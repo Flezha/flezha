@@ -14,6 +14,8 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   a race against a timer.
   """
 
+  # async: false: global telemetry handlers.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin
@@ -279,8 +281,9 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     test "init_provider performs no upstream I/O" do
       origin = start_origin(body: "cfg-v1")
 
+      # `init_provider/1` starts nothing — the poller is `activate/1`'s — so
+      # there is no process that could reach the origin later.
       assert {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
-      Process.sleep(60)
 
       assert requests(origin) == 0
       assert opts.overwatcher_pid == self()
@@ -288,7 +291,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "activate returns without waiting on the request" do
-      origin = start_origin(body: "cfg-v1", delay_ms: 250)
+      origin = start_origin(body: "cfg-v1", hold: self())
       {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
 
       {elapsed_us, {:ok, poller}} = :timer.tc(fn -> HttpPoll.activate(opts) end)
@@ -303,11 +306,12 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       Enum.each(1..50, fn n -> assert_received {:host_work, ^n} end)
 
       assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
+      release_origin()
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
     test "the health probe answers while a request is outstanding" do
-      origin = start_origin(body: "cfg-v1", delay_ms: 250)
+      origin = start_origin(body: "cfg-v1", hold: self())
       poller = start_poller(origin)
 
       # Mid-flight: the request is blocking its own child, not the worker, so
@@ -315,6 +319,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
       assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
 
+      release_origin()
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
@@ -387,10 +392,13 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "a poll in flight inside the window stays healthy" do
-      origin = start_origin(body: "cfg-v1", delay_ms: 250)
+      origin = start_origin(body: "cfg-v1", hold: self())
       poller = start_poller(origin)
 
+      # The request is in flight for as long as the origin holds it.
+      assert_receive {:origin_holding, conn}, 5_000
       assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+      send(conn, :unpark)
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
@@ -418,7 +426,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "a wedged worker is reported as uncertain, not as a verdict" do
-      wedged = spawn(fn -> Process.sleep(:infinity) end)
+      wedged = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
       on_exit(fn -> if Process.alive?(wedged), do: Process.exit(wedged, :kill) end)
 
       # A worker that is alive but not answering is neither healthy nor
@@ -686,6 +694,12 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
   # ---------- fake HTTP origin ----------
 
+  # The held request the origin reported; answering it lets the poll settle.
+  defp release_origin() do
+    assert_receive {:origin_holding, conn}, 5_000
+    send(conn, :unpark)
+  end
+
   defp start_origin(config) do
     {:ok, listen} =
       :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true, backlog: 16])
@@ -700,7 +714,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
             body: "",
             etag: nil,
             location: nil,
-            delay_ms: 0,
+            hold: nil,
             requests: 0,
             conditional: 0,
             last: ""
@@ -754,7 +768,12 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
           {Map.put(state, :conditional?, conditional?), state}
         end)
 
-      if config.delay_ms > 0, do: Process.sleep(config.delay_ms)
+      # A held origin keeps the request in flight until the test releases it.
+      if is_pid(config.hold) do
+        send(config.hold, {:origin_holding, self()})
+        FlezhaTest.Helper.NodeTestHelper.park()
+      end
+
       :gen_tcp.send(socket, response(config))
     end
 

@@ -5,10 +5,11 @@ defmodule Flezha.State.InputLogTest do
   frozen-watermark telemetry, and the tier-off cost-free default (no
   journaling work, no file).
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
 
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Overwatch
@@ -18,15 +19,20 @@ defmodule Flezha.State.InputLogTest do
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
+    class = "il_" <> Integer.to_string(System.unique_integer([:positive]))
 
     TestHelpers.start_state_tree()
 
     on_exit(fn ->
+      # The log lives in the shared state tree and truncates in its own turn
+      # (`sweep/1` is a cast), so it must be closed — its queued cut done —
+      # before the root under it goes away.
+      close_log(class)
       Application.delete_env(:flezha, :state_root)
       File.rm_rf!(base)
     end)
 
-    %{base: base, class: "il_" <> Integer.to_string(System.unique_integer([:positive]))}
+    %{base: base, class: class}
   end
 
   test "offsets are strictly monotonic and payloads round-trip in order", %{class: class} do
@@ -111,7 +117,7 @@ defmodule Flezha.State.InputLogTest do
       # (down to the floor, which is retained — the existing conservative
       # keep-at-or-above-the-floor contract).
       Application.put_env(:flezha, :input_log_hold_window_ms, 1)
-      Process.sleep(5)
+      aged_out()
       :ok = InputLog.sweep(class)
       assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [9]
     end
@@ -124,7 +130,7 @@ defmodule Flezha.State.InputLogTest do
       # Every record has aged out, but an unconsumed input must never be dropped:
       # the floor is min(watermark, aged_out), not the age bound alone.
       Application.put_env(:flezha, :input_log_hold_window_ms, 1)
-      Process.sleep(5)
+      aged_out()
       :ok = InputLog.sweep(class)
 
       assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
@@ -208,7 +214,7 @@ defmodule Flezha.State.InputLogTest do
     # channel before the record is journaled.
     assert {:pending, state} = Ingest.ingest(state, "message", %{"input_type" => "2"}, :cast)
 
-    refute_receive {:forwarded, _}, 50
+    refute_received {:forwarded, _}
     assert_receive reply
     assert {:ok, %Overwatch{}} = Ingest.journal_reply(state, reply)
 
@@ -289,13 +295,13 @@ defmodule Flezha.State.InputLogTest do
       assert md3["input_type"] == "2"
       assert_receive {:forwarded, ^class, {"m4", md4}}
       assert md4["flz.offset"] == "4"
-      refute_receive {:forwarded, _, _}, 50
+      refute_received {:forwarded, _, _}
     end
 
     test "no journal file means no re-forward work", %{class: class} do
       state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
       :ok = Replay.replay_journaled_inputs(state)
-      refute_receive {:forwarded, _, _}, 50
+      refute_received {:forwarded, _, _}
       refute File.exists?(Registry.input_log_path(class))
     end
   end
@@ -448,6 +454,19 @@ defmodule Flezha.State.InputLogTest do
     assert wait_until(fn -> Supervisor.lookup({class, :input_log}) == :error end, 2_000)
   end
 
+  # Every record appended so far is older than a 1 ms hold window.
+  defp aged_out() do
+    appended_at = System.system_time(:millisecond)
+    assert wait_until(fn -> System.system_time(:millisecond) > appended_at + 1 end, 1_000, 1)
+  end
+
+  defp close_log(class) do
+    case Supervisor.lookup({class, :input_log}) do
+      {:ok, pid} -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
+      :error -> :ok
+    end
+  end
+
   describe "a truncation costs the tail, not the log" do
     test "a floor past the index samples keeps exactly the tail", %{class: class} do
       for i <- 0..599, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
@@ -473,10 +492,11 @@ defmodule Flezha.State.InputLogTest do
       :ok = GenServer.stop(pid)
       # The registry drops the dead pid a moment after the exit; `append/3`
       # retries a `:noproc` only once, with no delay.
-      assert Enum.any?(1..200, fn _ ->
-               Flezha.State.Supervisor.lookup({class, :input_log}) == :error or
-                 (Process.sleep(5) && false)
-             end)
+      assert wait_until(
+               fn -> Flezha.State.Supervisor.lookup({class, :input_log}) == :error end,
+               1_000,
+               5
+             )
 
       {:ok, 300} = InputLog.append(class, "m300", %{})
       InputLog.record_consumed(class, {class, "proc", "a"}, 290)

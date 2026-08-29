@@ -59,7 +59,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
 
     assert {:ok, _state} = Websocket.handle_in({:text, "frame-1"}, state)
     assert_receive {:sync_io_in, "frame-1", %{"input_type" => "2"}}
-    refute_receive {:cast_io_in, _, _}
+    refute_received {:cast_io_in, _, _}
   end
 
   test "tier-off ingest keeps the fire-and-forget cast" do
@@ -68,7 +68,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
     for state <- [conn_state(stub, sync_ingest?: false), conn_state(stub, [])] do
       assert {:ok, _state} = Websocket.handle_in({:text, "frame-2"}, state)
       assert_receive {:cast_io_in, "frame-2", _}
-      refute_receive {:sync_io_in, _, _}
+      refute_received {:sync_io_in, _, _}
     end
   end
 end

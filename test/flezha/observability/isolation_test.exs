@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.IsolationTest do
+  # async: false: the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, Signal}
@@ -37,7 +38,7 @@ defmodule Flezha.Observability.IsolationTest do
       Registry.register_sink(%{
         name: slow_name,
         module: Slow,
-        config: %{sleep_ms: 50},
+        config: %{},
         overflow: :drop,
         mailbox_high_watermark: 5
       })
@@ -59,8 +60,9 @@ defmodule Flezha.Observability.IsolationTest do
     assert wall_us < 200_000,
            "1000 emits took #{wall_us}us; expected < 200_000us with :drop policy"
 
-    # Let the system flush a bit so the fast sink mailbox drains.
-    Process.sleep(200)
+    # The fast sink has counted everything once it answers a call queued
+    # behind the emits.
+    Flezha.Observability.TestSinks.settle(fast_name)
 
     fast_count = :counters.get(fast_ref, 1)
     assert fast_count == 1_000

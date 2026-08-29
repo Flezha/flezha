@@ -5,6 +5,7 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
   registers a reply ref that never resolves, then blocks and crashes instead
   of receiving a clean error and healing.
   """
+  # async: false: registered runner channels.
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.ControlChannel

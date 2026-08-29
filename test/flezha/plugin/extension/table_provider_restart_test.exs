@@ -11,6 +11,8 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
 
   # fails when: provider plugin stays dead after watchdog kill (no new owned pid spawned)
 
+  # async: false: writes Application env.
+
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog

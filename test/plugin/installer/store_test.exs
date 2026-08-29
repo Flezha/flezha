@@ -5,6 +5,8 @@ defmodule Flezha.Plugin.Installer.StoreTest do
   the singleton DETS table.
   """
 
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
+
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog, only: [capture_log: 1]

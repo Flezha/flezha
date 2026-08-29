@@ -2994,6 +2994,18 @@ mod edge_output_ordering_tests {
     /// means the same thing whichever mechanism carried the backpressure. A
     /// parked producer folds nothing; a deferring producer folds into a buffer
     /// the flusher will not drain while the push is outstanding.
+    /// Yield until `done` holds; a 5 s deadline names `what` on failure.
+    fn spin_until(what: &str, done: impl Fn() -> bool) {
+        let started = std::time::Instant::now();
+        while !done() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "timed out waiting for {what}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     fn shipped(slot: &Arc<EntitySlot>) -> u64 {
         crate::flusher::EntityFlusher::instance().drain_now_for_tests();
         slot.change_seq.load(std::sync::atomic::Ordering::Acquire)
@@ -3014,6 +3026,7 @@ mod edge_output_ordering_tests {
         let consumer = Arc::clone(&instance.entities[1][0]);
         saturate(&consumer);
         let before = shipped(&producer);
+        let blocked_before = crate::entity::pushes_blocked_total();
 
         let (work, effect) = work_and_effect(7, &[1]);
         let resolving = {
@@ -3021,9 +3034,13 @@ mod edge_output_ordering_tests {
             std::thread::spawn(move || resolve_item(&producer, &work, effect, None))
         };
 
-        // The push has nowhere to go, so nothing this item produced is durable
-        // — including the offset that would make a replay skip its input.
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        // The push has nowhere to go — it is held back — so nothing this item
+        // produced is durable, including the offset that would make a replay
+        // skip its input.
+        spin_until("the push to be held back", || {
+            crate::entity::pushes_blocked_total() > blocked_before
+                || !producer.push_holdback.lock().unwrap().is_empty()
+        });
         assert_eq!(
             shipped(&producer),
             before,
@@ -3055,6 +3072,7 @@ mod edge_output_ordering_tests {
         let full = Arc::clone(&instance.entities[3][0]);
         saturate(&full);
         let before = shipped(&producer);
+        let blocked_before = crate::entity::pushes_blocked_total();
 
         let (work, effect) = work_and_effect(11, &[1, 2, 3]);
         let resolving = {
@@ -3062,7 +3080,10 @@ mod edge_output_ordering_tests {
             std::thread::spawn(move || resolve_item(&producer, &work, effect, None))
         };
 
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        spin_until("the fan-out push to be held back", || {
+            crate::entity::pushes_blocked_total() > blocked_before
+                || !producer.push_holdback.lock().unwrap().is_empty()
+        });
         assert_eq!(
             instance.entities[1][0].mailbox.len(),
             1,

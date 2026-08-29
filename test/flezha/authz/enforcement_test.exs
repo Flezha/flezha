@@ -4,6 +4,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
   identity derives only from the authenticated transport (verified token /
   namespace handshake), destructive verbs are gated, and denials are audited.
   """
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

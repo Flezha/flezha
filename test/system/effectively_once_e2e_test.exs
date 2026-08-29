@@ -17,7 +17,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Runner.FleetManager
@@ -61,6 +61,9 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert info.runner_id == exec_a
 
     # The SDK-declared tier must have been resolved at bind.
@@ -106,9 +109,9 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     expected_final = %{"k1" => "k1=c", "k2" => "k2=b", "k3" => "k3=a"}
     assert await_changelog(expected_final, 60_000)
 
-    # Drain the quiet window, then run the conformance audit over EVERYTHING
+    # Once the outbox owes nothing, run the conformance audit over EVERYTHING
     # the sink ever received (including re-driven duplicates).
-    Process.sleep(1_000)
+    assert await_outbox_drained(operative_id), "the outbox never drained"
     outputs = drain_outputs([])
 
     assert changelog(outputs) == expected_final,

@@ -6,6 +6,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   state from the runner, and on that path the runner is dead, so the source
   controller's disk is the only surviving copy — and `state_root` is node-local.
   """
+  # async: false: writes Application env; a shared on-disk root; a peer BEAM.
   use ExUnit.Case, async: false
 
   alias Flezha.State.{FsyncBatcher, Registry, Supervisor, TestHelpers, WalWriter, WalTransfer}

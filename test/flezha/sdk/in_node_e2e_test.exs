@@ -6,6 +6,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
   BEAM). Exercises the full path — handshake, AssignRunnerId, ConnectSocket,
   AddOperative, primary-stream io_in routing — with no external process.
   """
+  # async: false: the live controller and its fleet; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.FleetManager
@@ -77,10 +78,10 @@ defmodule Flezha.SDK.InNodeE2ETest do
     operative_id = "probe_op_#{System.unique_integer([:positive])}"
     builder = %Builder{id: operative_id, factory_id: "sdk_probe", init_values: %{}, opts: []}
 
+    # `start_operative` returns after the SDK acknowledged `AddOperative`, so
+    # the operative is instantiated there when the first input is sent.
     assert {:ok, _info} = OperativeManager.start_operative(ns, builder)
 
-    # Give AddOperative time to instantiate the operative on the SDK side.
-    Process.sleep(200)
     OperativeManager.send_io(operative_id, ns, "hello", %{"channel" => "in", "input_type" => "2"})
 
     assert_receive {:sdk_probe_ran, "hello"}, 10_000

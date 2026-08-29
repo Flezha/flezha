@@ -5,6 +5,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   entry, a failing replay re-parks it with `generation` incremented, and
   a drop is audited.
   """
+  # async: false: writes Application env; a shared on-disk root; global telemetry handlers.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

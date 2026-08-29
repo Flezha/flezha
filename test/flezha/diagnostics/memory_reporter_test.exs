@@ -1,4 +1,5 @@
 defmodule Flezha.Diagnostics.MemoryReporterTest do
+  # async: false: the primary Logger; registered singletons; OS environment variables.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog

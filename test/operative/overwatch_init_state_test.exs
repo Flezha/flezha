@@ -91,7 +91,11 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     }
 
     assert {:ok, _} = OperativeManager.start_operative(@namespace, operative)
-    refute_receive {:probe, :called}, 200
+    # The plugins are activated in the Overwatch's own turn; a call to it
+    # answers after that.
+    {:ok, overwatch} = OperativeManager.get_operative_pid(@namespace, operative_id)
+    _ = :sys.get_state(overwatch)
+    refute_received {:probe, :called}
 
     {:ok, json_state} =
       OperativeManager.get_entity_state(@namespace, operative_id)
@@ -136,7 +140,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       :exit, _ -> :ok
     end
 
-    refute_receive {:probe, :called}, 300
+    refute_received {:probe, :called}
   end
 
   test "4.2.4 {:error, reason} from resolver surfaces and operative is not registered" do

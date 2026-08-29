@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
   use FlezhaTest.SystemCase, capability: :liveness
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness, only: [boot_runner: 3, peek_outputs: 0]
 
   alias Flezha.Convergence.{Heal, Loop}
@@ -41,6 +41,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   @tick_ms 1_500
   @heartbeat_ms 300
 
+  # A fresh fleet per test: every drill evicts or terminates its runner.
   setup do
     namespace = "wedge_e2e_#{System.unique_integer([:positive])}"
 
@@ -84,7 +85,16 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     # delivering) while the SDK's dispatch counter is frozen; that pair, plus a
     # live heartbeat, is the verdict.
     OperativeManager.send_io(operative_id, namespace, "wedge", %{"input_type" => "2"})
-    Process.sleep(500)
+
+    # The runner's heartbeat reports the handout the wedged worker holds.
+    assert wait_until(
+             fn ->
+               Flezha.Transport.LivenessCounters.snapshot_all().channels
+               |> Enum.any?(&(&1.runner_id == runner_a and Map.get(&1, :hb_inflight, 0) >= 1))
+             end,
+             30_000
+           ),
+           "the wedge input never reached a pool worker"
 
     # Unlinked on purpose: the test stops it deliberately in phase 2, and a
     # link would make that stop kill the test.
@@ -218,6 +228,8 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
     assert {:ok, %{runner_id: ^runner_id}} =
              OperativeManager.start_operative(namespace, builder(operative_id, self()))
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     {operative_id, port, runner_id}
   end

@@ -6,6 +6,8 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
   regression net for the shared `put_if/4` guard semantics.
   """
 
+  # async: false: writes Application env; a shared on-disk root.
+
   use ExUnit.Case, async: false
 
   alias Flezha.State.DurabilityTier.Backend.LocalPath

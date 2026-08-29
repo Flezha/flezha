@@ -7,6 +7,8 @@ defmodule Flezha.ConvergenceTest do
   covered by the `runner disconnect preserve` integration test.
   """
 
+  # async: false: writes Application env; Mimic stubs; a shared on-disk root.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -740,7 +742,15 @@ defmodule Flezha.ConvergenceTest do
 
       # Wedge it: a blocking call leaves the server stuck inside handle_call.
       spawn(fn -> catch_exit(GenServer.call(pid, :block, :infinity)) end)
-      Process.sleep(20)
+
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn ->
+                 Process.info(pid, :current_function) ==
+                   {:current_function, {__MODULE__.WedgeServer, :handle_call, 3}}
+               end,
+               1_000
+             )
+
       # Pile messages behind the blocked call so the probe sees a backlog.
       for _ <- 1..5, do: GenServer.cast(pid, :noop)
 
@@ -993,7 +1003,7 @@ defmodule Flezha.ConvergenceTest do
                  self()
                )
 
-      refute_receive :reconcile_started, 50
+      refute_received :reconcile_started
     end
 
     test "the post-round plan adopts what the round started rather than fighting it" do
@@ -1421,7 +1431,7 @@ defmodule Flezha.ConvergenceTest do
                       %{operative_id: "btc", detail: :wal_frozen, entity: "op/k1"}}
 
       Loop.note_stuck_transitions(stuck, stuck)
-      refute_receive {^ref, [:flezha, :convergence, :operative_stuck], _, _}, 50
+      refute_received {^ref, [:flezha, :convergence, :operative_stuck], _, _}
     end
 
     test "intent-mismatch transitions emit with the named operatives", %{ref: ref} do
@@ -1433,7 +1443,7 @@ defmodule Flezha.ConvergenceTest do
       # Unchanged and cleared transitions do not re-emit.
       Loop.note_intent_mismatch_transition(["btc", "eth"], ["btc", "eth"])
       Loop.note_intent_mismatch_transition(["btc", "eth"], [])
-      refute_receive {^ref, [:flezha, :convergence, :intent_mismatch], _, _}, 50
+      refute_received {^ref, [:flezha, :convergence, :intent_mismatch], _, _}
     end
   end
 

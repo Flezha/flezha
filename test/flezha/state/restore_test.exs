@@ -1,4 +1,5 @@
 defmodule Flezha.State.RestoreTest do
+  # async: false: writes Application env; a shared on-disk root; node-global tables.
   use ExUnit.Case, async: false
 
   alias Flezha.State.{Restore, Snapshot, Supervisor, TestHelpers, WalWriter}

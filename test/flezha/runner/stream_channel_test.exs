@@ -1,6 +1,8 @@
 defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Runner.StreamChannel
 
+  # async: false: writes Application env; a shared on-disk root; registered runner channels.
+
   use ExUnit.Case, async: false
 
   setup context do
@@ -63,7 +65,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       send(pid, {:flz_closed, :ref_y, :eof})
       _ = GenServer.call(pid, :stream_ref_status)
 
-      refute_receive {:output_stall, _}, 100
+      refute_received {:output_stall, _}
     end
   end
 
@@ -163,12 +165,12 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       # No real output, but a fresh heartbeat lands right before the check.
-      Process.sleep(@threshold_ms * 3)
+      age_stream(pid, @threshold_ms * 3)
       send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{}})
       send(pid, :io_liveness_check)
       _ = GenServer.call(pid, :stream_ref_status)
 
-      refute_receive {:output_stall, _}, 100
+      refute_received {:output_stall, _}
     end
 
     test "operative whose heartbeats stop is flagged for every operative", %{pid: pid} do
@@ -178,7 +180,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       # Last heartbeat, then silence past the threshold.
       send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{}})
-      Process.sleep(@threshold_ms * 3)
+      age_stream(pid, @threshold_ms * 3)
       send(pid, :io_liveness_check)
 
       assert_receive {:output_stall, "operative_a"}
@@ -188,11 +190,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     test "unbound stream is never flagged", %{pid: pid} do
       :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
 
-      Process.sleep(@threshold_ms * 3)
+      age_stream(pid, @threshold_ms * 3)
       send(pid, :io_liveness_check)
       _ = GenServer.call(pid, :stream_ref_status)
 
-      refute_receive {:output_stall, _}, 100
+      refute_received {:output_stall, _}
     end
 
     test "primary (send-only) stream is never flagged even when bound and silent" do
@@ -203,11 +205,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
-      Process.sleep(@threshold_ms * 3)
+      age_stream(pid, @threshold_ms * 3)
       send(pid, :io_liveness_check)
       _ = GenServer.call(pid, :stream_ref_status)
 
-      refute_receive {:output_stall, _}, 100
+      refute_received {:output_stall, _}
     end
 
     test "heartbeat metadata records the runner's dispatch self-report", %{
@@ -294,7 +296,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       _ = GenServer.call(pid, :stream_ref_status)
 
       assert_receive {:output_stall, "cont_op"}
-      refute_receive {:output_stall, "bnd_op"}, 100
+      refute_received {:output_stall, "bnd_op"}
     end
 
     test "delete_entity_state is ignored for a workflow (non-dynamic) class", %{pid: pid} do
@@ -309,9 +311,9 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       frame = Flezha.State.Wire.encode_entity_id(class, "proc", "seg")
       send(pid, {:flz_data, :ref_z, "delete_entity_state", frame, %{}})
-      # Flush the frame through the channel; the (gated) delete must not spawn.
+      # Flush the frame through the channel: the gate is decided inside the
+      # handler, so a delete it did not spawn there is never spawned.
       _ = GenServer.call(pid, :stream_ref_status)
-      Process.sleep(50)
 
       assert File.exists?(wal)
     end
@@ -330,5 +332,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
         send(test_pid, {:output_stall, md.operative_instance})
       end
     end
+  end
+
+  # The stream's last frame was `ms` ago: the liveness window lapses without
+  # the test waiting it out.
+  defp age_stream(pid, ms) do
+    :sys.replace_state(pid, &%{&1 | last_seen: &1.last_seen - ms})
   end
 end

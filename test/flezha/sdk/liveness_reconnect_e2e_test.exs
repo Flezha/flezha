@@ -7,6 +7,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   removal-refusal (7.2). Native transport, in-process, so `run/3` and the
   streams live in this BEAM.
   """
+  # async: false: the live controller and its fleet; global telemetry handlers; OS environment variables.
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.FleetManager
@@ -98,8 +99,21 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
     handle = start_runner(ns, [EchoOp])
     on_exit(fn -> Flezha.SDK.close(handle) end)
 
-    # Idle across several heartbeat windows — heartbeats keep the channel live.
-    refute_receive {:output_stall, _}, 1_500
+    # Idle across several heartbeat windows — the heartbeats show as the
+    # secondary stream's `last_seen` moving on — and no stall is flagged.
+    [runner_id] = FleetManager.active_runners(ns)
+    channels = secondary_channels(runner_id)
+    idle_from = System.monotonic_time(:millisecond)
+
+    assert NodeTestHelper.wait_until(
+             fn ->
+               Enum.any?(channels, &(:sys.get_state(&1).last_seen >= idle_from + 3 * 200))
+             end,
+             10_000
+           ),
+           "the heartbeats never reached a secondary stream"
+
+    refute_received {:output_stall, _}
   end
 
   test "killing an SDK-side stream drives reconnect and the runner recovers", %{ns: ns} do
@@ -152,8 +166,8 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
                opts: []
              })
 
-    Process.sleep(200)
-
+    # `start_operative` returns after the SDK acknowledged `AddOperative`, so
+    # the instance is live on the handle when the removal is refused.
     assert {:error, {:operative_type_in_use, "lr_echo", n}} =
              Flezha.SDK.remove_stream(handle2, EchoOp)
 
@@ -168,5 +182,14 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
       id when is_binary(id) -> id
       other -> other
     end)
+  end
+
+  # The runner's secondary (heartbeat-carrying) stream channels.
+  defp secondary_channels(runner_id) do
+    prefix = runner_id <> "_scs_"
+
+    Registry.select(Flezha.Service.Identificator, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn {key, _pid} -> is_binary(key) and String.starts_with?(key, prefix) end)
+    |> Enum.map(&elem(&1, 1))
   end
 end

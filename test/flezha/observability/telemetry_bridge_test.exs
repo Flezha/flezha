@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.TelemetryBridgeTest do
+  # async: false: writes Application env; a shared on-disk root; the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
@@ -228,8 +229,16 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert usage.measurements[:entries] == 1
     assert usage.measurements[:bytes] > 0
 
-    # retention_seconds = 0: the sweep drops the just-parked entry, loudly.
-    Process.sleep(5)
+    # retention_seconds = 0: the sweep drops the just-parked entry, loudly —
+    # once the entry's own millisecond has passed (expiry is strictly older).
+    [%{"ts_ms" => ts_ms}] = Flezha.Dlq.Store.list("ObsOperative")
+
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> System.system_time(:millisecond) > ts_ms end,
+             1_000,
+             1
+           )
+
     :ok = Flezha.Dlq.Store.sweep()
 
     dropped =

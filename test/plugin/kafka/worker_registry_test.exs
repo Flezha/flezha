@@ -1,6 +1,8 @@
 defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
 
+  # async: false: registered singletons.
+
   use ExUnit.Case, async: false
 
   @hosts_a [{"kafka-a", 9092}]
@@ -51,7 +53,7 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
         end
 
       assert_receive {:starter_called, _identity, worker_pid}
-      refute_receive {:starter_called, _, _}
+      refute_received {:starter_called, _, _}
 
       pids = tokens |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
       assert pids == [worker_pid]
@@ -107,8 +109,8 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
 
       assert {:ok, pid2, _ref2} = WorkerRegistry.acquire(identity, reg)
       assert pid2 == pid1
-      refute_receive {:starter_called, _, _}, 100
-      refute_receive {:stopper_called, _}, 100
+      refute_received {:starter_called, _, _}
+      refute_received {:stopper_called, _}
     end
 
     test "implicit release when caller dies", %{registry: reg} do
@@ -422,30 +424,21 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
       assert_receive {:starter_called, worker_pid}
 
       Process.exit(worker_pid, :kill)
-      # Wait past linger so pending_refs is dropped.
-      Process.sleep(100)
+      # The death is handled (its monitor gone) and the pending refs it
+      # snapshotted are dropped once the linger lapses.
+      assert eventually(
+               fn ->
+                 state = :sys.get_state(reg)
+                 state.worker_monitors == %{} and state.pending_refs == %{}
+               end,
+               1_000
+             )
 
       send(caller, :swap_now)
       assert_receive {:swap_result, {:error, :no_pending_swap}}
     end
   end
 
-  defp eventually(check_fn, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    do_eventually = fn loop ->
-      if check_fn.() do
-        true
-      else
-        if System.monotonic_time(:millisecond) >= deadline do
-          false
-        else
-          Process.sleep(5)
-          loop.(loop)
-        end
-      end
-    end
-
-    do_eventually.(do_eventually)
-  end
+  defp eventually(check_fn, timeout),
+    do: FlezhaTest.Helper.NodeTestHelper.wait_until(check_fn, timeout, 5)
 end

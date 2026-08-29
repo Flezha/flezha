@@ -3,6 +3,7 @@ defmodule Flezha.State.PersistenceResolverTest do
   §5b.1: the kind+class `persistent_state?` resolution (workflow durable-by-default,
   opt-out per class) and the finished-job retention window resolver.
   """
+  # async: false: writes Application env.
   use ExUnit.Case, async: false
 
   alias Flezha.State.PersistenceResolver

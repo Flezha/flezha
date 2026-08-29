@@ -96,8 +96,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
             )
 
           Websocket.handle_info(:idle_check, state)
-          # Yield so the queued self-exit signal is processed.
-          Process.sleep(500)
+          FlezhaTest.Helper.NodeTestHelper.park()
         end)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_000
@@ -144,18 +143,22 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
 
     test "stays alive (does NOT exit) when within threshold" do
       Process.flag(:trap_exit, true)
+      parent = self()
 
       {pid, ref} =
         spawn_monitor(fn ->
           state = base_state(idle_timeout_ms: 5_000)
           Websocket.handle_info(:idle_check, state)
+          # Reached only when the check did not exit the process.
+          send(parent, :checked)
 
           receive do
             :stop -> :ok
           end
         end)
 
-      refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 300
+      assert_receive :checked, 1_000
+      refute_received {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}
       Process.exit(pid, :kill)
       assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 1_000
     end
@@ -164,6 +167,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   describe "handle_info(:idle_check) — disabled" do
     test "is a no-op when idle_timeout_ms is 0" do
       Process.flag(:trap_exit, true)
+      parent = self()
 
       {pid, ref} =
         spawn_monitor(fn ->
@@ -174,13 +178,16 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
             )
 
           Websocket.handle_info(:idle_check, state)
+          # Reached only when the check did not exit the process.
+          send(parent, :checked)
 
           receive do
             :stop -> :ok
           end
         end)
 
-      refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 300
+      assert_receive :checked, 1_000
+      refute_received {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}
       Process.exit(pid, :kill)
       assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 1_000
     end

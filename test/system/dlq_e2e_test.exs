@@ -22,7 +22,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   use FlezhaTest.SystemCase, capability: :retry_ladder
 
   import ExUnit.CaptureIO
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Dlq.Store
@@ -77,6 +77,8 @@ defmodule FlezhaTest.System.DlqE2ETest do
     }
 
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     # Healthy payload flows end to end.
     send_inputs(operative_id, namespace, ["a"])

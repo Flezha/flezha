@@ -10,6 +10,7 @@ defmodule Flezha.State.WalRewindTest do
   rests on — the epoch is explicit (so a re-run cannot double-bump) and the
   input-log watermark falls back with the records that reported it.
   """
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.ClassRegistry

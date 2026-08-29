@@ -5,6 +5,7 @@ defmodule Flezha.SDK.DispatchTest do
   native `Local.Stream` whose controller side the test owns; `run/3` runs in the
   test's BEAM so it can also probe directly.
   """
+  # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
   alias Flezha.SDK.{Topology, Counters, Operative, Entity, Channels, KeyGroup}
@@ -242,21 +243,25 @@ defmodule Flezha.SDK.DispatchTest do
     assert_receive {:"$gen_cast", {:park, ^entity_pid, _identity2, _body2}}, 1_000
   end
 
-  test "drop_newest sheds at capacity; the runner stays responsive" do
-    defmodule SlowProc do
-      @behaviour Flezha.SDK.Procedure
-      def name, do: "slow"
-      def init_state(_), do: nil
+  # `GatedProc` with a one-item mailbox: each run is held until the test
+  # releases it, so a burst finds the mailbox full for as long as the test
+  # wants rather than for as long as a sleep lasts.
+  defmodule SlowProc do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "slow"
+    def init_state(_), do: nil
 
-      def run(input, s, ctx) do
-        Process.sleep(50)
-        Flezha.SDK.Ctx.emit(ctx, input)
-        {:ok, s}
-      end
-
-      def mailbox_capacity, do: 1
+    def run(input, s, ctx) do
+      send(:dispatch_probe, {:running, input, self()})
+      receive(do: (:release -> :ok))
+      Flezha.SDK.Ctx.emit(ctx, input)
+      {:ok, s}
     end
 
+    def mailbox_capacity, do: 1
+  end
+
+  test "drop_newest sheds at capacity; the runner stays responsive" do
     defmodule DropOp do
       @behaviour Flezha.SDK.StreamOperative
       def factory_id, do: "drop_op"
@@ -271,11 +276,15 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.sink("out")
     end
 
+    probe!()
     %{op: op, counters: counters} = start_operative(DropOp)
     # Fire many quickly; capacity 1 + drop_newest → only a subset get through.
     for n <- 1..10, do: Operative.input(op, "in", "v#{n}", %{})
 
-    outputs = drain_outputs([], 400)
+    # Every input either ran (released here as it reports in) or was shed:
+    # the two accounts add up to the burst once it is through.
+    runs = release_runs_until(fn runs -> runs + Counters.drops_newest(counters) == 10 end)
+    outputs = collect_outputs(runs)
     assert length(outputs) >= 1
     assert length(outputs) < 10
 
@@ -295,7 +304,8 @@ defmodule Flezha.SDK.DispatchTest do
       def init_state(_), do: nil
 
       def run(input, s, ctx) do
-        Process.sleep(50)
+        send(:dispatch_probe, {:running, input, self()})
+        receive(do: (:release -> :ok))
         Flezha.SDK.Ctx.emit(ctx, input)
         {:ok, s}
       end
@@ -318,12 +328,16 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.sink("out")
     end
 
+    probe!()
     %{op: op} = start_operative(DefaultOp)
     # The same burst `drop_newest` sheds: capacity 1 against 10 inputs, each
-    # held 50 ms. Under the default the router waits instead of dropping.
+    # held at the gate. Under the default the router waits instead of dropping.
     for n <- 1..10, do: Operative.input(op, "in", "v#{n}", %{})
 
-    assert length(drain_outputs([], 1_500)) == 10
+    # Released as each reports in — the router is parked on the full mailbox
+    # between runs, and an output is delivered only once it moves again.
+    assert release_runs_until(fn runs -> runs == 10 end) == 10
+    assert length(collect_outputs(10)) == 10
   end
 
   test "a mis-routed dynamic key parks with the contract error before any Entity state" do
@@ -355,9 +369,14 @@ defmodule Flezha.SDK.DispatchTest do
       Operative.input(op, "in", "slow", %{})
       assert_receive {:running, "slow", entity}, 1_000
 
-      Process.sleep(40)
-      assert {1, oldest_ms} = Counters.handout_liveness(counters)
-      assert oldest_ms >= 30
+      # The handout ages on the clock while the Entity holds it.
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn ->
+                 match?({1, oldest_ms} when oldest_ms >= 30, Counters.handout_liveness(counters))
+               end,
+               1_000,
+               5
+             )
 
       send(entity, :release)
       assert_receive {:flz_data, _id, "op-1", "slow", _}, 2_000
@@ -421,20 +440,34 @@ defmodule Flezha.SDK.DispatchTest do
     assert Process.alive?(op), "a dead Entity took its Operative down"
   end
 
-  defp wait_until(done, timeout \\ 2_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
+  defp wait_until(done, timeout \\ 2_000),
+    do: FlezhaTest.Helper.NodeTestHelper.wait_until(done, timeout, 10)
 
-    Stream.repeatedly(fn ->
-      done.() or (Process.sleep(10) && false)
+  # This process is where a gated Procedure reports in.
+  defp probe!() do
+    Process.register(self(), :dispatch_probe)
+
+    on_exit(fn ->
+      if Process.whereis(:dispatch_probe), do: Process.unregister(:dispatch_probe)
     end)
-    |> Enum.find(fn ok -> ok or System.monotonic_time(:millisecond) > deadline end)
   end
 
-  defp drain_outputs(acc, timeout) do
-    receive do
-      {:flz_data, _id, "op-1", payload, _meta} -> drain_outputs([payload | acc], timeout)
-    after
-      timeout -> Enum.reverse(acc)
+  # Release every gated run as it reports in, until `done?.(runs)` holds;
+  # answers how many ran.
+  defp release_runs_until(done?, runs \\ 0) do
+    if FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> done?.(runs) end, 200, 5) do
+      runs
+    else
+      assert_receive {:running, _input, entity}, 1_000
+      send(entity, :release)
+      release_runs_until(done?, runs + 1)
+    end
+  end
+
+  defp collect_outputs(n) do
+    for _ <- 1..n do
+      assert_receive {:flz_data, _id, "op-1", payload, _meta}, 1_000
+      payload
     end
   end
 end

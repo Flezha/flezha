@@ -6,6 +6,8 @@ defmodule Flezha.AuthZ.StoresTest do
   GenServer + named ETS cache.
   """
 
+  # async: false: a shared on-disk root; the primary Logger; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, TokenStore}
@@ -113,8 +115,14 @@ defmodule Flezha.AuthZ.StoresTest do
 
     test "expired token is rejected" do
       {:ok, _} = TokenStore.start_link([])
-      {:ok, raw, _} = TokenStore.issue("alice", "_system", :operator, 1)
-      :timer.sleep(1_100)
+      {:ok, raw, %{expires_at: expires_at}} = TokenStore.issue("alice", "_system", :operator, 1)
+      # Expiry is a whole-second wall-clock comparison: wait for that second.
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> System.system_time(:second) >= expires_at end,
+               2_000,
+               10
+             )
+
       assert {:error, :token_expired} = TokenStore.verify(raw)
     end
 

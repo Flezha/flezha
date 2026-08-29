@@ -13,6 +13,8 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Operative.Overwatch
 
+  # async: false: the primary Logger; node-global tables.
+
   use ExUnit.Case, async: false
 
   # One case drives a handover with no control unit, which logs a deserialize
@@ -206,7 +208,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
 
       assert reply == :ok
       assert Table.phase(again.extensions, "steady") == :running
-      refute_receive {:activate_called, :first_activation}, 100
+      refute_received {:activate_called, :first_activation}
     end
 
     test "the same restart reports :ok once upstream recovers", ctx do

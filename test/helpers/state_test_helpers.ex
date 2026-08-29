@@ -239,6 +239,25 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  Move a live writer's clocks `ms` into the past — its advance window, its
+  last-seen Change, its oldest un-snapshotted record and its last resync — so
+  a check judging age sees the window lapsed without the test waiting it out.
+  """
+  def age_writer(writer, ms) do
+    :sys.replace_state(writer, fn state ->
+      [:last_advance_at, :last_change_seen_at, :oldest_unsnapshotted_at, :last_resync_at]
+      |> Enum.reduce(state, fn key, acc ->
+        case Map.get(acc, key) do
+          at when is_integer(at) -> Map.put(acc, key, at - ms)
+          _ -> acc
+        end
+      end)
+    end)
+
+    :ok
+  end
+
+  @doc """
   Build a 16-byte WAL header. The controller treats the header as opaque
   bytes; tests only need a stable shape to round-trip records through
   `WalWriter.encode_record/3` and back.
@@ -327,21 +346,16 @@ defmodule Flezha.State.TestHelpers do
   @spec close_and_await(pid(), Registry.entity_id(), timeout()) :: :ok
   def close_and_await(server, entity_id, timeout_ms \\ 2_000) do
     WalWriter.close(server)
-    await_deregistered(entity_id, System.monotonic_time(:millisecond) + timeout_ms)
-  end
 
-  defp await_deregistered(entity_id, deadline) do
-    case Supervisor.lookup(entity_id) do
-      :error ->
-        :ok
+    deregistered? =
+      FlezhaTest.Helper.NodeTestHelper.wait_until(
+        fn -> Supervisor.lookup(entity_id) == :error end,
+        timeout_ms,
+        5
+      )
 
-      {:ok, _pid} ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          raise "writer for #{inspect(entity_id)} still registered after close"
-        end
-
-        Process.sleep(5)
-        await_deregistered(entity_id, deadline)
-    end
+    if deregistered?,
+      do: :ok,
+      else: raise("writer for #{inspect(entity_id)} still registered after close")
   end
 end

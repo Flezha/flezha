@@ -7,6 +7,8 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   saga + retention + SDK-reporting work in later phases.
   """
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 

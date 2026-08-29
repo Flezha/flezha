@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.BusTest do
+  # async: false: the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, Signal}
@@ -75,7 +76,7 @@ defmodule Flezha.Observability.BusTest do
       Registry.register_sink(%{
         name: name,
         module: Slow,
-        config: %{sleep_ms: 50},
+        config: %{},
         overflow: :drop,
         mailbox_high_watermark: 2
       })
@@ -84,10 +85,9 @@ defmodule Flezha.Observability.BusTest do
 
     # Saturate the sink mailbox; only the first 2 land before the
     # watermark trips and subsequent emits are dropped with counter
-    # bumps.
+    # bumps — by the emitter itself, so the counter is current on return.
     Enum.each(1..20, fn _ -> emit_metric(src) end)
 
-    Process.sleep(100)
     dropped = Registry.sink_counter(name, :dropped)
     assert dropped > 0
   end

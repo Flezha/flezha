@@ -19,6 +19,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   suite covers the multi-peer init_sync semantics.
   """
 
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.Builder
@@ -526,28 +528,15 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     do: HubRegistryTestHelper.seed_runner(@namespace, runner_id, factory_id)
 
   defp await_bound_node(hub_id, operative_id, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_bound_node(hub_id, operative_id, deadline)
-  end
-
-  defp do_await_bound_node(hub_id, operative_id, deadline) do
-    bound =
-      case Map.get(ProcessRegistry.dump(hub_id), operative_id) do
-        {_cspec, node_pids, _meta} -> HubManager.live_node(node_pids)
-        _ -> nil
-      end
-
-    cond do
-      not is_nil(bound) ->
-        bound
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        nil
-
-      true ->
-        Process.sleep(50)
-        do_await_bound_node(hub_id, operative_id, deadline)
-    end
+    FlezhaTest.Helper.NodeTestHelper.wait_until(
+      fn ->
+        case Map.get(ProcessRegistry.dump(hub_id), operative_id) do
+          {_cspec, node_pids, _meta} -> HubManager.live_node(node_pids)
+          _ -> nil
+        end
+      end,
+      timeout_ms
+    )
   end
 
   test "await_recovery_complete/2 times out when a hub is stuck in :recovering" do

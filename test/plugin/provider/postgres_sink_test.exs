@@ -11,6 +11,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   (reachable at localhost:5433, user/db/password `flezha`/`flezha_test`).
   """
 
+  # async: false: the primary Logger.
+
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
@@ -272,9 +274,14 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
     emit(opts, "v2", stamps(entity, "2.0", "1", "k2"))
 
-    Process.sleep(500)
-    assert SinkWorker.stats(pid).buffer_len == 2
-    assert SinkWorker.stats(pid).consecutive_failures >= 1
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn ->
+               stats = SinkWorker.stats(pid)
+               stats.buffer_len == 2 and stats.consecutive_failures >= 1
+             end,
+             5_000
+           ),
+           "the records were not retained through a failed attempt: #{inspect(SinkWorker.stats(pid))}"
 
     # Operator creates the schema out of band → the next retry commits all.
     create_tables!(db)

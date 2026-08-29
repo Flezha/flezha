@@ -51,6 +51,8 @@ defmodule Flezha.Load.MemoryDriftTest do
       (default `memory_drift_test`).
   """
 
+  # async: false: the live controller and its fleet; registered singletons; node-global tables.
+
   use ExUnit.Case, async: false
 
   @moduletag :memory_drift
@@ -150,30 +152,29 @@ defmodule Flezha.Load.MemoryDriftTest do
   ## ----- bootstrap helpers --------------------------------------------------
 
   defp wait_for_ws_endpoint! do
-    deadline = System.monotonic_time(:millisecond) + @testnet_wait_timeout_ms
-    do_wait_for_ws_endpoint(deadline)
-  end
+    reachable? =
+      FlezhaTest.Helper.NodeTestHelper.wait_until(
+        fn ->
+          case :gen_tcp.connect(~c"localhost", @testnet_port, [:binary, active: false], 500) do
+            {:ok, sock} -> :gen_tcp.close(sock) == :ok
+            {:error, _reason} -> false
+          end
+        end,
+        @testnet_wait_timeout_ms,
+        250
+      )
 
-  defp do_wait_for_ws_endpoint(deadline) do
-    case :gen_tcp.connect(~c"localhost", @testnet_port, [:binary, active: false], 500) do
-      {:ok, sock} ->
-        :gen_tcp.close(sock)
-        :ok
-
-      {:error, _reason} ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          flunk(
-            "Testnet WS source #{@testnet_ws_uri} not reachable within " <>
-              "#{@testnet_wait_timeout_ms} ms. Verify `testnet_enabled: true` " <>
-              "in config/test.exs and that the bundle at " <>
-              "test/apps/testnet/dist/index.js exists (run `mix test.setup` " <>
-              "if not)."
-          )
-        else
-          Process.sleep(250)
-          do_wait_for_ws_endpoint(deadline)
-        end
+    unless reachable? do
+      flunk(
+        "Testnet WS source #{@testnet_ws_uri} not reachable within " <>
+          "#{@testnet_wait_timeout_ms} ms. Verify `testnet_enabled: true` " <>
+          "in config/test.exs and that the bundle at " <>
+          "test/apps/testnet/dist/index.js exists (run `mix test.setup` " <>
+          "if not)."
+      )
     end
+
+    :ok
   end
 
   defp assert_kafka_reachable! do
@@ -356,10 +357,14 @@ defmodule Flezha.Load.MemoryDriftTest do
   ## ----- sampling + capture loop -------------------------------------------
 
   defp sampler_loop(samples_ref, interval_ms) do
+    {:ok, _} = :timer.send_interval(interval_ms, :sample)
+    sample_on_tick(samples_ref)
+  end
+
+  defp sample_on_tick(samples_ref) do
     reading = Flezha.Diagnostics.MemoryReporter.capture()
     :ets.insert(samples_ref, {System.system_time(:millisecond), reading})
-    Process.sleep(interval_ms)
-    sampler_loop(samples_ref, interval_ms)
+    receive(do: (:sample -> sample_on_tick(samples_ref)))
   end
 
   defp capture_loop(deadline_ms, snapshot_interval_min) do
@@ -381,7 +386,10 @@ defmodule Flezha.Load.MemoryDriftTest do
         do_capture_loop(deadline_ms, now + snapshot_interval_ms, snapshot_interval_ms)
 
       true ->
-        Process.sleep(min(deadline_ms - now, next_snapshot - now))
+        # A timer to the earlier of the two deadlines, not a sleep: the loop
+        # is driven by its own schedule.
+        Process.send_after(self(), :capture_due, min(deadline_ms - now, next_snapshot - now))
+        receive(do: (:capture_due -> :ok))
         do_capture_loop(deadline_ms, next_snapshot, snapshot_interval_ms)
     end
   end

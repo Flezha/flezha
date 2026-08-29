@@ -36,6 +36,8 @@ defmodule Flezha.Load.CreditSoakTest do
       two pairs + trades ≈ 1220 msg/s offered).
   """
 
+  # async: false: writes Application env; the live controller and its fleet; global telemetry handlers.
+
   use ExUnit.Case, async: false
 
   @moduletag :credit_soak
@@ -234,7 +236,10 @@ defmodule Flezha.Load.CreditSoakTest do
         parked: parked_counter(ce_id)
       }
 
-      Process.sleep(@sample_ms)
+      # The sampling cadence is a timer, so the stall injected above keeps
+      # running while the next sample is due.
+      Process.send_after(self(), :sample_due, @sample_ms)
+      receive(do: (:sample_due -> :ok))
 
       next_stall =
         if now >= next_stall_at, do: next_stall_at + @stall_every_ms, else: next_stall_at
@@ -253,15 +258,18 @@ defmodule Flezha.Load.CreditSoakTest do
 
       pid ->
         :ok = :sys.suspend(pid)
-        Process.sleep(@stall_ms)
-        :ok = :sys.resume(pid)
+        {:ok, _} = :timer.apply_after(@stall_ms, :sys, :resume, [pid])
     end
   end
 
+  # No persisted progress for two seconds.
   defp quiesced?(writer) do
     a = WalWriter.last_persisted_seq(writer)
-    Process.sleep(2_000)
-    WalWriter.last_persisted_seq(writer) == a
+
+    not FlezhaTest.Helper.NodeTestHelper.wait_until(
+      fn -> WalWriter.last_persisted_seq(writer) != a end,
+      2_000
+    )
   end
 
   ## ----- anomaly telemetry ------------------------------------------------------

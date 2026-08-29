@@ -10,6 +10,7 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
   (`Native` is a NIF and can't be mocked, so close is observed via the signal and
   the handler's robustness to a bogus stream ref).
   """
+  # async: false: Mimic stubs; the live controller and its fleet; the primary Logger.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -57,6 +58,6 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
     state = %{transport: :uds, pending_streams: %{0 => stream_ref}}
 
     assert {:noreply, _} = Server.handle_info(connect_frame(), state)
-    refute_receive {:rejected, _, _}, 200
+    refute_received {:rejected, _, _}
   end
 end

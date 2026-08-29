@@ -18,6 +18,8 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
   """
   alias Flezha.Runner.{StreamChannel, StreamSup}
 
+  # async: false: registered runner channels.
+
   use ExUnit.Case, async: false
 
   setup context do

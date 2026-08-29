@@ -10,6 +10,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   The registry is `FakeStartRegistry`, whose `insert_new` is ProcessHub's
   atomic id claim — the same harness the spawn suite drives.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal

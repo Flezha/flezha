@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.ExportTest do
+  # async: false: writes Application env; the observability registry; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, Signal}
@@ -50,8 +51,7 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      # Cast is async — let it settle.
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       {body, _series_count} = PrometheusRegistry.render()
       text = IO.iodata_to_binary(body)
@@ -89,7 +89,7 @@ defmodule Flezha.Observability.ExportTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       {body, _} = PrometheusRegistry.render()
       text = IO.iodata_to_binary(body)
@@ -118,7 +118,7 @@ defmodule Flezha.Observability.ExportTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
       {body, _} = PrometheusRegistry.render()
       assert IO.iodata_to_binary(body) =~ "# TYPE " <> Atom.to_string(source) <> "_flag gauge"
     end
@@ -144,7 +144,7 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       {body, _} = PrometheusRegistry.render()
       text = IO.iodata_to_binary(body)
@@ -178,7 +178,7 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      Process.sleep(80)
+      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
       {body, _} = PrometheusRegistry.render()
       text = IO.iodata_to_binary(body)
 
@@ -239,7 +239,9 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      Process.sleep(80)
+      # Bus → PrometheusSink → PrometheusRegistry: settle each hop in order.
+      Flezha.Observability.TestSinks.settle(Flezha.Observability.Export.PrometheusSink)
+      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       body = http_get(port, "/metrics")
       assert body =~ "_scrape_e2e_counter"
@@ -331,10 +333,13 @@ defmodule Flezha.Observability.ExportTest do
            })}
         )
 
-      # Wait long enough for the periodic flush tick to fire and the
-      # OtlpClient's full retry schedule to drain (5 attempts × backoff
-      # capped at 4s but interleaved with the 50ms flush interval).
-      Process.sleep(400)
+      # The periodic flush tick hands the batch to the client and empties the
+      # buffer whether or not the endpoint answers.
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> GenServer.call(sink, :stats).buffered == 0 end,
+               5_000
+             ),
+             "the flush tick never drained the buffer"
 
       # The sink is alive (didn't deadlock under :block) and emitted a
       # :otlp_batch_dropped event for at least one batch — we assert

@@ -39,6 +39,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.
+  # A fresh fleet per test: the runner's connect is what most scenarios prove.
   setup do
     namespace = unique("smoke")
     on_exit(fn -> FleetManager.stop_namespace(namespace) end)

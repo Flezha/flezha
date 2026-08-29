@@ -1,4 +1,5 @@
 defmodule Flezha.State.RetentionTest do
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
   alias Flezha.State.{
@@ -223,11 +224,14 @@ defmodule Flezha.State.RetentionTest do
       old = Process.whereis(Retention)
       Process.exit(old, :kill)
 
-      assert Enum.any?(1..200, fn _ ->
-               Process.sleep(5)
-               pid = Process.whereis(Retention)
-               is_pid(pid) and pid != old
-             end),
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn ->
+                 pid = Process.whereis(Retention)
+                 is_pid(pid) and pid != old
+               end,
+               1_000,
+               5
+             ),
              "Retention must be restarted by its supervisor"
 
       assert ClassRegistry.overwatch_pid(class) == {:ok, self()},

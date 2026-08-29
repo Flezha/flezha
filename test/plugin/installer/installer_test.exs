@@ -9,6 +9,8 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
   start one in a supervisor within each test.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Installer

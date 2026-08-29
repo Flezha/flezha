@@ -555,12 +555,14 @@ mod tests {
         let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
 
         // Fake non-servicing controller: drain the init frame, then hold the
-        // connection open and stay silent — never acknowledges the runner.
+        // connection open and stay silent — never acknowledges the runner —
+        // until the test lets it go.
+        let (release, held) = std::sync::mpsc::channel::<()>();
         let ctrl = thread::spawn(move || {
             let mut ctrl_end = ctrl_end;
             let mut buf = [0u8; 1024];
             let _ = ctrl_end.read(&mut buf);
-            thread::sleep(Duration::from_secs(3));
+            let _ = held.recv();
         });
 
         let (itx, _irx) = unbounded();
@@ -587,6 +589,7 @@ mod tests {
 
         std::env::remove_var("FLEZHA_CONTROL_ACK_TIMEOUT_MS");
         std::env::remove_var("FLEZHA_CONTROL_IDLE_TIMEOUT_MS");
+        drop(release);
         ctrl.join().ok();
     }
 
@@ -604,14 +607,16 @@ mod tests {
         let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
 
         // Fake controller: drain the init frame, send ONE control frame (the
-        // ack), then go silent forever — the post-handshake wedge.
+        // ack), then go silent — the post-handshake wedge — until the test
+        // lets it go.
+        let (release, held) = std::sync::mpsc::channel::<()>();
         let ctrl = thread::spawn(move || {
             let mut ctrl_end = ctrl_end;
             let mut buf = [0u8; 1024];
             let _ = ctrl_end.read(&mut buf);
             let ack = payloader::build_from_binary("control_command", b"\x08\x01", HashMap::new());
             let _ = ctrl_end.write_all(&ack);
-            thread::sleep(Duration::from_secs(3));
+            let _ = held.recv();
         });
 
         let (itx, _irx) = unbounded();
@@ -651,6 +656,7 @@ mod tests {
 
         std::env::remove_var("FLEZHA_CONTROL_ACK_TIMEOUT_MS");
         std::env::remove_var("FLEZHA_CONTROL_IDLE_TIMEOUT_MS");
+        drop(release);
         ctrl.join().ok();
     }
 

@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-28 23:48 (supervisor session 1)
+**Last updated**: 2026-08-29 01:53 (supervisor session 1, heartbeat)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 0a done (`e8f81b8a`). Next: implement `refactor-0-tests` (0b).
+Area 0a done (`e8f81b8a`). Area 0b implementing (worker spawned); tag `refactor-baseline-0b` at `59deb753`.
 
 ## Board
 
@@ -19,7 +19,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | # | Area | Change id | Depends on | Status | Commit | Gates before → after |
 |---|------|-----------|------------|--------|--------|----------------------|
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
-| 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | proposed | | |
+| 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | implementing | | |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | pending | | |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | pending | | |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
@@ -39,7 +39,14 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None.
+- change `refactor-0-tests` · role implement · started 2026-08-28 23:49
+- checkpoint A after task group 1 (flake population + root causes, NO edits): the
+  supervisor vetoes any fix that changes behaviour before code moves; checkpoint B
+  at the end
+- worker agent lives in supervisor session 1 only; a new session must re-spawn
+- last seen: 2026-08-29 01:53 — tasks 2/11 ticked; working tree: 221 files changed, 1902 insertions(+), 1115 deletions(-)
+- resume note: if this worker is gone, re-spawn with the resume brief; group-2
+  edits are test files plus the settle-signal seams the report must list
 
 ## Awaiting the user's decision
 
@@ -63,6 +70,34 @@ Nothing.
   without `--features flezha_runner/bench-internals`.
 - 0a: `mix deps.get` reports packages with security advisories (pre-existing).
 - 0a: `.git/info/exclude` on this box hides `bench/flink/`; other boxes see reports.
+- 0b **F1 — PRODUCT DEFECT, own change owed, before area 5a touches `wal_writer`**:
+  after an effectively-once park, `WalWriter.take_outbox_window/3` re-enters
+  `dispatch_outbox_window` via `complete_entry({:cursor,1})` → `try_dispatch_outbox`
+  (`wal_writer.ex:1288`) while the outer window is open; the nested window advances
+  the consumed watermark to 2, then the outer window's `InputLog.record_consumed/3`
+  (`input_log.ex:189`, unconditional `:ets.insert`) overwrites it with 1. Fires
+  whenever the park record and the next record share one fsync batch. Impact: the
+  input-log retention floor and credit accounting under-report by one offset after
+  every park until the next input. `test/system/dlq_e2e_test.exs:119` fails 14/20
+  alone — it was never a load flake. Left red, untagged, per charter §9.
+- 0b F5 — `test/flezha_test.exs:591` (runner disconnect, preserve) failed 1/6 full
+  runs, 0/10 alone, 0/3 instrumented; root cause not established; left as is.
+- 0b `mix test --include system` always exits 2: the two `:postgres_integration`
+  modules raise in `setup_all` because an include beats an exclude (the `:interop`
+  self-skip pattern is the fix; authorised inside 0b).
+- 0b UDS socket path overflow in the system tier: a stream socket path of 114 bytes
+  (`/tmp/flezha_sockets/<node>/secondary_stream_<namespace>_<ids>_wus.sock`) exceeds
+  `sun_path`; 120 "Failed to start primary listener" + 167 "Failed to connect runner"
+  error lines per run while the tests still pass. Owed.
+- 0b commit `e3d6e2e3`'s `:sys.get_state(Loop)` drain in the output-stall drill is
+  inert (a 200 000-iteration probe: the `send_after(…, 0)` tick lands after the
+  reply every time).
+- 0b test hygiene: 738 leaked `/tmp/flezha_*` dirs (state-test and durability-stub
+  roots never removed); `app_data/dlq` holds leftovers from tests using the default
+  DLQ dir. Owed (area 7).
+- 0b three uncaptured `[error]` lines in a plain `mix test` (two sdk_lang-mismatch
+  restore refusals, one ControlUnit abnormal shutdown) would trip CI's uncaptured-log
+  gate on this suite shape.
 
 ## Decisions
 
@@ -90,6 +125,20 @@ Nothing.
   interleaved A/B is the only perf gate.
 - 2026-08-28 `baseline.json` keeps per-file production LOC / markers / sleeps /
   refutes so a regression names its file.
+- 2026-08-29 Flake instrumentation lives in the scratchpad (`elixir -r probes.exs
+  -S mix test`), never in the tree.
+- 2026-08-29 "Green in isolation" is not the discriminator: F1 fails alone 70 %,
+  F5/F6 pass alone. Reproduce per charter D5 before touching anything.
+- 2026-08-29 The one sanctioned poll primitive (`NodeTestHelper.wait_until/2`, the
+  target the copied loops collapse onto) keeps a real `Process.sleep` for its
+  interval, honestly named; the `test` sleeps metric floors at 1, never disguised
+  as `receive … after`.
+- 2026-08-29 The naming gates walk `git ls-files`: an untracked new file is invisible
+  to them (commit `e8f81b8a` landed with three offences in its own dev notes this
+  way). The supervisor `git add -N`s a worker's new files before gating.
+- 2026-08-29 A first-input race against an asynchronously activating sink plugin is
+  settled by waiting on the plugin's phase (`Table.phase` → `:running`) before the
+  send — a positive signal — never by re-sending.
 
 ## Baseline (rough, pre-Phase-0 — replaced by `baseline.json` in 0a)
 

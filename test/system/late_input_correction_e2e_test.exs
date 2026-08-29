@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
   use FlezhaTest.SystemCase, capability: :correction_window
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Operative.Builder
@@ -63,6 +63,8 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
 
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert wait_until(
              fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,
              30_000
@@ -87,7 +89,16 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
            "the late trade was not folded back into event-time order; got #{inspect(folded(namespace, operative_id))}"
 
     # --- The sink converged, it did not accumulate ----------------------------
-    Process.sleep(1_000)
+    # The live-state read answers before the replay's records reach the
+    # controller, so wait for the first regenerated output (a bumped epoch) and
+    # then for the outbox to owe nothing more.
+    assert wait_until(
+             fn -> Enum.any?(peek_outputs(), fn {_msg, md} -> md["flz.epoch"] != "0" end) end,
+             60_000
+           ),
+           "no regenerated output reached the sink"
+
+    assert await_outbox_drained(operative_id), "the outbox never drained"
     outputs = drain_outputs([])
 
     changelog =
@@ -119,6 +130,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     assert wait_until(
              fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,

@@ -9,6 +9,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
   declared the stream may stay quiet.
   """
 
+  # async: false: global telemetry handlers.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Websocket
@@ -60,17 +62,22 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
       last_resubscribe_at: stale
     }
 
+    parent = self()
+
     {pid, ref} =
       spawn_monitor(fn ->
         Websocket.handle_info(:idle_check, state)
+        # Reached only when the check did not exit the process.
+        send(parent, :checked)
 
         receive do
           :stop -> :ok
         end
       end)
 
-    refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 200
-    refute_receive {:telemetry, @telemetry_event, _, _}, 100
+    assert_receive :checked, 1_000
+    refute_received {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}
+    refute_received {:telemetry, @telemetry_event, _, _}
 
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 1_000

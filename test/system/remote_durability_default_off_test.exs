@@ -15,7 +15,7 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Operative.Builder
@@ -62,6 +62,9 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert info.runner_id == exec
 
     assert wait_until(fn -> ClassRegistry.effectively_once?(operative_id) end, 30_000)

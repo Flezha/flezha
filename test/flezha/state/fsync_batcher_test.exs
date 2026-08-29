@@ -1,4 +1,5 @@
 defmodule Flezha.State.FsyncBatcherTest do
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog

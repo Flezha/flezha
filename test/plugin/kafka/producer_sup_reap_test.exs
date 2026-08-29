@@ -4,6 +4,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   Phase 7.3). A recovered operative must start a fresh, healthy producer rather than
   re-attach to a worker that can no longer drain.
   """
+  # async: false: registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
@@ -37,7 +38,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   end
 
   defp fake_worker do
-    pid = spawn(fn -> Process.sleep(:infinity) end)
+    pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
     pid
   end

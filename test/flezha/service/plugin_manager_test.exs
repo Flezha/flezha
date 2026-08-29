@@ -14,6 +14,8 @@ defmodule Flezha.Service.PluginManagerTest do
   spinning up a real hub.
   """
 
+  # async: false: Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 

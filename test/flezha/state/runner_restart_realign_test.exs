@@ -24,6 +24,8 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   for late in-flight residue, refused at the WalWriter — never realigned on.
   """
 
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.{FleetManager, StreamChannel}
@@ -150,7 +152,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 2
 
     assert_receive {:stale_refused, %{count: 1}, %{session: ^stale_id}}, 1_000
-    refute_receive {:stale_refused, _, _}, 200
+    refute_received {:stale_refused, _, _}
     assert Metrics.get(Metrics.for_entity(ctx.entity_id), :stale_writer_refused_total) == 4
   end
 
@@ -191,7 +193,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     send(old, {:flz_data, 0, "entity_state_change", <<1, 2, 3>>, %{}})
     _ = GenServer.call(old, :stream_ref_status)
     assert channel_refused_count(old_id) == 5
-    refute_receive {:stale_refused, _, _}, 100
+    refute_received {:stale_refused, _, _}
   end
 
   test "takeover race: in-flight old-session Changes never land past the unbind; the new owner realigns cleanly",

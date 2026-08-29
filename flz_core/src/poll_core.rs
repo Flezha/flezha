@@ -856,6 +856,12 @@ impl PollCore {
     }
 
     /// Work activations handed out and not yet answered.
+    /// Threads currently inside [`Self::poll`] — the settle a test reads before
+    /// arming what a blocked poller must wake for.
+    pub fn pollers_inside(&self) -> usize {
+        self.pollers_inside.load(Ordering::Acquire)
+    }
+
     pub fn outstanding_count(&self) -> usize {
         self.outstanding_count.load(Ordering::Acquire)
     }

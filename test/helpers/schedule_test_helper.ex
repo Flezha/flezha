@@ -88,25 +88,15 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
   Every schedule wait goes through this — `start_child`/`stop_child` and
   cross-node hub discovery are all asynchronous, so a bare assert races.
   """
-  @poll_interval_ms 50
   def await_until(timeout_ms, describe, fun) when is_function(fun, 0) do
-    do_await_until(System.monotonic_time(:millisecond) + timeout_ms, describe, fun)
-  end
-
-  defp do_await_until(deadline, describe, fun) do
-    case fun.() do
-      {:ok, value} ->
-        value
-
-      :retry ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          flunk("timed out waiting for #{describe.()}")
-        else
-          Process.sleep(@poll_interval_ms)
-          do_await_until(deadline, describe, fun)
-        end
+    case FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> ok_value(fun.()) end, timeout_ms) do
+      {:ok, value} -> value
+      _ -> flunk("timed out waiting for #{describe.()}")
     end
   end
+
+  defp ok_value({:ok, _} = ok), do: ok
+  defp ok_value(:retry), do: nil
 
   @doc "Block until `name` has a live pid in the schedule hub."
   def await_registered(name, timeout_ms \\ 2_000) do

@@ -1,6 +1,9 @@
 defmodule Flezha.Dlq.StoreTest do
   # Rebinds the global :dlq config to a tmp dir.
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   alias Flezha.Dlq.Store
 
@@ -139,7 +142,10 @@ defmodule Flezha.Dlq.StoreTest do
     Application.put_env(:flezha, :dlq, Keyword.put(cfg, :retention_seconds, 0))
 
     assert {:ok, _ref} = Store.append(store, entry())
-    Process.sleep(5)
+    # A zero retention expires an entry strictly older than the sweep's clock
+    # reading, so the entry's own millisecond has to pass first.
+    [%{"ts_ms" => ts_ms}] = Store.list(store, nil)
+    assert wait_until(fn -> System.system_time(:millisecond) > ts_ms end, 1_000, 1)
     assert :ok = Store.sweep(store)
 
     assert_receive {:dropped, %{count: 1}, %{procedure_id: "ohlc", reason: :age}}, 2_000
@@ -152,7 +158,6 @@ defmodule Flezha.Dlq.StoreTest do
     Application.put_env(:flezha, :dlq, Keyword.put(cfg, :max_total_bytes, 300))
 
     assert {:ok, first} = Store.append(store, entry(%{park_id: "a", payload: "aaaa"}))
-    Process.sleep(5)
     assert {:ok, _second} = Store.append(store, entry(%{park_id: "b", payload: "bbbb"}))
 
     assert :ok = Store.sweep(store)

@@ -5,6 +5,7 @@ defmodule Flezha.State.RegistryNamespaceTest do
   claim an Operative records when it binds — the entity_id stays the wire's
   3-tuple, and isolation holds at the path seam.
   """
+  # async: false: writes Application env; a shared on-disk root.
   use ExUnit.Case, async: false
 
   alias Flezha.State.Registry

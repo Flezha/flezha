@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.RegistryTest do
+  # async: false: the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.Registry

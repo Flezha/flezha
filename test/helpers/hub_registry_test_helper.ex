@@ -75,7 +75,10 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   cleared, its Overwatch pid stays in the registry).
   """
   def inject_operative(ns, operative_id),
-    do: inject_operative(ns, operative_id, [{node(), spawn(fn -> Process.sleep(:infinity) end)}])
+    do:
+      inject_operative(ns, operative_id, [
+        {node(), spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)}
+      ])
 
   @doc """
   Seed a synthetic active runner — its fleet entry, factory advertisement, and
@@ -100,7 +103,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
       Task.start(fn ->
         {:ok, _} = Registry.register(Identificator, "#{runner_id}_cu", nil)
         send(owner, {:cu_registered, runner_id})
-        Process.sleep(:infinity)
+        FlezhaTest.Helper.NodeTestHelper.park()
       end)
 
     receive do

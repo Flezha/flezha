@@ -1,4 +1,5 @@
 defmodule Flezha.Schedule.StoreTest do
+  # async: false: a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Schedule.Store

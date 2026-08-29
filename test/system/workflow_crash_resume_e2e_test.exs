@@ -146,7 +146,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           )
 
         seed = ~s({"seed":"go"})
-        delivered = collector |> await_outputs(5) |> Enum.map(&elem(&1, 0))
+        delivered = collector |> await_outputs(5, operative_id) |> Enum.map(&elem(&1, 0))
 
         assert Enum.sort(delivered) ==
                  Enum.sort([
@@ -194,7 +194,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         subscriptions: [{:on_output, []}]
       }
 
-      _operative_id =
+      operative_id =
         drive_crash_resume(
           ctx,
           "tier_commit_block_workflow",
@@ -204,7 +204,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         )
 
       # The run is already complete; only the final flush's casts are in flight.
-      outputs = await_tier_outputs(1)
+      outputs = await_tier_outputs(1, operative_id)
 
       assert outputs != [], "no tier output reached the sink"
 
@@ -302,7 +302,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           plugins: [forward_sink("outbox_sink", collector)]
         )
 
-      delivered = await_outputs(collector, 1)
+      delivered = await_outputs(collector, 1, operative_id)
 
       assert [{@a_out, md}] = delivered,
              "proc A's staged output must reach the sink exactly once: #{inspect(delivered)}"
@@ -355,7 +355,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           before_rebind: &drop_flush_markers/1
         )
 
-      delivered = await_outputs(collector, 2)
+      delivered = await_outputs(collector, 2, operative_id)
 
       assert [{@a_out, first}, {@a_out, second}] = delivered,
              "the un-flushed commit was not re-driven on restore: #{inspect(delivered)}"
@@ -387,7 +387,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           plugins: [forward_sink("undo_sink", collector)]
         )
 
-      delivered = await_outputs(collector, 2)
+      delivered = await_outputs(collector, 2, operative_id)
 
       assert [{@undo_forward, forward}, {"out:undone", undo}] = delivered,
              "expected the forward output then exactly one undo: #{inspect(delivered)}"
@@ -497,38 +497,39 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     end
   end
 
-  # Wait for the sink to receive at least `count` frames, then settle briefly and
-  # take everything. `drive_crash_resume` already waited for the terminal
-  # completion, so only the final flush's casts are in flight — but under a loaded
-  # box that can take longer than any fixed sleep. The settle window means an
-  # unexpected EXTRA delivery still fails the exact-count assertions.
-  defp await_outputs(collector, count) do
+  # Wait for the sink to receive at least `count` frames and for the journal to
+  # owe nothing more, then take everything: an unexpected EXTRA delivery still
+  # fails the exact-count assertions, because it lands before the journal is
+  # settled.
+  defp await_outputs(collector, count, operative_id) do
     wait_until(fn -> length(collected(collector)) >= count end, 30_000)
-    Process.sleep(500)
+    assert journal_settled?(operative_id), "the proc journal still owes output"
     collected_with_meta(collector)
   end
 
-  # Same deadline-then-settle wait for the tier sink, which forwards into this
-  # process's mailbox rather than a collector.
-  defp await_tier_outputs(count) do
-    deadline = System.monotonic_time(:millisecond) + 30_000
-    await_tier_outputs(drain_tier_outputs([]), count, deadline)
+  # Same wait for the tier sink, which forwards into this process's mailbox
+  # rather than a collector.
+  defp await_tier_outputs(count, operative_id) do
+    outputs = drain_tier_outputs([])
+
+    outputs =
+      if length(outputs) >= count do
+        outputs
+      else
+        wait_until(
+          fn -> match?({:messages, [_ | _]}, Process.info(self(), :messages)) end,
+          30_000
+        )
+
+        outputs ++ drain_tier_outputs([])
+      end
+
+    assert journal_settled?(operative_id), "the proc journal still owes output"
+    outputs ++ drain_tier_outputs([])
   end
 
-  defp await_tier_outputs(acc, count, deadline) do
-    cond do
-      length(acc) >= count ->
-        Process.sleep(500)
-        acc ++ drain_tier_outputs([])
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        acc
-
-      true ->
-        Process.sleep(100)
-        await_tier_outputs(acc ++ drain_tier_outputs([]), count, deadline)
-    end
-  end
+  defp journal_settled?(operative_id),
+    do: wait_until(fn -> ProcJournal.pending_entries(operative_id) == [] end, 30_000)
 
   describe "durable loop + suspension (reference/uds)" do
     @describetag transport: :uds, cell: :uds_loop, reference_runtime: true
@@ -574,7 +575,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              "the loop did not commit one iteration per turn: " <>
                inspect(committed_iters(operative_id))
 
-      assert replies(collector, 2) == ["reply:hello", "reply:again"]
+      assert replies(collector, 2, operative_id) == ["reply:hello", "reply:again"]
 
       # Each iteration recorded the inbox offset it consumed, and the consumed
       # prefix was released.
@@ -604,7 +605,12 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert wait_until(fn -> committed_iters(operative_id) == [0, 1, 2] end, 60_000),
              "the suspended instance did not rehydrate and run the new turn as iteration 2"
 
-      assert replies(collector, 3) == ["reply:hello", "reply:again", "reply:wake-up"]
+      assert replies(collector, 3, operative_id) == [
+               "reply:hello",
+               "reply:again",
+               "reply:wake-up"
+             ]
+
       refute suspended?(namespace, operative_id)
 
       # --- 3. SIGKILL mid-iteration 3 → resume AT iteration 3 ---
@@ -644,7 +650,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert wait_until(fn -> committed_iters(operative_id) == [0, 1, 2, 3] end, 90_000),
              "the resumed loop never committed the in-flight iteration 3"
 
-      assert replies(collector, 4) == [
+      assert replies(collector, 4, operative_id) == [
                "reply:hello",
                "reply:again",
                "reply:wake-up",
@@ -717,7 +723,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
              "the rediscovered suspended instance did not rehydrate on a new message"
 
-      assert replies(collector, 2) == ["reply:one", "reply:two"]
+      assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
     end
 
     # The same park/rehydrate cycle for a class with NO per-Entity state. It has
@@ -761,7 +767,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
                inspect(committed_iters(operative_id))
 
       # The point of the test: the second turn's staged output was delivered.
-      assert replies(collector, 2) == ["reply:one", "reply:two"]
+      assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
     end
   end
 
@@ -800,7 +806,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              "the loop did not commit one iteration per turn: " <>
                inspect(committed_iters(operative_id))
 
-      assert replies(collector, 3) == ["reply:alpha", "reply:beta", "reply:gamma"]
+      assert replies(collector, 3, operative_id) == ["reply:alpha", "reply:beta", "reply:gamma"]
       assert ProcJournal.current_epoch(operative_id) == 0
       assert consumed_offsets(operative_id) == [1, 2, 3]
 
@@ -836,7 +842,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              ),
              "the resumed loop did not run the next message as iteration 1"
 
-      outputs = await_outputs(collector, 6)
+      outputs = await_outputs(collector, 6, operative_id)
 
       # Undo runs in reverse iteration order (gamma, then beta), and only then
       # does the loop resume forward. The epoch rule, on the wire: everything the
@@ -868,7 +874,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # `res:...` is proc A's forward output; the terminal marker names the attempt
       # the flaky entity finally succeeded on — 2 ⇒ the ladder absorbed the
       # first failure.
-      assert [{~s(res:{"seed":"go"}), _}, {marker, _}] = await_outputs(collector, 2)
+      assert [{~s(res:{"seed":"go"}), _}, {marker, _}] = await_outputs(collector, 2, operative_id)
       assert marker == ~s(attempt:2:{"seed":"go"})
 
       {:ok, entries} = ProcJournal.read(operative_id)
@@ -887,7 +893,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       operative_id = drive_retry_run(ctx, collector, "99", "error")
 
-      assert [{~s(res:{"seed":"go"}), _}, {"res:undone", _}] = await_outputs(collector, 2)
+      assert [{~s(res:{"seed":"go"}), _}, {"res:undone", _}] =
+               await_outputs(collector, 2, operative_id)
 
       {:ok, entries} = ProcJournal.read(operative_id)
 
@@ -922,7 +929,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           plugins: [forward_sink("branch_sink", collector)]
         )
 
-      delivered = collector |> await_outputs(4) |> Enum.map(&elem(&1, 0))
+      delivered = collector |> await_outputs(4, operative_id) |> Enum.map(&elem(&1, 0))
 
       assert Enum.sort(delivered) == [
                "a:#{@seed}",
@@ -980,7 +987,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       # Forward output of the three completed procedures, then their undo — the
       # deepest first, the shared root last.
-      delivered = collector |> await_outputs(6) |> Enum.map(&elem(&1, 0))
+      delivered = collector |> await_outputs(6, operative_id) |> Enum.map(&elem(&1, 0))
 
       assert Enum.drop(delivered, 3) == ["undo-c", "b:undo-b", "a:undo-a"],
              "descendants before ancestors: #{inspect(delivered)}"
@@ -1044,8 +1051,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # --- durable-loop helpers ---------------------------------------------------
 
   # The sink's collector accumulates, so each wait is for the running total.
-  defp replies(collector, count) do
-    collector |> await_outputs(count) |> Enum.map(fn {payload, _md} -> payload end)
+  defp replies(collector, count, operative_id) do
+    collector |> await_outputs(count, operative_id) |> Enum.map(fn {payload, _md} -> payload end)
   end
 
   defp send_turn(namespace, operative_id, text) do
@@ -1079,7 +1086,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, opts \\ []) do
     {before_rebind, builder_opts} = Keyword.pop(opts, :before_rebind)
     namespace = unique("workflow_crash")
-    operative_id = unique(factory_id)
+    # Operative ids are capped at 32 bytes and the unique suffix reaches 7 digits.
+    operative_id = unique(String.slice(factory_id, 0, 24))
     id_path = unique_id_path()
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
@@ -1270,22 +1278,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp unique_id_path,
     do: Path.join(System.tmp_dir!(), "flz-crash-id-#{System.unique_integer([:positive])}")
 
-  defp wait_until(fun, timeout_ms \\ 15_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline)
-  end
-
-  defp do_wait_until(fun, deadline) do
-    cond do
-      fun.() ->
-        true
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        false
-
-      true ->
-        Process.sleep(50)
-        do_wait_until(fun, deadline)
-    end
-  end
+  defp wait_until(fun, timeout_ms \\ 15_000),
+    do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, timeout_ms)
 end

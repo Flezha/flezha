@@ -10,6 +10,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   mutating actions that needed leader election are gone (process_hub's
   coordinator handles election where it is still required).
   """
+  # async: false: Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
 

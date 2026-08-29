@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.AuditLogTest do
+  # async: false: writes Application env; a shared on-disk root; the observability registry.
   use ExUnit.Case, async: false
 
   # Supervised AuditLog children log a benign "shut down abnormally (exit) normal"
@@ -323,7 +324,7 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       AuditSvc.list_files(%{source: :cli})
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(Sink)
 
       # The list_files call itself emits a :list_files event on :audit_log
       # source — covered by the audit-of-audit test below. The
@@ -338,7 +339,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(Sink)
 
       path = Path.join(dir, "audit-current.jsonl")
       content = File.read!(path)
@@ -383,7 +384,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(Sink)
 
       path = Path.join(dir, "audit-current.jsonl")
 
@@ -421,7 +422,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(Sink)
 
       content = File.read!(Path.join(dir, "audit-current.jsonl"))
       assert content =~ Atom.to_string(extra_source)
@@ -443,7 +444,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(Sink)
       assert Sink.post_close_dropped() >= 1
     end
   end
@@ -511,7 +512,7 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, entries} = AuditSvc.list_files(%{source: :cli})
       assert length(entries) == 1
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(Sink)
       content = File.read!(Path.join(dir, "audit-current.jsonl"))
       assert content =~ ~s("source":"audit_log")
       assert content =~ ~s("name":"list_files")

@@ -6,6 +6,8 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
   cancellation token and the teardown follows on `WorkflowCompleted`.
   """
 
+  # async: false: Mimic global mode; Mimic stubs; registered runner channels.
+
   use ExUnit.Case, async: false
   use Mimic
 

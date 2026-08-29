@@ -14,6 +14,8 @@ defmodule Flezha.Service.HubManagerTest do
   path is covered in `Flezha.Service.PluginManagerTest`.
   """
 
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin

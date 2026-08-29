@@ -6,6 +6,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   ships them back on `RestoreInitState` so a respawned driver finishes the
   remaining hooks and skips already-undone ones.
   """
+  # async: false: writes Application env; Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
 
   import Mimic
@@ -34,13 +35,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     <<byte_size(sid)::16-big, sid::binary, 0::64-big, 0::128, 0::32-big, 0::32-big>>
   end
 
-  defp eventually(fun, retries \\ 100) do
-    cond do
-      fun.() -> true
-      retries == 0 -> false
-      true -> Process.sleep(5) && eventually(fun, retries - 1)
-    end
-  end
+  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 500, 5)
 
   test "compensation_markers/1 reflects the persisted marker files" do
     seg = {"rc", "proc", "seg"}

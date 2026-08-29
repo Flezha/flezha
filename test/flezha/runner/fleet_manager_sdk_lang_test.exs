@@ -20,6 +20,8 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
   alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.State.TestHelpers, as: StateTestHelpers
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 

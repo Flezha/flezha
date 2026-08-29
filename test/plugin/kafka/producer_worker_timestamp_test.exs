@@ -8,6 +8,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
+  # async: false: Mimic global mode; Mimic stubs; registered singletons.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -24,7 +26,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
 
     {:ok, pid} =
       GenServer.start_link(ProducerWorker,
-        worker_pid: spawn(fn -> Process.sleep(:infinity) end),
+        worker_pid: spawn(&FlezhaTest.Helper.NodeTestHelper.park/0),
         topic: @topic,
         partition: @partition,
         plugin_id: "ts-test-#{System.unique_integer([:positive])}",

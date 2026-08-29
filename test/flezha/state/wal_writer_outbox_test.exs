@@ -7,6 +7,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
   cadence instead of per record (§4), and the crash-tear all-or-nothing
   property of the atomic effect record (§3.5).
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal

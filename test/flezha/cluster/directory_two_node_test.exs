@@ -8,6 +8,8 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
   slow and excluded by default: `mix test --include multi_node`.
   """
 
+  # async: false: the live controller and its fleet; the primary Logger; a peer BEAM.
+
   use ExUnit.Case, async: false
 
   @moduletag :multi_node

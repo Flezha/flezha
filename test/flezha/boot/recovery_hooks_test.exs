@@ -1,4 +1,5 @@
 defmodule Flezha.Boot.RecoveryHooksTest do
+  # async: false: writes Application env; the observability registry; the primary Logger.
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.RecoveryHooks

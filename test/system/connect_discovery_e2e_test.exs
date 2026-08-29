@@ -20,6 +20,8 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
   @moduletag timeout: 120_000
 
+  # A fresh fleet per test: each scenario starts its runner under a different
+  # socket-ladder environment, so the runner is the subject, not a fixture.
   setup do
     namespace = "discovery_#{System.unique_integer([:positive])}"
     on_exit(fn -> FleetManager.stop_namespace(namespace) end)

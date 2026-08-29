@@ -11,6 +11,8 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
   without this test.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Installer

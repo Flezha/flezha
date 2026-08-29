@@ -4,6 +4,8 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
   so two concurrent installs cannot race on the code server or DETS.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Installer

@@ -10,6 +10,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   The registry is `FakeStartRegistry`, so the rescale drives the real start and
   stop paths rather than doubles of them.
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
@@ -233,7 +234,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   describe "dependents and concurrency" do
     test "a rescale nudges exactly the forwards that target this group" do
       parent = self()
-      overwatch = spawn_link(fn -> Process.sleep(:infinity) end)
+      overwatch = spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       stub(HubManager, :operative_plugins, fn _ns ->
         [

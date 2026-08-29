@@ -38,20 +38,27 @@ defmodule FlezhaTest.Helper.OperativeTestHelper do
   end
 
   defp ingest_until_accepted(operative_id, namespace, msg, metadata, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
+    accepted? =
+      FlezhaTest.Helper.NodeTestHelper.wait_until(
+        fn ->
+          remaining = max(deadline - System.monotonic_time(:millisecond), 1)
 
-    if remaining <= 0 do
-      raise "Operative never accepted the input before the timeout"
-    end
+          case OperativeManager.send_io_confirming(
+                 operative_id,
+                 namespace,
+                 msg,
+                 metadata,
+                 remaining
+               ) do
+            {:error, _retryable} -> false
+            _accepted -> true
+          end
+        end,
+        max(deadline - System.monotonic_time(:millisecond), 0),
+        @ingest_retry_ms
+      )
 
-    case OperativeManager.send_io_confirming(operative_id, namespace, msg, metadata, remaining) do
-      {:error, _retryable} ->
-        Process.sleep(min(@ingest_retry_ms, remaining))
-        ingest_until_accepted(operative_id, namespace, msg, metadata, deadline)
-
-      _accepted ->
-        :ok
-    end
+    if accepted?, do: :ok, else: raise("Operative never accepted the input before the timeout")
   end
 
   defp resolve_timeout(:quic),

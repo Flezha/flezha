@@ -10,6 +10,7 @@ defmodule FlezhaTest.Runner.RunnerReconnectBindingTest do
   stop → restart pattern (matrix 18.7) with a fixed `FLEZHA_RUNNER_ID_PATH`,
   and asserts the operative follows the runner onto its new session.
   """
+  # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -184,17 +185,6 @@ defmodule FlezhaTest.Runner.RunnerReconnectBindingTest do
     |> Enum.any?(fn {oid, _node_pids} -> oid == operative_id end)
   end
 
-  defp eventually(fun, attempts \\ 40) do
-    cond do
-      fun.() ->
-        true
-
-      attempts <= 0 ->
-        false
-
-      true ->
-        Process.sleep(25)
-        eventually(fun, attempts - 1)
-    end
-  end
+  defp eventually(fun, attempts \\ 40),
+    do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, attempts * 25, 25)
 end

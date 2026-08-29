@@ -8,6 +8,7 @@ defmodule Flezha.Cluster.OrchestratorTest do
   restart it under a synthetic unreachable-peer config to exercise the
   degrade-to-solo path.
   """
+  # async: false: writes Application env.
   use ExUnit.Case, async: false
 
   alias Flezha.Cluster.Orchestrator

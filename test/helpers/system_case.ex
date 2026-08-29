@@ -45,6 +45,15 @@ defmodule FlezhaTest.SystemCase do
   end
 
   @doc """
+  `nil` when `condition` holds, else `reason` — the `skip:` value of a module
+  that must not run in the ordinary `--include system` pass: an ExUnit include
+  beats an exclude, so a tag alone cannot keep it out, while a skip is honoured
+  whatever the filters say.
+  """
+  @spec skip_unless(boolean(), String.t()) :: String.t() | nil
+  def skip_unless(condition, reason), do: if(condition, do: nil, else: reason)
+
+  @doc """
   The runtime a scenario spawns: the selected SDK, or the reference when the
   scenario is tagged `reference_runtime: true`.
 
@@ -63,6 +72,7 @@ defmodule FlezhaTest.SystemCase do
     capability = Keyword.fetch!(opts, :capability)
 
     quote do
+      # async: false: every scenario drives the live controller and its fleet.
       use ExUnit.Case, async: false
 
       @moduletag :system

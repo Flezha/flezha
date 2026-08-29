@@ -4,6 +4,7 @@ defmodule Flezha.Schedule.HubTakeoverTest do
   # the schedule. Needs a real peer BEAM, so it is slow, strictly sequential,
   # and excluded by default — starting and stopping a peer disturbs the shared
   # cluster state other suites run against. `mix test --include multi_node`.
+  # async: false: a shared on-disk root; the live controller and its fleet; the primary Logger.
   use ExUnit.Case, async: false
 
   @moduletag :multi_node

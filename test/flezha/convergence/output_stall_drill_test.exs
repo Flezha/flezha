@@ -16,6 +16,8 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
   The numbers this run produces are recorded in the change's `design.md`.
   """
 
+  # The Loop and the Watchdog are registered singletons; the state root is an env key.
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.Loop
@@ -52,29 +54,10 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
       File.rm_rf!(base)
     end)
 
-    start_supervised!({Loop, tick_ms: @tick_ms})
-
-    # `Loop.init/1` schedules its first tick immediately, so with a tick
-    # interval this long there is still exactly one in flight. Drain it with a
-    # synchronous call — a message queued before the call is handled before the
-    # reply — or a loaded box delivers it inside a later assertion window and
-    # the drill reads it as a tick its own sweep caused.
-    _ = :sys.get_state(Loop)
-
-    %{header: TestHelpers.stub_header()}
-  end
-
-  test "a stalled Entity reaches the Loop's remedy decision in one hop", %{header: header} do
-    entity_id = TestHelpers.sample_entity_id("drill_#{System.unique_integer([:positive])}")
-    {:ok, _} = Supervisor.find_or_start(entity_id)
-    {:ok, writer} = Supervisor.lookup(entity_id)
-    :ok = WalWriter.append(writer, 0, header, "z")
-    :ok = WalWriter.append(writer, 1, header, "a")
-
-    # Changes still arriving, seq frozen — the stall signature.
-    Process.sleep(@stall_ms * 2)
-    :duplicate = WalWriter.append(writer, 1, header, "a")
-
+    # Listening BEFORE the Loop starts: `Loop.init/1` schedules its first tick
+    # immediately, and a synchronous call cannot drain a timer message that has
+    # not been delivered yet. The boot tick is consumed here as the settle
+    # signal, so the ticks the tests see are the ones their own sweeps cause.
     parent = self()
     handler = "stall-drill-#{System.unique_integer([:positive])}"
 
@@ -87,7 +70,15 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
 
     on_exit(fn -> :telemetry.detach(handler) end)
 
-    {_class, _procedure, _key} = entity_id
+    start_supervised!({Loop, tick_ms: @tick_ms})
+    assert_receive {:tick, _boot_tick}, @budget_ms
+
+    %{header: TestHelpers.stub_header()}
+  end
+
+  test "a stalled Entity reaches the Loop's remedy decision in one hop", %{header: header} do
+    {_entity_id, _writer} = stalled_writer("drill_", header)
+
     started_at = System.monotonic_time(:microsecond)
     :ok = Watchdog.sweep_now()
 
@@ -106,34 +97,35 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
   end
 
   test "re-flagging an already-recorded stall costs no extra tick", %{header: header} do
-    entity_id = TestHelpers.sample_entity_id("drill_dedup_#{System.unique_integer([:positive])}")
-    {:ok, _} = Supervisor.find_or_start(entity_id)
-    {:ok, writer} = Supervisor.lookup(entity_id)
-    :ok = WalWriter.append(writer, 0, header, "z")
-    :ok = WalWriter.append(writer, 1, header, "a")
-
-    Process.sleep(@stall_ms * 2)
-    :duplicate = WalWriter.append(writer, 1, header, "a")
-
-    parent = self()
-    handler = "stall-drill-dedup-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler,
-      [:flezha, :convergence, :tick],
-      fn _e, meas, _meta, _ -> send(parent, {:tick, meas}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
+    {_entity_id, _writer} = stalled_writer("drill_dedup_", header)
 
     :ok = Watchdog.sweep_now()
     assert_receive {:tick, _}, @budget_ms
 
     # The sensor re-flags every sweep; the Watchdog's deleted `recently_resynced?`
     # throttle now lives on the actor as "already recorded", so a second sweep
-    # must not drive the whole loop again.
+    # must not drive the whole loop again. The sweep's re-flag reaches the Loop
+    # before the call below does, and a tick it caused would have sent its
+    # telemetry before the Loop answered.
     :ok = Watchdog.sweep_now()
-    refute_receive {:tick, _}, 200
+    _ = :sys.get_state(Loop)
+    refute_received {:tick, _}
+  end
+
+  # A live writer with Changes still arriving and its seq frozen — the stall
+  # signature — with the advance window already lapsed on its own clock.
+  defp stalled_writer(prefix, header) do
+    entity_id =
+      TestHelpers.sample_entity_id(
+        prefix <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
+    {:ok, _} = Supervisor.find_or_start(entity_id)
+    {:ok, writer} = Supervisor.lookup(entity_id)
+    :ok = WalWriter.append(writer, 0, header, "z")
+    :ok = WalWriter.append(writer, 1, header, "a")
+    TestHelpers.age_writer(writer, @stall_ms * 2)
+    :duplicate = WalWriter.append(writer, 1, header, "a")
+    {entity_id, writer}
   end
 end

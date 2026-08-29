@@ -7,6 +7,8 @@ defmodule Flezha.Service.OperativeManagerRoutingTest do
   `Flezha.Cluster.DirectoryTwoNodeTest` (`:multi_node`).
   """
 
+  # async: false: the live controller and its fleet; a peer BEAM.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Cluster.Directory

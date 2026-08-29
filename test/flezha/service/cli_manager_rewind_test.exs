@@ -4,6 +4,7 @@ defmodule Flezha.Service.CliManagerRewindTest do
   rewind that went through, and each verdict the Overwatch guard can return, is
   reported. The guard's own logic is covered in `overwatch_suspension_test`.
   """
+  # async: false: Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

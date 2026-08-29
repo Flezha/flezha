@@ -11,6 +11,7 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   value is already where the ordinary restore looks, and pulling from a node
   that no longer exists on every bind would be noise.
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
@@ -53,6 +54,19 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
     end)
   end
 
+  # The restore enumerates the class's Entities only after any pull: the
+  # message this returns marks that point.
+  defp expect_scan(reply_to) do
+    scanned = {:scanned, make_ref()}
+
+    stub(Flezha.State.Registry, :entities_of, fn _operative_class ->
+      send(reply_to, scanned)
+      []
+    end)
+
+    scanned
+  end
+
   test "a member placed off the assembling node pulls its class tree first" do
     expect_pull(self())
     peer = :"peer@127.0.0.1"
@@ -78,17 +92,21 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
 
   test "a member placed on the assembling node pulls nothing" do
     expect_pull(self())
+    scanned = expect_scan(self())
 
     :ok = Replay.dispatch_restore(state("ohlc#p0"), [state_source_node: node()], "runner-1")
 
-    refute_receive {:pulled, _, _}, 300
+    assert_receive ^scanned, 2_000
+    refute_received {:pulled, _, _}
   end
 
   test "an operative that was never rescaled pulls nothing" do
     expect_pull(self())
+    scanned = expect_scan(self())
 
     :ok = Replay.dispatch_restore(state("plain"), [], "runner-1")
 
-    refute_receive {:pulled, _, _}, 300
+    assert_receive ^scanned, 2_000
+    refute_received {:pulled, _, _}
   end
 end

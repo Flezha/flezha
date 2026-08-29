@@ -12,6 +12,8 @@ defmodule Flezha.State.RecoveryResolveRunnerTest do
   it must actually resolve the runner.
   """
 
+  # async: false: Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 

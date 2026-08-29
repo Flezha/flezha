@@ -164,7 +164,7 @@ defmodule FlezhaQuicTest do
       # refusal to happen rather than waiting out a window to prove it did not
       # connect. The runner retries after a refusal, so it is still running here.
       assert_receive {:refused, %{count: 1}, %{stage: :handshake}}, 15_000
-      refute_receive {:runner_connected_event, {^refused_namespace, _}}, 200
+      refute_receive {:runner_connected_event, {^refused_namespace, _}}, 100
       assert FleetManager.active_runners(refused_namespace) == []
     after
       Flezha.Service.EventManager.rem_handler(:runner_connected_event)

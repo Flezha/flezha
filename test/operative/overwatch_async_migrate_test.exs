@@ -8,6 +8,8 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   window even mid-retry.
   """
 
+  # async: false: writes Application env; the live controller and its fleet; the primary Logger.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.Builder
@@ -74,23 +76,19 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
              GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
            end)
 
-    # Replace ping with a blocking one so the un-park retry task runs
-    # for ~5 s.
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
-      send(test_pid, :ping_started)
-      :timer.sleep(5_000)
-      {:ok, :pong}
-    end)
+    # Replace ping with one that blocks until released, so the un-park retry
+    # task is in flight for as long as the test needs.
+    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
 
     # Fire the un-park migrate. The Overwatch must return `:ok`
     # immediately (the retry task is spawned out-of-band).
     :ok = GenServer.call(overwatch_pid, {:runner_migrate, "fake_new_runner"}, 1_000)
 
-    assert_receive :ping_started, 500
+    assert_receive {:ping_started, _}, 500
 
     # Now tear the operative down the way the hub stop path does (a
     # supervisor :shutdown exit). terminate/2 MUST return within 1 s even
-    # though the migrate task is blocked inside the 5 s sleep — it kills the
+    # though the migrate task is blocked inside the ping — it kills the
     # task instead of waiting on it. Trap: the Overwatch is linked to this
     # test, and a :shutdown stop propagates over the link.
     Process.flag(:trap_exit, true)
@@ -126,19 +124,17 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
              GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
            end)
 
-    # First un-park migrate: long blocking ping.
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
-      send(test_pid, :ping_started)
-      :timer.sleep(2_000)
-      {:ok, :pong}
-    end)
+    # First un-park migrate: a ping that blocks until released.
+    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
 
     :ok = GenServer.call(overwatch_pid, {:runner_migrate, "first"}, 1_000)
-    assert_receive :ping_started, 500
+    assert_receive {:ping_started, pinger}, 500
 
     # Second migrate must be rejected as :busy.
     assert {:error, :busy} =
              GenServer.call(overwatch_pid, {:runner_migrate, "second"}, 1_000)
+
+    send(pinger, :unpark)
   end
 
   # fails when: the running-migrate branch commits the binding before the runner
@@ -202,22 +198,16 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     }
   end
 
-  defp eventually(fun, timeout \\ 2_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_eventually(fun, deadline)
-  end
+  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 2_000, 25)
 
-  defp do_eventually(fun, deadline) do
-    cond do
-      fun.() ->
-        true
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        false
-
-      true ->
-        Process.sleep(25)
-        do_eventually(fun, deadline)
+  # A ping that blocks inside the migrate task until the test releases it (or
+  # the task is killed) — the "several seconds into the backoff schedule"
+  # scenario, without the seconds.
+  defp blocking_ping(test_pid) do
+    fn _runner_id ->
+      send(test_pid, {:ping_started, self()})
+      FlezhaTest.Helper.NodeTestHelper.park()
+      {:ok, :pong}
     end
   end
 end

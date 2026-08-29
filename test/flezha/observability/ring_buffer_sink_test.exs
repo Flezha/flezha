@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.RingBufferSinkTest do
+  # async: false: the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, RingBufferSink, Signal}
@@ -15,9 +16,9 @@ defmodule Flezha.Observability.RingBufferSinkTest do
       })
 
     # The RingBufferSink subscribes to Registry events via PubSub and
-    # creates a table for newly-registered sources. Give it a moment
-    # to receive the broadcast.
-    Process.sleep(50)
+    # creates a table for newly-registered sources; a call to it answers
+    # after that broadcast has been handled.
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
 
     on_exit(fn -> Registry.unregister_source(src) end)
     {:ok, src: src}
@@ -28,19 +29,17 @@ defmodule Flezha.Observability.RingBufferSinkTest do
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :n, measurements: %{i: i}}))
     end)
 
-    Process.sleep(50)
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
     results = RingBufferSink.query(src, 0)
     assert length(results) == 10
   end
 
   test "query with from_ts filters older entries", %{src: src} do
     Bus.emit(Signal.new(%{kind: :event, source: src, name: :first}))
-    Process.sleep(10)
     boundary = System.monotonic_time(:microsecond)
-    Process.sleep(10)
     Bus.emit(Signal.new(%{kind: :event, source: src, name: :second}))
 
-    Process.sleep(50)
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
     results = RingBufferSink.query(src, boundary)
     names = Enum.map(results, & &1.name)
     assert :second in names
@@ -54,13 +53,13 @@ defmodule Flezha.Observability.RingBufferSinkTest do
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :n}))
     end)
 
-    Process.sleep(50)
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
     assert RingBufferSink.count(src) == initial + 5
   end
 
   test "query from a non-owner process succeeds", %{src: src} do
     Bus.emit(Signal.new(%{kind: :event, source: src, name: :n}))
-    Process.sleep(50)
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
 
     task =
       Task.async(fn ->

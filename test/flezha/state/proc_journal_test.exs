@@ -5,6 +5,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
   helper, invisibility to the Entity scanners, delete), and the resume state
   the bind ships back on `AddOperative.proc_journal`.
   """
+  # async: false: writes Application env; a shared on-disk root.
   use ExUnit.Case, async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
@@ -734,13 +735,15 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # The hold is taken inside the chain, before the run settles — which is the
     # order the real dispatcher produces.
-    assert {"held", meta, _} = next_output()
+    assert {"held", meta, %{owner: owner}} = next_output()
     :ok = Outbox.hold(meta)
     :ok = Outbox.settled(meta)
 
     # Held by a delivery-guaranteed sink: dispatched is not delivered, so the
-    # marker must not land and the entry is still owed.
-    Process.sleep(100)
+    # marker must not land and the entry is still owed. The reports are casts
+    # to the owning writer; a call to it answers once they are folded.
+    {:ok, writer} = Flezha.State.Supervisor.lookup(owner)
+    _ = :sys.get_state(writer)
     assert markers(inst) == []
     assert [%{proc_idx: 0}] = ProcJournal.pending_entries(inst)
 

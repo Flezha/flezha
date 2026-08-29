@@ -9,6 +9,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   `HubManager.live_pid/1` resolver and inject a synthetic two-node registry entry
   to assert the consumers select the live/local pid instead of crashing.
   """
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.Snapshot
@@ -62,7 +63,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     end
 
     test "get_all_operatives/1 returns the live/local pid for a operative registered on two nodes" do
-      dead_node_pid = spawn(fn -> Process.sleep(:infinity) end)
+      dead_node_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
       local_pid = self()
 
       inject_operative(@namespace, "operative_mn", [
@@ -88,7 +89,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
     test "flz operative list (Flezha.list_operatives/1) lists a multi-node operative without crashing" do
       # Backs `flz operative list` via OperativeManager.get_operative_ids → get_all_operatives.
-      dead_node_pid = spawn(fn -> Process.sleep(:infinity) end)
+      dead_node_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       inject_operative(@namespace, "operative_cli_mn", [
         {:dead@nohost, dead_node_pid},

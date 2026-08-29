@@ -3,6 +3,7 @@ defmodule Flezha.State.CompletionTest do
   §5b.3: the per-operative completion record — atomic write, read-back, and its
   presence as the retain-vs-delete signal.
   """
+  # async: false: writes Application env; a shared on-disk root.
   use ExUnit.Case, async: false
 
   alias Flezha.State.{Completion, TestHelpers}

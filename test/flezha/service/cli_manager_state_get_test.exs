@@ -6,6 +6,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   `StreamOperativeStateSerializerTest`; here we pin how each verdict reaches
   the operator, and that the non-resident family points at the durable path.
   """
+  # async: false: Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

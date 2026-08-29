@@ -5,6 +5,7 @@ defmodule Flezha.State.DeleteEntityTest do
   the SDK reaper's fire-and-forget `delete_entity_state` frame and the
   `flz state delete` CLI.
   """
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.State.{Registry, Supervisor, TestHelpers, WalWriter}

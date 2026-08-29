@@ -21,7 +21,7 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Operative.Builder
@@ -62,6 +62,9 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert info.runner_id == runner
 
     assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operative_id) end, 30_000),
@@ -69,10 +72,11 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
 
     # --- Phase 1: an open interval holds its outputs ------------------------
     # Offsets 0..2. Under the default these three emits would already be at the
-    # sink; declared `:at_checkpoint`, none of them may be.
+    # sink; declared `:at_checkpoint`, none of them may be. The controller hears
+    # nothing from an open interval, so the hold is proved by what arrives:
+    # phase 2's batch rides ONE record seq (an early flush would ride its own)
+    # and phase 3's held output lands no earlier than the delay.
     send_inputs(operative_id, namespace, ["k1:a", "k2:a", "k3:a"])
-
-    refute_receive {:message_forward, _msg, _md}, @max_delay_ms - 500
 
     refute InputLog.watermark(operative_id),
            "an open interval acknowledges nothing, exactly as under the default"
@@ -114,9 +118,15 @@ defmodule FlezhaTest.System.CheckpointBatchedOutputsE2ETest do
     # One input, then silence. Nothing will ever call `ctx.checkpoint()` again,
     # so only `max_delay_ms` can close this interval — and it must, or the
     # output waits for an input that never comes.
+    sent_at = System.monotonic_time(:millisecond)
     send_inputs(operative_id, namespace, ["k4:a"])
 
     assert_receive {:message_forward, msg, md}, @max_delay_ms * 4
+    held_ms = System.monotonic_time(:millisecond) - sent_at
+
+    assert held_ms >= @max_delay_ms - 500,
+           "the held output shipped #{held_ms} ms after its input, before the delay could close"
+
     assert to_string(msg) == "k4=a"
     assert md["flz.key"] == "k4"
 

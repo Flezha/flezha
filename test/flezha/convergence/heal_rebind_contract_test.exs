@@ -8,6 +8,8 @@ defmodule Flezha.Convergence.HealRebindContractTest do
   as it was, for the next convergence tick.
   """
 
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
+
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal

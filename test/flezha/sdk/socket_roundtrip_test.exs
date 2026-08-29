@@ -7,6 +7,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   `run/3`. Proves the client NIFs, the reader/writer threads and the `:socket`
   transport seam without a second OS process.
   """
+  # async: false: the live controller and its fleet; registered singletons; OS environment variables.
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.FleetManager
@@ -109,8 +110,10 @@ defmodule Flezha.SDK.SocketRoundtripTest do
       opts: []
     }
 
+    # `start_operative` returns after the SDK acknowledged `AddOperative`; the
+    # SDK opens its data stream separately, and a cast into an unbound one drops.
     assert {:ok, _info} = OperativeManager.start_operative(ns, builder)
-    Process.sleep(200)
+    assert NodeTestHelper.await_stream_bound(ns, operative_id), "the data stream never bound"
 
     OperativeManager.send_io(operative_id, ns, "over-the-wire", %{
       "channel" => "in",

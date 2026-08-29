@@ -9,6 +9,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   `OperativeManager.send_io_confirming/5` path — so the worker exercises the
   production call, not a test double of it.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -147,7 +148,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   ## ---------- delivery (tasks 5.1 – 5.6) ----------
 
   test "the callback enqueues and returns without waiting for a slow target" do
-    slow = spawn_link(fn -> Process.sleep(:infinity) end)
+    slow = spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)
     resolve_to(%{"slow" => slow})
 
     {:ok, opts, _pid} = prepare("src", "slow")
@@ -209,7 +210,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       emit(opts, "once")
 
       assert_receive {:target_got, "once", _}, 1_000
-      refute_receive {:target_got, "once", _}, 200
+      refute_receive {:target_got, "once", _}, 100
 
       assert %{buffer_len: 0, attempts: 0} = ForwardWorker.stats(worker)
     end
@@ -246,8 +247,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     emit(opts, "waiting")
 
     # Held, not dropped, while the target does not exist.
-    Process.sleep(50)
-    assert ForwardWorker.stats(worker).buffer_len == 1
+    wait_until(fn -> ForwardWorker.stats(worker).buffer_len == 1 end)
 
     resolve_to(%{id => fake_target(fn _ -> :ok end)})
 
@@ -257,7 +257,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   test "a saturated queue parks the enqueueing caller" do
     id = uniq("stuck")
-    resolve_to(%{id => spawn_link(fn -> Process.sleep(:infinity) end)})
+    resolve_to(%{id => spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)})
 
     {:ok, opts, worker} = prepare(uniq("src"), id, %{queue_max: 2, call_timeout_ms: 50})
 
@@ -272,7 +272,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   test "a re-prepared plugin reuses its live worker and keeps queued items" do
     id = uniq("reuse")
-    resolve_to(%{id => spawn_link(fn -> Process.sleep(:infinity) end)})
+    resolve_to(%{id => spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)})
 
     plugin_id = uniq("plug")
     source = uniq("src")
@@ -362,8 +362,9 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     _table = Table.unsubscribe(table, "fwd")
 
     wait_until(fn -> not Process.alive?(worker) end)
-    # A permanent child would be back by now; a transient one stays down.
-    Process.sleep(50)
+    # The supervisor has handled the exit (a call queues behind it): a
+    # permanent child would be back by now, a transient one stays down.
+    _ = :sys.get_state(ForwardSup)
 
     assert ForwardSup.stop_worker(ForwardSup.key(plugin_id: "fwd", target_operative_id: id)) ==
              :ok
@@ -571,7 +572,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       assert entry.error =~ source
       assert entry.error =~ base
 
-      refute_receive {:member_got, _, "no-key"}, 200
+      refute_receive {:member_got, _, "no-key"}, 100
     end
 
     test "an unkeyed message to a single-member target still flows" do
@@ -761,11 +762,9 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
   end
 
-  defp wait_until(fun, attempts \\ 100) do
-    cond do
-      fun.() -> :ok
-      attempts <= 0 -> flunk("condition never held")
-      true -> Process.sleep(10) && wait_until(fun, attempts - 1)
-    end
+  defp wait_until(fun) do
+    if FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 1_000, 10),
+      do: :ok,
+      else: flunk("condition never held")
   end
 end

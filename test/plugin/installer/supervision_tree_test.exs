@@ -4,6 +4,8 @@ defmodule Flezha.Plugin.Installer.SupervisionTreeTest do
   boot-time config validation, and the restart strategy.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Installer.Supervisor, as: InstallerSup

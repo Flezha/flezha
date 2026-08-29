@@ -1,4 +1,5 @@
 defmodule Flezha.Boot.StatePathMigratorTest do
+  # async: false: writes Application env; a shared on-disk root.
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.StatePathMigrator

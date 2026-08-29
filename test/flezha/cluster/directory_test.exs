@@ -7,6 +7,8 @@ defmodule Flezha.Cluster.DirectoryTest do
   readers without a cluster round.
   """
 
+  # async: false: the live controller and its fleet.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Cluster.Directory

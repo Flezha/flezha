@@ -31,6 +31,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   @namespace "state_freshness_e2e"
   @factory "store_input"
 
+  # One scenario, whose runner is SIGTERMed by the test itself.
   setup do
     on_exit(fn ->
       try do
@@ -73,6 +74,9 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 
+    assert FlezhaTest.Helper.NodeTestHelper.await_stream_bound(@namespace, operative_id),
+           "the data stream never bound"
+
     {:ok, overwatch_pid} = OperativeManager.get_operative_pid(@namespace, operative_id)
     pre_state = :sys.get_state(overwatch_pid)
 
@@ -94,9 +98,18 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     end)
 
     # Inputs travel via primary stream and the operative's `run` runs
-    # async in the SDK's worker pool. Settle briefly so the state has
-    # been mutated before we trigger SIGTERM.
-    Process.sleep(200)
+    # async in the SDK's worker pool: the live state read shows them applied
+    # before SIGTERM is sent.
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn ->
+               case OperativeManager.get_entity_state(@namespace, operative_id) do
+                 {:ok, json} -> Enum.all?(inputs_sent, &String.contains?(json, &1))
+                 _ -> false
+               end
+             end,
+             15_000
+           ),
+           "the inputs never reached the operative's state"
 
     {_, 0} =
       System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
@@ -161,23 +174,10 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   end
 
   defp do_wait_for_snapshot(overwatch_pid, deadline) do
-    cond do
-      not Process.alive?(overwatch_pid) ->
-        nil
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        nil
-
-      true ->
-        case :sys.get_state(overwatch_pid).snapshot do
-          nil ->
-            Process.sleep(50)
-            do_wait_for_snapshot(overwatch_pid, deadline)
-
-          snap ->
-            snap
-        end
-    end
+    FlezhaTest.Helper.NodeTestHelper.wait_until(
+      fn -> Process.alive?(overwatch_pid) and :sys.get_state(overwatch_pid).snapshot end,
+      max(deadline - System.monotonic_time(:millisecond), 0)
+    ) || nil
   end
 
   defp ensure_port_dead(port) do

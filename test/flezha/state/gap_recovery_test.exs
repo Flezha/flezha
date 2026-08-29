@@ -9,6 +9,8 @@ defmodule Flezha.State.GapRecoveryTest do
   the WAL resumes — a workflow, self-healed blip with telemetry.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.StreamChannel
@@ -131,8 +133,10 @@ defmodule Flezha.State.GapRecoveryTest do
       {:flz_data, 0, "entity_state_change", frame(ctx.entity_id, 2, ctx.header, "x"), %{}}
     )
 
-    refute_receive {:seq_gap, _, _}, 200
-    refute_receive {:resync_called, _, _, _}, 200
+    # Both frames are through the channel and the writer once the channel answers.
+    _ = GenServer.call(sc, :stream_ref_status)
+    refute_received {:seq_gap, _, _}
+    refute_receive {:resync_called, _, _, _}, 100
 
     # The contiguous frame advanced the WAL to 4 via the normal path.
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
@@ -166,8 +170,9 @@ defmodule Flezha.State.GapRecoveryTest do
     assert_receive {:seed_called, ^cold_id, opts}, 1_000
     assert opts[:reason] == :baseline_seed
     assert opts[:runner_id] == "exec-cold"
-    refute_receive {:seed_called, ^cold_id, _}, 200
-    refute_receive {:seq_gap, _, _}, 100
+    _ = GenServer.call(sc, :stream_ref_status)
+    refute_receive {:seed_called, ^cold_id, _}, 100
+    refute_received {:seq_gap, _, _}
 
     # The pulled full-state snapshot lands via the real data-plane handler
     # and becomes the Entity's baseline.
@@ -200,9 +205,7 @@ defmodule Flezha.State.GapRecoveryTest do
     assert eventually(fn -> Flezha.State.Snapshot.latest_snapshot(ctx.entity_id) != nil end)
   end
 
-  defp eventually(fun), do: eventually(fun, 50)
-  defp eventually(_fun, 0), do: false
-  defp eventually(fun, retries), do: fun.() || (Process.sleep(10) && eventually(fun, retries - 1))
+  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 500, 10)
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

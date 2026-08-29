@@ -121,12 +121,20 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   end
 
   defp start_operative(namespace, operative_id) do
-    OperativeManager.start_operative(namespace, %Builder{
-      id: operative_id,
-      factory_id: @factory,
-      init_values: %{},
-      opts: []
-    })
+    result =
+      OperativeManager.start_operative(namespace, %Builder{
+        id: operative_id,
+        factory_id: @factory,
+        init_values: %{},
+        opts: []
+      })
+
+    with {:ok, _} <- result do
+      assert NodeTestHelper.await_stream_bound(namespace, operative_id),
+             "the data stream never bound"
+    end
+
+    result
   end
 
   defp state_of(namespace, operative_id) do
@@ -157,11 +165,6 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
     end
   end
 
-  defp wait_until(fun, timeout_ms, waited \\ 0) do
-    cond do
-      fun.() -> true
-      waited >= timeout_ms -> false
-      true -> (Process.sleep(100) && wait_until(fun, timeout_ms, waited + 100)) || false
-    end
-  end
+  defp wait_until(fun, timeout_ms),
+    do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, timeout_ms, 100)
 end

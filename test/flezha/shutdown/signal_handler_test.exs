@@ -2,6 +2,7 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
   # async: false — reads the node-global `erl_signal_server` and
   # reconfigures the Logger level. The cases that would *mutate* the global
   # manager run in a throwaway BEAM instead (see "paths that end the VM").
+  # async: false: the primary Logger.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog, only: [capture_log: 1, with_log: 1]
@@ -220,7 +221,11 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
         receive do
           {:DOWN, ^ref, _, _, _} -> :ok
         end
-        Process.sleep(500)
+        # The restore of kernel's handler is spawned from terminate/2.
+        FlezhaTest.Helper.NodeTestHelper.wait_until(
+          fn -> :erl_signal_handler in :gen_event.which_handlers(:erl_signal_server) end,
+          5_000
+        )
         IO.puts("AFTER_STOP=" <> inspect(:gen_event.which_handlers(:erl_signal_server)))
         """)
 
@@ -242,8 +247,13 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
         Logger.configure(level: :info)
         {:ok, pid} = Flezha.Shutdown.SignalHandler.start_link(enabled: false)
         send(pid, :sigterm)
-        Process.sleep(10_000)
-        IO.puts("NEVER_STOPPED")
+        # The VM's exit status is the handler's to decide, so this script must
+        # outlive it: park once the stop has begun, give up if it never does.
+        if FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> :init.get_status() != {:started, :started} end, 10_000) do
+          FlezhaTest.Helper.NodeTestHelper.park()
+        else
+          IO.puts("NEVER_STOPPED")
+        end
         """)
 
       assert code == 0, "expected a clean :init.stop(), got #{code}: #{out}"
@@ -261,8 +271,11 @@ defmodule Flezha.Shutdown.SignalHandlerTest do
         {:ok, pid} = Flezha.Shutdown.SignalHandler.start_link(enabled: false)
         :sys.replace_state(pid, fn s -> %{s | count: 2} end)
         send(pid, :sigterm)
-        Process.sleep(10_000)
-        IO.puts("NEVER_HALTED")
+        if FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> :init.get_status() != {:started, :started} end, 10_000) do
+          FlezhaTest.Helper.NodeTestHelper.park()
+        else
+          IO.puts("NEVER_HALTED")
+        end
         """)
 
       assert code == 143, "expected the halt(143) escape hatch, got #{code}: #{out}"

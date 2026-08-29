@@ -12,6 +12,8 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   entry before the child terminates), stubbed here at the ProcessHub seam.
   """
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 

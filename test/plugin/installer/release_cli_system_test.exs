@@ -132,44 +132,24 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
   ## Helpers
 
   defp wait_until_ready!(env, deadline_ms \\ 60_000) do
-    deadline = System.monotonic_time(:millisecond) + deadline_ms
-    poll_ready(env, deadline)
+    if FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> ready?(env) end, deadline_ms, 250),
+      do: :ok,
+      else: flunk("daemon did not become ready within #{deadline_ms}ms")
   end
 
-  defp poll_ready(env, deadline) do
-    now = System.monotonic_time(:millisecond)
-
-    cond do
-      now >= deadline ->
-        flunk("daemon did not become ready within #{deadline}ms")
-
-      true ->
-        case System.cmd(@flzvm, ["pid"], env: env, stderr_to_stdout: true) do
-          {_, 0} ->
-            # Boot-loader readiness — call BootLoader via rpc.
-            case System.cmd(
-                   @flzvm,
-                   ["rpc", "GenServer.call(Flezha.BootLoader, :boot_ready?, 5000) |> IO.puts()"],
-                   env: env,
-                   stderr_to_stdout: true
-                 ) do
-              {out, 0} ->
-                if out =~ "true" do
-                  :ok
-                else
-                  Process.sleep(250)
-                  poll_ready(env, deadline)
-                end
-
-              _ ->
-                Process.sleep(250)
-                poll_ready(env, deadline)
-            end
-
-          _ ->
-            Process.sleep(250)
-            poll_ready(env, deadline)
-        end
+  # The daemon answers `pid`, and its BootLoader reports ready over rpc.
+  defp ready?(env) do
+    with {_, 0} <- System.cmd(@flzvm, ["pid"], env: env, stderr_to_stdout: true),
+         {out, 0} <-
+           System.cmd(
+             @flzvm,
+             ["rpc", "GenServer.call(Flezha.BootLoader, :boot_ready?, 5000) |> IO.puts()"],
+             env: env,
+             stderr_to_stdout: true
+           ) do
+      out =~ "true"
+    else
+      _ -> false
     end
   end
 

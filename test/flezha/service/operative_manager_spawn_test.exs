@@ -7,6 +7,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   claim ProcessHub's `start_child` performs, so the concurrency case exercises
   the real race resolution rather than a serialized stand-in.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
 

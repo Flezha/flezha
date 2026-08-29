@@ -14,6 +14,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   older-than-grace case fails — because either one alone is a weaker guarantee
   than it reads.
   """
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
@@ -247,7 +248,13 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       # The replica tie-break is the writing node's wall clock, so the two ships
       # have to land in different milliseconds for "newest" to mean anything.
-      Process.sleep(2)
+      shipped_at = System.system_time(:millisecond)
+
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> System.system_time(:millisecond) > shipped_at end,
+               1_000,
+               1
+             )
 
       {:ok, _} = start_supervised(Shipper)
       File.write!(roles, "owner-roles")

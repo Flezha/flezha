@@ -10,6 +10,8 @@ defmodule Flezha.Runner.RetiringCloseDiagnosisTest do
   has no business deciding.
   """
 
+  # async: false: writes Application env; the live controller and its fleet; the primary Logger.
+
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog

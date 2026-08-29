@@ -3,8 +3,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
   alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
+
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   import ExUnit.CaptureLog
 
@@ -17,13 +21,24 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     Enum.reduce(state.in_flight, 0, fn batch, n -> n + length(batch.records) end)
   end
 
+  # The worker's own accounting is the settle signal for a caller that
+  # enqueues from another process.
+  defp in_flight?(pid, n),
+    do: wait_until(fn -> ProducerWorker.stats(pid).in_flight == n end, 1_000, 5)
+
+  defp queued?(pid, n),
+    do: wait_until(fn -> ProducerWorker.stats(pid).queue_depth == n end, 1_000, 5)
+
+  defp dispatched?(pid),
+    do: wait_until(fn -> ProducerWorker.stats(pid).in_flight >= 1 end, 1_000, 5)
+
   defp start_worker(opts) do
     test_pid = self()
 
     {:ok, script_pid} = Agent.start_link(fn -> Keyword.get(opts, :script, []) end)
 
     base = [
-      worker_pid: spawn(fn -> Process.sleep(:infinity) end),
+      worker_pid: spawn(&FlezhaTest.Helper.NodeTestHelper.park/0),
       topic: @topic,
       partition: @partition,
       plugin_id: "test-#{System.unique_integer([:positive])}",
@@ -259,12 +274,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     # Saturate: kick off the in-flight slow batch
     {first_caller, _} = spawn_monitor(fn -> ProducerWorker.enqueue(pid, "first", %{}) end)
-    Process.sleep(20)
+    assert in_flight?(pid, 1)
 
     # Fill queue to capacity
     spawn(fn -> ProducerWorker.enqueue(pid, "filler-1", %{}) end)
     spawn(fn -> ProducerWorker.enqueue(pid, "filler-2", %{}) end)
-    Process.sleep(10)
+    assert queued?(pid, 2)
 
     # This one will trigger drop_oldest
     spawn(fn -> ProducerWorker.enqueue(pid, "filler-3", %{}) end)
@@ -292,10 +307,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end)
 
     spawn(fn -> ProducerWorker.enqueue(pid, "first", %{}) end)
-    Process.sleep(10)
+    assert in_flight?(pid, 1)
 
     spawn(fn -> ProducerWorker.enqueue(pid, "filler", %{}) end)
-    Process.sleep(10)
+    assert queued?(pid, 1)
 
     assert {:error, {:queue_full, :overflow}} = ProducerWorker.enqueue(pid, "rejected", %{})
   end
@@ -650,9 +665,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     # Establish in-flight (first) and a queued message (filler).
     spawn(fn -> ProducerWorker.enqueue(pid, "first", %{}) end)
-    Process.sleep(20)
+    assert in_flight?(pid, 1)
     spawn(fn -> ProducerWorker.enqueue(pid, "filler", %{}) end)
-    Process.sleep(20)
+    assert queued?(pid, 1)
 
     # The queue is now full (filler) and in-flight (first) never completes;
     # this third enqueue must timeout via the block path.
@@ -668,9 +683,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     # Inject an outcome for a dispatch the window never issued — a no-op.
     send(pid, {:kafka_ex_response, make_ref(), Fakes.ok_response(@topic, @partition)})
-    Process.sleep(10)
 
-    # Worker still alive and responsive.
+    # Worker still alive and responsive (the call queues behind the message).
     assert ProducerWorker.stats(pid).queue_depth == 0
   end
 
@@ -687,12 +701,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       end)
 
       assert :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
-      Process.sleep(20)
+      # The linger fires and the first record goes out alone.
+      assert in_flight?(pid, 1)
 
       assert :ok = ProducerWorker.cast_enqueue(pid, "msg-1", %{})
       assert :ok = ProducerWorker.cast_enqueue(pid, "msg-2", %{})
       assert :ok = ProducerWorker.cast_enqueue(pid, "msg-3", %{})
-      Process.sleep(20)
+      assert queued?(pid, 3)
 
       stats = ProducerWorker.stats(pid)
       assert stats.queue_depth == 3
@@ -714,7 +729,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       attach(:dropped)
 
       :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
-      Process.sleep(20)
+      assert in_flight?(pid, 1)
 
       for i <- 1..200 do
         :ok = ProducerWorker.cast_enqueue(pid, "msg-#{i}", %{})
@@ -724,7 +739,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
                       %{overflow_strategy: :drop_oldest}},
                      500
 
-      Process.sleep(50)
+      # Every cast has been handled once a call queued behind them answers.
+      _ = ProducerWorker.stats(pid)
       {:message_queue_len, qlen} = Process.info(pid, :message_queue_len)
       assert qlen <= 5
 
@@ -749,9 +765,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       attach(:dropped)
 
       :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
-      Process.sleep(20)
+      assert in_flight?(pid, 1)
       :ok = ProducerWorker.cast_enqueue(pid, "filler", %{})
-      Process.sleep(10)
+      assert queued?(pid, 1)
       :ok = ProducerWorker.cast_enqueue(pid, "rejected", %{})
 
       assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
@@ -781,7 +797,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
                       %{last_reason: :record_list_too_large, caller: :async}},
                      1_000
 
-      Process.sleep(20)
       assert Process.alive?(pid)
       stats = ProducerWorker.stats(pid)
       assert stats.queue_depth == 0
@@ -823,7 +838,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           ProducerWorker.enqueue(pid, "sync-msg", %{})
         end)
 
-      Process.sleep(5)
+      # The sync record is queued (the linger is still open) when the async
+      # one joins it: both ride one batch, one failure.
+      assert queued?(pid, 1)
       :ok = ProducerWorker.cast_enqueue(pid, "async-msg", %{})
 
       assert {:error, {:permanent, :record_list_too_large}} = Task.await(sync_caller, 1_000)
@@ -863,10 +880,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     for payload <- ["first", "filler", "waits-1", "waits-2"] do
       :ok = ProducerWorker.cast_enqueue(pid, payload, %{})
-      Process.sleep(10)
     end
 
-    refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
+    # Every cast has been admitted (or evicted) once a call queued behind them
+    # answers; a drop would have emitted before that.
+    _ = ProducerWorker.stats(pid)
+    refute_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}
 
     sent =
       for _ <- 1..4, into: MapSet.new() do
@@ -913,7 +932,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     test "resumes producing after K give-ups without the shared worker dying" do
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       identity = %{hosts: [{"k", 9092}]}
-      fresh = spawn(fn -> Process.sleep(:infinity) end)
+      fresh = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.stub(WorkerRegistry, :force_replace, fn ^identity -> {:ok, fresh} end)
 
@@ -962,7 +981,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       identity = %{hosts: [{"k", 9092}]}
       test_pid = self()
-      fresh = spawn(fn -> Process.sleep(:infinity) end)
+      fresh = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.stub(WorkerRegistry, :force_replace, fn ^identity ->
         send(test_pid, :refresh_called)
@@ -1014,7 +1033,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       :ok = ProducerWorker.cast_enqueue(pid, "a", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "b", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "c", %{})
-      Process.sleep(30)
+      assert dispatched?(pid)
 
       pre = :sys.get_state(pid)
       assert pre.producer_id == 4242
@@ -1023,14 +1042,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
 
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
       end)
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
-      Process.sleep(50)
 
       post = :sys.get_state(pid)
       assert post.worker_pid == new_worker_pid
@@ -1053,7 +1071,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       :ok = ProducerWorker.cast_enqueue(pid, "payload-1", %{"k" => "v"})
       :ok = ProducerWorker.cast_enqueue(pid, "payload-2", %{"flezha.dedup_key" => "abc"})
-      Process.sleep(30)
+      assert dispatched?(pid)
 
       pre = :sys.get_state(pid)
       in_flight_records = Enum.flat_map(pre.in_flight, & &1.records)
@@ -1061,14 +1079,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
       end)
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
-      Process.sleep(30)
 
       post = :sys.get_state(pid)
 
@@ -1097,11 +1114,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
-      Process.sleep(20)
+      assert dispatched?(pid)
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1119,13 +1136,14 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert Map.has_key?(measurements, :queue_bytes)
       assert metadata.topic == @topic
       assert metadata.partition == @partition
+      _ = :sys.get_state(pid)
       assert metadata.reason == :killed
       assert metadata.producer_id_before == 1234
       assert metadata.new_worker_pid == new_worker_pid
       assert is_pid(metadata.old_worker_pid)
       assert is_integer(metadata.producer_id_after) or is_nil(metadata.producer_id_after)
 
-      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], _, _}, 100
+      refute_received {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], _, _}
     end
 
     test "no :produce :failed events fire for queued records during the swap window (2.7.5)" do
@@ -1139,11 +1157,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
-      Process.sleep(20)
+      assert dispatched?(pid)
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1152,7 +1170,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       attach(:produce_failed)
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
 
-      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}, 100
+      # The swap is handled ahead of this call; a failure would have fired inside it.
+      _ = :sys.get_state(pid)
+      refute_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}
     end
 
     test "defensive :EXIT from unrelated pid does not crash the producer (2.7.6)" do
@@ -1163,9 +1183,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       # NOTE: send from a non-parent pid — gen_server.erl turns
       # `{:EXIT, parent_pid, :normal}` into a real terminate call.
-      other = spawn(fn -> Process.sleep(:infinity) end)
+      other = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
       send(pid, {:EXIT, other, :killed})
-      Process.sleep(20)
+      _ = :sys.get_state(pid)
 
       assert Process.alive?(pid),
              ":EXIT from unrelated pid must not crash the producer"
@@ -1181,7 +1201,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       pre = :sys.get_state(pid)
 
       send(pid, {:kafka_worker_dead, {{[{"k", 9092}], 0, 0}, make_ref()}, :killed})
-      Process.sleep(20)
 
       post = :sys.get_state(pid)
       assert post.queue == pre.queue
@@ -1201,11 +1220,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
-      Process.sleep(20)
+      assert dispatched?(pid)
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       counter = :counters.new(1, [])
 
@@ -1220,7 +1239,9 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       end)
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
-      Process.sleep(200)
+
+      # Two refused swaps back off before the third succeeds.
+      assert wait_until(fn -> :sys.get_state(pid).worker_pid == new_worker_pid end, 2_000, 5)
 
       post = :sys.get_state(pid)
       assert post.worker_pid == new_worker_pid
@@ -1242,7 +1263,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
-      Process.sleep(20)
+      assert dispatched?(pid)
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
@@ -1261,8 +1282,15 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
 
-      # Wait for the producer to finish the exhaustion bookkeeping.
-      Process.sleep(50)
+      # The exhaustion bookkeeping empties the queue and the window.
+      assert wait_until(
+               fn ->
+                 state = :sys.get_state(pid)
+                 state.queue_size == 0 and state.in_flight == []
+               end,
+               2_000,
+               5
+             )
 
       assert Process.alive?(pid),
              "producer must stay alive after exhaustion (no supervisor crash loop)"
@@ -1292,11 +1320,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
-      Process.sleep(20)
+      assert dispatched?(pid)
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref -> {:error, :no_pending_swap} end)
 
@@ -1305,7 +1333,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       end)
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
-      Process.sleep(50)
 
       post = :sys.get_state(pid)
       assert post.worker_pid == new_worker_pid
@@ -1398,8 +1425,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
             "v#{seq}",
             Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
           )
-
-        Process.sleep(10)
       end
 
       # Every record is delivered — under `:drop_oldest` the middle one would
@@ -1410,7 +1435,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
                  2_000
                )
 
-      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
+      refute_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}
     end
 
     test "an explicitly configured drop of a guaranteed record is alarm-grade", %{
@@ -1437,8 +1462,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
                 "v#{seq}",
                 Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
               )
-
-            Process.sleep(10)
           end
 
           assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
@@ -1508,7 +1531,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert base_sequence(request) == -1
 
       :ok = ProducerWorker.cast_enqueue(pid, "b", %{})
-      refute_receive {:dispatched, _, _}, 100
+      _ = :sys.get_state(pid)
+      refute_received {:dispatched, _, _}
 
       Fakes.answer(pid, ref, Fakes.ok_response(@topic, @partition))
       assert_receive {:dispatched, _ref, _request}, 1_000
@@ -1521,7 +1545,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       Fakes.answer(pid, ref1, Fakes.err_response(@topic, @partition, 7))
       # k+1 and k+2 are still outstanding, so nothing goes back on the wire yet.
-      refute_receive {:dispatched, _, _}, 100
+      _ = :sys.get_state(pid)
+      refute_received {:dispatched, _, _}
 
       Fakes.answer(pid, ref2, Fakes.err_response(@topic, @partition, 45))
       Fakes.answer(pid, ref3, Fakes.err_response(@topic, @partition, 45))
@@ -1542,7 +1567,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       assert_receive {:dispatched, _, resent}, 1_000
       assert base_sequence(resent) == 1
-      refute_receive {:dispatched, _, _}, 100
+      _ = :sys.get_state(pid)
+      refute_received {:dispatched, _, _}
     end
 
     test "a timed-out head waits for the tail's outcome, then both go out in order" do
@@ -1551,7 +1577,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       [{ref1, 0}, {ref2, 1}] = fill_window(pid, 2)
 
       send(pid, {:dispatch_timeout, ref1})
-      refute_receive {:dispatched, _, _}, 100
+      _ = :sys.get_state(pid)
+      refute_received {:dispatched, _, _}
 
       Fakes.answer(pid, ref2, Fakes.err_response(@topic, @partition, 45))
 
@@ -1592,7 +1619,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       :sys.replace_state(pid, fn state -> %{state | registry_ref: registry_ref} end)
-      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}

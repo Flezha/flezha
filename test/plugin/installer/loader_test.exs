@@ -6,6 +6,8 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
   code server doesn't collide.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Installer.Loader

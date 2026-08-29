@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Runner.FleetManager
@@ -60,6 +60,9 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert info.runner_id == exec_a
 
     assert wait_until(fn -> ClassRegistry.effectively_once?(operative_id) end, 30_000),
@@ -115,7 +118,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
            "the replayed interval never acknowledged its inputs"
 
     # --- Conformance over EVERYTHING the sink ever saw ----------------------
-    Process.sleep(1_000)
+    assert await_outbox_drained(operative_id), "the outbox never drained"
     outputs = drain_outputs([])
 
     expected_final = %{"k1" => "k1=b", "k2" => "k2=a", "k3" => "k3=a", "k4" => "k4=a"}

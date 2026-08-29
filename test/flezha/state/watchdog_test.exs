@@ -7,16 +7,17 @@ defmodule Flezha.State.WatchdogTest do
   and recovered, and stays retriable.
   """
 
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
+
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Supervisor, TestHelpers, Watchdog, WalWriter}
 
   @stall_ms 20
   @compaction_ms 20
-  # How long a refute waits to be convinced nothing arrived: long enough to
-  # outlast a sweep's telemetry delivery, short enough not to pace the suite.
-  @quiet_ms 80
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -116,9 +117,9 @@ defmodule Flezha.State.WatchdogTest do
        %{header: header} do
     {_entity_id, writer} = live_writer("stall_", header)
 
-    # Let the advance window lapse, then keep Changes arriving (duplicates)
+    # The advance window lapses, then Changes keep arriving (duplicates)
     # without advancing the seq — the stall signature.
-    Process.sleep(@stall_ms * 2)
+    TestHelpers.age_writer(writer, @stall_ms * 2)
     :duplicate = WalWriter.append(writer, 1, header, "a")
 
     :ok = Watchdog.sweep_now()
@@ -133,7 +134,7 @@ defmodule Flezha.State.WatchdogTest do
     # The Watchdog emits and stops there. Its former direct resync is the
     # second actor the convergence pipeline replaced with the output-stall
     # ladder; a resync from here would race that ladder under no backoff.
-    refute_receive {:resync_called, _entity_id, _opts}, @quiet_ms
+    refute_received {:resync_called, _entity_id, _opts}
   end
 
   test "every completed sweep stamps the sensor freshness mark" do
@@ -147,11 +148,11 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "a genuinely idle entity is not flagged", %{header: header} do
-    {{_, _, key} = entity_id, _writer} = live_writer("idle_", header)
+    {{_, _, key} = entity_id, writer} = live_writer("idle_", header)
 
     # No Changes arrive after the window lapses — last_change_seen_at goes
     # stale alongside last_advance_at, so this is idle, not stalled.
-    Process.sleep(@stall_ms * 2)
+    TestHelpers.age_writer(writer, @stall_ms * 2)
 
     :ok = Watchdog.sweep_now()
 
@@ -159,15 +160,15 @@ defmodule Flezha.State.WatchdogTest do
     # test in this file uses the operative class "TestOperative", so an unscoped
     # refute — or one scoped only to the operative — matches a sibling test's
     # message and fails whenever the suite interleaves.
-    refute_receive {:output_stall, _, %{key: ^key}}, @quiet_ms
-    refute_receive {:resync_called, ^entity_id, _}, @quiet_ms
+    refute_received {:output_stall, _, %{key: ^key}}
+    refute_received {:resync_called, ^entity_id, _}
   end
 
   test "a stalled compaction times out and stays retriable, without resyncing a live entity below give-up" do
     {_, _, key} = entity_id = TestHelpers.sample_entity_id("comp_" <> uniq())
 
     Watchdog.compaction_started(entity_id, "exec-comp")
-    Process.sleep(@compaction_ms * 2)
+    age_compaction(entity_id, @compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
 
@@ -178,11 +179,11 @@ defmodule Flezha.State.WatchdogTest do
     assert ms >= @compaction_ms
     # Below the give-up threshold a still-live, still-correct Entity is NOT
     # force-resynced — the backoff-gated trigger sweep is the retry.
-    refute_receive {:resync_called, ^entity_id, _}, @quiet_ms
+    refute_received {:resync_called, ^entity_id, _}
 
     # Entry was cleared on timeout — a second sweep does not re-fire.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_timeout, _, %{key: ^key}}, @quiet_ms
+    refute_received {:compaction_timeout, _, %{key: ^key}}
   end
 
   test "repeated compaction failures back off and give up loudly with a real resync" do
@@ -194,7 +195,7 @@ defmodule Flezha.State.WatchdogTest do
       ExUnit.CaptureLog.capture_log(fn ->
         for _ <- 1..4 do
           Watchdog.compaction_started(entity_id, "exec-giveup")
-          Process.sleep(@compaction_ms * 2)
+          age_compaction(entity_id, @compaction_ms * 2)
           :ok = Watchdog.sweep_now()
         end
 
@@ -217,12 +218,11 @@ defmodule Flezha.State.WatchdogTest do
 
     Watchdog.compaction_started(entity_id, "exec-ok")
     Watchdog.compaction_completed(entity_id)
-    Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
     # Keyed on this entity: the sweep is global, so a sibling test's in-flight
     # compaction must not be able to answer for this one.
-    refute_receive {:compaction_timeout, _, %{key: ^key}}, @quiet_ms
+    refute_received {:compaction_timeout, _, %{key: ^key}}
   end
 
   # An owned writer (runner_id on append) is the trigger sweeps' subject;
@@ -254,14 +254,14 @@ defmodule Flezha.State.WatchdogTest do
 
     # In-flight guard: the next sweep does not re-enqueue.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
+    refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
   test "a small-but-old WAL triggers an age compaction", %{header: header} do
     Application.put_env(:flezha, :compact_after_age_ms, 30)
-    {key, _w} = owned_writer("age_", header, "x")
+    {key, w} = owned_writer("age_", header, "x")
 
-    Process.sleep(60)
+    TestHelpers.age_writer(w, 60)
     :ok = Watchdog.sweep_now()
 
     assert_receive {:compaction_trigger, _meas, %{key: ^key} = meta}, 1_000
@@ -270,28 +270,28 @@ defmodule Flezha.State.WatchdogTest do
 
   test "age trigger is disabled at 0", %{header: header} do
     Application.put_env(:flezha, :compact_after_age_ms, 0)
-    {key, _w} = owned_writer("age0_", header, "x")
+    {key, w} = owned_writer("age0_", header, "x")
 
-    Process.sleep(60)
+    TestHelpers.age_writer(w, 60)
     :ok = Watchdog.sweep_now()
 
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
+    refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
   test "size and age never double-enqueue across consecutive ticks", %{header: header} do
     Application.put_env(:flezha, :default_compact_after_bytes, 16)
     Application.put_env(:flezha, :compact_after_age_ms, 30)
-    {key, _w} = owned_writer("both_", header, "0123456789abcdef")
+    {key, w} = owned_writer("both_", header, "0123456789abcdef")
 
-    Process.sleep(60)
+    TestHelpers.age_writer(w, 60)
     :ok = Watchdog.sweep_now()
 
     # Both conditions hold, but the shared in-flight guard yields ONE enqueue.
     assert_receive {:compaction_trigger, _meas, %{key: ^key, trigger: :size}}, 1_000
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
+    refute_received {:compaction_trigger, _, %{key: ^key}}
 
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
+    refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
   test "a workflow class is not flagged for output stall or catastrophic dataflow", %{
@@ -322,7 +322,7 @@ defmodule Flezha.State.WatchdogTest do
 
     # The same stall signature that flags a stream class: window lapses,
     # then a duplicate Change keeps it "not idle" with a frozen seq.
-    Process.sleep(@stall_ms * 2)
+    TestHelpers.age_writer(w, @stall_ms * 2)
     :duplicate = WalWriter.append(w, 1, header, "a")
 
     :ok = Watchdog.sweep_now()
@@ -330,9 +330,9 @@ defmodule Flezha.State.WatchdogTest do
     # Scoped to THIS test's class and entity. The Watchdog is a singleton whose
     # sweep walks every registered entity, so an unscoped refute also matches a
     # sibling test's resync (a compaction timeout on its own WAL, say).
-    refute_receive {:output_stall, _, %{operative_class: ^class}}, @quiet_ms
-    refute_receive {:resync_called, ^pid, _}, @quiet_ms
-    refute_receive {:catastrophic, _, %{operative_class: ^class}}, @quiet_ms
+    refute_received {:output_stall, _, %{operative_class: ^class}}
+    refute_received {:resync_called, ^pid, _}
+    refute_received {:catastrophic, _, %{operative_class: ^class}}
   end
 
   test "a checkpoint-ack class's quiet interval is not a dead data-flow", %{header: header} do
@@ -368,10 +368,9 @@ defmodule Flezha.State.WatchdogTest do
       {:ok, w} = Supervisor.lookup(pid)
       :ok = WalWriter.append(w, 0, header, "z")
       :ok = WalWriter.append(w, 1, header, "a")
+      # Silent past the timeout, with output behind it.
+      TestHelpers.age_writer(w, @stall_ms * 2)
     end
-
-    # Both go silent past the timeout, with output behind them.
-    Process.sleep(@stall_ms * 2)
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -380,7 +379,7 @@ defmodule Flezha.State.WatchdogTest do
         # The control proves the detector is armed and this signature trips it...
         assert_receive {:catastrophic, ^per_input}, 1_000
         # ...and that the checkpoint-ack class is exempt, not merely unobserved.
-        refute_receive {:catastrophic, ^checkpoint}, @quiet_ms
+        refute_received {:catastrophic, ^checkpoint}
       end)
 
     # The positive control alarms by name; the exempt class never appears.
@@ -422,24 +421,36 @@ defmodule Flezha.State.WatchdogTest do
     ref = {:entity, entity_id}
     FlezhaTest.Helper.DurabilityBackendStub.set_down(true)
     assert {:error, :backend_down} = Flezha.State.DurabilityTier.Shipper.ship_now(ref)
-    Process.sleep(5)
+    # The breach is a millisecond past the failed ship.
+    assert wait_until(fn -> Flezha.State.DurabilityTier.breaches() != [] end, 1_000, 1)
 
     assert ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end) =~
              "RPO exceeded"
 
-    assert_receive {:rpo_exceeded, %{lag_ms: lag}, %{ref: reported}}, 1_000
+    # Pinned to THIS reference: the RPO sweep is node-global, so an unpinned
+    # receive takes whatever reference another module left pending.
+    reported = inspect(ref)
+    assert_receive {:rpo_exceeded, %{lag_ms: lag}, %{ref: ^reported}}, 1_000
     assert lag >= 0
-    assert reported == inspect(ref)
 
     # Latched: a sustained outage alarms once per breach, not once per sweep.
     :ok = Watchdog.sweep_now()
-    refute_receive {:rpo_exceeded, _, _}, @quiet_ms
+    refute_received {:rpo_exceeded, _, %{ref: ^reported}}
 
     # And it re-arms once the reference catches up and falls behind again.
     FlezhaTest.Helper.DurabilityBackendStub.set_down(false)
     assert :ok = Flezha.State.DurabilityTier.Shipper.ship_now(ref)
     :ok = Watchdog.sweep_now()
     assert Flezha.State.DurabilityTier.breaches() == []
+  end
+
+  # A compaction handed out `ms` ago, on the shared Watchdog's own ledger.
+  defp age_compaction(entity_id, ms) do
+    :sys.replace_state(Watchdog, fn state ->
+      update_in(state.compactions[entity_id], fn {started_at, runner_id} ->
+        {started_at - ms, runner_id}
+      end)
+    end)
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

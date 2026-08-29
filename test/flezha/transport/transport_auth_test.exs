@@ -5,6 +5,7 @@ defmodule Flezha.Transport.TransportAuthTest do
   boot, the release refuses distribution without a provisioned cookie, and
   the cert generator emits a full mutual-TLS set.
   """
+  # async: false: writes Application env; the primary Logger; OS environment variables.
   use ExUnit.Case, async: false
 
   alias Flezha.Transport.Native

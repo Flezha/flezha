@@ -28,9 +28,12 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
     def on_message(_ctx, _opts), do: raise("boom")
   end
 
+  # Holds its answer until the test releases it, so the Overwatch is proved
+  # responsive while a handler is genuinely still running.
   defmodule SlowProvider do
     def on_message(%Ctx.Msg{payload: p}, _opts) do
-      Process.sleep(200)
+      Process.register(self(), :slow_handler_under_test)
+      FlezhaTest.Helper.NodeTestHelper.park()
       {:ok, "slow:" <> p}
     end
   end
@@ -90,9 +93,18 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
     ref = make_ref()
     send(pid, {:flezha_request, "slow", "x", self(), ref})
 
+    handler =
+      FlezhaTest.Helper.NodeTestHelper.wait_until(
+        fn -> Process.whereis(:slow_handler_under_test) end,
+        1_000
+      )
+
+    assert is_pid(handler), "the handler never started"
+
     GenServer.cast(pid, {:io_in, "probe", %{}})
     assert :pong = GenServer.call(pid, :ping, 100)
 
+    send(handler, :unpark)
     assert_receive {:flezha_response, ^ref, {:ok, "slow:x"}}, 500
   end
 

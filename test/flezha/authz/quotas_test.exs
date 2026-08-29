@@ -1,4 +1,5 @@
 defmodule Flezha.AuthZ.QuotasTest do
+  # async: false: a shared on-disk root.
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ

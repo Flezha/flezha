@@ -8,6 +8,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   stored group record — so a missing or overlapping member has to show up as a
   warning rather than as a quietly short list. That is what these pin.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO
@@ -305,7 +306,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
       # BTC-USD hashes to key group 129, which p1 owns under ranges(3).
       assert_receive {:read, "ohlc#p1"}
-      refute_receive {:read, "ohlc#p0"}, 50
+      refute_received {:read, "ohlc#p0"}
       assert out =~ "BTC-USD"
     end
 

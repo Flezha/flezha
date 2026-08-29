@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.OtpBackendTest do
+  # async: false: writes Application env; the observability registry; registered singletons.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, RingBufferSink, Signal}
@@ -41,7 +42,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       {:ok, %{name: :beam_vm, status: :active}} = Registry.lookup_source(:beam_vm)
 
       # Two polls so scheduler-utilisation has a delta.
-      Process.sleep(120)
+      poll(pid, 2)
 
       mem_signals = RingBufferSink.query(:beam_vm, 0)
 
@@ -105,7 +106,7 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       {:ok, %{name: :host, status: :active}} = Registry.lookup_source(:host)
 
-      Process.sleep(150)
+      poll(pid, 1)
 
       signals = RingBufferSink.query(:host, 0)
 
@@ -140,7 +141,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       {:ok, %{name: :processhub, status: :active}} = Registry.lookup_source(:processhub)
 
       # One poll; no namespaces => no signals, no raise.
-      Process.sleep(75)
+      poll(pid, 1)
       :ok = GenServer.stop(pid)
     end
   end
@@ -160,7 +161,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       {:ok, %{name: :flezha_transport, status: :active}} =
         Registry.lookup_source(:flezha_transport)
 
-      Process.sleep(75)
+      poll(pid, 1)
       :ok = GenServer.stop(pid)
     end
   end
@@ -180,7 +181,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       {:ok, %{name: :flezha_bounded_mailbox, status: :active}} =
         Registry.lookup_source(:flezha_bounded_mailbox)
 
-      Process.sleep(150)
+      poll(pid, 1)
 
       events = RingBufferSink.query(:flezha_bounded_mailbox, 0)
       assert Enum.any?(events, fn s -> s.name == :bounded_mailbox_unavailable end)
@@ -221,7 +222,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       )
 
       {:ok, pid} = BeamVmSource.start_link([])
-      Process.sleep(100)
+      poll(pid, 1)
 
       signals = RingBufferSink.query(:beam_vm, 0)
       assert length(signals) > 0
@@ -230,5 +231,17 @@ defmodule Flezha.Observability.OtpBackendTest do
       _ = Bus
       :ok = GenServer.stop(pid)
     end
+  end
+
+  # Drive `n` polls of a source now rather than waiting out its interval, then
+  # let the ring buffer take what they emitted: the poll is the source's own
+  # timer message, and a call queued behind it answers once it ran.
+  defp poll(source, n) do
+    for _ <- 1..n do
+      send(source, :poll)
+      _ = :sys.get_state(source)
+    end
+
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
   end
 end

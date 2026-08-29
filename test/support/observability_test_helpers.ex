@@ -2,6 +2,23 @@ defmodule Flezha.Observability.TestSinks do
   @moduledoc false
   # Sink implementations used only by tests under
   # `test/flezha/observability/` and `test/flezha/service/`.
+
+  @doc """
+  Return once `sink` has handled every signal already sent to it: a signal is
+  a plain message, so a system call queued behind it answers after it.
+  `sink` is a registered sink name, a registered process name, or a pid.
+  """
+  def settle(pid) when is_pid(pid) do
+    _ = :sys.get_state(pid)
+    :ok
+  end
+
+  def settle(name) when is_atom(name) do
+    case Flezha.Observability.Registry.lookup_sink(name) do
+      {:ok, %{pid: pid}} when is_pid(pid) -> settle(pid)
+      _ -> settle(Process.whereis(name) || raise("no sink or process named #{inspect(name)}"))
+    end
+  end
 end
 
 defmodule Flezha.Observability.TestSinks.Counting do
@@ -65,7 +82,8 @@ end
 
 defmodule Flezha.Observability.TestSinks.Slow do
   @moduledoc false
-  # Sleeps in handle_signal to deliberately back the mailbox up.
+  # Parks on its first signal (until sent `:unpark`) to deliberately back the
+  # mailbox up.
 
   use GenServer
 
@@ -75,7 +93,7 @@ defmodule Flezha.Observability.TestSinks.Slow do
   def handle_signal(_signal, state), do: {:ok, state}
 
   @impl Flezha.Observability.Sink
-  def config_schema(), do: %{sleep_ms: :pos_integer}
+  def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
   def filter(), do: %{kinds: :any, sources: :any}
@@ -95,8 +113,8 @@ defmodule Flezha.Observability.TestSinks.Slow do
   def init(opts), do: {:ok, opts}
 
   @impl true
-  def handle_info({:signal, _signal}, %{config: %{sleep_ms: ms}} = state) do
-    Process.sleep(ms)
+  def handle_info({:signal, _signal}, state) do
+    FlezhaTest.Helper.NodeTestHelper.park()
     {:noreply, state}
   end
 

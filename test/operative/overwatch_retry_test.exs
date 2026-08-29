@@ -20,6 +20,8 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
 
+  # async: false: writes Application env; the live controller and its fleet; node-global tables.
+
   use ExUnit.Case, async: false
 
   @namespace "default"
@@ -224,9 +226,11 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     end)
 
     # It parks (init_error set) and never activates the plugin while parked.
-    assert eventually(fn ->
-             GenServer.call(pid, :get_overwatch_state).init_error != nil
-           end)
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> GenServer.call(pid, :get_overwatch_state).init_error != nil end,
+             2_000,
+             20
+           )
 
     refute_received :activated
 
@@ -243,9 +247,11 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     # so we poll the state instead of asserting immediately.
     assert_receive :activated, 5_000
 
-    assert eventually(fn ->
-             is_nil(GenServer.call(pid, :get_overwatch_state).init_error)
-           end)
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> is_nil(GenServer.call(pid, :get_overwatch_state).init_error) end,
+             2_000,
+             20
+           )
 
     state = GenServer.call(pid, :get_overwatch_state)
     assert Flezha.Plugin.Extension.Table.phase(state.extensions, "unpark_plugin") == :running
@@ -262,20 +268,6 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
         1 -> {:ok, :pong}
         n -> start_fn.(runner_id, n - 1)
       end
-    end
-  end
-
-  defp eventually(fun, attempts \\ 100) do
-    cond do
-      fun.() ->
-        true
-
-      attempts <= 0 ->
-        false
-
-      true ->
-        Process.sleep(20)
-        eventually(fun, attempts - 1)
     end
   end
 

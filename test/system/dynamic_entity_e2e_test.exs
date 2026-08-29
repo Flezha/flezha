@@ -18,6 +18,8 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
 
   use FlezhaTest.SystemCase, capability: :dynamic_entity
 
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
+
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
@@ -28,6 +30,8 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   @factory "dynamic_entity"
   @procedure "dynamic_entity_procedure"
 
+  # A fresh fleet per test: the two scenarios start their runner under
+  # different environments (one with a 200 ms idle TTL).
   setup do
     on_exit(fn ->
       try do
@@ -90,6 +94,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
     assert info.runner_id == ce_id
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     OperativeManager.send_io(operative_id, namespace, "#{key}:hello", %{"input_type" => "2"})
     OperativeManager.send_io(operative_id, namespace, "#{other}:bye", %{"input_type" => "2"})
@@ -149,6 +154,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
+    assert await_stream_bound(@namespace, operative_id), "the data stream never bound"
 
     # An input for a never-seen key: the edge's key function names the Entity,
     # the SDK lazily creates it, runs it, and ships the Change. The controller
@@ -169,24 +175,5 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
            "reaper/delete-RPC never removed the evicted Entity's WAL file"
 
     assert Registry.snapshot_paths(entity_id) == []
-  end
-
-  defp wait_until(fun, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline)
-  end
-
-  defp do_wait_until(fun, deadline) do
-    cond do
-      fun.() ->
-        true
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        false
-
-      true ->
-        Process.sleep(25)
-        do_wait_until(fun, deadline)
-    end
   end
 end

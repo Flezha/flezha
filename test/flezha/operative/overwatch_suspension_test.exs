@@ -12,6 +12,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   The callbacks are driven directly on a struct (no live GenServer), the way
   `overwatch_restore_async_test` does — the state machine is the unit here.
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -437,7 +438,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
         )
 
       {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "proc", "gone"}}, busy)
-      refute_receive {:migration_ready, ^inst}, 50
+      refute_received {:migration_ready, ^inst}
     end
   end
 end

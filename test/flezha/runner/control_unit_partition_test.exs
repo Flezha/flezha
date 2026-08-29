@@ -8,6 +8,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   stay byte-identical: proto3 omits zero-valued scalars, and that is the whole
   compatibility story.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
 

@@ -7,6 +7,7 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
   `{:error, {:unsupported_for_kind, :persistent_state}}` and never contacts the
   runner (the handler replies synchronously instead of spawning the send).
   """
+  # async: false: writes Application env.
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.Builder

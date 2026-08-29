@@ -16,6 +16,8 @@ defmodule Flezha.Convergence.PluginActivationRecoveryDrillTest do
   every later one. Nothing healed and nothing was raised.
   """
 
+  # async: false: Mimic global mode; Mimic stubs; the primary Logger.
+
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal

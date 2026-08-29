@@ -20,6 +20,8 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
 
   alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
 
+  # async: false: a shared Kafka broker in Docker.
+
   use ExUnit.Case, async: false
 
   @moduletag :kafka_integration
@@ -70,11 +72,19 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
 
     IO.puts(pause_out)
 
-    Process.sleep(2_000)
-
+    # `docker compose pause` returns once the container is frozen.
     second_half = produce_in_parallel(pid, 51..100)
 
-    Process.sleep(8_000)
+    # The paused broker answers nothing: the worker has to have met that —
+    # a failed attempt on the wire — before the broker comes back.
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn ->
+               stats = ProducerWorker.stats(pid)
+               stats.consecutive_failures >= 1 or stats.last_error != nil
+             end,
+             30_000
+           ),
+           "the worker never observed the paused broker"
 
     {unpause_out, 0} =
       System.cmd("docker", ["compose", "-f", @compose_file, "unpause", @compose_service])

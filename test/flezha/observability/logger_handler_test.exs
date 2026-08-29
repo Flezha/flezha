@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.LoggerHandlerTest do
+  # async: false: the observability registry; the primary Logger.
   use ExUnit.Case, async: false
 
   # The tests emit Logger calls on purpose to drive the bridge; assertions run

@@ -22,6 +22,8 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   `write_fun` instead of mocking `Native.send_data/2`.
   """
 
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -100,7 +102,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
     assert log =~ "Overwatch missing for shutdown notification"
     assert log =~ "p_missing"
 
-    refute_receive {:overwatch_received_snapshot, _}, 100
+    refute_received {:overwatch_received_snapshot, _}
   end
 
   defp start_control_channel(suffix) do

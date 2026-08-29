@@ -16,6 +16,8 @@ defmodule Flezha.Healthz.ServerTest do
     * Unknown paths return 404; non-GET methods return 405.
   """
 
+  # async: false: writes Application env; registered singletons; node-global tables.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.Snapshot
@@ -60,9 +62,9 @@ defmodule Flezha.Healthz.ServerTest do
   # Publish a convergence snapshot the way the Loop would, so the reader
   # under test has live state to format. `producing_operatives` is derived as
   # `bound - stalled`, mirroring the Loop.
-  defp publish_tick(stalled, bound \\ 0) do
+  defp publish_tick(stalled, bound \\ 0, age_ms \\ 0) do
     Snapshot.publish(%{
-      last_tick_at: System.monotonic_time(:millisecond),
+      last_tick_at: System.monotonic_time(:millisecond) - age_ms,
       stalled_operatives: stalled,
       bound_operatives: bound,
       producing_operatives: max(bound - length(stalled), 0),
@@ -291,10 +293,9 @@ defmodule Flezha.Healthz.ServerTest do
         else: Application.delete_env(:flezha, :convergence_tick_ms)
     end)
 
-    # First a tick to set the timestamp...
-    publish_tick([])
-    # ...then sleep past tick_ms × 2 so the staleness window elapses.
-    Process.sleep(50)
+    # A tick whose timestamp is already past tick_ms × 2: the staleness window
+    # has elapsed.
+    publish_tick([], 0, 50)
 
     {status, _headers, body} = get(port, "/healthz")
     decoded = Jason.decode!(body)

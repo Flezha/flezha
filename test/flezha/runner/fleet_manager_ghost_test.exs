@@ -15,6 +15,8 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
 
   alias Flezha.Runner.FleetManager
 
+  # async: false: the live controller and its fleet; node-global tables.
+
   use ExUnit.Case, async: false
 
   # A namespace with no running ProcessHub so the reroute side effects

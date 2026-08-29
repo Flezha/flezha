@@ -1,4 +1,5 @@
 defmodule Flezha.Schedule.HubTest do
+  # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
   use Mimic
 

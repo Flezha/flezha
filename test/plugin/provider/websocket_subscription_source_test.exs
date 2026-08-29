@@ -10,6 +10,8 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
   assert on the exact frames a given source transition produces.
   """
 
+  # async: false: the live controller and its fleet; global telemetry handlers.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Extension.Table
@@ -309,7 +311,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       s = state(applied: MapSet.new(["a"]))
 
       assert {:ok, _} = poll(s, source(["a"]))
-      refute_receive {:telemetry, [:flezha, :ws, :reconcile], _, _}, 200
+      refute_received {:telemetry, [:flezha, :ws, :reconcile], _, _}
     end
 
     test "a send against a transiently unestablished socket is skipped, not fatal" do
@@ -715,8 +717,9 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
         state(websocket_established?: false)
         |> Map.drop([:subscription, :applied, :inflight, :desired, :next_req_id])
 
-      assert {:ok, _} = Websocket.handle_connect(101, [], s)
-      refute_receive :subscription_poll, 200
+      assert {:ok, connected} = Websocket.handle_connect(101, [], s)
+      assert is_nil(Map.get(connected, :poll_timer)), "a poll timer was armed"
+      refute_received :subscription_poll
     end
   end
 
@@ -751,10 +754,11 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
           receive do
             msg ->
               {:ok, _} = Websocket.handle_info(msg, s)
-              Process.sleep(200)
+              FlezhaTest.Helper.NodeTestHelper.park()
           end
         end)
 
+      on_exit(fn -> Process.exit(pid, :kill) end)
       assert_receive :armed, 500
 
       report = Websocket.inspect_state(%{subscription: subscription(), owned_pid: pid})

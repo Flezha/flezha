@@ -16,6 +16,8 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
   backwards.
   """
 
+  # async: false: registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: Backend

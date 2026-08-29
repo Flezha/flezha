@@ -26,13 +26,10 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   @moduletag interop: true
 
-  # An ExUnit include BEATS an exclude, so `--include system` would run this
-  # module however it is excluded. A skip is honoured whatever the filters say
-  # — the same mechanism a deferred capability rides.
   @moduletag skip:
-               if(:interop in (ExUnit.configuration()[:include] || []),
-                 do: nil,
-                 else: "interop places two runtimes in one run; pass --include interop"
+               FlezhaTest.SystemCase.skip_unless(
+                 :interop in (ExUnit.configuration()[:include] || []),
+                 "interop places two runtimes in one run; pass --include interop"
                )
 
   alias Flezha.Operative.Builder
@@ -116,9 +113,12 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
     {:os_pid, os_pid} = :erlang.port_info(ctx.rust_port, :os_pid)
     System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
 
-    assert eventually(fn ->
-             FleetManager.runners_for_factory(@namespace, @shared_factory) == []
-           end),
+    assert NodeTestHelper.wait_until(
+             fn ->
+               FleetManager.runners_for_factory(@namespace, @shared_factory) == []
+             end,
+             10_000
+           ),
            "the Java runner became a candidate after the Rust runner died"
 
     assert FleetManager.placement_refusal(@namespace, @shared_factory) == {:language, @rust}
@@ -134,16 +134,5 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
     message = inspect(reason)
     assert message =~ "sdk_lang", message
     refute message =~ "does not exist", message
-  end
-
-  defp eventually(fun, attempts \\ 100) do
-    Enum.reduce_while(1..attempts, false, fn _, _ ->
-      if fun.() do
-        {:halt, true}
-      else
-        Process.sleep(100)
-        {:cont, false}
-      end
-    end)
   end
 end

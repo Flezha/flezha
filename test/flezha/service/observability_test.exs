@@ -1,4 +1,5 @@
 defmodule Flezha.Service.ObservabilityTest do
+  # async: false: writes Application env; the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Service.{CliManager, Observability}
@@ -48,7 +49,7 @@ defmodule Flezha.Service.ObservabilityTest do
         })
       )
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(RingBufferSink)
 
       {:ok, results} =
         Observability.query(
@@ -73,7 +74,7 @@ defmodule Flezha.Service.ObservabilityTest do
       :ok =
         Observability.disable_source(src, %{source: :cli, request_id: "req-123"})
 
-      Process.sleep(50)
+      Flezha.Observability.TestSinks.settle(RingBufferSink)
       {:ok, %{status: :disabled}} = Registry.lookup_source(src)
 
       audits = RingBufferSink.query(:observability_service, before_ts)
@@ -84,7 +85,6 @@ defmodule Flezha.Service.ObservabilityTest do
              end)
 
       :ok = Observability.enable_source(src, %{source: :ui})
-      Process.sleep(20)
       {:ok, %{status: :active}} = Registry.lookup_source(src)
     end
   end
@@ -126,7 +126,6 @@ defmodule Flezha.Service.ObservabilityTest do
 
     test "enable_source via CliManager builds :cli context", %{src: src} do
       assert :ok = CliManager.observability_disable_source(src)
-      Process.sleep(20)
       {:ok, %{status: :disabled}} = Registry.lookup_source(src)
       assert :ok = CliManager.observability_enable_source(src)
     end

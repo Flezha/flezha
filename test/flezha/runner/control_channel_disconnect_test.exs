@@ -4,6 +4,8 @@ defmodule FlezhaTest.Runner.ControlChannelDisconnectTest do
   alias Flezha.Service.Identificator
   alias FlezhaTest.Helper.NodeTestHelper
 
+  # async: false: the live controller and its fleet; registered runner channels.
+
   use ExUnit.Case, async: false
 
   @namespace "test_temp_namespace"

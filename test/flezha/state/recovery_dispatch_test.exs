@@ -6,6 +6,8 @@ defmodule Flezha.State.RecoveryDispatchTest do
   the live runner's accumulated state is never rebuilt to `init_state`.
   """
 
+  # async: false: writes Application env; Mimic stubs; a shared on-disk root.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -50,7 +52,7 @@ defmodule Flezha.State.RecoveryDispatchTest do
     assert {:ok, _ref} = Recovery.resync(entity_id, runner_id: "exec-1", reason: :seq_gap)
 
     assert_receive {:control_sent, "exec-1", :compact_entity}, 1_000
-    refute_receive {:control_sent, _, :restore_init_state}, 200
+    refute_received {:control_sent, _, :restore_init_state}
   end
 
   test "persisted WAL records resync via RestoreInitState push", %{header: header} do
@@ -64,7 +66,7 @@ defmodule Flezha.State.RecoveryDispatchTest do
     assert {:ok, _ref} = Recovery.resync(entity_id, runner_id: "exec-1", reason: :seq_gap)
 
     assert_receive {:control_sent, "exec-1", :restore_init_state}, 1_000
-    refute_receive {:control_sent, _, :compact_entity}, 200
+    refute_received {:control_sent, _, :compact_entity}
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

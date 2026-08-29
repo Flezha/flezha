@@ -8,6 +8,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
   unchanged, including its silent drop for a parked operative: a sender that
   needs the payload held uses the confirming path instead.
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
@@ -145,7 +146,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       assert_receive {:channel_got, ^inst, {"again", %{"flz.inbox_offset" => "1"}}}
 
       assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", %{}})
-      refute_receive {:channel_got, _, _}, 50
+      refute_received {:channel_got, _, _}
     end
 
     test "a durable-log refusal reports refused so the sender retries" do
@@ -166,7 +167,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       assert log =~ ":enospc"
       assert log =~ "input NOT forwarded"
 
-      refute_receive {:channel_got, _, _}, 50
+      refute_received {:channel_got, _, _}
     end
 
     test "an unbound stream is not-ready for a non-durable target, :ok for a durable one" do
@@ -203,8 +204,15 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       def init(reply), do: {:ok, %{reply: reply, seen: [], max_queued: 0}}
 
       def handle_call({:ingest, message, _md}, _from, state) do
+        # An overlapping caller has the next request queued here before this
+        # one is answered; a caller that waits for each answer never does.
+        FlezhaTest.Helper.NodeTestHelper.wait_until(
+          fn -> Process.info(self(), :message_queue_len) > {:message_queue_len, 0} end,
+          50,
+          1
+        )
+
         {:message_queue_len, queued} = Process.info(self(), :message_queue_len)
-        Process.sleep(2)
 
         {:reply, state.reply,
          %{state | seen: [message | state.seen], max_queued: max(state.max_queued, queued)}}
@@ -294,7 +302,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       assert %Overwatch{} = GenServer.call(host, :get_overwatch_state)
       GenServer.cast(host, {:io_out, "out", %{}})
       assert :pong = GenServer.call(host, :ping)
-      refute_receive {:channel_got, _, _}, 50
+      refute_received {:channel_got, _, _}
 
       # Consuming offset 0 mints the credit: the parked call answers.
       InputLog.record_consumed(inst, entity(inst), 0)
@@ -323,7 +331,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
          %{inst: inst, host: host} do
       for m <- ["b", "c", "d"], do: GenServer.cast(host, {:io_in, m, %{}})
       assert :pong = GenServer.call(host, :ping)
-      refute_receive {:channel_got, _, _}, 50
+      refute_received {:channel_got, _, _}
 
       InputLog.record_consumed(inst, entity(inst), 0)
 
@@ -351,8 +359,8 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
       assert_receive :log_looked_up
       assert_receive :log_looked_up
-      refute_receive :log_looked_up, 50
-      refute_receive {:channel_got, _, _}, 50
+      refute_received :log_looked_up
+      refute_received {:channel_got, _, _}
     end
   end
 
@@ -360,6 +368,6 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     state = state(instance_id(), init_error: :sdk_start_failed, channel: fake_channel(:ok))
 
     assert {:noreply, ^state} = Overwatch.handle_cast({:io_in, "hello", %{}}, state)
-    refute_receive {:channel_got, _, _}, 50
+    refute_received {:channel_got, _, _}
   end
 end

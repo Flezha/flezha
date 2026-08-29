@@ -766,6 +766,18 @@ mod tests {
 
     use super::*;
 
+    /// Yield until `done` holds; a 2 s deadline names `what` on failure.
+    fn spin_until(what: &str, done: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !done() {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "timed out waiting for {what}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     /// Build a capacity-1 mailbox pre-filled so `is_full()` reports true.
     /// Required because [`BlockParker::wait_one`] rechecks the mailbox
     /// after registering and returns without parking when it isn't full.
@@ -794,19 +806,10 @@ mod tests {
         while !started.load(Ordering::Acquire) {
             std::hint::spin_loop();
         }
-        // Brief pause to let the producer reach `parker.park()`.
-        std::thread::sleep(Duration::from_millis(10));
+        // The producer has reached `parker.park()` once it is counted.
+        spin_until("the producer to park", || parker.waiter_count() == 1);
         parker.unpark_one();
-        let join_start = Instant::now();
-        loop {
-            if t.is_finished() {
-                break;
-            }
-            if join_start.elapsed() > Duration::from_secs(2) {
-                panic!("waiter not unparked");
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        spin_until("the waiter to be unparked", || t.is_finished());
         t.join().unwrap();
     }
 
@@ -831,28 +834,25 @@ mod tests {
         let p = Arc::new(parker);
         let order = Arc::new(Mutex::new(Vec::<u8>::new()));
         let mut threads = Vec::new();
-        for tag in [b'A', b'B', b'C'] {
-            let p = Arc::clone(&p);
+        for (parked, tag) in [b'A', b'B', b'C'].into_iter().enumerate() {
+            let parker = Arc::clone(&p);
             let m = Arc::clone(&mbox);
             let order = Arc::clone(&order);
             threads.push(std::thread::spawn(move || {
-                p.wait_one(&m);
+                parker.wait_one(&m);
                 order.lock().unwrap().push(tag);
             }));
-            // Sequence the parkers so they enter the deque in order.
-            std::thread::sleep(Duration::from_millis(20));
+            // Sequence the parkers so they enter the deque in order: each is
+            // counted parked before the next is spawned.
+            spin_until("the parker to park", || p.waiter_count() == parked + 1);
         }
-        // All three should be parked now.
-        let start = Instant::now();
-        while p.waiter_count() < 3 {
-            if start.elapsed() > Duration::from_secs(2) {
-                panic!("waiters did not all park; count = {}", p.waiter_count());
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        for _ in 0..3 {
+        for woken in 1..=3 {
             p.unpark_one();
-            std::thread::sleep(Duration::from_millis(10));
+            // The woken thread records its wake before the next is issued, so
+            // the record is the deque order and not the scheduler's.
+            spin_until("the woken thread to record its wake", || {
+                order.lock().unwrap().len() == woken
+            });
         }
         for t in threads {
             t.join().unwrap();

@@ -844,7 +844,16 @@ fn c_abi_full_scenario() {
         let (status, _) = abi_poll(ctx_addr as *mut FlzContext, 30_000);
         (status, started.elapsed())
     });
-    thread::sleep(Duration::from_millis(100));
+    // The poller stays blocked for as long as it is watched; shutdown is what
+    // frees it.
+    let watched = Instant::now();
+    while watched.elapsed() < Duration::from_millis(100) {
+        assert!(
+            !blocked.is_finished(),
+            "the poller returned before shutdown"
+        );
+        thread::yield_now();
+    }
     unsafe { flz_core_shutdown(ctx) };
     let (status, waited) = blocked.join().expect("blocked poller returns");
     assert_eq!(status, FLZ_POLL_SHUTTING_DOWN);

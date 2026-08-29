@@ -1,4 +1,5 @@
 defmodule Flezha.AuthZ.BootstrapTest do
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}

@@ -15,6 +15,8 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.FleetStateHelper
 
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
+
   use ExUnit.Case, async: false
   use Mimic
 

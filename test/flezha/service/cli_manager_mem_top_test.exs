@@ -1,4 +1,5 @@
 defmodule Flezha.Service.CliManager.MemTopTest do
+  # async: false: the live controller and its fleet.
   use ExUnit.Case, async: false
 
   alias Flezha.Service.CliManager

@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.IntegrationTest do
+  # async: false: the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability
@@ -33,8 +34,8 @@ defmodule Flezha.Observability.IntegrationTest do
           {:registered, name}
       end
 
-    # Let the ring buffer subscriber pick up the new source.
-    Process.sleep(50)
+    # The ring buffer subscriber has picked up the new source once it answers.
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
 
     on_exit(fn ->
       Registry.unregister_source(src)
@@ -48,11 +49,12 @@ defmodule Flezha.Observability.IntegrationTest do
     :ok = Observability.subscribe(src)
     on_exit(fn -> Observability.unsubscribe(src) end)
 
-    {:ok, src: src}
+    {:ok, src: src, pubsub: pubsub_name(pubsub_sink)}
   end
 
   test "active → disabled → re-enabled lifecycle hits ring buffer + PubSub + registry", %{
-    src: src
+    src: src,
+    pubsub: pubsub
   } do
     rb_start = RingBufferSink.count(src)
 
@@ -68,7 +70,7 @@ defmodule Flezha.Observability.IntegrationTest do
       )
     end)
 
-    Process.sleep(100)
+    settle_sinks(pubsub)
 
     assert RingBufferSink.count(src) - rb_start == 100
     {:ok, %{status: :active}} = Registry.lookup_source(src)
@@ -77,7 +79,6 @@ defmodule Flezha.Observability.IntegrationTest do
 
     # Phase 2: disable. Emit 100 more, none should reach observers.
     :ok = ObsSvc.disable_source(src, %{source: :internal})
-    Process.sleep(30)
 
     Enum.each(1..100, fn i ->
       Bus.emit(
@@ -90,7 +91,7 @@ defmodule Flezha.Observability.IntegrationTest do
       )
     end)
 
-    Process.sleep(100)
+    settle_sinks(pubsub)
 
     {:ok, %{status: :disabled}} = Registry.lookup_source(src)
     # Ring-buffer count unchanged (no new inserts) — disable drops at the bus.
@@ -100,7 +101,6 @@ defmodule Flezha.Observability.IntegrationTest do
 
     # Phase 3: re-enable, emit 100 more, expect them again.
     :ok = ObsSvc.enable_source(src, %{source: :internal})
-    Process.sleep(30)
 
     Enum.each(1..100, fn i ->
       Bus.emit(
@@ -113,7 +113,7 @@ defmodule Flezha.Observability.IntegrationTest do
       )
     end)
 
-    Process.sleep(100)
+    settle_sinks(pubsub)
 
     {:ok, %{status: :active}} = Registry.lookup_source(src)
     assert RingBufferSink.count(src) - rb_start == 200
@@ -128,4 +128,14 @@ defmodule Flezha.Observability.IntegrationTest do
       0 -> []
     end
   end
+
+  # Both sinks have handled every emit so far: the ring buffer counts, the
+  # PubSub sink has forwarded to this process.
+  defp settle_sinks(pubsub) do
+    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    Flezha.Observability.TestSinks.settle(pubsub)
+  end
+
+  defp pubsub_name({:registered, name}), do: name
+  defp pubsub_name(:existing), do: :pubsub
 end

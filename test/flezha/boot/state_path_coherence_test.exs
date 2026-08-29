@@ -9,6 +9,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
   after `migrate/0`, and `FLEZHA_STATE_DIR` must be the single source for
   both the resolver and the migrator.
   """
+  # async: false: writes Application env; a shared on-disk root; OS environment variables.
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.StatePathMigrator

@@ -22,3 +22,17 @@ The repository SHALL carry one measuring script, `scripts/refactor_metrics.py`, 
 - **WHEN** `--write-baseline` runs
 - **THEN** the baseline SHALL carry the hostname, CPU model and governor beside every timing or bench number, and a later `--check` SHALL compare timings only against a baseline from the same hostname
 
+### Requirement: Tests wait for signals, not for time
+
+A test in the repository SHALL NOT sleep to wait for a condition, and SHALL NOT assert silence with a bare `refute_receive`: a wait SHALL observe a positive settle signal the code emits — an existing message, an existing telemetry event, or a state read through an existing public function — and a `refute_receive` SHALL follow such a signal with a timeout of at most 100 ms. A state read that must be repeated SHALL go through the suite's one polling primitive (`NodeTestHelper.wait_until/2,3`), whose interval is the suite's only deliberate sleep. An ExUnit module SHALL be `async: true` unless its `use` line states the global it depends on. A `test/system` module SHALL boot its fleet once per module unless it states why each test needs a fresh one.
+
+#### Scenario: A sleep is introduced into a test
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where a file under `test/` contains `Process.sleep` or `:timer.sleep`, or a Rust test contains `thread::sleep`
+- **THEN** the check SHALL report the file and, once `test` is a blocking area, exit non-zero
+
+#### Scenario: A flaky test is met
+
+- **WHEN** a test fails in a full run and passes alone
+- **THEN** the session that met it SHALL fix its root cause in the test's observation or in the code, and SHALL NOT tag it skipped or flaky
+

@@ -10,6 +10,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   Uses the 4-tuple ControlChannel constructor with a capturing `write_fun`
   (`Flezha.Transport.Native` is a NIF and cannot be Mimic-copied).
   """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]

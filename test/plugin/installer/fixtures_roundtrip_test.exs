@@ -11,6 +11,8 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
   stopped exercising its intended path.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Installer

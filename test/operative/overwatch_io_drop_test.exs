@@ -4,6 +4,7 @@ defmodule FlezhaTest.Operative.OverwatchIoDropTest do
   silently discarding the channel's `{:error, :no_stream}` reply. Exercised by
   calling the handler directly (the data channel is a real nil-ref StreamChannel).
   """
+  # async: false: registered runner channels; global telemetry handlers.
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.StreamChannel

@@ -36,7 +36,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Operative.Builder
@@ -50,15 +50,13 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   @moduletag :postgres_integration
   @moduletag timeout: 300_000
 
-  setup_all do
-    if System.get_env("POSTGRES_INTEGRATION") != "1" do
-      raise "Refusing to run the durability drill without POSTGRES_INTEGRATION=1"
-    end
+  @postgres_skip FlezhaTest.SystemCase.skip_unless(
+                   System.get_env("POSTGRES_INTEGRATION") == "1",
+                   "the durability drill needs POSTGRES_INTEGRATION=1"
+                 )
+  @moduletag skip: @postgres_skip
 
-    :ok
-  end
-
-  @tag capability: :workflow, skip: FlezhaTest.SystemCase.deferral(:workflow)
+  @tag capability: :workflow, skip: FlezhaTest.SystemCase.deferral(:workflow) || @postgres_skip
   test "a sync-declared workflow loses nothing when the controller's disk is destroyed" do
     backend_opts = install_durability_tier()
     namespace = unique("dur_wf")
@@ -164,6 +162,9 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert info.runner_id == exec_a
 
     assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operative_id) end, 30_000)

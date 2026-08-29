@@ -2,6 +2,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   # Error verdicts `System.halt/1`, so only success paths are asserted
   # in-process (the same posture as `cli_manager_send_test`); validation
   # failures are covered store-side in `Flezha.Schedule.StoreTest`.
+  # async: false: Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
   use Mimic
 

@@ -96,7 +96,8 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # would exercise only the change-log half of the migration.
     entity_id = {operative_id, @procedure, ""}
     Application.put_env(:flezha, :compact_after_age_ms, 1)
-    Process.sleep(50)
+    {:ok, writer} = Flezha.State.Supervisor.lookup(entity_id)
+    Flezha.State.TestHelpers.age_writer(writer, 50)
     :ok = Flezha.State.Watchdog.sweep_now()
 
     assert CA.wait_for_snapshot_file(entity_id, 15_000),
@@ -134,7 +135,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     assert wait_until(fn -> total(namespace, operative_id) == 12 end)
 
     refute_receive {:migrated, %{operative: ^operative_id}},
-                   2_000,
+                   100,
                    "a second restore must find records at the running version"
   end
 
@@ -151,8 +152,14 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
 
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
 
+    # The bind-time restore's verdict is what the guard produces; wait for it.
+    FlezhaTest.Helper.MessageTestHelper.forward_telemetry(
+      [:flezha, :state, :restore_refused],
+      :refused
+    )
+
     assert {:ok, _} = start(namespace, operative_id, @v1)
-    Process.sleep(3_000)
+    assert_receive {:refused, _, %{entity: {^operative_id, _, _}}}, 30_000
 
     # v2's change records encode `{delta, note}` where v1's encode `(delta)`.
     # Positional codecs read the first field happily, so an unguarded restore
@@ -181,6 +188,9 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # gap has nothing to reach. A live state read is the readiness signal —
     # it answers only once the Entity exists — and every send below follows it.
     with {:ok, _} <- result do
+      assert NodeTestHelper.await_stream_bound(namespace, operative_id),
+             "the data stream never bound"
+
       unless wait_until(fn -> state_of(namespace, operative_id) != nil end) do
         raise "operative #{operative_id} never became resident on its runner"
       end

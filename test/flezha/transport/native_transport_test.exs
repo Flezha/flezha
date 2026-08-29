@@ -1,4 +1,5 @@
 defmodule Flezha.Transport.NativeTransportTest do
+  # async: false: a peer BEAM.
   use ExUnit.Case, async: false
 
   alias Flezha.Transport.Server

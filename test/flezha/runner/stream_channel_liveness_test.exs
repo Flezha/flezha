@@ -5,6 +5,8 @@ defmodule Flezha.Runner.StreamChannelLivenessTest do
   stall classifier can tell "fed but unbound" from "fed but not sending".
   """
 
+  # async: false: registered runner channels; node-global tables.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.StreamChannel

@@ -11,6 +11,8 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
   the accept count would be higher and every one of these would still pass.
   """
 
+  # async: false: the primary Logger.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Websocket
@@ -63,9 +65,18 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
     ack(ws, remove["req_id"])
 
     # ---- converged: the source is steady across a full poll cycle
-    # (subscription_interval_ms is floored at 1_000 by the provider), so
-    # nothing more is sent
-    refute_receive {:ws_frame, _}, 1_200
+    # (subscription_interval_ms is floored at 1_000 by the provider) — the
+    # next reconcile finds nothing to send, and nothing more is sent
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn ->
+               Websocket.inspect_state(%{subscription: opts.subscription, owned_pid: conn}).last_reconcile ==
+                 %{added: 0, removed: 0, sent: false}
+             end,
+             5_000
+           ),
+           "the provider never completed a quiet poll cycle"
+
+    refute_received {:ws_frame, _}
 
     # ---- and it all happened on ONE connection
     assert connections(ws) == 1

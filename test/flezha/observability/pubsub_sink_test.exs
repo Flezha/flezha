@@ -1,4 +1,5 @@
 defmodule Flezha.Observability.PubSubSinkTest do
+  # async: false: the observability registry.
   use ExUnit.Case, async: false
 
   alias Flezha.Observability
@@ -17,25 +18,27 @@ defmodule Flezha.Observability.PubSubSinkTest do
         flavour: :declarative
       })
 
-    case Registry.lookup_sink(:pubsub) do
-      {:ok, _} ->
-        # The default :pubsub sink is already registered (probably by
-        # a prior test that wasn't cleaned up). Reuse it.
-        :ok
+    sink =
+      case Registry.lookup_sink(:pubsub) do
+        {:ok, _} ->
+          # The default :pubsub sink is already registered (probably by
+          # a prior test that wasn't cleaned up). Reuse it.
+          :pubsub
 
-      :error ->
-        {:ok, _pid} =
-          Registry.register_sink(%{
-            name: sink_name,
-            module: PubSubSink,
-            config: %{}
-          })
+        :error ->
+          {:ok, _pid} =
+            Registry.register_sink(%{
+              name: sink_name,
+              module: PubSubSink,
+              config: %{}
+            })
 
-        on_exit(fn -> Registry.unregister_sink(sink_name) end)
-    end
+          on_exit(fn -> Registry.unregister_sink(sink_name) end)
+          sink_name
+      end
 
     on_exit(fn -> Registry.unregister_source(src) end)
-    {:ok, src: src}
+    {:ok, src: src, sink: sink}
   end
 
   test "subscriber receives one message per emit", %{src: src} do
@@ -48,13 +51,16 @@ defmodule Flezha.Observability.PubSubSinkTest do
     Observability.unsubscribe(src)
   end
 
-  test "unsubscribed process receives nothing", %{src: src} do
+  test "unsubscribed process receives nothing", %{src: src, sink: sink} do
     Observability.subscribe(src)
     Observability.unsubscribe(src)
 
     Bus.emit(Signal.new(%{kind: :event, source: src, name: :ignored}))
 
-    refute_receive {:flezha_signal, _}, 100
+    # The sink broadcasts from its own process, so once it has handled the
+    # signal every delivery it was going to make is already in a mailbox.
+    Flezha.Observability.TestSinks.settle(sink)
+    refute_received {:flezha_signal, _}
   end
 
   test "sink-disabled config: subscribe returns error when no sink running" do

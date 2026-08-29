@@ -22,7 +22,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
   import FlezhaTest.Helper.PostgresSink
   import FlezhaTest.Helper.TierE2EHarness
 
@@ -37,13 +37,11 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   @factory "tier_store"
   @procedure "tier_store_procedure"
 
-  setup_all do
-    if System.get_env("POSTGRES_INTEGRATION") != "1" do
-      raise "Refusing to run without POSTGRES_INTEGRATION=1 and the postgres-sink container up"
-    end
-
-    :ok
-  end
+  @moduletag skip:
+               FlezhaTest.SystemCase.skip_unless(
+                 System.get_env("POSTGRES_INTEGRATION") == "1",
+                 "needs POSTGRES_INTEGRATION=1 and the postgres-sink container up"
+               )
 
   setup do
     db = connect!()
@@ -92,6 +90,9 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+
+    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
+
     assert info.runner_id == exec_a
 
     # The SDK-declared tier must have been resolved at bind.
@@ -130,8 +131,9 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     expected_final = %{"k1" => "k1=c", "k2" => "k2=b", "k3" => "k3=a"}
     assert await_rows(db, expected_final, 60_000)
 
-    # Let the full outbox re-drive land, then audit the final table state.
-    Process.sleep(2_000)
+    # Once the outbox owes nothing the full re-drive has landed; audit the
+    # final table state.
+    assert await_outbox_drained(operative_id), "the outbox never drained"
 
     assert db_changelog(db) == expected_final,
            "the row set diverged from the no-crash final state"

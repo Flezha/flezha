@@ -4,6 +4,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   disk-footprint accounting (boot rebuild from the on-disk truth), and the
   breach alarm that never interrupts durable writes.
   """
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
@@ -117,7 +118,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
         # Latched: a second sweep with the breach still standing does not
         # re-alarm.
         :ok = Flezha.State.Watchdog.sweep_now()
-        refute_receive {:breach, _, %{namespace: "team-alarm"}}, 500
+        refute_received {:breach, _, %{namespace: "team-alarm"}}
       after
         :telemetry.detach(handler_id)
       end

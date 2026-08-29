@@ -13,6 +13,8 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
   hermetic.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

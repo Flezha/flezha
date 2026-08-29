@@ -110,6 +110,9 @@ the area's dev_notes; tree rules; docker rules; batching; authorisation) plus:
 
 The report is a hypothesis. Against the repo:
 
+- first `git add -N <every new file the worker created>` (intent-to-add, nothing
+  staged for real): the naming gates walk `git ls-files`, so an untracked file is
+  invisible to them until it is added — then run every gate;
 - every ticked box: the named code exists and does what the box says;
 - every new or extracted function has a caller (`grep`); a helper without one
   is the defect the refactor exists to remove;

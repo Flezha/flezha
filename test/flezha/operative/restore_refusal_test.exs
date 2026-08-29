@@ -12,6 +12,8 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
   A genuinely empty Entity is a SUCCESS, not a refusal, and must still bind.
   """
 
+  # async: false: writes Application env; Mimic stubs; a shared on-disk root.
+
   use ExUnit.Case, async: false
   use Mimic
 

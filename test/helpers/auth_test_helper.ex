@@ -77,18 +77,19 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
   `attempts × 25 ms`.
   """
   def await_platform_authz_events(name, since_us, attempts \\ 20) do
-    Enum.reduce_while(1..attempts, [], fn _i, _acc ->
-      matches =
-        Flezha.Observability.RingBufferSink.query(:platform_authz, since_us)
-        |> Enum.filter(&(&1.name == name))
-
-      if matches == [] do
-        Process.sleep(25)
-        {:cont, []}
-      else
-        {:halt, matches}
-      end
-    end)
+    FlezhaTest.Helper.NodeTestHelper.wait_until(
+      fn ->
+        case Enum.filter(
+               Flezha.Observability.RingBufferSink.query(:platform_authz, since_us),
+               &(&1.name == name)
+             ) do
+          [] -> nil
+          matches -> matches
+        end
+      end,
+      attempts * 25,
+      25
+    ) || []
   end
 
   @doc """
@@ -124,8 +125,9 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
         cardinality_budget: 256
       })
 
-    # Give the RingBufferSink a tick to observe the registration.
-    Process.sleep(50)
+    # The registration reaches the RingBufferSink as a message; a call to the
+    # sink returns once that message has been handled.
+    Flezha.Observability.TestSinks.settle(Flezha.Observability.RingBufferSink)
   end
 
   defp stop_if_running_one(mod) do

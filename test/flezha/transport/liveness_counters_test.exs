@@ -4,6 +4,8 @@ defmodule Flezha.Transport.LivenessCountersTest do
   the read-side snapshot, and dead-owner pruning.
   """
 
+  # async: false: node-global tables.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Transport.LivenessCounters
@@ -52,21 +54,24 @@ defmodule Flezha.Transport.LivenessCountersTest do
   test "snapshot prunes entries whose owner has died" do
     operative = "operative_dead_#{System.unique_integer([:positive])}"
 
+    parent = self()
+
     {:ok, pid} =
       Task.start(fn ->
         LivenessCounters.register_operative(operative)
+        send(parent, :registered)
 
         receive do
           :go -> :ok
         end
       end)
 
-    # Let it register, then let it exit.
-    Process.sleep(20)
+    assert_receive :registered, 1_000
     assert find_operative(operative) != nil
 
+    ref = Process.monitor(pid)
     send(pid, :go)
-    wait_dead(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
 
     # First snapshot prunes the dead owner's entry.
     LivenessCounters.snapshot_all()
@@ -81,12 +86,5 @@ defmodule Flezha.Transport.LivenessCountersTest do
   defp find_operative(operative) do
     LivenessCounters.snapshot_all().operatives
     |> Enum.find(fn r -> r.operative_id == operative end)
-  end
-
-  defp wait_dead(pid) do
-    if Process.alive?(pid) do
-      Process.sleep(5)
-      wait_dead(pid)
-    end
   end
 end

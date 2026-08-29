@@ -7,6 +7,8 @@ defmodule Flezha.AuthZTest do
   uses. Async false because of named-singleton GenServers.
   """
 
+  # async: false: writes Application env; a shared on-disk root.
+
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ

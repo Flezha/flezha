@@ -15,6 +15,8 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
   collection is only safe against a complete, correctly-paged listing.
   """
 
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
+
   use ExUnit.Case, async: false
 
   alias Flezha.State.DurabilityTier.Backend.S3

@@ -4,6 +4,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
   families as the operator sees them — thin renderers over the authorized
   wrappers, driven end to end against live auth stores.
   """
+  # async: false: a shared on-disk root.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

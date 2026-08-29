@@ -914,8 +914,12 @@ mod tests {
         until(&pool, "the pool to reach its ceiling", |(size, _, _, _)| {
             size == 3
         });
-        std::thread::sleep(Duration::from_millis(100));
-        assert_eq!(pool.snapshot().0, 3, "the pool grew past its ceiling");
+        // Watched, not waited out: the ceiling holds for as long as it is observed.
+        let watched = std::time::Instant::now();
+        while watched.elapsed() < Duration::from_millis(100) {
+            assert_eq!(pool.snapshot().0, 3, "the pool grew past its ceiling");
+            std::thread::yield_now();
+        }
         for _ in 0..10 {
             let _ = release_tx.send(());
         }

@@ -8,6 +8,7 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   Non-zero only for a durable `:workflow` class with WAL on disk; `0` for a fresh
   spawn, a stream operative, or an opted-out workflow one.
   """
+  # async: false: writes Application env; a shared on-disk root.
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.Replay

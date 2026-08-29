@@ -8,6 +8,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
   `ControlChannel` watchdog's (runner-controller-connection-healing, D1). The
   old `synthesize_disconnect` eviction role was removed from this heartbeat.
   """
+  # async: false: the primary Logger; registered runner channels.
   use ExUnit.Case, async: false
 
   # The stuck-caller sweep logs at warn by design; capture so a green run stays
@@ -55,6 +56,6 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
     assert {:noreply, %{response_refs: refs}} = ControlUnit.handle_info(:heartbeat, state)
 
     assert Map.has_key?(refs, ref)
-    refute_receive {_ref, {:error, :timeout}}, 50
+    refute_received {_ref, {:error, :timeout}}
   end
 end

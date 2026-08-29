@@ -5,6 +5,7 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
   authenticates with the real secret while the returned/persisted opts carry
   only a redacted placeholder.
   """
+  # async: false: Mimic global mode; Mimic stubs; OS environment variables.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -17,7 +18,7 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
 
   defp fake_client_stubs(test_pid) do
     stub(KafkaEx, :start_link_worker, fn :no_name, worker_opts ->
-      client = spawn(fn -> Process.sleep(:infinity) end)
+      client = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
       send(test_pid, {:client_started, client, worker_opts})
       {:ok, client}
     end)

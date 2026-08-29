@@ -5,6 +5,8 @@ defmodule Flezha.State.WalWriterCreditTest do
   `EntityMailboxStatus` suppression for credit-speaking sessions.
   """
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
@@ -69,11 +71,11 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert sync(pid) == 1
 
     # Append alone mints nothing.
-    refute_receive {:credit_drained, _, _}, 100
+    refute_received {:credit_drained, _, _}
 
     :ok = WalWriter.fsync(pid)
     assert_receive {:credit_drained, @session, 100}
-    refute_receive {:credit_drained, _, _}, 100
+    refute_received {:credit_drained, _, _}
   end
 
   test "a dedup-dropped Change releases its bytes immediately", %{pid: pid} do
@@ -165,7 +167,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
       # Telemetry still fires for in-process observers…
       # …but no wire signal is shipped.
-      refute_receive {:ctl_async, _, {:entity_mailbox_status, _}}, 200
+      refute_received {:ctl_async, _, {:entity_mailbox_status, _}}
     end
 
     test "legacy session keeps the byte-for-byte EntityMailboxStatus wire signal", %{pid: pid} do

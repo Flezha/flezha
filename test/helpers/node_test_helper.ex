@@ -389,28 +389,57 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   @doc """
-  Poll `fun` every 50 ms until it returns a truthy value (returned) or
-  `timeout_ms` elapses (returns the last falsy result). The shared home for
-  the wait loop every system/e2e test used to carry privately.
+  Poll `fun` every `interval_ms` until it returns a truthy value (returned) or
+  `timeout_ms` elapses (returns the last falsy result). The one polling loop in
+  the suite: a state read is the settle signal of last resort, and its interval
+  is the suite's one deliberate sleep.
   """
-  def wait_until(fun, timeout_ms) do
+  def wait_until(fun, timeout_ms, interval_ms \\ 50) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline)
+    do_wait_until(fun, deadline, interval_ms)
   end
 
-  defp do_wait_until(fun, deadline) do
+  defp do_wait_until(fun, deadline, interval_ms) do
     case fun.() do
       falsy when falsy in [nil, false] ->
         if System.monotonic_time(:millisecond) >= deadline do
           falsy
         else
-          Process.sleep(50)
-          do_wait_until(fun, deadline)
+          Process.sleep(interval_ms)
+          do_wait_until(fun, deadline, interval_ms)
         end
 
       truthy ->
         truthy
     end
+  end
+
+  @doc """
+  Block until told to `:unpark` — the body of a placeholder process that has to
+  stay alive for the test's duration (`spawn(&park/0)`, `spawn_link(&park/0)`).
+  """
+  def park(), do: receive(do: (:unpark -> :ok))
+
+  @doc """
+  Wait until `operative_id`'s primary data stream is bound. `start_operative/2`
+  returns once the runner has accepted the operative over the control channel;
+  the runner opens its data stream separately, and until the acceptor binds it
+  an `io_in` cast is dropped (`nil_drops`) — a tier-on input is journaled but
+  never forwarded. The first input of a scenario that counts outputs waits here.
+  """
+  def await_stream_bound(namespace, operative_id, timeout_ms \\ 30_000) do
+    wait_until(
+      fn ->
+        with {:ok, pid} <-
+               Flezha.Service.OperativeManager.get_operative_pid(namespace, operative_id),
+             %{channel: channel, init_error: nil} when channel != nil <- :sys.get_state(pid) do
+          GenServer.call(channel, :stream_ref_status) != nil
+        else
+          _ -> false
+        end
+      end,
+      timeout_ms
+    )
   end
 
   @doc """

@@ -10,6 +10,8 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
   source and owns the ring-buffer polling.
   """
 
+  # async: false: a shared on-disk root.
+
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}

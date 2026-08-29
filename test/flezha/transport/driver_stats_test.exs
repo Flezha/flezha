@@ -32,10 +32,14 @@ defmodule Flezha.Transport.DriverStatsTest do
 
   test "loop heartbeat advances while the driver thread is alive", %{server: server} do
     first = Native.driver_stats(server)
-    Process.sleep(200)
-    second = Native.driver_stats(server)
 
-    assert second.loop_iterations > first.loop_iterations
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> Native.driver_stats(server).loop_iterations > first.loop_iterations end,
+             5_000
+           ),
+           "the driver loop's heartbeat never advanced"
+
+    second = Native.driver_stats(server)
     assert second.now_ms >= first.now_ms
     # last_loop_ms is fresh relative to now (driver is looping, not wedged).
     assert second.now_ms - second.last_loop_ms < 1_000

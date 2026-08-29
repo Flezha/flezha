@@ -15,6 +15,8 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   alias Flezha.Plugin.Provider.Kafka
   alias Flezha.Plugin.Provider.Kafka.{ProducerSup, WorkerRegistry}
 
+  # async: false: Mimic global mode; Mimic stubs; the primary Logger.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -291,11 +293,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
           idempotent: false
         })
 
-      # Send simulates a 30 s broker round-trip — pre-change this would block
-      # the chain caller until the GenServer.call timeout. With cast_enqueue
-      # the chain returns immediately.
+      # Send never answers — a broker round-trip that outlives the test — so a
+      # chain that waited on it would block until the GenServer.call timeout.
+      # With cast_enqueue the chain returns immediately.
       :sys.replace_state(producer_pid, fn state ->
-        %{state | send_fn: fn _w, _r, _ns -> Process.sleep(30_000) end}
+        %{state | send_fn: fn _w, _r, _ns -> FlezhaTest.Helper.NodeTestHelper.park() end}
       end)
 
       ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "x", metadata: %{}}

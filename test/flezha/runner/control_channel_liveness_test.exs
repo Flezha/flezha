@@ -71,7 +71,7 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
     state = state("ex_ok", now - div(window_ms(), 3))
 
     assert {:noreply, ^state} = ControlChannel.handle_info(:liveness_tick, state)
-    refute_receive {:liveness_timeout, _m, _meta}, 100
+    refute_received {:liveness_timeout, _m, _meta}
   end
 
   test "an inbound control_ping is the liveness signal — it bumps last_seen" do
@@ -81,7 +81,12 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
     on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
     before = :sys.get_state(pid).last_seen
-    Process.sleep(5)
+    # `last_seen` is a millisecond stamp; the clock has to move for a bump to show.
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> System.monotonic_time(:millisecond) > before end,
+             1_000,
+             1
+           )
 
     send(pid, {:flz_data, 1, "control_ping", "ka-nonce", %{}})
     # :sys.get_state is FIFO-ordered after the send, so the ping is processed.

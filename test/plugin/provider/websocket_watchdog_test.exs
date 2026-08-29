@@ -11,6 +11,8 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
   Fresh's reply form rather than a re-entrant `Fresh.send/2`.
   """
 
+  # async: false: global telemetry handlers.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Websocket
@@ -71,9 +73,10 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
       # exit with {:shutdown, :idle_timeout}.
       s = state(idle_timeout_ms: 100, ignore_pattern: "heartbeat", last_data_frame_at: 0)
 
+      # `last_data_frame_at: 0` is already older than any window; only the
+      # heartbeats' refresh of `last_frame_at` keeps the feed alive.
       s =
         Enum.reduce(1..3, s, fn _, acc ->
-          Process.sleep(40)
           {:ok, ns} = Websocket.handle_in({:text, ~s({"event":"heartbeat"})}, acc)
           ns
         end)
@@ -93,7 +96,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
         spawn_monitor(fn ->
           s = state(idle_timeout_ms: 100, last_frame_at: stale, last_data_frame_at: stale)
           Websocket.handle_info(:idle_check, s)
-          Process.sleep(500)
+          FlezhaTest.Helper.NodeTestHelper.park()
         end)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_000
@@ -178,7 +181,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
         )
 
       assert {:ok, _} = Websocket.handle_info(:idle_check, s)
-      refute_receive {:telemetry, [:flezha, :ws, :resubscribe], _, _}, 200
+      refute_received {:telemetry, [:flezha, :ws, :resubscribe], _, _}
     end
   end
 
@@ -220,7 +223,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
       # do not retry every tick. No re-subscribe telemetry is emitted.
       assert {:ok, ns} = Websocket.handle_info(:idle_check, s)
       assert ns.last_resubscribe_at >= now
-      refute_receive {:telemetry, [:flezha, :ws, :resubscribe], _, _}, 200
+      refute_received {:telemetry, [:flezha, :ws, :resubscribe], _, _}
     end
   end
 
@@ -232,6 +235,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
     test "a stale last_frame_at during reconnect does not exit with :idle_timeout" do
       attach_telemetry([:flezha, :ws, :idle_reconnect])
       stale = :erlang.monotonic_time(:millisecond) - 500
+      parent = self()
 
       {pid, ref} =
         spawn_monitor(fn ->
@@ -244,11 +248,14 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
             )
 
           Websocket.handle_info(:idle_check, s)
-          Process.sleep(500)
+          # Reached only when the check did not exit the process.
+          send(parent, :checked)
+          FlezhaTest.Helper.NodeTestHelper.park()
         end)
 
-      refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 300
-      refute_receive {:telemetry, [:flezha, :ws, :idle_reconnect], _, _}, 50
+      assert_receive :checked, 1_000
+      refute_received {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}
+      refute_received {:telemetry, [:flezha, :ws, :idle_reconnect], _, _}
       Process.exit(pid, :kill)
     end
   end

@@ -12,7 +12,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIgnorePatternTest do
 
   # fails when: heartbeat-only frames mask data silence and the watchdog never fires
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Websocket
 

@@ -8,6 +8,7 @@ defmodule Flezha.Service.CliManagerSendTest do
   success verdicts are asserted in-process; an error exit is exercised by a live
   CLI run in the change's verification.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

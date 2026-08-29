@@ -124,14 +124,14 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     table = Table.new(@catalog)
     {:ok, table} = Table.subscribe(table, "p1", plugin)
 
-    refute_receive {:activated, _}, 50
+    refute_received {:activated, _}
 
     {table, _} = Table.bulk_activate(table)
     assert_receive {:activated, :first}, 200
     assert Table.phase(table, "p1") == :running
 
     {table, _} = Table.bulk_activate(table)
-    refute_receive {:activated, _}, 50
+    refute_received {:activated, _}
     assert Table.phase(table, "p1") == :running
   end
 
@@ -292,7 +292,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       {table, []} = activate_quietly(subscribed(DefiniteHealthProvider))
 
       assert Table.health(table) == %{"p1" => {:unhealthy, :upstream_down}}
-      refute_receive {:fail_open, _, _}, 100
+      refute_received {:fail_open, _, _}
     end
   end
 end

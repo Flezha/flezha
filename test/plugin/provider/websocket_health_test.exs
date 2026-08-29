@@ -53,8 +53,9 @@ defmodule Flezha.Plugin.Provider.WebsocketHealthTest do
 
   test "unhealthy when the connection pid is dead" do
     pid = liveness_stub(10, 10)
+    ref = Process.monitor(pid)
     Process.exit(pid, :kill)
-    Process.sleep(20)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 1_000
     assert Websocket.health(%{owned_pid: pid, idle_timeout_ms: 1_000}) == {:unhealthy, :not_alive}
   end
 

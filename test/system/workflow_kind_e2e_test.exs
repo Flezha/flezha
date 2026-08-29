@@ -11,26 +11,38 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   use FlezhaTest.SystemCase, capability: :workflow
 
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
+
+  alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
-  alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.PortPilot
   alias Flezha.Service.OperativeManager
 
   @namespace "task_kind_e2e"
   @factory "echo_workflow"
 
-  setup do
+  # One fleet for the module: every scenario names its own operative.
+  setup_all do
+    {port, _ce_id} = NodeTestHelper.start_runner_port(@namespace)
+
     on_exit(fn ->
       try do
-        OperativeManager.stop_all_operatives(@namespace)
+        FleetManager.stop_namespace(@namespace)
       catch
         _, _ -> :ok
       end
 
+      ensure_port_dead(port)
+    end)
+
+    :ok
+  end
+
+  setup do
+    on_exit(fn ->
       try do
-        FleetManager.stop_namespace(@namespace)
+        OperativeManager.stop_all_operatives(@namespace)
       catch
         _, _ -> :ok
       end
@@ -41,9 +53,6 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   @tag :task_kind_e2e
   test "task runs once on start and is deregistered on completion" do
-    {port, _ce_id} = start_runner()
-    on_exit(fn -> ensure_port_dead(port) end)
-
     operative_id = "task_e2e_#{System.unique_integer([:positive])}"
 
     builder = %Builder{
@@ -68,55 +77,5 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   defp registered?(operative_id) do
     match?({:ok, pid} when is_pid(pid), HubManager.get_pid(@namespace, operative_id))
-  end
-
-  defp start_runner() do
-    {:ok, current_path} = :file.get_cwd()
-
-    command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
-        "--target-dir=./target -- " <> @namespace
-
-    EventManager.add_handler(:runner_connected_event)
-    {port, _command} = PortPilot.open_port(command, transport: :uds)
-
-    ce_id =
-      receive do
-        {:runner_connected_event, {@namespace, ce_id}} -> ce_id
-      after
-        120_000 -> raise "compute engine never connected"
-      end
-
-    EventManager.rem_handler(:runner_connected_event)
-    {port, ce_id}
-  end
-
-  defp wait_until(fun, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_until(fun, deadline)
-  end
-
-  defp do_wait_until(fun, deadline) do
-    cond do
-      fun.() ->
-        true
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        false
-
-      true ->
-        Process.sleep(25)
-        do_wait_until(fun, deadline)
-    end
-  end
-
-  defp ensure_port_dead(port) do
-    if is_port(port) and Enum.member?(:erlang.ports(), port) do
-      try do
-        Port.close(port)
-      catch
-        _, _ -> :ok
-      end
-    end
   end
 end

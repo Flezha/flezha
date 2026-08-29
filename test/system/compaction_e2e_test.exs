@@ -36,6 +36,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   @factory "store_input"
   @procedure "store_input_procedure"
 
+  # One scenario, one runner.
   setup do
     prev_age = Application.get_env(:flezha, :compact_after_age_ms)
     prev_timeout = Application.get_env(:flezha, :compaction_timeout_ms)
@@ -81,6 +82,9 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 
+    assert NodeTestHelper.await_stream_bound(@namespace, operative_id),
+           "the data stream never bound"
+
     # Grow the WAL with changeful inputs (each PushText is one Change record).
     for i <- 1..50 do
       OperativeManager.send_io(operative_id, @namespace, "line-#{i}-#{operative_id}", %{
@@ -104,11 +108,12 @@ defmodule FlezhaTest.System.CompactionE2ETest do
 
     on_exit(fn -> :telemetry.detach(done_id) end)
 
-    # Arm the age trigger low and force a sweep. `oldest_unsnapshotted_at` is
-    # already older than 1 ms by the time we sweep, so the age branch fires.
+    # Arm the age trigger low and force a sweep with the Entity's oldest
+    # un-snapshotted record already past it.
     Application.put_env(:flezha, :compact_after_age_ms, 1)
     Application.put_env(:flezha, :compaction_timeout_ms, 30_000)
-    Process.sleep(50)
+    {:ok, writer} = Flezha.State.Supervisor.lookup(entity_id)
+    Flezha.State.TestHelpers.age_writer(writer, 50)
     :ok = Flezha.State.Watchdog.sweep_now()
 
     assert_receive {:compaction_completed, %{operative: ^operative_id, procedure: @procedure}},

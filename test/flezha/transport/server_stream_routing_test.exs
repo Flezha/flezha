@@ -9,6 +9,7 @@ defmodule Flezha.Transport.ServerStreamRoutingTest do
   the exact stream it arrived on — not an arbitrary pending one — and so closed
   streams (e.g. `nc -zU` liveness probes) are cleaned up instead of accumulating.
   """
+  # async: false: Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
 

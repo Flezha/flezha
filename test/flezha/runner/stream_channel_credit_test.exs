@@ -6,6 +6,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   reset, and per-Entity receiver isolation.
   """
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -140,7 +142,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       # Follow-up frames do not re-offer and stay legacy.
       :ok = push_frame(ctx.channel, state_change_frame(ctx.class, "k1", 1, "two"))
-      refute_receive {:init_offered, _}, 200
+      refute_receive {:init_offered, _}, 100
       assert counters_row(ctx.runner_id, ctx.name).credit_active == 0
       await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 1 end)
     end
@@ -164,7 +166,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       writer = writer_pid({ctx.class, "op1", "k1"})
       await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 0 end)
-      refute_receive {:init_offered, _}, 200
+      refute_receive {:init_offered, _}, 100
       assert counters_row(ctx.runner_id, ctx.name).credit_active == 0
     end
   end
@@ -193,7 +195,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       assert row.credit_ledger_level == 16 * 1024 * 1024 - total
 
       # Stalled fsync (the batcher is stubbed out): nothing is minted.
-      refute_receive {:ctl_async, _, {:credit_grant, _}}, 300
+      _ = GenServer.call(ctx.channel, :stream_ref_status)
+      refute_received {:ctl_async, _, {:credit_grant, _}}
 
       # One explicit fsync covering all three records mints exactly ONE
       # batched grant for the full freed byte count — never per record.
@@ -205,7 +208,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       assert runner_id == ctx.runner_id
       assert bytes == total
-      refute_receive {:ctl_async, _, {:credit_grant, _}}, 200
+      _ = GenServer.call(ctx.channel, :stream_ref_status)
+      refute_received {:ctl_async, _, {:credit_grant, _}}
 
       await(fn ->
         counter(ctx.runner_id, ctx.name, :credit_ledger_level) == 16 * 1024 * 1024
@@ -316,7 +320,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       send(ctx.channel, {:credit_drained, init1.stream_id, 999_999})
       _ = GenServer.call(ctx.channel, :stream_ref_status)
 
-      refute_receive {:ctl_async, _, {:credit_grant, _}}, 200
+      refute_received {:ctl_async, _, {:credit_grant, _}}
       assert counters_row(ctx.runner_id, ctx.name).credit_ledger_level == level
     end
   end

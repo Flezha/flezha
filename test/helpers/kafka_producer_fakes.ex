@@ -85,12 +85,7 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
 
   defp respond({:delayed, value, delay_ms}) do
     ref = make_ref()
-    worker = self()
-
-    spawn(fn ->
-      Process.sleep(delay_ms)
-      send(worker, {:kafka_ex_response, ref, value})
-    end)
+    Process.send_after(self(), {:kafka_ex_response, ref, value}, delay_ms)
 
     {:ok, ref}
   end

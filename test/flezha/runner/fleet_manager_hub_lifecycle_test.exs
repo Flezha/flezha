@@ -11,6 +11,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   real (but operative-less) ProcessHub, injecting a registry row the way
   `HubManagerRegistryTest` does — no SDK / no runner process needed.
   """
+  # async: false: writes Application env; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   import FlezhaTest.Helper.HubRegistryTestHelper

@@ -9,6 +9,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
   Uses the 4-tuple ControlChannel constructor with a capturing `write_fun`,
   mirroring `ControlChannelProcCommitTest`.
   """
+  # async: false: the live controller and its fleet; registered runner channels.
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.{ControlChannel, FleetManager}
@@ -62,7 +63,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
     # Dispatch completed (the cast is on its way); fire-and-forget = no frame
     # written back.
     _ = :sys.get_state(control_channel)
-    refute_receive {:test_writer_called, _, _}, 200
+    refute_received {:test_writer_called, _, _}
 
     # The cast crosses a process boundary, so poll for the applied set.
     assert eventually(fn ->
@@ -78,17 +79,5 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
     assert FleetManager.runners_for_factory(@namespace, "alpha") == []
   end
 
-  defp eventually(fun, attempts \\ 50) do
-    cond do
-      fun.() ->
-        true
-
-      attempts == 0 ->
-        false
-
-      true ->
-        Process.sleep(10)
-        eventually(fun, attempts - 1)
-    end
-  end
+  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 500, 10)
 end

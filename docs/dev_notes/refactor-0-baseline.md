@@ -132,6 +132,8 @@ instead of 12, half of them re-wrapping lines the SDK had wrapped at 100.
 
 ## Naming gates
 
+<!-- kind-naming-record:begin -->
+<!-- overflow-naming-record:begin -->
 **Fixed at the source, with one allowlist row widened rather than added.** The
 kind gate's 24 offences were wording (`TTL-bounded` → `TTL-expiring`,
 `Unbounded:` → `No cap:`, a test renamed `…has_a_time_limit…`, the PHP fixture
@@ -142,6 +144,8 @@ went from `ruby_glue.rs` to `flz_core_ffi/src/`. The overflow gate's five were
 four spec lines (`Block`-policy → `DropNothing`-policy in
 `python-sdk-concurrency`, edited directly with no delta) and one dev note that
 MENTIONS the retired header, wrapped in an `overflow-naming-record` block.
+<!-- overflow-naming-record:end -->
+<!-- kind-naming-record:end -->
 
 ## Stale claims, refuted by measurement
 

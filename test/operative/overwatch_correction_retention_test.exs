@@ -8,6 +8,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
   But a one-line declaration can commit the controller to real disk, so a floor
   raised above its configured value is announced.
   """
+  # async: false: writes Application env; a shared on-disk root; global telemetry handlers.
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.ClassRegistry
@@ -81,7 +82,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
     assert InputLog.hold_window_ms(class) == 600_000
     assert PersistenceResolver.compact_after_age_ms(class) == 600_000
 
-    refute_receive {^ref, _, _}, 50
+    refute_received {^ref, _, _}
   end
 
   test "an age floor of 0 is satisfied, not raised — the polarity trap" do
@@ -98,6 +99,6 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
     assert :ok = ClassRegistry.announce_derived_retention(class, 60_000)
 
     assert PersistenceResolver.compact_after_age_ms(class) == 0
-    refute_receive {^ref, _, _}, 50
+    refute_received {^ref, _, _}
   end
 end

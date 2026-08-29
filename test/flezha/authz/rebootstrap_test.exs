@@ -5,6 +5,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
   tokens), and the next boot re-enters the ordinary bootstrap flow with a
   fresh token.
   """
+  # async: false: a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog

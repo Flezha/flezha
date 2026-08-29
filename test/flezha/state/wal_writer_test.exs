@@ -1,4 +1,5 @@
 defmodule Flezha.State.WalWriterTest do
+  # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
@@ -152,7 +153,7 @@ defmodule Flezha.State.WalWriterTest do
 
       # Nothing but the pulled snapshot clears the wait, so the next gap frame
       # after the interval must drive another pull rather than shed forever.
-      Process.sleep(@retry_interval_ms + 20)
+      TestHelpers.age_writer(srv, @retry_interval_ms + 20)
       assert :awaiting_baseline = WalWriter.append(srv, 5002, header, "d2", "exec-cold")
       assert_receive {:resync_called, ^pid, opts}, 1_000
       assert opts[:reason] == :baseline_seed
@@ -174,7 +175,7 @@ defmodule Flezha.State.WalWriterTest do
       assert WalWriter.last_persisted_seq(srv) == 5006
 
       # A healed Entity stops pulling.
-      Process.sleep(@retry_interval_ms + 20)
+      TestHelpers.age_writer(srv, @retry_interval_ms + 20)
       assert :ok = WalWriter.append(srv, 5007, header, "d4", "exec-cold")
       refute_receive {:resync_called, _, _}, 50
     end

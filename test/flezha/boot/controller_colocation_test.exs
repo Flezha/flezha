@@ -9,6 +9,7 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
   stream socket, and a state root another controller is writing, which is two
   unsynchronised writers over one entity WAL tree.
   """
+  # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.StateRootLock

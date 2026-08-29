@@ -2,6 +2,8 @@ defmodule FlezhaTest.Runner.StreamSupTest do
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamSup
 
+  # async: false: registered runner channels.
+
   use ExUnit.Case, async: false
 
   describe "bind_stream_to_first_nil/2" do

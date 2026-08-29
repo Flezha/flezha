@@ -8,6 +8,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   state ships no restore at all, so a journal delivered there would never arrive
   and the driver would resume at iteration 0 on every wake.
   """
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
 

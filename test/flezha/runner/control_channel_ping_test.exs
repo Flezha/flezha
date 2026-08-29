@@ -42,7 +42,9 @@ defmodule Flezha.Runner.ControlChannelPingTest do
 
     send(pid, {:flz_data, 1, "control_ping", "x", %{}})
 
-    refute_receive :wrote, 200
+    # The ping has been handled once the channel answers a call.
+    _ = :sys.get_state(pid)
+    refute_received :wrote
     assert Process.alive?(pid)
 
     GenServer.stop(pid)

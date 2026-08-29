@@ -203,6 +203,35 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
+  Return once every Entity of `operative_id` has a transactional outbox that
+  owes nothing: each durable entry dispatched and confirmed by its sinks.
+  Everything the sink will ever forward for the inputs so far is in the
+  caller's mailbox after this.
+  """
+  def await_outbox_drained(operative_id, timeout_ms \\ 30_000) do
+    NodeTestHelper.wait_until(
+      fn ->
+        case Flezha.State.Registry.entities_of(operative_id) do
+          [] -> false
+          entities -> Enum.all?(entities, &outbox_drained?/1)
+        end
+      end,
+      timeout_ms
+    )
+  end
+
+  defp outbox_drained?(entity_id) do
+    case Flezha.State.Supervisor.lookup(entity_id) do
+      {:ok, writer} ->
+        state = :sys.get_state(writer)
+        state.outbox_awaiting == %{} and :queue.is_empty(state.pending_outbox)
+
+      :error ->
+        false
+    end
+  end
+
+  @doc """
   Every keyed output the `BeamMsgForward` sink has forwarded to this process,
   as `{payload, metadata}` — WITHOUT consuming the mailbox, so a poll can be
   retried and the full history audited afterwards with `drain_outputs/0`.

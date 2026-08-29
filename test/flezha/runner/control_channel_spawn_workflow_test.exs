@@ -9,6 +9,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   Uses the 4-tuple ControlChannel constructor with a capturing `write_fun`,
   mirroring `ControlChannelUpdateFactoriesTest`.
   """
+  # async: false: Mimic global mode; Mimic stubs; registered runner channels.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -120,16 +121,17 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
     parent = self()
 
     expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy ->
-      send(parent, :resolving)
-      Process.sleep(300)
+      send(parent, {:resolving, self()})
+      FlezhaTest.Helper.NodeTestHelper.park()
       :spawned
     end)
 
     send_request(channel, instance_id: "w1", factory_id: "worker")
 
-    assert_receive :resolving, 1_000
+    assert_receive {:resolving, resolver}, 1_000
     # The channel answers its own calls while the resolution is still running.
     assert %{} = :sys.get_state(channel)
+    send(resolver, :unpark)
     assert {"ref-spawn", %{outcome: "spawned"}} = await_response()
   end
 end

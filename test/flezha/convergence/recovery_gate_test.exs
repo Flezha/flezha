@@ -8,6 +8,8 @@ defmodule Flezha.Convergence.RecoveryGateTest do
   timeout contract.
   """
 
+  # async: false: the primary Logger; registered runner channels; node-global tables.
+
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.{Intent, RecoveryGate, Snapshot}

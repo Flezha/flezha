@@ -12,6 +12,8 @@ defmodule Flezha.State.RecoveryForOverwatchTest do
   observed) is structurally impossible on the new path.
   """
 
+  # async: false: Mimic stubs; the live controller and its fleet.
+
   use ExUnit.Case, async: false
 
   alias Flezha.State.Recovery

@@ -107,10 +107,11 @@ defmodule FlezhaTest do
 
     assert :ok === OperativeManager.stop_operative(@default_namespace, operative_id)
 
-    # TODO: add hook instead to listen to process removal.
-    Process.sleep(100)
-
-    assert OperativeManager.exist?(@default_namespace, operative_id) === false
+    assert NodeTestHelper.wait_until(
+             fn -> not OperativeManager.exist?(@default_namespace, operative_id) end,
+             5_000
+           ),
+           "the stopped operative is still registered"
   end
 
   test "operative adding non existing factory" do
@@ -565,7 +566,7 @@ defmodule FlezhaTest do
     # Make sure all the operatives are migrated to the other runner. The
     # reroute rebinds each operative off the disconnect handler and commits
     # only on a confirmed migrate, so the tags land asynchronously.
-    assert eventually(
+    assert NodeTestHelper.wait_until(
              fn ->
                OperativeManager.operative_registry(namespace)
                |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, metadata}} ->
@@ -651,7 +652,7 @@ defmodule FlezhaTest do
     # and the global recovery gate are non-deterministic, so drive the real
     # reconcile path synchronously via `tick_now/0` on each poll and wait
     # for the reseat to land.
-    assert eventually(
+    assert NodeTestHelper.wait_until(
              fn ->
                Flezha.Convergence.Loop.tick_now()
 
@@ -676,7 +677,7 @@ defmodule FlezhaTest do
     # misbound, so a later tick won't re-dispatch. Re-drive the documented,
     # idempotent restore re-dispatch path per operative each poll so a restore
     # that raced the new runner's readiness retries until state converges.
-    assert eventually(
+    assert NodeTestHelper.wait_until(
              fn ->
                for {operative_id, _info} <- operative_infos do
                  case HubManager.get_pid(namespace, operative_id) do
@@ -842,7 +843,7 @@ defmodule FlezhaTest do
     # still has to finish binding and take the handover before it can answer for
     # its Entities. Poll that out — migrated-with-state is an eventual property,
     # and reading it at the first converged tag races the bind.
-    assert eventually(
+    assert NodeTestHelper.wait_until(
              fn ->
                Enum.all?(operative_infos, fn {operative_id, _info} ->
                  OperativeManager.get_entity_state(namespace, operative_id) ===
@@ -882,7 +883,7 @@ defmodule FlezhaTest do
     :ok = GenServer.call(ow, {:plugin_unsubscribe, plugin_id})
     refute subscribed_plugin?(ow, plugin_id)
 
-    assert eventually(
+    assert NodeTestHelper.wait_until(
              fn ->
                Flezha.Convergence.Loop.tick_now()
                subscribed_plugin?(ow, plugin_id)
@@ -929,7 +930,7 @@ defmodule FlezhaTest do
 
     FlezhaTest.SickProvider.set_health({:unhealthy, :test_sick})
 
-    assert eventually(
+    assert NodeTestHelper.wait_until(
              fn ->
                Flezha.Convergence.Loop.tick_now()
                FlezhaTest.SickProvider.activations() > activations_before
@@ -955,25 +956,5 @@ defmodule FlezhaTest do
       %{extensions: %{plugins: plugins}} -> Map.has_key?(plugins, plugin_id)
       _ -> false
     end
-  end
-
-  defp eventually(fun, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    do_eventually = fn do_self, fun, deadline ->
-      cond do
-        fun.() ->
-          true
-
-        System.monotonic_time(:millisecond) >= deadline ->
-          false
-
-        true ->
-          Process.sleep(25)
-          do_self.(do_self, fun, deadline)
-      end
-    end
-
-    do_eventually.(do_eventually, fun, deadline)
   end
 end

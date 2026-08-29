@@ -11,6 +11,8 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
   surfaced via `[:flezha, :workflow, :failed]` telemetry — no retry.
   """
 
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+
   use ExUnit.Case, async: false
   use Mimic
 
@@ -69,7 +71,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
     assert meta.status == "ok"
     assert meta.result == "the-answer"
 
-    refute_receive {:telemetry, [:flezha, :workflow, :failed], _m, _meta}, 200
+    refute_received {:telemetry, [:flezha, :workflow, :failed], _m, _meta}
   end
 
   test "WorkflowCompleted error → failure telemetry + identical teardown" do
@@ -121,7 +123,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
     assert meta.result == "partial"
 
     # Cancellation is not a failure.
-    refute_receive {:telemetry, [:flezha, :workflow, :failed], _m, _meta}, 200
+    refute_received {:telemetry, [:flezha, :workflow, :failed], _m, _meta}
   end
 
   test "the teardown waits until the Overwatch has run the completion's direct outputs" do
@@ -159,8 +161,10 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
     payload = build_workflow_completed_payload("task-direct", "ok", "", "", "ref-direct", 1)
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    # Not torn down while that output is still on its way...
-    refute_receive {:stop_operative_called, "task-direct"}, 300
+    # Not torn down while that output is still on its way: the channel has
+    # handled the completion once it answers a call.
+    _ = :sys.get_state(control_channel)
+    refute_received {:stop_operative_called, "task-direct"}
 
     # ...and torn down once the Overwatch has run it.
     send(overwatch, :output_ran)

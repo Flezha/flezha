@@ -12,6 +12,7 @@ defmodule Flezha.State.DurabilityTierTest do
   `WalWriter`: the tier reads the on-disk framing, so writing that framing
   directly is both the real input and the only way to pin a seq range exactly.
   """
+  # async: false: writes Application env; a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO
@@ -411,7 +412,13 @@ defmodule Flezha.State.DurabilityTierTest do
       TestHelpers.append_wal(ctx.entity_id, 4..5)
       Stub.set_down(true)
       assert {:error, :backend_down} = Shipper.ship_now(ref)
-      Process.sleep(5)
+      # The breach is a millisecond past the failed ship.
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> DurabilityTier.breaches() != [] end,
+               1_000,
+               1
+             )
+
       assert [%{ref: ^ref}] = DurabilityTier.breaches()
 
       # ...and then another controller takes it over. A handover is not a
@@ -450,8 +457,13 @@ defmodule Flezha.State.DurabilityTierTest do
       TestHelpers.append_wal(ctx.entity_id, 4..5)
       Stub.set_down(true)
       assert {:error, :backend_down} = Shipper.ship_now(ref)
+      # The breach is a millisecond past the failed ship.
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> DurabilityTier.breaches() != [] end,
+               1_000,
+               1
+             )
 
-      Process.sleep(5)
       assert [%{ref: ^ref}] = DurabilityTier.breaches()
 
       # The breach clears the moment the backend catches up again — an alarm

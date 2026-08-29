@@ -37,6 +37,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   @input_bytes 1_024
   @slow_fsync_ms 1_000
 
+  # One scenario, one runner, under a deliberately slowed fsync path.
   setup do
     prev_fsync = Application.get_env(:flezha, :agent_fsync_interval_ms)
 
@@ -94,6 +95,9 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
+
+    assert NodeTestHelper.await_stream_bound(@namespace, operative_id),
+           "the data stream never bound"
 
     # Prime with ONE input so the first state frame runs the credit
     # handshake, and burst only once the session is credit-speaking —

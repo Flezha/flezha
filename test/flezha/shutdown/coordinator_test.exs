@@ -1,6 +1,7 @@
 defmodule Flezha.Shutdown.CoordinatorTest do
   # async: false — exercises the singleton Coordinator GenServer and the
   # named ETS table. Tests reset state between cases.
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
 
   use Mimic
@@ -100,9 +101,9 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       test_pid = self()
 
       stub(HubManager, :get_running_namespaces, fn ->
-        send(test_pid, :hub_called)
-        # Simulate slow stop so the second caller arrives during drain.
-        Process.sleep(100)
+        # The drain holds until the second caller has queued behind it.
+        send(test_pid, {:hub_called, self()})
+        FlezhaTest.Helper.NodeTestHelper.park()
         []
       end)
 
@@ -117,12 +118,22 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       # Wait until the first caller has entered drain, then issue
       # a second shutdown — it should join.
-      assert_receive :hub_called, 1_000
+      assert_receive {:hub_called, drainer}, 1_000
 
       caller_b =
         Task.async(fn ->
           Coordinator.shutdown(:cli, timeout_ms: 5_000)
         end)
+
+      # Release the drain once the second call is queued behind it.
+      coordinator = Process.whereis(Coordinator)
+
+      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+               fn -> Process.info(coordinator, :message_queue_len) > {:message_queue_len, 0} end,
+               1_000
+             )
+
+      send(drainer, :unpark)
 
       assert :ok = Task.await(caller_a, 5_000)
       assert :ok = Task.await(caller_b, 5_000)
@@ -233,8 +244,9 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       test_pid = self()
       stub_local_operatives()
 
+      # A drain that never returns inside the budget.
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
-        Process.sleep(2_000)
+        FlezhaTest.Helper.NodeTestHelper.park()
         {:ok, %{migrated: 1, forced: 0}}
       end)
 
