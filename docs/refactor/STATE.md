@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 23:21 (supervisor session 2 — area 3 segment E committed `623ba124`)
+**Last updated**: 2026-08-29 23:23 (supervisor session 2 — area 3 segment F running, closes the area)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -62,11 +62,21 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Area 3 segments A–E are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`,
-`9e4b6681`, `623ba124`). **Segment F closes the area**: batch 10b (the
-supervisor-added `procedure::expand` split), then batch 11 — which now opens with the
-supervisor-added 11.0 (`tests/common::prelude`) and ends with the area's ONE
-measurement pass.
+`refactor-3-rust-sdk`, **segment F — the close** (batch 10b: `procedure::expand`;
+batch 11: comments, naming, the D13 string proof, full gates, the area's ONE
+measurement pass, dev notes and hand-over), fresh general-purpose worker, spawned
+2026-08-29 23:23. Checkpoint 6; the supervisor archives, commits and flips the
+ratchets.
+
+Its A/B is the whole area's, and under the rewritten §8 it is the FIRST measurement
+since checkpoint 1: rows 1 and 2 are gates (floors 0.33 % and 0.95 %), rows 3 and 4
+direction only (9.04 % and 6.01 % — they cannot resolve 3 %), row 5 guard, row 6
+direction. Three paired rounds detect, five only on an unbroken direction; a row whose
+binary sha matches its arm is skipped on that evidence. Arms A′/B2/B3/B4 are kept
+under `$SCRATCH/area3/` so a regression bisects instead of re-running.
+
+Area 3 segments A–E are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`,
+`623ba124`).
 
 `sdk/rust` is at **no file over 800, no function over 50, no name over 32**, sleeps
 9 → 3 with each survivor named. Supervisor re-ran the suite independently: 36 binaries,
