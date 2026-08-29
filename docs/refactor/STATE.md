@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 19:56 (supervisor session 2 — area 3 segment A committed `a1bdfa34`)
+**Last updated**: 2026-08-29 20:07 (supervisor session 2 — area 3 segment B running)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -62,8 +62,24 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Area 3 segment A is verified and committed (`a1bdfa34`); segment B (the typed
-tail onto the shared seam, batches 3–4) is next.
+`refactor-3-rust-sdk`, **segment B** (batches 3–4: `TypedBodies<S>` and the typed
+tail onto `settle_effects`, lazy `coalesce`, `snapshot_frame` onto `flz_core::Error`,
+then `dispatcher.rs` under the ceilings), fresh general-purpose worker, spawned
+2026-08-29 20:07. Checkpoint 2 after batch 4. Stages nothing. **This is the area's
+core change** — the typed half of the seam area 1 built.
+
+The supervisor rewrote `tasks.md` 4.8, 6.5 and 8.6 to the new §8: those checkpoints
+now BUILD and sha their arm and record which rows cannot have moved, and no longer
+measure. Only task 11.7 (the area's final checkpoint) measures.
+
+Its acceptance test is task 3.5's: the five byte-pinning tests in
+`entity/flusher.rs`, including
+`effect_record_body_postcard_bytes_are_the_cross_language_fixture`, must pass
+UNEDITED. Those bytes are a cross-language contract every other SDK decodes; a test
+that needs editing means the port is not neutral, and the worker was told to stop and
+report rather than adjust it.
+
+Area 3 segment A is committed (`a1bdfa34`).
 
 Supervisor verification: `cargo check --workspace --all-targets` exit 0 with no
 flags (re-run here — **board finding 0a is closed**), `cargo +nightly fmt --all
