@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 21:43 (supervisor session 2 — area 3 segment D running)
+**Last updated**: 2026-08-29 22:00 (supervisor session 2 — segment D heartbeat 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -76,6 +76,13 @@ to catch. Left unclarified, this was the same self-contradiction that tripped ta
 3.1/3.5.
 
 Segments A (`a1bdfa34`), B (`9f747656`) and C (`0f23dbd1`) are committed.
+
+- last seen 22:00: **both file splits have landed.** `lib.rs` **821 → 157** (the task
+  asked for ~250), `runner_handle.rs` 599 created, and `dispatcher.rs`
+  **1 924 → 663** with an `operative/dispatcher/` directory beside it — so the
+  supervisor-added task 7.5 is done and `files_over_800` should fall by two. Ticks
+  36; a `flezha_runner` suite run is executing. True delta with the new files
+  intent-added: +118 (2 093 in / 1 975 out).
 
 `sdk/rust` `functions_over_50` is **12 → 1** (only `lib.rs:640 remove`, which task 7.2
 owns) and `files_over_800` 9 → 7.
