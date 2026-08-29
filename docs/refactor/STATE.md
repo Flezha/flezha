@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 19:16 (supervisor session 2 — area 3 approved, segment A running)
+**Last updated**: 2026-08-29 19:19 (supervisor session 2 — segment A heartbeat 1, charter §11 amended)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -65,6 +65,19 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 `refactor-3-rust-sdk`, **segment A** (batches 0–2: arm A and the floors, Cargo
 hygiene, the benches onto `flz_core::bench_support`), fresh general-purpose worker,
 spawned 2026-08-29 19:16. Checkpoint 1 after batch 2. Stages nothing.
+
+- last seen 19:19: arms built under `$SCRATCH/area3/`, batches 1–2 in flight
+  (`Cargo.toml`, both SDK benches, `flz_core/src/bench_support.rs`, and
+  `flz_core_ffi/benches/alloc_counter.rs` deleted as the machinery moves down).
+  **`--check` is RED on a blocking area and that is sanctioned**: `flz_core`
+  prod_loc 12 639 → 12 737 (+98 in `bench_support.rs`), the alloc-counter machinery
+  arriving from `flz_core_ffi`. `sdk/rust` cannot depend on `flz_core_ffi`, so §3
+  leaves `flz_core` as the only shared home. Charter §11 amended (`79a8f8da`): lines
+  arriving from a higher layer are not a breach WHEN the change shows a larger
+  deletion in the layers they left, evidenced with per-area numbers, and the lower
+  area is re-baselined at the close. Supervisor's own count so far: +98 against
+  `flz_core_ffi` test −44 and `sdk/rust` test −76 = net −22, batch 2 unfinished.
+  The worker was told not to bend the work to the gate.
 
 **Proposal APPROVED** by the supervisor after one round: all 32 candidates now carry
 a reuse decision or an explicit compliance marker (15 did on first submission; the
