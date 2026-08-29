@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 22:27 (supervisor session 2 — area 3 segment E running)
+**Last updated**: 2026-08-29 23:16 (supervisor session 2 — segment E reported, verifying)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -77,6 +77,36 @@ neither is load.
 
 Area 3 segments A–D are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`);
 segment F opens with the supervisor-added batch **10b**.
+
+- last seen 23:16: **reported at checkpoint 5.** Verified by the supervisor:
+  `files_over_800` **5 → 0**, `long_names` **9 → 0**, sleeps 5 → 3, `functions_over_50`
+  0, `tests/ui/` clean, `cargo +nightly fmt --all --check` clean. A supervisor re-run
+  of the SDK suite is in flight.
+
+  **The flake work is the best in the programme so far.** The worker found that the
+  plain regime (8 threads, idle box) reproduces NEITHER flake — 20/20 before and after
+  — so a green proof there would have meant nothing. It built a stress regime
+  (`--test-threads=32` under `nproc` busy loops) that does reproduce them: flake 1
+  **14/20 → 20/20**, flake 2 **19/20 → 20/20**. It then flagged its own caveat — flake
+  1's before/after populations differ (31 tests → 3), so the binary split is itself
+  part of the cure — and stressed all seven other split binaries at 20 runs each to
+  check. **A third flake was met and fixed** per charter §9:
+  `drop_oldest_evicts_head_and_bumps_oldest_counter` asserts a delta on a
+  process-wide counter while siblings shed concurrently, 16/20 → 20/20.
+- previous 23:00: batch 10's splits have landed — **37 test binaries and not one
+  over 800 lines**. `operative_dispatch.rs` became eight behaviour files,
+  `entity_timers.rs` four (`timer_{durability,firing,lifecycle,surface}`),
+  `operative_topology.rs` three, and task 10.3's renames are in
+  (`drop_nothing_holdback{,_bound}.rs`). Ticks 48 — batch 10 ticks at its end. The
+  two ≥20-run flake proofs are still ahead and are this segment's long pole.
+- previous 22:44: batch 9 essentially done, ticks 48. **`workflow/mod.rs` 4 280 →
+  161** with `workflow/tests/` beside it; `poll_core_tests.rs` split four ways;
+  `route_latest/tests.rs` → `route_latest_tests.rs` (git records it as a rename, so
+  the 9.3 measurement correction is visible as one). 26 files, 5 592 in / 5 284 out.
+  **To check at the checkpoint**: the poll-core split landed at
+  `runner/tests/poll_core/*` where task 9.2 named `runner/poll_core_tests/*` — a
+  deviation from D7's suffix rule that may be an improvement, but needs its reason
+  stated.
 
 `sdk/rust` is at **`functions_over_50` 0** and `files_over_800` 5 (the five remaining
 are test masses batches 9–10 own). `lib.rs` 821 → 157, `dispatcher.rs` 1 921 → 663.
@@ -289,6 +319,19 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 3e **`sdk/rust/tests/ui/*.rs` must NOT be rustfmt-formatted.** Their line numbers
+  are pinned by the `.stderr` snapshots, and `cargo fmt` never reaches them because
+  trybuild compiles them out-of-tree — so a per-file `rustfmt` loop DOES reach them
+  and breaks the snapshots. Segment E's worker hit this, restored all five files
+  byte-identically with `git show HEAD:<path> > <path>` (no checkout/restore/reset),
+  and reported it. Owed a line in the area's dev notes.
+- 3e whole-repo `duplicate_pairs` rose **183 → 235**: fifteen new test binaries each
+  repeat the same `use` header, and `benches/workflow_scaling.rs` now pairs with the
+  seven workflow-fixture files batch 9 split out of one 4 281-line file. Structural,
+  not sloppiness — but `sdk/rust` re-baselines at the area close, so the rise would
+  become the new floor. Added as task **11.0** (a `tests/common::prelude`), with the
+  instruction to report the count in ONE scan mode and to say plainly if the fix does
+  not move it.
 - 3d a stale doc block rode along with `channel_metadata` into
   `sdk/rust/src/operative/dispatcher/emit_sink.rs:344-350`. It documents a function
   that no longer exists, names the RETIRED `Block` overflow policy, and carries a
