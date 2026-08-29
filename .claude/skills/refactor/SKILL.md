@@ -147,16 +147,36 @@ Fail → `SendMessage` to the same worker with the exact findings; row stays
 5. Tell the user in ≤ 5 lines: area, LOC delta, A/B, commit, what is next.
 6. Continue with §0.
 
-## 6. Heartbeat and pacing
+## 6. Heartbeat, stall detection and pacing
 
-While a worker runs you are woken by its completion. As a fallback, schedule a
-wake-up of 1200–1800 s (the loop's `ScheduleWakeup`, `noop: true` when nothing
-changed). On each wake-up update *Current worker → last seen* in `STATE.md`
-with the time, `tasks.md` ticks, and `git diff --stat | tail -1`.
+While a worker runs, the fallback wake-up is **600 s** (never longer). Every
+wake-up is a stall check, not a status note:
 
-Stop the loop (`stop: true`) only when every row is `done`, or when the only
-runnable areas are `blocked` on an entry in *Awaiting the user's decision*.
-Say so in one line.
+1. `ps -eo cmd | grep -E 'cargo|rustc|criterion|mix |beam.smp|mvn|rust_runner|node |python|ruby|php'`
+   — is anything of the worker's running?
+2. the newest file under the scratchpad (`find $SCRATCH -newermt '-10 minutes'`)
+   and any `*DONE*` / marker files the worker's jobs write;
+3. `tasks.md` ticks and `git diff --stat | tail -1` versus the last heartbeat.
+
+**Stalled** = no process of the worker's, nothing written in 10 minutes, ticks
+unchanged. A stalled worker gets a `SendMessage` at once naming the marker
+that exists and the step to take; if it does not respond within one more
+heartbeat, spawn a fresh worker with the resume brief. Never wait a second
+heartbeat "to be sure".
+
+Every worker brief carries: *never end your turn to wait for a background job
+— use the Bash tool's `run_in_background: true` and act on its completion
+notification, never a Monitor; if you must check a job, run one bounded
+check (`timeout 500 bash -c 'until [ -f <marker> ]; do sleep 15; done'`) and
+continue in the same turn.*
+
+Implement segments are **two batches** long so a checkpoint comes every few
+hours, and the supervisor verifies and commits at each.
+
+On each wake-up update *Current worker → last seen* in `STATE.md` with the
+time, ticks, and `git diff --stat | tail -1`. Stop the loop (`stop: true`)
+only when every row is `done`, or when the only runnable areas are `blocked`
+on an entry in *Awaiting the user's decision*. Say so in one line.
 
 ## 7. Blockers
 
