@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 18:40 (supervisor session 2 — area 3 surveying)
+**Last updated**: 2026-08-29 19:16 (supervisor session 2 — area 3 approved, segment A running)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | surveying | | |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | tag `d56b3a11` | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,23 +62,30 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **survey** (read-only), fresh general-purpose worker, spawned
-2026-08-29 18:40. Writes `proposal.md`, `design.md`, `tasks.md`; changes no code.
-Area 2 is done (`e3b6cab3`, archived as `2026-08-29-refactor-2-ffi-veneers`,
-five areas flipped to blocking ratchets). Area 3 (`sdk/rust` + `flezha-macros`) is
-next and its dependency (area 1) is done.
+`refactor-3-rust-sdk`, **segment A** (batches 0–2: arm A and the floors, Cargo
+hygiene, the benches onto `flz_core::bench_support`), fresh general-purpose worker,
+spawned 2026-08-29 19:16. Checkpoint 1 after batch 2. Stages nothing.
 
-Area-2 final A/B verdict, box `moon` on mains: no regression on any row — 7py
-+0.53 % paired median (B9 faster 4/5), 7node settled by a three-arm pass (B9-vs-B4
-−0.13 %, B9-vs-A −0.55 %), row 5 settled by B2-vs-B9 (B9 faster 5/5, −3.54 %) after
-the A-vs-B9 direction proved to be arm A's build path, Ruby direction +2.89 % in
-B9's favour, allocs/elem flat (7.096 → 7.097).
+**Proposal APPROVED** by the supervisor after one round: all 32 candidates now carry
+a reuse decision or an explicit compliance marker (15 did on first submission; the
+charter §2 gap was the only thing sent back). 11 batches in six segments, tag
+`refactor-baseline-3` = `d56b3a11`.
 
-**Method finding that outlives this area: an arm built in a `git worktree` is not
-comparable to one built in the tree.** A Rust binary is not byte-reproducible across
-build paths, and row 5 read +3.5 % against arm A while reading −3.5 % against a
-tree-built arm of the same vintage. Every decisive A/B comparison must be between two
-arms built the same way; arm A stays useful for direction, not for a verdict.
+The survey's own corrections, all verified: the board's "7 jscpd pairs in the SDK
+benches" was area 1's already-closed set — at HEAD there are **21** among the SDK
+benches themselves; `targets.md`'s cross-crate pairs for this area are dead anchors
+measured at `4405cf9d` before area 1 (the concept survives, four live pairs remain);
+and the fourth `wait_until` implementation, `flz_core::test_support::spin_until`, is
+unreachable from `sdk/rust` (`pub(crate)` in a private module) so charter §3 forbids
+the merge — recorded as a decision, not an omission.
+
+**A/B design worth carrying to later areas**: rows 3 and 4
+(`throughput_effectively_once_tiers`) have never been floored by this programme and
+are floored in batch 0.4; row 6 is marked *direction only, never a gate*; and the
+plan mints a **new reference arm A′ at checkpoint 1**, because moving the benches
+onto `bench_support::Settle` removes up to 1 ms of poll latency from inside
+criterion's own measured window (~0.14 % on row 1, the same order as the residue the
+area is chasing) — the instrument moves before the code does.
 
 ## Awaiting the user's decision
 
