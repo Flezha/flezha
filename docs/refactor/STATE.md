@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 21:02 (supervisor session 2 — area 3 segment C running)
+**Last updated**: 2026-08-29 21:19 (supervisor session 2 — segment C heartbeat 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -75,6 +75,16 @@ not the variant the task names), and `TypeMismatch`'s absence of a producer must
 grepped and recorded BEFORE the delete.
 
 Area 3 segments A (`a1bdfa34`) and B (`9f747656`) are committed.
+
+- last seen 21:19: batch 5 done and batch 6 under way (ticks 28). `channel/builder.rs`
+  is gone, replaced by `channel/builder/{mod,issue,state,stream,merge}.rs` at
+  358/192/482/470/162 lines — all under the task's 560 ceiling. `flz_core`'s
+  `host/register.rs` and `workflow/spec.rs` are edited, so the shared `graph_order`
+  (task 6.1) is in flight. True delta with the new modules intent-added: **−284**
+  (2 241 in / 2 525 out).
+  Three `tests/ui/*.stderr` files changed — supervisor checked, and the diff is
+  **path-only** (`src/channel/builder.rs` → `src/channel/builder/stream.rs`), which
+  is what a module split does to trybuild expectations, not a changed diagnostic.
 
 **The typed tail is on the shared seam.** `TypedBuffer<S>` is now an alias for
 `EffectBuffer<TypedBodies<S>>`, `invoke_once`'s tail is one `settle_effects` call,

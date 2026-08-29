@@ -203,7 +203,10 @@ scaffolding into a finished one makes that area's production count rise by
 construction — the ratchet is per-area and cannot see the deletion on the
 other side. Such a rise is accepted at the checkpoint when the change shows a
 LARGER deletion in the layers the code left, per-area numbers printed from
-`--check`, and the lower area is re-baselined at the close. Assertion is not
+`--check`, and the lower area is re-baselined at the close. An excess over that
+deletion is accepted only when it is itself forced by another ceiling of §7,
+named and counted line by line — one blocking rule may not be broken to satisfy
+another in silence. Assertion is not
 enough: no evidence, no exemption. Nothing else exempts a blocking area.
 
 ## 12. The session contract

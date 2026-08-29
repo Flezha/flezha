@@ -3,7 +3,7 @@
 //! is a contract the veneer suites assert substrings of.
 
 use std::any::{Any, TypeId};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::decl::{
@@ -15,13 +15,15 @@ use super::entity::{
     build_host_entity_slot, host_deserialize_unreachable, host_payload_codec,
     host_serialize_unreachable, HostPayload, HostProcedureFacts,
 };
-use crate::channel::{ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy};
+use crate::channel::{
+    ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, ProcedureId, RetryPolicy,
+};
 use crate::error::Error;
 use crate::operative::topology::{
     AckGranularity, BeyondWindowPolicy, CheckpointOutputs, CheckpointPolicy, CorrectionPolicy,
     EntityMode, OperativeTopology, ProcedureDescriptor,
 };
-use crate::workflow::spec::{ProcDag, WorkflowSpec};
+use crate::workflow::spec::{graph_order, GraphOrder, GraphSeed, ProcDag, WorkflowSpec};
 use crate::workflow::{LoopMode, RollbackMode};
 
 /// The body of `flz_core_declare_class`.
@@ -659,15 +661,21 @@ fn host_run_unreachable(
 fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, Error> {
     let root = refuse_dag_shape(topology)?;
     let n = topology.procedures.len();
-    let (parents, children) = inter_proc_edges(topology);
-    let (order, seen) = kahn_order(&parents, &children, root);
+    let GraphOrder {
+        order,
+        parents,
+        children,
+        on_cycle,
+        ..
+    } = graph_order(
+        n,
+        &inter_proc_edges(topology),
+        &[root as ProcedureId],
+        GraphSeed::Roots,
+    );
     if order.len() != n {
-        let missing = topology
-            .procedures
-            .iter()
-            .enumerate()
-            .find(|(i, _)| !seen[*i])
-            .map(|(_, p)| p.name.to_string())
+        let missing = on_cycle
+            .map(|i| topology.procedures[i as usize].name.to_string())
             .unwrap_or_default();
         return Err(Error::Declaration(format!(
             "procedure `{missing}` is on a cycle or not reachable from the entry channel"
@@ -694,11 +702,10 @@ fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, Error> {
     })
 }
 
-/// `(parents, children)` over inter-proc channels, indexed by procedure id.
-fn inter_proc_edges(topology: &OperativeTopology) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
-    let n = topology.procedures.len();
-    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+/// Producer → consumer pairs over the inter-proc channels only: a workflow's
+/// stages are wired to each other, never through the entry channel.
+fn inter_proc_edges(topology: &OperativeTopology) -> Vec<(ProcedureId, ProcedureId)> {
+    let mut edges = Vec::new();
     for channel in &topology.channels {
         if channel.kind != ChannelKind::InterProcedure {
             continue;
@@ -707,11 +714,10 @@ fn inter_proc_edges(topology: &OperativeTopology) -> (Vec<Vec<usize>>, Vec<Vec<u
             continue;
         };
         for edge in &channel.consumers {
-            parents[edge.procedure as usize].push(producer as usize);
-            children[producer as usize].push(edge.procedure as usize);
+            edges.push((producer, edge.procedure));
         }
     }
-    (parents, children)
+    edges
 }
 
 /// The root of a well-shaped chain: one entry channel feeding one procedure,
@@ -746,30 +752,4 @@ fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, Error> {
         }
     }
     Ok(entry.consumers[0].procedure as usize)
-}
-
-/// Kahn's order from `root`, and which procedures it reached.
-fn kahn_order(
-    parents: &[Vec<usize>],
-    children: &[Vec<usize>],
-    root: usize,
-) -> (Vec<u32>, Vec<bool>) {
-    let n = parents.len();
-    let mut in_degree: Vec<usize> = parents.iter().map(Vec::len).collect();
-    let mut order: Vec<u32> = Vec::with_capacity(n);
-    let mut ready: VecDeque<usize> = VecDeque::new();
-    ready.push_back(root);
-    let mut seen = vec![false; n];
-    seen[root] = true;
-    while let Some(node) = ready.pop_front() {
-        order.push(node as u32);
-        for &child in &children[node] {
-            in_degree[child] = in_degree[child].saturating_sub(1);
-            if in_degree[child] == 0 && !seen[child] {
-                seen[child] = true;
-                ready.push_back(child);
-            }
-        }
-    }
-    (order, seen)
 }

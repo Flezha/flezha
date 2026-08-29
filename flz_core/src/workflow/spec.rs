@@ -41,6 +41,115 @@ impl ProcDag {
     }
 }
 
+/// Where a graph walk starts. `Roots` is the single-rooted shape a structured
+/// workflow declares, so a node the roots do not reach is left out of the
+/// order; `EveryIndegreeZero` is the stream shape, where a disconnected node
+/// still takes a position and unreachability is reported separately.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GraphSeed {
+    Roots,
+    EveryIndegreeZero,
+}
+
+/// One graph-shape walk over the procedure nodes: Kahn topological order plus
+/// reachability from the roots. Both declaration surfaces read their shape
+/// refusals off this — the rule is one rule, so its mechanism is one
+/// mechanism, and each caller keeps its own refusal wording.
+pub struct GraphOrder {
+    /// Node ids in Kahn topological order (FIFO — for a tree this is exactly
+    /// BFS from the root, so workflow `proc_idx` numbering stays stable).
+    pub order: Vec<ProcedureId>,
+    /// Node id → position in `order`; `usize::MAX` for a node the walk left
+    /// out.
+    pub pos: Vec<usize>,
+    /// Incoming edges per node, indexed by node id.
+    pub parents: Vec<Vec<usize>>,
+    /// Outgoing edges per node, indexed by node id.
+    pub children: Vec<Vec<usize>>,
+    /// First node unreachable from the roots, if any (meaningful only when
+    /// the graph is acyclic — a cycle already explains unreachability).
+    pub unreachable: Option<ProcedureId>,
+    /// First node the walk left over — on (or strictly downstream of) a cycle.
+    pub on_cycle: Option<ProcedureId>,
+}
+
+/// The edge tables one walk needs: outgoing, incoming, and the incoming count.
+fn adjacency(
+    n: usize,
+    edges: &[(ProcedureId, ProcedureId)],
+) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<usize>) {
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut indegree = vec![0usize; n];
+    for &(producer, consumer) in edges {
+        children[producer as usize].push(consumer as usize);
+        parents[consumer as usize].push(producer as usize);
+        indegree[consumer as usize] += 1;
+    }
+    (parents, children, indegree)
+}
+
+/// Which nodes `roots` reach, following `children`.
+fn reachable(children: &[Vec<usize>], roots: &[ProcedureId]) -> Vec<bool> {
+    let mut reached = vec![false; children.len()];
+    let mut stack: Vec<usize> = roots.iter().map(|&r| r as usize).collect();
+    while let Some(node) = stack.pop() {
+        if std::mem::replace(&mut reached[node], true) {
+            continue;
+        }
+        stack.extend(children[node].iter().copied());
+    }
+    reached
+}
+
+/// Walk `n` nodes over `edges` (producer → consumer pairs), reachable from
+/// `roots`. Merge mappings are irrelevant to shape, so an edge is a pair of
+/// procedure ids.
+pub fn graph_order(
+    n: usize,
+    edges: &[(ProcedureId, ProcedureId)],
+    roots: &[ProcedureId],
+    seed: GraphSeed,
+) -> GraphOrder {
+    let (parents, children, mut indegree) = adjacency(n, edges);
+    let reached = reachable(&children, roots);
+    let unreachable = (0..n).find(|&i| !reached[i]).map(|i| i as ProcedureId);
+
+    let mut queued = vec![false; n];
+    let mut queue: std::collections::VecDeque<usize> = match seed {
+        GraphSeed::Roots => roots.iter().map(|&r| r as usize).collect(),
+        GraphSeed::EveryIndegreeZero => (0..n).filter(|&i| indegree[i] == 0).collect(),
+    };
+    for &node in &queue {
+        queued[node] = true;
+    }
+    let mut order = Vec::with_capacity(n);
+    let mut pos = vec![usize::MAX; n];
+    while let Some(node) = queue.pop_front() {
+        pos[node] = order.len();
+        order.push(node as ProcedureId);
+        for &child in &children[node] {
+            indegree[child] = indegree[child].saturating_sub(1);
+            if indegree[child] == 0 && !queued[child] {
+                queued[child] = true;
+                queue.push_back(child);
+            }
+        }
+    }
+    let on_cycle = (0..n)
+        .find(|&i| pos[i] == usize::MAX)
+        .map(|i| i as ProcedureId);
+
+    GraphOrder {
+        order,
+        pos,
+        parents,
+        children,
+        unreachable,
+        on_cycle,
+    }
+}
+
 /// A workflow class as the registry holds it; `topology` is `None` for the
 /// run-sugar form.
 pub struct WorkflowSpec {
