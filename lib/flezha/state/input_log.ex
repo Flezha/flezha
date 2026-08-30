@@ -185,16 +185,61 @@ defmodule Flezha.State.InputLog do
   Report an Entity's durable consumed-offset (called when an effect record
   carrying `consumed_offset` becomes durable, and on boot repopulation from
   the WAL tail).
+
+  A consumed-offset only ever moves forward: the report takes effect when it is
+  strictly greater than the stored one and is otherwise ignored, so a reporter
+  holding a stale view cannot walk the watermark back over a higher offset
+  another already made durable. `rewind_consumed/3` is the only way down.
+
+  The rule lives with the value rather than at the call sites because no caller
+  is in a position to hold it. An outbox window folds its own entries forward
+  with `max/2` and knows nothing of a window that ran nested inside its own
+  dispatch; a hydration knows nothing of a window closing beside it. Only the
+  value they all report into sees both.
   """
   @spec record_consumed(binary(), tuple(), non_neg_integer()) :: :ok
   def record_consumed(operative_class, entity_id, offset) do
     ensure_watermark_table()
-    :ets.insert(@watermarks, {{operative_class, entity_id}, offset})
+    stored = advance_stored_offset({operative_class, entity_id}, offset)
 
-    # A watermark advance may free source credit; the log server drains
-    # the ledger and unparks waiting appends. Async — this runs on the
-    # WalWriter's fsync path.
-    notify_consumed(operative_class, entity_id, offset)
+    # A watermark advance may free source credit; the log server drains the
+    # ledger and unparks waiting appends. Async — this runs on the WalWriter's
+    # fsync path. Every report notifies, including one the guard ignored, or
+    # which reporter arrived last would decide whether parked appends are
+    # released; it carries the offset now STORED, so the log's own copy of the
+    # value tracks the value rather than the request.
+    notify_consumed(operative_class, entity_id, stored)
+  end
+
+  # The offset now stored for `key` after applying `offset` to it. Reporters are
+  # separate `WalWriter` processes, so the comparison and the write have to be
+  # one operation or two of them interleaving lose an advance: the match spec's
+  # guard IS the monotonic rule, and `select_replace/2` is what makes deciding
+  # it and acting on it indivisible.
+  defp advance_stored_offset(key, offset) do
+    advance = [{{key, :"$1"}, [{:<, :"$1", offset}], [{:const, {key, offset}}]}]
+
+    case :ets.select_replace(@watermarks, advance) do
+      1 ->
+        offset
+
+      # Nothing matched: either a row already stands at or past `offset`, and
+      # whoever wrote it is the authority its report drains against, or there
+      # is no row for this Entity yet.
+      0 ->
+        case :ets.lookup(@watermarks, key) do
+          [{_, stored}] -> stored
+          [] -> claim_stored_offset(key, offset)
+        end
+    end
+  end
+
+  # First offset for an Entity: claim the row, or re-decide against whoever
+  # claimed it first.
+  defp claim_stored_offset(key, offset) do
+    if :ets.insert_new(@watermarks, {key, offset}),
+      do: offset,
+      else: advance_stored_offset(key, offset)
   end
 
   defp notify_consumed(operative_class, entity_id, offset) do

@@ -101,6 +101,21 @@ monotonically, so the bytes a watermark advance frees SHALL be taken as a
 prefix of the tracked offsets, costing the number freed rather than the number
 still in flight.
 
+An Entity's stored consumed-offset SHALL be monotonically non-decreasing. A
+reported advance SHALL take effect only when it is strictly greater than the
+stored offset, and SHALL otherwise leave the stored offset unchanged; the
+comparison and the write SHALL be atomic with respect to concurrent reporters,
+so two reporters racing resolve to the higher offset rather than to whichever
+wrote last. A report that does not move the offset SHALL still trigger the
+credit drain and unpark, so which reporter arrives last cannot determine
+whether waiting appends are released, and SHALL carry the offset now stored
+rather than the one reported, so the log's own copy of an Entity's
+consumed-offset cannot be taken backwards either.
+
+The single exception SHALL be an explicit rewind, used only after a correction
+has rewound an Entity's WAL and the records reporting the higher offset no
+longer exist. No other path SHALL lower a stored consumed-offset.
+
 #### Scenario: A restarted log recovers its watermark
 
 - **WHEN** the input-log process restarts while its Entities' last
@@ -120,6 +135,36 @@ still in flight.
   window of the log
 - **THEN** the log recomputes its min-watermark and drains source credit once
   for the burst, not once per report
+
+#### Scenario: A lower report does not move the watermark back
+
+- **GIVEN** an Entity whose stored consumed-offset is 2
+- **WHEN** a consumed-offset of 1 is reported for that Entity
+- **THEN** the stored offset SHALL remain 2
+
+#### Scenario: A nested window's advance survives the outer window closing
+
+- **GIVEN** an outbox window whose completion re-enters dispatch and closes a
+  nested window that advances the Entity's consumed-offset to 2
+- **WHEN** the outer window then reports its own furthest offset of 1
+- **THEN** the Entity's stored consumed-offset SHALL be 2, and the input-log
+  retention floor and credit accounting SHALL reflect 2
+
+#### Scenario: A rejected report still drains credit
+
+- **GIVEN** an Entity whose stored consumed-offset is 2 and a source parked on
+  credit
+- **WHEN** a consumed-offset of 1 is reported
+- **THEN** the stored offset SHALL remain 2 and the credit drain and unpark
+  SHALL still run
+
+#### Scenario: An explicit rewind still lowers the offset
+
+- **GIVEN** an Entity whose stored consumed-offset is 5 and a correction that
+  has rewound its WAL to 2
+- **WHEN** the rewind path reports 2
+- **THEN** the stored offset SHALL become 2, so the next sweep cannot truncate
+  the inputs the correction is about to replay
 
 ### Requirement: An append never waits on a sync
 
@@ -210,3 +255,4 @@ The host process of an effectively-once operative SHALL NOT wait on the input lo
 
 - **WHEN** the input log exits while an append is in flight and the re-issued append finds no log
 - **THEN** the confirming call receives `{:error, :refused}` and the input is not forwarded
+

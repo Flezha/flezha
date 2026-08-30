@@ -17,10 +17,10 @@ reads this file, `git status`, and the open change's `tasks.md`, then continues.
    "Machine hygiene". Kill what you started. A `top` snapshot lies about
    benchmark load; count runs over a window instead.
 3. **The defect list moved.** Everything found and not fixed now lives in
-   `docs/known_issues.md` (tracked, 40 entries, severity-ordered, each with
-   evidence and what a fix must account for). Two carry proposals:
-   `fix-outbox-watermark-overwrite` (KI-1) and `fix-first-input-drop-on-bind`
-   (KI-2), both owed **before** the controller areas that refactor those files.
+   `docs/known_issues.md` (tracked, severity-ordered, each with evidence and
+   what a fix must account for). `fix-outbox-watermark-overwrite` closed KI-1;
+   `fix-first-input-drop-on-bind` (KI-2) is still owed **before** the controller
+   area that refactors those files.
    `openspec/changes/` is gitignored, so those proposals are machine-local —
    `docs/known_issues.md` is the durable record.
 4. **The charter was amended four times on 2026-08-29/30**, each time because
@@ -191,8 +191,8 @@ with attribution preserved, because the arms are still kept at every checkpoint.
 > programme, with severity, evidence and what a fix must account for. Forty entries
 > as of 2026-08-30, including the pre-existing ones this board never held (the bench
 > gate that cannot complete, Java's workflow resume re-running committed producers,
-> the unvalidated OOM fix, the production items). Two carry proposals:
-> `fix-outbox-watermark-overwrite` (KI-1) and `fix-first-input-drop-on-bind` (KI-2).
+> the unvalidated OOM fix, the production items). `fix-outbox-watermark-overwrite`
+> has since closed KI-1; `fix-first-input-drop-on-bind` (KI-2) is still owed.
 > Keep appending here as areas find things; move them across when an area closes.
 
 - 0a: `.github/workflows/format.yml` does not run the four veneer formatters, so CI

@@ -506,4 +506,84 @@ defmodule Flezha.State.InputLogTest do
                Enum.to_list(290..300)
     end
   end
+
+  describe "a stored consumed-offset only moves forward" do
+    test "a first report for an absent key stores that offset", %{class: class} do
+      refute InputLog.watermark(class)
+
+      InputLog.record_consumed(class, {class, "proc", "a"}, 7)
+
+      assert InputLog.watermark(class) == 7
+    end
+
+    test "two reporters resolve to the higher offset, whichever arrives last", %{class: class} do
+      # One class per case: `watermark/1` is the minimum across an operative's
+      # Entities, so a shared class would answer for the slowest of the three.
+      ascending = class <> "_asc"
+      InputLog.record_consumed(ascending, {ascending, "proc", "a"}, 3)
+      InputLog.record_consumed(ascending, {ascending, "proc", "a"}, 5)
+      assert InputLog.watermark(ascending) == 5
+
+      # The direction the unconditional insert got wrong.
+      descending = class <> "_desc"
+      InputLog.record_consumed(descending, {descending, "proc", "a"}, 5)
+      InputLog.record_consumed(descending, {descending, "proc", "a"}, 3)
+      assert InputLog.watermark(descending) == 5
+
+      # Reporters are separate processes: the compare and the write are one
+      # operation, so neither can read 5 and then write 3 over it.
+      concurrent = class <> "_conc"
+
+      [5, 3]
+      |> Enum.map(
+        &Task.async(fn ->
+          InputLog.record_consumed(concurrent, {concurrent, "proc", "a"}, &1)
+        end)
+      )
+      |> Task.await_many(2_000)
+
+      assert InputLog.watermark(concurrent) == 5
+    end
+
+    test "an explicit rewind lowers it, and the next report advances it again", %{class: class} do
+      entity = {class, "proc", "a"}
+      InputLog.record_consumed(class, entity, 5)
+
+      # The correction rewound the WAL to 2: the records that reported 5 are
+      # gone, so the watermark must follow them down.
+      InputLog.rewind_consumed(class, entity, 2)
+      assert InputLog.watermark(class) == 2
+
+      # The guard is against moving BACKWARDS, not against re-reaching a value
+      # once held: the replay re-consumes and reports 5 again.
+      InputLog.record_consumed(class, entity, 5)
+      assert InputLog.watermark(class) == 5
+    end
+
+    test "a report the guard rejects still drains credit and unparks", %{class: class} do
+      # Each body encodes to 53 bytes, so a 160-byte window admits exactly
+      # three and parks the fourth.
+      on_exit(TestHelpers.override_env(:source_credit_window_bytes, 160))
+      entity = {class, "proc", "a"}
+      body = String.duplicate("x", 40)
+
+      # Reported before the log exists: the advance reaches the table and no
+      # cast reaches the log, so the log seeds this offset at init having
+      # drained nothing for it.
+      InputLog.record_consumed(class, entity, 2)
+
+      for i <- 0..2, do: {:ok, ^i} = InputLog.append(class, body, %{})
+
+      # 159 of 160 bytes outstanding: the next append parks.
+      reqids = InputLog.append_async(class, body, %{}, :gen_server.reqids_new(), :parked)
+      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+
+      # A stale reporter's offset of 1: the write is rejected, and the report
+      # still reaches the log, which drains offsets 0..2 and releases the park.
+      InputLog.record_consumed(class, entity, 1)
+
+      assert InputLog.watermark(class) == 2
+      assert {{:reply, {:ok, 3}}, :parked, _} = :gen_server.wait_response(reqids, 2_000, true)
+    end
+  end
 end

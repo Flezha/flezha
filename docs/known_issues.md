@@ -31,30 +31,6 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
-### KI-1 · Watermark overwritten after an effectively-once park
-
-**OpenSpec change**: `fix-outbox-watermark-overwrite` (proposed 2026-08-30).
-
-- **Where**: `lib/flezha/state/wal_writer.ex:1288`, `lib/flezha/state/input_log.ex:189`.
-- **What happens**: after an effectively-once park, `WalWriter.take_outbox_window/3`
-  re-enters `dispatch_outbox_window` via `complete_entry({:cursor,1})` →
-  `try_dispatch_outbox` while the outer window is still open. The nested window
-  advances the consumed watermark to 2; the outer window's
-  `InputLog.record_consumed/3` then overwrites it back to 1 with an
-  unconditional `:ets.insert`.
-- **Impact**: the input-log retention floor and credit accounting under-report by
-  one offset after every park, until the next input arrives.
-- **Fires when**: the park record and the next record share one fsync batch.
-- **Evidence**: `test/system/dlq_e2e_test.exs:121` (was `:119` before the file
-  moved) fails 14 of 20 runs **in isolation** — it was never a load flake.
-  Re-confirmed 2026-08-29 by an interleaved run against tag
-  `refactor-baseline-2`: the failure reproduces on the baseline arm, so it
-  predates the refactor programme entirely.
-- **Why not fixed here**: behaviour change; charter §1.
-- **A fix must**: make the nested and outer windows agree on who owns the
-  watermark, rather than making `record_consumed/3` conditional and leaving two
-  writers. Note the test is currently red and untagged, deliberately.
-
 ### KI-2 · First input after `start_operative/2` is journaled and never forwarded
 
 **OpenSpec change**: `fix-first-input-drop-on-bind` (proposed 2026-08-30).
@@ -101,6 +77,44 @@ below is all that survives — which is enough to write it again.
   `nonblocking-drop-nothing-backpressure` removed. Needs a design pass first.
 - **A fix must**: decide what a caller is told when the buffer is full, without
   parking a host thread.
+
+### KI-41 · A re-entrant outbox window advances the watermark before the park it is dispatching is durable
+
+- **Severity**: P1 · **investigation first**.
+- **Where**: `lib/flezha/state/wal_writer.ex` — `take_outbox_window/3` calls
+  `await_entry/4` *before* `apply_effect/2` for the same entry.
+- **What happens**: an entry with no outputs completes inside `await_entry/4`
+  (tally `pending: 0`), so `complete_entry({:cursor, seq})` re-enters
+  `try_dispatch_outbox/1` and a nested window dispatches the *next* record and
+  reports its consumed-offset — all before the outer entry's own
+  `apply_effect/2` runs. A zero-output entry is exactly what a dead-letter park
+  produces, and `apply_effect/2`'s own comment states the required order: "the
+  watermark move can truncate the poison input out of the input-log, so the DLQ
+  store entry must be durable first". Under re-entry that order inverts.
+  `drain_confirmed/1` likewise advances the in-memory `outbox_flushed_seq` past
+  the park before the park is stored.
+- **Evidence**: a probe on `dispatch_outbox_window/2`, `take_outbox_window/3`,
+  `apply_effect/2` and `advance_consumed/2`, driven by
+  `test/flezha/state/wal_writer_outbox_test.exs` "a nested window's advance
+  survives the outer window closing", printed exactly this order:
+  `take seq=0` → `complete_entry {:cursor, 0}` → nested `window-open` →
+  `take seq=1` → `apply_effect seq=1 offset=2` → `record_consumed 2` →
+  `apply_effect seq=0 dlq=true` (the park) → outer `record_consumed`.
+- **Impact**: the exposure is the few microseconds between the nested window's
+  `record_consumed/3` and the outer entry's park write, inside one `do_fsync/1`
+  on one process. A retention sweep landing in that window could truncate the
+  poison input while the DLQ entry is not yet stored. A crash in the window is
+  safe: the boot re-drive re-reads the WAL and `apply_effect/2` is idempotent.
+  `persist_dedup/1` runs at the end of the same `do_fsync/1`, after the park, so
+  the *durable* cursor is never inverted.
+- **Why not fixed here**: found while instrumenting
+  `fix-outbox-watermark-overwrite` (its task 1.2, the design's Open Question).
+  That change's own Non-Goals rule the re-entrancy out of scope — reshaping
+  `complete_entry/2`'s control flow belongs to `refactor-5a-state` — and this is
+  an ordering inversion, not the double-write that change fixes.
+- **A fix must**: run an entry's `apply_effect/2` before anything can complete
+  it, or stop `complete_entry/2` re-entering dispatch while a window is open.
+  Note the two are the same seam `refactor-5a-state` will restructure.
 
 ---
 
@@ -514,6 +528,7 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`a0c71389`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |
 | `cargo check --workspace --all-targets` red without a feature nobody passes | `467a378a` — three `[[test]]` entries were missing `required-features` |
 | `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `fae9184f` |
 | Node `Source::get` costing four N-API calls per field read (~4 % on the Node dispatch row) | `fae9184f` |

@@ -391,6 +391,42 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert InputLog.watermark(rc) == 11
   end
 
+  # KI-1: the outer window's own furthest offset must not overwrite the higher
+  # one a window nested inside its dispatch already reported.
+  test "a nested window's advance survives the outer window closing", %{
+    rc: rc,
+    entity_id: entity_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    # One fsync batch, deliberately: the park record's entry carries no output,
+    # so it completes inside the very window that dispatched it and
+    # `complete_entry({:cursor, _})` re-enters dispatch while that window is
+    # still open. The nested window then carries the next record — durable in
+    # the same batch — and reports the furthest offset either window saw.
+    in_one_window(fn ->
+      :ok =
+        WalWriter.append(
+          pid,
+          0,
+          effect_header(),
+          effect_body([], 1, %{channel: "in", error: "poison", attempts: 3, payload: "kp:poison"})
+        )
+
+      :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k2", "b")], 2))
+    end)
+
+    :ok = WalWriter.fsync(pid)
+
+    assert {"b", _, _} = next_output()
+
+    assert InputLog.watermark(rc) == 2,
+           "the outer window's furthest offset of 1 overwrote the nested window's 2"
+  end
+
   test "re-drive of a park record is idempotent: no duplicate DLQ entry", %{
     rc: rc,
     entity_id: entity_id,
