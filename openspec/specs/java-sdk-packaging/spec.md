@@ -135,3 +135,25 @@ Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Mod
 - **WHEN** a Java SDK jar's `META-INF/MANIFEST.MF` is inspected
 - **THEN** any role-tag entries SHALL use `Runner` (not `ComputeEngine` or `Operator`); free-text descriptions SHALL use `Operative` rather than `Processor`
 
+### Requirement: A documented build command SHALL succeed on a repeated run
+
+A build command this repository documents or invokes SHALL succeed when run
+twice in the same checkout without an intervening clean. A command that works
+only against an empty `target/` fails for every caller after the first, and the
+first green run is what hides it.
+
+Packaging SHALL NOT consume its own previous output. Where a module produces no
+artifact of its own, it SHALL NOT inherit and re-process the artifact a previous
+run left in place.
+
+#### Scenario: The conformance build command runs twice
+
+- **GIVEN** a checkout whose Java `target/` directory is not empty
+- **WHEN** the test-app build command is run twice with no clean between
+- **THEN** both runs SHALL succeed
+
+#### Scenario: The fat jar carries one copy of its notices
+
+- **WHEN** the assembled fat jar is listed
+- **THEN** `META-INF/THIRD_PARTY_NOTICES.md` SHALL appear exactly once, and the five `native/<os>-<arch>/libflz_core_ffi.*` entries SHALL be the only native libraries present
+
