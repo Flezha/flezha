@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-30 21:20 (defect programme complete, all ten changes landed; AREA 4 IS NEXT)
+**Last updated**: 2026-08-30 21:35 (defect programme triaged; PHASE 1 = 12 defects in 6 changes, PHASE 2 = area 4)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -94,7 +94,15 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. **Area 3 is done** (`c5bdc26b`, archived as `2026-08-29-refactor-3-rust-sdk`;
+**`finish-the-suite-log-gate` — proposal worker spawned 2026-08-30 22:0x.** The
+defect programme's ten changes landed, but it left the CI uncaptured-log gate
+(`.github/workflows/elixir.yml:150`–`:163`) still unable to report: `KI-48`
+(production — `ControlUnit` exits abnormally on every teardown that races an
+in-flight control command) and `KI-49`/`KI-50` (test-side leaks onto a later
+test's stub/observation) are its named leftovers. One more supervised change
+closes them, then area 4 starts.
+
+Area 3 is done (`c5bdc26b`, archived as `2026-08-29-refactor-3-rust-sdk`;
 `sdk/rust` and `flezha-macros` flipped to blocking ratchets). Areas 0a, 0b, 1s, 1, 2
 and 3 are complete — **~42 % of the codebase by production LOC**.
 
@@ -586,13 +594,45 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-**A defect programme ran on 2026-08-30, between area 3 and area 4.** All forty
-entries in `docs/known_issues.md` were triaged against the code, and nine
-OpenSpec changes landed from it. All ten changes landed. The refactor resumes at area 4.
+Two phases, in this order. **Phase 1 first** — area 4 refactors `sdk/java`
+with zero behaviour change, and KI-33 is a live correctness defect in exactly
+that code. Refactoring over it would carry the bug into the new shape and cost
+the A/B its meaning.
 
-1. **Area 4** (`sdk/java`, 8 441 lines) — the defect programme is finished; all
-   ten of its changes landed. Run the survey first, as every area does. (`sdk/java`, 8 441 lines). Its dependency, area 1, is done.
-   Run the survey first, as every area does.
+### Phase 1 — the twelve actionable defects
+
+Every entry below carries a `**Where**` with file:line, an `**Evidence**`
+block with the command and its output, and an `**A fix must**` clause. Read the
+entry before briefing a worker; do not re-derive what triage already measured.
+
+| # | Change | Entries | Why grouped |
+|---|---|---|---|
+| 1 | `fix-java-workflow-resume-duplication` | KI-33 (P1) | Investigation first — 17/19 fail on both transports, `b` and `c` each arrive twice. **Blocks area 4.** |
+| 2 | `fix-control-unit-abnormal-exit` | KI-48 (P2) | Production behaviour: `ControlUnit` exits abnormally whenever a runner tree comes down. |
+| 3 | `close-prometheus-label-coercion` | KI-45, KI-46 (P2/P3) | One family — the `to_string/1` shape `close-otlp-export-crash` removed from the codec, still standing on the other exporter. |
+| 4 | `green-the-test-hygiene-tail` | KI-49, KI-50, KI-18, KI-21, KI-23 | Tests that lie or leak; four are one-liners, KI-49 is a task leaking onto the next test's stub. |
+| 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
+| 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
+
+**Do not touch, and do not let a worker "helpfully" fix:**
+
+- **The user decides**: KI-3, KI-10. Put options and a recommendation under
+  *Awaiting the user's decision*; never pick for them.
+- **Deferred with a reason already recorded**: KI-41 (folds into
+  `refactor-5a-state`), KI-36 (needs a soak under real load), KI-34 (needs the
+  Kafka stack), KI-14 (rides the next PHP image change), KI-6 (a Python SDK
+  source decision), KI-15 (impossible as filed, and says so).
+- **Notes, not work**: KI-25, KI-29, KI-30, KI-31.
+
+### Phase 2 — the refactor resumes
+
+1. **Area 4** (`sdk/java`, 8 441 lines). Its dependency, area 1, is done. Run
+   the survey first, as every area does. `sdk/java` changed on 2026-08-30
+   outside the programme (native profiles, `.gitignore`, CI moved the
+   five-triple cross-build to release tags, seven artefacts untracked) — none
+   of it is refactoring, the survey reads the current tree, and the worker must
+   **not** re-track natives or jars (`scripts/check-build-artifacts.sh`
+   refuses it).
 2. Areas 5a–5e, 6, 7, 8 after it, in dependency order.
 
 ### What the defect programme leaves behind

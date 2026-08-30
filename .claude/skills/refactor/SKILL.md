@@ -42,6 +42,36 @@ Then classify:
 Unrecognised uncommitted changes outside the area's paths: leave them, note
 them in `STATE.md`, continue.
 
+## 0.5 A defect queue comes before the areas
+
+If `STATE.md`'s *Next steps* opens with a **Phase 1** table, work it to
+completion before any area. Each row is one OpenSpec change, run with the same
+discipline as an area: one fresh `general-purpose` worker, sequential, the §4
+checkpoint, and you commit — never the worker.
+
+The rows are ordered, and the order is load-bearing where a row says so (a
+correctness defect inside an area's code must land before that area refactors
+it, or the bug is carried into the new shape and the A/B loses its meaning).
+
+For a defect row, the worker's brief replaces the survey brief with:
+
+> Read `docs/known_issues.md` and find each entry named in your change. Every
+> entry carries `**Where**` (file:line), `**Evidence**` (the command run and
+> the output it gave) and `**A fix must**`. Do not re-derive what triage
+> already measured — verify the entry still reproduces at HEAD, then fix it.
+> **Show the regression test RED on HEAD before the fix lands**: a test that
+> never failed on the defective code proves nothing. If an entry no longer
+> reproduces, say so and move it to *Resolved* with the evidence instead of
+> writing code for it. Every fix is deletion-funded where it can be; a new
+> shared helper is earned at the third caller, not the second.
+
+Some entries are explicitly **not** work: the *Do not touch* list under the
+Phase 1 table names them. A worker that "helpfully" fixes one of those has
+taken a decision that belongs to the user — send it back.
+
+When every Phase 1 row is done, update `STATE.md`, then continue at §0 with
+the areas.
+
 ## 1. Invariants
 
 - **One worker at a time**, always. Shared working tree.
