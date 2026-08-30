@@ -83,6 +83,15 @@ the areas.
 - Never push. Never a destructive git command. Never `docker compose down`.
 - `STATE.md` is updated after **every** event (spawn, report, verify, commit,
   blocker) and on every heartbeat — with a timestamp.
+- **Never stage a file the live worker may be editing.** Run
+  `git diff <file>` and confirm every hunk is yours BEFORE `git add`, and stage
+  paths one by one, never a directory. `docs/known_issues.md` is the guaranteed
+  collision: charter §1b requires the worker to write findings there, and you
+  file your own there too. On 2026-08-30 a supervisor commit about the QUIC send
+  buffer silently absorbed a worker's KI-33 rewrite and a new KI entry this way
+  — nothing was lost, but the history now attributes that work to the wrong
+  commit. If you only need to record a finding while a worker runs, either wait
+  for the checkpoint or put it in `STATE.md`, which is yours alone.
 
 ## 2. Survey a pending area
 
