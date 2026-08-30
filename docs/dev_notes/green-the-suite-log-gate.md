@@ -63,6 +63,14 @@ from the baseline full run, present in the post-fix one, present in 2 of 2 runs
 of that file alone. So the gate is intermittently red on it, not permanently —
 which is worth knowing, because a single green full run does not prove it gone.
 
+> **Corrected 2026-08-30 by `finish-the-suite-log-gate`.** That "2 of 2 runs of
+> that file alone" did **not** reproduce at the later HEAD on the same box: with
+> KI-48's guard removed again, `mix test test/flezha_test.exs` printed the line
+> in **0 of 2** runs (`14 passed`, zero `[error]` each), while a full `mix test`
+> on the same tree still carried it. `flezha_test.exs` owns the line; it is not
+> a reproducer for it, and the successor change had to prove KI-48 closed on
+> full runs instead.
+
 ## The gate was proved, not assumed
 
 A gate that has only ever been red and is now green has been shown to be quiet,
@@ -129,7 +137,7 @@ sources, none of them reliably present**:
 | source | seen |
 |---|---|
 | the two restore refusals | every run before the fix, none after |
-| `ControlUnit … shut down abnormally` (KI-48) | 2 of 3 full runs; 2 of 2 runs of `flezha_test.exs` alone |
+| `ControlUnit … shut down abnormally` (KI-48) | 2 of 3 full runs; 2 of 2 runs of `flezha_test.exs` alone (the file-alone figure did **not** hold later — see the correction above) |
 | a task `overwatch_suspension_test` leaks onto its own next test's stub (KI-49) | 1 of 3 full runs; **1 of 5 runs of that module alone** |
 
 KI-49 was found by the third full run and is the change's own gate working: two
@@ -141,6 +149,11 @@ this change's task list, so it is filed and not fixed — and the honest reading
 that **the gate cannot be relied on to be green until KI-48 and KI-49 are both
 closed**. What this change bought is that a new uncaptured error is now visible
 against a known, named set of two rather than an unexplained three.
+
+> **`finish-the-suite-log-gate` closed all three** (KI-48, KI-49, KI-50) — and
+> its own gate runs then turned up **two more** sources this change never
+> sampled: KI-53 and KI-54, each in 1 of 6 full runs. "Four sources, none of
+> them reliably present" was right about the shape and short on the count.
 
 ## What this change did not do
 

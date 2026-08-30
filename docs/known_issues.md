@@ -476,128 +476,84 @@ below is all that survives — which is enough to write it again.
   is **not** the include-path problem; and the reason no build-time home exists
   is written beside the bindgen guard, where the next reader looks.
 
-### KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down
+### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT`
 
 - **Severity**: P2 · **proposal owed** — the fix is a production behaviour
-  change, so it was diagnosed and left alone by `green-the-suite-log-gate`
-  (that change's D2 says a defect landing on the production side is brought back
-  rather than folded in).
-- **Where**: `lib/flezha/runner/runner_supervisor.ex:18`–`:39` (the child order)
-  and `lib/flezha/runner/control_unit.ex` (every `handle_call` that calls
-  `ControlChannel.send_control/2` — `:220`, `:271`).
-- **What happens**: `RunnerSupervisor` lists `ControlChannel` before
-  `ControlUnit`, so its `:one_for_one` terminate sweep — reverse order — stops
-  the **channel first**. A `ControlUnit` sitting in
-  `GenServer.call(control_channel, {:send_control, …}, 5000)` at that moment
-  exits with `{:shutdown, {GenServer, :call, …}}`. OTP's `supervisor:shutdown/2`
-  accepts only a bare `shutdown`, so the tuple is `{error, Reason}` and
-  `do_terminate/2` reports `shutdown_error` at `[error]`:
+  decision, so `finish-the-suite-log-gate` filed it rather than folding it in,
+  the way `green-the-suite-log-gate` filed KI-48.
+- **Where**: `lib/flezha/state/input_log.ex` — `init/1` sets
+  `Process.flag(:trap_exit, true)` (`:359`), the fsync companion is
+  `spawn_link`ed (`:488`, `start_syncer/1`), and the module has **no
+  `handle_info/2` clause at all**. Every message that is not a call or a cast
+  therefore lands on `GenServer`'s default handler, which logs at `[error]`.
+- **What happens**: the syncer's death arrives as `{:EXIT, pid, reason}` and is
+  reported as
 
   ```
-  [error] Child Flezha.Runner.ControlUnit of Supervisor
-    {Flezha.Service.Identificator, "test_temp_namespace_37722754971_wus"}
-    shut down abnormally
-  ** (exit) exited in: GenServer.call({:via, Registry, {…, "…_cc"}},
-       {:send_control, <<…>>}, 5000)
-      ** (EXIT) shutdown
+  [error] Flezha.State.InputLog #PID<0.9412.0> received unexpected message in
+    handle_info/2: {:EXIT, #PID<0.9413.0>, :killed}
   ```
 
-- **The in-flight command is a `Ping`** (field 19 of `CommandRequest`), whose
-  16-hex nonce is minted only by `ControlUnit.handle_call({:ping_runner, …})`,
-  whose only production caller is `Flezha.Operative.Lifecycle` —
-  `attempt_ping_and_start/3` before `:start_operative`, and `runner_ready?/1`.
-- **Why this is production and not a test artefact.** Everything after the test's
-  one call is production code: `NodeTestHelper.stop_runner/2` →
-  `FleetManager.disconnect_runner/2` (the same public entry `Convergence.Heal`
-  uses) → the runner closes → `FleetManager.runner_disconnected` →
-  `do_handle_runner_disconnect/3` → `FleetSupervisor.stop_runner_sup/1` →
-  `Supervisor.terminate_child/2`. No test stops any child itself or names an
-  order. The ping is issued by production code. The one test-side ingredient —
-  `test/flezha_test.exs:592` starting `Convergence.Loop`, which the test config
-  leaves off — makes the run **more** production-like, not less, since the Loop
-  is on in production.
-- **The code already half-knows.** `ControlChannel.send_control/2` guards the
-  channel being *gone* (`GenServer.whereis` → `{:error, :no_control_channel}`)
-  but not its dying mid-call; and `Lifecycle.timeout_class?/1` names "the
-  ControlUnit having exited on such a call" as one of three shapes a busy runner
-  takes. The **caller** is defended; the unit itself is left to die.
-- **Impact**: one `[error]` supervisor report per teardown that races an
-  in-flight control command. Nothing is lost — the tree is going down and every
-  caller already tolerates the exit — but it is the last line keeping
-  `.github/workflows/elixir.yml`'s uncaptured-log gate red, now intermittently
-  (absent from one full `mix test`, present in the next; 2 of 2 runs of
-  `test/flezha_test.exs` alone).
-- **A fix must** decide between two shapes and not paper over the report:
-  guard the call inside `ControlUnit` (catch the exit, answer the waiter an
-  error — the shape `ping_runner/2` already uses on its own caller side), or
-  stop `ControlUnit` before `ControlChannel` in `RunnerSupervisor`'s child list.
-  It must NOT be answered by wrapping the test in `capture_log`: the test drives
-  no failure path on purpose, so there would be nothing to assert.
-
----
-
-### KI-50 · `Extension.PhaseTest` "uncertain health probe" fails about 1 run in 3, in-suite only
-
-- **Severity**: P2 · not in KI-18's population; found 2026-08-30.
-- **Where**: `test/plugin/extension/phase_test.exs`, "an uncertain health probe
-  is observable / a provider that reports its own uncertainty reads healthy AND
-  emits".
-- **Evidence**: full `mix test` on the same tree gave **1835/1836 then 1836/1836**
-  — intermittent, not deterministic. The module alone passes **3 of 3** (14
-  tests each). So it is an interaction, and this repository's own lesson is that
-  a test which passes alone and fails in a suite is evidence of a **leak** before
-  it is evidence of load (see KI-43's resolution).
-- **Not attributable to `adopt-process-hub-hex-release`**: the file carries zero
-  references to `ProcessHub` or `:elector`, and that change's own worker measured
-  1836 on three consecutive runs before it.
-- **A fix must**: find what leaks into it rather than retrying it. The assertion
-  is "reads healthy AND emits", so the candidate is an emit from a previous
-  module's provider arriving on this one's observation — the same shape as
-  KI-49. Do not add a settle: that hides it, and the suite then stops being able
-  to report it at all.
+- **Observed at BEAM shutdown**, *after* `Result: 1840 passed` had printed —
+  the application master's terminate sweep exits the app's remaining processes
+  with `:kill`, and the order is unspecified, so a syncer can be killed while
+  its still-trapping `InputLog` is alive to log it. Two lines in one full
+  `mix test`; **1 of 6** full runs on this box (`errorlines=0` in the other
+  five). Not reproducible from `mix test test/flezha/state/input_log_test.exs`
+  alone (0 of 3 runs, 31 passed) — the logs there are stopped by their own
+  supervisor before the sweep reaches them.
+- **The log line is the small half.** With no `EXIT` clause a syncer that dies
+  for a *real* reason — an `:file.datasync` error, a `{:badmatch, …}` out of
+  `open_raw/1` — is logged as an "unexpected message" and then ignored, and
+  every later `send(state.syncer, :sync)` (`:451`) goes to a dead pid and
+  silently succeeds. **The fsync stops happening and nothing says so**, on the
+  path every effectively-once source waits on. `terminate/2` already sends the
+  syncer `:stop` (`:477`), so the syncer's lifetime *is* meant to be managed;
+  the `EXIT` half is the omission.
+- **A fix must** decide what a dead syncer means rather than just silencing the
+  log: re-spawn it (and say so), or stop the `InputLog` so its supervisor
+  restarts the pair. Matching `{:EXIT, _, _}` and returning `{:noreply, state}`
+  turns a durability hole into a *silent* durability hole and must not be the
+  answer.
 
 ---
 
 ## P2 — tests that lie or leak
 
-### KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub
+### KI-54 · A `ForwardWorker` retry outlives its test and reaches a deleted ETS table
 
-- **Severity**: P2 · found by `green-the-suite-log-gate`'s own gate, and **not
-  fixed by it** — it is a fourth uncaptured-error source, outside that change's
-  task list.
-- **Where**: `test/flezha/operative/overwatch_suspension_test.exs:157`.
-- **What happens**: a test's migrate task is still in the retry ladder
-  (`Lifecycle.do_start_with_retry/4`, 10 ms backoff, preceded by
-  `startup attempt 1 failed: {:ping_failed, :no_control_unit} — retrying`) when
-  the test ends. The next test replaces the module's Mimic stub —
-  `stub(OperativeManager, :assign_runner, fn _ns, "chat", ^inst -> "ex_2" end)`,
-  whose third argument is **pinned to that test's own instance id** — so the
-  leftover task arrives carrying the *previous* id and matches no clause:
+- **Severity**: P2 · found by `finish-the-suite-log-gate`'s own gate, and **not
+  fixed by it** — a fifth uncaptured-error source, outside that change's task
+  list. **Same shape as the KI-49 that change closed**: a background retry
+  outliving the test that started it.
+- **Where**: `test/helpers/fake_start_registry.ex:186` (`pid_of/2`), reached
+  from `Flezha.Plugin.Provider.OperativeForward.ForwardWorker.deliver_next/1`
+  (`forward_worker.ex:208`) → `OperativeManager.send_io_confirming/5`
+  (`operative_manager.ex:593`) → `get_operative_pid/3` (`:49`). The owning
+  module is `test/flezha/plugin/provider/operative_forward_test.exs`.
+- **What happens**: a delivery is deferred — the log line immediately before it
+  is `[operative-forward] src_19972 -> stuck_19940 delivery deferred:
+  {:unreachable, {:timeout, …}} (retrying in 250 ms)` — and the 250 ms retry
+  fires after the owning test has finished and its `FakeStartRegistry` ETS table
+  has been deleted:
 
   ```
-  [error] Task #PID<0.426.0> started from #PID<0.415.0> terminating
-  ** (FunctionClauseError) no function clause matching in anonymous fn/3 in
-     …OverwatchSuspensionTest."test input for a suspended instance is journaled
-     and rehydrates it"/1
-      overwatch_suspension_test.exs:157: anonymous fn("default", "chat", "susp_451")
-      lib/flezha/operative/lifecycle.ex:440: Lifecycle.resolve_runner/4
-  [error] Child :undefined of Supervisor Flezha.Operative.MessageHandlerTaskSup terminated
+  [error] Process #PID<0.4506.0> on node :"test_agent_node1@127.0.0.1" raised an exception
+  ** (ArgumentError) errors were found at the given arguments:
+    * 1st argument: the table identifier does not refer to an existing ETS table
+      :ets.lookup(#Reference<…>, "grp_15523#p1")
+      test/helpers/fake_start_registry.ex:186: FakeStartRegistry.pid_of/2
   ```
 
-  Two `[error]` lines, **every test still passing** — which is exactly the shape
-  the uncaptured-log gate exists to catch.
-- **Reproduction**: the module alone, no other file involved —
-  `mix test test/flezha/operative/overwatch_suspension_test.exs`, **1 run in 5**
-  (seed 432113) prints the pair while reporting `20 passed`; in a full `mix test`
-  it appeared in 1 of 3 runs. Cheap: the module runs in ~0.2 s.
-- **Why it was not fixed on the spot**: it is test-side and small, but the fix
-  has to decide *why* the task outlives its test before it picks a shape, and a
-  catch-all clause on the stub would silence the symptom while weakening the
-  assertion the pin exists to make. `green-the-suite-log-gate` was scoped to
-  three named lines and one judgement call.
-- **A fix must** stop or await the migrate task the test spawned, rather than
-  loosening the stub — the pinned `^inst` is what proves the rehydrate resolves
-  the *right* instance.
+- **Reproduction**: not isolated. Seen **1 of 6** full `mix test` runs on this
+  box (seed 983242); every test passed in that run — which is exactly the shape
+  the uncaptured-log gate exists to catch, and is why it was seen at all.
+- **A fix must** stop the retry with the test that started it, or make the
+  registry lookup answer "gone" instead of raising — and should first establish
+  whether a `ForwardWorker` retrying into a namespace that no longer exists is
+  *also* a production question, since only the ETS-table half is test-side.
+
+---
 
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
@@ -837,6 +793,11 @@ since carries its own date.
   — absent from the baseline full run, present in the post-fix one, present in
   2 of 2 runs of that file alone — so the gate is **intermittently** red on it,
   not permanently. See KI-48 for the mechanism.
+  **Corrected 2026-08-30 by `finish-the-suite-log-gate`**: the "2 of 2 runs of
+  that file alone" did **not** hold at the later HEAD on the same box. With
+  KI-48's guard removed, `mix test test/flezha_test.exs` printed the line in
+  **0 of 2** runs (`14 passed` each, zero `[error]`), while a full `mix test`
+  still carried it. Treat that file as *an* owner, not as a reproducer.
 - **The entry's "three lines" is one run's sample, not the population.** A third
   full run turned up a **fourth** source the baseline never showed — two
   `[error]` lines from a task `overwatch_suspension_test` leaks into its own
@@ -844,6 +805,13 @@ since carries its own date.
   cannot be relied on to be green until KI-48 and KI-49 are both closed; what
   this change bought is that a *new* uncaptured error is now visible against a
   known, named set of two instead of an unexplained three.
+  **The sample was still short.** `finish-the-suite-log-gate` closed KI-48,
+  KI-49 and KI-50 and then, in its own gate runs, turned up **two more**
+  sources neither change had seen: KI-53 (`InputLog` logging its linked
+  syncer's `EXIT` at BEAM shutdown) and KI-54 (a `ForwardWorker` retry reaching
+  a deleted ETS table after its test). Each appeared in 1 of 6 full runs. The
+  standing lesson is the one this entry keeps re-learning: **the population is
+  whatever the last N runs sampled**, and N is always too small.
 
 
 ### KI-23 · `unique/1` suffixes can breach the operative-id cap
@@ -1383,6 +1351,9 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down | `finish-the-suite-log-gate` — `ControlChannel.send_control/3` now wraps its `GenServer.call` in the two-clause `catch` `ControlUnit.ping_runner/2` already used one layer up: `:exit, {:timeout, _} -> {:error, :timeout}` and `:exit, reason -> {:error, {:control_channel_exit, reason}}`. Design D1's Shape B, in the single funnel all six `ControlUnit` `handle_call`s cross; no caller changed (nine sites read, each already carrying an `{:error, reason}` arm) and the child list was **not** reordered — starting `ControlChannel` first would open a window in which `handle_info`'s `GenServer.cast` to an unregistered `ControlUnit` returns `:ok` and drops an SDK reply, trading an `[error]` line for a silent drop. **Two corrections to this entry, both measured.** (1) Its premise was **inverted**: `runner_supervisor.ex:18`–`:39` lists `ControlUnit` **first** and `ControlChannel` third, and the reverse-order terminate sweep is what stops the channel first — so its own fix wording ("stop `ControlUnit` before `ControlChannel` in the child list") reads as *list it earlier*, which is already the case and would change nothing; to stop it first you must move it **later**. (2) Its reproduction claim did not hold: `test/flezha_test.exs` alone printed the line in **0 of 2** runs with the guard removed, against the "2 of 2" recorded when it was filed. The evidence is the full run instead — one hit at baseline, **zero** across four post-fix full runs including two on fixed seeds. Both new cases were run **red first** (`1/3 passed`: the caller *exits* rather than being answered) and are green after |
+| KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub | `finish-the-suite-log-gate` — the six tests that spawn a real bind task now `await_migrate_task/1`, which reads the `%{pid: pid}` handle they already hold and asserts `{:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}`. That is strictly stronger than the `assert migrate_task != nil` it follows, and the `^inst` pin is untouched — the entry forbids loosening it and nothing did. **Two corrections.** (1) **Six tests leak, not one**: `:116`, `:155` (the one filed), `:185`, `:275`, `:320` and `:330`; the last two spawned through `stub_rebind/0` and **discarded the state** as `{:reply, :ok, _}`, so their leak was invisible to anyone grepping for `migrate_task != nil`. (2) The `startup attempt 1 failed … — retrying` line the entry quotes is **unreachable while the test is running**: the module's `setup` overrides `:overwatch_retry_backoff_ms` to `[1]`, so `rest == []` on the first attempt and there is no ladder. It appears because the orphan reaches `resolve_runner/4` only after its test's `on_exit` has **restored the production backoff** — which is the mechanism by which the task survives long enough to reach the next test at all. Measured: **3 of 10** seeds red at HEAD (777, 432113, 5150 — each `20 passed`, exit 0, two `[error]` lines), **0 of 10** on the same ten seeds after, at an unchanged 1.6 s. The await is proved load-bearing: expecting a wrong reason turns exactly those six red |
+| KI-50 · `Extension.PhaseTest` "uncertain health probe" fails about 1 run in 3, in-suite only | `finish-the-suite-log-gate` — the structural defect is fixed and **the rate was never reproduced at this HEAD**; both halves are stated because the second one matters. The module's hand-rolled `:telemetry.attach` is replaced by `MessageTestHelper.forward_telemetry/3`, which gained an optional metadata predicate, and each test now mints its own `plugin_id` and forwards only events carrying it — so a foreign `fail_open` is never delivered rather than merely waited past (no settle, no `async: false`, both of which this entry forbids). **Not reproduced in 15 runs** at this HEAD: `phase_test.exs` alone 5/5 green, the plugin tree 8/8 and then 5/5 green, and two full `mix test` runs green — so the ~1-in-3 claim stands neither confirmed nor refuted here. **The census explains why the window is narrow.** A scratch telemetry recorder plus an `ExUnit` formatter on one monotonic clock, over two full runs: **exactly four `fail_open` emits per run**, identical population both times — three from `phase_test` itself and **one** from `table_health_test.exs` (`plugin_id: "r"`) — and the two `async: true` emitters **never overlapped** in either run. Design D3's second named candidate, `Convergence.Probe`'s Loop tick, emitted **zero** times in both runs and is removed from suspicion. What replaces the missing race as proof is a **deterministic** one: with only the filter argument removed, the change's new scoping case fails with `Unexpectedly received message {:fail_open, …, %{plugin_id: "foreign_fail_open_1380"}}` — the entry's mechanism, on demand |
 | KI-19 · Test hygiene: leaked temp dirs and DLQ leftovers | `79e45353` — four modules now register cleanup where each directory is created; a run leaves the count no higher than it found it. Its DLQ half was measured NOT to grow in a plain run and is a different root (`app_data/dlq`) |
 | KI-27 · Specs and docs name things that do not exist | triage: three of its four claims are measured gone (`libflz_transport` retired by `24127af0`; `flz_jni`'s only surviving mentions are this file and the board describing the issue; `config.exs` now says `key`). **One survives** and is refiled as KI-51 |
 | KI-37 · SDK native binaries ship all five triples — provisional | triage: **two of six SDKs, not every SDK** — Node ships per-triple `optionalDependencies`, Ruby compiles at install, Python ships maturin wheels. Scoped to Java and PHP and refiled as KI-52. Today's artefact purge changed repository weight, not distribution shape — do not conflate them |

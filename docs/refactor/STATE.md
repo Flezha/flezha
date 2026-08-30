@@ -94,43 +94,42 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**`finish-the-suite-log-gate` — proposal worker spawned 2026-08-30 22:0x.** The
-defect programme's ten changes landed, but it left the CI uncaptured-log gate
-(`.github/workflows/elixir.yml:150`–`:163`) still unable to report: `KI-48`
-(production — `ControlUnit` exits abnormally on every teardown that races an
-in-flight control command) and `KI-49`/`KI-50` (test-side leaks onto a later
-test's stub/observation) are its named leftovers. One more supervised change
-closes them, then area 4 starts.
+None.
 
-**Proposal approved 21:32** (`openspec validate --strict` clean; supervisor
-re-derived the child order, the `send_control/2` funnel and the nine call sites
-from the code rather than from the report). Implementation runs in two segments:
-batches 1-3 (baseline, KI-48, KI-49), then 4-6 (KI-50, gate proof, close-out).
+**`finish-the-suite-log-gate` is DONE** — `21185253` (KI-48, KI-49) and the
+commit below (KI-50, the gate proof, the close-out); archived as
+`2026-08-30-finish-the-suite-log-gate`, `code-quality-baseline` gained both new
+requirements. Full suite 1836 -> 1839 passed; CI's grep 1 hit -> 0 on two seeds.
 
-**Reconciliation with the Phase 1 queue below.** A peer session wrote that queue
-(`dc335efa`, 21:09) while this change's proposal was already being written, so
-they overlap: `finish-the-suite-log-gate` closes **row 2 in full** (KI-48) and
-**KI-49 + KI-50 out of row 4**. Row 4 (`green-the-test-hygiene-tail`) therefore
-keeps only KI-18, KI-21, KI-23. Row 1 (KI-33) still blocks area 4 and is
-unaffected.
+**It did not make the gate reliably green, and the reason is worth reading.**
+The two batch-5 runs that exist to PROVE the gate reports immediately reported
+two sources nobody had seen, so the standing population was five, not three:
+
+- **KI-53 (production, the real find).** `input_log.ex` sets `trap_exit`,
+  `spawn_link`s its fsync companion and has NO `handle_info/2` clause at all.
+  The `[error]` line is the small half: a syncer that dies for a real reason is
+  logged as "unexpected message" and then IGNORED, after which every
+  `send(state.syncer, :sync)` succeeds silently against a dead pid — the fsync
+  stops and nothing says so, on the path every effectively-once source waits on.
+  A `{:EXIT, _, _} -> {:noreply, state}` clause would convert a durability hole
+  from noisy to silent, which is why it is filed and not folded in.
+- **KI-54 (test-side).** A `ForwardWorker` 250 ms retry outlives its test in
+  `operative_forward_test.exs` and calls into a deleted ETS table — the same
+  shape as the KI-49 this change just closed, in a different module.
+
+Both at 1 of 6 full runs. KI-54 was NOT folded in on purpose: with KI-53
+deferred the gate stays red about 1 run in 6 either way, so halving the rate is
+not achieving the purpose. Both are queued below instead.
+
+Areas 0a, 0b, 1s, 1, 2 and 3 are complete — ~42 % of the codebase by production
+LOC. Area 3 is `c5bdc26b`, archived as `2026-08-29-refactor-3-rust-sdk`;
+`sdk/rust` and `flezha-macros` are blocking ratchets.
 
 **Two sessions share this tree.** `moon-d7` and `flezha-11` are both live local
-sessions on this repo; the peer commit above landed mid-run here. Both were idle
-at 21:30. Anything uncommitted under `lib/`, `test/` or `docs/` during this
-change is this session's worker — a peer `git add -A` would sweep it.
-
-*Last seen 21:37* — batches 1-3 worker: `control_channel.ex`,
-`overwatch_suspension_test.exs` and `control_channel_send_control_test.exs`
-edited, a full-suite log written at 21:36. Machine clean (no zombies, no
-polling loops, load 1.07, no containers).
-
-Area 3 is done (`c5bdc26b`, archived as `2026-08-29-refactor-3-rust-sdk`;
-`sdk/rust` and `flezha-macros` flipped to blocking ratchets). Areas 0a, 0b, 1s, 1, 2
-and 3 are complete — **~42 % of the codebase by production LOC**.
-
-**Next**: area 4 (`sdk/java`, 8 441 lines) — its dependency (area 1) is done, and it
-is the last area before the five controller areas, which are 42 % of the codebase on
-their own and carry the 55-file dependency cycle.
+sessions on this repo; the peer commit `dc335efa` landed mid-run here and swept
+a board edit of this session's into it. Anything uncommitted under `lib/`,
+`test/` or `docs/` during a change is the running worker's — a peer `git add -A`
+would take it.
 
 ### The one verdict that outlives this area
 
@@ -630,11 +629,13 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | # | Change | Entries | Why grouped |
 |---|---|---|---|
 | 1 | `fix-java-workflow-resume-duplication` | KI-33 (P1) | Investigation first — 17/19 fail on both transports, `b` and `c` each arrive twice. **Blocks area 4.** |
-| 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48 (P2) | **In progress.** Absorbed, with KI-49 and KI-50, into one change: the three are the only sources keeping the uncaptured-log gate from reporting. |
+| 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48, KI-49, KI-50 | **DONE** — `21185253` + the close-out commit. Absorbed all three: they were believed to be the only sources keeping the uncaptured-log gate from reporting. They were not — see rows 7 and 8. |
 | 3 | `close-prometheus-label-coercion` | KI-45, KI-46 (P2/P3) | One family — the `to_string/1` shape `close-otlp-export-crash` removed from the codec, still standing on the other exporter. |
-| 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23 | Tests that lie or leak. KI-49 and KI-50 moved to row 2's change — they are gate sources, and the gate is proved once or not at all. |
+| 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | Tests that lie or leak. KI-49 and KI-50 went to row 2's change; KI-54 arrives here — a `ForwardWorker` retry outliving its test, the same shape as the KI-49 row 2 closed, so row 2's await pattern is the candidate fix. |
 | 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
 | 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
+| 7 | `close-input-log-syncer-blindness` | **KI-53 (P1)** | **New, found 2026-08-30 by the gate this programme just proved.** Not a log line: `InputLog` cannot tell that its fsync companion died, and keeps sending to a dead pid. Design question — re-spawn the syncer, or stop the log so its supervisor restarts the pair. Needs its own test; do NOT answer it with a `{:EXIT, _, _}` clause that returns `{:noreply, state}`. |
+| 8 | — | the gate itself | Not a change: after rows 4 and 7 land, re-run the batch-5 proof (a scratch uncaptured `Logger.error` must turn the gate red while `mix test` exits 0) and confirm two full runs clean. Only then is the gate reliable, and only then does `code-quality-baseline`'s new SHALL hold in practice. |
 
 **Do not touch, and do not let a worker "helpfully" fix:**
 

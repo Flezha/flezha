@@ -310,3 +310,60 @@ than the whole entry being left to overstate.
 - **WHEN** it is revised
 - **THEN** the stale claims SHALL be removed and what was measured in their place recorded
 
+### Requirement: A plain test run SHALL emit no uncaptured error log
+
+A default `mix test` on a clean tree SHALL produce no `[error]` or `[critical]`
+line. Every failure path a test drives on purpose is captured and asserted; any
+line that reaches the console is an unasserted failure, whether it comes from a
+test or from the production code under it.
+
+A line SHALL be closed at its cause. Narrowing the gate's pattern, allowlisting a
+message, filtering the log, or wrapping a test that drives no failure path in a
+module-wide capture SHALL NOT satisfy this: each makes the gate pass without
+making the run quiet, which is the condition the gate exists to detect.
+
+A production defect surfaced this way SHALL be fixed as a production change or
+recorded with a reproduction and left — never silenced from the test side, which
+would hide a live defect behind a green gate.
+
+#### Scenario: A clean tree runs quiet
+
+- **GIVEN** a working tree with no local modifications
+- **WHEN** a default `mix test` runs and the log gate's own pattern is applied to its output
+- **THEN** the pattern SHALL match nothing
+
+#### Scenario: Silencing the symptom does not count
+
+- **GIVEN** an uncaptured error closed by narrowing the gate, allowlisting the message, or capturing a test that drives no failure path
+- **WHEN** the practice is reviewed
+- **THEN** it SHALL NOT be treated as satisfying this requirement
+
+### Requirement: A test SHALL scope its observation of a process-global signal
+
+A test SHALL scope its observation of a process-global signal to what the test
+itself caused, by a discriminator the test controls. This covers any VM-wide
+facility a signal arrives through — a `:telemetry` handler, a named table, or a
+shared registry.
+
+Handlers of this kind fire for events raised in any process, so an unscoped
+observation in an `async: true` module receives whatever a concurrently running
+module or a background process emits. The resulting assertion is not about the
+code under test, and it fails intermittently and only in a full run, which is the
+most expensive shape a test failure can take.
+
+Waiting, retrying, or settling before the assertion SHALL NOT satisfy this: it
+defers the foreign signal rather than excluding it, and leaves the same
+observation open for the next emitter.
+
+#### Scenario: A concurrent emitter does not reach another test's assertion
+
+- **GIVEN** an `async: true` test observing a process-global signal
+- **WHEN** another module or a background process emits the same signal while it runs
+- **THEN** the observation SHALL NOT deliver that emitter's signal to the test
+
+#### Scenario: A settle does not count as scoping
+
+- **GIVEN** an unscoped observation made to pass by waiting, retrying, or settling
+- **WHEN** the practice is reviewed
+- **THEN** it SHALL NOT be treated as satisfying this requirement
+

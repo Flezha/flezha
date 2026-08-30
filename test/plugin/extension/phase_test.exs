@@ -12,6 +12,8 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
+  alias Flezha.Plugin.ProviderBehaviour
+  alias FlezhaTest.Helper.MessageTestHelper
 
   use ExUnit.Case, async: true
 
@@ -237,62 +239,81 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   end
 
   describe "an uncertain health probe is observable" do
+    # `fail_open/3` is a VM-global `:telemetry` event, and this module is
+    # `async: true`: an unscoped forward delivers a concurrently running
+    # emitter's event here too, so `assert_receive` matches a signal this test
+    # never caused and `refute_received` is falsified outright. Each test gets
+    # its own plugin id and forwards only events carrying it.
     setup do
-      handler = "fail-open-#{System.unique_integer([:positive])}"
-      test_pid = self()
+      id = "fail_open_#{System.unique_integer([:positive])}"
 
-      :telemetry.attach(
-        handler,
-        Flezha.Plugin.ProviderBehaviour.fail_open_event(),
-        fn _event, measurements, meta, _cfg ->
-          send(test_pid, {:fail_open, measurements, meta})
-        end,
-        nil
+      MessageTestHelper.forward_telemetry(
+        ProviderBehaviour.fail_open_event(),
+        :fail_open,
+        &(Map.get(&1, :plugin_id) == id)
       )
 
-      on_exit(fn -> :telemetry.detach(handler) end)
-      :ok
+      %{plugin_id: id}
     end
 
-    test "a health/1 that raises reports healthy AND emits" do
-      {table, []} = activate_quietly(subscribed(RaisingHealthProvider))
+    test "a health/1 that raises reports healthy AND emits", %{plugin_id: id} do
+      {table, []} = activate_quietly(subscribed(RaisingHealthProvider, id))
 
-      assert Table.health(table) == %{"p1" => :healthy}
+      assert Table.health(table) == %{id => :healthy}
 
       assert_receive {:fail_open, %{count: 1}, meta}
-      assert meta.plugin_id == "p1"
+      assert meta.plugin_id == id
       assert meta.provider == RaisingHealthProvider
       assert {:raised, %RuntimeError{message: "probe blew up"}} = meta.reason
     end
 
-    test "a health/1 returning an unrecognised value reports healthy AND emits" do
-      {table, []} = activate_quietly(subscribed(GarbageHealthProvider))
+    test "a health/1 returning an unrecognised value reports healthy AND emits", %{plugin_id: id} do
+      {table, []} = activate_quietly(subscribed(GarbageHealthProvider, id))
 
-      assert Table.health(table) == %{"p1" => :healthy}
+      assert Table.health(table) == %{id => :healthy}
 
       assert_receive {:fail_open, %{count: 1}, meta}
       assert meta.reason == {:invalid_return, :probably_fine}
     end
 
-    test "a provider that reports its own uncertainty reads healthy AND emits" do
-      {table, []} = activate_quietly(subscribed(UncertainHealthProvider))
+    test "a provider that reports its own uncertainty reads healthy AND emits", %{plugin_id: id} do
+      {table, []} = activate_quietly(subscribed(UncertainHealthProvider, id))
 
       # This is the wedged-worker path every worker-backed provider takes: the
       # provider cannot complete its probe, says so, and the table — which knows
       # the plugin id — turns it into the one fail-open event.
-      assert Table.health(table) == %{"p1" => :healthy}
+      assert Table.health(table) == %{id => :healthy}
 
       assert_receive {:fail_open, %{count: 1}, meta}
-      assert meta.plugin_id == "p1"
+      assert meta.plugin_id == id
       assert meta.provider == UncertainHealthProvider
       assert meta.reason == :probe_timeout
     end
 
-    test "a definite verdict emits nothing" do
-      {table, []} = activate_quietly(subscribed(DefiniteHealthProvider))
+    test "a definite verdict emits nothing", %{plugin_id: id} do
+      {table, []} = activate_quietly(subscribed(DefiniteHealthProvider, id))
 
-      assert Table.health(table) == %{"p1" => {:unhealthy, :upstream_down}}
+      assert Table.health(table) == %{id => {:unhealthy, :upstream_down}}
       refute_received {:fail_open, _, _}
+    end
+
+    test "another plugin's fail-open is never delivered here", %{plugin_id: id} do
+      foreign =
+        Task.async(fn ->
+          ProviderBehaviour.fail_open("foreign_#{id}", GarbageHealthProvider, :not_this_test)
+        end)
+
+      # `:telemetry.execute/3` runs every attached handler in the emitting
+      # process, so the task returning means this test's handler has already
+      # decided on that event — the refute below is a decision, not a race.
+      assert Task.await(foreign) == :healthy
+      refute_received {:fail_open, _, _}
+
+      # ... and the filter is not one that simply matches nothing: this test's
+      # own emit still arrives, on the same handler, straight after.
+      {table, []} = activate_quietly(subscribed(UncertainHealthProvider, id))
+      assert Table.health(table) == %{id => :healthy}
+      assert_receive {:fail_open, %{count: 1}, %{plugin_id: ^id, reason: :probe_timeout}}
     end
   end
 end

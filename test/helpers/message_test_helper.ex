@@ -7,8 +7,22 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
 
       forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
       assert_receive {:rejected, %{count: 1}, %{stage: :handshake}}, 500
+
+  `:telemetry` handlers are VM-global: the handler fires for an event executed
+  in ANY process, not only this test's. In an `async: true` module that makes an
+  unfiltered forward unsafe — a concurrently running emitter's event lands in
+  this mailbox, and `assert_receive` then matches a signal the test never
+  caused while `refute_received` is falsified outright. Pass `filter`, a
+  predicate on the event's metadata, to scope the observation to what this test
+  itself emitted:
+
+      forward_telemetry(event, :fail_open, &(Map.get(&1, :plugin_id) == my_id))
+
+  The predicate runs in the emitting process, so keep it total — a raise there
+  makes `:telemetry` detach the handler and the test goes deaf.
   """
-  def forward_telemetry(event, tag) do
+  def forward_telemetry(event, tag, filter \\ fn _metadata -> true end)
+      when is_function(filter, 1) do
     test_pid = self()
     handler_id = {__MODULE__, tag, System.unique_integer([:positive])}
 
@@ -17,7 +31,7 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
         handler_id,
         event,
         fn _event, measurements, metadata, _ ->
-          send(test_pid, {tag, measurements, metadata})
+          if filter.(metadata), do: send(test_pid, {tag, measurements, metadata})
         end,
         nil
       )
