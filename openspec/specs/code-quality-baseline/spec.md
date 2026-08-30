@@ -152,3 +152,55 @@ the wrapper to use instead.
   wrapper's own module
 - **THEN** it SHALL exit zero, the exemption being declared by path
 
+### Requirement: A failure-path test SHALL assert its diagnostic
+
+A test that deliberately drives a path which logs an error SHALL capture that
+log and assert on the part of the message that carries meaning. The diagnostic
+becomes something the test checks, rather than output the run prints and the
+merge gate trips over.
+
+Capturing without asserting SHALL NOT satisfy this: it quiets the run while
+removing the diagnostic from everything, which trades a visible problem for an
+invisible one. A module-wide capture SHALL NOT be used either, because it also
+swallows lines a later test emits by accident — including the ones that would
+have revealed a defect.
+
+#### Scenario: A failure-path test asserts what it provoked
+
+- **GIVEN** a test that drives a path which logs an error
+- **WHEN** it runs
+- **THEN** it SHALL capture that log and assert on the message's meaningful part
+
+#### Scenario: A silenced diagnostic does not count
+
+- **GIVEN** a test that captures a log and discards it, or a module-wide capture
+- **WHEN** the practice is reviewed
+- **THEN** it SHALL NOT be treated as satisfying this requirement
+
+### Requirement: A log gate SHALL be demonstrated to fail
+
+A gate that searches output for a forbidden pattern SHALL be shown to go red on
+a deliberate violation and green on its removal. A gate that has only ever
+reported one verdict has been shown to be consistent, not to work — and one that
+has been red since it was written reports nothing, because no one can tell a new
+violation from the standing ones.
+
+#### Scenario: The gate goes red on purpose
+
+- **GIVEN** a deliberate uncaptured error added to the suite
+- **WHEN** the gate's own command runs against the run's output
+- **THEN** it SHALL exit non-zero, and SHALL exit zero once that error is removed
+
+### Requirement: A test SHALL remove the temporary directories it creates
+
+A test that creates a temporary directory SHALL register its removal at the
+point of creation, so a run leaves the temporary-directory count no higher than
+it found it. Cleanup SHALL NOT depend on a shared teardown helper that each
+module must remember to call, which reproduces the same omission one level up.
+
+#### Scenario: A run leaves no temporary directories behind
+
+- **GIVEN** the count of temporary directories before a plain `mix test`
+- **WHEN** the run completes
+- **THEN** the count SHALL be no higher than before
+
