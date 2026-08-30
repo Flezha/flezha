@@ -195,8 +195,14 @@ Fail → `SendMessage` to the same worker with the exact findings; row stays
 While a worker runs, the fallback wake-up is **600 s** (never longer). Every
 wake-up is a stall check, not a status note:
 
-1. `ps -eo cmd | grep -E 'cargo|rustc|criterion|mix |beam.smp|mvn|rust_runner|node |python|ruby|php'`
-   — is anything of the worker's running?
+1. `ps -eo pcpu,etime,pid,ppid,cmd --sort=-pcpu | head -12` plus `uptime` — is
+   anything of the worker's running, and **is every top consumer explainable?**
+   Rule each one logical or leaked by name; a grep for known leak shapes finds
+   only the leaks it already knows (charter §11b). `epmd`, one `playwright-mcp`
+   per Claude session and the peer sessions' own `claude` processes are expected;
+   a `beam.smp`, `java`, `mvn`, `cargo`, `rustc` or test app still alive AFTER a
+   run finished is not. A 1-minute load average below the 15-minute one means the
+   box is quieting down; above it means something started.
 2. the newest file under the scratchpad (`find $SCRATCH -newermt '-10 minutes'`)
    and any `*DONE*` / marker files the worker's jobs write;
 3. `tasks.md` ticks and `git diff --stat | tail -1` versus the last heartbeat.

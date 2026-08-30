@@ -284,6 +284,29 @@ the machine every 30–60 minutes** and kills what it started — zombies, orpha
 `cargo`/`rustc`/`criterion`/`beam.smp`/`mix`/`mvn` processes, polling loops,
 containers. The commands are in `CLAUDE.md` under "Machine hygiene".
 
+**Attribute the CPU, do not just count the leaks.** A sweep that greps for known
+leak shapes finds only the leaks it already knows. Every sweep therefore also
+sorts by CPU and rules each consumer *logical* or *leaked*, by name:
+
+```
+ps -eo pcpu,etime,pid,ppid,user,cmd --sort=-pcpu | head -12
+uptime          # 1-min BELOW 15-min = the box is quieting; above = something started
+```
+
+A consumer that cannot be explained is investigated before it is killed, and a
+process you cannot attribute to yourself is asked about, never killed (`CLAUDE.md`).
+
+**Long-lived here and NOT leaks** — killing one is a real cost, so they are named
+rather than left to judgement: `epmd -daemon` (the Erlang port mapper; every BEAM
+test run leaves it and it costs nothing idle), one `playwright-mcp` node process
+per live Claude session, and the `claude` processes of the peer sessions sharing
+this tree. What IS a leak after a run has finished: any `beam.smp`, `java`, `mvn`,
+`cargo`, `rustc`, `rust_runner`, or a `node`/`python`/`ruby`/`php` test app.
+
+**The strongest evidence a run tore down cleanly is a negative one**: immediately
+after an e2e or bench arm, none of those names appears at all. Record that, not
+"looked fine".
+
 **A `top` snapshot lies about benchmark load.** Criterion and the round-trip
 benches measure in 60-second windows separated by builds and process startup, so
 a snapshot usually lands in a gap and shows an idle box while the fan runs hard.
