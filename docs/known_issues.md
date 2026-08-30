@@ -221,110 +221,41 @@ below is all that survives — which is enough to write it again.
 
 ---
 
-### KI-44 · The OTLP codec crashes on any attribute value that is not a string
+### KI-45 · `PrometheusRegistry` re-encodes a metric label the same way the OTLP codec did
 
-- **Severity**: P2 · **would break a live export, not just a test**.
-- **Where**: `lib/flezha/observability/export/otlp_codec.ex:222`, `:239`, `:267` —
-  `kv_attribute(to_string(k), to_string(v))`.
-- **What happens**: `to_string/1` raises `Protocol.UndefinedError` for a Map, and
-  Logger metadata *is* a map. Any signal carrying a map-valued attribute takes
-  the exporting process down. Nothing guards the value's shape.
-- **Evidence**: `test/flezha/observability/export_test.exs:320` failed on
-  2026-08-30 with `protocol String.Chars not implemented for Map`, the value
-  being a log event's own metadata
-  (`mfa: {Flezha.Shutdown.Coordinator, :fold_drain_outcome, 2}`). The test is
-  `async: false`, uses no Logger, and the exception arrived as an EXIT from
-  another process — so the map reached the codec from outside the test. It
-  passes 3/3 alone, and the same tree produced 1830 and 1829 on two runs, so it
-  is timing-dependent in *which signals flow*, not flaky in itself.
-- **Not attributable to `close-mimic-global-leak`**: that change touched no
-  observability or shutdown code, and `export_test.exs` is untouched and uses no
-  Mimic global mode.
-- **A fix must**: decide what a non-String.Chars attribute value becomes —
-  `inspect/1` is the obvious answer — and apply it at all three sites, since a
-  guard at one leaves the other two. Check whether the codec should also be
-  refusing such a value at the bus rather than at encode time.
-- **Triage (2026-08-30)**: **REAL, and much broader than filed.** It is not
-  "any signal carrying a map-valued attribute" — it is **every log signal the
-  Logger bridge produces**. `LoggerHandler.build_metadata/3`
-  (`lib/flezha/observability/logger_handler.ex:104`) unconditionally puts
-  `mfa: {M, F, A}` (a tuple) *and* `logger: meta` (the whole Logger metadata
-  map) into `signal.metadata`. `OtlpSink.filter/0` is
-  `%{kinds: :any, sources: :any}`
-  (`lib/flezha/observability/export/otlp_sink.ex:38`) and `flush/1` calls
-  `OtlpCodec.encode_batch/1` with no `try`, so the sink process dies on the
-  first log line it batches. The three `to_string(v)` sites are unchanged at
-  `:222`, `:239`, `:267`.
-- **Reproduction** — the real handler feeding the real codec, no stubbing; the
-  Signal is captured off a local trace on `Bus.emit/1`.
-
-  ```elixir
-  # /tmp/ki44.exs
-  alias Flezha.Observability.{LoggerHandler, Bus}
-  alias Flezha.Observability.Export.OtlpCodec
-
-  me = self()
-  tracer = spawn_link(fn ->
-    (fn loop -> receive do
-       {:trace, _p, :call, {Bus, :emit, [sig]}} -> send(me, {:sig, sig}); loop.(loop)
-       _ -> loop.(loop)
-     end end).(fn l -> l end)
-  end)
-
-  Code.ensure_loaded!(Bus)
-  1 = :erlang.trace_pattern({Bus, :emit, 1}, true, [:local])
-  1 = :erlang.trace(self(), true, [:call, {:tracer, tracer}])
-
-  LoggerHandler.log(
-    %{level: :warning, msg: {:string, "drain finished"},
-      meta: %{mfa: {Flezha.Shutdown.Coordinator, :fold_drain_outcome, 2},
-              file: ~c"lib/flezha/shutdown/coordinator.ex", line: 412, pid: self()}},
-    %{}
-  )
-
-  :erlang.trace(self(), false, [:call])
-  signal = receive do: ({:sig, s} -> s), after: (2_000 -> raise "Bus.emit never called")
-
-  IO.puts("metadata keys: #{inspect(Map.keys(signal.metadata))}")
-  enc = fn s -> try do (OtlpCodec.encode_logs([s]); :encoded_cleanly) rescue
-    e -> {:raised, e.__struct__, e |> Exception.message() |> String.split("\n") |> hd()} end end
-  IO.puts("encode_logs(bridged signal) -> #{inspect(enc.(signal))}")
-  IO.puts("encode_logs(safe metadata)  -> #{inspect(enc.(%{signal | metadata: %{level: :warning, line: 412}}))}")
-  ```
-
-  ```
-  $ MIX_ENV=test mix run --no-start /tmp/ki44.exs
-  metadata keys: [:line, :logger, :message, :file, :level, :mfa]
-  encode_logs(bridged signal) -> {:raised, Protocol.UndefinedError, "protocol String.Chars not implemented for Map. …"}
-  encode_logs(safe metadata)  -> :encoded_cleanly
-  ```
-
-  The second line is the **control**: the identical signal with String.Chars-safe
-  metadata encodes cleanly, so the probe can report a clean result. A direct
-  codec probe adds the value shapes: `%{…}` and `{M, F, A}` and a pid all raise;
-  a plain list does **not**.
-- **Escalation — inferred from config, NOT driven live.** `OtlpSink` is a direct
-  child of `Export.Supervisor`, which is `Supervisor.init(children, strategy:
-  :one_for_one)` at `lib/flezha/observability/export/supervisor.ex:56` — default
-  intensity, 3 restarts in 5 s. Four log lines inside five seconds therefore take
-  the export tree down and start spending the budget above it. OTLP is opt-in
-  (`FLEZHA_OTLP_ENABLED`, default `false`, `config/runtime.exs:530`), which is
-  the only reason this has never been seen in production: nobody has turned the
-  exporter on. Whoever does gets no telemetry at all. **I did not drive that
-  cascade** — it is read off the supervisor spec, not observed.
-- **Second defect at the same three sites, not in the original entry**:
-  `to_string/1` on a list does not raise, it *re-encodes*. `%{l: [1, 2, 3]}`
-  encodes to the bytes `<<1, 2, 3>>`, and `file:` — a charlist — goes the same
-  way. A `String.Chars`-only guard leaves that silent corruption in place; the
-  fix wants `inspect/1` for everything that is not already a binary, not a
-  `rescue` around `to_string/1`.
-- **Worth fixing**: yes, and it is small — one shared value-coercion helper
-  behind all three sites. The entry's own "Severity: P2" line understates it
-  given the sink is unusable and the tree can cascade; treat it as P1 while it
-  sits in this band. The bus-level question the entry raises should be answered
-  *no*: `Signal` deliberately accepts any plain map, `RingBufferSink` and the
-  audit log consume these same values without trouble, and only the OTLP wire
-  needs strings — so the coercion belongs at encode time, where it is.
+- **Severity**: P2 · **proposal owed** (small).
+- **Where**: `lib/flezha/observability/export/prometheus_registry.ex:192` —
+  `Enum.map(fn {k, v} -> {to_string(k), to_string(v)} end)` over a metric
+  signal's metadata.
+- **What happens**: the shape `close-otlp-export-crash` removed from
+  `OtlpCodec`, still standing on the other exporter. `to_string/1` raises
+  `Protocol.UndefinedError` for a map, a tuple or a pid, which would take
+  `PrometheusRegistry` down inside `record/1`; and for a list it returns the
+  binary of the elements, so a charlist or byte-list label is silently
+  rewritten on the exposition.
+- **Why it is not the same severity**: `PrometheusSink.filter/0` is
+  `%{kinds: [:metric], sources: :any}`
+  (`lib/flezha/observability/export/prometheus_sink.ex:36`), so the Logger
+  bridge's map and tuple — which reach *every* OTLP log signal — never arrive
+  here. Only a metric emitted with a non-scalar metadata value does, and every
+  metric source in the tree emits scalars today. It is a live crash waiting on
+  one new source, not one that fires now.
+- **Evidence**: measured on `0c4a695a` alongside KI-44's reproduction; the
+  filter and the `to_string` pair are read directly off the two files above.
+  **Not driven**: no signal was pushed through `PrometheusRegistry.record/1`
+  with a map-valued label, so the crash is inferred from `to_string/1`'s
+  contract, not observed.
+- **Why not fixed with KI-44**: it is not the same fix. Prometheus label
+  *names* must match `[a-zA-Z_][a-zA-Z0-9_]*`, so coercing a tuple key to
+  `"{:a, :b}"` produces a well-formed string and a malformed exposition — the
+  Prometheus side needs a name rule as well as a value rule, and
+  `escape_label_value/1` already owns part of that question.
+- **A fix must**: decide the label-name rule first (refuse, slugify, or drop
+  the label), then reuse `OtlpCodec.attribute_string/1`'s decision for the
+  value — a binary unchanged, scalars via `String.Chars`, everything else
+  inspected. `lib/flezha/observability/export/otlp_client.ex:147` has the same
+  two-`to_string` shape and is **not** part of this: those are operator-supplied
+  `:otlp_headers` from config, not telemetry.
 
 ---
 
@@ -1660,6 +1591,30 @@ Do not run one as a gate and do not report its single-run number as a verdict.
 
 ---
 
+### KI-46 · OTLP attributes are stringified where the protocol has typed values
+
+- **Severity**: P3 · **proposal owed**.
+- **Where**: `lib/flezha/observability/export/otlp_codec.ex` — `kv_attribute/2`
+  and `any_value_string/1`, which emit `AnyValue.string_value` (field 1) and
+  nothing else.
+- **What happens**: nothing breaks. Every attribute is present and readable
+  after `close-otlp-export-crash`, but a structured value crosses as an Elixir
+  rendering — `%{line: 412}`, `{Mod, :fun, 2}`, `[1, 2, 3]` — where OTLP's
+  `AnyValue` has `array_value` (5) and `kvlist_value` (6) for exactly these
+  shapes. A collector or a Grafana query cannot index into a string.
+- **Why it was not folded into `close-otlp-export-crash`**: that change had to
+  stop the exporter dying on its own payload, and stringifying is the smaller
+  fix. Emitting typed values changes the shape on the wire for attributes that
+  already export today, which is a compatibility question with its own answer
+  (design `close-otlp-export-crash/design.md`, Open Questions).
+- **A fix must**: map Elixir terms onto `AnyValue`'s oneof (`bool_value`,
+  `int_value`, `double_value`, `array_value`, `kvlist_value`, `bytes_value`),
+  decide what a tuple, a pid and a struct become — none has an OTLP shape, so
+  inspection stays their answer — and keep one decision behind all attribute
+  sites, as `attribute_string/1` is now.
+
+---
+
 ## Older defects, found before the refactor programme
 
 These predate `docs/refactor/STATE.md` and were carried only in session memory
@@ -2136,6 +2091,8 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-47 · `check-overflow-naming.sh` red on its own evidence — a triage entry has to quote the retired name to prove it is gone | the gate now separates a QUOTED mention from a bare use, scoped to `docs/known_issues.md`; drilled both ways (bare use still exits 1) |
+| KI-44 · the OTLP codec crashed on any attribute value that is not a string, and silently re-encoded a list | `close-otlp-export-crash` (`<commit>`) — one private `attribute_string/1` renders every attribute **key and value**: a binary passes through untouched, an atom, integer or float takes its `String.Chars` rendering, everything else — lists included — goes through `inspect/1` with `limit: :infinity, printable_limit: :infinity`. Both halves were driven red first: a real `LoggerHandler.log/2` event through the real codec raised `Protocol.UndefinedError` on `logger:` (a Map) and on `mfa:` (a Tuple), while `%{l: [1, 2, 3]}` encoded to the bytes `<<1, 2, 3>>` **with no exception at all**. Three corrections to the filed entry, each measured: `:222` is the metric `NumberDataPoint` site, not the resource (`default_resource/0` never sees signal metadata); an attribute **key** can be a non-string too and crashed identically, since `Signal.new/1` validates that metadata is a map and never constrains its keys; and the escalation is no longer inferred — with the coercion reverted, `OtlpSink` dies inside `flush/1` with that exception, which the flush test now pins. `mix test test/flezha/observability/export_test.exs` with `attribute_string/1` reverted to `to_string/1`: **12 of 18**, six red including the list case, which fails without raising; restored: **18 of 18**, full suite **1836 passed, 0 failed**. The sibling site on the Prometheus exporter is KI-45; typed `AnyValue`s are KI-46 |
 | KI-43 · 28 test modules set Mimic's global mode without releasing it | `close-mimic-global-leak` (`828a9f50`) — 26 modules moved to `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1`, two dropped global mode entirely (they register no stub anywhere reachable), and `scripts/check-mimic-global.sh` refuses the raw call in `test/` with `test/helpers/mimic_global.ex` exempt by path. Measured, not asserted: `mix test test/flezha/service/cli_manager_state_get_test.exs test/flezha/service/cli_manager_schedule_test.exs --seed 0` was **11/20 passed, 9 failed**, every failure `Only the global owner is allowed`, against **10 passed** for the schedule module alone; after, **20 passed** on the same seed. Read directly (a temporary `ExUnit.after_suite` probe on `:ets.lookup(Mimic.Server, :mode)`): at seed 0 exactly one of the 28 left the mode `:global`; after the change all 36 global-mode modules left it `:private`. The entry's own reading was too broad — see `docs/dev_notes/close-mimic-global-leak.md` for which of the 28 could actually leak and why |
 | KI-2 · first input after `start_operative/2` journaled and never forwarded (both faces: the start window, and the restore re-forward onto a stream a fresh runner has not bound) | `fix-first-input-drop-on-bind` (`e16260a7`) — the operative bind now waits for its data-stream channel (`StreamChannel.await_bind/2`), and an undelivered payload arms `{:stream_bound, _}`, which re-forwards the journal tail through the replay path a restore already used. Deterministic proof: `test/flezha/operative/bind_reforward_test.exs` — its four delivery cases were run red on the pre-fix tree, in 2.1 s, with no sampling. `effectively_once_checkpoint_e2e_test.exs:37` 40x in isolation: **40/40 pass, 0 `[:flezha, :stream, :drop]`** |
 | KI-20 · `sdk_smoke_e2e_test.exs` carried the old re-send workaround | `fix-first-input-drop-on-bind` (`e16260a7`) — `send_until_forwarded` deleted, the single `send_io` stands, and `NodeTestHelper.await_stream_bound/2` is gone from the tree with it (29 call sites across 15 modules) |

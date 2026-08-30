@@ -8,7 +8,7 @@ defmodule Flezha.Observability.LoggerHandlerTest do
 
   require Logger
 
-  alias Flezha.Observability.{Counters, Registry, Signal}
+  alias Flezha.Observability.{Counters, Registry, TestSinks}
   alias Flezha.Observability.TestSinks.Counting
 
   setup do
@@ -37,10 +37,9 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     Logger.warning("hello-observability")
 
     log_signal =
-      receive_until(
-        fn s -> s.kind == :log and s.metadata.message == "hello-observability" end,
-        500
-      )
+      TestSinks.receive_signal(fn s ->
+        s.kind == :log and s.metadata.message == "hello-observability"
+      end)
 
     assert log_signal
     assert log_signal.name == :warning
@@ -68,24 +67,6 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     # Logger should still work after this call.
     Logger.warning("still-alive")
     assert Counters.get(:logger_bridge_failures) >= before_failures
-  end
-
-  defp receive_until(_pred, timeout) when timeout <= 0, do: nil
-
-  defp receive_until(pred, timeout) do
-    start = System.monotonic_time(:millisecond)
-
-    receive do
-      {:counted, %Signal{} = sig} ->
-        if pred.(sig) do
-          sig
-        else
-          elapsed = System.monotonic_time(:millisecond) - start
-          receive_until(pred, timeout - elapsed)
-        end
-    after
-      timeout -> nil
-    end
   end
 
   defp drain_mailbox() do

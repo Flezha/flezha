@@ -140,6 +140,16 @@ Unix nanoseconds (`(ts + System.time_offset(:microsecond)) * 1_000`). The client
 plus `/v1/metrics`, `/v1/logs`, `/v1/traces` (a suffix already present is not doubled), so
 `:otlp_endpoint` is the collector **base** URL.
 
+Attribute keys and values cross as OTLP strings, and a signal's metadata holds arbitrary terms — the
+Logger bridge attaches a map (`logger:`) and an `{m, f, a}` tuple to every log event. Every term is
+representable: a binary is used unchanged, an atom, integer or float takes its `String.Chars` rendering,
+and anything else — a map, a tuple, a pid, **a list** — is inspected in full (`limit: :infinity`, so
+nothing is elided into `...`). So an attribute may reach the collector as an Elixir rendering
+(`%{line: 412}`, `[1, 2, 3]`) rather than a JSON or typed one; encoding never raises on an attribute's
+shape, and never silently re-encodes one. Note that a charlist reads as `~c"..."`, not as its text: the
+codec cannot tell a charlist meant as text from a byte list meant as data, and saying which it is beats
+guessing. `service.version` is the exception, converted at its source because it is known to be one.
+
 Retry: up to 5 attempts per POST with backoff `250, 500, 1_000, 2_000, 4_000` ms on `5xx`, `:closed`,
 `:timeout` or `:econnrefused`; any other error gives up at once; per-request timeout 10 s. Success
 emits `:otlp_batch_flushed` (`%{batch_size, duration_us}`); exhaustion discards the batch and emits

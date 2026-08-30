@@ -56,7 +56,14 @@ PATTERNS = [re.compile(p) for p in (
 # mechanism with its own vocabulary — its policy really is named `:block`, and
 # renaming it here would widen the diff without making anything truer. Masked
 # by scope so the prose pattern does not claim it.
-ALLOWED = [("openspec/specs/observability-foundation", re.compile(r"Block policy is opt-in"))]
+ALLOWED = [
+    ("openspec/specs/observability-foundation", re.compile(r"Block policy is opt-in")),
+    # `docs/known_issues.md` records retired vocabulary as evidence: an entry
+    # proving the old name is gone has to quote it. A QUOTED occurrence is a
+    # mention, not a use — bare prose naming the policy is still caught, which
+    # is the only shape that could reintroduce it.
+    ("docs/known_issues.md", re.compile(r"""['"`]OverflowPolicy::Block['"`]""")),
+]
 
 sys.exit(naming_gate.walk(
     check=naming_gate.pattern_check(PATTERNS, ALLOWED),

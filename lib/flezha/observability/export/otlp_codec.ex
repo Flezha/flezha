@@ -18,6 +18,13 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   generation, no proto schema introspection. Each public function
   documents the field-number → wire-type mapping it emits, mirroring
   the upstream `.proto` definitions.
+
+  Attribute keys and values cross as OTLP strings, and a signal's metadata
+  holds arbitrary terms. Every one of them is representable: a binary is used
+  unchanged, an atom, integer or float takes its `String.Chars` rendering, and
+  anything else — a map, a tuple, a pid, **a list** — is inspected in full.
+  Encoding therefore never raises on the shape of an attribute, and never
+  silently re-encodes one. See `attribute_string/1`.
   """
 
   import Bitwise
@@ -219,7 +226,7 @@ defmodule Flezha.Observability.Export.OtlpCodec do
 
     attr_fields =
       Enum.map(signal.metadata, fn {k, v} ->
-        field(7, @wire_length_delim, encode_message(kv_attribute(to_string(k), to_string(v))))
+        field(7, @wire_length_delim, encode_message(kv_attribute(k, v)))
       end)
 
     base ++ val_field ++ attr_fields
@@ -236,7 +243,7 @@ defmodule Flezha.Observability.Export.OtlpCodec do
 
     attrs =
       Enum.map(signal.metadata, fn {k, v} ->
-        field(6, @wire_length_delim, encode_message(kv_attribute(to_string(k), to_string(v))))
+        field(6, @wire_length_delim, encode_message(kv_attribute(k, v)))
       end)
 
     [
@@ -264,7 +271,7 @@ defmodule Flezha.Observability.Export.OtlpCodec do
     #        start_time_unix_nano = 7, end_time_unix_nano = 8, attributes = 9 }
     attrs =
       Enum.map(signal.metadata, fn {k, v} ->
-        field(9, @wire_length_delim, encode_message(kv_attribute(to_string(k), to_string(v))))
+        field(9, @wire_length_delim, encode_message(kv_attribute(k, v)))
       end)
 
     [
@@ -307,10 +314,25 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   defp kv_attribute(key, value) do
     # KeyValue { key = 1, value = 2 (AnyValue) }
     [
-      field(1, @wire_length_delim, encode_string(key)),
-      field(2, @wire_length_delim, encode_message(any_value_string(value)))
+      field(1, @wire_length_delim, encode_string(attribute_string(key))),
+      field(2, @wire_length_delim, encode_message(any_value_string(attribute_string(value))))
     ]
   end
+
+  # An OTLP attribute key and value both cross the wire as strings, and a
+  # signal's metadata holds arbitrary terms: the Logger bridge alone attaches a
+  # map and an {m, f, a} tuple to every log event. `to_string/1` cannot carry
+  # them — it raises for a map, a tuple or a pid, and for a list it returns the
+  # binary of the elements, silently changing what the attribute says. So only
+  # the types with an unambiguous String.Chars rendering take that route;
+  # everything else is inspected, lists included. The limits are explicit so a
+  # long term is never elided into "..." and read as complete.
+  defp attribute_string(term) when is_binary(term), do: term
+
+  defp attribute_string(term) when is_atom(term) or is_integer(term) or is_float(term),
+    do: to_string(term)
+
+  defp attribute_string(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)
 
   defp any_value_string(value) do
     # AnyValue { string_value = 1 }
@@ -341,7 +363,6 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   defp encode_message(iodata), do: IO.iodata_to_binary(iodata)
 
   defp encode_string(value) when is_binary(value), do: value
-  defp encode_string(value), do: to_string(value)
 
   defp encode_bytes(value) when is_binary(value), do: value
 
