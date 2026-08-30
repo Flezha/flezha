@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-30 01:25 (supervisor session 2 — **AREA 3 DONE**, ready for hand-over)
+**Last updated**: 2026-08-30 02:55 (supervisor session 2 — **AREA 3 DONE**; history rewrite undone, hashes repointed, ready for area 4)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -36,30 +36,36 @@ one host core, tests fast and real.
 
 ## Status
 
-Done: Phase 0, 1s, area 1 (kernel), area 2 segments A (`01f45d7d`), B (`fae9184f`)
-C (`853f37fe`, plus the corrective `fmt(2)` `77287b1d`) and D (`e89e4a7a`). All five
-areas now have no file over 800 lines and no function over 50; the area is
-**−93 production and −354 test lines**. NEXT: area 2 segment E — batch 9 only
-(verification, the final A/B on all three rows, artifacts, hand-over), which closes
-the area.
+Done: Phase 0, 1s, area 1 (kernel), area 2 (all five segments, `09f2c50f`) and
+area 3 (segments A–F, `fcb3ced9`). `flz_core`, `flz_transport`, `flz_nif`,
+`flz_core_ffi`, the four veneers, `sdk/rust` and `flezha-macros` are all BLOCKING
+ratchets. NEXT: **area 4 (`sdk/java`, 8 441 lines)** — its only dependency, area 1,
+is done.
 
-**Progress, measured not estimated**: ~33 % by production LOC — 46.8 K of ~143 K
-touched (`flz_core` 18.2, `flz_transport`+`flz_nif` 6.3, `flz_core_ffi` 4.7, the four
-veneers 17.6). The 45 % figure this board carried earlier was my own count of board
-ROWS, which over-counts badly: the five controller areas still ahead are 66 K
-production lines on their own — 46 % of the codebase — and they also have to cut the
-55-file dependency cycle, which is the hardest work in the programme and has not
-started. Areas 3 (`sdk/rust`, 10.6 K + 20.1 K test) and 4 (`sdk/java`, 14.3 K) sit
-between here and there.
+**Progress, measured not estimated**: ~42 % by production LOC. The 45 % figure this
+board carried earlier was my own count of board ROWS, which over-counts badly: the
+five controller areas still ahead are 66 K production lines on their own — 46 % of
+the codebase — and they also have to cut the 55-file dependency cycle, which is the
+hardest work in the programme and has not started. Area 4 (`sdk/java`) sits between
+here and there.
 
-**The history was rewritten outside the programme.** The user ran `fix.sh` (an
-untracked `git filter-branch` that shifts commit timestamps) at 14:52; every commit
-hash on this branch changed and the `refactor-baseline-*` tags moved with it (all
-still ancestors of HEAD, so every `git diff refactor-baseline-<id>` still works).
-This board's hashes are remapped to the new history; `.git-blame-ignore-revs`,
-`baseline.json`'s `head`, `CLAUDE.md` and `docs/dev_notes/` still name dead hashes
-(supervisor task, below). The pre-rewrite history survives on branch
-`backup-20260829-145208`.
+**The history rewrite has been undone.** `fix.sh` (an untracked `git filter-branch`)
+ran at 14:52 on 2026-08-29 and changed every commit hash on this branch — while
+removing nothing: the tree and blob object sets were byte-identical either side. It
+left the branch on a history disjoint from `origin`, which a later
+`git reset --hard ORIG_HEAD` then fell off, dropping 43 commits.
+
+All 43 were replayed onto origin's untouched history and pushed as a fast-forward,
+so **this branch is back on the same history as `origin/dev` and no remote hash ever
+changed**. Every hash cited in this board, `CLAUDE.md`, `docs/known_issues.md`,
+`docs/dev_notes/`, `.git-blame-ignore-revs` and `baseline.json` has been repointed to
+the surviving commit and verified to resolve. The pre-recovery state survives on
+branch `RESCUE-area3-45cbd1db`; `backup-20260829-145208` and the other 14 stale
+branches are deleted, with `archive/*` tags kept for the three that held unique work.
+
+The bloat `fix.sh` was aimed at is real and untouched — 2.05 GB of blob bytes, 1.78 GB
+of it seven committed Java artefacts. It now has a proposal:
+`openspec/changes/unbundle-committed-build-artifacts`.
 
 ## Board
 
@@ -575,12 +581,21 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. `/loop /refactor` in a new session: it reads this file, finds no worker and area 2
-   `implementing`, and re-spawns segment B (batches 3–4) from task 3.1.
-2. Then segments C (5–6), D (7–8), E (9) of area 2; supervisor commit at each.
-3. Area 3 (Rust SDK): `TypedBodies<S>`, the typed tail onto `settle_effects`, the
-   bench scaffolding onto `flz_core::bench_support`, the typed-path −1.4 %.
-4. Owed defect changes (user's priority call, see "Awaiting"): F1 dlq watermark, the
-   first-input drop (two faces) — before areas 5a/5e. Owed follow-up
+1. `/loop /refactor` in a new session: it reads this file, finds no worker and every
+   area through 3 `done`, and spawns the **area 4 survey** (`sdk/java`, 8 441 lines).
+2. Then area 4's segments; supervisor commit at each, under the A/B policy below
+   (build every checkpoint, measure once at the last).
+3. The user's stated preference is to clear the open OpenSpec changes BEFORE area 4
+   resumes. Three are open, none blocking the programme:
+   - `fix-first-input-drop-on-bind` — proposal only (1/4 artifacts); the two-faced
+     first-input drop from "Awaiting", touching `state`/`runner`
+   - `fix-outbox-watermark-overwrite` — proposal only (1/4); F1, the watermark
+     overwrite after a park (`wal_writer.ex:1288`, `input_log.ex:189`)
+   - `unbundle-committed-build-artifacts` — complete (4/4), 37 tasks; removes the
+     seven committed Java artefacts and purges 2.05 GB from history
+   The first two refactor exactly the files areas 5a and 5e will touch, so landing
+   them first is cheaper than landing them after. Owed follow-up
    `sdk-declaration-refusals-in-the-core` after area 4.
+4. **`openspec/changes` is gitignored** — every open change above exists only on this
+   disk until archived. Back them up before any fresh clone.
 5. Plug the laptop in before any checkpoint: every A/B is refused on battery.
