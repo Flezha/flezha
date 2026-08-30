@@ -125,7 +125,7 @@ sequential `#[test]` — they share ordered state, and splitting the `#[test]`
 would have made the ordering a hope rather than a fact.
 
 **The charter's 50-line function ceiling is production-only** (amended at
-`6b38f2b9`, which is what `refactor_metrics.py` had measured all along), so
+`63c45c1d`, which is what `refactor_metrics.py` had measured all along), so
 `tests/abi/shape.rs` keeps two flat assertion tables of 75 and 72 lines. The
 **file** ceiling still binds tests, and that is what forced this split.
 

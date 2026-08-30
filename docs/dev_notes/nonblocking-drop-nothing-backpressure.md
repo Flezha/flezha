@@ -270,7 +270,7 @@ changing what a liveness slot is.
   picks the FIRST artifact path in a `conformance.json` that *exists* and never
   checks whether it is current: `test/apps/rust_runner/conformance.json` lists
   `target/release/rust_runner` first, and a copy three days old — built before
-  `ed856088` added `sdk_lang` to the advertisement — advertised `0`, so every
+  `41a35a14` added `sdk_lang` to the advertisement — advertised `0`, so every
   placement was correctly refused and `mix bench` looked like a placement bug.
   `cargo build -p rust_runner --release` fixed it. Same trap already documented
   for `java_runner.jar`. **Rebuild every committed artifact whose source you
@@ -420,7 +420,7 @@ adds is unreachable** — `push_deferred` is never set, so the holdback, the gat
 and the flusher skip are all inert. The one always-live change is the parker's
 entry cleanup, and it REMOVES a dead entry rather than adding one.
 
-**Not baselined against HEAD**, because checking out `d2d0b4a5` would have
+**Not baselined against HEAD**, because checking out `f4f5808e` would have
 touched the working tree. Recorded as characterised, not proven. If someone
 needs certainty, that is the one run to do.
 

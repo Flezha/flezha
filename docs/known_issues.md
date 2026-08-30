@@ -96,7 +96,7 @@ below is all that survives — which is enough to write it again.
 - **What happens**: on a box missing one veneer formatter (commonly `rubocop`),
   the script fails loudly about that formatter and never reports that the Rust
   tree is dirty.
-- **Evidence**: this is exactly how commit `fae9184f` landed with six unformatted
+- **Evidence**: this is exactly how commit `d6f6e16f` landed with six unformatted
   production files. The worker's "format-check.sh exits 0" was taken on trust.
 - **A fix should**: warn-and-continue on a missing formatter, or run each
   formatter's check independently and report all failures, so one absent tool
@@ -286,7 +286,7 @@ isolation is not evidence** — reproduce under load before concluding anything
 
 ### KI-22 · An inert drain in the output-stall drill
 
-- Commit `220ba60c`'s `:sys.get_state(Loop)` drain is a no-op: a 200 000-iteration
+- Commit `087d0d28`'s `:sys.get_state(Loop)` drain is a no-op: a 200 000-iteration
   probe showed the `send_after(…, 0)` tick lands after the reply every time.
 
 ### KI-23 · `unique/1` suffixes can breach the operative-id cap
@@ -450,7 +450,7 @@ until 2026-08-30. Dates are when each was last established, not when it started.
   call, so when the SDK ships state changes faster than the controller can fsync
   (the Pi's SD-card fsync being the bottleneck) the FsyncBatcher and
   per-partition WalWriter mailboxes grow without bound.
-- **The gap**: fix `7393b70` has never been validated against the mock Kraken
+- **The gap**: fix `f877ccb` has never been validated against the mock Kraken
   load that reproduced the original incident.
 
 ### KI-37 · SDK native binaries ship all five triples — provisional
@@ -546,13 +546,13 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
-| KI-2 · first input after `start_operative/2` journaled and never forwarded (both faces: the start window, and the restore re-forward onto a stream a fresh runner has not bound) | `fix-first-input-drop-on-bind` (`c09d67b8`) — the operative bind now waits for its data-stream channel (`StreamChannel.await_bind/2`), and an undelivered payload arms `{:stream_bound, _}`, which re-forwards the journal tail through the replay path a restore already used. Deterministic proof: `test/flezha/operative/bind_reforward_test.exs` — its four delivery cases were run red on the pre-fix tree, in 2.1 s, with no sampling. `effectively_once_checkpoint_e2e_test.exs:37` 40x in isolation: **40/40 pass, 0 `[:flezha, :stream, :drop]`** |
-| KI-20 · `sdk_smoke_e2e_test.exs` carried the old re-send workaround | `fix-first-input-drop-on-bind` (`c09d67b8`) — `send_until_forwarded` deleted, the single `send_io` stands, and `NodeTestHelper.await_stream_bound/2` is gone from the tree with it (29 call sites across 15 modules) |
-| KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`99b4f201`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |
-| `cargo check --workspace --all-targets` red without a feature nobody passes | `467a378a` — three `[[test]]` entries were missing `required-features` |
-| `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `fae9184f` |
-| Node `Source::get` costing four N-API calls per field read (~4 % on the Node dispatch row) | `fae9184f` |
-| `refactor_metrics.py` measuring Rust functions short (`#` stripped as a comment, so `quote!` interpolations ended the brace count) | `dd9265d3` |
-| Three Rust SDK flakes, each with a mechanism rather than a retry | `2c4a39bd` |
+| KI-2 · first input after `start_operative/2` journaled and never forwarded (both faces: the start window, and the restore re-forward onto a stream a fresh runner has not bound) | `fix-first-input-drop-on-bind` (`e16260a7`) — the operative bind now waits for its data-stream channel (`StreamChannel.await_bind/2`), and an undelivered payload arms `{:stream_bound, _}`, which re-forwards the journal tail through the replay path a restore already used. Deterministic proof: `test/flezha/operative/bind_reforward_test.exs` — its four delivery cases were run red on the pre-fix tree, in 2.1 s, with no sampling. `effectively_once_checkpoint_e2e_test.exs:37` 40x in isolation: **40/40 pass, 0 `[:flezha, :stream, :drop]`** |
+| KI-20 · `sdk_smoke_e2e_test.exs` carried the old re-send workaround | `fix-first-input-drop-on-bind` (`e16260a7`) — `send_until_forwarded` deleted, the single `send_io` stands, and `NodeTestHelper.await_stream_bound/2` is gone from the tree with it (29 call sites across 15 modules) |
+| KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`9410eea7`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |
+| `cargo check --workspace --all-targets` red without a feature nobody passes | `119a20d4` — three `[[test]]` entries were missing `required-features` |
+| `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `d6f6e16f` |
+| Node `Source::get` costing four N-API calls per field read (~4 % on the Node dispatch row) | `d6f6e16f` |
+| `refactor_metrics.py` measuring Rust functions short (`#` stripped as a comment, so `quote!` interpolations ended the brace count) | `6818eec1` |
+| Three Rust SDK flakes, each with a mechanism rather than a retry | `588094e4` |
 | Committed `.pyc` files and a missing `__pycache__` ignore | area 2 |
 | `mix test --include system` "always exits 2" | refuted — the `:postgres_integration` modules self-skip now |

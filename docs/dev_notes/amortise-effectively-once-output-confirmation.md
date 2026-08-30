@@ -122,7 +122,7 @@ plain (untokened) `StreamChannel` path.
 identity,keyed --durabilities on`, medians of 3, **zero loss and zero
 duplicates on all 24 runs**:
 
-| cell | before (`5753758e`) | after part 1 | delta |
+| cell | before (`d8c7510d`) | after part 1 | delta |
 |---|---|---|---|
 | identity / EO throughput | 84 857 rec/s | **97 008** | +14 % |
 | keyed / EO throughput | 24 090 rec/s | 24 429 | +1.4 % (noise) |

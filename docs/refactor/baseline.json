@@ -2722,35 +2722,35 @@
   "roundtrip_end_to_end_rec_per_sec": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "42ac2a19",
+   "head": "419d9d3f",
    "hostname": "moon",
    "value": 53843.96
   },
   "roundtrip_p50_ms": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "42ac2a19",
+   "head": "419d9d3f",
    "hostname": "moon",
    "value": 111.1
   },
   "roundtrip_p99_ms": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "42ac2a19",
+   "head": "419d9d3f",
    "hostname": "moon",
    "value": 199.8
   },
   "rust_dispatch_entity_stress_8x4x8x20k_melem_per_sec": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "42ac2a19",
+   "head": "419d9d3f",
    "hostname": "moon",
    "value": 1.9604
   },
   "rust_dispatch_regression_100x1x1x10k_melem_per_sec": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "42ac2a19",
+   "head": "419d9d3f",
    "hostname": "moon",
    "value": 1.4462
   }
@@ -2773,7 +2773,7 @@
   "governor": "powersave",
   "hostname": "moon"
  },
- "head": "fcb3ced9",
+ "head": "c5bdc26b",
  "repo": {
   "clippy_warnings": null,
   "credo_warnings": null,
@@ -2792,14 +2792,14 @@
   "mix_test_exunit": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "59deb753",
+   "head": "a147111c",
    "hostname": "moon",
    "seconds": 56.2
   },
   "mix_test_wall": {
    "cpu": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
    "governor": "powersave",
-   "head": "59deb753",
+   "head": "a147111c",
    "hostname": "moon",
    "seconds": 59.0
   }

@@ -4,7 +4,7 @@ The measurement spike behind charter §3's "one host core" paragraph: does
 putting the typed Rust dispatcher and the erased host on one effect buffer
 and one settlement tail cost throughput? Verdict **converge** — every row
 inside its floor, allocations flat. Nothing merged: the seam lives on branch
-`spike/1s-dispatcher` (`5717e177` = arm A, the benches; `8634bd7a` = arm B,
+`spike/1s-dispatcher` (`3b61380d` = arm A, the benches; `f480f89e` = arm B,
 the seam) off tag `refactor-baseline-1s`, and area 1 (`refactor-1-kernel`)
 re-implements it under the charter rather than merging it. The table is in
 the change's `design.md`; what is here is what area 1 must know to write it
