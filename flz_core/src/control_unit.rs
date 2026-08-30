@@ -16,7 +16,12 @@ use flz_transport::transport::liveness::{self, ControlLiveness, ReadAction};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::last_good::LastGood;
-use flz_transport::utility::{socket_dir, socket_probe};
+// `socket_dir` is reached only from `try_open_uds`, which is `#[cfg(unix)]`.
+// Ungated, this import is dead on a Windows target and `-D warnings` in CI
+// makes that an error.
+#[cfg(unix)]
+use flz_transport::utility::socket_dir;
+use flz_transport::utility::socket_probe;
 use prost::Message;
 use serde::Serialize;
 
