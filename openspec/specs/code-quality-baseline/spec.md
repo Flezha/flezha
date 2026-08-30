@@ -3,9 +3,7 @@
 ## Purpose
 
 The code-quality-baseline capability defines a project-wide build-hygiene contract: default Cargo, Maven, and Mix builds emit zero warnings from project-owned source, default-feature workspace tests pass, lib output filenames do not collide, comments describe present-tense behavior, and dead-code suppressions carry justification. The capability establishes a durable normative baseline; any future change that regresses it must explicitly carry the regression in its proposal. Third-party crate, Hex package, and protobuf-generated source warnings are out of scope and do not gate the build.
-
 ## Requirements
-
 ### Requirement: Default Cargo build SHALL produce zero warnings from project crates
 
 `cargo build --workspace --all-targets` SHALL exit 0 with no warning lines emitted from project crates (`flezha_runner`, `flz_transport`, `flz_core_ffi`, `flz_nif`, `flz`, `rust_runner`). Warnings emitted by third-party crates compiled as part of the workspace are out of scope and SHALL NOT cause the build gate to fail.
@@ -113,3 +111,44 @@ Every `#[allow(dead_code)]` attribute in project crates SHALL be accompanied by 
 
 - **WHEN** a contributor adds a `#[allow(dead_code)]` attribute to a project source file
 - **THEN** the attribute SHALL be either preceded by a one-line `//` comment explaining why, or use the Rust 1.81+ `#[allow(dead_code, reason = "...")]` form
+
+### Requirement: A test SHALL restore any process-global test mode it changes
+
+A test module SHALL return a process-global test-double mode to its default
+before that module's tests finish. A module SHALL NOT rely on the library
+observing its owner exit: the library begins watching an owner only once that
+owner registers a test double, so a test that registers none is never watched
+and the mode outlives it.
+
+Test sources SHALL NOT call the raw mode-setting function. They SHALL use the
+repository's releasing wrapper, so the release cannot be forgotten. The wrapper's
+own definition is the single exemption and SHALL be allowlisted by path.
+
+A gate SHALL fail when a test source calls the raw function, naming the file and
+the wrapper to use instead.
+
+#### Scenario: A module that stubs nothing does not leak the mode
+
+- **GIVEN** a test module that enters global mode and registers no stub
+- **WHEN** its tests finish and another module calls `stub/3` from its own process
+- **THEN** that call SHALL succeed
+
+#### Scenario: A module hands the default mode to the next one
+
+- **GIVEN** a test module that enters global mode
+- **WHEN** its tests finish, on any seed
+- **THEN** the process-global mode SHALL read as the default, whatever the
+  module's last-run test did
+
+#### Scenario: The gate refuses a raw mode-setting call in a test
+
+- **GIVEN** a test source calling the raw global-mode function directly
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero naming that file and the wrapper to use
+
+#### Scenario: The wrapper's own definition is exempt
+
+- **WHEN** the gate runs against a tree whose only raw call is inside the
+  wrapper's own module
+- **THEN** it SHALL exit zero, the exemption being declared by path
+
