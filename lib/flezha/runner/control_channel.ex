@@ -19,6 +19,11 @@ defmodule Flezha.Runner.ControlChannel do
   @control_liveness_window_ms 45_000
   @control_liveness_interval_ms 15_000
 
+  # OTP's own `GenServer.call/2` default, made explicit because `send_control/3`
+  # answers on it rather than letting a slow channel exit its caller. Tests pass
+  # a short one to reach that arm without waiting five seconds.
+  @control_call_timeout_ms 5_000
+
   def start_link({namespace, runner_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, nil},
       name: Identificator.control_channel(runner_id)
@@ -39,7 +44,8 @@ defmodule Flezha.Runner.ControlChannel do
     )
   end
 
-  def send_control(runner_id, command) do
+  @spec send_control(binary(), tuple(), timeout()) :: {:ok, binary()} | {:error, term()}
+  def send_control(runner_id, command, timeout_ms \\ @control_call_timeout_ms) do
     control_channel = Identificator.control_channel(runner_id)
 
     case GenServer.whereis(control_channel) do
@@ -48,14 +54,26 @@ defmodule Flezha.Runner.ControlChannel do
 
       _ ->
         ref = gen_ref()
+        bin = encode_request(ref, command)
 
         # Propagate the transport result instead of always returning {:ok, ref}.
         # A reset/dead stream replies {:error, :no_connection_available}; the
         # caller (ControlUnit) must then surface a clean error to the operative
         # rather than registering a reply ref that will never resolve.
-        case GenServer.call(control_channel, {:send_control, encode_request(ref, command)}) do
-          :ok -> {:ok, ref}
-          {:error, reason} -> {:error, reason}
+        #
+        # A channel that dies or stalls mid-call must answer its caller, not
+        # exit it. The supervisor's reverse-order terminate sweep stops this
+        # channel while a `ControlUnit` is still blocked here, and an exiting
+        # unit loses every waiter in its `response_refs`. Same two clauses
+        # `ControlUnit.ping_runner/2` uses one layer up, named for this layer.
+        try do
+          case GenServer.call(control_channel, {:send_control, bin}, timeout_ms) do
+            :ok -> {:ok, ref}
+            {:error, reason} -> {:error, reason}
+          end
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, reason -> {:error, {:control_channel_exit, reason}}
         end
     end
   end

@@ -102,6 +102,28 @@ in-flight control command) and `KI-49`/`KI-50` (test-side leaks onto a later
 test's stub/observation) are its named leftovers. One more supervised change
 closes them, then area 4 starts.
 
+**Proposal approved 21:32** (`openspec validate --strict` clean; supervisor
+re-derived the child order, the `send_control/2` funnel and the nine call sites
+from the code rather than from the report). Implementation runs in two segments:
+batches 1-3 (baseline, KI-48, KI-49), then 4-6 (KI-50, gate proof, close-out).
+
+**Reconciliation with the Phase 1 queue below.** A peer session wrote that queue
+(`dc335efa`, 21:09) while this change's proposal was already being written, so
+they overlap: `finish-the-suite-log-gate` closes **row 2 in full** (KI-48) and
+**KI-49 + KI-50 out of row 4**. Row 4 (`green-the-test-hygiene-tail`) therefore
+keeps only KI-18, KI-21, KI-23. Row 1 (KI-33) still blocks area 4 and is
+unaffected.
+
+**Two sessions share this tree.** `moon-d7` and `flezha-11` are both live local
+sessions on this repo; the peer commit above landed mid-run here. Both were idle
+at 21:30. Anything uncommitted under `lib/`, `test/` or `docs/` during this
+change is this session's worker — a peer `git add -A` would sweep it.
+
+*Last seen 21:37* — batches 1-3 worker: `control_channel.ex`,
+`overwatch_suspension_test.exs` and `control_channel_send_control_test.exs`
+edited, a full-suite log written at 21:36. Machine clean (no zombies, no
+polling loops, load 1.07, no containers).
+
 Area 3 is done (`c5bdc26b`, archived as `2026-08-29-refactor-3-rust-sdk`;
 `sdk/rust` and `flezha-macros` flipped to blocking ratchets). Areas 0a, 0b, 1s, 1, 2
 and 3 are complete — **~42 % of the codebase by production LOC**.
@@ -608,9 +630,9 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | # | Change | Entries | Why grouped |
 |---|---|---|---|
 | 1 | `fix-java-workflow-resume-duplication` | KI-33 (P1) | Investigation first — 17/19 fail on both transports, `b` and `c` each arrive twice. **Blocks area 4.** |
-| 2 | `fix-control-unit-abnormal-exit` | KI-48 (P2) | Production behaviour: `ControlUnit` exits abnormally whenever a runner tree comes down. |
+| 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48 (P2) | **In progress.** Absorbed, with KI-49 and KI-50, into one change: the three are the only sources keeping the uncaptured-log gate from reporting. |
 | 3 | `close-prometheus-label-coercion` | KI-45, KI-46 (P2/P3) | One family — the `to_string/1` shape `close-otlp-export-crash` removed from the codec, still standing on the other exporter. |
-| 4 | `green-the-test-hygiene-tail` | KI-49, KI-50, KI-18, KI-21, KI-23 | Tests that lie or leak; four are one-liners, KI-49 is a task leaking onto the next test's stub. |
+| 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23 | Tests that lie or leak. KI-49 and KI-50 moved to row 2's change — they are gate sources, and the gate is proved once or not at all. |
 | 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
 | 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
 

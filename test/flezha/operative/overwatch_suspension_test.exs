@@ -131,6 +131,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
            "an instance with undelivered input must rehydrate, not sit suspended " <>
              "waiting for a message that already arrived"
 
+    :ok = await_migrate_task(after_park)
+
     # With nothing pending, the same park suspends and stays there.
     :ok = ProcJournal.append_iter_committed(inst, 1, 2, [])
     {:noreply, idle, :hibernate} = Overwatch.handle_cast({:suspend, 1, nil}, state(inst))
@@ -180,6 +182,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
            "a second wake source does not start a second rehydration"
 
     assert Enum.map(ProcInbox.undelivered(inst), & &1.message) == ["hello", "second"]
+
+    :ok = await_migrate_task(rehydrating)
   end
 
   test "the wake deadline rehydrates with a timer tick and no input" do
@@ -195,6 +199,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert [%{offset: 1, message: "", metadata: %{"flz.wake" => "timer"}}] =
              ProcInbox.undelivered(inst),
            "the timer wake rides the inbox — one wake path, so racing sources collapse"
+
+    :ok = await_migrate_task(rehydrating)
   end
 
   test "with no runner to rehydrate onto, the instance stays suspended" do
@@ -216,6 +222,18 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert_receive {[:alias | _], _} = reply, 2_000
     {:noreply, state} = Overwatch.handle_info(reply, state)
     state
+  end
+
+  # The rehydrate/rebind runs the real bind task, which has no runner to reach
+  # here and so always comes back parked. Awaiting that result is both the
+  # stronger assertion — the task the test started actually resolves, and on the
+  # missing runner rather than on anything else — and what keeps it from
+  # outliving its test: an abandoned task re-enters the retry ladder once
+  # `on_exit` restores the production backoff, and lands on the next test's
+  # instance-pinned stub carrying this test's id.
+  defp await_migrate_task(%Overwatch{migrate_task: %{pid: pid}}) do
+    assert_receive {:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}, 2_000
+    :ok
   end
 
   test "a suspended instance is rediscovered from durable state after a redeploy" do
@@ -290,6 +308,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert state.migrate_task != nil
     {:ok, entries} = ProcJournal.read(inst)
     refute Enum.any?(entries, &(&1.type == :parked))
+
+    :ok = await_migrate_task(state)
   end
 
   test "rewind to an uncommitted iteration is refused, changing nothing" do
@@ -323,8 +343,10 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     commit_turns(inst, 3, emitting_outbox())
     :ok = ClassRegistry.put_compensable_ops(inst, [0])
 
-    assert {:reply, :ok, _} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+    assert {:reply, :ok, rewound} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
     assert ProcJournal.current_epoch(inst) == 1
+
+    :ok = await_migrate_task(rewound)
   end
 
   test "iterations that emitted nothing need no coverage" do
@@ -333,7 +355,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     commit_turns(inst, 3, [])
     :ok = ClassRegistry.put_compensable_ops(inst, [])
 
-    assert {:reply, :ok, _} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+    assert {:reply, :ok, rewound} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+    :ok = await_migrate_task(rewound)
   end
 
   describe "migration_consent/1 (processhub-deferred-migration)" do
