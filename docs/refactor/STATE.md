@@ -106,7 +106,39 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**`java-diamond-resume` (KI-33) — investigation + proposal worker spawned 22:08.**
+**`java-diamond-resume` (KI-33) — proposal APPROVED 22:42, implementation worker
+running (batches 1-3, then 4-6).**
+
+**KI-33's diagnosis is REFUTED, and the entry stood for months.** It says the
+Java resume re-runs producers whose handoff was already journaled, and that a
+fix must journal-gate the resume. Both are wrong. Two probes killed it: the
+proc journal holds exactly ONE `proc_committed` per proc at `iter=0` (nothing
+re-ran, no gate failed), and a NO-CRASH run — one runner, no SIGKILL, no
+rebind, no journal resume — delivers the same 9 payloads. It is not a resume
+defect at all.
+
+The mechanism, re-derived by the supervisor from the code and not from the
+report: `ActivationDispatcher.collectEdgeOutputs` (`:841`) emits one `Edge`
+output PER CONSUMER of the producing channel. That is correct for a stream —
+`flz_core/src/host/activation.rs:508` destructures `Edge { channel, consumer }`
+and uses it. It is wrong for a workflow stage: `host/workflow.rs:69` matches
+`Edge { channel, .. }`, DISCARDS the consumer, collects each output as a
+released value, and the driver fans out to the children itself. Two consumers
+on `dfan` therefore double every downstream node's work. Java implemented the
+sentence it was given: `sdk-poll-core`'s "Edge transforms and keys evaluate
+producer-side" states the stream rule unconditionally, so the cross-SDK rule
+binds on the CONTRACT half even though only Java changes code (only java and
+rust implement `workflow`; the other five defer it in their conformance
+manifests, verified). The fix reference is `WorkflowCollectAdapter::emit` in
+`sdk/rust/.../emit_sink.rs` — one `collect`, no consumer loop.
+
+**The jar on disk did not match HEAD**, and that is why this was worth
+re-deriving: its native predated two `flz_core` commits and changed size on
+rebuild, while its CLASSES matched — so class dates are not evidence. The
+worker rebuilt the host native and both fat jars (gitignored, so other sessions
+in this tree inherit the newer artefacts).
+
+*(spawned 22:08 as an investigation + proposal worker)*
 Phase 1 row 1, P1, and the one row that blocks area 4: `refactor-4-java-sdk`
 rewrites `sdk/java` with zero behaviour change, so refactoring over a live
 effectively-once violation carries it into the new shape and costs the A/B its
@@ -176,13 +208,66 @@ attributably, for one 7-minute bisect instead of six measured checkpoints.
 
 ## Awaiting the user's decision
 
-- THREE product defects need their own (behaviour-changing) changes and a priority
-  call — the first-input drop now has a second face (1c: the restore re-forward
-  path drops the same way): **F1** (watermark overwrite after a park, `wal_writer.ex:1288`
-  + `input_log.ex:189`) and the **first-input drop after `start_operative/2`**.
-  Recommendation: fix both as ordinary OpenSpec changes before area 5a (state) and
-  5e (runner), since those areas refactor exactly these files; the programme does
-  not block on them — areas 1s–4 and 6 do not touch that code.
+**This section is read by the user, roughly daily, and answered in a
+conversation. It must therefore be TRUE: an item that has landed is deleted
+from here the moment it lands.** On 2026-08-30 it still listed two defects
+(F1's watermark overwrite and the first-input drop) that had both been fixed
+and archived — which is exactly the failure that makes a list stop being read.
+
+**Nothing here blocks work.** An item lands here precisely so the programme does
+NOT stop for it: record it, move to the next runnable thing, and raise it when
+the user asks. When the user agrees a shape and says to fix it, the item is
+queued as the next work — the session finishes the segment in flight, commits
+it, and takes the agreed item before the next queued row.
+
+**Each entry carries**: what it is and where; why it is the user's call and not
+the supervisor's; the options with the cost of each; a recommendation; and what
+it blocks, if anything. An entry without a recommendation is a question the
+supervisor has not finished thinking about.
+
+### KI-3 — what is a caller told when its frame was discarded? (P1)
+
+The last silent-drop default in a platform whose stated guarantee is that
+nothing drops by default. `enqueue_write` (`flz_nif/src/uds_driver.rs:474`)
+drops on overflow and bumps `write_buffer_dropped`; `send_frame`
+(`flz_nif/src/stream.rs:25`) answers `:ok` unconditionally and does not even
+check the `cmd_tx.send` result, so a dead driver thread is a second, uncounted
+drop path. **Nothing in `lib/` reads the drop counter** — not the liveness
+verdicts, not the observability source; the only reader in the tree is a bench
+printout. So the loss is invisible to the caller *and* to the platform.
+
+Why it is yours: every answer changes behaviour a user of the SDK can see, and
+the cast path cannot simply block without reintroducing the wedge that
+`nonblocking-drop-nothing-backpressure` removed.
+
+- **Surface the loss only** — make the platform able to see it (read the counter
+  into a liveness verdict and the observability source) while `send_frame` still
+  answers `:ok`. Cheapest, honest, does not change the guarantee.
+- **Answer the caller** — `send_frame` returns an error on a full buffer. Changes
+  a hot-path signature and every caller, in every SDK.
+- **Hold the frame** — apply the `DropNothing` holdback shape the Entity path
+  already uses. Largest, and the one that actually satisfies the guarantee.
+
+Recommendation: the first now (it is small and makes the defect measurable),
+the third as its own change later. Blocks nothing today.
+
+### KI-10 — Credo strict: disable two checks, or edit 1 083 sites? (P2)
+
+`mix credo --strict` reports **1 461** issues, and **1 083** of them (653
+`AliasUsage` + 430 `ParenthesesOnZeroArityDefs`) are checks this codebase
+deliberately does not follow — 74 % of the count. Every one of the 36 areas in
+`baseline.json` carries `"credo_warnings": null`, so no area ratchets this
+metric at all and the number is not currently a signal.
+
+Why it is yours: it is a house-style decision, not a defect.
+
+- **Disable both** in `.credo.exs` with a one-line reason each, then ratchet on
+  the remaining 378 (139 of which are real nesting depth). Cost: minutes.
+- **Adopt them** and edit ~1 083 sites against the style already chosen. Cost:
+  days, and a diff that touches nearly every file.
+
+Recommendation: disable both and ratchet the 378. Blocks the credo ratchet only;
+area 5a owes the decision.
 
 ### Gate finding — the format gate aborts before it checks Rust
 

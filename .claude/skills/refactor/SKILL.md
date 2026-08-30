@@ -259,6 +259,24 @@ is reproduced and triaged at once, including a P3 wart.
 ## 7. Blockers
 
 A decision that is the user's — a public-surface rename, a defect whose fix
-changes behaviour, a gate that cannot be met without one — goes under
-*Awaiting the user's decision* with the options and your recommendation. The
-area becomes `blocked`; move to the next runnable area.
+changes behaviour, a gate that cannot be met without one, or anything too large
+to take without a priority call — goes under *Awaiting the user's decision*
+with what it is, why it is theirs, the options **with the cost of each**, and
+your recommendation. Then **move on immediately** (charter §1c): mark only the
+area that cannot proceed `blocked`, and take the next runnable thing. Waiting
+for an answer is not a state this programme has.
+
+**The user asks about that section roughly daily.** When they do, answer with
+the options and the costs — and do not stop the work in flight to have the
+conversation.
+
+**When the user agrees a shape and says to fix it**, the item becomes the NEXT
+work item: finish the segment in flight, commit it, then take the agreed item
+before the next queued row. The segment boundary is the insertion point because
+it is the first moment the tree is clean — one worker at a time in a shared tree
+means a new worker cannot start over another's uncommitted edits.
+
+**Keep the section true.** Delete an item the day it lands. On 2026-08-30 it
+still listed two defects that had been fixed and archived, which is exactly what
+makes a list stop being read. An entry with no recommendation is not an
+escalation — it is a question you have not finished thinking about.

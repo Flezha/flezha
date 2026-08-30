@@ -57,9 +57,9 @@ moment of discovery and expensive a week later, when the context is gone.
      *Resolved*. Do not delete the entry: "never true" and "fixed" must stay
      distinguishable.
    - **Real but not worth fixing** → record the cost and what it would buy.
-     This verdict is the supervisor's, and it **escalates to the user** whenever
-     the fix needs a behaviour or product decision, or would cost more than the
-     rest of the area. A worker never rules a defect away.
+     This verdict is the supervisor's. A worker never rules a defect away.
+   - **Too large, or the user's call** → §1c. Skip it and keep working; do not
+     stop the programme for it.
 6. **Fix it in its own commit**, with a regression test **shown red first** — a
    test that never failed on the defective code proves nothing. The refactor
    commits stay behaviour-free and bisectable; a bisect must always be able to
@@ -84,6 +84,31 @@ verdict of *real and worth fixing* pauses the area for a fix; *not a bug* and
 **A defect in code the area has already refactored is not a special case.** It
 follows the same eight steps; a finished area is a blocking ratchet, so the fix
 must clear that area's gates too.
+
+## 1c. A defect that needs the user does not stop the work
+
+Added 2026-08-30 on the user's instruction. A defect whose fix needs a
+behaviour or product decision, or which would cost more than the rest of the
+area, is **skipped, not blocked on**: it goes to `STATE.md` → *Awaiting the
+user's decision* with what it is, why it is the user's call, the options with
+the cost of each, and a recommendation — then the session **moves straight on
+to the next runnable thing**. Waiting for an answer is not a state this
+programme has.
+
+The user asks about that section roughly daily. When they do: discuss it,
+answer with the options and the cost, and **keep the current work running
+meanwhile** — the discussion is not a checkpoint.
+
+When the user agrees a shape and says to fix it, the item becomes the **next**
+work item: finish the segment in flight, commit it, and take the agreed item
+before the next queued row. The segment boundary is the insertion point because
+it is the first moment the tree is clean — one worker at a time in a shared
+tree means a new worker cannot start over another's uncommitted edits.
+
+**That section must be true.** An item that has landed is deleted from it the
+same day; a list carrying two already-fixed entries is what stops it being
+read. An entry with no recommendation is a question the supervisor has not
+finished thinking about, not an escalation.
 
 ## 2. Reuse
 
