@@ -279,3 +279,34 @@ read and acted on: it is what produced the assertions above.
 - **WHEN** a module's documented path layout is compared with the function that builds it
 - **THEN** they SHALL describe the same path
 
+### Requirement: A recorded defect SHALL carry a reproduction
+
+An entry in the defect list SHALL carry a command that demonstrates the defect
+and the output that command produced. An entry without one records a suspicion,
+and a suspicion cannot be verified, closed, or acted on by anyone but its author.
+
+An entry whose defect is fixed or was never true SHALL be moved out of the open
+list, keeping its evidence. A closed entry retained in place makes the open list
+unreadable: a reader cannot tell which items are live, and stops reading it.
+
+An entry SHALL claim no more than has been measured. Where part of an entry is
+found stale, that part SHALL be removed and what replaced it recorded, rather
+than the whole entry being left to overstate.
+
+#### Scenario: A new entry carries a reproduction
+
+- **WHEN** a defect is recorded
+- **THEN** the entry SHALL include the command that shows it and that command's output
+
+#### Scenario: A closed entry leaves the open list
+
+- **GIVEN** an entry whose defect is fixed or was never true
+- **WHEN** the list is read
+- **THEN** that entry SHALL NOT appear among open defects, and its evidence SHALL remain available
+
+#### Scenario: A partly stale entry is narrowed
+
+- **GIVEN** an entry of which some claims are measured to be no longer true
+- **WHEN** it is revised
+- **THEN** the stale claims SHALL be removed and what was measured in their place recorded
+
