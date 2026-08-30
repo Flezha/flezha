@@ -48,7 +48,14 @@ delivery and the controller's re-forwarded replay slice travel: in-process
 `flz_core::routing::route_to_consumers` for Rust; host-side for a byte-level
 host such as Java (`ActivationDispatcher.collectEdgeOutputs` on the producer,
 `valuesForEntity` at delivery), because `(edge, key)` is all the core routes
-on. Two obligations follow:
+on. That is the **stream** seam. A **workflow stage** has a different one: the
+core does not route a stage's output on `(edge, key)` at all — it collects
+every output as one released value, and the driver hands that batch to each
+child itself. A workflow producer therefore releases the value **once, raw**,
+naming only the producing channel, and each consumer edge is evaluated at the
+consumer (`valuesForEntity`), which is also the seam a journal re-seed
+crosses. Evaluating producer-side there would multiply the released batch by
+the channel's consumer count. Two obligations follow:
 
 - **Pure and total.** A closure re-runs on replay; one that reads the clock or
   a counter rebuilds a state the live run never had.

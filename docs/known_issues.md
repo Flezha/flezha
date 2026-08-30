@@ -80,6 +80,82 @@ below is all that survives — which is enough to write it again.
   OOM path. Whatever backpressure answer KI-3 takes should cover both, and the
   doc comments are corrected in that change either way.
 
+### KI-57 · UDS socket paths overflow `sun_path` in a full run, and a test dies of it
+
+- **Severity**: P1 · **investigation first**, then proposal. **Supersedes
+  KI-17's triage**, which closed this as *"never true — measured worst case 107
+  bytes, longest ever written 89"*. It is true, it is measured below, and 107
+  was one byte from the wall.
+- **Where**: `Flezha.Socket.Support.stream_socket_path/2`
+  (`lib/flezha/socket/support.ex:77`) composes
+  `socket_dir() <> "/#{type}_stream_#{runner_id}.sock"`. For `:secondary` that
+  is **`socket_dir()` + 63 bytes** at a 40-character runner id. The NIF refuses
+  at 108 (`SUN_LEN`, NUL included).
+- **What happens**: the driver refuses, `Flezha.Runner.StreamAcceptor.init/1`
+  exits `"driver init failed"`, its supervisor's `:secondary_acceptor` child
+  fails to start, and `Flezha.Runner.FleetManager.runner_connect/3` then
+  refuses the connect (`{:runner_supervisor_down, {:noproc, …}}`). The runner
+  never gets a control channel, so any operative that needed it never runs.
+- **Measured, in two full runs I made today** (`java-diamond-resume`, batch 6):
+
+  ```
+  $ FLEZHA_E2E_RUNTIME=java mix test --include system
+  Result: 1918/1920 passed, 5 skipped, 35 excluded
+  1) test v1 code meeting v2 state is refused, not decoded (SchemaEvolutionE2ETest)
+     Assertion failed, no matching message after 30000ms
+  2) test state written at v1 comes back through the migration a bumped v2 declares
+     ** (MatchError) no match of right hand side value: :error   # State.Supervisor.lookup
+
+  $ grep -c sun_path <the java log>     -> 1306
+  $ grep -c sun_path <the reference log> -> 249      # mix test --include system: 1920 passed
+  ```
+
+  So the overflow fires **hundreds of times per run in both runtimes** and is
+  usually survived — a refused connect is retried under a fresh session token,
+  and a token one digit shorter fits. It becomes a test failure only where the
+  scenario cannot recover.
+- **Intermittent by exactly that much.** The identical command 12 minutes later,
+  same tree, same jar: **1919/1920**, `1258` `sun_path` lines, and only the
+  *second* of the two schema tests failed — its runner drew a 40-character id
+  (`schema_evolution_e2e_123428_126547821466`) where the first drew 39
+  (`…_22140820659`). One digit of a session token is the whole difference
+  between a green suite and a red one.
+- **The distinguishing measurement** is the runner-id length, and nothing else:
+
+  ```
+  reference run (passed):  38-39 chars  schema_evolution_e2e_30405_376271936606
+  java run (failed):       40 chars     schema_evolution_e2e_419362_660179359383
+  ```
+
+  `unique/1` is `System.unique_integer([:positive])`, which grows through a
+  BEAM's life — 5 digits early, 6-7 late — so **the same module passes or fails
+  by where it lands in the run**. Same generator as **KI-23**, a different wall:
+  that entry measured `digits=5` over a plain `mix test` and concluded the
+  32-byte operative-id cap is not reached; a `--include system` run mints more
+  and reaches **6**, which is what puts this path over 108. Alone it is never
+  near the wall:
+
+  ```
+  $ FLEZHA_E2E_RUNTIME=java mix test test/system/schema_evolution_e2e_test.exs --include system
+  Result: 2 passed        # 1.5 seconds
+  ```
+- **Which directory is long was not established.** The main node resolves
+  `/run/user/1000/flezha` (21 bytes → 84 for a 40-char id, nowhere near the
+  limit), while the peer directories `config/test.exs:147` mints are
+  `/tmp/flezha_sockets/<node>@127.0.0.1` — up to **48** bytes for
+  `native_reject_peer@127.0.0.1`, which is 48 + 63 = **111**. That is the only
+  arithmetic in the tree that reaches the observed failure, but the failing
+  acceptor was not attributed to a specific node before this was filed.
+- **Why not fixed here**: found while closing KI-33, in a change that touches
+  the Java emit funnel and one e2e file — nothing to do with socket naming, and
+  the fix is a naming/length decision (shorten the socket file name, hash the
+  runner id, or bound `unique/1`'s suffix) that belongs with whoever owns the
+  discovery ladder.
+- **A fix must**: make the path length independent of how late in a run a test
+  is scheduled, and fail loudly at construction with the path and its length
+  rather than as a driver init error 3 frames away. Note the count, not the
+  failure, is the real signal: a run can be green with 249 of these in its log.
+
 ### KI-55 · A host SDK applies an inter-procedure edge transform twice
 
 - **Severity**: P1 · **proposal owed**.

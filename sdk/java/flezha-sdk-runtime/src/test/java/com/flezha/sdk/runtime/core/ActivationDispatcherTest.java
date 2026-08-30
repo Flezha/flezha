@@ -319,6 +319,30 @@ class ActivationDispatcherTest {
         assertThat(RECORDED).containsExactly("=mid:v");
     }
 
+    @Test
+    @DisplayName("KI-55: a STREAM inter-proc edge map applies TWICE — pins the defect, not the contract")
+    void interProcEdgeMapAppliesTwice() {
+        StreamOperativeClassRegistry.registerClass(MappedPipelineOperative.class);
+        ItemEffect produced = soleEffect(work("mapped_pipeline_op", 0, Optional.empty(), 0, input(0, "v", 1)));
+        Output edge = produced.outputs().get(0);
+        soleEffect(work(
+                "mapped_pipeline_op",
+                1,
+                Optional.empty(),
+                0,
+                new WorkItem.Input(1, edge.payload(), List.of(), OptionalLong.empty(), false, 2)));
+
+        // collectEdgeOutputs applies the chain producer-side and valuesForEntity
+        // applies it again at delivery, so a map composes with itself. The
+        // contract (sdk-poll-core, "Edge transforms and keys evaluate
+        // producer-side") says `=M:mid:v`. This asserts what the code DOES so
+        // the suite is green and a fix cannot land silently: invert it to
+        // `=M:mid:v` when KI-55 is closed. Every transform elsewhere in the
+        // tree sits on an ENTRY channel, where there is no producer-side
+        // application, which is why nothing else sees this.
+        assertThat(RECORDED).containsExactly("=M:M:mid:v");
+    }
+
     // ------------------------------------------------------------------
     // verdicts
     // ------------------------------------------------------------------
@@ -1064,6 +1088,22 @@ class ActivationDispatcherTest {
         @Override
         public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("mid:" + input);
+        }
+    }
+
+    public static final class MappedPipelineOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "mapped_pipeline_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(String.class, "in")
+                    .into(MidProc.class)
+                    .named("mapped_mid")
+                    .map(String.class, s -> "M:" + s)
+                    .into(KeyRecorder.class);
         }
     }
 

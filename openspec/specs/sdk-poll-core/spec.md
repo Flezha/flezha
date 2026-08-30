@@ -113,12 +113,25 @@ commands SHALL be handled entirely inside the core and SHALL NOT surface to the 
 
 ### Requirement: Edge transforms and keys evaluate producer-side
 
-Consumer-edge transform chains and `key_by` SHALL be applied by the host when
-completing the activation that produced the value; outputs SHALL carry
-`(consumer_edge_id, bytes, key?)` and the core SHALL route on `(edge, key)` without
-evaluating host closures. Unkeyed entry inputs into a keyed edge SHALL take a batched
-`KeyRequest` activation before routing. A transform or key failure SHALL be reported in
-the completion and SHALL enter the existing retry→park ladder.
+For a **stream** activation, consumer-edge transform chains and `key_by` SHALL be
+applied by the host when completing the activation that produced the value;
+outputs SHALL carry `(consumer_edge_id, bytes, key?)` and the core SHALL route on
+`(edge, key)` without evaluating host closures. Unkeyed entry inputs into a keyed
+edge SHALL take a batched `KeyRequest` activation before routing. A transform or
+key failure SHALL be reported in the completion and SHALL enter the existing
+retry→park ladder.
+
+For a **workflow stage** activation the shape is different, because the core does
+not route a workflow stage's output on `(edge, key)`: the driver holds the
+released batch, hands it to every child of the node, and journals it per
+producing channel. A host completing a workflow stage SHALL therefore emit
+**exactly one edge output per released value**, naming the **producing channel**,
+carrying the value **untransformed and unkeyed** — one emit SHALL NOT become one
+output per consumer, whatever the channel's consumer count. Each consumer edge's
+transform chain and key SHALL be evaluated **at the consumer**, when the host
+receives the stage input carrying that value, so that a live run and a journal
+re-seed apply the edge at the same seam exactly once. The core SHALL NOT consult
+an edge output's consumer field on this path.
 
 #### Scenario: Replay re-keys identically
 - **WHEN** a journaled slice is re-forwarded by the controller through a keyed edge
@@ -127,6 +140,10 @@ the completion and SHALL enter the existing retry→park ladder.
 #### Scenario: Entry input into a keyed edge
 - **WHEN** an entry-channel input arrives for a consumer reached only via a keyed edge
 - **THEN** the core SHALL obtain the key via a `KeyRequest` activation before enqueueing to any entity mailbox, and no keyless drop path SHALL exist
+
+#### Scenario: A workflow stage emits once per released value
+- **WHEN** a host workflow procedure emits one value on a producing channel that declares two consumers
+- **THEN** the completion SHALL carry exactly one edge output for that value, and the stage's released batch SHALL hold one value — not one per consumer — so the journaled handoff, every downstream node's input batch and every downstream plugin output SHALL be identical to the single-consumer case
 
 ### Requirement: Host classes reach full capability
 

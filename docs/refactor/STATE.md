@@ -106,94 +106,45 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**`java-diamond-resume` (KI-33) — proposal APPROVED 22:42, implementation worker
-running (batches 1-3, then 4-6).**
+None.
 
-**KI-33's diagnosis is REFUTED, and the entry stood for months.** It says the
-Java resume re-runs producers whose handoff was already journaled, and that a
-fix must journal-gate the resume. Both are wrong. Two probes killed it: the
-proc journal holds exactly ONE `proc_committed` per proc at `iter=0` (nothing
-re-ran, no gate failed), and a NO-CRASH run — one runner, no SIGKILL, no
-rebind, no journal resume — delivers the same 9 payloads. It is not a resume
-defect at all.
+**`java-diamond-resume` (KI-33) is DONE** — `4de341b5` (the Java arm) and the
+close-out commit below; archived as `2026-08-30-java-diamond-resume`,
+`sdk-poll-core` and `workflow-branching` both amended. Java e2e 17/21 -> **21
+passed** on that file, both transports, verified by the supervisor
+independently; rust unchanged at 21; `mix test` 1839, system reference 1920,
+`cargo test -p flz_core` 146, both maven builds green.
 
-The mechanism, re-derived by the supervisor from the code and not from the
-report: `ActivationDispatcher.collectEdgeOutputs` (`:841`) emits one `Edge`
-output PER CONSUMER of the producing channel. That is correct for a stream —
-`flz_core/src/host/activation.rs:508` destructures `Edge { channel, consumer }`
-and uses it. It is wrong for a workflow stage: `host/workflow.rs:69` matches
-`Edge { channel, .. }`, DISCARDS the consumer, collects each output as a
-released value, and the driver fans out to the children itself. Two consumers
-on `dfan` therefore double every downstream node's work. Java implemented the
-sentence it was given: `sdk-poll-core`'s "Edge transforms and keys evaluate
-producer-side" states the stream rule unconditionally, so the cross-SDK rule
-binds on the CONTRACT half even though only Java changes code (only java and
-rust implement `workflow`; the other five defer it in their conformance
-manifests, verified). The fix reference is `WorkflowCollectAdapter::emit` in
-`sdk/rust/.../emit_sink.rs` — one `collect`, no consumer loop.
+**KI-33's entry was wrong on every claim it made.** Not a resume defect (the
+journal holds one `proc_committed` per proc at `iter=0`, and a run with no
+crash at all reproduces it); not "B1/B2, C and the join each run twice" (every
+node ran ONCE — the root's released batch was doubled); and its "a fix must
+journal-gate the resume" would have produced nothing. The real mechanism:
+`collectEdgeOutputs` emitted one `Edge` output per CONSUMER, which is right for
+a stream (the core routes on `(edge, key)` and reads the consumer) and wrong
+for a workflow stage (`fold_effect` discards the consumer and collects each
+output as one released value, then the driver fans out itself). Entry rewritten
+and moved to *Resolved*.
 
-**The jar on disk did not match HEAD**, and that is why this was worth
-re-deriving: its native predated two `flz_core` commits and changed size on
-rebuild, while its CLASSES matched — so class dates are not evidence. The
-worker rebuilt the host native and both fat jars (gitignored, so other sessions
-in this tree inherit the newer artefacts).
+**Two P1s found on the way, both filed with a reproduction, neither fixed:**
+- **KI-55** — a host SDK applies an inter-procedure edge transform TWICE. Now
+  reproduced on the STREAM path too (`"=M:M:mid:v"`), pinned by a
+  characterization test that asserts the defective value on purpose so a silent
+  fix is impossible. Read-established in Node, Python and PHP as well; Ruby
+  declares no transform surface and Rust evaluates once.
+- **KI-57** — UDS socket paths overflow `sun_path`. **Supersedes KI-17's
+  triage**, which had closed it as "never true, worst case 107 bytes": measured
+  1306 / 1258 / 249 occurrences across three full runs today, and it kills a
+  test when the id reaches 40 chars. Same generator as KI-23, different wall.
 
-**Batches 1-3 committed** (see the commit below): the reproduction stood up on
-artefacts built from HEAD, the mechanism confirmed BEFORE any edit, and the Java
-arm fixed with both unit tests shown red first. Batches 4-6 (the e2e red-then-
-green, the spec deltas, the record) are with the same worker.
-
-Two findings from the implementation worth carrying:
-- **D6's double application is now REPRODUCED, not read.** The red at 3.3
-  printed `"=mapped:mapped:mid:v"` — `collectEdgeOutputs` applied the edge map
-  producer-side and `valuesForEntity` applied it again at delivery. The workflow
-  arm removes it. Whether an inter-procedure STREAM edge with a `map` double-
-  applies the same way is **untouched and looks live from the code**; it is
-  task 5.3 and the verdict is the supervisor's.
-- **KI-33 is wrong a third time**: not only is it not a resume defect, its claim
-  that "B1/B2, C and the join each run twice" is false. Every node ran ONCE;
-  the root's released batch was doubled and the doubling propagated.
-
-*(spawned 22:08 as an investigation + proposal worker)*
-Phase 1 row 1, P1, and the one row that blocks area 4: `refactor-4-java-sdk`
-rewrites `sdk/java` with zero behaviour change, so refactoring over a live
-effectively-once violation carries it into the new shape and costs the A/B its
-meaning. The entry is reproducible for the first time (17/19, both transports).
-
-**`finish-the-suite-log-gate` is DONE** — `21185253` (KI-48, KI-49) and the
-commit below (KI-50, the gate proof, the close-out); archived as
-`2026-08-30-finish-the-suite-log-gate`, `code-quality-baseline` gained both new
-requirements. Full suite 1836 -> 1839 passed; CI's grep 1 hit -> 0 on two seeds.
-
-**It did not make the gate reliably green, and the reason is worth reading.**
-The two batch-5 runs that exist to PROVE the gate reports immediately reported
-two sources nobody had seen, so the standing population was five, not three:
-
-- **KI-53 (production, the real find).** `input_log.ex` sets `trap_exit`,
-  `spawn_link`s its fsync companion and has NO `handle_info/2` clause at all.
-  The `[error]` line is the small half: a syncer that dies for a real reason is
-  logged as "unexpected message" and then IGNORED, after which every
-  `send(state.syncer, :sync)` succeeds silently against a dead pid — the fsync
-  stops and nothing says so, on the path every effectively-once source waits on.
-  A `{:EXIT, _, _} -> {:noreply, state}` clause would convert a durability hole
-  from noisy to silent, which is why it is filed and not folded in.
-- **KI-54 (test-side).** A `ForwardWorker` 250 ms retry outlives its test in
-  `operative_forward_test.exs` and calls into a deleted ETS table — the same
-  shape as the KI-49 this change just closed, in a different module.
-
-Both at 1 of 6 full runs. KI-54 was NOT folded in on purpose: with KI-53
-deferred the gate stays red about 1 run in 6 either way, so halving the rate is
-not achieving the purpose. Both are queued below instead.
-
-Areas 0a, 0b, 1s, 1, 2 and 3 are complete — ~42 % of the codebase by production
-LOC. Area 3 is `c5bdc26b`, archived as `2026-08-29-refactor-3-rust-sdk`;
-`sdk/rust` and `flezha-macros` are blocking ratchets.
-
-**Two sessions share this tree.** `moon-d7` and `flezha-11` are both live local
-sessions on this repo; the peer commit `dc335efa` landed mid-run here and swept
-a board edit of this session's into it. Anything uncommitted under `lib/`,
-`test/` or `docs/` during a change is the running worker's — a peer `git add -A`
-would take it.
+**PROCESS FAILURE, recorded so it does not recur.** The supervisor's commit
+`56b73109` swept this worker's uncommitted `docs/known_issues.md` edits: it
+carries the KI-33 rewrite and the KI-55 entry under a message about QUIC. Cause:
+the supervisor staged a file the live worker was editing. Charter §1b REQUIRES
+a worker to write findings into `known_issues.md`, and the supervisor files its
+own there too, so that file is a guaranteed collision point. The rule is now in
+the skill's §1: while a worker runs, read `git diff <file>` before staging it
+and stage only what is provably yours. Nothing was lost.
 
 ### The one verdict that outlives this area
 

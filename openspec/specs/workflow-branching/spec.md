@@ -99,6 +99,13 @@ receives exactly the values released on the channels it consumes, and a join
 node's input batch SHALL **accumulate** every producer's released output — no
 producer's contribution may be overwritten or dropped.
 
+A channel's consumer count SHALL NOT change what its producer releases. One
+emit SHALL release one value on the producing channel whether that channel has
+one consumer or several; the fan-out happens once, where the driver hands the
+released batch to each child. A topology SHALL therefore produce the same
+per-procedure invocation count, the same journaled handoff and the same plugin
+output whatever its fan-out width, in every SDK.
+
 A procedure declaring more than one **outgoing** channel SHALL be rejected at
 registration with an error naming the node (the emit surface carries one
 output channel per procedure, so a second one could never be routed), as SHALL
@@ -121,4 +128,9 @@ single-branch case with unchanged behavior.
 
 - **WHEN** a class declares a topology in which a procedure's output reaches itself transitively
 - **THEN** registration SHALL fail with an error identifying the cycle
+
+#### Scenario: Fan-out does not multiply the released batch
+
+- **WHEN** the root of a diamond A→(B1→B2, C)→Join emits once on a channel with two consumers
+- **THEN** its journaled handoff SHALL hold ONE value, each of B1, C, B2 and the join SHALL run once per contribution, and the sink SHALL receive exactly the five payloads a single-consumer chain would produce — on every SDK that carries the `workflow` capability
 

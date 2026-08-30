@@ -131,15 +131,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # respawn re-runs B2 ALONE, and the join runs exactly once — with C's
       # JOURNALED handoff banked and B2's fresh output appended. One contract,
       # both SDKs.
-      # KI-33: java's resume re-runs the committed producers, so each of B, C
-      # and the join arrives twice. Skipped on java alone — the reference arm
-      # still proves the contract — and skipped, not pinned to the reference,
-      # because a pin reports a pass for a runtime that never ran.
-      @tag skip:
-             FlezhaTest.SystemCase.skip_unless(
-               NodeTestHelper.runtime() != :java,
-               "KI-33: the java SDK's workflow resume re-runs committed producers"
-             )
       test "a fan-in diamond joins once, and a crash re-runs only the uncommitted producer",
            ctx do
         collector = spawn_link(fn -> collect_loop([]) end)
@@ -180,6 +171,50 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
                "the join is the diamond's single leaf"
 
         assert ProcJournal.complete?(operative_id, [4])
+      end
+
+      # The same diamond with NO crash: one runner, the release env set, so
+      # nothing resumes and no journal is replayed. It runs beside the crash
+      # scenario because the fan-out shape is what the join's payload count
+      # proves, and a crash-only test invites the reading that a doubled join
+      # is a resume defect — it is not. `java-diamond-resume`: a channel's
+      # consumer count SHALL NOT multiply the value its producer released.
+      test "a fan-in diamond joins once with no crash at all", ctx do
+        collector = spawn_link(fn -> collect_loop([]) end)
+        namespace = unique("workflow_nocrash")
+        operative_id = unique("diamond_workflow")
+        id_path = unique_id_path()
+
+        on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+        # The release env is what lets DiamB2 through on the FIRST runner, so
+        # the chain completes without ever being killed.
+        {_port, _exec} = boot_runner(namespace, ctx, id_path, release?: true)
+
+        start_workflow(namespace, operative_id, "diamond_workflow",
+          plugins: [forward_sink("diamond_sink", collector)]
+        )
+
+        await_status(operative_id, "ok", 60_000)
+
+        seed = ~s({"seed":"go"})
+        delivered = collector |> await_outputs(5, operative_id) |> Enum.map(&elem(&1, 0))
+
+        assert Enum.sort(delivered) ==
+                 Enum.sort([
+                   "a:#{seed}",
+                   "b:#{seed}",
+                   "c:#{seed}",
+                   "j:b:#{seed}",
+                   "j:c:#{seed}"
+                 ]),
+               "the fan-out multiplied the released batch: #{inspect(delivered)}"
+
+        {:ok, entries} = ProcJournal.read(operative_id)
+        committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+
+        assert Enum.sort(committed) == [0, 1, 2, 3, 4],
+               "each node commits exactly once on a clean run: " <> inspect(committed)
       end
     end
   end
