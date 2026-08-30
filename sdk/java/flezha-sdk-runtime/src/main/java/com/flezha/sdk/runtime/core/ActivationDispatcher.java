@@ -190,6 +190,14 @@ public final class ActivationDispatcher {
             return operativeId;
         }
 
+        /**
+         * A structured (declared-DAG) workflow class, whose stages the core
+         * folds into the driver's collect sink instead of routing them.
+         */
+        boolean isStructuredWorkflow() {
+            return workflowSpec != null && !workflowSpec.isRunSugar();
+        }
+
         private static Procedure<?, ?, ?, ?, ?, ?> instantiate(ProcedureDescriptor desc) {
             try {
                 return desc.procedureClass().getDeclaredConstructor().newInstance();
@@ -836,9 +844,42 @@ public final class ActivationDispatcher {
             }
         }
 
-        /** Producer-side edge evaluation: transform chain, edge key, consumer event time. */
+        /**
+         * Producer-side edge evaluation: transform chain, edge key, consumer
+         * event time. That is the STREAM shape — the core routes each output
+         * on {@code (edge, key)} and reads the consumer.
+         *
+         * <p>A workflow stage is folded, not routed: {@code fold_effect}
+         * ({@code flz_core::host::workflow}) discards the consumer and collects
+         * every output as ONE released value, which the driver then fans out to
+         * each child itself. One output per consumer would therefore multiply
+         * the stage's released batch — and every downstream node's work — by
+         * the channel's consumer count. So a structured workflow releases the
+         * value once, untransformed and unkeyed; each consumer applies its own
+         * edge on delivery in {@link #valuesForEntity}, which is the seam a
+         * live run and a journal re-seed both cross. Mirrors the Rust SDK's
+         * {@code WorkflowCollectAdapter::emit}.
+         */
         @SuppressWarnings({"unchecked", "rawtypes"})
         private void collectEdgeOutputs(int channelId, ChannelDescriptor descriptor, Object value) {
+            // A channel with no consumer releases nothing: on a workflow that
+            // is a plugin-bound terminal, and seeding the next stage from it
+            // would hand the driver a terminal output.
+            if (descriptor.consumers().isEmpty()) {
+                return;
+            }
+            if (instance.isStructuredWorkflow()) {
+                outputs.add(new Output(
+                        // The consumer the fold discards; naming the channel's
+                        // first keeps the target a well-formed Edge.
+                        new OutputTarget.Edge(
+                                channelId, descriptor.consumers().get(0).procedure()),
+                        Optional.empty(),
+                        OptionalLong.empty(),
+                        List.of(),
+                        instance.edgeCodec.serialize(value)));
+                return;
+            }
             for (ConsumerEdge edge : descriptor.consumers()) {
                 EdgeYield yielded = edge.transformValue(value);
                 List<Object> values = yielded == null ? List.of(value) : yielded.values();

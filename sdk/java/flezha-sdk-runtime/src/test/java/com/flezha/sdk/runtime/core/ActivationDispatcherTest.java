@@ -586,6 +586,53 @@ class ActivationDispatcherTest {
     }
 
     @Test
+    @DisplayName("a workflow stage releases ONE untransformed edge output, whatever the consumer count")
+    void workflowStageReleasesOneEdgeOutputPerValue() {
+        WorkflowOperativeClassRegistry.registerClass(FanOutWorkflow.class);
+        ItemEffect effect = soleEffect(work("fanout_workflow", 0, Optional.empty(), 0, input(0, "v", 1)));
+
+        // The workflow fold discards the consumer and the driver fans the
+        // released batch out itself, so `wf_fan`'s two consumers must not
+        // double it.
+        assertThat(effect.outputs()).hasSize(1);
+        Output released = effect.outputs().get(0);
+        assertThat(released.target()).isInstanceOf(OutputTarget.Edge.class);
+        assertThat(((OutputTarget.Edge) released.target()).channel()).isEqualTo(1);
+        assertThat(released.key()).isEmpty();
+        assertThat(released.eventTime()).isEmpty();
+        assertThat(new KryoCodec(List.of(), false).deserialize(released.payload(), Object.class))
+                .as("the released value is raw: the consumer edge's map belongs to the consumer")
+                .isEqualTo("mid:v");
+    }
+
+    @Test
+    @DisplayName("each workflow consumer applies its own edge transform exactly once, at delivery")
+    void workflowConsumerAppliesItsEdgeOnce() {
+        WorkflowOperativeClassRegistry.registerClass(FanOutWorkflow.class);
+        ItemEffect stage = soleEffect(work("fanout_workflow", 0, Optional.empty(), 0, input(0, "v", 1)));
+        byte[] released = stage.outputs().get(0).payload();
+
+        // The one released value reaches BOTH children — the driver's fan-out —
+        // and each evaluates its own edge in valuesForEntity.
+        soleEffect(work(
+                "fanout_workflow",
+                1,
+                Optional.empty(),
+                0,
+                new WorkItem.Input(1, released, List.of(), OptionalLong.empty(), false, 2)));
+        soleEffect(work(
+                "fanout_workflow",
+                2,
+                Optional.empty(),
+                0,
+                new WorkItem.Input(1, released, List.of(), OptionalLong.empty(), false, 3)));
+
+        assertThat(RECORDED)
+                .as("the mapped edge applies once (never producer-side AND again here)")
+                .containsExactly("=mapped:mid:v", "=mid:v");
+    }
+
+    @Test
     @DisplayName("CompensateRun decodes the recorded outputs and collects the undo emits")
     void compensateRunUndoesWithDecodedOutputs() {
         WorkflowOperativeClassRegistry.registerClass(SagaWorkflow.class);
@@ -1228,6 +1275,30 @@ class ActivationDispatcherTest {
         @Override
         public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
             throw WorkflowOperativeException.nonRetryable("nope");
+        }
+    }
+
+    /**
+     * A structured workflow whose producing channel `wf_fan` has TWO consumers,
+     * one of them behind a map — the shape the fan-in diamond's root has, and
+     * the one a per-consumer producer-side emit multiplies.
+     */
+    public static final class FanOutWorkflow implements WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "fanout_workflow";
+        }
+
+        @Override
+        public boolean persistenceEnabled() {
+            return false;
+        }
+
+        @Override
+        public void procedures(ChannelBuilder c) {
+            var fan = c.input(String.class, "seed").into(MidProc.class).named("wf_fan");
+            fan.map(String.class, s -> "mapped:" + s).into(KeyRecorder.class);
+            fan.into(KeyRecorder.class, "wf_plain_leaf");
         }
     }
 

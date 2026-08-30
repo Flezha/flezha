@@ -138,6 +138,22 @@ rebuild, while its CLASSES matched — so class dates are not evidence. The
 worker rebuilt the host native and both fat jars (gitignored, so other sessions
 in this tree inherit the newer artefacts).
 
+**Batches 1-3 committed** (see the commit below): the reproduction stood up on
+artefacts built from HEAD, the mechanism confirmed BEFORE any edit, and the Java
+arm fixed with both unit tests shown red first. Batches 4-6 (the e2e red-then-
+green, the spec deltas, the record) are with the same worker.
+
+Two findings from the implementation worth carrying:
+- **D6's double application is now REPRODUCED, not read.** The red at 3.3
+  printed `"=mapped:mapped:mid:v"` — `collectEdgeOutputs` applied the edge map
+  producer-side and `valuesForEntity` applied it again at delivery. The workflow
+  arm removes it. Whether an inter-procedure STREAM edge with a `map` double-
+  applies the same way is **untouched and looks live from the code**; it is
+  task 5.3 and the verdict is the supervisor's.
+- **KI-33 is wrong a third time**: not only is it not a resume defect, its claim
+  that "B1/B2, C and the join each run twice" is false. Every node ran ONCE;
+  the root's released batch was doubled and the doubling propagated.
+
 *(spawned 22:08 as an investigation + proposal worker)*
 Phase 1 row 1, P1, and the one row that blocks area 4: `refactor-4-java-sdk`
 rewrites `sdk/java` with zero behaviour change, so refactoring over a live
