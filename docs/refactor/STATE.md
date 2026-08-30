@@ -36,8 +36,8 @@ one host core, tests fast and real.
 
 ## Status
 
-Done: Phase 0, 1s, area 1 (kernel), area 2 segments A (`4b032bb8`), B (`d6ef9947`)
-C (`a4358e97`, plus the corrective `fmt(2)` `3249b6da`) and D (`33efc794`). All five
+Done: Phase 0, 1s, area 1 (kernel), area 2 segments A (`01f45d7d`), B (`fae9184f`)
+C (`853f37fe`, plus the corrective `fmt(2)` `77287b1d`) and D (`e89e4a7a`). All five
 areas now have no file over 800 lines and no function over 50; the area is
 **−93 production and −354 test lines**. NEXT: area 2 segment E — batch 9 only
 (verification, the final A/B on all three rows, artifacts, hand-over), which closes
@@ -69,10 +69,10 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 |---|------|-----------|------------|--------|--------|----------------------|
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `8fb9d167` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `ea1f6f26` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
-| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`, `623ba124`, `b4408d58` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
+| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `e709cd40`, `f1b4fe54`, `d6288963` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `01f45d7d`, B `fae9184f`, fmt `77287b1d`, C `853f37fe`, D `e89e4a7a`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `467a378a`, `52a5b2f2`, `81bb57d7`, `f293aa7b`, `2c4a39bd`, `fcb3ced9` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -88,7 +88,7 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. **Area 3 is done** (`b4408d58`, archived as `2026-08-29-refactor-3-rust-sdk`;
+None. **Area 3 is done** (`fcb3ced9`, archived as `2026-08-29-refactor-3-rust-sdk`;
 `sdk/rust` and `flezha-macros` flipped to blocking ratchets). Areas 0a, 0b, 1s, 1, 2
 and 3 are complete — **~42 % of the codebase by production LOC**.
 
@@ -113,7 +113,7 @@ measurement. So: a real cost, imprecisely measured.
 tail instead of two — and reverting the area's core change on a number this noisy
 trades a structural gain for a measurement artifact. **A clean re-measure on a cold
 box is owed** before anyone decides to optimise or keep it. To reproduce: arm A′ is
-the tree at `a1bdfa34`, arm B2 the tree at `9f747656`; build **both the same way**
+the tree at `467a378a`, arm B2 the tree at `52a5b2f2`; build **both the same way**
 (two worktrees are comparable to each other, a worktree and the tree are not) and run
 row 1 at `FLEZHA_BENCH_MEASUREMENT_SECS=60`, `FLEZHA_WORKER_POOL_SIZE=8`, five paired
 rounds. The arms themselves die with this session's scratchpad.
@@ -139,7 +139,7 @@ attributably, for one 7-minute bisect instead of six measured checkpoints.
 rubocop) BEFORE running any of them, and `cargo +nightly fmt --all` is line 43. On a
 box missing one veneer formatter the script fails loudly about that formatter and
 never reports that Rust is dirty. That is how segment B's six unformatted production
-files reached commit `d6ef9947`: the worker's "format-check.sh exits 0" was taken on
+files reached commit `fae9184f`: the worker's "format-check.sh exits 0" was taken on
 trust and the supervisor ran the naming and metrics gates but not the format gate.
 Corrected by a `fmt(2)` commit; the lesson is that **the supervisor runs
 `cargo +nightly fmt --all --check` itself at every close** — it is read-only and
@@ -160,7 +160,7 @@ anyone writes another multi-token allowlist entry.
 
 The user's call, on the evidence that benchmarking was **61 % of area 2's closing
 segment** (66 of 108 minutes) against 30 % tests and 9 % builds. Charter §8 rewritten
-(`8d89f470`); every later area follows it:
+(`f746f798`); every later area follows it:
 
 1. **Build every checkpoint, measure once.** A checkpoint builds and sha-keeps its
    arm (~2 min); only the area's LAST checkpoint measures. A regression there is
@@ -381,7 +381,7 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   50-line function ceiling (`primitives_round_trip` 75, `assert_kind_maps` 72).
   Both are segment B's content relocated by the split, both are flat tables, and
   `refactor_metrics.py` counts production functions only — so no gate sees them.
-  RESOLVED 2026-08-29 by amending charter §7 (`7f665dba`): the function ceiling is
+  RESOLVED 2026-08-29 by amending charter §7 (`6b38f2b9`): the function ceiling is
   production only, which is what the gate has always measured, so the charter and
   the gate now agree instead of leaving an invisible gap. The file ceiling still
   binds tests — that is what forced the `abi_scenario` split.
@@ -435,7 +435,7 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   cross-language identifier rename is exactly what needs a parse check.
 - 2 (supervisor, session 2) the history rewrite (`fix.sh`, `filter-branch`) left
   `.git-blame-ignore-revs` naming five dead SHAs, `docs/refactor/baseline.json`'s
-  `head` at `5f21b515` (dead), and dead hashes in `CLAUDE.md`, `docs/dev_notes/
+  `head` at `1e371a37` (dead), and dead hashes in `CLAUDE.md`, `docs/dev_notes/
   refactor-0-baseline.md`, `docs/refactor/targets.md` and `charter.md`. Supervisor
   reconciles them in a docs commit this session.
 - 2 (supervisor, session 2) foreign untracked file `fix.sh` in the tree (the
@@ -542,7 +542,7 @@ with attribution preserved, because the arms are still kept at every checkpoint.
 - 2026-08-29 A test is deleted only with an lcov diff (`cargo llvm-cov --lcov`,
   `DA:`/`FNDA:` per file) showing every lost line inside the deleted test's body.
 - 2026-08-29 `flz_core`, `flz_transport`, `flz_nif` are blocking ratchets from
-  `e6bd6792` (prod 12 639 / 1 743 / 2 048; markers 0; files>800 0; clippy 0).
+  `d6288963` (prod 12 639 / 1 743 / 2 048; markers 0; files>800 0; clippy 0).
 - 2026-08-29 Rows 7 (veneer whole-system) run `-p 2 -m 40000 --runners 1` = 80 000
   records per run, the 1s spike's resolving shape; K33's "80 000 records" means the
   total, not `-m`.

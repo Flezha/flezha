@@ -63,7 +63,7 @@ diagnostic, so a moved snapshot there means the change is not neutral.
 `brace_extent` stripped Rust `#` as a shell-style comment, so every `#ident`
 interpolation ended the brace count early: `procedure.rs::expand` measured as if
 it closed at its first emission and was invisible at 348 lines. Fixed at
-`5d53f7f5`, mid-area — which is why batch 10b exists and why `state.rs`'s three
+`dd9265d3`, mid-area — which is why batch 10b exists and why `state.rs`'s three
 expanders (72 / 60 / 101) surfaced only at the close.
 
 **The classifier reads `/tests/` or a `_tests.rs` suffix, and nothing else.**

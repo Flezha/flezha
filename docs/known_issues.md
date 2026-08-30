@@ -113,7 +113,7 @@ below is all that survives — which is enough to write it again.
 - **What happens**: on a box missing one veneer formatter (commonly `rubocop`),
   the script fails loudly about that formatter and never reports that the Rust
   tree is dirty.
-- **Evidence**: this is exactly how commit `d6ef9947` landed with six unformatted
+- **Evidence**: this is exactly how commit `fae9184f` landed with six unformatted
   production files. The worker's "format-check.sh exits 0" was taken on trust.
 - **A fix should**: warn-and-continue on a missing formatter, or run each
   formatter's check independently and report all failures, so one absent tool
@@ -514,10 +514,10 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
-| `cargo check --workspace --all-targets` red without a feature nobody passes | `a1bdfa34` — three `[[test]]` entries were missing `required-features` |
-| `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `d6ef9947` |
-| Node `Source::get` costing four N-API calls per field read (~4 % on the Node dispatch row) | `d6ef9947` |
-| `refactor_metrics.py` measuring Rust functions short (`#` stripped as a comment, so `quote!` interpolations ended the brace count) | `5d53f7f5` |
-| Three Rust SDK flakes, each with a mechanism rather than a retry | `623ba124` |
+| `cargo check --workspace --all-targets` red without a feature nobody passes | `467a378a` — three `[[test]]` entries were missing `required-features` |
+| `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `fae9184f` |
+| Node `Source::get` costing four N-API calls per field read (~4 % on the Node dispatch row) | `fae9184f` |
+| `refactor_metrics.py` measuring Rust functions short (`#` stripped as a comment, so `quote!` interpolations ended the brace count) | `dd9265d3` |
+| Three Rust SDK flakes, each with a mechanism rather than a retry | `2c4a39bd` |
 | Committed `.pyc` files and a missing `__pycache__` ignore | area 2 |
 | `mix test --include system` "always exits 2" | refuted — the `:postgres_integration` modules self-skip now |
