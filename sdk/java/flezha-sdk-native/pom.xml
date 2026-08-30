@@ -92,10 +92,12 @@
             </build>
         </profile>
         <!--
-          native-build: Build flz_core_ffi's cdylib for the host triple (linux-x64
-          is the only platform the SDK currently ships) and verify the binary
-          is present before packaging. Use this for single-machine local
-          builds and for the `native-build` GitHub job.
+          native-build: portable packaging. Stages all five triples — the host
+          compiled from source, the other four downloaded from the release
+          matching this version and checksum-verified — then asserts all five
+          before shading. A triple already on disk is left alone, so a tree that
+          was just cross-built locally is never overridden by a download. This is
+          the only profile that touches the network, and no test path uses it.
         -->
         <profile>
             <id>native-build</id>
@@ -106,7 +108,7 @@
                         <artifactId>exec-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>host-build</id>
+                                <id>stage-all-triples</id>
                                 <phase>generate-resources</phase>
                                 <goals>
                                     <goal>exec</goal>
@@ -116,6 +118,11 @@
                                     <arguments>
                                         <argument>--output</argument>
                                         <argument>${native.output.dir}</argument>
+                                        <argument>--targets</argument>
+                                        <argument>all</argument>
+                                        <argument>--skip-present</argument>
+                                        <argument>--fetch-missing</argument>
+                                        <argument>${project.version}</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
@@ -142,7 +149,7 @@
                                                 <file>${native.output.dir}/macos-arm64/libflz_core_ffi.dylib</file>
                                                 <file>${native.output.dir}/windows-x64/libflz_core_ffi.dll</file>
                                             </files>
-                                            <message>native-build profile is missing a required libflz_core_ffi binary (five platforms).</message>
+                                            <message>native-build: a portable jar needs all five libflz_core_ffi binaries. Stage the missing ones with `scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native --targets all`.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>
@@ -154,9 +161,11 @@
         </profile>
 
         <!--
-          native-verify: assert that all five committed native binaries exist
-          in native-output-dir without invoking the build script. CI uses
-          this profile; refresh the binaries with `scripts/build-dist.sh`.
+          native-verify: assert the HOST triple's binary is staged, without
+          building or downloading anything. Every test path uses this profile —
+          `mvn verify`, the conformance suite, CI — because the suites run on
+          the machine they run on and need no other platform's library. The
+          other four triples are a distribution concern; see native-build.
         -->
         <profile>
             <id>native-verify</id>
@@ -167,22 +176,22 @@
                         <artifactId>maven-enforcer-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>require-all-native-binaries</id>
+                                <id>require-host-native-binary</id>
                                 <phase>prepare-package</phase>
                                 <goals>
                                     <goal>enforce</goal>
                                 </goals>
                                 <configuration>
                                     <rules>
+                                        <requireProperty>
+                                            <property>native.host.dir</property>
+                                            <message>native-verify: this os.name/os.arch has no supported flz_core_ffi triple. Supported: linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64.</message>
+                                        </requireProperty>
                                         <requireFilesExist>
                                             <files>
-                                                <file>${native.output.dir}/linux-x64/libflz_core_ffi.so</file>
-                                                <file>${native.output.dir}/linux-arm64/libflz_core_ffi.so</file>
-                                                <file>${native.output.dir}/macos-x64/libflz_core_ffi.dylib</file>
-                                                <file>${native.output.dir}/macos-arm64/libflz_core_ffi.dylib</file>
-                                                <file>${native.output.dir}/windows-x64/libflz_core_ffi.dll</file>
+                                                <file>${native.output.dir}/${native.host.dir}/libflz_core_ffi.${native.host.ext}</file>
                                             </files>
-                                            <message>native-verify: one or more of the five committed libflz_core_ffi binaries are missing. Refresh them with `scripts/build-dist.sh` and `git add` the result.</message>
+                                            <message>native-verify: the host triple's binary is not staged at src/main/resources/native/${native.host.dir}/libflz_core_ffi.${native.host.ext}. It is build output, not tracked in git — produce it with `scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native`.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>
@@ -191,6 +200,53 @@
                     </plugin>
                 </plugins>
             </build>
+        </profile>
+
+        <!--
+          The host triple's staged directory and library extension, resolved
+          from os.name/os.arch exactly as NativeLibraryLoader resolves them at
+          runtime. Kept in Maven rather than a script so `native-verify` needs
+          no Rust toolchain: the CI job that runs the Java unit tests has none.
+        -->
+        <profile>
+            <id>host-linux-x64</id>
+            <activation><os><name>linux</name><arch>amd64</arch></os></activation>
+            <properties>
+                <native.host.dir>linux-x64</native.host.dir>
+                <native.host.ext>so</native.host.ext>
+            </properties>
+        </profile>
+        <profile>
+            <id>host-linux-arm64</id>
+            <activation><os><name>linux</name><arch>aarch64</arch></os></activation>
+            <properties>
+                <native.host.dir>linux-arm64</native.host.dir>
+                <native.host.ext>so</native.host.ext>
+            </properties>
+        </profile>
+        <profile>
+            <id>host-macos-x64</id>
+            <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+            <properties>
+                <native.host.dir>macos-x64</native.host.dir>
+                <native.host.ext>dylib</native.host.ext>
+            </properties>
+        </profile>
+        <profile>
+            <id>host-macos-arm64</id>
+            <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+            <properties>
+                <native.host.dir>macos-arm64</native.host.dir>
+                <native.host.ext>dylib</native.host.ext>
+            </properties>
+        </profile>
+        <profile>
+            <id>host-windows-x64</id>
+            <activation><os><family>windows</family><arch>amd64</arch></os></activation>
+            <properties>
+                <native.host.dir>windows-x64</native.host.dir>
+                <native.host.ext>dll</native.host.ext>
+            </properties>
         </profile>
 
     </profiles>

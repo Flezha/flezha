@@ -44,8 +44,8 @@ env:
 
 jobs:
   # One job per SDK runtime, so a red cell names the SDK that broke. The
-  # schedule runs the two SDKs whose runners are committed artifacts; a
-  # dispatch can pick any runtime that carries a conformance manifest.
+  # schedule runs the two reference SDKs, rust and java; a dispatch can pick any
+  # runtime that carries a conformance manifest.
   matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -173,6 +173,16 @@ jobs:
           cargo build --quiet \
             --manifest-path=test/apps/rust_runner/Cargo.toml \
             --target-dir=./target
+
+      - name: Pre-build the Java SDK and its test runner
+        if: matrix.runtime == 'java'
+        # The host-triple libflz_core_ffi the SDK loads, the SDK into this job's
+        # ~/.m2, and the fat jar PortPilot spawns. None of the three is tracked
+        # in git, and no connect budget covers building them on first launch.
+        run: |
+          scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
+          mvn -B -q -DskipTests -P native-verify -f sdk/java/pom.xml install
+          mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml package
 
       - name: Pre-build the Node SDK and its test app
         if: matrix.runtime == 'node'

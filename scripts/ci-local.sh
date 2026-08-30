@@ -17,10 +17,10 @@
 #           then the shared smoke tier under FLEZHA_E2E_RUNTIME=java
 #           (matches java-sdk.yml's two jobs)
 #
-# Distribution artifacts (5× native binaries + SDK fat jar + test
-# runner fat jar) are *committed* to git. Refresh them with one
-# command — `scripts/build-dist.sh` — and `git add` the updated dist/
-# directories. CI never rebuilds them.
+# No build artifact is tracked in git, so the `java` section builds what it
+# needs: the HOST triple's libflz_core_ffi and the two jars, exactly as the
+# workflow does. `scripts/build-dist.sh` is the five-triple release path and is
+# not on any test path.
 #
 # Exit code is non-zero on the first failing section. On success the
 # script prints `ALL CI CHECKS PASSED`.
@@ -58,21 +58,6 @@ require_cmd() {
     red "missing required command: $1 ($2)"
     exit 1
   }
-}
-
-# Returns 0 (true) if all five native binaries are committed under resources.
-all_native_binaries_present() {
-  local nd="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
-  [[ -f "${nd}/linux-x64/libflz_core_ffi.so"      ]] && \
-  [[ -f "${nd}/linux-arm64/libflz_core_ffi.so"    ]] && \
-  [[ -f "${nd}/macos-x64/libflz_core_ffi.dylib"   ]] && \
-  [[ -f "${nd}/macos-arm64/libflz_core_ffi.dylib" ]] && \
-  [[ -f "${nd}/windows-x64/libflz_core_ffi.dll"   ]]
-}
-
-# Returns 0 (true) if the test runner jar is committed.
-test_app_jar_present() {
-  [[ -f "${REPO_ROOT}/test/apps/java_runner/dist/java_runner.jar" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -123,15 +108,10 @@ run_java() {
   require_cmd cargo "install Rust stable"
   require_cmd npm "install Node.js 20+"
 
-  if ! all_native_binaries_present || ! test_app_jar_present; then
-    red "Distribution artifacts are missing. Build them with one command:"
-    red "  scripts/build-dist.sh"
-    red "then 'git add' the updated files under:"
-    red "  sdk/java/flezha-sdk-native/src/main/resources/native/"
-    red "  sdk/java/flezha-sdk/dist/"
-    red "  test/apps/java_runner/dist/"
-    return 1
-  fi
+  # Mirrors java-sdk.yml's "Build the host triple" step. Every Java path below
+  # reads what this stages; the other four triples are a release concern.
+  bold ">>> scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native"
+  scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
 
   # Mirrors java-sdk.yml `java-unit-tests` job.
   bold ">>> mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify"
@@ -146,6 +126,14 @@ run_java() {
 
   bold ">>> mix deps.get"
   mix deps.get
+
+  # PortPilot launches test/apps/java_runner/target/java_runner.jar, which
+  # resolves com.flezha:flezha-sdk from ~/.m2.
+  # `clean` where CI gets a fresh checkout: the shade plugin refuses to shade
+  # an already-shaded jar, and the `verify` above left one in target/.
+  bold ">>> mvn install (SDK) + mvn package (java_runner)"
+  mvn -B -q -DskipTests -P native-verify -f sdk/java/pom.xml clean install
+  mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml clean package
 
   # PortPilot launches `cargo run --quiet` for rust_runner at boot;
   # BootLoader's post_hook only gives it 20s to connect (config/test.exs).

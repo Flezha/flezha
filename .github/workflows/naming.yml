@@ -10,6 +10,14 @@ name: Naming
 # as code — and toolchain-free, so it costs nothing next to the Format gate.
 # Local equivalents: the `scripts/check-*.sh` invoked below.
 #
+# check-build-artifacts is the repository-weight gate: `tracked` refuses a
+# committed build artefact (native libraries and fat jars are build output —
+# `scripts/build-native.sh` produces the one triple a test needs, and a release
+# publishes all five), and `size` holds the packed repository under 150 MB.
+# `size` needs the whole history, so its job checks out with fetch-depth 0; it
+# is non-blocking until the history purge reclaims what the committed artefacts
+# already cost (docs/runbooks/purge-build-artifacts.md).
+#
 # refactor-metrics is the structure ratchet (docs/refactor/charter.md §11):
 # non-blocking until an area is listed under `blocking` in
 # docs/refactor/baseline.json, and it uploads the measured JSON either way.
@@ -33,6 +41,25 @@ jobs:
         run: scripts/check-overflow-naming.sh
       - name: check-sdk-boundary
         run: scripts/check-sdk-boundary.sh
+
+  build-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: check-build-artifacts tracked
+        run: scripts/check-build-artifacts.sh tracked
+
+  repo-size:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: check-build-artifacts size
+        run: scripts/check-build-artifacts.sh size
 
   refactor-metrics:
     runs-on: ubuntu-latest

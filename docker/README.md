@@ -6,11 +6,12 @@ Three image stacks, one per concern. Don't mix them up.
 |------------|----------------------------------------------------------------------|-----------------------------------------------|
 | `dev/`     | Local dev/runtime: controller + Rust compute engine + Kafka UI + testnet  | `docker compose -f docker/dev/docker-compose.yml up` |
 | `prod/`    | Production controller image                                               | `docker compose -f docker/prod/docker-compose.yml up` |
-| `build/`   | Pinned cross-compile toolchain for `scripts/build-dist.sh --docker`  | one-shot artifact refresh; never long-running |
+| `build/`   | Pinned cross-compile toolchain for `scripts/build-dist.sh --docker`  | release artifact build; never long-running    |
 
-The committed distribution artifacts (5× native binaries + 2 Java fat
-jars) are produced exclusively by `build/Dockerfile.dist` (or the host
-toolchain) — never by `dev/` or `prod/`. See
+The distribution artifacts a release publishes (5× native binaries + 2 Java fat
+jars — build output, tracked nowhere) are produced exclusively by
+`build/Dockerfile.dist` (or the host toolchain) — never by `dev/` or `prod/`.
+Day-to-day work needs only the host triple, from `scripts/build-native.sh`. See
 [`build/README.md`](build/README.md) for the build flow and
 [`dev/README.md`](dev/README.md) for the runtime flow.
 

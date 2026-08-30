@@ -6,7 +6,8 @@ deps
 priv/native/*.so
 **/node_modules
 **/__pycache__
-.elixir_ls
+**/.elixir_ls
+**/.lexical
 cover
 flezha-*.tar
 
@@ -14,7 +15,7 @@ flezha-*.tar
 app_data
 logs
 *.dump
-erl_crash.dump
+**/erl_crash.dump
 bench-*.txt
 BENCH.md
 QUIC_DIAGNOSTICS.md
@@ -44,6 +45,30 @@ scripts
 
 # Java SDK is a separate deliverable — not needed for the agent build.
 sdk/java
+
+# The Java native libraries and fat jars. Untracked build output, so they are
+# absent from a clean checkout and present only on a machine that has built
+# them; naming them keeps that developer's build context the same size as the
+# checkout's, whatever the broader rules above happen to cover.
+sdk/java/flezha-sdk-native/src/main/resources/native
+sdk/java/flezha-sdk/dist
+test/apps/java_runner/dist
+
+# The same library, built for the other veneers, and the package trees around
+# it. `sdk/rust` is the only Cargo workspace member under sdk/, so nothing here
+# is read by the Rust build stage.
+sdk/node/native
+sdk/php/lib
+sdk/php/vendor
+sdk/python/.venv
+sdk/python/dist
+sdk/python/src/flezha/*.so
+sdk/ruby/lib/flezha/*.so
+sdk/ruby/pkg
+
+# Bench run outputs. `bench/` itself is source (the harness); its reports are
+# logs, and one of them is 70 MB.
+bench/*/reports
 
 # Test tree — kept out of the prod context except for cargo workspace
 # members (whose Cargo.toml is read during metadata resolution even when

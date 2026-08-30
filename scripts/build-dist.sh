@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build EVERYTHING that needs to live in git for CI to skip rebuilds:
+# Build every distribution artefact the Java and PHP SDKs ship:
 #
 #   1. flz_core_ffi cdylib (poll-core ABI + JNI, feature "jni") for all 5
 #      platforms ->
@@ -12,7 +12,11 @@
 #   4. Test runner fat jar ->
 #      test/apps/java_runner/dist/java_runner.jar
 #
-# Two modes:
+# None of it is tracked in git. Day to day you need only the host triple —
+# `scripts/build-native.sh` produces that in one step, and every test path
+# reads it. This script is the five-triple path: what a RELEASE publishes.
+#
+# Modes:
 #   --host    (default) Run on the host. Auto-installs cargo-zigbuild and
 #             zig if missing; uses an isolated CARGO_TARGET_DIR so a
 #             root-owned target/ can't block the build.
@@ -20,12 +24,12 @@
 #             No host toolchain required — only docker. Builds the image
 #             on first run; cached afterward. Bind-mounts the repo and a
 #             persistent named volume for cargo + maven caches.
-#
-# Then:
-#   git add sdk/java/flezha-sdk-native/src/main/resources/native/ \
-#           sdk/java/flezha-sdk/dist/ \
-#           test/apps/java_runner/dist/
-#   git commit -m "Refresh native + Java distribution artifacts"
+#   --stage-release <dir>
+#             Do not build. Copy the seven artefacts already on disk into
+#             <dir> under their published asset names and write a SHA-256
+#             manifest beside them. This is what the release job uploads,
+#             and the names are the ones `scripts/build-native.sh
+#             --fetch-missing` asks for.
 #
 # Host-mode requirements that this script will NOT auto-install:
 #   - Rust stable (rustup), Maven 3.8+, JDK 21, python3 + python3-venv
@@ -34,7 +38,7 @@
 #
 # Force-rebuild the docker image (e.g. after changing Dockerfile.dist):
 #   FLEZHA_REBUILD_IMAGE=1 scripts/build-dist.sh --docker
-
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -45,10 +49,12 @@ cd "${REPO_ROOT}"
 # Argument parsing
 # ---------------------------------------------------------------------------
 MODE="host"
+STAGE_RELEASE_DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host)   MODE="host"; shift ;;
     --docker) MODE="docker"; shift ;;
+    --stage-release) MODE="stage-release"; STAGE_RELEASE_DIR="$2"; shift 2 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -130,6 +136,53 @@ require_cmd() {
   }
 }
 
+# shellcheck source=scripts/native_triples.sh
+source "${SCRIPT_DIR}/native_triples.sh"
+
+# ---------------------------------------------------------------------------
+# stage-release mode: publish what is already on disk. No build, no toolchain.
+# ---------------------------------------------------------------------------
+if [[ "${MODE}" == "stage-release" ]]; then
+  require_cmd sha256sum "install coreutils"
+  [[ -n "${STAGE_RELEASE_DIR}" ]] || { red "--stage-release needs a directory"; exit 1; }
+
+  mkdir -p "${STAGE_RELEASE_DIR}"
+  step "staging release assets into ${STAGE_RELEASE_DIR}"
+
+  missing=()
+  assets=()
+  stage_asset() {
+    local src="$1" name="$2"
+    if [[ ! -f "${src}" ]]; then missing+=("${src}"); return; fi
+    cp -f "${src}" "${STAGE_RELEASE_DIR}/${name}"
+    assets+=("${name}")
+  }
+
+  for t in "${ALL_TRIPLES[@]}"; do
+    dir="${TRIPLE_TO_DIR[${t}]}"
+    ext="${TRIPLE_TO_EXT[${t}]}"
+    stage_asset "${NATIVE_OUT}/${dir}/libflz_core_ffi.${ext}" \
+                "$(release_asset_name "${dir}" "${ext}")"
+  done
+  stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
+  stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
+
+  if (( ${#missing[@]} > 0 )); then
+    red "cannot stage a release: these artefacts are not built yet"
+    printf '  %s\n' "${missing[@]}" >&2
+    red "build them first with: scripts/build-dist.sh --host"
+    exit 1
+  fi
+
+  # Bare names in the manifest, so a consumer verifies the asset it downloaded
+  # without knowing where it was staged. Named explicitly rather than globbed,
+  # so a stray file in the directory is never published as an asset.
+  ( cd "${STAGE_RELEASE_DIR}" && sha256sum -- "${assets[@]}" > SHA256SUMS.txt )
+  echo "  -> ${STAGE_RELEASE_DIR}/SHA256SUMS.txt"
+  green "${#assets[@]} assets + manifest staged."
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # 0. Sanity-check the toolchain we will NOT auto-install.
 # ---------------------------------------------------------------------------
@@ -167,37 +220,8 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Make sure all five rustup targets are installed.
 # ---------------------------------------------------------------------------
-TRIPLES=(
-  "x86_64-unknown-linux-gnu"
-  "aarch64-unknown-linux-gnu"
-  "x86_64-apple-darwin"
-  "aarch64-apple-darwin"
-  "x86_64-pc-windows-gnu"
-)
-declare -A TRIPLE_TO_DIR=(
-  ["x86_64-unknown-linux-gnu"]="linux-x64"
-  ["aarch64-unknown-linux-gnu"]="linux-arm64"
-  ["x86_64-apple-darwin"]="macos-x64"
-  ["aarch64-apple-darwin"]="macos-arm64"
-  ["x86_64-pc-windows-gnu"]="windows-x64"
-)
-declare -A TRIPLE_TO_EXT=(
-  ["x86_64-unknown-linux-gnu"]="so"
-  ["aarch64-unknown-linux-gnu"]="so"
-  ["x86_64-apple-darwin"]="dylib"
-  ["aarch64-apple-darwin"]="dylib"
-  ["x86_64-pc-windows-gnu"]="dll"
-)
-declare -A TRIPLE_TO_PREFIX=(
-  ["x86_64-unknown-linux-gnu"]="lib"
-  ["aarch64-unknown-linux-gnu"]="lib"
-  ["x86_64-apple-darwin"]="lib"
-  ["aarch64-apple-darwin"]="lib"
-  ["x86_64-pc-windows-gnu"]=""
-)
-
 step "ensuring rustup targets are installed"
-for t in "${TRIPLES[@]}"; do
+for t in "${ALL_TRIPLES[@]}"; do
   if ! rustup target list --installed 2>/dev/null | grep -qx "${t}"; then
     echo "  rustup target add ${t}"
     rustup target add "${t}"
@@ -236,7 +260,7 @@ build_native() {
   echo "  -> ${dst}"
 }
 
-for t in "${TRIPLES[@]}"; do
+for t in "${ALL_TRIPLES[@]}"; do
   build_native flz_core_ffi jni "${t}"
 done
 
@@ -250,7 +274,7 @@ done
 #     than rebuilt, so the two distributions cannot carry different cores.
 # ---------------------------------------------------------------------------
 step "staging the native libraries into the PHP package"
-for t in "${TRIPLES[@]}"; do
+for t in "${ALL_TRIPLES[@]}"; do
   dir="${TRIPLE_TO_DIR[${t}]}"
   ext="${TRIPLE_TO_EXT[${t}]}"
   mkdir -p "${PHP_NATIVE_OUT}/${dir}"
@@ -260,12 +284,14 @@ for t in "${TRIPLES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 5. Build the SDK fat jar (-P native-verify enforces all 5 natives present).
+# 5. Build the SDK fat jar (-P native-build enforces all 5 natives present;
+#    every triple was just built above, so it stages nothing and fetches
+#    nothing).
 # ---------------------------------------------------------------------------
 step "building SDK fat jar"
 # `clean` is load-bearing: the shade plugin reuses stale target/ output, so
 # without it the fat jar can embed a previous build's native binaries.
-mvn -B -q -f sdk/java/pom.xml -P native-verify -DskipTests clean install
+mvn -B -q -f sdk/java/pom.xml -P native-build -DskipTests clean install
 
 mkdir -p "${SDK_DIST}"
 cp -f sdk/java/flezha-sdk/target/flezha-sdk-*.jar "${SDK_DIST}/flezha-sdk.jar"
@@ -290,8 +316,5 @@ green "============================================================"
 green "  All distribution artifacts built."
 green "============================================================"
 echo
-echo "Stage and commit with:"
-echo "  git add sdk/java/flezha-sdk-native/src/main/resources/native/ \\"
-echo "          sdk/java/flezha-sdk/dist/ \\"
-echo "          test/apps/java_runner/dist/"
-echo "  git commit -m \"Refresh native + Java distribution artifacts\""
+echo "None of it is tracked in git. To publish a release, stage the assets with:"
+echo "  scripts/build-dist.sh --stage-release dist-release"

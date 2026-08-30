@@ -35,26 +35,41 @@ The `protoc` install layer rejects any other `uname -m` with
 - Build the `rust_runner` application.
 - Build the controller `mix compile`
 
-### Distribution artifacts (committed to git, never built by CI)
+### Distribution artifacts (built, never committed)
 
-Three classes of artifacts ride along in the repo so CI never rebuilds
-them:
+Three classes of build output — none of it tracked in git:
 
 - 5× native binaries — `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_core_ffi.{so,dylib,dll}`
 - SDK fat jar — `sdk/java/flezha-sdk/dist/flezha-sdk.jar`
 - Test runner fat jar — `test/apps/java_runner/dist/java_runner.jar`
 
-Refresh all three with one command after touching anything under
-`sdk/java/`, `flz_core_ffi/`, `flz_core/`, `flz_transport/`, or `test/apps/java_runner/`:
+**To develop and test you need one native binary: the host triple.** Build it
+once after cloning, and again after touching `flz_core_ffi/`, `flz_core/` or
+`flz_transport/`:
+
+```bash
+scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
+```
+
+`mvn verify`, `FLEZHA_E2E_RUNTIME=java mix test` and the conformance suite all
+read that one file, offline. The Maven `native-verify` profile asserts it is
+there and names this command when it is not.
+
+**All five triples are a release concern.** A version tag runs the
+`release-artifacts` job in `.github/workflows/java-sdk.yml`, which cross-builds
+the five, assembles both fat jars, and publishes them with a SHA-256 manifest as
+GitHub Release assets. To assemble a portable jar yourself:
 
 ```bash
 scripts/build-dist.sh             # host toolchain (auto-installs zig if missing)
 scripts/build-dist.sh --docker    # pinned container; needs only docker
+mvn -P native-build -f sdk/java/pom.xml package   # or: fetch the published five
 ```
 
-Then `git add` the updated `dist/` directories and commit. The
-`scripts/install-hooks.sh` pre-commit hook will refuse a commit that
-edits source under those paths without restaging the refreshed jars.
+`native-build` downloads any triple missing from your tree from the release
+matching the pinned version, verifies it against the manifest, and leaves
+anything you cross-built alone. It is the only path that touches the network,
+and no test uses it.
 
 See [`docker/build/README.md`](docker/build/README.md) for the build
 image; [`docker/dev/README.md`](docker/dev/README.md) for the runtime
@@ -82,12 +97,12 @@ What each section runs (each line below is the literal command):
   - `mix test` (excludes `:system`; includes the SDK conformance gate)
 - **`java`** — mirrors `.github/workflows/java-sdk.yml` (both jobs):
   - `mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify` (Java unit tests + JaCoCo)
-  - `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` (the shared smoke tier against the committed test runner jar)
+  - `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` (the shared smoke tier against the test runner jar)
 
-The `java` section refuses to run if any committed distribution artifact
-is missing — it'll point you at `scripts/build-dist.sh`. The script uses
-an isolated `CARGO_TARGET_DIR=target-ci-local/` so it can't be blocked
-by stale local cargo state.
+The `java` section builds the host triple and both jars first, exactly as the
+workflow does — nothing it needs is tracked in git. The script uses an isolated
+`CARGO_TARGET_DIR=target-ci-local/` so it can't be blocked by stale local cargo
+state.
 
 Exit code is non-zero on the first failing section; otherwise the script
 ends with `ALL CI CHECKS PASSED`.
@@ -301,9 +316,10 @@ A capability an SDK does not carry is declared in its manifest
 must pass. `docs/sdk/conformance.md` has the whole contract, including what a
 new SDK owes.
 
-The jars and native binaries the Java runs consume are **committed** and never
-built by CI — refresh them with `scripts/build-dist.sh` and commit. That needs
-Java 21, Rust stable, `cargo-zigbuild` and a Zig toolchain.
+The jars and native binary the Java runs consume are build output — produce them
+with `scripts/build-native.sh` plus `mvn package` (Java 21 and Rust stable; see
+"Distribution artifacts" above). Only a portable, five-triple jar needs
+`cargo-zigbuild` and a Zig toolchain.
 
 On hardened containers where `/tmp` is mounted `noexec`, set
 `FLEZHA_NATIVE_LIB_DIR=/path/to/writable` so `NativeLibraryLoader` can

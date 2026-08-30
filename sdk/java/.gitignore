@@ -17,11 +17,6 @@ dependency-reduced-pom.xml
 *.tar.gz
 *.rar
 
-# The committed SDK fat jar lives under flezha-sdk/dist/ — refresh via
-# `scripts/build-dist.sh` and `git add` the result.
-!flezha-sdk/dist/
-!flezha-sdk/dist/*.jar
-
 # IDE - IntelliJ IDEA
 .idea/
 *.iml
@@ -56,6 +51,7 @@ Thumbs.db
 *.tmp
 *.backup
 
-# Bundled native binaries are committed to git; the `native-verify`
-# Maven profile asserts the five-platform set is present
-# (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64).
+# The fat jar under flezha-sdk/dist/ and the native binaries under
+# flezha-sdk-native/src/main/resources/native/ are build output, ignored by the
+# root .gitignore. There is deliberately no `!` re-including them here: a nested
+# .gitignore outranks the root one, and this file used to re-include the jar.

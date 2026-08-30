@@ -14,24 +14,23 @@ from the published runtime images:
 Build it, exec into it, run the controller, attach plugins, etc. Run all
 commands below from the project *root* directory.
 
-> **Not** the image for producing distribution artifacts. The native
-> binaries committed under
-> `sdk/java/flezha-sdk-native/src/main/resources/native/` and the two
-> committed fat jars (`sdk/java/flezha-sdk/dist/flezha-sdk.jar`,
-> `test/apps/java_runner/dist/java_runner.jar`) are
-> produced by a separate, build-only image. See
+> **Not** the image for producing distribution artifacts. The five native
+> binaries under `sdk/java/flezha-sdk-native/src/main/resources/native/` and the
+> two fat jars (`sdk/java/flezha-sdk/dist/flezha-sdk.jar`,
+> `test/apps/java_runner/dist/java_runner.jar`) are build output, tracked
+> nowhere, produced by a separate build-only image. See
 > [`../build/README.md`](../build/README.md) — the one-shot wrapper is
-> `scripts/build-dist.sh --docker`. CI never builds those artifacts; it
-> consumes the committed copies, so any change under `sdk/java/`,
-> `flz_core_ffi/`, `flz_core/`, `flz_transport/`, or `test/apps/java_runner/`
-> needs an artifact refresh + commit before it merges.
+> `scripts/build-dist.sh --docker`. You need that five-triple build only to
+> publish; to develop and test, build the host triple with
+> `scripts/build-native.sh` and nothing else.
 
 ## Quick reference
 
 | You want to…                              | Run                              | Image                      |
 |-------------------------------------------|----------------------------------|----------------------------|
 | Run the controller + plugins for dev           | the steps in this file           | `docker/dev/Dockerfile.toolchain`  |
-| Refresh committed dist artifacts          | `scripts/build-dist.sh --docker` | `docker/build/Dockerfile.dist` |
+| Build the host triple (all you need to test) | `scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native` | (none — runs on host) |
+| Build all five triples + both fat jars    | `scripts/build-dist.sh --docker` | `docker/build/Dockerfile.dist` |
 | Mirror what GitHub Actions does locally   | `scripts/ci-local.sh`            | (none — runs on host)      |
 | Production controller                          | see `../prod/README.md`          | `docker/prod/Dockerfile.controller` |
 

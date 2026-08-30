@@ -6,11 +6,9 @@ name: Elixir
 # runner. The runner-backed smoke tier runs in `java-sdk.yml` and the full
 # `:system` suite in `nightly-e2e.yml`; this workflow stays Elixir+Rust only.
 #
-# Native Java SDK binaries (libflz_core_ffi.{so,dylib,dll} × 5 platforms)
-# are committed under `sdk/java/flezha-sdk-native/src/main/resources/native/`
-# — neither this workflow nor `java-sdk.yml` builds them. Refresh locally
-# with `scripts/build-dist.sh` (rebuilds natives + SDK + test app jars
-# in one shot) and commit.
+# Nothing here touches the Java SDK's native binary: the conformance gate reads
+# manifests, not runners. `java-sdk.yml` builds the host triple it needs with
+# `scripts/build-native.sh`; no build artefact is tracked in git.
 
 on:
   pull_request:

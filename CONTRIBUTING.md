@@ -25,10 +25,10 @@ Two repo-wide rules that are easy to miss:
   protocol, defaults, bench and e2e fixtures — changes in Rust, Java and Elixir
   in the same change, or the change names what it defers. Normative text:
   `docs/architecture/runner.md`.
-- **Committed distribution artifacts.** Edits under `sdk/java/`,
-  `flz_transport/` or `test/apps/java_runner/` require refreshed jars in the
-  same commit (`scripts/build-dist.sh`); the pre-commit hook from
-  `scripts/install-hooks.sh` enforces it.
+- **No build artifact is committed.** Native libraries and fat jars are build
+  output; `scripts/check-build-artifacts.sh` fails a pull request that tracks
+  one. Build the host triple once with `scripts/build-native.sh` and every Java
+  test path works offline — see README "Building".
 
 Keep a change to one concern, and read the matching `docs/dev_notes/` entry
 before touching an area listed in `CLAUDE.md`.

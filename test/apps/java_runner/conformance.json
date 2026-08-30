@@ -7,6 +7,7 @@
   },
   "artifacts": {
     "test": [
+      "target/java_runner.jar",
       "dist/java_runner.jar"
     ],
     "bench": [
@@ -15,8 +16,8 @@
     ]
   },
   "build": {
-    "test": "scripts/build-dist.sh",
-    "bench": "mvn -f test/apps/java_runner/pom.xml package"
+    "test": "scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native && mvn -B -DskipTests -P native-verify -f sdk/java/pom.xml install && mvn -B -DskipTests -f test/apps/java_runner/pom.xml package",
+    "bench": "scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native && mvn -B -DskipTests -P native-verify -f sdk/java/pom.xml install && mvn -B -DskipTests -f test/apps/java_runner/pom.xml package"
   },
   "connect_timeout_ms": 60000,
   "transports": [

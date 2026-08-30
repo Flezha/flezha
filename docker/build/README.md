@@ -1,7 +1,7 @@
 # Docker BUILD
 
-Pinned toolchain image used to produce the distribution artifacts that
-ride along in the repo (so CI never has to rebuild them):
+Pinned toolchain image used to produce the distribution artifacts a **release**
+publishes. None of them is tracked in git:
 
 - `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_core_ffi.{so,dylib,dll}`
   — the `flz_core_ffi` cdylib (feature `jni`) for **all five** target platforms (linux-x64,
@@ -9,6 +9,11 @@ ride along in the repo (so CI never has to rebuild them):
 - `sdk/java/flezha-sdk/dist/flezha-sdk.jar` — SDK fat jar.
 - `test/apps/java_runner/dist/java_runner.jar` —
   test runner fat jar.
+
+You do not need this image, or zig, to work on Flezha: every test path reads the
+**host triple** alone, and `scripts/build-native.sh` builds that with the
+ordinary linker. Reach for the five-triple build to cut a release, or to
+assemble a portable jar locally instead of fetching the published assets.
 
 This image is **only for builds**, not for running the controller. For
 runtime/dev see [`../dev/README.md`](../dev/README.md); for production
@@ -68,6 +73,6 @@ Edit `Dockerfile.dist`, then:
 FLEZHA_REBUILD_IMAGE=1 scripts/build-dist.sh --docker
 ```
 
-If you bump pinned versions (Maven, JDK base image, Rust toolchain),
-also refresh the artifacts on the same commit so reproducibility is
-checked in alongside the toolchain change.
+If you bump pinned versions (Maven, JDK base image, Rust toolchain), the next
+release built from this image carries the change; nothing is checked in
+alongside it, so note the bump in the release notes instead.

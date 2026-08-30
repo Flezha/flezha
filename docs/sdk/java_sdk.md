@@ -62,18 +62,28 @@ Dynamic-entity scenarios assert against live state for this runtime.
 
 ## Packaging
 
-Committed artifacts, refreshed by `scripts/build-dist.sh` and never built by
-CI:
+Build output. None of it is tracked in git.
 
-| Artifact | Path |
-| --- | --- |
-| Native `flz_core_ffi` (5 platforms) | `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/` |
-| SDK fat jar | `sdk/java/flezha-sdk/dist/flezha-sdk.jar` |
-| Test runner fat jar | `test/apps/java_runner/dist/java_runner.jar` |
+| Artifact | Path | Produced by |
+| --- | --- | --- |
+| Native `flz_core_ffi`, host triple | `sdk/java/flezha-sdk-native/src/main/resources/native/<host>/` | `scripts/build-native.sh --output <that dir>` |
+| Native `flz_core_ffi`, all 5 platforms | the same tree, one directory each | `scripts/build-dist.sh`, or `mvn -P native-build` fetching the release assets |
+| SDK fat jar | `sdk/java/flezha-sdk/dist/flezha-sdk.jar` | `scripts/build-dist.sh` |
+| Test runner fat jar | `test/apps/java_runner/target/java_runner.jar` | `mvn -f test/apps/java_runner/pom.xml package` |
 
-The test runner jar is what the e2e harness spawns (`test` profile); the bench
-prefers a locally built `test/apps/java_runner/target/java_runner.jar`
-(`bench` profile). Both launch lines come from the manifest.
+Two profiles, two jobs:
+
+- **`native-verify`** asserts the **host triple** is staged and neither builds
+  nor downloads. Every test path uses it — `mvn verify`, the e2e harness, CI —
+  so the suites run offline against one binary.
+- **`native-build`** is portable packaging: it stages every absent triple (the
+  host compiled, the rest downloaded from the GitHub Release matching the pinned
+  version and checksum-verified), leaves anything already on disk alone, and
+  asserts all five before shading.
+
+The e2e harness spawns `target/java_runner.jar`, falling back to `dist/` for a
+tree assembled by `scripts/build-dist.sh`. Both launch lines come from the
+manifest.
 
 ## Testing
 

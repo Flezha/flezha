@@ -15,42 +15,36 @@ on:
       - "test/helpers/node_test_helper.ex"
       - "test/system/sdk_smoke_e2e_test.exs"
       - ".github/workflows/java-sdk.yml"
+  # No `paths:` here, deliberately. A path filter is evaluated against the
+  # commits a push carries, and a tag pushed onto an existing commit carries
+  # none — so a filtered push trigger would skip the release job every time.
+  # The pull-request trigger above keeps its filter, which is where the cost is.
   push:
     branches: [main]
-    paths:
-      - "sdk/java/**"
-      - "flz_core/**"
-      - "flz_core_ffi/**"
-      - "flz_transport/**"
-      - "protobufs/**"
-      - "lib/flezha/runner/fleet_manager.ex"
-      - "lib/flezha/operative/overwatch.ex"
-      - "lib/flezha/service/operative_manager.ex"
-      - "test/apps/java_runner/**"
-      - "test/helpers/node_test_helper.ex"
-      - "test/system/sdk_smoke_e2e_test.exs"
-      - ".github/workflows/java-sdk.yml"
+    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
-# Built artifacts that are *committed*:
-#   - Native binaries (libflz_core_ffi.{so,dylib,dll} × 5 platforms) under
-#       sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/
-#   - SDK fat jar at  sdk/java/flezha-sdk/dist/flezha-sdk.jar
-#   - Test runner fat jar at
-#       test/apps/java_runner/dist/java_runner.jar
+# No build artifact is tracked in git. Every job here builds what it needs.
 #
-# Refresh all of them locally with one command (`scripts/build-dist.sh`),
-# then `git add` + commit. CI never invokes the build script, never runs
-# cargo-zigbuild, never cross-compiles.
+# Pull requests build the HOST triple only — `scripts/build-native.sh` with no
+# --targets — because the suites run on the machine they run on. They never
+# install zig or cargo-zigbuild and never cross-compile: that property is the
+# whole reason the artifacts were committed in the first place, and it is kept.
+#
+# The five-triple cross-build lives in `release-artifacts`, which runs on a
+# version tag only and publishes the five binaries, both fat jars and a SHA-256
+# manifest as GitHub Release assets. `mvn -P native-build` fetches those assets
+# for anyone assembling a portable jar.
 
 jobs:
-  # Java-side unit tests + JaCoCo coverage. The `-P native-verify` profile
-  # asserts the committed natives are present without rebuilding them, and
-  # there's no "package fat jar" step (the fat jar is committed too).
+  # Java-side unit tests + JaCoCo coverage against a host-triple-only tree.
+  # `-P native-verify` asserts the host binary is staged and neither builds nor
+  # downloads anything, so this job's only native step is the one below.
   java-unit-tests:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -62,12 +56,42 @@ jobs:
           java-version: 21
           cache: maven
 
-      - name: Verify (compile + unit + JaCoCo) against committed natives
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the host-triple native binary
+        # Keyed on the host triple and on every crate that ends up inside
+        # libflz_core_ffi, so a pull request touching only sdk/java/ restores
+        # the binary the last main build produced instead of recompiling it.
+        id: native-cache
+        uses: actions/cache@v5
+        with:
+          path: sdk/java/flezha-sdk-native/src/main/resources/native
+          key: native-x86_64-unknown-linux-gnu-${{ hashFiles('Cargo.lock', 'flz_core/**', 'flz_core_ffi/**', 'flz_transport/**') }}
+          restore-keys: |
+            native-x86_64-unknown-linux-gnu-
+
+      - name: Build the host triple
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
+
+      - name: Verify (compile + unit + JaCoCo + fat jar) against the host triple
+        # `verify` runs through `package`, so the shaded jar uploaded below is
+        # this run's. Shading an already-shaded jar duplicates resources, so
+        # there is deliberately no second packaging step.
         run: mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify
 
-  # Java <-> Elixir integration matrix. Runs in parallel with java-unit-tests
-  # — both consume committed artefacts, so neither blocks the other.
+      - uses: actions/upload-artifact@v4
+        with:
+          # Host triple only. A portable jar carries all five binaries and is
+          # published by `release-artifacts` on a version tag.
+          name: flezha-sdk-host-only-not-portable
+          path: sdk/java/flezha-sdk/target/flezha-sdk-*.jar
+
+  # Java <-> Elixir integration matrix. Runs in parallel with java-unit-tests;
+  # each builds its own host-triple binary, so neither blocks the other.
   mix-integration-matrix:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -149,12 +173,23 @@ jobs:
             --manifest-path=test/apps/rust_runner/Cargo.toml \
             --target-dir=./target
 
+      - name: Build the host triple
+        # flezha-sdk-native's `native-verify` profile asserts this binary before
+        # packaging, and the runner loads it at startup. Host triple only: this
+        # job runs on the machine it tests.
+        run: scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
+
       - name: Install Flezha Java SDK into local Maven repo
         # The test java runner (test/apps/java_runner) depends on
         # `com.flezha:flezha-sdk` + `flezha-sdk-testing` as Maven
         # artifacts, resolved against the runner's per-job `~/.m2`. `-DskipTests` skips unit tests + jacoco; the
         # parallel `java-unit-tests` job covers those.
-        run: mvn -B -DskipTests -f sdk/java/pom.xml install
+        run: mvn -B -DskipTests -f sdk/java/pom.xml -P native-verify install
+
+      - name: Build the java_runner fat jar
+        # PortPilot launches `test/apps/java_runner/target/java_runner.jar`;
+        # it is build output, not tracked in git.
+        run: mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml package
 
       - name: Run the shared smoke tier against the Java runtime
         env:
@@ -163,3 +198,43 @@ jobs:
           mix test --include sdk_smoke \
             --formatter FlezhaTest.Helper.TimingFormatter \
             --formatter ExUnit.CLIFormatter
+
+  # The five-triple cross-build, on a version tag and nowhere else. This is the
+  # narrow reinstatement of what `2026-04-25-slim-app-footprint` removed: a
+  # release needs every supported platform, a pull request needs one.
+  release-artifacts:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build all five triples and both fat jars
+        # The same script that is run locally. It installs cargo-zigbuild and a
+        # ziglang venv itself, so nothing here pins a second copy of that.
+        run: scripts/build-dist.sh --host
+
+      - name: Stage the assets and their SHA-256 manifest
+        run: scripts/build-dist.sh --stage-release dist-release
+
+      - name: Publish them to the tag's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist-release/* --clobber
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes dist-release/*
+          fi
