@@ -97,3 +97,25 @@ Once `refactor-3-rust-sdk` lands, the areas `sdk/rust` and `flezha-macros` SHALL
 - **WHEN** `cargo test --workspace` runs with no `--features` argument
 - **THEN** every `flezha_runner` test target that imports `flezha_runner::__dispatch_internals` SHALL declare `required-features = ["bench-internals"]`, so the run compiles and the targets that need the feature are skipped rather than failing to build
 
+### Requirement: A recorded metric SHALL name the scan that produced it
+
+A metric whose value depends on which files were scanned SHALL record that scan
+alongside the value. A comparison between two recordings made under different
+scans SHALL be refused, not reported — the numbers describe different questions,
+and a gate that compares them reports a change nobody made.
+
+Refusal SHALL be an error, not a warning. A warning in a gate is a number nobody
+reads, which is the same defect the requirement exists to prevent.
+
+#### Scenario: A cross-scan comparison is refused
+
+- **GIVEN** a recorded baseline produced under one set of scanned areas
+- **WHEN** the check runs over a different set
+- **THEN** it SHALL refuse the comparison and name the difference, rather than report a delta
+
+#### Scenario: A same-scan comparison proceeds
+
+- **GIVEN** a baseline and a run over the same set of areas
+- **WHEN** the check runs
+- **THEN** it SHALL compare them normally
+
