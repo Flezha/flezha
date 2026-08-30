@@ -22,7 +22,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
   use FlezhaTest.SystemCase, capability: :effectively_once
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.PostgresSink
   import FlezhaTest.Helper.TierE2EHarness
 
@@ -90,8 +90,6 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     }
 
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
-
-    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     assert info.runner_id == exec_a
 

@@ -96,9 +96,6 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 
-    assert NodeTestHelper.await_stream_bound(@namespace, operative_id),
-           "the data stream never bound"
-
     # Prime with ONE input so the first state frame runs the credit
     # handshake, and burst only once the session is credit-speaking —
     # otherwise the burst races the handshake and flows un-metered.

@@ -82,9 +82,6 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 
-    assert NodeTestHelper.await_stream_bound(@namespace, operative_id),
-           "the data stream never bound"
-
     # Grow the WAL with changeful inputs (each PushText is one Change record).
     for i <- 1..50 do
       OperativeManager.send_io(operative_id, @namespace, "line-#{i}-#{operative_id}", %{

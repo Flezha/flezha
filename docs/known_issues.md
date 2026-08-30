@@ -31,37 +31,6 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
-### KI-2 · First input after `start_operative/2` is journaled and never forwarded
-
-**OpenSpec change**: `fix-first-input-drop-on-bind` (proposed 2026-08-30).
-
-- **Where**: the start path in `lib/flezha/runner/`, and the restore re-forward
-  path (second face, below).
-- **What happens**: `start_operative/2` returns on the control-channel ack, but
-  the runner's primary data stream binds later — `StreamChannel` publishes
-  `stream_ref: nil` at init. A `send_io` cast in that window hits `io_in/3` →
-  `{:error, :no_stream}` and is dropped, recorded only as `nil_drops` and a
-  `[:flezha, :stream, :drop]` telemetry event. Under tier-on the input **is**
-  journaled (`Ingest.verdict/2` answers `:ok` on `:no_stream`) and then never
-  forwarded at bind.
-- **Impact**: silent loss of the first input(s) of an operative's life, with a
-  durable record claiming they were accepted.
-- **Evidence**: a telemetry probe logged 38 drops on exactly the failing e2e
-  operatives in one combined run.
-- **Second face**: `test/system/effectively_once_checkpoint_e2e_test.exs:37` —
-  after a rebind the controller re-forwards offsets onto a data stream the fresh
-  runner has not bound yet; three `[:flezha, :stream, :drop]` in one millisecond,
-  never re-driven. Reproduced on the 40th probed iteration in isolation.
-- **Why not fixed here**: behaviour change; charter §1.
-- **A fix must**: either make the start reply wait for the bind, or make the cast
-  un-droppable (queue until bound). Both faces need the same cure — a
-  bind-aware forward — or the restore path will keep dropping after the start
-  path is fixed.
-- **Worked around in tests by**: `NodeTestHelper.await_stream_bound/2`, which
-  settles on the acceptor's own `:stream_ref_status`. Every e2e module now uses
-  it. `test/system/sdk_smoke_e2e_test.exs`'s `send_until_forwarded` is an older
-  re-send workaround for the same defect and should fold onto it (see KI-20).
-
 ### KI-3 · UDS write-buffer drops are invisible to the caller
 
 - **Severity**: P1 · **investigation first**, then proposal.
@@ -256,10 +225,59 @@ isolation is not evidence** — reproduce under load before concluding anything
   never removed); `app_data/dlq` holds leftovers from tests using the default DLQ
   directory. Owed to the test-consolidation area.
 
-### KI-20 · `sdk_smoke_e2e_test.exs` still carries the old drop workaround
+### KI-43 · 28 modules leave Mimic in global mode, failing the next module's stubs
 
-- `send_until_forwarded` is a re-send loop written around KI-2. Fold it onto
-  `NodeTestHelper.await_stream_bound/2` once KI-2 is fixed.
+- **Severity**: P2 · **mechanical fix, no investigation needed**.
+- **Where**: every module using `setup :set_mimic_global` (or a bare
+  `Mimic.set_mimic_global()`) instead of
+  `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1` — 28 files, against
+  10 that already use the safe helper.
+- **What happens**: Mimic resets `:global` to `:private` only when it sees the
+  owner go down, and it monitors the owner only once that owner registers a
+  stub. A global-mode test that stubs nothing leaves `:global` behind, and the
+  next module to call `stub/3` from its own pid dies with
+  `** (ArgumentError) Stub cannot be called by the current process. Only the
+  global owner is allowed.` — every test in it, not just one.
+- **Evidence**: a two-file, two-second reproduction, no seed hunting needed:
+  `mix test test/flezha/service/cli_manager_state_get_test.exs
+  test/flezha/service/cli_manager_schedule_test.exs --seed 0` → 10 failures;
+  `cli_manager_schedule_test.exs` alone → 10 passed. In a full
+  `mix test --include system` it surfaces whenever the seed happens to order a
+  leaky module in front of a private-stub one — observed as 10 failures on seed
+  `682679`, reproducible by re-running that seed.
+- **The remedy already exists and is unused**: `test/helpers/mimic_global.ex`
+  releases the mode in `on_exit`, and its moduledoc describes exactly this
+  failure. The fix is `setup :set_mimic_global` →
+  `import FlezhaTest.Helper.MimicGlobal` + `setup :set_mimic_global_until_exit`,
+  once per file.
+- **Why it may look new**: any change that adds or removes a test module
+  re-permutes ExUnit's module order for a given seed, so a suite that never hit
+  the adjacency can start hitting it without anything about the hazard changing.
+  Do not read a first sighting as a regression in the commit that surfaced it.
+- **Why not fixed on the spot**: 28 unrelated files, none of them in the area of
+  the change that found it.
+
+### KI-42 · Four e2e sites still name `<state_root>/<class>`, a path that cannot exist
+
+- **Severity**: P2 · **investigation first** (each site needs its own reading).
+- **Where**: `test/system/remote_durability_e2e_test.exs:110` and `:205`,
+  `test/system/partitioned_operatives_e2e_test.exs:185`,
+  `test/system/workflow_crash_resume_e2e_test.exs:1267`.
+- **What happens**: durable state lives under `<state_root>/<namespace>/<class>`
+  (`Flezha.State.Registry.class_dir/1`). These four join `<state_root>` to the
+  class directly. The three `refute File.exists?(...)` are therefore **vacuously
+  true** — they assert the absence of a path that never exists, so a genuine
+  failure to delete state would pass them — and the `File.rm_rf` leaks the tree
+  it meant to reclaim.
+- **Evidence**: the same mistake in `TierE2EHarness.cleanup/3` leaked one state
+  tree per run and failed `effectively_once_checkpoint_e2e_test.exs:37` **11
+  times in 40** once enough had accumulated for `unique/1`'s per-BEAM integers to
+  collide; with the path corrected the same 40 runs are 40/40. Fixed there by
+  `fix-first-input-drop-on-bind`; these four were left because each is an
+  assertion whose intended meaning has to be re-derived, not a path swap.
+- **A fix must**: use `Registry.class_dir/1` and then check that the assertion
+  still says what its author meant — a `refute File.exists?` that has never been
+  able to fail may be hiding a real leak.
 
 ### KI-21 · Three uncaptured `[error]` lines in a plain `mix test`
 
@@ -528,6 +546,8 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-2 · first input after `start_operative/2` journaled and never forwarded (both faces: the start window, and the restore re-forward onto a stream a fresh runner has not bound) | `fix-first-input-drop-on-bind` — the operative bind now waits for its data-stream channel (`StreamChannel.await_bind/2`), and an undelivered payload arms `{:stream_bound, _}`, which re-forwards the journal tail through the replay path a restore already used. Deterministic proof: `test/flezha/operative/bind_reforward_test.exs` — its four delivery cases were run red on the pre-fix tree, in 2.1 s, with no sampling. `effectively_once_checkpoint_e2e_test.exs:37` 40x in isolation: **40/40 pass, 0 `[:flezha, :stream, :drop]`** |
+| KI-20 · `sdk_smoke_e2e_test.exs` carried the old re-send workaround | `fix-first-input-drop-on-bind` — `send_until_forwarded` deleted, the single `send_io` stands, and `NodeTestHelper.await_stream_bound/2` is gone from the tree with it (29 call sites across 15 modules) |
 | KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`99b4f201`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |
 | `cargo check --workspace --all-targets` red without a feature nobody passes | `467a378a` — three `[[test]]` entries were missing `required-features` |
 | `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `fae9184f` |

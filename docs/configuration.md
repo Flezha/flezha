@@ -420,6 +420,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:overwatch_proc_warn_ms` | `2_000` | `lib/flezha/operative/overwatch.ex` |
 | `:overwatch_retry_backoff_ms` | `[200, 500, 1_000, 2_000, 5_000, 10_000]` | `lib/flezha/operative/lifecycle.ex` |
 | `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
+| `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
 | `:plugin_retry_base_delay_ms` | `4_000` | `lib/flezha/plugin/extension/table.ex` |
 | `:correction_debounce_ms` | `200` | `lib/flezha/operative/replay.ex` |
 | `:control_unit_heartbeat_interval_ms` | `15_000` | `lib/flezha/runner/control_unit.ex` |

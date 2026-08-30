@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
   use FlezhaTest.SystemCase, capability: :correction_window
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Operative.Builder
@@ -62,8 +62,6 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     }
 
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
-
-    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     assert wait_until(
              fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,
@@ -130,7 +128,6 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
-    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     assert wait_until(
              fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,

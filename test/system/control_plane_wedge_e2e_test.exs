@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
   use FlezhaTest.SystemCase, capability: :liveness
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness, only: [boot_runner: 3, peek_outputs: 0]
 
   alias Flezha.Convergence.{Heal, Loop}
@@ -228,8 +228,6 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
     assert {:ok, %{runner_id: ^runner_id}} =
              OperativeManager.start_operative(namespace, builder(operative_id, self()))
-
-    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
 
     {operative_id, port, runner_id}
   end

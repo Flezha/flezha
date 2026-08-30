@@ -56,6 +56,58 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
+  @doc """
+  Ask this channel to tell `pid` about its next stream bind, as
+  `{:stream_bound, name}` under the channel's registered name.
+
+  Answers `:bound` when a stream is already up — the caller has nothing to wait
+  for — `:unbound` once the interest is recorded, and `:no_channel` when no such
+  channel is running. Deciding and recording happen in the channel process, so a
+  bind landing between the two cannot be missed.
+
+  One-shot: every bind notifies the recorded pids and forgets them, so a caller
+  that still cares after a later close asks again.
+  """
+  @spec notify_on_bind(GenServer.name() | nil, pid()) :: :bound | :unbound | :no_channel
+  def notify_on_bind(nil, _pid), do: :no_channel
+
+  def notify_on_bind(channel, pid) when is_pid(pid) do
+    case GenServer.whereis(channel) do
+      nil -> :no_channel
+      _ -> GenServer.call(channel, {:notify_on_bind, pid})
+    end
+  end
+
+  @doc """
+  Block the CALLING process until `channel` has a bound stream, at most
+  `timeout_ms`.
+
+  Used by the operative bind so nothing downstream of it — the durable restore,
+  the journal re-forward, the first ingest queued behind it — is issued onto a
+  stream that cannot carry it. The wait is a selective receive, so every other
+  message the caller is holding stays queued, which is what makes the caller's
+  mailbox the queue an unbound stream needs.
+
+  `:ok` also answers a channel that is not running: an operative whose runner has
+  no channel pool has nothing to wait for and its delivery failure is reported by
+  `io_in/3` as before.
+  """
+  @spec await_bind(GenServer.name() | nil, non_neg_integer()) ::
+          :ok | {:error, :stream_unbound}
+  def await_bind(channel, timeout_ms) do
+    case notify_on_bind(channel, self()) do
+      :unbound ->
+        receive do
+          {:stream_bound, ^channel} -> :ok
+        after
+          timeout_ms -> {:error, :stream_unbound}
+        end
+
+      _bound_or_absent ->
+        :ok
+    end
+  end
+
   # The runner's self-report, mirrored slot for slot. `dispatches` frozen while
   # the runner is alive is a wedged pool; `credit_parked` advancing while it
   # freezes is fed-but-parked rather than frozen; `blocked_parks` says the same
@@ -103,7 +155,11 @@ defmodule Flezha.Runner.StreamChannel do
         # session), durable-write forwards are refused at this binding.
         # Terminal — the session is evicted right after, never re-bound.
         fenced?: false,
-        refused_entities: MapSet.new()
+        refused_entities: MapSet.new(),
+        # Processes owed a `{:stream_bound, name}` when this channel next binds.
+        # Cleared by the bind that serves them, so it never outlives the window
+        # it exists for.
+        bind_waiters: MapSet.new()
       }
     }
   end
@@ -189,12 +245,34 @@ defmodule Flezha.Runner.StreamChannel do
   @impl true
   def handle_call({:bind, new_ref}, _from, %{stream_ref: nil} = state) do
     publish_stream(state.name, new_ref, state.liveness_ref)
-    {:reply, :ok, %{state | stream_ref: new_ref, last_seen: System.monotonic_time(:millisecond)}}
+
+    # After the publish: a waiter woken before `io_in/3` could read the new ref
+    # would forward onto the channel it was told is up and be dropped again.
+    Enum.each(state.bind_waiters, &send(&1, {:stream_bound, state.name}))
+
+    {:reply, :ok,
+     %{
+       state
+       | stream_ref: new_ref,
+         last_seen: System.monotonic_time(:millisecond),
+         bind_waiters: MapSet.new()
+     }}
   end
 
   @impl true
   def handle_call({:bind, _new_ref}, _from, state) do
     {:reply, :already_bound, state}
+  end
+
+  # Bind interest, decided and recorded in one turn (see `notify_on_bind/2`).
+  @impl true
+  def handle_call({:notify_on_bind, _pid}, _from, %{stream_ref: ref} = state) when ref != nil do
+    {:reply, :bound, state}
+  end
+
+  @impl true
+  def handle_call({:notify_on_bind, pid}, _from, state) do
+    {:reply, :unbound, %{state | bind_waiters: MapSet.put(state.bind_waiters, pid)}}
   end
 
   # Takeover fence: unbind this channel from the Entity write path.

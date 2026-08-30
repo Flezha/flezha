@@ -163,7 +163,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       :error -> :ok
     end
 
-    File.rm_rf!(Path.join(Flezha.State.Registry.state_root(), operative_id))
+    File.rm_rf!(Flezha.State.Registry.class_dir(operative_id))
     Flezha.Operative.ClassRegistry.delete(operative_id)
     :ok
   catch
@@ -185,7 +185,10 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     Path.join(System.tmp_dir!(), "eff_once_id_#{System.unique_integer([:positive])}")
   end
 
-  def cleanup(namespace, operative_id, id_path) do
+  # `operative_id` is unused: the namespace is this scenario's alone, so its whole
+  # state tree goes and every class under it with it. It stays in the signature
+  # because every caller names what it created.
+  def cleanup(namespace, _operative_id, id_path) do
     try do
       OperativeManager.stop_all_operatives(namespace)
     catch
@@ -199,7 +202,13 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     end
 
     File.rm(id_path)
-    File.rm_rf(Path.join(Flezha.State.Registry.state_root(), operative_id))
+
+    # Durable state lives under `<root>/<namespace>/<class>`
+    # (`Flezha.State.Registry.class_dir/1`), and the namespace is this test's
+    # alone — so the whole namespace tree goes. Removing `<root>/<class>`, a
+    # path that has never existed, left every run's WAL on disk, and a later run
+    # whose `unique/1` id collided with an earlier one restored it.
+    File.rm_rf(Path.join(Flezha.State.Registry.state_root(), namespace))
   end
 
   @doc """

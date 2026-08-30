@@ -12,9 +12,15 @@ defmodule Flezha.Operative.Replay do
   Everything here runs in the `Flezha.Operative.Overwatch` process and reads its
   state without changing it: the one mutation a correction makes is the debounce
   bookkeeping, which stays in the Overwatch beside the cast that drives it.
+
+  One exception, and `arm_bind_reforward/1` is built around it: the un-park path
+  drives `Lifecycle.complete_init/4` — and so the bind restore and this module's
+  journal re-forward — inside a task, where `self()` is not the Overwatch.
   """
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
+  alias Flezha.Runner.StreamChannel
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
@@ -328,6 +334,63 @@ defmodule Flezha.Operative.Replay do
   end
 
   @doc """
+  Re-forward everything this operative's durable logs still owe: the
+  effectively-once input tail and the durable workflow's inbox tail.
+
+  The single entry point a data-stream bind takes. Both halves are the ones the
+  restore path already calls, so a bind and a restore re-forward through one
+  implementation and differ only in what triggered them. Both are self-guarding,
+  so a class with neither log does nothing.
+  """
+  @spec reforward_undelivered_tail(Overwatch.t()) :: Overwatch.t()
+  def reforward_undelivered_tail(%Overwatch{} = state) do
+    _ = replay_journaled_inputs(state)
+    deliver_inbox_tail(state)
+  end
+
+  @doc """
+  Arm `reforward_undelivered_tail/1` for a payload an unbound stream could not
+  carry: ask the operative's channel to announce its next bind, which the
+  Overwatch answers with the re-forward. The channel's waiter set IS the arming,
+  so a second undelivered payload costs one call and schedules nothing extra.
+
+  `:armed` means a re-forward will happen — including the race where the stream
+  came up between the failed delivery and this call, settled by handing the
+  Overwatch the notification it just missed. `:unarmed` means the operative has
+  no channel that can ever bind, so nothing will re-forward and the caller must
+  not report the payload accepted.
+  """
+  @spec arm_bind_reforward(Overwatch.t()) :: :armed | :unarmed
+  def arm_bind_reforward(%Overwatch{channel: channel} = state) do
+    owner = owner_pid(state)
+
+    case StreamChannel.notify_on_bind(channel, owner) do
+      :unbound ->
+        :armed
+
+      :bound ->
+        send(owner, {:stream_bound, channel})
+        :armed
+
+      :no_channel ->
+        :unarmed
+    end
+  end
+
+  # Who handles the notification — deliberately not `self()`. The un-park path
+  # runs the whole bind, restore and journal re-forward included, inside a task,
+  # and a task registered as the waiter dies before the bind can reach it. The
+  # class registry already names the live Overwatch for exactly this reason (the
+  # fsync-gated outbox flush resolves its `:on_output` target through it); the
+  # fallback covers a state that was never registered, which is only a test's.
+  defp owner_pid(%Overwatch{} = state) do
+    case ClassRegistry.overwatch_pid(Overwatch.operative_class(state)) do
+      {:ok, pid} -> pid
+      :error -> self()
+    end
+  end
+
+  @doc """
   Re-forward every inbox entry above the durable consumed offset, stamped with
   its original offset (never re-journaling — the inbox already holds them).
 
@@ -395,7 +458,17 @@ defmodule Flezha.Operative.Replay do
   # deliberately NOT an ingest: these payloads are already in their log and
   # already ran `:on_input`, so re-journaling them would duplicate them.
   defp reforward(%Overwatch{} = state, payloads) do
-    Enum.each(payloads, &Overwatch.deliver(state, &1))
+    dropped? =
+      Enum.reduce(payloads, false, fn payload, any_dropped? ->
+        Overwatch.deliver(state, payload) == {:error, :no_stream} or any_dropped?
+      end)
+
+    # A re-forward onto a stream that has not bound is dropped exactly as a fresh
+    # ingest is, and the tail this pass could not deliver is still the tail the
+    # next bind owes — so it arms the same re-forward the ingest path arms.
+    if dropped?, do: arm_bind_reforward(state)
+
+    :ok
   end
 
   # ---------- correction ----------

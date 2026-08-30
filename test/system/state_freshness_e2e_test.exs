@@ -74,9 +74,6 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 
-    assert FlezhaTest.Helper.NodeTestHelper.await_stream_bound(@namespace, operative_id),
-           "the data stream never bound"
-
     {:ok, overwatch_pid} = OperativeManager.get_operative_pid(@namespace, operative_id)
     pre_state = :sys.get_state(overwatch_pid)
 

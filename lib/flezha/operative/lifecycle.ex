@@ -24,6 +24,7 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamSup
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
@@ -205,6 +206,7 @@ defmodule Flezha.Operative.Lifecycle do
            }
            |> bind_to_runner(operative.id, final_runner_id)
            |> Map.put(:init_error, nil),
+         :ok <- await_stream_bound(state),
          # BEFORE the restore: a refused restore parks the operative, so a
          # correction running after it would never run at all — the factory
          # would park every attempt at its wrong language forever.
@@ -274,6 +276,27 @@ defmodule Flezha.Operative.Lifecycle do
       {:error, reason} -> {:error, {:restore_refused, reason}, state}
     end
   end
+
+  # An operative binds to a runner over the CONTROL channel; the data stream that
+  # carries its input is a separate connection the SDK opens afterwards.
+  # Everything below this point forwards on that stream — the durable restore's
+  # re-forward, the inbox tail, the plugins' first input, and every ingest
+  # waiting in this process's mailbox — so the bind waits for it rather than
+  # issuing onto a stream that would drop what it is given.
+  #
+  # No caller is parked by the wait. `start_operative/2` returned when this
+  # process started; an ingest cast simply stays queued, which is the queue an
+  # unbound stream needs and the reason no second one is built. A runner with no
+  # channel pool at all has nothing to wait for and passes straight through.
+  defp await_stream_bound(%Overwatch{} = state) do
+    case StreamChannel.await_bind(state.channel, stream_bind_wait_ms()) do
+      :ok -> :ok
+      {:error, :stream_unbound} -> {:error, {:stream_unbound, state.channel}}
+    end
+  end
+
+  defp stream_bind_wait_ms,
+    do: Application.get_env(:flezha, :stream_bind_wait_ms, 30_000)
 
   @doc """
   Point the state at `runner_id` and the stream channel that serves it.

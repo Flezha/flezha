@@ -28,6 +28,7 @@ defmodule Flezha.Operative.Ingest do
   alias Flezha.Operative.Lifecycle
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
+  alias Flezha.Operative.Replay
   alias Flezha.State.InputLog
   alias Flezha.State.ProcInbox
   alias Flezha.Transport.LivenessCounters
@@ -218,18 +219,27 @@ defmodule Flezha.Operative.Ingest do
   defp told({:io_in, _from}, _verdict), do: :ok
   defp told(_reply_to, verdict), do: verdict
 
-  # Forward what the journal answered with, and say what became of it. A durable
-  # target has already journaled the payload, so an unbound stream is not a
-  # delivery failure — the bind delivers it. A target with no durable log has
-  # nowhere to hold it, so the sender is told to retry.
+  # Forward what the journal answered with, and say what became of it. An unbound
+  # stream is not a delivery failure for a durable target: the log holds the
+  # payload and the channel's next bind re-forwards the tail above the Entity's
+  # consumed offset. `Replay.arm_bind_reforward/1` is what makes that true —
+  # the claim is only worth `:ok` once the re-forward is actually scheduled.
+  # Anything else — no durable log to hold it, or no channel that can ever bind —
+  # is refused, so the journal can never claim an input the system dropped.
   defp verdict(_state, nil), do: {:ok, :absorbed}
   defp verdict(_state, :refused), do: {:error, :refused}
 
   defp verdict(%Overwatch{} = state, payload) do
     case Overwatch.deliver(state, payload) do
       :ok -> :ok
-      {:error, :no_stream} -> if durable_input?(state), do: :ok, else: {:error, :not_ready}
+      {:error, :no_stream} -> undeliverable(state)
     end
+  end
+
+  defp undeliverable(%Overwatch{} = state) do
+    if durable_input?(state) and Replay.arm_bind_reforward(state) == :armed,
+      do: :ok,
+      else: {:error, :not_ready}
   end
 
   defp durable_input?(%Overwatch{effectively_once: eo, durable_workflow: db}), do: eo or db

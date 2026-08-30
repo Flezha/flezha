@@ -27,7 +27,7 @@ defmodule Flezha.State.InputLogTest do
       # The log lives in the shared state tree and truncates in its own turn
       # (`sweep/1` is a cast), so it must be closed — its queued cut done —
       # before the root under it goes away.
-      close_log(class)
+      TestHelpers.close_input_log(class)
       Application.delete_env(:flezha, :state_root)
       File.rm_rf!(base)
     end)
@@ -458,13 +458,6 @@ defmodule Flezha.State.InputLogTest do
   defp aged_out() do
     appended_at = System.system_time(:millisecond)
     assert wait_until(fn -> System.system_time(:millisecond) > appended_at + 1 end, 1_000, 1)
-  end
-
-  defp close_log(class) do
-    case Supervisor.lookup({class, :input_log}) do
-      {:ok, pid} -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
-      :error -> :ok
-    end
   end
 
   describe "a truncation costs the tail, not the log" do

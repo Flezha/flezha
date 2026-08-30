@@ -963,6 +963,14 @@ log, and durable workflow instances, whose inputs land in the proc inbox.
 including a plain stateful stream operative — the default configuration,
 since persistence defaults to enabled and the tier is an explicit opt-in.
 
+A re-forward SHALL NOT be issued onto a data stream that has not yet bound. The
+Controller re-forwards after a rebind, and a fresh runner binds its primary data
+stream after the control-channel handshake completes; a re-forward issued in
+that window is dropped and never re-driven, which loses exactly the input the
+restore exists to preserve. The re-forward SHALL therefore be gated on the bind,
+using the same mechanism that delivers a journaled input accepted before an
+operative's first bind — one re-forward path, not two.
+
 #### Scenario: The contract distinguishes journaled from un-journaled classes
 
 - **WHEN** the restore contract is consulted for the fate of queued input
@@ -981,6 +989,20 @@ since persistence defaults to enabled and the tier is an explicit opt-in.
 - **WHEN** a restore discards queued input
 - **THEN** the discard SHALL be counted and exposed, naming the Entity, rather
   than leaving no trace
+
+#### Scenario: A re-forward onto an unbound stream is not lost
+
+- **GIVEN** a rebind whose fresh runner has completed the control-channel
+  handshake but has not yet bound its primary data stream
+- **WHEN** the Controller re-forwards an Entity's journaled offsets
+- **THEN** those offsets SHALL reach the procedure once the data stream binds,
+  and SHALL NOT be dropped
+
+#### Scenario: The restore and first-bind re-forwards share one path
+
+- **WHEN** the re-forward issued after a restore and the re-forward issued at an
+  operative's first data-stream bind are compared
+- **THEN** they SHALL be the same code path, differing only in what triggers them
 
 ### Requirement: The compaction handshake SHALL be verified end to end against a real SDK
 

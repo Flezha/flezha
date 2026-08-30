@@ -129,11 +129,6 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
         opts: []
       })
 
-    with {:ok, _} <- result do
-      assert NodeTestHelper.await_stream_bound(namespace, operative_id),
-             "the data stream never bound"
-    end
-
     result
   end
 

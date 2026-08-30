@@ -158,39 +158,66 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
       :refused
     )
 
-    assert {:ok, _} = start(namespace, operative_id, @v1)
-    assert_receive {:refused, _, %{entity: {^operative_id, _, _}}}, 30_000
+    # Placement only: `start/3`'s residency wait would raise on the very outcome
+    # this scenario proves, since a refused restore never makes the Entity
+    # resident.
+    _ = place(namespace, operative_id, @v1)
 
-    # v2's change records encode `{delta, note}` where v1's encode `(delta)`.
-    # Positional codecs read the first field happily, so an unguarded restore
-    # hands v1 the value 9 as though it had written it. The guard is what makes
-    # that impossible.
-    #
-    # What the operator sees *instead* is the sibling change's business: today
-    # the refused restore is discarded and the Entity binds cold;
-    # `guard-cross-sdk-placement` turns that into a failed bind. This assertion
-    # is the part that holds either way.
+    assert_receive {:refused, _, %{entity: {^operative_id, _, _}, reason: reason}}, 30_000
+
+    # Refused BY NAME, which is the whole point. v2's change records encode
+    # `{delta, note}` where v1's encode `(delta)`, and a positional codec reads
+    # the first field happily — an unguarded restore hands v1 the value 9 as
+    # though it had written it. The version stamp is what makes that impossible,
+    # so the reason has to be the stamp and not an incidental decode failure.
+    assert reason =~ "schema_version 2 is above the running procedure's 1"
+
+    # `operative-state-persistence`, "A refused restore fails the bind instead of
+    # cold-starting the Entity": the operative is left unbound. Whether
+    # `start_operative/2`'s own reply carried the refusal is NOT part of that
+    # guarantee and is a real race — `Replay.dispatch_restore/3` reports the
+    # verdict off-process, so `{:restore_refused, _}` and the
+    # `:registry_runner_set` call `finalize_init_operative/3` makes reach the
+    # Overwatch in either order. The park is the outcome, and it is not a race.
+    assert wait_until(fn -> not serving?(namespace, operative_id) end),
+           "a refused restore must leave the operative unbound, never serving"
+
     refute total(namespace, operative_id) == 9,
            "v1 must not read v2's state: got #{inspect(state_of(namespace, operative_id))}"
   end
 
+  defp place(namespace, operative_id, factory) do
+    OperativeManager.start_operative(namespace, %Builder{
+      id: operative_id,
+      factory_id: factory,
+      init_values: %{},
+      opts: []
+    })
+  end
+
+  # A live Overwatch that is not parked. A refused restore leaves the operative
+  # one of two ways — parked in place, or stopped by `finalize_init_operative/3`
+  # when the refusal beat the start's own status read — and neither is serving.
+  # Binding cold and folding input WOULD be, which is what this scenario forbids.
+  defp serving?(namespace, operative_id) do
+    with {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_id),
+         %{init_error: nil} <- :sys.get_state(pid) do
+      true
+    else
+      _ -> false
+    end
+  catch
+    :exit, _ -> false
+  end
+
   defp start(namespace, operative_id, factory) do
-    result =
-      OperativeManager.start_operative(namespace, %Builder{
-        id: operative_id,
-        factory_id: factory,
-        init_values: %{},
-        opts: []
-      })
+    result = place(namespace, operative_id, factory)
 
     # `start_operative` returns once the operative is placed; its Entity
     # materializes on the runner a moment later, and an input sent into that
     # gap has nothing to reach. A live state read is the readiness signal —
     # it answers only once the Entity exists — and every send below follows it.
     with {:ok, _} <- result do
-      assert NodeTestHelper.await_stream_bound(namespace, operative_id),
-             "the data stream never bound"
-
       unless wait_until(fn -> state_of(namespace, operative_id) != nil end) do
         raise "operative #{operative_id} never became resident on its runner"
       end

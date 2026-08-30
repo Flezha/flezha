@@ -541,6 +541,25 @@ defmodule Flezha.Operative.Overwatch do
   # handle_info
   # ---------------------------------------------------------------
 
+  # Parked: not serving, and the un-park's own bind re-forwards the tail. A
+  # re-forward here would push input at the runner the operative is parked away
+  # from — the same reason the ingress cast is dropped while parked.
+  @impl true
+  def handle_info({:stream_bound, _channel}, %__MODULE__{init_error: reason} = state)
+      when reason != nil do
+    {:noreply, state}
+  end
+
+  # The operative's data stream bound. Anything its durable logs still hold above
+  # the Entities' consumed offsets was issued onto a stream that could not carry
+  # it — re-forward it now, on the replay path a restore uses. Which channel
+  # announced the bind does not matter: the tail is owed either way, and it goes
+  # out on whichever channel this operative is bound to now.
+  @impl true
+  def handle_info({:stream_bound, _channel}, %__MODULE__{} = state) do
+    {:noreply, Replay.reforward_undelivered_tail(state)}
+  end
+
   # A bind-time restore the SDK refused, reported from the off-process replay.
   # The Entity's durable state never reached the runner, so the operative parks
   # rather than serving from empty state; the convergence loop re-places it.

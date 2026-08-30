@@ -246,15 +246,18 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   a tier-on input is journaled (`Ingest.verdict/2` answers `:ok` on `:no_stream`)
   and never forwarded at bind. A drop probe logged 38 drops on exactly the failing
   e2e operatives. Cure: a start reply that waits for the bind, or a cast that
-  cannot drop. Every e2e module now settles on `await_stream_bound/2`;
-  `sdk_smoke` still carries an older re-send loop.
+  cannot drop. **RESOLVED by `fix-first-input-drop-on-bind`** (KI-2): the
+  operative bind waits for its data-stream channel and an undelivered payload
+  arms a bind re-forward, so `await_stream_bound/2` is deleted from the tree.
 - 0b UDS driver `DropNewest` write-buffer drops are invisible to the caller
   (`Native.send_frame/4` always answers `:ok`); only `driver_stats.write_buffer_dropped`
   sees them (the last silent-drop default; already on the memory list).
 - 0b `unique/1` suffixes reach 7 digits in one BEAM, so any id prefix over 24 chars
   breaches the 32-byte operative-id cap late in a combined run.
 - 0b `sdk_smoke_e2e_test.exs` `send_until_forwarded` is the old re-send workaround
-  for the first-input drop; fold onto `await_stream_bound/2` in area 7.
+  for the first-input drop. **RESOLVED by `fix-first-input-drop-on-bind`**
+  (KI-20): deleted, with nothing folded onto — the single `send_io` stands, and
+  `await_stream_bound/2` no longer exists to fold onto.
 - 0b F5 (`flezha_test.exs:591`) still unexplained; 10/10 alone again.
 - 1s `test/apps/python_runner/__pycache__/fixtures.cpython-312.pyc` is COMMITTED
   and stale; every Python runner launch dirties the tree (area 2 deletes it and
@@ -489,8 +492,10 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   way). The supervisor `git add -N`s a worker's new files before gating.
 - 2026-08-29 The e2e first-input race is NOT sink-plugin activation (that wait ran
   green as a no-op and the failures continued); it is the data-stream bind. The
-  settle is `NodeTestHelper.await_stream_bound/2` on the acceptor's own
+  settle was `NodeTestHelper.await_stream_bound/2` on the acceptor's own
   `:stream_ref_status` — a positive signal — never a re-send.
+  **`fix-first-input-drop-on-bind` moved that wait into the product and deleted
+  the helper**, so a bind race now fails the suite instead of being settled around.
 - 2026-08-29 The combined one-BEAM `--include system` run is a different load
   profile from per-half runs and is the one that exposes the drop; both are run.
 - 2026-08-29 Charter §3 "three dispatchers" is refuted by the code (1s survey): the

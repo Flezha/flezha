@@ -18,7 +18,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
 
   use FlezhaTest.SystemCase, capability: :dynamic_entity
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, await_stream_bound: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
@@ -94,8 +94,6 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
     assert info.runner_id == ce_id
-    assert await_stream_bound(namespace, operative_id), "the data stream never bound"
-
     OperativeManager.send_io(operative_id, namespace, "#{key}:hello", %{"input_type" => "2"})
     OperativeManager.send_io(operative_id, namespace, "#{other}:bye", %{"input_type" => "2"})
 
@@ -154,8 +152,6 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
-    assert await_stream_bound(@namespace, operative_id), "the data stream never bound"
-
     # An input for a never-seen key: the edge's key function names the Entity,
     # the SDK lazily creates it, runs it, and ships the Change. The controller
     # writes a WAL file — at the identity the trait hook used to produce.

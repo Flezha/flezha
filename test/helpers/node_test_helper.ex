@@ -415,32 +415,27 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   @doc """
+  A real, never-bound primary `StreamChannel` under a fresh registered name, and
+  the pid serving it — the state every operative's data stream passes through
+  between the runner's control-channel handshake and the stream the SDK opens
+  after it. Stopped on exit.
+
+  A channel in this state answers every `io_in/3` with `{:error, :no_stream}`,
+  which is the window `input-delivery-guarantee` is about. It stays unbound
+  until the caller binds a stream to it.
+  """
+  def unbound_stream_channel(runner_id \\ "test_runner") do
+    name = :"unbound_chan_#{System.unique_integer([:positive])}"
+    {:ok, pid} = Flezha.Runner.StreamChannel.start_link({runner_id, name, :primary})
+    ExUnit.Callbacks.on_exit(fn -> ensure_stopped(pid) end)
+    {name, pid}
+  end
+
+  @doc """
   Block until told to `:unpark` — the body of a placeholder process that has to
   stay alive for the test's duration (`spawn(&park/0)`, `spawn_link(&park/0)`).
   """
   def park(), do: receive(do: (:unpark -> :ok))
-
-  @doc """
-  Wait until `operative_id`'s primary data stream is bound. `start_operative/2`
-  returns once the runner has accepted the operative over the control channel;
-  the runner opens its data stream separately, and until the acceptor binds it
-  an `io_in` cast is dropped (`nil_drops`) — a tier-on input is journaled but
-  never forwarded. The first input of a scenario that counts outputs waits here.
-  """
-  def await_stream_bound(namespace, operative_id, timeout_ms \\ 30_000) do
-    wait_until(
-      fn ->
-        with {:ok, pid} <-
-               Flezha.Service.OperativeManager.get_operative_pid(namespace, operative_id),
-             %{channel: channel, init_error: nil} when channel != nil <- :sys.get_state(pid) do
-          GenServer.call(channel, :stream_ref_status) != nil
-        else
-          _ -> false
-        end
-      end,
-      timeout_ms
-    )
-  end
 
   @doc """
   Stop `pid` if it is still alive, tolerating the race that makes

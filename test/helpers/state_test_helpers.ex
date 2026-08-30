@@ -39,6 +39,17 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  Close `class`'s input log if one is running, so its queued truncation is done
+  before the state root under it goes away.
+  """
+  def close_input_log(class) do
+    case Supervisor.lookup({class, :input_log}) do
+      {:ok, pid} -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
+      _ -> :ok
+    end
+  end
+
+  @doc """
   Allocates a per-test temporary directory under `System.tmp_dir!/0` and
   registers it as the controller's `:state_root`. Callers should
   `on_exit(fn -> Application.delete_env(:flezha, :state_root) end)` to
