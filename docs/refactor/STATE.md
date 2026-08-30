@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-30 21:05 (defect programme done bar its housekeeping; area 4 is next)
+**Last updated**: 2026-08-30 21:20 (defect programme complete, all ten changes landed; AREA 4 IS NEXT)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -588,24 +588,18 @@ CI (1.19); no formatter for the four veneers.
 
 **A defect programme ran on 2026-08-30, between area 3 and area 4.** All forty
 entries in `docs/known_issues.md` were triaged against the code, and nine
-OpenSpec changes landed from it. That work is finished except for one change;
-the refactor resumes at area 4 immediately after it.
+OpenSpec changes landed from it. All ten changes landed. The refactor resumes at area 4.
 
-1. **Finish `known-issues-housekeeping`** — the only open change
-   (`openspec/changes/known-issues-housekeeping/`, 16 tasks, validated). It is
-   markdown only: move 12 entries that triage closed into *Resolved*, rewrite 5
-   that overstate their scope, and relabel 3 that are notes rather than defects.
-   It was left last on purpose, because every other worker wrote into the same
-   file. One worker, no code.
-2. **Then area 4** (`sdk/java`, 8 441 lines). Its dependency, area 1, is done.
+1. **Area 4** (`sdk/java`, 8 441 lines) — the defect programme is finished; all
+   ten of its changes landed. Run the survey first, as every area does. (`sdk/java`, 8 441 lines). Its dependency, area 1, is done.
    Run the survey first, as every area does.
-3. Areas 5a–5e, 6, 7, 8 after it, in dependency order.
+2. Areas 5a–5e, 6, 7, 8 after it, in dependency order.
 
 ### What the defect programme leaves behind
 
 `docs/known_issues.md` is now the durable record, and every entry carries a
 command that reproduces it and that command's output — which none of the
-original forty had. Roughly ten entries stay genuinely open, and they split
+original forty had. **Twenty** entries stay genuinely open, and they split
 three ways:
 
 - **Two are the user's decision, not work**: KI-3 (what a caller is told when
