@@ -11,6 +11,8 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
 
   @behaviour Flezha.State.DurabilityTier.Backend
 
+  import ExUnit.Callbacks, only: [on_exit: 1]
+
   @table :flezha_durability_stub
   @control :flezha_durability_stub_control
   @owner :flezha_durability_stub_owner
@@ -57,6 +59,11 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
         System.tmp_dir!(),
         @isolated_prefix <> Integer.to_string(System.unique_integer([:positive]))
       )
+
+    # The stores mkdir this tree the first time one of them writes; reclaiming
+    # it belongs here, beside the only place that names it — `uninstall/0` is
+    # not enough, since a module installs once per test and uninstalls once.
+    on_exit(fn -> File.rm_rf(root) end)
 
     for {key, subkey} <- @isolated_store_dirs do
       previous = Application.get_env(:flezha, key, [])

@@ -27,6 +27,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
 
   test "migrate/0 leaves resolver-written WAL in place and the reader finds it" do
     root = TestHelpers.tmp_app_data_dir()
+    on_exit(fn -> File.rm_rf!(root) end)
     pid = TestHelpers.sample_entity_id()
 
     # Written through the resolver — which places it under the `_system`
@@ -54,6 +55,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
       ])
 
     File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
     System.put_env("FLEZHA_STATE_DIR", dir)
 
     assert Registry.state_root() == dir

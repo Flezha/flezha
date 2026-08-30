@@ -723,9 +723,106 @@ below is all that survives — which is enough to write it again.
   touched. The entry's "needs someone to read the advisories and decide" is now
   discharged: read, one advisory, not exploitable here, bump when convenient.
 
+### KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down
+
+- **Severity**: P2 · **proposal owed** — the fix is a production behaviour
+  change, so it was diagnosed and left alone by `green-the-suite-log-gate`
+  (that change's D2 says a defect landing on the production side is brought back
+  rather than folded in).
+- **Where**: `lib/flezha/runner/runner_supervisor.ex:18`–`:39` (the child order)
+  and `lib/flezha/runner/control_unit.ex` (every `handle_call` that calls
+  `ControlChannel.send_control/2` — `:220`, `:271`).
+- **What happens**: `RunnerSupervisor` lists `ControlChannel` before
+  `ControlUnit`, so its `:one_for_one` terminate sweep — reverse order — stops
+  the **channel first**. A `ControlUnit` sitting in
+  `GenServer.call(control_channel, {:send_control, …}, 5000)` at that moment
+  exits with `{:shutdown, {GenServer, :call, …}}`. OTP's `supervisor:shutdown/2`
+  accepts only a bare `shutdown`, so the tuple is `{error, Reason}` and
+  `do_terminate/2` reports `shutdown_error` at `[error]`:
+
+  ```
+  [error] Child Flezha.Runner.ControlUnit of Supervisor
+    {Flezha.Service.Identificator, "test_temp_namespace_37722754971_wus"}
+    shut down abnormally
+  ** (exit) exited in: GenServer.call({:via, Registry, {…, "…_cc"}},
+       {:send_control, <<…>>}, 5000)
+      ** (EXIT) shutdown
+  ```
+
+- **The in-flight command is a `Ping`** (field 19 of `CommandRequest`), whose
+  16-hex nonce is minted only by `ControlUnit.handle_call({:ping_runner, …})`,
+  whose only production caller is `Flezha.Operative.Lifecycle` —
+  `attempt_ping_and_start/3` before `:start_operative`, and `runner_ready?/1`.
+- **Why this is production and not a test artefact.** Everything after the test's
+  one call is production code: `NodeTestHelper.stop_runner/2` →
+  `FleetManager.disconnect_runner/2` (the same public entry `Convergence.Heal`
+  uses) → the runner closes → `FleetManager.runner_disconnected` →
+  `do_handle_runner_disconnect/3` → `FleetSupervisor.stop_runner_sup/1` →
+  `Supervisor.terminate_child/2`. No test stops any child itself or names an
+  order. The ping is issued by production code. The one test-side ingredient —
+  `test/flezha_test.exs:592` starting `Convergence.Loop`, which the test config
+  leaves off — makes the run **more** production-like, not less, since the Loop
+  is on in production.
+- **The code already half-knows.** `ControlChannel.send_control/2` guards the
+  channel being *gone* (`GenServer.whereis` → `{:error, :no_control_channel}`)
+  but not its dying mid-call; and `Lifecycle.timeout_class?/1` names "the
+  ControlUnit having exited on such a call" as one of three shapes a busy runner
+  takes. The **caller** is defended; the unit itself is left to die.
+- **Impact**: one `[error]` supervisor report per teardown that races an
+  in-flight control command. Nothing is lost — the tree is going down and every
+  caller already tolerates the exit — but it is the last line keeping
+  `.github/workflows/elixir.yml`'s uncaptured-log gate red, now intermittently
+  (absent from one full `mix test`, present in the next; 2 of 2 runs of
+  `test/flezha_test.exs` alone).
+- **A fix must** decide between two shapes and not paper over the report:
+  guard the call inside `ControlUnit` (catch the exit, answer the waiter an
+  error — the shape `ping_runner/2` already uses on its own caller side), or
+  stop `ControlUnit` before `ControlChannel` in `RunnerSupervisor`'s child list.
+  It must NOT be answered by wrapping the test in `capture_log`: the test drives
+  no failure path on purpose, so there would be nothing to assert.
+
 ---
 
 ## P2 — tests that lie or leak
+
+### KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub
+
+- **Severity**: P2 · found by `green-the-suite-log-gate`'s own gate, and **not
+  fixed by it** — it is a fourth uncaptured-error source, outside that change's
+  task list.
+- **Where**: `test/flezha/operative/overwatch_suspension_test.exs:157`.
+- **What happens**: a test's migrate task is still in the retry ladder
+  (`Lifecycle.do_start_with_retry/4`, 10 ms backoff, preceded by
+  `startup attempt 1 failed: {:ping_failed, :no_control_unit} — retrying`) when
+  the test ends. The next test replaces the module's Mimic stub —
+  `stub(OperativeManager, :assign_runner, fn _ns, "chat", ^inst -> "ex_2" end)`,
+  whose third argument is **pinned to that test's own instance id** — so the
+  leftover task arrives carrying the *previous* id and matches no clause:
+
+  ```
+  [error] Task #PID<0.426.0> started from #PID<0.415.0> terminating
+  ** (FunctionClauseError) no function clause matching in anonymous fn/3 in
+     …OverwatchSuspensionTest."test input for a suspended instance is journaled
+     and rehydrates it"/1
+      overwatch_suspension_test.exs:157: anonymous fn("default", "chat", "susp_451")
+      lib/flezha/operative/lifecycle.ex:440: Lifecycle.resolve_runner/4
+  [error] Child :undefined of Supervisor Flezha.Operative.MessageHandlerTaskSup terminated
+  ```
+
+  Two `[error]` lines, **every test still passing** — which is exactly the shape
+  the uncaptured-log gate exists to catch.
+- **Reproduction**: the module alone, no other file involved —
+  `mix test test/flezha/operative/overwatch_suspension_test.exs`, **1 run in 5**
+  (seed 432113) prints the pair while reporting `20 passed`; in a full `mix test`
+  it appeared in 1 of 3 runs. Cheap: the module runs in ~0.2 s.
+- **Why it was not fixed on the spot**: it is test-side and small, but the fix
+  has to decide *why* the task outlives its test before it picks a shape, and a
+  catch-all clause on the stub would silence the symptom while weakening the
+  assertion the pin exists to make. `green-the-suite-log-gate` was scoped to
+  three named lines and one judgement call.
+- **A fix must** stop or await the migrate task the test spawned, rather than
+  loosening the stub — the pinned `^inst` is what proves the rehydrate resolves
+  the *right* instance.
 
 ### KI-17 · UDS socket paths overflow `sun_path`, and can fail a test
 
@@ -806,6 +903,13 @@ isolation is not evidence** — reproduce under load before concluding anything
 - `test/plugin/kafka/worker_registry_test.exs:303` — a controller unit test with
   no runner involved.
 - `flezha_test.exs:383` (live handover) — not the same as `:591`.
+- **Second sightings (2026-08-30, from `green-the-suite-log-gate`'s runs)**: two
+  of the five now have a second, and the "exactly one sighting each" below is
+  that much weaker. `worker_registry_test.exs:303` failed one plain `mix test`
+  (`assert entry.callers == 3`, left `2`) and passes alone, 14 passed;
+  `flezha_test.exs:383` and `workflow_crash_resume_e2e_test.exs:249` each failed
+  one of two `--include system` runs — **a different one each run**, 1914/1915
+  both times, which is the load-sensitive signature rather than a regression.
 - **Triage (2026-08-30)**: **the set does not hold together — one defect, one
   stale, three suspicions.** Established by reading the code for each named
   mechanism, not by re-running anything: the entry's own instruction is that
@@ -955,6 +1059,25 @@ isolation is not evidence** — reproduce under load before concluding anything
   the stub helper — the cheapest item in this band. The DLQ half is worth pairing
   with KI-42, since it is the same module leaking through the same misunderstood
   path.
+- **Resolution of the `/tmp` half (2026-08-30, `green-the-suite-log-gate`)**:
+  closed at **four** sites, each `on_exit` beside the line that mints the
+  directory — `restore_refusal_test.exs`'s setup,
+  `fleet_manager_sdk_lang_test.exs:178`, both dirs in
+  `state_path_coherence_test.exs` (the `tmp_app_data_dir/0` one and the
+  hand-rolled `flezha_state_dir_*`), and `DurabilityBackendStub`'s
+  `isolate_store_dirs/0`, which mints one root per `install/0` where a module
+  uninstalls once — so `uninstall/0` alone would still have leaked one per test.
+  Measured with a timestamp marker rather than a count, because
+  `System.unique_integer/1` restarts low in each BEAM and run N+1 re-mints run
+  N's names, so a count hides a leak behind a collision: after the fix a run of
+  the four sites creates or touches **no** `/tmp/flezha_*` entry at all, and a
+  full `mix test` touches only the configured socket root. The three named
+  modules were **+11 dirs** before and **0** after; the full run's total fell
+  **336 → 323**, the 13 reclaimed being earlier runs' leaks whose names this run
+  re-minted and then cleaned.
+- **What is left**: the DLQ half, deliberately untouched. Triage established it
+  does not grow in a plain run and needs `--include system`; it is worth pairing
+  with KI-42, as the entry says.
 
 
 ### KI-42 · Four e2e sites still name `<state_root>/<class>`, a path that cannot exist
@@ -1115,6 +1238,34 @@ isolation is not evidence** — reproduce under load before concluding anything
   one `capture_log` wrapper in a single module. Until it is fixed the gate
   protects nothing, because nobody can tell a new uncaptured error from the three
   standing ones.
+- **Resolution (2026-08-30, `green-the-suite-log-gate`)**: **two of the three
+  lines closed; the third is a production defect and is re-filed as KI-48.**
+  Both refusals in `test/flezha/operative/restore_refusal_test.exs` now run
+  inside `ExUnit.CaptureLog.with_log/1` and assert on what was captured — that
+  the line says `restore REFUSED`, names the Entity (`inspect(id)`) and carries
+  the SDK's own reason — so the diagnostic became the assertion the module was
+  missing rather than console noise. `capture_log` without an assertion, and
+  `@moduletag capture_log: true`, were both rejected: they make the run quiet by
+  making the module deaf. Measured: a plain `mix test` grepped **2** refusal
+  lines at HEAD and **0** after, 1836 passed both times.
+- **The gate itself was proved, not assumed** — it had never been seen to pass,
+  so a green run only showed it was quiet. A scratch test emitting one
+  uncaptured `Logger.error` turned CI's grep **RED while `mix test` still exited
+  0** (which is the whole point of the gate); the same test wrapped in
+  `capture_log` with an assertion turned it **GREEN**. The scratch test was then
+  deleted.
+- **The attribution the entry could not pin**: `test/flezha_test.exs:592`
+  ("runner disconnect preserve"), found with `--trace`. The line is intermittent
+  — absent from the baseline full run, present in the post-fix one, present in
+  2 of 2 runs of that file alone — so the gate is **intermittently** red on it,
+  not permanently. See KI-48 for the mechanism.
+- **The entry's "three lines" is one run's sample, not the population.** A third
+  full run turned up a **fourth** source the baseline never showed — two
+  `[error]` lines from a task `overwatch_suspension_test` leaks into its own
+  next test, filed as KI-49 and reproducible in that module alone. So the gate
+  cannot be relied on to be green until KI-48 and KI-49 are both closed; what
+  this change bought is that a *new* uncaptured error is now visible against a
+  known, named set of two instead of an unexplained three.
 
 
 ### KI-22 · An inert drain in the output-stall drill

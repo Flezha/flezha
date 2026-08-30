@@ -17,6 +17,8 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
   use ExUnit.Case, async: false
   use Mimic
 
+  import ExUnit.CaptureLog, only: [with_log: 1]
+
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
@@ -26,9 +28,18 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
   @java 2
 
+  # Both refusal cases stub the SDK with this and then assert the log line
+  # carries it back: the diagnostic is what they test, not noise they emit.
+  @refusal "sdk_lang mismatch: this SDK is rust (1), the record was written by java (2)"
+
   setup do
-    TestHelpers.tmp_app_data_dir()
-    on_exit(fn -> Application.delete_env(:flezha, :state_root) end)
+    base = TestHelpers.tmp_app_data_dir()
+
+    on_exit(fn ->
+      Application.delete_env(:flezha, :state_root)
+      File.rm_rf!(base)
+    end)
+
     :ok
   end
 
@@ -36,13 +47,18 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
     {"#{base}_#{System.unique_integer([:positive])}", "p0", "k"}
   end
 
+  defp assert_refusal_logged(log, entity_id) do
+    assert log =~ "restore REFUSED"
+    assert log =~ inspect(entity_id)
+    assert log =~ @refusal
+  end
+
   describe "await_restore/2" do
     test "reports the SDK's refusal, with telemetry naming the entity and reason" do
       id = entity("refused")
-      reason = "sdk_lang mismatch: this SDK is rust (1), the record was written by java (2)"
 
       stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _entity ->
-        {:error, reason}
+        {:error, @refusal}
       end)
 
       :telemetry.attach(
@@ -56,8 +72,11 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
       on_exit(fn -> :telemetry.detach("restore-refusal-test") end)
 
-      assert Replay.await_restore("runner_1", id) == {:error, reason}
-      assert_receive {:refused, %{count: 1}, %{entity: ^id, runner: "runner_1", reason: ^reason}}
+      {result, log} = with_log(fn -> Replay.await_restore("runner_1", id) end)
+
+      assert result == {:error, @refusal}
+      assert_receive {:refused, %{count: 1}, %{entity: ^id, runner: "runner_1", reason: @refusal}}
+      assert_refusal_logged(log, id)
     end
 
     test "an unanswered round trip is not a refusal" do
@@ -86,10 +105,8 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
       stub(Flezha.State.Supervisor, :find_or_start, fn _entity -> {:ok, self()} end)
 
-      refusal = "sdk_lang mismatch: this SDK is rust (1), the record was written by java (2)"
-
       stub(Flezha.State.Commands, :await_restore_init_state, fn _runner, _entity ->
-        {:error, refusal}
+        {:error, @refusal}
       end)
 
       # Re-forwarding the input tail onto an Entity whose baseline never landed
@@ -98,7 +115,10 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
         flunk("the journal replay ran after a refused restore")
       end)
 
-      assert Replay.restore_and_replay_journal(tier_state(id)) == {:error, refusal}
+      {result, log} = with_log(fn -> Replay.restore_and_replay_journal(tier_state(id)) end)
+
+      assert result == {:error, @refusal}
+      assert_refusal_logged(log, id)
     end
 
     test "an Entity with no state binds: it is never restored in the first place" do
