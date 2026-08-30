@@ -261,51 +261,6 @@ below is all that survives — which is enough to write it again.
 
 ## P2 — gates that lie, and time sinks
 
-### KI-5 · `duplicate_pairs` depends on which areas are scanned
-
-- **Where**: `scripts/refactor_metrics.py`.
-- **What happens**: a cross-area duplicate pair is attributed to both areas, so
-  the count depends on how many areas one invocation scans. `sdk/rust` reads
-  **128** alone, **136** with two siblings, **178** whole-repo — on identical
-  source.
-- **Impact**: a baseline recorded with `--area` and checked against the whole-repo
-  run would fire falsely. Today's baseline and `--check` both use the whole-repo
-  scan, so the gate is self-consistent — but the per-area numbers quoted in
-  reports are not comparable with it.
-- **A fix should**: always scan the whole repo, or record the mode alongside the
-  number and refuse to compare across modes.
-- **Triage (2026-08-30)**: **REAL**; the mechanism is unchanged and the numbers
-  are stale. `jscpd_pairs` (`scripts/refactor_metrics.py:397`) is handed only the
-  roots of the areas this invocation scans (line 525), so a pair whose two halves
-  straddle a scanned and an unscanned area is invisible.
-- **Reproduction** — three runs, same tree, same commit:
-
-  ```
-  $ python3 scripts/refactor_metrics.py --area sdk/rust --json | jq '.areas["sdk/rust"].duplicate_pairs'
-  169
-  $ python3 scripts/refactor_metrics.py --area sdk/rust --area sdk/java --area sdk/node --json | ...
-  169
-  $ python3 scripts/refactor_metrics.py --json | jq '.areas["sdk/rust"].duplicate_pairs'
-  215
-  ```
-
-  Diffing the two pair LISTS: 46 pairs are in the whole-repo run and not the
-  area-only one, **and none the other way** — 42 of the 46 pair `sdk/rust`
-  against `test/apps`, the rest against `flz_core`, `flz_core_ffi` and
-  `flz_transport`. The entry's "136 with two siblings" does not reproduce with
-  *those* siblings: `sdk/java` and `sdk/node` share nothing with `sdk/rust`, so
-  they add zero. Which siblings you scan is exactly the point.
-- **Correction to the entry**: the numbers are 169 / 169 / 215, not 128 / 136 /
-  178, and the relation is **monotone** — a per-area count is always an
-  undercount, never an overcount. So a per-area baseline checked against the
-  whole-repo run fires falsely (the direction the entry gives), and the reverse
-  silently misses a regression. `naming.yml:85` runs `--check` with no `--area`,
-  and `baseline.json` was written the same way, so the gate itself is consistent.
-- **Worth fixing**: yes, cheaply — record the scan mode in the JSON and refuse to
-  compare across modes. The per-area invocation is genuinely useful for a worker
-  looking at one area; what must not happen is a per-area number being quoted
-  next to a baseline number as though they were the same measurement.
-
 ### KI-6 · `ruff check` is red, and is deliberately not gated
 
 - **Where**: `sdk/python`; `scripts/format-apply.sh` runs `ruff format` only.
@@ -520,41 +475,32 @@ below is all that survives — which is enough to write it again.
   `ruby-dev`) the build fails earlier and differently — `'ruby.h' file not
   found` — which hides the stdarg.h symptom entirely and sends the reader after
   the wrong header.
-- **Worth fixing**: yes, small — move the guard out of the script into
-  `flz_core_ffi/build.rs` (or a `.cargo/config.toml` env entry), so any cargo
-  invocation of the ruby features gets it. As it stands the mitigation protects
-  the one caller that was already known to need it.
-
-### KI-16 · `mix deps.get` reports packages with security advisories
-
-- Pre-existing, unaudited. Needs someone to read the advisories and decide.
-- **Triage (2026-08-30)**: **REAL**, and now audited — which is exactly what the
-  entry asked for. There is **one** advisory, not several, and this tree is not
-  exposed to it.
-- **Reproduction**:
-
-  ```
-  $ mix hex.audit
-  Advisories:
-    postgrex 0.22.3 - EEF-CVE-2026-66838 (MEDIUM)
-      aka: CVE-2026-66838, GHSA-3gww-3f36-2388
-      SQL injection via the :comment option in Postgrex.stream/4
-      https://osv.dev/vulnerability/EEF-CVE-2026-66838
-
-  Found packages with security advisories
-  ```
-- **Exposure: none.** The vulnerable call is `Postgrex.stream/4` with a
-  `:comment` option. `lib/` never calls `Postgrex.stream` and never passes
-  `:comment` anywhere — the two Postgrex callers use `Postgrex.query/4`
-  (`lib/flezha/state/durability_tier/backend/postgres.ex:178`),
-  `Postgrex.child_spec/1` (`:48`) and `Postgrex.start_link/1`
-  (`lib/flezha/plugin/provider/postgres/sink_worker.ex:126`), plus an
-  `after_connect: {Postgrex, :query!, …}` at `:185`.
-- **Worth fixing**: yes, and it is a lock bump, not a change. `mix.exs` already
-  declares `{:postgrex, "~> 0.22"}`, so a patched 0.22.x is admissible without
-  touching the constraint; `mix.lock` pins 0.22.3. Do it the next time deps are
-  touched. The entry's "needs someone to read the advisories and decide" is now
-  discharged: read, one advisory, not exploitable here, bump when convenient.
+- **The entry's own remedy was tried and cannot be built** (2026-08-30,
+  `small-mechanical-fixes`). `rb-sys` is a *dependency* of `flz_core_ffi`, so
+  cargo runs its build script — the one that runs bindgen — before
+  `flz_core_ffi/build.rs` exists to set anything: the reproduction dies at
+  `Compiling rb-sys v0.9.130` and this crate's build script never runs. There is
+  no channel back either; `cargo::` metadata flows from a dependency to its
+  dependents. The only mechanism that reaches a bare `cargo test -p flz_core_ffi
+  --features ruby-embed` is `.cargo/config.toml`'s `[env]`, which takes a
+  **literal** value — here `-I/usr/lib/gcc/x86_64-linux-gnu/13/include`, i.e.
+  gcc 13, `x86_64`, Debian layout. Committing that would set the variable on
+  every box, point most of them at a directory that does not exist, and leave
+  this same failure behind a guard that looks general. Worse than none, so the
+  wrapper stays.
+- **The residue, and it stays open**: `cargo test -p flz_core_ffi --features
+  ruby-embed` is **unprotected** on a box without clang's builtin headers.
+  Re-proved after `cargo clean -p rb-sys`, rbenv 3.4.10 on `PATH`, the variable
+  unset: exit 101, `'stdarg.h' file not found`. Export
+  `BINDGEN_EXTRA_CLANG_ARGS=-I$(gcc -print-file-name=include)`, or install
+  `libclang-dev` — which is what `ruby-sdk.yml` does, so **CI is not exposed**,
+  and that workflow is the only caller of the ruby features besides the wrapper
+  (`build-dist.sh` does not build them).
+- **What did change**: the `'ruby.h'` trap above is now diagnosed rather than
+  left to mislead. `scripts/build-ruby-sdk.sh` refuses *before* cargo when the
+  Ruby on `PATH` has no development headers, names that as the cause and says it
+  is **not** the include-path problem; and the reason no build-time home exists
+  is written beside the bindgen guard, where the next reader looks.
 
 ### KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down
 
@@ -786,6 +732,22 @@ since carries its own date.
   change's diff holds no file under `elixirc_paths(:test)` (`lib`,
   `test/fixtures`, `test/helpers`, `test/support`), none under `config/` or
   `test/`, and `mix test` never reads `.formatter.exs`.
+- `test/flezha/state/watchdog_test.exs:390` (`a remote-durability RPO breach
+  alarms once and clears when it catches up`) — added 2026-08-30 from
+  `small-mechanical-fixes`, and it has a **named mechanism, so it is a leak
+  rather than load**. The closing `assert Flezha.State.DurabilityTier.breaches()
+  == []` (`:444`) is node-global and **unpinned**, and the entry it found belongs
+  to another module: `{:entity, {"TestOperative", "TestProcedure", "p1"}}` — the
+  default id in `test/helpers/state_test_helpers.ex` — carrying `failures: 1,
+  last_error: ":backend_down"`. Eight lines above, the same test pins its
+  `assert_receive` for exactly this reason ("the RPO sweep is node-global, so an
+  unpinned receive takes whatever reference another module left pending"); the
+  assertion below was left unpinned. The fix is to pin it to `ref`, or to clear
+  the ledger in `setup` — not to retry. **Not caused by the change that found
+  it**: that diff carries no Elixir source or test file at all, the backend on
+  this path is `FlezhaTest.Helper.DurabilityBackendStub` and not Postgrex, the
+  module alone is 13 passed at the failing run's own seed (233764), and the whole
+  suite re-run at that seed is **1836 passed**.
 - **Method note for the next A/B here.** A HEAD worktree cannot run this suite
   beside the main tree without `TMPDIR` isolation: `config/test.exs:148` keys
   the socket directory on `System.tmp_dir!()` and `node()` alone, so two
@@ -1167,73 +1129,6 @@ since carries its own date.
   (which leaves 8 digits) or use a fixed-width suffix. Only the two 24-byte
   prefixes sit at the edge, and one of them is already a manual truncation with
   no margin, which is the fragile part worth removing.
-
-
-### KI-24 · `sdk/rust/tests/ui/*.rs` must not be rustfmt-formatted
-
-- Their line numbers are pinned by the `.stderr` snapshots, and `cargo fmt` never
-  reaches them because trybuild compiles them out-of-tree — so a per-file
-  `rustfmt` loop *does* reach them and breaks the snapshots. Exclude that
-  directory from any formatting loop.
-
-- **Triage (2026-08-30)**: **REAL, live and undefended — but the entry names the
-  wrong threat.** The repo's own formatters are safe: `scripts/format-apply.sh:43`
-  runs `cargo +nightly fmt --all` and `.github/workflows/format.yml:82`–`:86`
-  runs the same under the pinned `nightly-2026-05-07`. Neither is a per-file
-  loop. The exposure is the **agent-level convention** — this box's standing rule
-  is "never `cargo fmt --all` here; use `rustfmt +nightly --edition 2021 <file>`"
-  — so any session formatting a changed-file list that includes
-  `sdk/rust/tests/ui/*.rs` breaks the snapshots. That is worth keeping the entry
-  for, and it is not what the entry currently says.
-- **No defence exists.** `rustfmt.toml:17`–`:20` ignores only
-  `flz_transport/src/generated` and `sdk/rust/src/generated`; nothing in
-  `scripts/`, `.github/workflows/` or any `.toml` mentions `tests/ui`.
-- **Reproduction** — scratchpad copies only, the working tree never touched:
-
-  ```
-  $ cp rustfmt.toml sdk/rust/tests/ui/*.rs $SCRATCH/uifmt/
-  $ cd $SCRATCH/uifmt && for f in *.rs; do rustfmt +nightly --edition 2021 "$f"; done
-  CHANGED: procedure_ctx_with_key.rs        (13 -> 16 lines)
-  CHANGED: sealed_disallows_on_full.rs      (37 -> 44 lines)
-  CHANGED: sealed_disallows_wiring.rs       (55 -> 69 lines)
-  CHANGED: stream_handle_cannot_escape.rs   (34 -> 41 lines)
-  CHANGED: wire_wrong_input.rs              (53 -> 67 lines)
-  total changed: 5 of 25
-  ```
-
-  20 of 25 files are unchanged, so the run can report clean — the 5 are the
-  finding, not the method.
-- **Every one of the 5 has `.stderr` pins, and every pin moves.** Sample, with
-  the line the snapshot names before and after formatting:
-
-  | pin | before | after |
-  |---|---|---|
-  | `procedure_ctx_with_key.rs:9:1` | `fn p(_input: u64, ctx: &mut …ProcedureCtx) -> …` | `fn p(` |
-  | `sealed_disallows_on_full.rs:34:10` | `.on_full(OverflowPolicy::DropNothing);` | `}` |
-  | `sealed_disallows_wiring.rs:52:10` | `.into::<Downstream>();` | `&mut self,` |
-  | `stream_handle_cannot_escape.rs:27:15` | `static STASH: std::sync::Mutex<…>` | `_: StateHandle<'_, Self>,` |
-  | `wire_wrong_input.rs:50:17` | `.into::<ConsumesCandle>();` | `fn init_state(…) {}` |
-
-  And the snapshots embed the **rendered source line verbatim**, not just
-  `line:col`, so even a pin whose coordinates survived would still break. 5 of 5.
-- **The "`cargo fmt` never reaches them" claim is verified**, without running fmt:
-  `cargo metadata --no-deps` on `sdk/rust/Cargo.toml` lists 35 test targets and
-  **none** with a `src_path` under `/tests/ui/`. The only ui-related target is the
-  trybuild driver `sdk/rust/tests/ui_compile_fail.rs`, which names them as runtime
-  **string** paths (`t.compile_fail("tests/ui/wire_wrong_input.rs")`), never as
-  modules. Cargo does not auto-discover `tests/<subdir>/*.rs`, and nothing
-  `mod`-declares them.
-- **Correction to the entry and to `CLAUDE.md`**: the count is **5, not three**.
-  `CLAUDE.md:62` and `docs/dev_notes/refactor-3-rust-sdk.md:46`–`:48` both say
-  "breaks three at once"; at HEAD it is five.
-- **Worth fixing**: yes, and there is a one-line mechanical defence the entry does
-  not mention — add `"sdk/rust/tests/ui"` to `rustfmt.toml`'s `ignore` array.
-  `ignore` is nightly-only, which is already the pinned toolchain, and it makes a
-  stray `rustfmt +nightly --edition 2021 sdk/rust/tests/ui/foo.rs` a no-op. That
-  turns a documentation-only defence, which depends on every future session having
-  read this entry, into one the tool enforces.
-
----
 
 ## P3 — warts, wording, and measurement notes
 
@@ -2012,6 +1907,9 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-5 · `duplicate_pairs` is a pair count over whatever the run scanned, so `sdk/rust` reads 169 alone and 215 whole-repo, and `--check` differenced the two in silence | `small-mechanical-fixes` — `measure()` records `scan`, the sorted area set, beside the numbers it produced; `docs/refactor/baseline.json` carries it; `scan_mismatch/2` makes `--check` **refuse** a baseline recorded over a different set rather than report a delta, and a baseline with no `scan` at all is refused too, an unknown scan being exactly the comparison the rule forbids. Re-measured at `50304acb`: **169 / 169 / 215** for `sdk/rust` alone, with `sdk/java` + `sdk/node`, and whole-repo — the entry's 128 / 136 / 178 were stale by about a third, and the middle row is the point, since those two siblings share nothing with `sdk/rust` and add zero: *which* siblings you scan is what moves the number, not how many. Both arms drilled — whole-repo `--check` compares normally, `--check --area sdk/rust` prints `the baseline scanned 36 areas, this run 1 (only in the baseline: cli, flezha-macros, …)` and exits **2** — and `--self-test` pins all three arms including the legacy no-`scan` baseline. The key was added to the existing baseline by hand (**+38 lines, −0**) so that no metric value moved. Refusing on *any* difference is deliberate rather than over-strict: adding an area adds files to the jscpd run and so can add cross-area pairs to areas that were already there, which means every area's count really does move. The response is `--write-baseline`, and charter §11 now says so |
+| KI-16 · `mix deps.get` reports packages with security advisories, unaudited | `small-mechanical-fixes` — **one** advisory, `postgrex 0.22.3` / EEF-CVE-2026-66838 (MEDIUM), SQL injection via the `:comment` option of `Postgrex.stream/4`, and **`lib/` never reaches it**: no `Postgrex.stream` call and no `:comment` anywhere, the callers being `Postgrex.query/4`, `Postgrex.child_spec/1`, `Postgrex.start_link/1` and an `after_connect: {Postgrex, :query!, …}`. `mix.exs` already declares `{:postgrex, "~> 0.22"}`, so 0.22.4 needed no constraint change. **`mix deps.update postgrex` moved two lines, not one** — `telemetry 1.3.0 => 1.4.2` came along, and postgrex does not depend on telemetry at all (`db_connection`'s `~> 0.4 or ~> 1.0` does), so the resolver simply took the newest satisfying version while it was re-resolving. telemetry was put back to 1.3.0 and `mix deps.get` accepted it, leaving the committed lock diff at one line. `mix hex.audit` after: *No retired or security advisory packages found* |
+| KI-24 · `sdk/rust/tests/ui/*.rs` must never be rustfmt-formatted and nothing enforced it — the count was wrong too | `small-mechanical-fixes` — `rustfmt.toml`'s `ignore` gains `sdk/rust/tests/ui`, so a stray `rustfmt +nightly --edition 2021 sdk/rust/tests/ui/foo.rs` is a no-op; `ignore` is nightly-only, which is already the pinned toolchain. Measured on scratchpad copies before the tree was touched — without the entry the per-file loop rewrites **5 of 25** files (`procedure_ctx_with_key`, `sealed_disallows_on_full`, `sealed_disallows_wiring`, `stream_handle_cannot_escape`, `wire_wrong_input`), with it **0 of 25** — then run for real over the working tree, where `git status` on the directory comes back empty. The 20 unchanged files are why this hid: a loop over the whole list reports clean. The count is **five, not three**; `CLAUDE.md` and `docs/dev_notes/refactor-3-rust-sdk.md` both said three and both now say five |
 | KI-4 · the format gate's `need` preflight tested every formatter BEFORE running any, so one absent veneer tool ended the run and said nothing about the six languages behind it | `format-gate-tells-the-truth` — the preflight's install hint survives; only the abort goes. `scripts/gate_lib.sh` holds one `gate_run`/`gate_report` pair that both format scripts source, keeps "tool unavailable" and "check failed" in separate lists, and carries that distinction **across a process boundary** in the exit status: **2** = a tool was missing, **1** = something is unformatted, failure winning when both are true (which is what lets `format-check.sh` roll `format-apply.sh` up without flattening it — `--nested`, and it has to be asked for, because prettier, ruff and rubocop all use exit 2 for "the tool errored"). Proved on the box the entry was filed from, where `rubocop` and `php` are genuinely absent: the gate now reports cargo fmt / mix format / mvn spotless / prettier / ruff format and NAMES Ruby and PHP as not run, where before it printed **not one `==>` line**. Three arms drilled: every tool present and the tree clean → **exit 0**, seven formatters; two tools absent → **exit 2**, and `reuse lint` plus the notices diff still ran behind them; a deliberately unformatted `.exs` with every tool present → **exit 1**, `UNFORMATTED: mix format`, and the four formatters after Elixir still ran. `format-check.sh` took the same shape, so an absent `reuse` no longer hides a stale `THIRD_PARTY_NOTICES.md` |
 | KI-7 · CI ran no veneer formatter at all — `format-check.sh` was the only caller of prettier, ruff, rubocop and php-cs-fixer anywhere, and KI-4 is why it could silently not | `format-gate-tells-the-truth` — `.github/workflows/format.yml` installs all four (setup-node + `npm ci`, setup-python + `pip install ruff`, setup-ruby + `gem install rubocop`, setup-php with `ext-ffi` + `composer install`) and then runs **`scripts/format-apply.sh --check`** rather than keeping its own list of formatters, which is the drift this entry was: one list now, not two. Every version is read out of the SDK's own manifest (`package-lock.json`, `pyproject.toml`, `flezha.gemspec`, `composer.lock`) so no pin is written twice. The four installs are `continue-on-error` for the same reason the script collects instead of aborting — a failed install costs one language, not the report. The `paths` allow-list became a `paths-ignore` of `docs/**` and `openspec/**`: an allow-list that forgets a source tree is a gate that silently stops covering it, which is how four of the seven languages went unchecked |
 | KI-8 · `scripts/format-apply.sh` ran `cargo +nightly fmt` while CI pinned `nightly-2026-05-07`, two genuinely different builds on this box | `format-gate-tells-the-truth` — the script now invokes `cargo +nightly-2026-05-07`, with the comment beside it naming the workflow and `rust-toolchain.toml` as the other two places to bump together. Re-measured before the change: `nightly` is `f964de49b 2026-05-07`, `nightly-2026-05-07` is `365c0e1d7 2026-05-06`, and both exit 0 with empty output on this tree — the risk was real and the realisation was zero, which is why this rode a change rather than justifying one |

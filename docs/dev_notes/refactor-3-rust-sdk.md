@@ -47,9 +47,9 @@ holds `generic_args` and the ident casing, which are `syn` inspection.
 are pinned by the `.stderr` snapshots. `cargo fmt` never reaches them (trybuild
 compiles them out-of-tree), which is exactly why a per-file `rustfmt` loop —
 the only safe way to format this tree, since `cargo fmt --all` is forbidden here
-— DOES reach them and breaks three snapshots at once. Exclude `tests/ui/` from
-every formatting loop. Segment E hit this and restored the files with
-`git show HEAD:<path> > <path>`.
+— DOES reach them and breaks five of the twenty-five at once. `rustfmt.toml`'s
+`ignore` now carries `sdk/rust/tests/ui`, so the loop skips them. Segment E hit
+this and restored the files with `git show HEAD:<path> > <path>`.
 
 **A file split moves a `.stderr` snapshot, and that is legal; a macro edit
 cannot.** Splitting `channel/builder.rs` into a directory moved 7 lines across 3

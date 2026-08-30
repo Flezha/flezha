@@ -17,9 +17,27 @@ if [[ "${1:-}" == "--release" ]]; then
   cargo_args+=(--release)
 fi
 
-# rb-sys runs bindgen over ruby.h, and bindgen needs clang's BUILTIN headers:
-# with libclang alone the build dies inside cargo with `'stdarg.h' file not
-# found`. gcc's builtin include directory carries the same headers.
+# The two ways this build dies are both "a header is missing", and they want
+# opposite remedies. First: a Ruby with no development headers, which rb-sys
+# reports as `'ruby.h' file not found` — no include path fixes that, so name it
+# here rather than let it read as the stdarg.h case below.
+hdrdir="$(ruby -e 'print RbConfig::CONFIG["rubyhdrdir"].to_s' 2>/dev/null || true)"
+if [[ ! -f "$hdrdir/ruby.h" ]]; then
+  echo "the ruby on PATH ($(command -v ruby || echo none)) has no development headers" >&2
+  echo "  no ruby.h under '${hdrdir:-<none>}' — install ruby-dev, or put the SDK's" >&2
+  echo "  rbenv ruby on PATH. This is NOT the bindgen include-path problem." >&2
+  exit 1
+fi
+
+# Second: rb-sys runs bindgen over ruby.h, and bindgen needs clang's BUILTIN
+# headers: with libclang alone the build dies inside cargo with `'stdarg.h' file
+# not found`. gcc's builtin include directory carries the same headers.
+#
+# This guard cannot move into `flz_core_ffi/build.rs`: rb-sys is a dependency,
+# so its build script runs first and fails before ours exists. A bare
+# `cargo build/test -p flz_core_ffi --features ruby*` on a box with no clang
+# builtin headers is therefore unprotected — export the same variable, or
+# install libclang-dev, which is what CI does.
 if [[ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]] \
   && ! compgen -G "/usr/lib/llvm-*/lib/clang/*/include/stdarg.h" >/dev/null; then
   gcc_include="$(gcc -print-file-name=include 2>/dev/null || true)"

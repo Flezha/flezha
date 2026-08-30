@@ -13,6 +13,8 @@ file is test inside each `#[cfg(test)] mod … { }` block. Duplicates are jscpd'
 cycles `mix xref graph --format cycles`, lint counts credo and clippy under `--lint` (slow,
 opt-in). A ratcheted metric must never rise; timings tolerate 5 % and compare only on the
 recording box; an area under `blocking` in the baseline fails `--check`, the rest only report.
+`duplicate_pairs` counts pairs among the files scanned, so a recording names its area set and
+`--check` refuses a baseline recorded under a different one instead of differencing the two.
 """
 
 import argparse
@@ -538,7 +540,7 @@ def measure(area_filter=None, lint=False):
         "credo_warnings": len(credo) if credo is not None else None,
         "clippy_warnings": len(clippy) if clippy is not None else None,
     }
-    return {"areas": result, "repo": repo}
+    return {"areas": result, "repo": repo, "scan": sorted(table)}
 
 
 def box():
@@ -563,6 +565,20 @@ def culprits_for(metric, then, now):
         return []
     grown = {f: v - then.get(key, {}).get(f, 0) for f, v in now.get(key, {}).items()}
     return [f"{f} (+{d})" for f, d in sorted(grown.items(), key=lambda kv: -kv[1]) if d > 0][:5]
+
+
+def scan_mismatch(current, baseline):
+    """Why two recordings cannot be compared, or None. `duplicate_pairs` counts pairs
+    among the files a run scanned, so a narrower area set answers a different question —
+    `sdk/rust` reads 169 alone and 215 whole-repo on identical source."""
+    then, now = baseline.get("scan"), current.get("scan")
+    if then is None:
+        return "the baseline records no scan; re-record it with --write-baseline"
+    if then == now:
+        return None
+    sides = (("only in the baseline", set(then) - set(now)), ("only here", set(now) - set(then)))
+    named = "; ".join(f"{where}: {', '.join(sorted(n))}" for where, n in sides if n)
+    return f"the baseline scanned {len(then)} areas, this run {len(now)} ({named})"
 
 
 def compare(current, baseline, timings=None, current_box=None):
@@ -721,6 +737,10 @@ def self_test_ratchet():
         r[0] == "timings" for r in compare(cur, base, {"suite": 106.0}, {"hostname": "elsewhere"})
     )
     assert exit_code(regs, {"blocking": []}) == 0 and exit_code(regs, {"blocking": ["a"]}) == 1
+    assert scan_mismatch({"scan": ["a", "b"]}, {"scan": ["a", "b"]}) is None
+    assert "only in the baseline: b" in scan_mismatch({"scan": ["a"]}, {"scan": ["a", "b"]})
+    assert "only here: b" in scan_mismatch({"scan": ["a", "b"]}, {"scan": ["a"]})
+    assert "records no scan" in scan_mismatch({"scan": ["a"]}, base)
 
 
 # --- main --------------------------------------------------------------------
@@ -757,6 +777,10 @@ def write_baseline(data, baseline, args):
 def check(data, baseline, args):
     if not baseline:
         print(f"no {BASELINE}; run --write-baseline first", file=sys.stderr)
+        return 2
+    mismatch = scan_mismatch(data, baseline)
+    if mismatch:
+        print(f"refusing to compare against {BASELINE}: {mismatch}", file=sys.stderr)
         return 2
     regressions = compare(data, baseline, parse_kv(args.timing), data["box"])
     blocking = set(baseline.get("blocking", []))

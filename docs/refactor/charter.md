@@ -197,6 +197,13 @@ refutes, suite wall-clock. `--write-baseline` records `docs/refactor/
 baseline.json`; `--check` fails when a ratcheted metric is worse than the
 baseline. A finished area flips its gates from measuring to blocking.
 
+`duplicate_pairs` counts pairs among the files a run scanned, so a narrower
+`--area` set answers a different question — `sdk/rust` reads 169 alone and 215
+whole-repo on identical source. A recording therefore names its area set, and
+`--check` refuses a baseline recorded under a different one rather than
+differencing two numbers that mean different things. Changing the area table
+means re-recording the baseline.
+
 **Lines that arrive from a higher layer are not a breach.** §3 sends shared
 code down to the lowest layer that needs it, so a later area moving its
 scaffolding into a finished one makes that area's production count rise by

@@ -17,4 +17,7 @@ group_imports = "StdExternalCrate"
 ignore = [
     "flz_transport/src/generated",
     "sdk/rust/src/generated",
+    # trybuild compiles these out-of-tree and pins every diagnostic to a line
+    # number in the matching `.stderr`, so formatting one breaks its snapshot.
+    "sdk/rust/tests/ui",
 ]
