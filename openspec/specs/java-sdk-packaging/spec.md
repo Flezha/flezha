@@ -3,9 +3,7 @@
 ## Purpose
 
 Defines how the Java SDK is structured, built, and distributed: Maven module layout, native binary packaging and runtime loading, version pinning to `flz_core_ffi`, and CI publication of build artifacts.
-
 ## Requirements
-
 ### Requirement: Maven Multi-Module Layout
 
 The Java SDK SHALL live under `sdk/java/` as a Maven multi-module project with the following modules: `flezha-sdk-api`, `flezha-sdk-protobuf`, `flezha-sdk-runtime`, `flezha-sdk-native`, `flezha-sdk` (aggregator / fat jar), and `flezha-sdk-integration-tests`. Each module's `pom.xml` MUST declare `java.version = 21` via Maven toolchains or the `maven-compiler-plugin` `<release>21</release>` setting.
@@ -25,19 +23,38 @@ binaries (built with the `jni` feature, so one binary carries both the C
 ABI and the JNI exports) for at minimum the five supported target triples,
 under resource paths `native/<os>-<arch>/libflz_core_ffi.<ext>`
 (linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64;
-`.so`/`.dylib`/`.dll` per platform). The cross-build SHALL be driven by
-`cargo-zigbuild` from the existing Maven `native-build` profile
-(`scripts/build-native.sh`), and `scripts/build-dist.sh` SHALL stage all
-five before the jar is assembled. The Java SDK links no native surface
+`.so`/`.dylib`/`.dll` per platform). The Java SDK links no native surface
 besides `flz_core_ffi`, whose `jni_glue.rs` is its JNI binding.
+
+None of the five SHALL be tracked in git. The Maven `native-build` profile
+SHALL obtain each triple absent from
+`flezha-sdk-native/src/main/resources/native/` either by cross-building it with
+`cargo-zigbuild` (`scripts/build-native.sh --targets all`, which
+`scripts/build-dist.sh` drives) or by downloading and checksum-verifying the
+published release asset for the pinned version, and SHALL leave any binary
+already present on disk untouched.
+
+The `native-verify` profile SHALL assert the **host triple only** and SHALL NOT
+invoke any build or download step. Every test path — `mvn verify`,
+`mix test.java_sdk`, the SDK conformance suite — SHALL use `native-verify` and
+SHALL therefore pass on a host-triple-only tree with no network access.
 
 #### Scenario: Fat jar contains the five core binaries
 - **WHEN** `mvn -P native-build package` completes successfully
 - **THEN** `unzip -l sdk/java/flezha-sdk/target/flezha-sdk-*.jar` SHALL list the five `native/<os>-<arch>/libflz_core_ffi.*` paths, and no other native library
 
 #### Scenario: Missing native target fails the packaging step
-- **WHEN** `mvn -P native-build package` (or `-P native-verify`) runs but any of the five binaries is missing from `flezha-sdk-native/src/main/resources/native/`
-- **THEN** the build SHALL fail with an enforcer error naming the refresh command
+- **WHEN** `mvn -P native-build` runs and a triple can be neither cross-built nor fetched for the pinned version
+- **THEN** the build SHALL fail with an enforcer error naming the missing triple and the refresh command
+
+#### Scenario: native-verify asserts only the host triple
+- **GIVEN** a tree containing `native/<host-os>-<host-arch>/libflz_core_ffi.*` and none of the other four
+- **WHEN** `mvn -f sdk/java/pom.xml -P native-verify verify` is run
+- **THEN** the build SHALL succeed, and SHALL NOT download or build anything
+
+#### Scenario: No native binary is tracked in git
+- **WHEN** `git ls-files sdk/java/flezha-sdk-native/src/main/resources/native/` is run
+- **THEN** it SHALL report no files
 
 ### Requirement: Runtime Native Library Loading
 
@@ -85,15 +102,26 @@ check, whose silent-continue posture is exactly how runtime skew hid).
 
 ### Requirement: CI Build and Publish Artifacts
 
-CI SHALL include a Java SDK workflow that (a) cross-builds `flz_core_ffi` (feature `jni`) for the five target triples, (b) assembles the fat jar, (c) runs Java unit tests, (d) runs the integration-test matrix from the `java-sdk-testing` spec, and (e) publishes the built jar as a CI artifact for download. Maven-registry publication is out of scope for this change.
+CI SHALL include a Java SDK workflow whose pull-request jobs (a) build the host triple only, (b) assemble the fat jar against it, (c) run Java unit tests, and (d) run the integration-test matrix from the `java-sdk-testing` spec. Pull-request jobs SHALL NOT cross-build any non-host triple and SHALL NOT install `zig` or `cargo-zigbuild`.
+
+A separate release job, triggered by a version tag and not by pull requests, SHALL cross-build all five triples, assemble both fat jars, and publish the five binaries, both jars, and a SHA-256 manifest as GitHub Release assets for that tag. Maven-registry publication remains out of scope.
 
 #### Scenario: Pull request CI produces a downloadable jar
 - **WHEN** a pull request is opened that affects `sdk/java/**`, `flz_core/**`, `flz_core_ffi/**`, or `flz_transport/**`
-- **THEN** CI SHALL attach the built `flezha-sdk-<version>.jar` as a workflow artifact on the PR
+- **THEN** CI SHALL attach a host-triple `flezha-sdk-<version>.jar` as a workflow artifact on the PR, labelled as non-portable
 
 #### Scenario: Java-only changes reuse cached native binaries
-- **WHEN** a pull request touches only files under `sdk/java/` (excluding `sdk/java/flezha-sdk-native/src/main/resources/native/`) and none of the native crates
-- **THEN** CI SHALL reuse cached native binaries from the most recent successful main-branch build instead of cross-rebuilding them
+- **WHEN** a pull request touches only files under `sdk/java/` and none of the native crates
+- **THEN** CI SHALL reuse the cached host-triple binary from the most recent successful main-branch build instead of rebuilding it
+
+#### Scenario: A release tag publishes the portable matrix
+- **WHEN** a version tag is pushed
+- **THEN** the release job SHALL publish five `libflz_core_ffi.*` assets, `flezha-sdk.jar`, `java_runner.jar`, and a SHA-256 manifest to that tag's GitHub Release
+
+#### Scenario: Pull-request jobs never cross-compile
+- **GIVEN** the merged `.github/workflows/java-sdk.yml`
+- **WHEN** its pull-request-triggered jobs are grepped for `cargo-zigbuild`, `cargo zigbuild`, or `ziglang`
+- **THEN** there SHALL be no matches
 
 ### Requirement: Java SDK artifact identifiers use canonical vocabulary
 
@@ -106,3 +134,4 @@ Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Mod
 #### Scenario: Manifest metadata reflects canonical role names
 - **WHEN** a Java SDK jar's `META-INF/MANIFEST.MF` is inspected
 - **THEN** any role-tag entries SHALL use `Runner` (not `ComputeEngine` or `Operator`); free-text descriptions SHALL use `Operative` rather than `Processor`
+

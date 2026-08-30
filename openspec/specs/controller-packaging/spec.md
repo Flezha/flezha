@@ -257,7 +257,11 @@ Operators changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace
 
 ### Requirement: `.dockerignore` SHALL exclude all non-source artefacts from the build context
 
-The repo's `.dockerignore` SHALL exclude at minimum: `**/target`, `_build`, `deps`, `priv/native/*.so`, `**/node_modules`, `.git`, `.github`, `.vscode`, `.elixir_ls`, `cover`, `*.dump`, `erl_crash.dump`, `docs`, `test/apps/testnet/dist`, `test/apps/testnet/node_modules`, and (for the prod image) the entire `test/` tree.
+The repo's `.dockerignore` SHALL exclude at minimum: `**/target`, `_build`, `deps`, `priv/native/*.so`, `**/node_modules`, `.git`, `.github`, `.vscode`, `.elixir_ls`, `cover`, `*.dump`, `erl_crash.dump`, `docs`, `test/apps/testnet/dist`, `test/apps/testnet/node_modules`, `sdk/java/flezha-sdk-native/src/main/resources/native`, `sdk/java/flezha-sdk/dist`, `test/apps/java_runner/dist`, and (for the prod image) the entire `test/` tree.
+
+The three Java artefact paths are no longer tracked in git, so they are present
+only on a machine that has built them; excluding them keeps a developer's build
+context the same size as a clean checkout's.
 
 #### Scenario: Prod image's COPY does not pull in build artefacts
 
@@ -265,31 +269,11 @@ The repo's `.dockerignore` SHALL exclude at minimum: `**/target`, `_build`, `dep
 - **WHEN** `make docker-build` is run with BuildKit enabled
 - **THEN** the build context size reported by Docker SHALL be less than 50MB (well under what including `target/` alone would produce — typically 1GB+)
 
-### Requirement: Java native binaries and fat jars SHALL be committed to git, not built by CI
+#### Scenario: A built Java tree does not enlarge the build context
 
-The five native binaries `libflz_core_ffi.{so,dylib,dll}` for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64` SHALL be committed under `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/`. The Java SDK fat jar SHALL be committed at `sdk/java/flezha-sdk/dist/flezha-sdk.jar`. The test runner fat jar SHALL be committed at `test/apps/java_runner/dist/java_runner.jar`.
-
-CI SHALL NOT cross-compile any of the five native binaries. CI SHALL NOT package either fat jar. Runners SHALL refresh these artefacts locally with `scripts/build-native.sh --targets all` and `scripts/build-java-jars.sh`, then `git add` and commit them.
-
-The `flezha-sdk-native` Maven build SHALL provide a `native-verify` profile that asserts all five native binaries exist on disk without invoking any build step. CI SHALL use `-P native-verify` (never `-P native-build`).
-
-#### Scenario: java-sdk.yml does not invoke cargo-zigbuild
-
-- **GIVEN** the merged `.github/workflows/java-sdk.yml`
-- **WHEN** the file is grepped for `cargo-zigbuild`, `cargo zigbuild`, or `ziglang`
-- **THEN** there SHALL be no matches; the workflow SHALL NOT install or invoke Zig
-
-#### Scenario: java-sdk.yml uses the native-verify profile
-
-- **GIVEN** the `java-unit-tests` job in `.github/workflows/java-sdk.yml`
-- **WHEN** the Maven verify step is inspected
-- **THEN** the command SHALL include `-P coverage,native-verify` (and SHALL NOT include `-P native-build`)
-
-#### Scenario: native-verify fails when a binary is missing
-
-- **GIVEN** a working tree where `sdk/java/flezha-sdk-native/src/main/resources/native/macos-arm64/libflz_core_ffi.dylib` has been deleted
-- **WHEN** `mvn -f sdk/java/pom.xml -P native-verify verify` is run
-- **THEN** the build SHALL fail in the `prepare-package` phase with a message naming the missing file
+- **GIVEN** a working tree where the five native binaries and both fat jars have been built and are present on disk but untracked
+- **WHEN** `make docker-build` is run with BuildKit enabled
+- **THEN** the build context size SHALL still be less than 50MB
 
 ### Requirement: `elixir.yml` SHALL be Elixir+Rust only
 
