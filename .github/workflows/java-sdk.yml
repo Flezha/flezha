@@ -233,8 +233,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
+          # A semver pre-release tag (v0.1.0-rc.1, v0.0.0-dev.1) carries a `-`
+          # after the version. Mark those, so a trial run of this job cannot be
+          # mistaken for a shipped version — and so it never becomes "latest".
+          case "$TAG" in
+            *-*) prerelease=--prerelease ;;
+            *)   prerelease= ;;
+          esac
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist-release/* --clobber
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes dist-release/*
+            gh release create "$TAG" --title "$TAG" --generate-notes $prerelease dist-release/*
           fi
