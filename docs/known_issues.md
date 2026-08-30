@@ -528,7 +528,7 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
-| KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`a0c71389`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |
+| KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`99b4f201`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |
 | `cargo check --workspace --all-targets` red without a feature nobody passes | `467a378a` — three `[[test]]` entries were missing `required-features` |
 | `test/apps/node_runner/fixtures.mjs` a `SyntaxError` since `refactor(0a)`, so no Node e2e had run in four areas | `fae9184f` |
 | Node `Source::get` costing four N-API calls per field read (~4 % on the Node dispatch row) | `fae9184f` |
