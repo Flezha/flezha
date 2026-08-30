@@ -28,20 +28,28 @@ The project SHALL ship a `rustfmt.toml` at the repository root that pins the can
 
 ### Requirement: Project SHALL enforce `cargo fmt` in CI
 
-A GitHub Actions workflow SHALL run `cargo fmt --all -- --check` on every pull request and push to `main`. The check SHALL fail the workflow when any project source file diverges from `rustfmt.toml`'s contract. The Rust toolchain version used by the check SHALL be pinned (via `rust-toolchain.toml` or an explicit workflow input) so a stable-rustfmt change does not retroactively break the gate.
+A GitHub Actions workflow SHALL run `cargo fmt --all -- --check` on every pull request and push to `main`. The check SHALL fail the workflow when any project source file diverges from `rustfmt.toml`'s contract. The Rust toolchain version used by the check SHALL be pinned (via `rust-toolchain.toml` or an explicit workflow input) so a stable-rustfmt change does not retroactively break the gate, and the same pinned version SHALL be the one the local format script invokes.
+
+The workflow's path filter SHALL be expressed as paths to ignore rather than paths to include, so a source tree added later is covered by default. A filter that must name every covered tree is a gate that silently stops covering the one it forgets.
 
 #### Scenario: A PR introduces an unformatted Rust change
 
 - **WHEN** a contributor opens a PR that modifies a Rust file in a way that violates `rustfmt.toml`
 - **THEN** the format CI workflow fails
-- **AND** the failure annotation cites `cargo fmt --all -- --check` as the failing step
+- **AND** the failing step's output names the Rust formatter as the check that failed
 - **AND** merge is blocked until the contributor fixes the formatting
 
-#### Scenario: A PR touches only docs
+#### Scenario: A PR touches only prose
 
-- **WHEN** a contributor opens a PR that modifies only `*.md` files outside `lib/`, `sdk/`, `flz_*/`, `cli/`, or `test/apps/`
-- **THEN** the format workflow's path filters skip the run
-- **AND** no Rust formatter check executes
+- **WHEN** a contributor opens a PR that modifies only files under `docs/` or `openspec/`
+- **THEN** the format workflow's path filter skips the run
+- **AND** no formatter check executes
+
+#### Scenario: A PR touches a source tree the filter never named
+
+- **WHEN** a contributor opens a PR that modifies a source tree added after the workflow was last edited
+- **THEN** the format workflow runs
+- **AND** the gate reports on it rather than skipping it
 
 ### Requirement: Project SHALL enforce `mix format` in CI
 
@@ -85,21 +93,24 @@ The Maven parent at `sdk/java/pom.xml` SHALL configure `spotless-maven-plugin` w
 
 ### Requirement: Project SHALL ship local format scripts
 
-The repository SHALL ship two scripts at `scripts/format-check.sh` and `scripts/format-apply.sh`. The check script SHALL run `cargo fmt --all -- --check`, `mix format --check-formatted`, and `mvn -f sdk/java/pom.xml -DskipTests spotless:check` in sequence with `set -euo pipefail` so the first failing language stops the script. The apply script SHALL run `cargo fmt --all`, `mix format`, and `mvn -f sdk/java/pom.xml -DskipTests spotless:apply` in sequence to fix all three trees in one command. Both SHALL be tracked under version control and documented in the top-level `README.md`.
+The repository SHALL ship two scripts at `scripts/format-check.sh` and `scripts/format-apply.sh`. Both SHALL attempt every check they cover and report the outcome of each; neither SHALL let one check's failure — or one tool's absence — prevent the checks behind it from running. The check script SHALL run every language's formatter in check mode and then the licensing checks; the apply script SHALL run every language's formatter in write mode to fix the whole tree in one command. Both SHALL be tracked under version control and documented in the top-level `README.md`.
+
+The scripts SHALL exit non-zero when anything is unformatted and non-zero when a tool they need is unavailable, using a different status for each, and the CI workflow SHALL invoke the same script rather than maintaining its own list of formatters.
 
 #### Scenario: Developer runs format-check locally
 
 - **WHEN** a developer runs `scripts/format-check.sh` from the repo root
-- **THEN** the script runs the Rust, Elixir, and Java format checks in that order
-- **AND** the script exits non-zero on the first failure (Rust if Rust fails; Elixir if Rust passes but Elixir fails; etc.)
-- **AND** on full success the script exits 0 with no stdout output
+- **THEN** the script runs every formatter it can, then the licensing checks
+- **AND** a failure in one of them does not prevent the rest from running
+- **AND** the summary names every check that failed and every tool that was missing
+- **AND** on full success the script exits 0
 
 #### Scenario: Developer fixes formatting in one shot
 
 - **WHEN** a developer runs `scripts/format-apply.sh` from the repo root
-- **THEN** the script runs `cargo fmt --all`, `mix format`, and `mvn spotless:apply` in sequence
-- **AND** every authored source file in the tree conforms to its respective formatter on completion
-- **AND** subsequent `scripts/format-check.sh` invocations exit 0
+- **THEN** the script runs every language's formatter in write mode
+- **AND** every authored source file whose formatter is installed conforms to it on completion
+- **AND** subsequent `scripts/format-check.sh` invocations exit 0 on a box with every formatter installed
 
 ### Requirement: Project SHALL track bulk-format SHAs in `.git-blame-ignore-revs`
 
@@ -145,4 +156,43 @@ The Node, Ruby, PHP and Python SDKs SHALL each declare one formatter as a pinned
 
 - **WHEN** `mix format --check-formatted` runs under the Elixir version CI pins and under the version the repository's toolchain pin names
 - **THEN** both SHALL report the same result on the same tree
+
+### Requirement: A formatter gate SHALL report every language it covers
+
+A gate that checks formatting across several languages SHALL attempt every one
+of them and report per language. An unavailable tool SHALL remove only its own
+language from the report; it SHALL NOT prevent the remaining languages from
+being checked, and SHALL NOT leave the operator unable to tell which were
+examined.
+
+The output SHALL distinguish a tool that could not run from a tree that is not
+formatted. Both may fail the run, but a missing tool SHALL NOT suppress a
+dirty-tree finding for a different language.
+
+A language the gate claims to cover SHALL actually be attempted in continuous
+integration. Where a formatter cannot run there, the workflow SHALL say so
+where the step would be, rather than presenting a gate that covers it.
+
+#### Scenario: A missing tool does not hide the other languages
+
+- **GIVEN** a machine where one language's formatter is not installed
+- **WHEN** the format gate runs
+- **THEN** it SHALL report that tool as unavailable, and SHALL still report a verdict for every other language it covers
+
+#### Scenario: An unformatted file is reported even when another tool is missing
+
+- **GIVEN** a machine missing one formatter, and a tree with an unformatted file in a different language
+- **WHEN** the gate runs
+- **THEN** it SHALL report that file
+
+#### Scenario: A gated language is gated in CI
+
+- **WHEN** the formatting workflow is read
+- **THEN** every language the gate covers SHALL either have a step that runs its formatter, or a comment where that step would be saying why it cannot
+
+#### Scenario: The exit status says which finding it is
+
+- **GIVEN** a machine missing one formatter
+- **WHEN** the gate runs against a tree every available formatter accepts
+- **THEN** it SHALL exit with a status distinct from the one it uses for an unformatted tree, so a caller can tell "not checked" from "not formatted" without parsing the output
 
