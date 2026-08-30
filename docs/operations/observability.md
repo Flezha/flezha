@@ -107,8 +107,43 @@ methods `405`, malformed requests `400`; idle connections close after 5 s. There
 authentication — keep it on loopback or front it with a reverse proxy.
 
 Series names are `<source>_<name>` (`beam_vm_memory_total`, `flezha_dlq_dlq_parked_total`). Labels are
-the metadata keys and values, stringified and sorted; `prometheus_type` and `buckets` never become labels.
+the metadata keys and values, sorted; `prometheus_type` and `buckets` never become labels.
 The type is inferred from the measurement keys (first match wins); `metadata.prometheus_type` overrides.
+
+**Labels are made well-formed at record time, whatever a producer emitted.** A metadata map holds
+arbitrary Elixir terms — `TelemetryBridge` forwards a third-party `:telemetry` event's metadata
+verbatim — and a malformed exposition is worse than a missing one: Prometheus fails the *whole
+scrape*, so one bad key blinds every metric the controller has.
+
+*Values* take `Flezha.Observability.Signal.metadata_text/1`, the one rule both exporters and the
+audit log share: a UTF-8 binary passes through, an atom (`nil` reads `"nil"`), integer or float takes
+its `String.Chars` rendering, and everything else — a map, a tuple, a pid, a list, a binary that is
+not valid UTF-8 — is inspected in full. So a charlist value reads `~c"lib/x.ex"` rather than
+`lib/x.ex`: at the source you know a charlist is text, at the exporter you do not.
+
+*Names* are then sanitized into Prometheus's `[a-zA-Z_][a-zA-Z0-9_]*`:
+
+- every character outside `[a-zA-Z0-9_]` becomes `_`, so `http.status_code` becomes
+  `http_status_code` — the published OpenTelemetry-to-Prometheus mapping;
+- a name that would start with a digit gains a leading `_`, and an empty name becomes `_`;
+- a **leading run of `_` collapses to one**, so no producer label can enter Prometheus's reserved
+  `__` namespace or forge the registry's own `__truncated__` marker;
+- on a **histogram** a resulting name of `le` is dropped, because the renderer appends its own
+  `le` to every bucket line and a duplicate label name invalidates the exposition. On a counter or
+  gauge `le` is legal and is kept;
+- if two keys in one signal sanitize to the same name, the pairs are sorted and the first wins;
+  the rest are dropped rather than emitted as a duplicate label.
+
+**Sanitizing can merge two series.** Two raw label sets that sanitize alike become one ETS key:
+counters add, gauges last-write-win, histograms merge. This is deliberate — sanitizing at render
+time instead would emit two rows with identical series lines, which Prometheus rejects as hard as a
+duplicate label — but it does mean a metric's cardinality is budgeted on the names an operator
+actually sees.
+
+Every name rewritten or dropped increments a per-source counter, readable with
+`PrometheusRegistry.coercion_count/1` beside the existing `truncation_count/1`. There is no event
+per coercion: the rewrite is self-evident in the scrape, because the sanitized name is what the
+operator reads.
 
 | Measurements contain                 | Type      | Stored as                             |
 | ------------------------------------ | --------- | ------------------------------------- |

@@ -62,4 +62,50 @@ defmodule Flezha.Observability.SignalTest do
       end
     end
   end
+
+  describe "metadata_text/1" do
+    test "nil renders as its name, not as the empty string" do
+      # `to_string(nil)` is "", which as a key means no name at all and
+      # collides with a genuine "" key. Every other atom is its own name.
+      assert Signal.metadata_text(nil) == "nil"
+      assert Signal.metadata_text(true) == "true"
+      assert Signal.metadata_text(false) == "false"
+      assert Signal.metadata_text(:a) == "a"
+    end
+
+    test "a UTF-8 binary passes through and a non-UTF-8 one is inspected" do
+      assert Signal.metadata_text("ok \u00e9") == "ok \u00e9"
+      assert Signal.metadata_text(<<0xFF, 0x00, 0xFE>>) == "<<255, 0, 254>>"
+    end
+
+    test "a list is the list, never the binary of its bytes" do
+      assert Signal.metadata_text([1, 2, 3]) == "[1, 2, 3]"
+      refute Signal.metadata_text([1, 2, 3]) == <<1, 2, 3>>
+    end
+
+    test "it is total: no term raises, and every answer is a valid UTF-8 string" do
+      terms = [
+        nil,
+        :a,
+        1,
+        1.5,
+        "s",
+        <<0xFF>>,
+        [1, 2, 3],
+        ~c"cl",
+        {:a, :b},
+        %{a: 1},
+        self(),
+        make_ref(),
+        &Signal.metadata_text/1,
+        %Signal{kind: :log, source: :s, name: :n}
+      ]
+
+      for term <- terms do
+        text = Signal.metadata_text(term)
+        assert is_binary(text) and text != ""
+        assert String.valid?(text)
+      end
+    end
+  end
 end

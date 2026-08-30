@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-30 21:35 (defect programme triaged; PHASE 1 = 12 defects in 6 changes, PHASE 2 = area 4)
+**Last updated**: 2026-08-31 01:00 — HANDOVER. Phase 1 rows 1, 2 and 3 are DONE; row 3.5 has a survey worker that may or may not have finished (see *Current worker*). Area 4 is UNBLOCKED.
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -106,45 +106,67 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None.
+**A survey worker for row 3.5 (`fix-opaque-module-names`) was spawned at 00:44
+and this session ended around it.** If
+`openspec/changes/fix-opaque-module-names/` exists on this machine, that is its
+output and it was never reviewed by a supervisor — read it, but verify every
+claim before acting, and note the durable-name question it was asked to settle
+GATES every rename in it. If the directory does not exist, the survey never
+finished and must be re-run. `openspec/changes/` is gitignored, so nothing about
+it is in the history either way.
 
-**`java-diamond-resume` (KI-33) is DONE** — `4de341b5` (the Java arm) and the
-close-out commit below; archived as `2026-08-30-java-diamond-resume`,
-`sdk-poll-core` and `workflow-branching` both amended. Java e2e 17/21 -> **21
-passed** on that file, both transports, verified by the supervisor
-independently; rust unchanged at 21; `mix test` 1839, system reference 1920,
-`cargo test -p flz_core` 146, both maven builds green.
+**Handover notes for a fresh session**
+- Run `/loop /refactor`. The skill's §0.5 sends you to the Phase 1 queue below
+  before any area; §6b and charter §1b govern what you do when a worker finds a
+  defect; §1's last bullet is why you must not stage a file a live worker is
+  editing (this session did that once and absorbed a worker's edits into an
+  unrelated commit).
+- Two other local Claude sessions were live in this tree during this one. Check
+  `ListAgents` before assuming an uncommitted change is yours.
+- The `## Resolved` section of `docs/known_issues.md` now has TWO formats — an
+  older table and two newer `### … — RESOLVED` entries added by this session.
+  Cosmetic, but pick one before it becomes three.
 
-**KI-33's entry was wrong on every claim it made.** Not a resume defect (the
-journal holds one `proc_committed` per proc at `iter=0`, and a run with no
-crash at all reproduces it); not "B1/B2, C and the join each run twice" (every
-node ran ONCE — the root's released batch was doubled); and its "a fix must
-journal-gate the resume" would have produced nothing. The real mechanism:
-`collectEdgeOutputs` emitted one `Edge` output per CONSUMER, which is right for
-a stream (the core routes on `(edge, key)` and reads the consumer) and wrong
-for a workflow stage (`fold_effect` discards the consumer and collects each
-output as one released value, then the driver fans out itself). Entry rewritten
-and moved to *Resolved*.
 
-**Two P1s found on the way, both filed with a reproduction, neither fixed:**
-- **KI-55** — a host SDK applies an inter-procedure edge transform TWICE. Now
-  reproduced on the STREAM path too (`"=M:M:mid:v"`), pinned by a
-  characterization test that asserts the defective value on purpose so a silent
-  fix is impossible. Read-established in Node, Python and PHP as well; Ruby
-  declares no transform surface and Rust evaluates once.
-- **KI-57** — UDS socket paths overflow `sun_path`. **Supersedes KI-17's
-  triage**, which had closed it as "never true, worst case 107 bytes": measured
-  1306 / 1258 / 249 occurrences across three full runs today, and it kills a
-  test when the id reaches 40 chars. Same generator as KI-23, different wall.
+**Phase 1 row 3, `close-prometheus-label-coercion`, is DONE** — `55f32234` +
+the close-out commit; archived, `observability-export` amended. Slice 124
+passed, full suite 1857, verified by the supervisor.
 
-**PROCESS FAILURE, recorded so it does not recur.** The supervisor's commit
-`56b73109` swept this worker's uncommitted `docs/known_issues.md` edits: it
-carries the KI-33 rewrite and the KI-55 entry under a message about QUIC. Cause:
-the supervisor staged a file the live worker was editing. Charter §1b REQUIRES
-a worker to write findings into `known_issues.md`, and the supervisor files its
-own there too, so that file is a guaranteed collision point. The rule is now in
-the skill's §1: while a worker runs, read `git diff <file>` before staging it
-and stage only what is provably yours. Nothing was lost.
+**KI-45 was filed P2 "waiting on one new source" and was a live P1.** Two
+`TelemetryBridge` paths carry a non-scalar today (`wal_backpressure`'s 3-tuple
+`entity_id`, `operative_forward.retry`'s tuple `reason`), and the crash wiped
+**five** ETS tables — every metric since boot — then four crashes in a measured
+376 ms took the whole Export supervisor down. Three further failures were found
+that do NOT raise, which a crash-only fix would have left standing.
+
+**The change measured itself and the measurement changed it, twice.**
+- The obvious regex sanitizer costs **9.7 µs per label name** in compiled module
+  code — 12× a byte comprehension, and a module-attribute regex was no better.
+  Caught before shipping; without it the funnel would have been ~40 µs/emit.
+- The first cut still cost **4.85×** HEAD. Sent back for a bounded fix rather
+  than filing a regression the change itself introduced: a validity fast path
+  (no allocation when the name is already legal) plus a list scan for the
+  collision check brought it to **1216 → 2166 ns/emit, 1.78×**, winning back
+  ~65 % over three runs.
+- The fast path had a trap the worker caught: `__foo` is grammatical under
+  `[a-zA-Z_][a-zA-Z0-9_]*` but must NOT fast-path, because collapsing the
+  reserved `__` run is part of the rule — fast-pathing it would have silently
+  reopened the `__truncated__` forgery the change closes. Proved over 45,036
+  inputs, 0 disagreements.
+
+**Two task texts were refuted by doing them**, both now corrected in place:
+"the OTLP body is valid UTF-8" is not an assertion that can exist (a fixed64
+timestamp guarantees every body is invalid UTF-8; 0 of 20 on both signal kinds),
+and the named bench emits against zero interested sinks so it cannot measure
+this funnel at all.
+
+Found and filed, not fixed: **KI-58** (the metric NAME is never checked against
+the exposition grammar — deliberately a different fix, since a name is a
+developer-chosen atom that belongs refused at registration) and **KI-60** (two
+different JSON *value* rules shipping in one tree, which disagree).
+
+Areas 0a, 0b, 1s, 1, 2, 3 done. **Next: row 3.5, `fix-opaque-module-names`** —
+the user's queued item, see its detail block below.
 
 ### The one verdict that outlives this area
 
@@ -763,13 +785,13 @@ entry before briefing a worker; do not re-derive what triage already measured.
 
 | # | Change | Entries | Why grouped |
 |---|---|---|---|
-| 1 | `fix-java-workflow-resume-duplication` | KI-33 (P1) | Investigation first — 17/19 fail on both transports, `b` and `c` each arrive twice. **Blocks area 4.** |
+| 1 | ~~`fix-java-workflow-resume-duplication`~~ → `java-diamond-resume` | KI-33 (P1) | **DONE** — `4de341b5` + `f2c7868d`, archived. Its filed diagnosis was refuted in both halves: nothing was re-run (one `proc_committed` per proc at `iter=0`) and it is not a resume defect at all (the same 9 payloads arrive with no crash). The mechanism was `collectEdgeOutputs` emitting one `Edge` output per CONSUMER — right for a stream, wrong for a workflow stage. Java e2e 17/21 → 21/21. **Area 4 is unblocked.** |
 | 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48, KI-49, KI-50 | **DONE** — `21185253` + the close-out commit. Absorbed all three: they were believed to be the only sources keeping the uncaptured-log gate from reporting. They were not — see rows 7 and 8. |
-| 3 | `close-prometheus-label-coercion` | KI-45, KI-46 (P2/P3) | One family — the `to_string/1` shape `close-otlp-export-crash` removed from the codec, still standing on the other exporter. |
+| 3 | `close-prometheus-label-coercion` | KI-45 (P1), KI-59 | **DONE** — `55f32234` + close-out. KI-46 deferred by name (`close-otlp-typed-attributes`): typing the values would have destroyed this change's only control. |
+| 3.5 | `fix-opaque-module-names` | KI-10 | **SURVEYED, proposal written and `--strict` valid, NOT reviewed.** 3 renames, 4 folds, 260 keeps; one change in three ordered commits. The survey refuted this board's sequencing claim by an order of magnitude — see the detail block below. |
 | 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | Tests that lie or leak. KI-49 and KI-50 went to row 2's change; KI-54 arrives here — a `ForwardWorker` retry outliving its test, the same shape as the KI-49 row 2 closed, so row 2's await pattern is the candidate fix. |
 | 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
 | 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
-| 3.5 | `fix-opaque-module-names` | KI-10 | **Queued 2026-08-30 by the user, runs after row 3.** Adopt credo's `AliasUsage`, disable `ParenthesesOnZeroArityDefs`, and fix the module names the first check exposes. Survey first — see below. |
 | 6.5 | `close-transport-send-buffer-loss` | **KI-3 (P1), KI-56 (P1)** | **Queued 2026-08-30 by the user; proposal WRITTEN and `--strict` valid.** One watermark gate replaces UDS's silent drop and gives QUIC the bound it never had; the sender parks a BEAM process, never a scheduler thread. Four knobs (both watermarks, the gate's fallback interval, credit's `PARK_TIMEOUT`). Does NOT replace the credit system — see the KI-3 entry above for why they compose. |
 | 7 | `close-input-log-syncer-blindness` | **KI-53 (P1)** | **New, found 2026-08-30 by the gate this programme just proved.** Not a log line: `InputLog` cannot tell that its fsync companion died, and keeps sending to a dead pid. Design question — re-spawn the syncer, or stop the log so its supervisor restarts the pair. Needs its own test; do NOT answer it with a `{:EXIT, _, _}` clause that returns `{:noreply, state}`. |
 | 8 | — | the gate itself | Not a change: after rows 4 and 7 land, re-run the batch-5 proof (a scratch uncaptured `Logger.error` must turn the gate red while `mix test` exits 0) and confirm two full runs clean. Only then is the gate reliable, and only then does `code-quality-baseline`'s new SHALL hold in practice. |
@@ -786,49 +808,72 @@ entry before briefing a worker; do not re-derive what triage already measured.
 
 ### Row 3.5 — `fix-opaque-module-names`, in detail
 
-**The user's instruction**: adopt `AliasUsage`, fix the code, and fix every
-opaque or confusing module name it exposes — either rename to a proper module or
-fold the code into its parent and call it there. Which names deserve which is
-the implementer's judgement; some submodules are valid as they stand.
+**SURVEYED 2026-08-31. The proposal is written and `--strict` valid**
+(`openspec/changes/fix-opaque-module-names/` — 817-line `design.md` carrying
+the 267-row table, `proposal.md`, `tasks.md`, a `code-quality-baseline` delta).
+That directory is gitignored, so it exists on this machine only and appears in
+no diff. **It has not been supervisor-reviewed** — the next session reviews it
+before implementing.
 
-**The measurement that shapes it (259 modules in `lib/`).** Last-segment
-collisions: `Supervisor` ×7, `Store` ×4, `Stream` ×3, `Snapshot` ×3,
-`Observability` ×3, and `Registry`, `Server`, `Source`, `Sink`, `Telemetry`,
-`Metrics`, `Manifest`, `Retention` ×2 each. The tree also uses Elixir's OWN
-`Registry` by bare name in 7 places (`{:via, Registry, …}`).
+**The survey refuted this board's own analysis. The corrections are the point,
+so they are recorded before the plan.**
 
-**So the work is the OPPOSITE order to the check.** `AliasUsage` forces the last
-segment, and for a large fraction of these the last segment is neither unique
-nor self-describing — `Flezha.State.Registry` **cannot** be aliased in a file
-using the stdlib `Registry` at all, and `Kafka.Telemetry` aliased to `Telemetry`
-is worse than the full name. Enabling the check wholesale would INCREASE the
-confusion it is being adopted to remove. **The naming pass is a prerequisite
-for the alias pass, not a companion to it.**
+- **The sequencing claim was wrong by an order of magnitude.** This board said
+  the naming pass was a prerequisite for the alias pass because "for a large
+  fraction of these the last segment is unacceptable". Measured: **51 of 653
+  sites (7.8 %) over 8 modules, and 0 of 653 mechanically blocked.** The cause
+  is that credo's `AliasUsage` ships `excluded_lastnames` already covering
+  `Registry`, `Stream`, `Supervisor`, `IO`, `Task`, `Application` — **credo
+  enforces rule 2 for us and never asks for those renames.**
+- **"The tree uses Elixir's own `Registry` by bare name in 7 places, so
+  `Flezha.State.Registry` cannot be aliased there" was wrong.** 7 occurrences in
+  5 files, and **none of them references `Flezha.State.Registry`**. Zero actual
+  conflict.
+- **The collision list was incomplete**: 19 segments over 47 modules, not 13
+  over 35 — `State`×3 and `Postgres`/`Extension`/`Counters`/`Codec`/`Backoff`×2
+  were missed.
+- Counts: `ParenthesesOnZeroArityDefs` **431** not 430; KI-10's total **1463**
+  not 1461; the residue to ratchet **379** not 378. Correct as filed: **259**
+  modules, **653** `AliasUsage` sites.
 
-**The rule for "does this submodule deserve to exist"** — all three, or it is
-renamed or folded:
-1. Its last segment is unique across the tree and means something without its
-   parent. `Plugin.Provider.Kafka.ProducerWorker` passes; `Kafka.Telemetry`
-   fails.
-2. It does not collide with a stdlib name in use — `Registry`, `Stream`,
-   `Supervisor`, `Server`, `IO` fail on sight.
-3. It earns its own file. Otherwise fold into the parent — **but** folding grows
-   the parent and charter §7 caps a file at 800 lines, so for a parent near the
-   ceiling rename is the only option, not fold. Name that constraint per module
-   rather than discovering it late.
+**The durable question is settled: YES, and it does not block.** An Elixir module
+name IS written verbatim into durable state — `operative_manager.ex:789` puts
+`Flezha.Operative.Overwatch` in the cspec `start` MFA, and the stored term
+carries `%Builder{}` and `%Plugin{}` struct tags, landing in
+`<cspec_root>/<hub_id>/registry.dets`. **13 modules are pinned** (those three
+plus the ten providers in `config/config.exs:15`–`:31`). None of them is a
+rename candidate, so **no rename here is a migration and no `flz reset` is
+needed.** Every other durable surface was opened and is clean. Honesty note: no
+local `.dets` holds an `Elixir.Flezha` atom today, so the verdict rests on the
+read and write paths, not on a live sample. The tree already half-knows —
+`declared_manifest.ex:75` decodes WITHOUT `[:safe]` where `manifest.ex:111`
+decodes with it, and a failure is silent (`extension/table.ex:177` logs a
+warning and still reports `:running`).
 
-**Two things the survey settles BEFORE anything moves:**
-- **Durable module names.** Plugin provider modules are persisted in the durable
-  cspec row. If any stored value is a module name, a rename is a MIGRATION, not
-  a rename, and breaks restore of existing state. Establish this first; it
-  decides whether the rename list is safe or needs a compatibility path.
-- **The rename list itself**, classified against the three rules, shown to the
-  user before it is applied.
+**The plan: 3 renames, 4 folds, 260 keeps, one change in three ordered commits.**
+Renames: `State.Registry`→`State.Paths` (it is path resolution, 601 LOC so
+folding is impossible, and `state/supervisor.ex:148` writes a parenthetical to
+disambiguate it today), `AuthZ.Store`→`AuthZ.DetsStore`, `SDK.Backoff`→
+`SDK.Jitter`. Folds: `Service.Parser`→`Identificator`,
+`Plugin.Provider.Metrics`→`State.Metrics`, and the two `*.Telemetry` modules
+into their parents. 24 further modules take a written-down `as:` rule instead.
 
-**Sequencing**: this runs as its own change immediately after row 3 and BEFORE
-area 5a. Areas 5a–5e refactor exactly these modules; applying a global naming
-rule piecemeal per area produces the inconsistency the change exists to remove,
-and doing it after them means the work twice with invalidated baselines.
+Order — renames, then aliases, then `.credo.exs` + ratchet — because 8 of the 51
+`as:` decisions change if the rename lands after, and because commit 1's blast
+radius reaches `openspec/specs` (14 refs for `State.Registry` alone) and `docs/`
+where the compiler is blind; burying that under ~650 alias lines makes the risky
+half unreviewable. The ratchet target is 379 but must be RECORDED from a
+measured post-pass run, never the arithmetic — ~650 new aliases raise
+`AliasOrder` unless inserted alphabetically.
+
+**Two items the survey flagged for the user, deliberately not fixed:**
+`Plugin.Provider.Metrics` is **dead** (zero callers for either public function,
+and its moduledoc's `flz state list` claim is false), and `AuthZ.DetsStore` is
+shared code in the wrong layer (`Schedule.Store` depends on it).
+
+**New finding**: the tree already answers the ambiguity two ways at once —
+`as: ObsRegistry` in 7 files, `as: StateRegistry` in 1, bare in 11. One
+question, two answers.
 
 ### Phase 2 — the refactor resumes
 

@@ -123,14 +123,13 @@ defmodule Flezha.Observability.AuditLog.Codec do
 
   defp stringify_map(map) when is_map(map) do
     Enum.into(map, %{}, fn {k, v} ->
-      {stringify_key(k), stringify_value(v)}
+      {Signal.metadata_text(k), stringify_value(v)}
     end)
   end
 
-  defp stringify_key(k) when is_atom(k), do: Atom.to_string(k)
-  defp stringify_key(k) when is_binary(k), do: k
-  defp stringify_key(k), do: inspect(k)
-
+  # `stringify_value/1` is deliberately NOT `Signal.metadata_text/1`: JSON
+  # carries typed values, so recursing into a list or a map is right here and
+  # wrong on a wire that can only hold text.
   defp stringify_value(v)
        when is_binary(v) or is_number(v) or is_boolean(v) or is_nil(v),
        do: v

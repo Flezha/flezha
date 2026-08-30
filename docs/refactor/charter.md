@@ -309,6 +309,24 @@ the machine every 30–60 minutes** and kills what it started — zombies, orpha
 `cargo`/`rustc`/`criterion`/`beam.smp`/`mix`/`mvn` processes, polling loops,
 containers. The commands are in `CLAUDE.md` under "Machine hygiene".
 
+**A session hands over with no worker alive.** Ending a session — or declaring a
+handover point — while a subagent runs leaves a worker editing this tree that
+the successor cannot see or address: `ListAgents` reports peer sessions with a
+busy/idle flag and never their subagents. The check is that `ListAgents` shows
+no `Subagents` section at all; anything still listed is stopped first. Prefer
+letting a worker finish: its analysis lives in a context that dies with it, and
+its output under `openspec/changes/` is gitignored, so a kill can destroy work
+that appears in no diff. A worker killed mid-work has its remaining state
+written to the board, because that is the successor's only trace of it.
+
+**`ps` cannot see a worker.** A subagent runs inside the `claude` process, so
+every OS-level check below is blind to it: an agent burning time and tokens
+appears nowhere in `ps`, in the load average, or in a file listing. Agent-level
+hygiene is a separate instrument — `ListAgents`, read for elapsed time and spend
+— and it belongs at the START of a sweep, not as an afterthought. A supervisor
+that only runs `ps` is checking the half of the machine its workers do not live
+in.
+
 **Attribute the CPU, do not just count the leaks.** A sweep that greps for known
 leak shapes finds only the leaks it already knows. Every sweep therefore also
 sorts by CPU and rules each consumer *logical* or *leaked*, by name:

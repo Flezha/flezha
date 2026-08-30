@@ -82,6 +82,44 @@ defmodule Flezha.Observability.Signal do
     }
   end
 
+  @doc """
+  Render one metadata key or value as the text an encoder can put on a wire.
+
+  A signal's metadata holds arbitrary terms — the Logger bridge alone attaches
+  a map and an `{m, f, a}` tuple to every log event, and the WAL writer a
+  3-tuple entity id. `to_string/1` cannot carry them: it raises for a map, a
+  tuple or a pid, and for a list it returns the binary of the elements,
+  silently changing what the term says. So only the types with an unambiguous
+  `String.Chars` rendering take that route; everything else is inspected, lists
+  included. The limits are explicit so a long term is never elided into `"..."`
+  and read as complete.
+
+  A binary is text only if it is valid UTF-8. The Prometheus scrape response
+  declares `charset=utf-8` and protobuf defines a `string` field as UTF-8, so a
+  binary that is not valid UTF-8 is inspected too — `<<255, 0, 254>>` — rather
+  than passed through to corrupt the body it lands in.
+
+  `nil` is the one atom whose `String.Chars` rendering is not its name: it is
+  `""`, which on either wire means a key with no name at all, colliding with a
+  genuine `""` key. It renders `"nil"`.
+
+  `inspect/2` cannot raise — `Inspect.Opts` defaults to `safe: true` — so this
+  function is total for every term.
+  """
+  @spec metadata_text(term()) :: String.t()
+  def metadata_text(term) when is_binary(term) do
+    if String.valid?(term), do: term, else: inspect_term(term)
+  end
+
+  def metadata_text(nil), do: "nil"
+
+  def metadata_text(term) when is_atom(term) or is_integer(term) or is_float(term),
+    do: to_string(term)
+
+  def metadata_text(term), do: inspect_term(term)
+
+  defp inspect_term(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)
+
   defp validate_kind!(kind) when kind in @kinds, do: :ok
 
   defp validate_kind!(kind) do

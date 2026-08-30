@@ -75,6 +75,25 @@ the areas.
 ## 1. Invariants
 
 - **One worker at a time**, always. Shared working tree.
+- **Never end a session with a subagent alive.** Before you declare a handover
+  point, report "nothing outstanding", or stop the loop, run `ListAgents` and
+  confirm there is **no `Subagents` section at all** — that is the check, not
+  your memory of what you spawned. `TaskStop` anything still listed.
+  A successor session cannot discover it: `ListAgents` shows peer **sessions**
+  with a busy/idle flag, never their subagents, so an inherited worker is a
+  process editing this tree that nobody can see or address. It also breaks the
+  one-worker invariant above, silently, from the successor's first command.
+- **Prefer letting a worker finish over killing it.** A worker minutes from
+  reporting has its whole analysis in a context that dies with it, and its
+  output under `openspec/changes/` is gitignored, so a kill can destroy work
+  that appears in no diff and no `git status`. On 2026-08-31 a survey was killed
+  one minute before it wrote its files and cost a full re-derivation of a
+  267-row table. If you must kill one mid-work, **record on the board what state
+  that leaves** — which files exist, which do not, and whether the survey must
+  be re-run — because that is the only trace the successor gets.
+- **A peer session marked `busy` may hold a worker in this tree.** Check
+  `ListAgents` before assuming an uncommitted change is yours, and before
+  spawning a worker of your own into files that peer may be editing.
 - **Fresh worker per role** (`subagent_type: "general-purpose"`), never a fork:
   it must read the repo, not inherit your reading.
 - **Verification means reading the repo**, never re-reading the report.
@@ -204,6 +223,16 @@ Fail → `SendMessage` to the same worker with the exact findings; row stays
 While a worker runs, the fallback wake-up is **600 s** (never longer). Every
 wake-up is a stall check, not a status note:
 
+0. **`ListAgents` — `ps` CANNOT SEE A WORKER.** A subagent is a conversation
+   inside the `claude` process, not an OS process: `ps` shows one `claude` per
+   session and nothing about what it is running or spending. Every heartbeat
+   therefore starts with `ListAgents` and reads the worker's **elapsed time and
+   token spend**, not just "is it alive". An agent whose spend is climbing while
+   its ticks and its files are not is the agent-level stall, and it is invisible
+   to every check below. On 2026-08-31 a survey worker was seen at 8m41s and
+   240 k tokens with its displayed activity "cleaning scratchpad temp files" —
+   a task worth seconds — and this supervisor had run `ListAgents` twice all
+   session, never as a heartbeat instrument.
 1. `ps -eo pcpu,etime,pid,ppid,cmd --sort=-pcpu | head -12` plus `uptime` — is
    anything of the worker's running, and **is every top consumer explainable?**
    Rule each one logical or leaked by name; a grep for known leak shapes finds

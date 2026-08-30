@@ -2816,6 +2816,7 @@ defmodule Flezha.Service.CliManager do
   # forward to `Flezha.Service.Observability`. Future `flz observe ...`
   # subcommands call these.
 
+  alias Flezha.Observability.Signal
   alias Flezha.Service.Observability, as: ObsSvc
 
   def observability_list_sources(opts \\ []) do
@@ -3021,9 +3022,13 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp stringify_keys(map) when is_map(map) do
-    Enum.into(map, %{}, fn {k, v} -> {to_string(k), inspect_or_pass(v)} end)
+    Enum.into(map, %{}, fn {k, v} -> {Signal.metadata_text(k), inspect_or_pass(v)} end)
   end
 
+  # `inspect_or_pass/1` is deliberately NOT `Signal.metadata_text/1`, for the
+  # same reason `AuditLog.Codec.stringify_value/1` is not: JSON carries typed
+  # values, and collapsing onto the text rule would render every number and
+  # boolean in `flz observe tail --json` as a string.
   defp inspect_or_pass(v) when is_binary(v) or is_number(v) or is_boolean(v), do: v
   defp inspect_or_pass(v) when is_atom(v), do: Atom.to_string(v)
   defp inspect_or_pass(v), do: inspect(v)

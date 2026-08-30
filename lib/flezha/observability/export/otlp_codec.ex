@@ -20,11 +20,13 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   the upstream `.proto` definitions.
 
   Attribute keys and values cross as OTLP strings, and a signal's metadata
-  holds arbitrary terms. Every one of them is representable: a binary is used
-  unchanged, an atom, integer or float takes its `String.Chars` rendering, and
-  anything else — a map, a tuple, a pid, **a list** — is inspected in full.
-  Encoding therefore never raises on the shape of an attribute, and never
-  silently re-encodes one. See `attribute_string/1`.
+  holds arbitrary terms. Every one of them is representable: a UTF-8 binary is
+  used unchanged, an atom, integer or float takes its `String.Chars` rendering,
+  and anything else — a map, a tuple, a pid, **a list**, a binary that is not
+  valid UTF-8 — is inspected in full. Encoding therefore never raises on the
+  shape of an attribute, never silently re-encodes one, and never puts bytes a
+  protobuf `string` field cannot carry on the wire. See
+  `Flezha.Observability.Signal.metadata_text/1`.
   """
 
   import Bitwise
@@ -313,26 +315,14 @@ defmodule Flezha.Observability.Export.OtlpCodec do
 
   defp kv_attribute(key, value) do
     # KeyValue { key = 1, value = 2 (AnyValue) }
+    # An OTLP attribute key and value both cross the wire as strings, and a
+    # signal's metadata holds arbitrary terms; `Signal.metadata_text/1` states
+    # the one rule that turns any of them into text.
     [
-      field(1, @wire_length_delim, encode_string(attribute_string(key))),
-      field(2, @wire_length_delim, encode_message(any_value_string(attribute_string(value))))
+      field(1, @wire_length_delim, encode_string(Signal.metadata_text(key))),
+      field(2, @wire_length_delim, encode_message(any_value_string(Signal.metadata_text(value))))
     ]
   end
-
-  # An OTLP attribute key and value both cross the wire as strings, and a
-  # signal's metadata holds arbitrary terms: the Logger bridge alone attaches a
-  # map and an {m, f, a} tuple to every log event. `to_string/1` cannot carry
-  # them — it raises for a map, a tuple or a pid, and for a list it returns the
-  # binary of the elements, silently changing what the attribute says. So only
-  # the types with an unambiguous String.Chars rendering take that route;
-  # everything else is inspected, lists included. The limits are explicit so a
-  # long term is never elided into "..." and read as complete.
-  defp attribute_string(term) when is_binary(term), do: term
-
-  defp attribute_string(term) when is_atom(term) or is_integer(term) or is_float(term),
-    do: to_string(term)
-
-  defp attribute_string(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)
 
   defp any_value_string(value) do
     # AnyValue { string_value = 1 }

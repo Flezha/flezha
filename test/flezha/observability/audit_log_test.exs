@@ -104,6 +104,65 @@ defmodule Flezha.Observability.AuditLogTest do
     test "decode rejects non-JSON lines" do
       assert {:error, _} = Codec.decode("not json\n")
     end
+
+    test "a metadata key of every shape renders as it did before the shared rule" do
+      # The codec's own `stringify_key/1` was deleted onto
+      # `Signal.metadata_text/1`. These are the renderings it produced, pinned
+      # as literals so the deletion is proved free rather than assumed.
+      signal =
+        Signal.new(%{
+          kind: :event,
+          source: :observability_service,
+          name: :key_shapes,
+          metadata: %{
+            :a_key => 1,
+            "b key" => 1,
+            42 => 1,
+            1.5 => 1,
+            {:x, :y} => 1,
+            [1, 2, 3] => 1,
+            ~c"cl" => 1,
+            nil => 1
+          }
+        })
+
+      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+
+      assert decoded["metadata"] |> Map.keys() |> Enum.sort() ==
+               Enum.sort([
+                 "a_key",
+                 "b key",
+                 "42",
+                 "1.5",
+                 "{:x, :y}",
+                 "[1, 2, 3]",
+                 ~s(~c"cl"),
+                 "nil"
+               ])
+    end
+
+    test "a key past inspect's default limit is rendered whole, not elided" do
+      # The shared rule inspects with `limit: :infinity, printable_limit:
+      # :infinity`; the deleted `stringify_key/1` used bare `inspect/1`, whose
+      # default `:limit` is 200. This is the one deliberate widening the move
+      # carries into the audit log — a long key reads complete instead of
+      # ending in "...".
+      long = Enum.to_list(1..250)
+
+      signal =
+        Signal.new(%{
+          kind: :event,
+          source: :observability_service,
+          name: :long_key,
+          metadata: %{long => 1}
+        })
+
+      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+      [rendered] = Map.keys(decoded["metadata"])
+
+      assert rendered == inspect(long, limit: :infinity, printable_limit: :infinity)
+      refute rendered =~ "..."
+    end
   end
 
   # ---------- Index ----------

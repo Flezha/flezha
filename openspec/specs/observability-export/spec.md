@@ -149,10 +149,17 @@ telemetry: the Logger bridge attaches a map and a tuple to every log signal it
 forwards, and a signal's metadata is validated as a map without any constraint
 on its keys, so a key is as free in its shape as a value.
 
-A term that is already a binary SHALL be used unchanged. Any term that is not a
-binary, atom, integer or float SHALL be rendered by inspection, **lists
-included** — a list SHALL NOT be converted with `to_string/1`, which returns the
-binary of its elements and silently changes what the attribute says.
+A term that is already a binary SHALL be used unchanged **where that binary is
+valid UTF-8**. A binary that is not SHALL be rendered by inspection: protobuf
+defines a `string` field as UTF-8, so passing arbitrary bytes through produces a
+message a strict collector rejects. Any term that is not a binary, atom, integer
+or float SHALL be rendered by inspection, **lists included** — a list SHALL NOT
+be converted with `to_string/1`, which returns the binary of its elements and
+silently changes what the attribute says.
+
+`nil` SHALL render as `nil`. It is the one atom whose `String.Chars` rendering
+is not its own name but the empty string, which as a key names nothing at all
+and collides with a genuine empty key.
 
 The same rule SHALL apply to keys and to values. Two rules would be the same
 question answered twice, and the crash and the corruption both reach the encoder
@@ -160,6 +167,13 @@ through either half.
 
 The rendering SHALL NOT elide. Where a limit applies it SHALL be stated
 explicitly, so a truncated attribute is never mistaken for a complete one.
+
+This rule SHALL be stated in exactly one place and reached by every renderer of
+a signal's metadata — the OTLP encoder, the Prometheus registry, the audit log
+and the `flz observe tail` renderer — so they cannot drift into different
+answers to one question. A renderer whose output format carries typed values
+MAY keep its own rule for *values*, but SHALL NOT keep its own rule for keys,
+which are text in every one of these formats.
 
 #### Scenario: A bridged log signal encodes
 
@@ -181,13 +195,116 @@ explicitly, so a truncated attribute is never mistaken for a complete one.
 
 #### Scenario: A string attribute is unchanged
 
-- **GIVEN** an attribute whose value is already a binary
+- **GIVEN** an attribute whose value is already a binary and is valid UTF-8
 - **WHEN** it is encoded
 - **THEN** the attribute SHALL be that binary, unmodified
+
+#### Scenario: A non-UTF-8 binary attribute does not reach the wire raw
+
+- **GIVEN** an attribute whose value is a binary that is not valid UTF-8
+- **WHEN** it is encoded
+- **THEN** the attribute's encoded `string` field SHALL be valid UTF-8, and the raw bytes SHALL NOT appear anywhere in the encoded message
+
+#### Scenario: A `nil` key or value renders as its name
+
+- **GIVEN** an attribute whose key or value is `nil`
+- **WHEN** it is encoded
+- **THEN** it SHALL render `nil`, and SHALL NOT render as the empty string
 
 #### Scenario: The exporter survives what it cannot represent typefully
 
 - **GIVEN** a stream of signals carrying values of any term type
 - **WHEN** they are exported
 - **THEN** the export process SHALL remain alive, and no signal SHALL be dropped for the shape of its attribute values
+
+### Requirement: The Prometheus exposition SHALL be well-formed whatever a metric signal's metadata carries
+
+The Prometheus registry SHALL render a valid text exposition for any `:metric`
+signal, whatever the types and spellings in its metadata map. Recording a signal
+SHALL NOT raise, because the registry owns the exporter's aggregation tables and
+its death discards every counter, gauge and histogram accumulated since boot —
+a loss an operator reads as a counter reset, and one that arrives precisely when
+the system is under the load that makes export worth having.
+
+The terms it receives are ordinary telemetry, not misuse. `Signal.new/1`
+validates that metadata is a map and constrains neither its keys nor its values,
+and the telemetry bridge forwards a `:telemetry` event's metadata map verbatim,
+so a producer's tuple, map, pid, list or arbitrarily-spelled key reaches the
+exporter unchanged.
+
+**Label values.** A value SHALL be rendered by the same rule the OTLP encoder
+uses for an attribute: a valid-UTF-8 binary unchanged, an atom (`nil` as `nil`),
+integer or float by its `String.Chars` rendering, and every other term — lists
+included — by inspection. One rule SHALL serve both exporters; two would be the
+same question answered twice, and the answers would drift.
+
+**Label names.** A rendered label name SHALL match `[a-zA-Z_][a-zA-Z0-9_]*`. A
+name that does not SHALL be sanitized into that grammar rather than refused, so
+that a key following a foreign convention — dotted OpenTelemetry attribute
+names reach the bridge unchanged — keeps its label instead of disappearing with
+nothing in the output to say so. A malformed name is worse than a rewritten one:
+Prometheus fails the entire scrape on a parse error, so one bad key hides every
+metric the controller exports.
+
+A sanitized name SHALL NOT enter Prometheus's reserved `__` namespace, and SHALL
+NOT be able to forge the registry's own `__truncated__` series.
+
+**Reserved and colliding names.** A rendered series SHALL NOT carry the same
+label name twice. Where a producer's label would collide with one the renderer
+adds itself — `le` on a histogram's bucket lines — the producer's label SHALL be
+dropped. Where two of a signal's own keys sanitize to one name, one SHALL be
+kept deterministically and the rest dropped.
+
+**Visibility.** Every dropped or rewritten label SHALL increment a per-source
+counter readable from the registry. It SHALL NOT emit an event per occurrence:
+the sites that would emit are on the recording path, and telemetry that storms
+under the condition it reports is not observability.
+
+#### Scenario: A metric signal carrying a tuple does not kill the registry
+
+- **GIVEN** the `[:flezha, :state, :wal, :backpressure]` telemetry event, whose metadata carries `entity_id` as an `{operative_class, procedure_id, entity_key}` tuple
+- **WHEN** it reaches the Prometheus registry through the telemetry bridge
+- **THEN** the registry process SHALL remain alive, its aggregation tables SHALL survive, and the metric SHALL appear in the exposition with a readable rendering of the tuple
+
+#### Scenario: Series recorded before an unrepresentable one survive it
+
+- **GIVEN** a counter series already recorded and rendering
+- **WHEN** a later signal carries a value or key of any other term type
+- **THEN** the earlier series SHALL still render with its accumulated value
+
+#### Scenario: A list label value is not re-encoded as its bytes
+
+- **GIVEN** a metric signal whose metadata is `%{l: [1, 2, 3]}`
+- **WHEN** the exposition is rendered
+- **THEN** the label SHALL read as the list, and SHALL NOT be the three-byte binary of its elements
+
+#### Scenario: A label name outside the Prometheus grammar is rewritten, not emitted raw
+
+- **GIVEN** a metric signal whose metadata is keyed by `"http.status_code"`
+- **WHEN** the exposition is rendered
+- **THEN** the rendered label name SHALL match `[a-zA-Z_][a-zA-Z0-9_]*`, and the label's value SHALL still be present
+
+#### Scenario: A producer cannot enter the reserved namespace
+
+- **GIVEN** a metric signal whose metadata key sanitizes to a name beginning with two underscores
+- **WHEN** the exposition is rendered
+- **THEN** the rendered name SHALL carry at most one leading underscore, and SHALL NOT be `__truncated__`
+
+#### Scenario: A histogram never carries two `le` labels
+
+- **GIVEN** a metric signal with `measurements: %{duration_us: 100}` and a metadata key `le`
+- **WHEN** the exposition is rendered
+- **THEN** each bucket line SHALL carry exactly one `le` label, the one the renderer adds
+
+#### Scenario: The exposition body is valid UTF-8
+
+- **GIVEN** a metric signal whose metadata value is a binary that is not valid UTF-8
+- **WHEN** the exposition is rendered
+- **THEN** the whole body SHALL be valid UTF-8, as the `charset=utf-8` content type it is served with declares
+
+#### Scenario: The exporter survives a flapping producer
+
+- **GIVEN** a producer emitting signals the exporter cannot represent typefully, faster than the export supervisor's restart intensity
+- **WHEN** they are recorded
+- **THEN** the export supervisor and all its children SHALL remain alive
 

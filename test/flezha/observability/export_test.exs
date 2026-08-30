@@ -57,7 +57,7 @@ defmodule Flezha.Observability.ExportTest do
       Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       {body, _series_count} = PrometheusRegistry.render()
-      text = IO.iodata_to_binary(body)
+      text = assert_valid_exposition(body)
 
       assert text =~ "_requests"
       assert text =~ ~s(path="/x")
@@ -95,7 +95,7 @@ defmodule Flezha.Observability.ExportTest do
       Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       {body, _} = PrometheusRegistry.render()
-      text = IO.iodata_to_binary(body)
+      text = assert_valid_exposition(body)
       assert text =~ "_rss_bytes"
       assert text =~ " 200\n"
       refute text =~ " 100\n"
@@ -123,7 +123,8 @@ defmodule Flezha.Observability.ExportTest do
 
       Flezha.Observability.TestSinks.settle(PrometheusRegistry)
       {body, _} = PrometheusRegistry.render()
-      assert IO.iodata_to_binary(body) =~ "# TYPE " <> Atom.to_string(source) <> "_flag gauge"
+      text = assert_valid_exposition(body)
+      assert text =~ "# TYPE " <> Atom.to_string(source) <> "_flag gauge"
     end
 
     test "histogram bucketing" do
@@ -150,7 +151,7 @@ defmodule Flezha.Observability.ExportTest do
       Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       {body, _} = PrometheusRegistry.render()
-      text = IO.iodata_to_binary(body)
+      text = assert_valid_exposition(body)
 
       assert text =~ "# TYPE " <> Atom.to_string(source) <> "_fsync_tick histogram"
       assert text =~ "_fsync_tick_bucket"
@@ -183,10 +184,245 @@ defmodule Flezha.Observability.ExportTest do
 
       Flezha.Observability.TestSinks.settle(PrometheusRegistry)
       {body, _} = PrometheusRegistry.render()
-      text = IO.iodata_to_binary(body)
+      text = assert_valid_exposition(body)
 
       assert text =~ "__truncated__=\"true\""
       assert PrometheusRegistry.truncation_count(source) > 0
+    end
+  end
+
+  describe "PrometheusRegistry label coercion" do
+    setup do
+      start_supervised!(PrometheusRegistry)
+      :ok
+    end
+
+    test "a tuple metadata value renders instead of killing the registry" do
+      # The shape two live TelemetryBridge paths carry today: the WAL writer's
+      # 3-tuple entity id, and operative-forward's {:unreachable, _} reason.
+      source = metric_source(:wal_tuple)
+      registry = Process.whereis(PrometheusRegistry)
+
+      text =
+        record_and_render(source, :wal_backpressure, %{value: 1}, %{
+          entity_id: {"order_class", "proc_a", "key-1"},
+          status: :full
+        })
+
+      assert Process.alive?(registry)
+
+      labels = series_labels(text, "#{source}_wal_backpressure")
+      assert labels["entity_id"] == ~s({"order_class", "proc_a", "key-1"})
+      assert labels["status"] == "full"
+    end
+
+    test "the registry owns five ETS tables and a poison signal wipes none of them" do
+      # This is the part of the defect an operator feels: `init/1` creates all
+      # five named tables in the registry process, so its death took every
+      # counter, gauge and histogram since boot with it.
+      healthy = metric_source(:healthy_before)
+      poison = metric_source(:poison_after)
+
+      record_and_render(healthy, :requests, %{count: 1}, %{path: "/x"})
+      record_and_render(poison, :backpressure, %{value: 1}, %{entity_id: {:a, :b, :c}})
+
+      for tab <- [
+            :flezha_prom_counters,
+            :flezha_prom_gauges,
+            :flezha_prom_histograms,
+            :flezha_prom_label_index,
+            :flezha_prom_registry_counters
+          ] do
+        assert :ets.whereis(tab) != :undefined, "#{tab} was destroyed"
+      end
+
+      {body, _} = PrometheusRegistry.render()
+      text = assert_valid_exposition(body)
+      assert series_line(text, "#{healthy}_requests") =~ ~s(path="/x")
+    end
+
+    test "a list value reads as the list, never as the binary of its bytes" do
+      source = metric_source(:list_value)
+      text = record_and_render(source, :subject, %{count: 1}, %{l: [1, 2, 3]})
+
+      assert series_line(text, "#{source}_subject") =~ ~s(l="[1, 2, 3]")
+      refute String.contains?(text, <<1, 2, 3>>)
+    end
+
+    test "a non-UTF-8 binary value leaves the body valid UTF-8" do
+      # The Prometheus half of the UTF-8 clause. `prometheus_http.ex` declares
+      # charset=utf-8 on the scrape response.
+      source = metric_source(:utf8_value)
+      raw = <<0xFF, 0x00, 0xFE>>
+      text = record_and_render(source, :subject, %{count: 1}, %{v: raw})
+
+      assert String.valid?(text)
+      assert :binary.match(text, raw) == :nomatch
+      assert series_line(text, "#{source}_subject") =~ ~s(v="<<255, 0, 254>>")
+    end
+
+    test "a malformed label name is sanitized, an already-valid one is untouched" do
+      dotted = metric_source(:dotted)
+      valid = metric_source(:already_valid)
+
+      dotted_text =
+        record_and_render(dotted, :subject, %{count: 1}, %{
+          "a-b c" => "v",
+          "http.status_code" => "200",
+          "3bad" => "d",
+          "" => "e",
+          {:a, :b} => "t"
+        })
+
+      line = series_line(dotted_text, "#{dotted}_subject")
+      # `http.status_code` -> `http_status_code` is the published OTel mapping.
+      assert line =~ ~s(http_status_code="200")
+      assert line =~ ~s(a_b_c="v")
+      assert line =~ ~s(_3bad="d")
+      assert line =~ ~s(_="e")
+      assert line =~ ~s(_a___b_="t")
+      assert PrometheusRegistry.coercion_count(dotted) == 5
+
+      # The negative control: a sanitizer that rewrote everything, or nothing,
+      # would look identical on the cases above.
+      valid_text = record_and_render(valid, :subject, %{count: 1}, %{path: "/x", tenant: "t1"})
+      assert series_line(valid_text, "#{valid}_subject") =~ ~s({path="/x",tenant="t1"})
+      assert PrometheusRegistry.coercion_count(valid) == 0
+    end
+
+    test "a leading underscore run collapses so the reserved __ namespace is closed" do
+      source = metric_source(:reserved)
+
+      text =
+        record_and_render(source, :subject, %{count: 1}, %{"__truncated__" => "forged"})
+
+      line = series_line(text, "#{source}_subject")
+      assert line =~ ~s(_truncated__="forged")
+      refute line =~ ~s(__truncated__="forged")
+    end
+
+    test "an `le` key is dropped on a histogram and kept on a counter" do
+      hist = metric_source(:le_hist)
+      counter = metric_source(:le_counter)
+
+      hist_text = record_and_render(hist, :subject, %{duration_us: 3_000}, %{le: "collide"})
+      bucket = series_line(hist_text, "#{hist}_subject_bucket")
+
+      # `render_histogram_rows/3` appends its own {"le", …}; a second one makes
+      # the exposition invalid, which `assert_valid_exposition/1` now catches.
+      assert bucket =~ ~s(le=")
+      refute bucket =~ "collide"
+      assert PrometheusRegistry.coercion_count(hist) == 1
+
+      counter_text = record_and_render(counter, :subject, %{count: 1}, %{le: "kept"})
+      assert series_line(counter_text, "#{counter}_subject") =~ ~s(le="kept")
+      assert PrometheusRegistry.coercion_count(counter) == 0
+    end
+
+    test "two keys that sanitize alike produce one label, not a duplicate" do
+      source = metric_source(:collide)
+
+      text =
+        record_and_render(source, :subject, %{count: 1}, %{"a-b" => "1", "a.b" => "2", :z => "k"})
+
+      line = series_line(text, "#{source}_subject")
+      # Raw pairs are sorted before sanitizing, so "a-b" wins deterministically.
+      assert line =~ ~s({a_b="1",z="k"})
+      refute line =~ ~s("2")
+      assert PrometheusRegistry.coercion_count(source) == 2
+    end
+
+    test "coercion_count/1 and truncation_count/1 share a table without colliding" do
+      source = metric_source(:both_counters)
+
+      Enum.each(1..10, fn i ->
+        PrometheusRegistry.record(
+          Signal.new(%{
+            kind: :metric,
+            source: source,
+            name: :requests,
+            measurements: %{count: 1},
+            # One key needing coercion, one label value driving cardinality.
+            metadata: %{"a-b" => "x", tenant: "t#{i}"}
+          })
+        )
+      end)
+
+      TestSinks.settle(PrometheusRegistry)
+
+      # The budget above is 50, so nothing truncates; the bare-`source` key
+      # must still read 0 and not pick up the coercion tuple's count.
+      assert PrometheusRegistry.coercion_count(source) == 10
+      assert PrometheusRegistry.truncation_count(source) == 0
+    end
+  end
+
+  describe "Export.Supervisor under poison signals" do
+    setup do
+      prev = Application.get_env(:flezha, :observability_export, [])
+
+      Application.put_env(
+        :flezha,
+        :observability_export,
+        Keyword.merge(prev,
+          prometheus_enabled: true,
+          prometheus_port: 0,
+          prometheus_bind: "127.0.0.1",
+          otlp_enabled: false
+        )
+      )
+
+      on_exit(fn -> Application.put_env(:flezha, :observability_export, prev) end)
+      :ok
+    end
+
+    test "four poison signals inside the restart window leave every child alive" do
+      # Driven, not inferred: four registry crashes in ~0.5 s exceed
+      # `Supervisor.init/2`'s default 3-in-5 s and took the listener, the sink
+      # and the registry down with the supervisor — export dying exactly when
+      # back-pressure means an operator needs it.
+      #
+      # Started unnamed via the module's own `init/1`, so this is the real
+      # child list and the real restart intensity; the app's own
+      # Export.Supervisor holds the registered name with zero children.
+      # `restart: :temporary` so a death is observable rather than papered
+      # over by ExUnit's own supervisor restarting it.
+      sup =
+        start_supervised!(%{
+          id: :export_supervisor_probe,
+          start: {Supervisor, :start_link, [Flezha.Observability.Export.Supervisor, []]},
+          type: :supervisor,
+          restart: :temporary
+        })
+
+      ref = Process.monitor(sup)
+      source = metric_source(:flap)
+
+      for {status, i} <- Enum.with_index([:full, :open, :full, :open]) do
+        PrometheusRegistry.record(
+          Signal.new(%{
+            kind: :metric,
+            source: source,
+            name: :wal_backpressure,
+            measurements: %{value: i},
+            metadata: %{entity_id: {"c", "p", "k#{i}"}, status: status}
+          })
+        )
+
+        TestSinks.settle(PrometheusRegistry)
+      end
+
+      refute_receive {:DOWN, ^ref, :process, ^sup, _reason}, 200
+
+      ids =
+        sup
+        |> Supervisor.which_children()
+        |> Enum.map(fn {id, pid, _, _} -> {id, is_pid(pid) and Process.alive?(pid)} end)
+        |> Map.new()
+
+      assert ids[PrometheusRegistry] == true
+      assert ids[PrometheusSink] == true
+      assert ids[PrometheusHttp] == true
     end
   end
 
@@ -247,6 +483,7 @@ defmodule Flezha.Observability.ExportTest do
       Flezha.Observability.TestSinks.settle(PrometheusRegistry)
 
       body = http_get(port, "/metrics")
+      assert_valid_exposition(body)
       assert body =~ "_scrape_e2e_counter"
       assert body =~ ~s(path="/x")
     end
@@ -391,13 +628,31 @@ defmodule Flezha.Observability.ExportTest do
       refute <<1, 2, 3>> in keys
     end
 
+    test "a binary that is not valid UTF-8 never reaches a protobuf string field" do
+      # A protobuf `string` field is defined as UTF-8. The encoded body itself
+      # is NOT a UTF-8 assertion — a fixed64 timestamp makes every OTLP body
+      # invalid UTF-8, clean or not — so what proves it is the attribute read
+      # back out, plus the raw bytes being absent from the body entirely.
+      raw = <<0xFF, 0x00, 0xFE>>
+      body = OtlpCodec.encode_logs([attr_signal(:log, %{v: raw})])
+
+      attrs = log_attributes(body)
+
+      assert attrs["v"] == inspect(raw)
+      assert String.valid?(attrs["v"])
+      assert :binary.match(IO.iodata_to_binary(body), raw) == :nomatch
+    end
+
     test "the encoder represents any term it is handed" do
       meta = %{
         pid: self(),
         ref: make_ref(),
         fun: &OtlpCodec.encode_logs/1,
         struct: %Signal{kind: :log, source: :s, name: :n},
-        nested: %{a: [%{b: {1, 2}}]}
+        nested: %{a: [%{b: {1, 2}}]},
+        # `to_string(nil)` is "", which the `&1 != ""` assertion below catches:
+        # an attribute that names nothing is not an encodable attribute.
+        nil_value: nil
       }
 
       attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, meta)]))
@@ -499,6 +754,111 @@ defmodule Flezha.Observability.ExportTest do
       _ ->
         0
     end
+  end
+
+  # ---------- 4.1 exposition validity ----------
+  #
+  # Asserted over the WHOLE rendered body, not a substring: a malformed label
+  # name or a duplicate one inside a single `{}` fails the entire Prometheus
+  # scrape, so every metric the controller has is lost, not just the bad one.
+  # Substring assertions cannot see either.
+
+  @metric_name_re ~r/^[a-zA-Z_:][a-zA-Z0-9_:]*$/
+  @label_name_re ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+  defp assert_valid_exposition(body) do
+    text = IO.iodata_to_binary(body)
+    assert String.valid?(text), "the exposition body is not valid UTF-8"
+
+    for line <- String.split(text, "\n", trim: true), not String.starts_with?(line, "#") do
+      {name, labels} = parse_series(line)
+
+      assert Regex.match?(@metric_name_re, name),
+             "malformed metric name #{inspect(name)} in #{inspect(line)}"
+
+      keys = Enum.map(labels, fn {k, _v} -> k end)
+
+      for k <- keys do
+        assert Regex.match?(@label_name_re, k),
+               "malformed label name #{inspect(k)} in #{inspect(line)}"
+      end
+
+      assert Enum.uniq(keys) == keys,
+             "duplicate label name in #{inspect(line)}"
+    end
+
+    text
+  end
+
+  defp parse_series(line) do
+    case String.split(line, "{", parts: 2) do
+      [head] ->
+        [name | _] = String.split(head, " ", parts: 2)
+        {name, []}
+
+      [name, rest] ->
+        {name, parse_labels(rest)}
+    end
+  end
+
+  defp parse_labels("}" <> _), do: []
+
+  defp parse_labels(rest) do
+    [key, ~s(") <> quoted] = String.split(rest, "=", parts: 2)
+    {value, tail} = scan_quoted(quoted, "")
+
+    case tail do
+      "," <> more -> [{key, value} | parse_labels(more)]
+      "}" <> _ -> [{key, value}]
+    end
+  end
+
+  defp scan_quoted("\\" <> <<c::utf8, rest::binary>>, acc),
+    do: scan_quoted(rest, acc <> <<c::utf8>>)
+
+  defp scan_quoted(~s(") <> rest, acc), do: {acc, rest}
+
+  defp scan_quoted(<<c::utf8, rest::binary>>, acc), do: scan_quoted(rest, acc <> <<c::utf8>>)
+
+  defp metric_source(prefix) do
+    source = :"#{prefix}_#{:erlang.unique_integer([:positive])}"
+
+    Registry.register_source(%{
+      name: source,
+      kinds: [:metric],
+      flavour: :declarative,
+      cardinality_budget: 50
+    })
+
+    source
+  end
+
+  defp record_and_render(source, name, measurements, metadata) do
+    PrometheusRegistry.record(
+      Signal.new(%{
+        kind: :metric,
+        source: source,
+        name: name,
+        measurements: measurements,
+        metadata: metadata
+      })
+    )
+
+    TestSinks.settle(PrometheusRegistry)
+    {body, _} = PrometheusRegistry.render()
+    assert_valid_exposition(body)
+  end
+
+  defp series_line(text, prefix) do
+    text
+    |> String.split("\n", trim: true)
+    |> Enum.find(&(String.starts_with?(&1, prefix) and not String.starts_with?(&1, "#")))
+  end
+
+  # The rendered value is escaped (`escape_label_value/1`); this reads it back.
+  defp series_labels(text, prefix) do
+    {_name, labels} = text |> series_line(prefix) |> parse_series()
+    Map.new(labels)
   end
 
   defp attr_signal(kind, metadata) do

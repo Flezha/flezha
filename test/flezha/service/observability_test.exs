@@ -3,7 +3,7 @@ defmodule Flezha.Service.ObservabilityTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Service.{CliManager, Observability}
-  alias Flezha.Observability.{Registry, RingBufferSink}
+  alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
 
   setup do
     src = :"obs_svc_test_src_#{:erlang.unique_integer([:positive])}"
@@ -129,5 +129,66 @@ defmodule Flezha.Service.ObservabilityTest do
       {:ok, %{status: :disabled}} = Registry.lookup_source(src)
       assert :ok = CliManager.observability_enable_source(src)
     end
+
+    test "observe tail --json renders a metadata key of any shape", %{src: src} do
+      # `stringify_keys/1` was a fourth copy of the term->string decision and
+      # applied `to_string/1` to the KEY: a tuple key raised
+      # Protocol.UndefinedError in the CLI, a list key was silently re-encoded
+      # as the binary of its bytes, and a non-UTF-8 binary key made
+      # `Jason.encode!/1` raise. All three now go through the shared rule.
+      signal =
+        Signal.new(%{
+          kind: :event,
+          source: src,
+          name: :tail_probe,
+          measurements: %{count: 1},
+          metadata: %{
+            {:a, :b} => 1,
+            [1, 2, 3] => 2,
+            <<0xFF, 0x00, 0xFE>> => 3,
+            nil => 4,
+            :ok_key => "v"
+          }
+        })
+
+      json = capture_tail_json(src, signal)
+
+      assert Map.keys(json["metadata"]) |> Enum.sort() ==
+               Enum.sort(["{:a, :b}", "[1, 2, 3]", "<<255, 0, 254>>", "nil", "ok_key"])
+
+      # The value half stays typed — JSON has numbers, and collapsing it onto
+      # the text rule would stringify every one of them.
+      assert json["metadata"]["{:a, :b}"] == 1
+      assert json["measurements"]["count"] == 1
+    end
+  end
+
+  # Drives the real `render_tail_signal/2`: `do_tail_loop/3` reads the caller's
+  # own mailbox, so seeding it before the call exercises the render path
+  # without a live PubSub broadcast. The gate in front of the loop reads
+  # `:pubsub_sink_enabled`, which `config/test.exs` sets false, so the test
+  # owns that flag for its own duration rather than inheriting whatever the
+  # previous test left.
+  defp capture_tail_json(src, signal) do
+    prev = Application.get_env(:flezha, :observability, [])
+    Application.put_env(:flezha, :observability, Keyword.put(prev, :pubsub_sink_enabled, true))
+    on_exit(fn -> Application.put_env(:flezha, :observability, prev) end)
+
+    # The gate also needs the sink process itself; `config/test.exs` leaves it
+    # off, so start one unless another module already has.
+    if Process.whereis(PubSubSink) == nil do
+      sink = :"obs_tail_pubsub_#{:erlang.unique_integer([:positive])}"
+      {:ok, _pid} = Registry.register_sink(%{name: sink, module: PubSubSink, config: %{}})
+      on_exit(fn -> Registry.unregister_sink(sink) end)
+    end
+
+    send(self(), {:flezha_signal, signal})
+
+    out =
+      ExUnit.CaptureIO.capture_io(fn ->
+        CliManager.observability_render_tail(Atom.to_string(src), "json", duration_ms: 1)
+      end)
+
+    out |> String.split("\n", trim: true) |> List.first() |> Jason.decode!()
   end
 end

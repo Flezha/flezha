@@ -417,87 +417,6 @@ below is all that survives — which is enough to write it again.
 
 ---
 
-### KI-45 · `PrometheusRegistry` re-encodes a metric label the same way the OTLP codec did
-
-- **Severity**: **P1** · proposal written (`close-prometheus-label-coercion`).
-  **Raised from P2 and DRIVEN on 2026-08-30**; the severity paragraph below is
-  wrong and is kept only so the correction is legible.
-- **The entry's "waiting on one new source" is false — two live paths carry a
-  non-scalar today**, both mapped `:metric` and so both accepted by
-  `PrometheusSink.filter/0`:
-  - `[:flezha, :state, :wal, :backpressure]` puts `entity_id:
-    state.entity_id` on the metadata (`wal_writer.ex:1885`), and six lines
-    below the same function destructures it `{rc, sh, pk} <- state.entity_id`
-    — the code is its own proof that it is a 3-tuple.
-  - `[:flezha, :plugin, :operative_forward, :retry]` puts a `reason` of
-    `{:unreachable, …}` / `{:delivery_crashed, …}` (`forward_worker.ex:178`,
-    `:210` → `settle/2:252`).
-
-  `TelemetryBridge` forwards a `:telemetry` event's metadata **verbatim** into
-  `Signal.new/1` (`telemetry_bridge.ex:143`–`:149`), so the tuple arrives
-  unaltered.
-- **The blast radius is five ETS tables, not one signal.** `init/1`
-  (`prometheus_registry.ex:128`–`:135`) creates all five named tables in the
-  registry process, so the crash destroys **every counter, gauge and histogram
-  since boot**, and `render/0` then raises through `PrometheusHttp:100`, which
-  has no rescue. Four poison events in ~0.5 s — a writer flapping
-  `:full`/`:open` — exceed `Export.Supervisor`'s 3-in-5 s and take the listener,
-  the sink and the registry down with it. **Observed, not inferred.**
-- **Reproduction** (driven end to end through the real bridge → Bus → sink →
-  registry, `mix run --no-start`):
-
-  ```
-  before: flezha_dlq_dlq_usage{operative_class="c",procedure_id="p"} 1
-  === [:flezha, :state, :wal, :backpressure] with a real 3-tuple entity_id ===
-  PrometheusRegistry DIED: %Protocol.UndefinedError{protocol: String.Chars,
-    value: {"order_class", "proc_a", "key-1"}}
-  tables: [counters: false, gauges: false, histograms: false]
-  render/0 after: {:raised, "Prometheus registry not started"}
-  ```
-- **Three more, each measured, each SILENT** (no raise, wrong output):
-  `%{l: [1, 2, 3]}` renders `l=""` with the raw bytes in the body;
-  `%{"a-b c" => "v"}` renders `{a-b c="v"}`, a malformed exposition Prometheus
-  rejects whole; a `%{le: …}` key on a histogram renders
-  `_bucket{le="collide",le="5000"}`. A crash-only fix leaves all three standing.
-- **One more, on BOTH exporters**: a non-UTF-8 binary value leaves the
-  Prometheus body `String.valid?/1` false and sits raw inside an OTLP protobuf
-  `string` field.
-- *(Original severity note, now known wrong:)* **Severity**: P2 · **proposal
-  owed** (small).
-- **Where**: `lib/flezha/observability/export/prometheus_registry.ex:192` —
-  `Enum.map(fn {k, v} -> {to_string(k), to_string(v)} end)` over a metric
-  signal's metadata.
-- **What happens**: the shape `close-otlp-export-crash` removed from
-  `OtlpCodec`, still standing on the other exporter. `to_string/1` raises
-  `Protocol.UndefinedError` for a map, a tuple or a pid, which would take
-  `PrometheusRegistry` down inside `record/1`; and for a list it returns the
-  binary of the elements, so a charlist or byte-list label is silently
-  rewritten on the exposition.
-- **Why it is not the same severity**: `PrometheusSink.filter/0` is
-  `%{kinds: [:metric], sources: :any}`
-  (`lib/flezha/observability/export/prometheus_sink.ex:36`), so the Logger
-  bridge's map and tuple — which reach *every* OTLP log signal — never arrive
-  here. Only a metric emitted with a non-scalar metadata value does, and every
-  metric source in the tree emits scalars today. It is a live crash waiting on
-  one new source, not one that fires now.
-- **Evidence**: measured on `0c4a695a` alongside KI-44's reproduction; the
-  filter and the `to_string` pair are read directly off the two files above.
-  **Not driven**: no signal was pushed through `PrometheusRegistry.record/1`
-  with a map-valued label, so the crash is inferred from `to_string/1`'s
-  contract, not observed.
-- **Why not fixed with KI-44**: it is not the same fix. Prometheus label
-  *names* must match `[a-zA-Z_][a-zA-Z0-9_]*`, so coercing a tuple key to
-  `"{:a, :b}"` produces a well-formed string and a malformed exposition — the
-  Prometheus side needs a name rule as well as a value rule, and
-  `escape_label_value/1` already owns part of that question.
-- **A fix must**: decide the label-name rule first (refuse, slugify, or drop
-  the label), then reuse `OtlpCodec.attribute_string/1`'s decision for the
-  value — a binary unchanged, scalars via `String.Chars`, everything else
-  inspected. `lib/flezha/observability/export/otlp_client.ex:147` has the same
-  two-`to_string` shape and is **not** part of this: those are operator-supplied
-  `:otlp_headers` from config, not telemetry.
-
----
 
 ## P2 — gates that lie, and time sinks
 
@@ -724,6 +643,27 @@ below is all that survives — which is enough to write it again.
   developer sees the error — not quietly rewritten on every scrape.
 - **A fix must** put the check in `observability-foundation`'s registration
   path, not in the exporter.
+
+
+### KI-60 · Two different JSON *value* rules ship in one tree
+
+- **Severity**: P3 · found 2026-08-31 while closing KI-59.
+- **Where**: `AuditLog.Codec.stringify_value/1` and
+  `CliManager.inspect_or_pass/1`.
+- **What happens**: both answer "how does an arbitrary term become a JSON
+  value?", and they disagree. `stringify_value/1` recurses into lists and maps
+  and passes `nil` through as JSON `null`; `inspect_or_pass/1` inspects a list
+  or map and renders `nil` as the string `"nil"`. Two answers to one question,
+  both shipping, in outputs an operator may compare side by side.
+- **Why it was not collapsed with KI-59**: each is individually defensible for
+  its own consumer, and collapsing either changes an output shape that something
+  may parse. It needs a decision about which shape is correct before a fix, not
+  a mechanical merge.
+- **Also here**: `PrometheusRegistry.truncation_count/1`'s doc says
+  `flz observe sources --json` reads it. Nothing does.
+- **A fix must** pick one rule and state why, the way `metadata_text/1` now
+  does for the text case — the point of that extraction is that there is one of
+  it.
 
 ### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT`
 
@@ -1516,6 +1456,43 @@ every new production freeze to `incident_log.md` at the repository root.
 ---
 
 ## Resolved
+
+### KI-45 · `PrometheusRegistry` re-encodes a metric label the same way the OTLP codec did — RESOLVED
+
+Closed by `close-prometheus-label-coercion` (2026-08-31). What the entry got
+wrong, recorded because a resolved entry that still misstates its cause misleads
+as much as an open one:
+
+- Its severity paragraph — "every metric source in the tree emits scalars
+  today… a live crash waiting on one new source" — was **false**. Two live
+  `TelemetryBridge` paths carry a non-scalar: `wal_backpressure`'s 3-tuple
+  `entity_id` and `operative_forward.retry`'s tuple `reason`.
+- The blast radius was **five ETS tables plus the Export supervisor**, not one
+  dropped signal: the registry owns all five, so a crash wiped every metric
+  since boot, and four crashes in a measured **376 ms** exceeded the 3-in-5 s
+  intensity and took the listener, sink and registry down together.
+- Its UTF-8 bullet was half wrong. A clean OTLP body is **never** valid UTF-8 —
+  a fixed64 timestamp guarantees it, measured 0 of 20 on both signal kinds — so
+  `String.valid?` was never diagnostic there; only the raw bytes' presence was.
+- Filed *"Not driven"*. It is now driven end to end, and three further failures
+  were found that do **not** raise and that a crash-only fix would have left
+  standing: a list label rendering empty with raw bytes in the body, a key with
+  a space rendering an exposition Prometheus rejects whole, and an `le` key
+  rendering a duplicate label on a histogram.
+
+The fix is one term→string rule (`Signal.metadata_text/1`) with four callers,
+plus a Prometheus label-**name** rule, and it costs 1216 → 2166 ns/emit (1.78×)
+after the fast path — the first cut was 4.85× and was measured before shipping.
+
+### KI-59 · `flz observe tail --json` carries a fourth copy of the term→string rule — RESOLVED
+
+Closed by `close-prometheus-label-coercion` (2026-08-31), key half only.
+`CliManager.stringify_keys/1` is now the rule's fourth caller. **The value half
+survives on purpose**: `inspect_or_pass/1` passes binaries, numbers and booleans
+through as native JSON types, so `%{count: 1}` renders `{"count":1}`; collapsing
+it onto the text rule would stringify every number and boolean in the CLI's
+output. That is the same argument `AuditLog.Codec.stringify_value/1` carries.
+
 
 | Issue | Closed by |
 |---|---|
