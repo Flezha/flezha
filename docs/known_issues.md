@@ -419,7 +419,51 @@ below is all that survives — which is enough to write it again.
 
 ### KI-45 · `PrometheusRegistry` re-encodes a metric label the same way the OTLP codec did
 
-- **Severity**: P2 · **proposal owed** (small).
+- **Severity**: **P1** · proposal written (`close-prometheus-label-coercion`).
+  **Raised from P2 and DRIVEN on 2026-08-30**; the severity paragraph below is
+  wrong and is kept only so the correction is legible.
+- **The entry's "waiting on one new source" is false — two live paths carry a
+  non-scalar today**, both mapped `:metric` and so both accepted by
+  `PrometheusSink.filter/0`:
+  - `[:flezha, :state, :wal, :backpressure]` puts `entity_id:
+    state.entity_id` on the metadata (`wal_writer.ex:1885`), and six lines
+    below the same function destructures it `{rc, sh, pk} <- state.entity_id`
+    — the code is its own proof that it is a 3-tuple.
+  - `[:flezha, :plugin, :operative_forward, :retry]` puts a `reason` of
+    `{:unreachable, …}` / `{:delivery_crashed, …}` (`forward_worker.ex:178`,
+    `:210` → `settle/2:252`).
+
+  `TelemetryBridge` forwards a `:telemetry` event's metadata **verbatim** into
+  `Signal.new/1` (`telemetry_bridge.ex:143`–`:149`), so the tuple arrives
+  unaltered.
+- **The blast radius is five ETS tables, not one signal.** `init/1`
+  (`prometheus_registry.ex:128`–`:135`) creates all five named tables in the
+  registry process, so the crash destroys **every counter, gauge and histogram
+  since boot**, and `render/0` then raises through `PrometheusHttp:100`, which
+  has no rescue. Four poison events in ~0.5 s — a writer flapping
+  `:full`/`:open` — exceed `Export.Supervisor`'s 3-in-5 s and take the listener,
+  the sink and the registry down with it. **Observed, not inferred.**
+- **Reproduction** (driven end to end through the real bridge → Bus → sink →
+  registry, `mix run --no-start`):
+
+  ```
+  before: flezha_dlq_dlq_usage{operative_class="c",procedure_id="p"} 1
+  === [:flezha, :state, :wal, :backpressure] with a real 3-tuple entity_id ===
+  PrometheusRegistry DIED: %Protocol.UndefinedError{protocol: String.Chars,
+    value: {"order_class", "proc_a", "key-1"}}
+  tables: [counters: false, gauges: false, histograms: false]
+  render/0 after: {:raised, "Prometheus registry not started"}
+  ```
+- **Three more, each measured, each SILENT** (no raise, wrong output):
+  `%{l: [1, 2, 3]}` renders `l=""` with the raw bytes in the body;
+  `%{"a-b c" => "v"}` renders `{a-b c="v"}`, a malformed exposition Prometheus
+  rejects whole; a `%{le: …}` key on a histogram renders
+  `_bucket{le="collide",le="5000"}`. A crash-only fix leaves all three standing.
+- **One more, on BOTH exporters**: a non-UTF-8 binary value leaves the
+  Prometheus body `String.valid?/1` false and sits raw inside an OTLP protobuf
+  `string` field.
+- *(Original severity note, now known wrong:)* **Severity**: P2 · **proposal
+  owed** (small).
 - **Where**: `lib/flezha/observability/export/prometheus_registry.ex:192` —
   `Enum.map(fn {k, v} -> {to_string(k), to_string(v)} end)` over a metric
   signal's metadata.
@@ -662,6 +706,24 @@ below is all that survives — which is enough to write it again.
   Ruby on `PATH` has no development headers, names that as the cause and says it
   is **not** the include-path problem; and the reason no build-time home exists
   is written beside the bindgen guard, where the next reader looks.
+
+### KI-58 · A metric NAME is never checked against the exposition grammar
+
+- **Severity**: P2 · found 2026-08-30 while driving KI-45; **out of scope of
+  `close-prometheus-label-coercion` on purpose** (its design D5).
+- **Where**: `PrometheusRegistry.exposition_name/2`.
+- **What happens**: the label-name rule that change adds does not cover the
+  metric name itself. A source registered as `:"weird source.name"` with a
+  metric `:"3bad-name"` renders `weird source.name_3bad-name` — a space, a dot
+  and a leading digit, none legal in `[a-zA-Z_][a-zA-Z0-9_]*`, and Prometheus
+  rejects the whole scrape.
+- **Why it is not the same fix**: a label key arrives from third-party
+  metadata at runtime and must be sanitized, because refusing it would silently
+  drop a caller's dimension. A metric name is a **developer-chosen atom**, known
+  at registration, and belongs refused at `Registry.register_source/1` where the
+  developer sees the error — not quietly rewritten on every scrape.
+- **A fix must** put the check in `observability-foundation`'s registration
+  path, not in the exporter.
 
 ### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT`
 
@@ -1093,6 +1155,14 @@ since carries its own date.
 ---
 
 ### KI-46 · OTLP attributes are stringified where the protocol has typed values
+
+- **Note added 2026-08-30**: `AuditLog.Codec.stringify_value/1` **already
+  implements** the typed-recursive shape this entry asks for, for JSON — a
+  working in-tree precedent, not a design from scratch. Deliberately left OUT of
+  `close-prometheus-label-coercion`: that change's control is that
+  `attribute_string/1` moves byte-identically, proved only by
+  `export_test.exs`'s decode-the-protobuf tests, and typing the values would
+  destroy exactly that control. Follow-up id: `close-otlp-typed-attributes`.
 
 - **Severity**: P3 · **proposal owed**.
 - **Where**: `lib/flezha/observability/export/otlp_codec.ex` — `kv_attribute/2`
