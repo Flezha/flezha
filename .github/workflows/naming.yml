@@ -15,8 +15,9 @@ name: Naming
 # `scripts/build-native.sh` produces the one triple a test needs, and a release
 # publishes all five), and `size` holds the packed repository under 150 MB.
 # `size` needs the whole history, so its job checks out with fetch-depth 0; it
-# is non-blocking until the history purge reclaims what the committed artefacts
-# already cost (docs/runbooks/purge-build-artifacts.md).
+# needs the whole history, so its job checks out with fetch-depth 0. It is
+# blocking: the purge reclaimed 961 MB -> 15 MB, and the ceiling is what keeps
+# it there (docs/runbooks/purge-build-artifacts.md).
 #
 # refactor-metrics is the structure ratchet (docs/refactor/charter.md §11):
 # non-blocking until an area is listed under `blocking` in
@@ -53,7 +54,6 @@ jobs:
   repo-size:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
         with:
