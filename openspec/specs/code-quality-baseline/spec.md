@@ -204,3 +204,37 @@ module must remember to call, which reproduces the same omission one level up.
 - **WHEN** the run completes
 - **THEN** the count SHALL be no higher than before
 
+### Requirement: A dependency SHALL resolve from a published version
+
+Every dependency SHALL be declared as a published version requirement, so that
+the manifest alone determines what a build contains. A dependency SHALL NOT be
+declared against a branch: the lock pins a commit while the declaration names a
+moving target, so what a checkout builds against depends on when someone last
+unlocked it rather than on anything written down.
+
+A branch dependency MAY be taken temporarily while an upstream release is
+outstanding. It SHALL carry, in the declaration itself, the condition that ends
+it and the requirement it reverts to — and it SHALL be recorded as an open issue
+so that the condition is checked rather than forgotten.
+
+A local-path override for developing against an unreleased checkout is a
+different thing and is permitted, because it is opt-in per build and names no
+version.
+
+#### Scenario: No dependency is declared against a branch
+
+- **WHEN** the dependency declarations are read
+- **THEN** none SHALL name a git branch
+
+#### Scenario: A temporary branch pin states its exit condition
+
+- **GIVEN** a dependency taken from a branch while an upstream release is outstanding
+- **WHEN** its declaration is read
+- **THEN** it SHALL name the condition that ends it and the version requirement it reverts to, and an open issue SHALL track it
+
+#### Scenario: A local-path override remains available
+
+- **GIVEN** an environment variable naming a local checkout of a dependency
+- **WHEN** the project is built with it set
+- **THEN** the build SHALL use that checkout, and with it unset SHALL use the published version
+
