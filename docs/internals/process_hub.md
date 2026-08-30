@@ -305,9 +305,10 @@ cspec persists *which* plugins, the WAL persists *how far* an Entity has progres
 | Remote manifest adapter, WAL transfer | `lib/flezha/state/durability_tier/declared_manifest.ex`, `lib/flezha/state/wal_transfer.ex` |
 | Library: cluster, sync, registry, declared set, recovery, migration | `deps/process_hub/lib/process_hub/service/{cluster,synchronizer,process_registry,declared_children,recovery,migration}.ex`, `storage/remote_manifest.ex`, `strategy/migration/hot_swap.ex` |
 
-The dependency is pinned in `mix.lock` to a commit of `alfetahe/process-hub` (branch `dev`).
-`mix deps.get` follows the lock; `make refresh-process-hub` takes the branch tip and rewrites it;
-`FLEZHA_PROCESS_HUB_PATH` builds from a local checkout.
+The dependency is a hex release at the requirement `mix.exs` declares; `mix.lock` pins
+the exact version.
+`mix deps.get` follows the lock; `make refresh-process-hub` re-resolves within the requirement
+and rewrites it; `FLEZHA_PROCESS_HUB_PATH` builds from a local checkout.
 
 ## See also
 

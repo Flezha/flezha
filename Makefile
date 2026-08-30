@@ -19,10 +19,11 @@ build-release:
 	MIX_ENV=prod mix deps.get --only prod
 	MIX_ENV=prod mix release --overwrite
 
-# TEMPORARY, for as long as mix.exs tracks process_hub's `dev` branch: take
-# the current branch tip and rewrite its mix.lock entry. Plain `mix deps.get`
-# honours the locked commit, so this is the only way to move forward locally.
-# Commit the resulting mix.lock — CI and every other build path use it as-is.
+# Re-resolve process_hub within the version requirement mix.exs declares: drop
+# its lock entry so `mix deps.get` picks the newest matching release. Plain
+# `mix deps.get` honours the lock, so this is the only way to take a newer
+# release locally. Commit the resulting mix.lock — CI and every other build
+# path use it as-is.
 refresh-process-hub:
 	mix deps.unlock process_hub
 	mix deps.get

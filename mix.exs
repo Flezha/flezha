@@ -86,8 +86,8 @@ defmodule Flezha.MixProject do
     [
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      # github `dev` branch by default (temporary — see process_hub_dep/0);
-      # the deploy sets FLEZHA_PROCESS_HUB_PATH to build from a local checkout.
+      # a hex requirement, unless FLEZHA_PROCESS_HUB_PATH names a local
+      # checkout — see process_hub_dep/0.
       {:process_hub, process_hub_dep()},
       {:blockade, "~> 0.2.2"},
       # fresh 0.4.4's released mix.exs declares charlist elixirc_paths,
@@ -117,14 +117,14 @@ defmodule Flezha.MixProject do
     ]
   end
 
-  # TEMPORARY: tracks process_hub's `dev` branch until the next hex release,
-  # then reverts to a `"~> 0.6.x"` requirement. mix.lock pins the commit, so
-  # `mix deps.get` alone does NOT follow the branch — `make refresh-process-hub`
-  # (and the controller image build) unlock it to take the tip.
+  # `~> 0.7.0` admits 0.7.x and refuses 0.8: on a 0.x library a minor bump is
+  # where breaking changes are allowed to live, so widening is a deliberate edit.
+  # FLEZHA_PROCESS_HUB_PATH builds against a local checkout for iterating on
+  # process_hub itself; it names no version, so it is opt-in per build.
   defp process_hub_dep do
     case System.get_env("FLEZHA_PROCESS_HUB_PATH") do
       path when is_binary(path) and path != "" -> [path: path]
-      _ -> [git: "https://github.com/alfetahe/process-hub", branch: "dev"]
+      _ -> "~> 0.7.0"
     end
   end
 

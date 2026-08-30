@@ -18,8 +18,8 @@
 # silently redirecting a pinned tag. REPUBLISH=1 overrides it to repair a
 # broken push.
 #
-# process_hub is fetched from its GitHub `dev` branch at build time
-# (mix.exs default), so a plain git checkout is all the build context needs.
+# process_hub is fetched from hex at the version mix.lock pins, so a plain git
+# checkout is all the build context needs.
 #
 # Usage (logged in as alfetahe — `docker login -u alfetahe`):
 #   scripts/publish-image.sh            # prod (default): :<version> + :latest manifests

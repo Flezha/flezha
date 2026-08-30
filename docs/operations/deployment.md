@@ -283,10 +283,9 @@ VERSION=0.2.0 make docker-build
 # = docker build -t alfetahe/flezha:0.2.0 -f docker/prod/Dockerfile.controller .
 ```
 
-`process_hub` is fetched from its GitHub `dev` branch at build time
-(`mix deps.unlock process_hub` in Stage 2); a plain clone is all the build
-context needs. Set `FLEZHA_PROCESS_HUB_PATH` at build time to build from a
-local checkout instead (`mix.exs`).
+`process_hub` comes from hex at the version `mix.lock` pins; a plain clone is
+all the build context needs. Set `FLEZHA_PROCESS_HUB_PATH` at build time to
+build from a local checkout instead (`mix.exs`).
 
 ### Publishing
 
@@ -485,7 +484,7 @@ kubectl delete namespace flezha    # everything, including RBAC
 | `nif` / `nif-release` | Build only the `flz_nif` crate (debug / release) |
 | `test` | `mix test` |
 | `stabilize-test-check` | `mix test` twice, `cargo test --workspace --features flezha_runner/bench-internals`, `mvn -f sdk/java verify` (`SKIP_JAVA=1` skips the last) |
-| `refresh-process-hub` | `mix deps.unlock process_hub && mix deps.get` — move to the branch tip while `mix.exs` tracks `process_hub`'s `dev` branch |
+| `refresh-process-hub` | `mix deps.unlock process_hub && mix deps.get` — re-resolve `process_hub` within the requirement `mix.exs` declares, taking a newer matching release |
 | `clean` | `cargo clean`, `mix clean`, remove `_build`, `deps`, `priv/native/*.so` |
 | `docker-build` | Prod image for the host architecture; requires `VERSION=x.y.z` |
 | `docker-publish` | `scripts/publish-image.sh $(ARGS)` — native per-arch build, push, manifest rebuild |

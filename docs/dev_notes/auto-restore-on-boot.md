@@ -1,14 +1,11 @@
 # Auto-restore on boot (`auto-restore-on-boot` + `consume-recovery-mode-and-self-heal`)
 
-- **ProcessHub dependency — TEMPORARILY back on the GitHub `dev` branch**
-  (`alfetahe/process-hub`), pending the next hex release; revert
-  `process_hub_dep/0` to a `"~> 0.6.x"` requirement when it ships.
-  `mix.lock` pins the commit, so `mix deps.get` does NOT follow the
-  branch: `make refresh-process-hub` takes the tip and rewrites the lock
-  (commit it — CI and every other build path use the lock as-is), and
-  `docker/prod/Dockerfile.controller` unlocks it so the image takes the
-  tip on a cache-missed layer. `FLEZHA_PROCESS_HUB_PATH` still overrides
-  with a local checkout.
+- **ProcessHub dependency — a hex release.** The work this note describes
+  shipped in 0.7.0. `mix.exs` declares the requirement, `mix.lock` pins the
+  version, and every build path honours the lock — the controller image
+  included. `make refresh-process-hub` re-resolves within the requirement
+  (commit the resulting lock); `FLEZHA_PROCESS_HUB_PATH` still overrides with
+  a local checkout.
 - **Modules**: `lib/flezha/boot/` — `StatePathMigrator`, `RecoveryHooks`.
   The `StatePathMigrator` runs synchronously from
   `Flezha.Application.start/2` before `Flezha.State.Supervisor`.

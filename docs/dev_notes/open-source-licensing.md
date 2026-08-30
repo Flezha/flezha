@@ -24,10 +24,10 @@
   `flz_nif`. An MPL crate may depend on an Apache one; the reverse would put
   copyleft on the SDK link path.
 - **`process_hub` must never regress to GPL.** It was GPL-3.0 until 2026-08-23
-  and is relicensed to Apache-2.0 on its `dev` branch; GPL on a runtime
-  dependency makes MPL on the controller indefensible. `make
-  refresh-process-hub` unlocks the pin to the branch tip — check
-  `deps/process_hub/mix.exs` after any bump.
+  and is relicensed to Apache-2.0; GPL on a runtime dependency makes MPL on the
+  controller indefensible. Since `adopt-process-hub-hex-release` the dependency
+  is a hex release, so the licence is in the package metadata — `mix hex.info
+  process_hub` states it — and is worth re-reading after any bump.
 - **The shaded jars carry notices through the shade plugin, never through
   upstream `META-INF` files.** Same-named `META-INF/LICENSE(.txt)` and
   `NOTICE(.txt)` from Jackson, Objenesis and SLF4J overwrite each other in a

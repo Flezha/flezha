@@ -146,8 +146,8 @@ pays and how many starts share one.
 
 ## Cross-repo
 
-The process_hub changes live on process-hub's `dev` branch; flezha's
-`mix.lock` pins the commit (`make refresh-process-hub` moves it). While
+The process_hub changes shipped in the hex release 0.7.0, which flezha's
+`mix.lock` pins (`make refresh-process-hub` re-resolves it). While
 iterating, `FLEZHA_PROCESS_HUB_PATH=~/Code/process-hub` builds against the
 working copy.
 

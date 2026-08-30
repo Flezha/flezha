@@ -67,9 +67,10 @@ one-line edit if a legitimate size change ships in the same PR.
 
 ## process_hub source
 
-The image fetches `process_hub` from its GitHub `dev` branch at build time
-(`mix.exs::process_hub_dep/0` default). Nothing is baked in from a local
-checkout — a plain git clone is all the build context needs.
+`process_hub` comes from hex like every other dependency, at the version
+`mix.lock` pins. No build path sets `FLEZHA_PROCESS_HUB_PATH`
+(`mix.exs::process_hub_dep/0`), so nothing is baked in from a local checkout —
+a plain git clone is all the build context needs.
 
 ## Publishing to Docker Hub
 

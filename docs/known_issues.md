@@ -783,6 +783,28 @@ below is all that survives — which is enough to write it again.
 
 ---
 
+### KI-50 · `Extension.PhaseTest` "uncertain health probe" fails about 1 run in 3, in-suite only
+
+- **Severity**: P2 · not in KI-18's population; found 2026-08-30.
+- **Where**: `test/plugin/extension/phase_test.exs`, "an uncertain health probe
+  is observable / a provider that reports its own uncertainty reads healthy AND
+  emits".
+- **Evidence**: full `mix test` on the same tree gave **1835/1836 then 1836/1836**
+  — intermittent, not deterministic. The module alone passes **3 of 3** (14
+  tests each). So it is an interaction, and this repository's own lesson is that
+  a test which passes alone and fails in a suite is evidence of a **leak** before
+  it is evidence of load (see KI-43's resolution).
+- **Not attributable to `adopt-process-hub-hex-release`**: the file carries zero
+  references to `ProcessHub` or `:elector`, and that change's own worker measured
+  1836 on three consecutive runs before it.
+- **A fix must**: find what leaks into it rather than retrying it. The assertion
+  is "reads healthy AND emits", so the candidate is an emit from a previous
+  module's provider arriving on this one's observation — the same shape as
+  KI-49. Do not add a settle: that hides it, and the suite then stops being able
+  to report it at all.
+
+---
+
 ## P2 — tests that lie or leak
 
 ### KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub
@@ -2078,36 +2100,16 @@ until 2026-08-30. Dates are when each was last established, not when it started.
   Rewrite the entry to name Java and PHP, and record that Node, Ruby and Python
   set the precedent to follow rather than being part of the debt.
 
-### KI-38 · `process_hub` is pinned to a GitHub branch
-
-- **Severity**: P2. The dependency is pinned to GitHub `dev` for the
-  declared-children-and-remote-manifest work. Temporary; a hex release (0.6.2) is
-  owed, and the pin must never regress to a GPL-licensed revision
-  (`make refresh-process-hub` unlocks it).
-- **Triage (2026-08-30)**: **TRUE, verbatim, and reproducible in one line.**
-
-  ```
-  $ grep -n process_hub mix.lock
-  26:  "process_hub": {:git, "https://github.com/alfetahe/process-hub", "9966688b932c1ab3308a558119a69154e8811b82", [branch: "dev"]},
-  ```
-
-  `mix.exs:124`–`:128` (`process_hub_dep/0`) confirms the mechanism and already
-  carries the TEMPORARY comment, including the two facts worth keeping: the lock
-  pins the commit so `mix deps.get` alone does **not** follow the branch, and
-  `FLEZHA_PROCESS_HUB_PATH` overrides it with a local checkout for the deploy.
-- **Worth fixing**: not by anyone here — it is blocked on an upstream hex
-  release, and the pin is doing its job in the meantime. Its real cost is that it
-  blocks KI-39 (publishing) and nothing else. Leave it filed; do not spend time
-  on it until the upstream release exists.
-
 ### KI-39 · Open-source obligations, none met
 
-- **Severity**: P2. Nothing is published yet. Owed before anything is: the
-  `process_hub` hex release, a CLA bot, a `security@` contact, and the trademark
-  question. Licensing itself is settled (MPL-2.0 controller, Apache-2.0 SDK side,
-  recorded in `REUSE.toml`).
-- **Triage (2026-08-30)**: **THREE OF THE FOUR ARE DONE. Only the `process_hub`
-  hex release is still owed.** Checked one at a time:
+- **Severity**: P2. Nothing is published yet. All four things once owed — the
+  `process_hub` hex release, a CLA bot, a `security@` contact, and the
+  trademark question — are now addressed; what remains is confirming the CLA
+  bot is installed on the GitHub repository, and publishing itself. Licensing
+  itself is settled (MPL-2.0 controller, Apache-2.0 SDK side, recorded in
+  `REUSE.toml`).
+- **Triage (2026-08-30)**: **ALL FOUR ARE DONE**, the last of them —
+  the hex release — later the same day. Checked one at a time:
   - **`security@` contact — DONE.** `SECURITY.md` exists (written today) with
     `security@flezha.com` at `:15`, plus GitHub private vulnerability reporting,
     a 5-day acknowledgement / 14-day update commitment, a 90-day coordinated
@@ -2119,9 +2121,13 @@ until 2026-08-30. Dates are when each was last established, not when it started.
     warranty` section, and `:350` states the position explicitly: neither
     licence grants trademark rights (MPL-2.0 §2.3, Apache-2.0 §6), so a fork,
     derived work or hosted service may not use the name.
-  - **`process_hub` hex release — STILL OWED.** See KI-38; `mix.lock` still
-    pins a git branch, and a hex-published package cannot depend on a git
-    dependency.
+  - **`process_hub` hex release — DONE (2026-08-30).** 0.7.0 is published, and
+    `adopt-process-hub-hex-release` took it: `mix.exs` declares
+    `{:process_hub, "~> 0.7.0"}` and `mix.lock` holds a hex entry, so the
+    "a hex-published package cannot depend on a git dependency" obstacle is
+    gone. The licence is now in the package metadata (`mix hex.info
+    process_hub` → Apache-2.0) rather than needing a read of
+    `deps/process_hub/mix.exs` after every bump.
 - **What could NOT be established**: whether cla-assistant is actually *installed*
   on the GitHub repository, as opposed to documented. `CONTRIBUTING.md` describes
   the bot; nothing in the tree can prove the app is enabled. Verify that in the
@@ -2242,6 +2248,7 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-38 · `process_hub` pinned to a GitHub `dev` branch, so no version number described what a build contained | `adopt-process-hub-hex-release` (commit owed) — `mix.exs` declares `{:process_hub, "~> 0.7.0"}`; `mix.lock` carries the hex entry. **0.7.0 is the pinned code, published**: 78 `.ex` files each side, exactly one differs (`hub.ex`), and that difference is a pure relocation of `for_workers/1` — sorted, the two files are an identical multiset of lines. What the `.ex` comparison could **not** see is the package's own `mix.exs`, which raises `elector` from `~> 0.3.3` to `~> 0.3.4`; resolution fails until `elector` is unlocked, so the lock diff is two lines, not one. elector 0.3.4 is a real behaviour change on a live path (`erpc:multicall` replaces per-node `send_request`/`wait_response`, so the fan-out timeout is per batch rather than per node, and an election survives a candidate vanishing) — `declared_children` and `centralized_load_balancer` are its callers. `mix compile --force --warnings-as-errors` 272 files clean (negative control: a bogus `ProcessHub` call does fail it); `mix test` 1836 passed and `--include system` 1915 passed / 5 skipped, both unchanged from the HEAD baselines recorded before the swap, and `--include multi_node` 1845 passed — added because of the elector finding, since that tag is not covered by `--include system` and is where leader election actually runs |
 | KI-47 · `check-overflow-naming.sh` red on its own evidence — a triage entry has to quote the retired name to prove it is gone | the gate now separates a QUOTED mention from a bare use, scoped to `docs/known_issues.md`; drilled both ways (bare use still exits 1) |
 | KI-44 · the OTLP codec crashed on any attribute value that is not a string, and silently re-encoded a list | `close-otlp-export-crash` (`ba0d3632`) — one private `attribute_string/1` renders every attribute **key and value**: a binary passes through untouched, an atom, integer or float takes its `String.Chars` rendering, everything else — lists included — goes through `inspect/1` with `limit: :infinity, printable_limit: :infinity`. Both halves were driven red first: a real `LoggerHandler.log/2` event through the real codec raised `Protocol.UndefinedError` on `logger:` (a Map) and on `mfa:` (a Tuple), while `%{l: [1, 2, 3]}` encoded to the bytes `<<1, 2, 3>>` **with no exception at all**. Three corrections to the filed entry, each measured: `:222` is the metric `NumberDataPoint` site, not the resource (`default_resource/0` never sees signal metadata); an attribute **key** can be a non-string too and crashed identically, since `Signal.new/1` validates that metadata is a map and never constrains its keys; and the escalation is no longer inferred — with the coercion reverted, `OtlpSink` dies inside `flush/1` with that exception, which the flush test now pins. `mix test test/flezha/observability/export_test.exs` with `attribute_string/1` reverted to `to_string/1`: **12 of 18**, six red including the list case, which fails without raising; restored: **18 of 18**, full suite **1836 passed, 0 failed**. The sibling site on the Prometheus exporter is KI-45; typed `AnyValue`s are KI-46 |
 | KI-43 · 28 test modules set Mimic's global mode without releasing it | `close-mimic-global-leak` (`828a9f50`) — 26 modules moved to `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1`, two dropped global mode entirely (they register no stub anywhere reachable), and `scripts/check-mimic-global.sh` refuses the raw call in `test/` with `test/helpers/mimic_global.ex` exempt by path. Measured, not asserted: `mix test test/flezha/service/cli_manager_state_get_test.exs test/flezha/service/cli_manager_schedule_test.exs --seed 0` was **11/20 passed, 9 failed**, every failure `Only the global owner is allowed`, against **10 passed** for the schedule module alone; after, **20 passed** on the same seed. Read directly (a temporary `ExUnit.after_suite` probe on `:ets.lookup(Mimic.Server, :mode)`): at seed 0 exactly one of the 28 left the mode `:global`; after the change all 36 global-mode modules left it `:private`. The entry's own reading was too broad — see `docs/dev_notes/close-mimic-global-leak.md` for which of the 28 could actually leak and why |
