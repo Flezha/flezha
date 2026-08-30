@@ -344,3 +344,29 @@ A pinned fixture SHALL list every `HostClassDecl` key; a `flz_core` test SHALL a
 - **WHEN** a key is added to `HostClassDecl` and the fixture, and `HostClassDeclaration` is not taught to emit it
 - **THEN** `HostClassDeclarationTest` fails naming the missing key
 
+### Requirement: A test pinned to another runtime SHALL NOT report a pass for the one it names
+
+A test pinned to a runtime other than the one selected SHALL make that
+substitution visible in the run's own output — in the test's
+name or in what the runner reports — and not only in a comment beside the tag.
+
+A pinned test SHALL NOT be presentable as evidence about the runtime it did not
+exercise. Selecting a runtime and receiving a pass SHALL mean that runtime ran.
+
+Where a test is excluded because it fails for a known reason, the exclusion
+SHALL name that reason. An exclusion that silently substitutes a passing
+configuration is worse than a visible red, because it answers a question it did
+not ask.
+
+#### Scenario: Selecting a runtime that the test does not use is visible
+
+- **GIVEN** a test pinned to the reference runtime
+- **WHEN** the suite is run with a different runtime selected
+- **THEN** the run's output SHALL show that this test did not use the selected runtime
+
+#### Scenario: A known failure is excluded by name
+
+- **GIVEN** a test excluded because it fails for a recorded reason
+- **WHEN** its exclusion is read
+- **THEN** it SHALL name that reason, and SHALL NOT be replaced by a configuration that passes
+
