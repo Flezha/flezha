@@ -203,12 +203,10 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
 
     File.rm(id_path)
 
-    # Durable state lives under `<root>/<namespace>/<class>`
-    # (`Flezha.State.Registry.class_dir/1`), and the namespace is this test's
-    # alone — so the whole namespace tree goes. Removing `<root>/<class>`, a
-    # path that has never existed, left every run's WAL on disk, and a later run
-    # whose `unique/1` id collided with an earlier one restored it.
-    File.rm_rf(Path.join(Flezha.State.Registry.state_root(), namespace))
+    # The namespace is this test's alone, so its whole tree goes. The path is
+    # the registry's: a leftover tree captures `namespace_of_class/1` for the
+    # next run whose `unique/1` id collides with this one.
+    File.rm_rf(Flezha.State.Registry.namespace_dir(namespace))
   end
 
   @doc """

@@ -77,6 +77,8 @@ defmodule Flezha.State.RegistryNamespaceTest do
     assert File.read!(Path.join([base, "default", "adopted-op", "proc-0", "k1.wal"])) ==
              "legacy-bytes"
 
+    # Built by hand on purpose: this module's subject IS the layout, so
+    # deriving the path would make the assertion follow the resolution it pins.
     refute File.dir?(Path.join([base, "_system", "adopted-op"]))
     assert Registry.namespace_of_class("adopted-op") == "default"
   end
@@ -101,6 +103,7 @@ defmodule Flezha.State.RegistryNamespaceTest do
 
     :ok = Registry.delete_files(entity_id)
 
+    # Hand-built for the same reason as the adoption case above.
     refute File.dir?(Path.join([base, "team-a", "gone-op"]))
     # Released: another namespace may now claim the name.
     assert :ok = Registry.claim_namespace("gone-op", "team-b")

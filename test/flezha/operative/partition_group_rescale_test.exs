@@ -166,7 +166,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
       # The Entity is now p1's, byte-for-byte, and the source is gone.
       assert File.read!(Registry.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
       refute File.exists?(Registry.wal_path(moved))
-      refute File.exists?(Path.join(Registry.state_root(), "ohlc#p2"))
+      refute File.exists?(Registry.class_dir("ohlc#p2"))
 
       # The Entity that did not change owner was left exactly where it was.
       assert File.read!(Registry.wal_path({"ohlc#p0", "candle", "SOL-USD"})) == "sol"

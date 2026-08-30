@@ -65,7 +65,7 @@ replans from the committed history); a cuttable loop can only be rewound to its 
 iteration.
 
 **The durable inbox.** `Ingest.journal_input/2` is the one append-before-forward seam: post-start
-input goes to `<state_root>/<inst>/<inst>/inbox.wal` before it is forwarded, stamped
+input goes to `<state_root>/<ns>/<inst>/<inst>/inbox.wal` before it is forwarded, stamped
 `flz.inbox_offset` (WAL seq + 1; offset 0 means nothing consumed); a failed append is not
 forwarded. The record header is the first 16 bytes of `sha256(dedup_id)` — `flz.msg_id` when the
 sender stamps one, else a hash of the payload — and the writer's `dedup: true` index refuses a
@@ -256,7 +256,8 @@ Telemetry: `[:flezha, :state, :proc_commit | :iter_commit | :proc_outbox_flush]`
 ## Finished-job retention
 
 On terminal teardown the controller writes `Flezha.State.Completion`
-(`<state_root>/<operative_class>/completion.record` — `status`, `error`, `result`, `finished_at`)
+(`<state_root>/<namespace>/<operative_class>/completion.record` — `status`, `error`, `result`,
+`finished_at`)
 before the teardown, closes the instance's writer processes, and **retains** the state instead
 of deleting it. `Flezha.State.Retention` reclaims state and record once `finished_at + window`
 has passed. During the window `flz operative info <id>` reports phase `finished` with the status,

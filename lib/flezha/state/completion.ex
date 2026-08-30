@@ -7,9 +7,11 @@ defmodule Flezha.State.Completion do
   outcome stays inspectable via `flz operative info` until the retention window
   elapses (`Flezha.State.Retention` sweeps both).
 
-  The record lives at `<state_root>/<operative_class>/completion.record` — a
-  file sibling to the procedure directories, inert to every `Flezha.State.Registry`
-  scanner (which only recognise `.wal` / `.snap.<seq>` / `.outbox.dedup`). Its
+  The record lives at
+  `<state_root>/<namespace>/<operative_class>/completion.record` — a file
+  sibling to the procedure directories, inert to every
+  `Flezha.State.Registry` scanner (which only recognise `.wal` /
+  `.snap.<seq>` / `.outbox.dedup`). Its
   presence is also the retain-vs-delete signal for `stop_operative`.
   """
 

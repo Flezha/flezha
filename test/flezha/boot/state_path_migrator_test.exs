@@ -39,6 +39,8 @@ defmodule Flezha.Boot.StatePathMigratorTest do
     migrated = Path.join([base, "_system", "MyOperative", "procedure-0"])
     assert File.read!(Path.join(migrated, "p1.wal")) == "wal-bytes"
     assert File.read!(Path.join(migrated, "p1.snap.5")) == "snap-bytes"
+    # Built by hand on purpose: `<root>/<class>` is the PRE-migration layout,
+    # so its absence is the thing under test and `class_dir/1` cannot name it.
     refute File.dir?(Path.join(base, "ce-aaaa1111"))
     refute File.dir?(Path.join(base, "MyOperative"))
   end

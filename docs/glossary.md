@@ -176,8 +176,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 ## Workflow vocabulary
 
 - **Proc journal** — the per-instance append-only journal of workflow progress
-  (`<state_root>/<instance_id>/<instance_id>/proc.journal`, `Flezha.State.ProcJournal`) on the WAL
-  substrate under a reserved entity key. Its entries (`proc_committed`, `outbox_flushed`,
+  (`<state_root>/<namespace>/<instance_id>/<instance_id>/proc.journal`, `Flezha.State.ProcJournal`)
+  on the WAL substrate under a reserved entity key. Its entries (`proc_committed`, `outbox_flushed`,
   `iter_committed`, `parked`, `compensated`, `rewound`) are folded, never truncated.
 - **Level barrier / `ProcCommit`** — every entity of every procedure in a level joins before the
   SDK ships one `ProcCommit` per procedure `{entities_ran, handoff, staged outbox}`; the controller

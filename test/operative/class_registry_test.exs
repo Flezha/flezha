@@ -96,7 +96,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
   test "a tier-on put leaves a tier-off class's on-disk layout untouched", %{class: class} do
     :ok = ClassRegistry.put_effectively_once(class, false)
-    refute File.exists?(Path.join(Registry.state_root(), class))
+    refute File.exists?(Registry.class_dir(class))
   end
 
   test "checkpoint_ack? defaults to false — per-input is the tier's granularity",

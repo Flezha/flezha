@@ -53,7 +53,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   @tag :state_freshness_e2e
   test "SIGTERM to the rust SDK populates Overwatch.state.snapshot via RunnerShutdownNotification" do
     {port, ce_id} = start_runner()
-    on_exit(fn -> ensure_port_dead(port) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_port_dead(port) end)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
 
@@ -175,15 +175,5 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
       fn -> Process.alive?(overwatch_pid) and :sys.get_state(overwatch_pid).snapshot end,
       max(deadline - System.monotonic_time(:millisecond), 0)
     ) || nil
-  end
-
-  defp ensure_port_dead(port) do
-    if is_port(port) and Enum.member?(:erlang.ports(), port) do
-      try do
-        Port.close(port)
-      catch
-        _, _ -> :ok
-      end
-    end
   end
 end

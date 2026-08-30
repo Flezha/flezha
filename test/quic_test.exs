@@ -24,7 +24,7 @@ defmodule FlezhaQuicTest do
     # namespace's tree before anything binds. Narrower than
     # `State.TestHelpers.reset_all_entities/0`, which wipes the whole state
     # root — nothing here is live yet, so no WalWriter has to be stopped.
-    File.rm_rf(Path.join(Flezha.State.Registry.state_root(), @quic_namespace))
+    File.rm_rf(Flezha.State.Registry.namespace_dir(@quic_namespace))
 
     # Start 2 compute engines connected via QUIC for this test module.
     ce_id_1 = NodeTestHelper.start_runner(@quic_namespace, transport: :quic)

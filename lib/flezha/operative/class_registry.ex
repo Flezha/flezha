@@ -14,10 +14,11 @@ defmodule Flezha.Operative.ClassRegistry do
 
     1. the in-memory ETS table — populated at `Flezha.Operative.Overwatch`
        bind, evicted at teardown;
-    2. a durable per-class `kind` sidecar under
-       `<state_root>/<operative_class>/` — so a process-less `Retention` sweep
-       (which walks class dirs on disk with no live Overwatch) still resolves
-       the kind after teardown, while finished-job state is retained;
+    2. a durable per-class `kind` sidecar under `Registry.class_dir/1`
+       (`<state_root>/<namespace>/<operative_class>/`) — so a process-less
+       `Retention` sweep (which walks class dirs on disk with no live
+       Overwatch) still resolves the kind after teardown, while finished-job
+       state is retained;
     3. the default `:stream` — every class was stream before workflow
        operatives gained durable state, so an unknown class keeps the full
        stream behaviour and gating is only ever *subtractive*.

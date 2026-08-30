@@ -27,9 +27,7 @@ defmodule Flezha.AuthZ.BootstrapTest do
     :ok = RoleStore.bind("alice", "_system", :admin)
     assert :ok = Bootstrap.check_and_write()
 
-    refute File.exists?(
-             Path.join(Application.get_env(:flezha, :authn_authz)[:auth_dir], "bootstrap.token")
-           )
+    refute File.exists?(Application.get_env(:flezha, :authn_authz)[:bootstrap_token_path])
   end
 
   test "claim/2 with --principal binds and flips :enabled" do

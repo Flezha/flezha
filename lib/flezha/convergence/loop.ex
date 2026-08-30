@@ -576,7 +576,7 @@ defmodule Flezha.Convergence.Loop do
 
     case File.stat(root, time: :posix) do
       {:ok, %File.Stat{mtime: root_mtime}} ->
-        mtime = Enum.max([root_mtime | namespace_dir_mtimes(root)])
+        mtime = Enum.max([root_mtime | namespace_dir_mtimes()])
         now_s = System.os_time(:second)
 
         case cache do
@@ -593,10 +593,10 @@ defmodule Flezha.Convergence.Loop do
     end
   end
 
-  defp namespace_dir_mtimes(root) do
+  defp namespace_dir_mtimes() do
     for namespace <- Flezha.State.Registry.namespaces(),
         {:ok, %File.Stat{mtime: mtime}} <-
-          [File.stat(Path.join(root, namespace), time: :posix)],
+          [File.stat(Flezha.State.Registry.namespace_dir(namespace), time: :posix)],
         do: mtime
   end
 

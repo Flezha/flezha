@@ -3,10 +3,11 @@ defmodule Flezha.State.Registry do
   Path resolution for per-Entity WAL, snapshot, and outbox-dedup files.
 
   All persistence files live under
-  `<state_root>/<operative_class>/<procedure_id>/` where `<state_root>` is the
-  `:flezha, :state_root` application env (set by tests for isolation), else
-  the `FLEZHA_STATE_DIR` OS env (the operator-facing deployment knob), else
-  `app_data/state`.
+  `<state_root>/<namespace>/<operative_class>/<procedure_id>/`, where
+  `<state_root>` is the `:flezha, :state_root` application env (set by tests
+  for isolation), else the `FLEZHA_STATE_DIR` OS env (the operator-facing
+  deployment knob), else `app_data/state`. `namespace_dir/1` and `class_dir/1`
+  own the first two levels; nothing outside this module assembles them.
 
   `entity_key` is URL-safe-base64-encoded when it contains characters
   that would be unsafe on POSIX filesystems (anything outside `[A-Za-z0-9_.-]`).
@@ -159,10 +160,16 @@ defmodule Flezha.State.Registry do
     claimed_namespace(operative_class) || disk_namespace(operative_class) || "_system"
   end
 
+  @doc "Directory holding one namespace's durable state — the first level under `state_root/0`."
+  @spec namespace_dir(binary()) :: binary()
+  def namespace_dir(namespace) when is_binary(namespace) do
+    Path.join(state_root(), namespace)
+  end
+
   @doc "Directory holding every durable file of one Operative class."
   @spec class_dir(binary()) :: binary()
   def class_dir(operative_class) when is_binary(operative_class) do
-    Path.join([state_root(), namespace_of_class(operative_class), operative_class])
+    Path.join(namespace_dir(namespace_of_class(operative_class)), operative_class)
   end
 
   # Claims are keyed by {state_root, class}: a claim is a fact about ONE
@@ -196,18 +203,12 @@ defmodule Flezha.State.Registry do
   # The disk knows: the layout is `<root>/<namespace>/<class>/`, so the
   # namespace directory containing the class dir IS the owner.
   defp disk_namespace(operative_class) do
-    root = state_root()
-
-    root
-    |> list_dir()
-    |> Enum.find(fn name ->
-      File.dir?(Path.join(root, name)) and File.dir?(Path.join([root, name, operative_class]))
-    end)
+    Enum.find(namespaces(), &File.dir?(Path.join(namespace_dir(&1), operative_class)))
   end
 
   defp adopt_from_system(operative_class, namespace) do
-    from = Path.join([state_root(), "_system", operative_class])
-    to = Path.join([state_root(), namespace, operative_class])
+    from = Path.join(namespace_dir("_system"), operative_class)
+    to = Path.join(namespace_dir(namespace), operative_class)
 
     cond do
       not File.dir?(from) ->
@@ -470,8 +471,8 @@ defmodule Flezha.State.Registry do
 
   @doc """
   Enumerate every Entity that has any persistence file on disk under
-  `state_root()`. Walks the two-level directory tree
-  `<state_root>/<operative_class>/<procedure_id>/`.
+  `state_root()`. Walks the directory tree
+  `<state_root>/<namespace>/<operative_class>/<procedure_id>/`.
   """
   @spec all_entities() :: [entity_id()]
   def all_entities() do
@@ -485,8 +486,7 @@ defmodule Flezha.State.Registry do
   """
   @spec namespaces() :: [binary()]
   def namespaces() do
-    root = state_root()
-    root |> list_dir() |> Enum.filter(&File.dir?(Path.join(root, &1)))
+    state_root() |> list_dir() |> Enum.filter(&File.dir?(namespace_dir(&1)))
   end
 
   @doc """
@@ -501,11 +501,10 @@ defmodule Flezha.State.Registry do
   """
   @spec operative_classes() :: [binary()]
   def operative_classes() do
-    root = state_root()
-
     for namespace <- namespaces(),
-        class <- list_dir(Path.join(root, namespace)),
-        File.dir?(Path.join([root, namespace, class])),
+        dir = namespace_dir(namespace),
+        class <- list_dir(dir),
+        File.dir?(Path.join(dir, class)),
         uniq: true,
         do: class
   end

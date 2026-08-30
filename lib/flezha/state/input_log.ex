@@ -4,8 +4,9 @@ defmodule Flezha.State.InputLog do
   tier (`durable-input-log`).
 
   One GenServer per tier-enabled operative journals every inbound payload
-  (post-`:on_input`) at `<state_root>/<operative_class>/input.log` before the
-  Overwatch forwards it, assigning strictly monotonic offsets. Records reuse
+  (post-`:on_input`) at `<state_root>/<namespace>/<operative_class>/input.log`
+  before the Overwatch forwards it, assigning strictly monotonic offsets.
+  Records reuse
   the `WalWriter` framing (`encode_record`/`decode_record`, crc-protected,
   torn tail discarded on open) with a zeroed header, and durability rides the
   shared `FsyncBatcher`: the server registers in the `WriterRegistry` under

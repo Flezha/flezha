@@ -5,8 +5,9 @@ defmodule Flezha.State.ProcJournal do
   (`workflow-transactional-outbox`).
 
   One `proc.journal` per instance at
-  `<state_root>/<instance_id>/<instance_id>/proc.journal`, written through the
-  existing `WalWriter` framing + `FsyncBatcher` path under the reserved
+  `<state_root>/<namespace>/<instance_id>/<instance_id>/proc.journal`, written
+  through the existing `WalWriter` framing + `FsyncBatcher` path under the
+  reserved
   identity `Registry.journal_id/1` — no parallel persistence machinery. Each
   WAL record's change-bytes carry one typed journal entry, and its 16-byte
   record header carries the instance epoch and the entry's identity:

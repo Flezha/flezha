@@ -973,14 +973,15 @@ isolation is not evidence** — reproduce under load before concluding anything
      tests; `reset_recovery_states/0` on a process-global cache; the singleton
      convergence `Loop` started at a 1 s tick while `:657` also drives
      `tick_now/0`) — **none of them is *the* mechanism.** Weakest of the five.
-  2. `workflow_crash_resume_e2e_test.exs:249` — **DEFECT, and it is a KI-42 site,
-     not a load-sensitive test.** Re-seen on the post-fix tree at seed `567954`
-     (`docs/dev_notes/fix-first-input-drop-on-bind.md:215`–`:220`), so two
-     sightings at two commits. The module imports nothing and carries its **own
-     private** `cleanup/3` with the bad path at `:1267` — called from **seven**
-     sites (`554, 696, 741, 794, 975, 1034, 1093`), the last being
-     `drive_crash_resume/5`, which serves most scenarios in the file. See KI-42;
-     it should move there.
+  2. `workflow_crash_resume_e2e_test.exs:249` — **RESOLVED, and it was never a
+     load-sensitive test.** It was a KI-42 site: the module carried its **own
+     private** `cleanup/3` whose `File.rm_rf` named `<state_root>/<class>`, so
+     each of its **seven** call sites (`554, 696, 741, 794, 975, 1034, 1093`,
+     the last being `drive_crash_resume/5`) leaked one class tree per run, and a
+     later run whose `unique/1` id collided read the leftovers.
+     `assertions-that-cannot-fail` deleted that private copy — the module now
+     imports `TierE2EHarness.cleanup/3` — and measured the leak both ways on one
+     scenario. **Drop it from the list; four remain.**
   3. `effectively_once_e2e_test.exs:34` — **STALE**, cured today by
      `fix-first-input-drop-on-bind` (`e16260a7`) in both halves: the module lost
      its `await_stream_bound` call, and its `on_exit` rides
@@ -1017,11 +1018,11 @@ isolation is not evidence** — reproduce under load before concluding anything
   mechanisms named for 2, 4 and 5 are demonstrably present and would each produce
   a red under load; **none is proven to be the one that fired.**
 - **Worth fixing**: re-point the seven tags — that is the real risk here and it
-  is minutes of work. Then reshape the entry: move item 2 to KI-42, delete item
-  3, correct item 1's coordinate to `:592`, and attach the mechanisms to 4 and 5
-  so they stop reading as unexplained. Item 4 can be closed without a
-  reproduction, because the missing barrier is visible in the code and its own
-  sibling shows the correct form. Item 1 should be demoted to what it is: one
+  is minutes of work. Then reshape the entry: delete item 3, correct item 1's
+  coordinate to `:592`, and attach the mechanisms to 4 and 5 so they stop
+  reading as unexplained. (Item 2 is done — closed with KI-42.) Item 4 can be
+  closed without a reproduction, because the missing barrier is visible in the
+  code and its own sibling shows the correct form. Item 1 should be demoted to what it is: one
   sighting, no mechanism, not reproduced in 13 attempts.
 
 
@@ -1074,13 +1075,14 @@ isolation is not evidence** — reproduce under load before concluding anything
   (`lib/flezha/partition.ex:103`), whose `@member_separator` is `"#p"`, passed
   through `Store.safe/1` (`lib/flezha/dlq/store.ex:434`, `[^A-Za-z0-9._-]` → `_`),
   so `pgrp<N>#p0` lands on disk as `pgrp<N>_p0`. They come from the **system tier** —
-  `partitioned_operatives_e2e_test.exs`, the same module as KI-42's third site —
+  `partitioned_operatives_e2e_test.exs`, the module that also held KI-42's third
+  site —
   plus 3 `aborted_*`. A plain `mix test` cannot reproduce that half; it needs
   `--include system`.
 - **Worth fixing**: yes, and the `/tmp` half is three `on_exit` lines plus one in
-  the stub helper — the cheapest item in this band. The DLQ half is worth pairing
-  with KI-42, since it is the same module leaking through the same misunderstood
-  path.
+  the stub helper — the cheapest item in this band. The DLQ half is its own
+  leak: KI-42 is closed and touched only the **state** root, so nothing about
+  `app_data/dlq` moved with it.
 - **Resolution of the `/tmp` half (2026-08-30, `green-the-suite-log-gate`)**:
   closed at **four** sites, each `on_exit` beside the line that mints the
   directory — `restore_refusal_test.exs`'s setup,
@@ -1098,117 +1100,9 @@ isolation is not evidence** — reproduce under load before concluding anything
   **336 → 323**, the 13 reclaimed being earlier runs' leaks whose names this run
   re-minted and then cleaned.
 - **What is left**: the DLQ half, deliberately untouched. Triage established it
-  does not grow in a plain run and needs `--include system`; it is worth pairing
-  with KI-42, as the entry says.
-
-
-### KI-42 · Four e2e sites still name `<state_root>/<class>`, a path that cannot exist
-
-- **Severity**: P2 · **investigation first** (each site needs its own reading).
-- **Where**: `test/system/remote_durability_e2e_test.exs:110` and `:205`,
-  `test/system/partitioned_operatives_e2e_test.exs:185`,
-  `test/system/workflow_crash_resume_e2e_test.exs:1267`.
-- **What happens**: durable state lives under `<state_root>/<namespace>/<class>`
-  (`Flezha.State.Registry.class_dir/1`). These four join `<state_root>` to the
-  class directly. The three `refute File.exists?(...)` are therefore **vacuously
-  true** — they assert the absence of a path that never exists, so a genuine
-  failure to delete state would pass them — and the `File.rm_rf` leaks the tree
-  it meant to reclaim.
-- **Evidence**: the same mistake in `TierE2EHarness.cleanup/3` leaked one state
-  tree per run and failed `effectively_once_checkpoint_e2e_test.exs:37` **11
-  times in 40** once enough had accumulated for `unique/1`'s per-BEAM integers to
-  collide; with the path corrected the same 40 runs are 40/40. Fixed there by
-  `fix-first-input-drop-on-bind`; these four were left because each is an
-  assertion whose intended meaning has to be re-derived, not a path swap.
-- **A fix must**: use `Registry.class_dir/1` and then check that the assertion
-  still says what its author meant — a `refute File.exists?` that has never been
-  able to fail may be hiding a real leak.
-- **Triage (2026-08-30)**: **REAL, and the entry undercounts it — six sites, not
-  four.** `Registry.class_dir/1` (`lib/flezha/state/registry.ex:164`) is
-  `Path.join([state_root(), namespace_of_class(class), class])` and
-  `namespace_of_class/1` always answers something (claim → on-disk layout →
-  `"_system"`), so `Path.join(state_root(), class)` names a path the system
-  never writes. All four filed sites survive at HEAD.
-- **Reproduction — the assertion's subject made genuinely present at the real
-  path, and the assertion still passes.** A tree with a WAL file in it, written
-  through `class_dir/1`, is exactly what these three `refute File.exists?` exist
-  to catch:
-
-  ```
-  $ mix run --no-start /tmp/ki42.exs
-  state_root         = /tmp/ki42_5829
-  REAL class_dir     = /tmp/ki42_5829/acme/ohlc#p2   exists? true
-  path ASSERTED on   = /tmp/ki42_5829/ohlc#p2        exists? false
-
-  `refute File.exists?(Path.join(Registry.state_root(), class))` PASSES: true
-  ... while the tree it means to prove gone is present with 1 wal file(s).
-
-  CONTROL — same assertion written with class_dir/1 would FAIL: false
-  ```
-
-  The control line is the point: the probe **can** report dirty, so the green is
-  the assertion's blindness and not an artefact of the setup.
-- **Two more sites the entry does not name**, both of them cheap unit tests
-  rather than system-tier e2e:
-  - `test/operative/class_registry_test.exs:99` — `refute
-    File.exists?(Path.join(Registry.state_root(), class))`, in a test whose whole
-    purpose is "a put leaves no on-disk layout". Every *other* assertion in that
-    same file goes through `Registry.class_dir/1` (`:263`–`:272`); this one line
-    bypasses it. Proved the same way — after a real
-    `ClassRegistry.put_effectively_once(class, true)`:
-
-    ```
-    REAL class_dir   = /tmp/ki42b_3012/acme/cr_probe
-      exists?        true   contents: {:ok, ["effectively_once"]}
-    path ASSERTED on = /tmp/ki42b_3012/cr_probe   exists? false
-      -> refute PASSES: true   <- while a sidecar sits in the real dir
-    ```
-  - `test/flezha/operative/partition_group_rescale_test.exs:169` — `refute
-    File.exists?(Path.join(Registry.state_root(), "ohlc#p2"))`, sitting directly
-    beneath a `refute File.exists?(Registry.wal_path(moved))` at `:168` that
-    *does* work. The test is "3 to 2 absorbs the vacated member's entities **and
-    removes its tree**"; the second half of that promise is unguarded.
-- **Where the mistake comes from**: `lib/flezha/operative/class_registry.ex:17`
-  documents the sidecar as living under `<state_root>/<operative_class>/`. That
-  is the pre-namespace layout and it is false — the same module's own
-  `sidecar_path/2` (`:667`) correctly calls `Registry.class_dir/1`. A stale
-  moduledoc contradicting its own code is the most likely seed for all six sites.
-- **Scope of the shape, tree-wide**: 46 `refute File.exists?` / `refute
-  File.dir?` assertions in `test/`. **Five are vacuous** (the three filed plus
-  the two above). The rest are sound, and three near-misses are worth naming as
-  *correct* so nobody "fixes" them: `test/quic_test.exs:27` and
-  `test/helpers/tier_e2e_harness.ex:211` join the **namespace** (the latter is
-  the one `fix-first-input-drop-on-bind` repaired), and
-  `test/flezha/boot/state_path_migrator_test.exs:42`–`:43` join the flat
-  `<root>/<class>` *deliberately* — that is the pre-migration layout whose
-  absence they are asserting.
-- **The `File.rm_rf` site is a live leak with the largest blast radius of the
-  six, and it is also KI-18's item 2.** `workflow_crash_resume_e2e_test.exs:1267`
-  reclaims nothing, and the module imports nothing — it carries its *own* private
-  `cleanup/3`, called from **seven** sites (`554, 696, 741, 794, 975, 1034,
-  1093`), the last being `drive_crash_resume/5`, which serves most scenarios in
-  the file. So it leaks one state tree per scenario per run.
-- **Why a leaked tree is not merely untidy — it captures the next run.**
-  `namespace_of_class/1` falls back to `disk_namespace/1`
-  (`registry.ex:158`–`:160`), which scans the state root for *any* namespace
-  directory containing a directory of that class name. `state_root()` defaults to
-  `app_data/state` and no `:state_root` is set in `config/*.exs`, while
-  `System.unique_integer([:positive])` restarts per BEAM — so a leftover
-  `app_data/state/<old_ns>/<class>_<N>` from a previous run can capture *this*
-  run's `class_dir/1`, and the test then reads the previous run's files
-  (`workflow_crash_resume_e2e_test.exs:273`, `:275`). That is the same mechanism
-  this entry already records as failing
-  `effectively_once_checkpoint_e2e_test.exs:37` 11 times in 40. It is
-  order-dependent because `flezha_test.exs:66`'s `reset_all_entities/0` wipes the
-  whole root — which is exactly why a leak of this kind presents as "seen once".
-- **Worth fixing**: yes — but note that "fix" here means *the assertions turn
-  red*, because they have never once been able to. Do the two unit-test sites
-  first — the pair is **34 tests in 1.3 s**, all green today, so the flip is
-  instantly visible — and they will tell you immediately whether
-  `ClassRegistry` and `PartitionGroup.rescale/3` actually keep the promises their
-  test names make. Only then re-derive the three system-tier ones. Fix the
-  moduledoc at `class_registry.ex:17` in the same pass or the next author
-  repeats it.
+  does not grow in a plain run and needs `--include system`. KI-42 is closed and
+  did not reach it — that entry was about the state root, and `Store.safe/1`
+  writes under `app_data/dlq` on its own path rules.
 
 
 ### KI-21 · Three uncaptured `[error]` lines in a plain `mix test`
@@ -2249,6 +2143,7 @@ every new production freeze to `incident_log.md` at the repository root.
 | Issue | Closed by |
 |---|---|
 | KI-38 · `process_hub` pinned to a GitHub `dev` branch, so no version number described what a build contained | `adopt-process-hub-hex-release` (`4735c359`) — `mix.exs` declares `{:process_hub, "~> 0.7.0"}`; `mix.lock` carries the hex entry. **0.7.0 is the pinned code, published**: 78 `.ex` files each side, exactly one differs (`hub.ex`), and that difference is a pure relocation of `for_workers/1` — sorted, the two files are an identical multiset of lines. What the `.ex` comparison could **not** see is the package's own `mix.exs`, which raises `elector` from `~> 0.3.3` to `~> 0.3.4`; resolution fails until `elector` is unlocked, so the lock diff is two lines, not one. elector 0.3.4 is a real behaviour change on a live path (`erpc:multicall` replaces per-node `send_request`/`wait_response`, so the fan-out timeout is per batch rather than per node, and an election survives a candidate vanishing) — `declared_children` and `centralized_load_balancer` are its callers. `mix compile --force --warnings-as-errors` 272 files clean (negative control: a bogus `ProcessHub` call does fail it); `mix test` 1836 passed and `--include system` 1915 passed / 5 skipped, both unchanged from the HEAD baselines recorded before the swap, and `--include multi_node` 1845 passed — added because of the elector finding, since that tag is not covered by `--include system` and is where leader election actually runs |
+| KI-42 · six sites named `<state_root>/<class>`, a path the system never writes — five `refute File.exists?` that could not fail, and a `File.rm_rf` that reclaimed nothing | `assertions-that-cannot-fail` (commit pending) — all six now derive from `Flezha.State.Registry.class_dir/1`, and **every one was proved twice**: with the subject genuinely present at the real path the *old* assertion still passed (the two unit sites **34 passed**; `partitioned_operatives_e2e` **2 passed**; `remote_durability_e2e` under `POSTGRES_INTEGRATION=1` **3 passed**), and the *corrected* one goes red on the same subject and green once it is removed. **No deletion is broken** — all five are green against real behaviour, so `ClassRegistry`, `PartitionGroup.rescale/3`, `TierE2EHarness.destroy_local_state/1` and the rescale's tree removal all keep the promises their test names make; there was nothing to escalate. The `rm_rf` is proved by count, not by an assertion: one scenario (`workflow_crash_resume_e2e_test.exs:692`) left `app_data/state/workflow_loop_boot_2082/chat_loop_workflow_2114` with three class sidecars in it after its own `cleanup/3` ran, and leaves nothing after — the module's private `cleanup/3` is gone entirely, it imports `TierE2EHarness.cleanup/3`, which is the one teardown. **The sweep confirms the triage's number**: 46 `refute File.exists?` / `refute File.dir?` in `test/`, **exactly five vacuous** — the five filed — and 41 sound, each read against the layout it asserts on. **The seed is larger than filed**: not two moduledoc blocks but **seven**, across five modules (`state/registry.ex` twice, `operative/class_registry.ex`, `state/completion.ex`, `state/input_log.ex`, `state/proc_inbox.ex`, `state/proc_journal.ex`) plus four in `docs/`, every one dropping the `<namespace>` segment its own code writes. `Registry.namespace_dir/1` now owns that level and `class_dir/1` composes on it, so the two production sites that rebuilt it (`AuthZ.Quotas.compute_disk_bytes/1`, `Convergence.Loop.namespace_dir_mtimes/0`) and the two test sites (`TierE2EHarness.cleanup/3`, `quic_test.exs`) derive it too. Baselines unchanged: `mix test` **1836 passed**, `--include system` **1915 passed / 5 skipped** |
 | KI-47 · `check-overflow-naming.sh` red on its own evidence — a triage entry has to quote the retired name to prove it is gone | the gate now separates a QUOTED mention from a bare use, scoped to `docs/known_issues.md`; drilled both ways (bare use still exits 1) |
 | KI-44 · the OTLP codec crashed on any attribute value that is not a string, and silently re-encoded a list | `close-otlp-export-crash` (`ba0d3632`) — one private `attribute_string/1` renders every attribute **key and value**: a binary passes through untouched, an atom, integer or float takes its `String.Chars` rendering, everything else — lists included — goes through `inspect/1` with `limit: :infinity, printable_limit: :infinity`. Both halves were driven red first: a real `LoggerHandler.log/2` event through the real codec raised `Protocol.UndefinedError` on `logger:` (a Map) and on `mfa:` (a Tuple), while `%{l: [1, 2, 3]}` encoded to the bytes `<<1, 2, 3>>` **with no exception at all**. Three corrections to the filed entry, each measured: `:222` is the metric `NumberDataPoint` site, not the resource (`default_resource/0` never sees signal metadata); an attribute **key** can be a non-string too and crashed identically, since `Signal.new/1` validates that metadata is a map and never constrains its keys; and the escalation is no longer inferred — with the coercion reverted, `OtlpSink` dies inside `flush/1` with that exception, which the flush test now pins. `mix test test/flezha/observability/export_test.exs` with `attribute_string/1` reverted to `to_string/1`: **12 of 18**, six red including the list case, which fails without raising; restored: **18 of 18**, full suite **1836 passed, 0 failed**. The sibling site on the Prometheus exporter is KI-45; typed `AnyValue`s are KI-46 |
 | KI-43 · 28 test modules set Mimic's global mode without releasing it | `close-mimic-global-leak` (`828a9f50`) — 26 modules moved to `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1`, two dropped global mode entirely (they register no stub anywhere reachable), and `scripts/check-mimic-global.sh` refuses the raw call in `test/` with `test/helpers/mimic_global.ex` exempt by path. Measured, not asserted: `mix test test/flezha/service/cli_manager_state_get_test.exs test/flezha/service/cli_manager_schedule_test.exs --seed 0` was **11/20 passed, 9 failed**, every failure `Only the global owner is allowed`, against **10 passed** for the schedule module alone; after, **20 passed** on the same seed. Read directly (a temporary `ExUnit.after_suite` probe on `:ets.lookup(Mimic.Server, :mode)`): at seed 0 exactly one of the 28 left the mode `:global`; after the change all 36 global-mode modules left it `:private`. The entry's own reading was too broad — see `docs/dev_notes/close-mimic-global-leak.md` for which of the 28 could actually leak and why |

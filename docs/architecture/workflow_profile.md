@@ -83,7 +83,7 @@ Workflow durability is a per-instance append-only journal on the same WAL substr
 uses, under a reserved identity so it never surfaces as a phantom entity.
 
 ```
-<state_root>/<instance_id>/<instance_id>/proc.journal
+<state_root>/<namespace>/<instance_id>/<instance_id>/proc.journal
 
 record header (16 B): [epoch u32 BE][zero]
 record body:          [type u8][proc_idx u16 BE][iter u32 BE][payload]

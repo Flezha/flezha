@@ -84,7 +84,6 @@ defmodule Flezha.State.RetentionTest do
 
   describe "finished-job retention (workflow)" do
     test "retains a completion record within the window, reclaims it after" do
-      root = Registry.state_root()
       now = System.system_time(:second)
 
       # Within the (default 72h) window → retained.
@@ -113,7 +112,7 @@ defmodule Flezha.State.RetentionTest do
 
       assert Completion.exists?("bnd_live")
       refute Completion.exists?("bnd_old")
-      refute File.dir?(Path.join([root, "_system", "bnd_old"]))
+      refute File.dir?(Registry.class_dir("bnd_old"))
     end
   end
 

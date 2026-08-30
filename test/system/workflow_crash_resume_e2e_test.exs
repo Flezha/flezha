@@ -48,6 +48,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   use FlezhaTest.SystemCase, capability: :workflow
 
+  # The shared tier-e2e mechanics. `only:` because this module keeps its own
+  # `unique_id_path/0` under a crash-specific tmp prefix.
+  import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, os_pid: 1, sigkill: 1, unique: 1]
+
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
@@ -1172,14 +1176,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     # Close the port at teardown so the runner process exits (it blocks on
     # stdin until then); the SIGKILLed runner is already dead, so this is a
     # no-op for it.
-    on_exit(fn -> ensure_port_dead(port) end)
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
     {port, runner_id}
-  end
-
-  defp ensure_port_dead(port) do
-    if is_port(port) and Enum.member?(:erlang.ports(), port) do
-      try_quietly(fn -> Port.close(port) end)
-    end
   end
 
   # Force a fresh controller-side bind so `AddOperative` carries
@@ -1189,15 +1187,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp force_fresh_rebind(namespace, operative_id) do
     {:ok, pid} = OperativeManager.get_operative_pid(namespace, operative_id)
     Process.exit(pid, :kill)
-  end
-
-  defp os_pid(port) do
-    {:os_pid, pid} = :erlang.port_info(port, :os_pid)
-    pid
-  end
-
-  defp sigkill(os_pid) do
-    {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
   end
 
   defp registered?(namespace, operative_id) do
@@ -1259,21 +1248,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
        do: count_wal_records(rest, acc + 1)
 
   defp count_wal_records(_, acc), do: acc
-
-  defp cleanup(namespace, operative_id, id_path) do
-    try_quietly(fn -> OperativeManager.stop_all_operatives(namespace) end)
-    try_quietly(fn -> FleetManager.stop_namespace(namespace) end)
-    File.rm_rf(id_path)
-    File.rm_rf(Path.join(Registry.state_root(), operative_id))
-  end
-
-  defp try_quietly(fun) do
-    fun.()
-  catch
-    _, _ -> :ok
-  end
-
-  defp unique(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
   defp unique_id_path,
     do: Path.join(System.tmp_dir!(), "flz-crash-id-#{System.unique_integer([:positive])}")

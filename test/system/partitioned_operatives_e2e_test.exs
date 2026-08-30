@@ -182,7 +182,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     info_after = capture_io(fn -> CliManager.operative_info(namespace) end)
     assert info_after =~ "Partition group: #{group} (2/2)"
     assert info_after =~ "all 256 key groups owned exactly once"
-    refute File.exists?(Path.join(Registry.state_root(), Partition.member_id(group, 2)))
+    refute File.exists?(Registry.class_dir(Partition.member_id(group, 2)))
 
     # The move is only half the promise: the new owner must RESTORE what it
     # inherited, so the key continues from its pre-rescale state.

@@ -3,9 +3,10 @@ defmodule Flezha.State.ProcInbox do
   Per-instance durable inbox for a durable workflow operative
   (`workflow-durable-suspension`).
 
-  One `inbox.wal` per instance at `<state_root>/<instance_id>/<instance_id>/
-  inbox.wal`, written through the same `WalWriter` framing + `FsyncBatcher`
-  path as the sibling `proc.journal` under the reserved identity
+  One `inbox.wal` per instance at
+  `<state_root>/<namespace>/<instance_id>/<instance_id>/inbox.wal`, written
+  through the same `WalWriter` framing + `FsyncBatcher` path as the sibling
+  `proc.journal` under the reserved identity
   `Registry.inbox_id/1` — no parallel persistence machinery. Every post-start
   input is appended here **before** it is forwarded to the runner, so an
   input that arrives while the instance is suspended, crashed, or migrating is

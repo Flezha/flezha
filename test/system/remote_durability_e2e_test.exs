@@ -107,7 +107,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 60_000)
 
     destroy_local_state(operative_id)
-    refute File.exists?(Path.join(Registry.state_root(), operative_id))
+    refute File.exists?(Registry.class_dir(operative_id))
     assert ProcJournal.restore_state(operative_id) == nil, "local journal survived the drill"
 
     # A replacement runner with the release flag: the resumed chain can finish.
@@ -202,7 +202,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 60_000)
 
     destroy_local_state(operative_id)
-    refute File.exists?(Path.join(Registry.state_root(), operative_id))
+    refute File.exists?(Registry.class_dir(operative_id))
 
     {port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
