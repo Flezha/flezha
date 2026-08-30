@@ -264,8 +264,28 @@ the cast path cannot simply block without reintroducing the wedge that
 - **Hold the frame** — apply the `DropNothing` holdback shape the Entity path
   already uses. Largest, and the one that actually satisfies the guarantee.
 
+**Why the credit system does not already cover this** (asked 2026-08-30): it
+does exactly what it looks like — `flz_core/src/credit.rs` says "an exhausted
+window parks the sending thread and **never drops**" — but its scope is the
+**runner → controller state stream** plus the per-Operative source-ingestion
+ledger in `InputLog` (`CreditLedger`'s own moduledoc names both). The
+controller → runner input dispatch (`StreamChannel.io_in` → `send_frame`) and
+the control channel are **not** credited. The unit is "bytes debited on
+receipt, freed when durably drained", which fits a receiver that must fsync;
+on the input path the far-end backpressure is the Entity mailbox's own
+`on_full` policy, which acts AFTER the transport hop with no signal back to
+the sender.
+
+**And the two transports fail differently — see KI-56, filed the same day.**
+The QUIC driver calls `would_overflow_write_buffer` nowhere: `write_stream`
+extends its buffer unconditionally and treats a blocked flow-control window as
+a no-op, so the peer-not-draining condition that makes UDS drop makes QUIC grow
+**without bound**. Any answer here must cover both, or fixing one hands its
+failure mode to the other.
+
 Recommendation: the first now (it is small and makes the defect measurable),
-the third as its own change later. Blocks nothing today.
+the third as its own change later, covering UDS and QUIC together. Blocks
+nothing today.
 
 ### KI-10 — Credo strict: disable two checks, or edit 1 083 sites? (P2)
 
@@ -282,8 +302,26 @@ Why it is yours: it is a house-style decision, not a defect.
 - **Adopt them** and edit ~1 083 sites against the style already chosen. Cost:
   days, and a diff that touches nearly every file.
 
-Recommendation: disable both and ratchet the 378. Blocks the credo ratchet only;
-area 5a owes the decision.
+**Half decided 2026-08-30.** The user has ruled on
+`ParenthesesOnZeroArityDefs` (430 issues): **disable it** — they do not agree
+with the check. `AliasUsage` (653) is still open: they want to see what it
+actually asks for before ruling, and the concrete example is
+`lib/flezha/application.ex`, which aliases `Flezha.Runner.FleetManager` at the
+top and then writes `Flezha.Boot.StateRootLock.claim!()`,
+`Flezha.Boot.StatePathMigrator.migrate()` and
+`Flezha.State.DurabilityTier.children()` fully qualified inline — so the check
+is a **consistency** argument, not a style preference: the file already does
+both things.
+
+Held as ONE item rather than editing `.credo.exs` now, because both checks feed
+the same decision — the ratchet cannot be set until the remaining count is
+known, and 653 of the 1 083 are on the undecided side. When `AliasUsage` is
+ruled on, one pass disables what was rejected and records the ratchet.
+
+Recommendation: disable both and ratchet the ~378 that remain; the ~125
+"function body nested too deep" in that residue are real complexity signal and
+overlap the programme's own function-ceiling work. Blocks the credo ratchet
+only; area 5a owes the decision.
 
 ### Gate finding — the format gate aborts before it checks Rust
 

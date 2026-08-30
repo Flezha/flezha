@@ -40,6 +40,117 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-56 · The QUIC driver's send buffer has no cap at all
+
+- **Severity**: P1 · **read-established, NOT reproduced** — filed 2026-08-30
+  while answering a question about KI-3, by reading both drivers side by side.
+  The reproduction is owed; see *What would confirm it* below.
+- **Where**: `flz_nif/src/quic_driver.rs:533` (`write_stream`) and `:664`
+  (`flush_quic_write`), against `flz_nif/src/uds_driver.rs:474`
+  (`enqueue_write`).
+- **What happens**: the UDS driver bounds its per-stream send buffer —
+  `would_overflow_write_buffer(buffered, incoming, cap)`, 8 MiB by default,
+  `DropNewest` once non-empty. **The QUIC driver calls that predicate nowhere.**
+  `write_stream` does an unconditional `write_buffer.extend_from_slice(&data)`,
+  and `flush_quic_write` treats `quinn_proto::WriteError::Blocked` — the peer's
+  QUIC flow-control window being full — as a no-op that leaves the bytes
+  buffered. So the same condition that makes UDS *drop* (a peer that stops
+  draining) makes QUIC **grow without bound**.
+- **Two transports, two different failure modes, neither reported.** UDS loses
+  data silently; QUIC risks the process. This repository already carries a
+  production OOM whose root cause was unbounded buffers
+  (`controller-oom-rootcause-unbounded-wal-buffers`), so unbounded growth here
+  is not a hypothetical class.
+- **The documentation asserts the opposite.** `flz_transport/src/transport/
+  config.rs:34` introduces the cap as "Per-stream send-buffer cap **shared by
+  the UDS and QUIC drivers**", and `would_overflow_write_buffer`'s own doc calls
+  itself "the one predicate behind **every** driver's send-buffer bound". Both
+  sentences are false as written: `grep -n would_overflow_write_buffer
+  flz_nif/src/quic_driver.rs` returns nothing. A reader checking whether QUIC is
+  bounded finds a doc comment saying yes.
+- **What would confirm it**: a QUIC stream whose peer connects, completes the
+  handshake and never reads, then a sustained write; watch the driver's
+  `write_buffer_len` (already emitted as `driver_write_buffer_bytes` by
+  `TransportSource.emit_driver_stats/2`) grow past 8 MiB without bound and
+  without a `write_buffer_dropped` bump. KI-3 carries a working UDS harness of
+  exactly this shape to adapt.
+- **A fix must** decide the two transports' behaviour together, not separately —
+  which is the same decision KI-3 is waiting on. Bounding QUIC the way UDS is
+  bounded would give it UDS's silent-drop defect; leaving it unbounded keeps the
+  OOM path. Whatever backpressure answer KI-3 takes should cover both, and the
+  doc comments are corrected in that change either way.
+
+### KI-55 · A host SDK applies an inter-procedure edge transform twice
+
+- **Severity**: P1 · **proposal owed**.
+- **Where**: `ActivationDispatcher.EmitContext.collectEdgeOutputs`
+  (`sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:841`)
+  applies the consumer edge's transform chain producer-side, and
+  `ActivationDispatcher.valuesForEntity` (`:318`) applies the *same* chain again
+  when the consumer receives the value. Both sites run for one inter-procedure
+  **stream** edge.
+- **What happens**: a `map` / `flatMap` / `filter` declared on an inter-proc
+  edge composes with itself. A `.map(String.class, s -> "M:" + s)` between two
+  procedures delivers `M:M:mid:v` where the contract says `M:mid:v`. Silent —
+  no error, no counter, just a wrong value.
+- **Impact**: `openspec/specs/sdk-poll-core/spec.md` → *"Edge transforms and
+  keys evaluate producer-side"* says the transform is applied once, when the
+  producing activation completes. Applying it a second time at delivery
+  violates that, and a `filter` composed with itself is idempotent while a
+  `map` is not — so the shape decides whether the defect shows. `key_by` is
+  unaffected (selection, not reshaping).
+- **Why it survived**: every transform in the tree is declared on an **entry**
+  channel, where there is no producer-side application (the producer is the
+  wire) — so `mergedInputAppliesEdgeMapping`, the Rust transform suite and the
+  stream-transform e2e all pass and say nothing about this. Two comments assert
+  the opposite as design: `valuesForEntity`'s javadoc ("re-run *symmetrically*
+  at delivery because only bytes cross the core") and
+  `docs/dev_notes/stream-dsl-keyby-and-transforms.md:20`. Re-running is
+  symmetric for a key and for an entry channel; it is composition for a map on
+  an inter-proc edge.
+- **Reproduction** — `ActivationDispatcherTest.interProcEdgeMapAppliesTwice`
+  (added by `java-diamond-resume`, and asserting the CURRENT wrong value so the
+  suite is green and a fix is not silent). Invert its assertion to
+  `["=M:mid:v"]` and it fails:
+
+  ```
+  $ mvn -B -f sdk/java/pom.xml -pl flezha-sdk-runtime \
+      -Dtest=ActivationDispatcherTest#interProcEdgeMapAppliesTwice \
+      -Dsurefire.failIfNoSpecifiedTests=false test
+  Expecting actual:
+    ["=M:M:mid:v"]
+  to contain exactly (and in same order):
+    ["=M:mid:v"]
+  ```
+
+  The fixture is `MappedPipelineOperative`: `c.input(String.class, "in")
+  .into(MidProc.class).named("mapped_mid").map(String.class, s -> "M:" + s)
+  .into(KeyRecorder.class)` — one producer, one mapped inter-proc edge, one
+  consumer.
+- **Blast radius is not Java only** — the same two-site shape is in every
+  byte-level host, because `HostChannelDecl` carries no transform
+  (`flz_core/src/host/register.rs:466` builds every host consumer edge with
+  `transform: None`), so each host must apply its own and each applies it at
+  both ends: **Node** `src/ctx.ts:157` + `src/dispatch.ts:283`/`:363`,
+  **Python** `flezha/ctx.py:225` + `flezha/dispatch.py:276`, **PHP**
+  `src/Ctx.php:231` + `src/Dispatch/Dispatcher.php:462`. Ruby declares no
+  transform surface. **Reproduced on Java; the other three are read, not run.**
+  Rust is unaffected: `flz_core::routing::route_to_consumers` evaluates in
+  process, once.
+- **Not fixed here on purpose**: found while closing KI-33 (the workflow half of
+  the same seam, `docs/dev_notes/java-diamond-resume.md` D6). The workflow arm
+  removed the double application for workflow classes by releasing the value
+  raw; the **stream** path is a separate defect with a separate blast radius —
+  it decides which of the two sites is authoritative for four SDKs at once, and
+  the spec sentence says producer-side, so the consumer half is the one that
+  looks wrong. That is a design decision, not a patch.
+- **A fix must**: pick ONE seam per host SDK and prove it with a transform on an
+  inter-proc edge (not an entry channel), in every host SDK that carries the
+  surface; and correct the two comments that call the second application
+  symmetric. Note that the workflow arm now depends on `valuesForEntity` being
+  the consumer-side application — removing it would silently drop workflow edge
+  transforms.
+
 ### KI-3 · UDS write-buffer drops are invisible to the caller
 
 - **Severity**: P1 · **investigation first**, then proposal.
@@ -934,95 +1045,6 @@ since carries its own date.
 These predate `docs/refactor/STATE.md` and were carried only in session memory
 until 2026-08-30. Dates are when each was last established, not when it started.
 
-### KI-33 · Java workflow resume re-runs committed producers
-
-- **Severity**: P1 · **proposal owed — investigation first**.
-- **Where**: `test/system/workflow_crash_resume_e2e_test.exs:147` — "a fan-in
-  diamond joins once, and a crash re-runs only the uncommitted producer".
-- **What happens**: **fails deterministically on both Java arms (uds and quic),
-  3 of 3 runs.** The Rust arms pass. Expected 5 distinct payloads, gets 9:
-  `[a, c, c, b, b, j:c, j:c, j:b, j:b]`. `a` runs once, so A's journal skip
-  works — but B1/B2, C and the join each run **twice**. The resume re-runs
-  committed producers instead of only the uncommitted one.
-- **Why it matters**: that is an effectively-once violation on the Java SDK's
-  resume path, not a test artifact.
-- **Proven pre-existing**: swapping in the `java_runner.jar` blob from the git
-  index (the build staged before `unify-plugin-sink-api`) reproduces it, so that
-  change did not cause it.
-- **Why no proposal yet**: the symptom is established and the mechanism is not.
-  A proposal must start by root-causing which journal check the Java driver
-  skips on resume, then fix it — writing a fix design now would be guessing.
-- **Triage (2026-08-30)**: **STILL OPEN, but its stated reproduction no longer
-  runs — the test is pinned away from Java on purpose. Anyone who follows this
-  entry's instructions will get green and wrongly close it.**
-- **What happens if you do what the entry says:**
-
-  ```
-  $ FLEZHA_E2E_RUNTIME=java mix test test/system/workflow_crash_resume_e2e_test.exs:147 --include system
-  [conformance] runtime=java manifest=test/apps/java_runner/conformance.json deferred=[]
-  Result: 2 passed, 17 excluded
-  ```
-
-  Green. And the identical command with `FLEZHA_E2E_RUNTIME=rust` gives the
-  identical result, because **the runtime axis is inert for this test**.
-- **Why — and the code says so itself.** The scenario is now at
-  `test/system/workflow_crash_resume_e2e_test.exs:135` (`:147` is inside its
-  body) and carries `@tag reference_runtime: true` at `:134`, added by `578fb2e9`
-  (`feat(test): one end-to-end suite, one SDK per run`). `FlezhaTest.SystemCase`
-  resolves that tag to the reference SDK unconditionally
-  (`test/helpers/system_case.ex:66`–`:67`:
-  `def runtime_for(%{reference_runtime: true}), do: NodeTestHelper.reference_runtime()`),
-  and the reference is `:rust`. The comment above the tag (`:130`–`:133`) states
-  the reason in as many words: *"Known open on Java: a resumed diamond re-runs a
-  committed producer (predates this change; recorded in the dev notes). Pinned to
-  the reference until `java-diamond-resume` closes it."*
-- **Proved by process, not by inference.** Sampling `ps -eo pid,comm | awk
-  '$2=="java"'` twice a second across each run:
-
-  ```
-  pinned test  (:135, @tag reference_runtime)  java arm -> 0 distinct java processes
-  unpinned test (:72, same file)               java arm -> 4 distinct java processes
-  ```
-
-  The probe was validated against a real `java -jar test/apps/java_runner/dist/java_runner.jar`
-  first, so a zero is a zero and not a broken probe. The Java e2e arm is alive and
-  well — it simply never reaches this scenario.
-- **What could NOT be established: whether the defect still exists at HEAD.**
-  Confirming or refuting it requires removing `@tag reference_runtime: true`, and
-  triage fixes nothing. Everything else is in place — both jars are on disk from
-  today (`02:27`) and the only kernel commit since is `62d7e918`, a
-  `#[cfg(unix)]` import gate with no behaviour change on Linux — so a single tag
-  removal is the whole cost of finding out.
-- **Worth fixing**: yes, and it is still P1. **First step is one line**: run that
-  scenario un-pinned on the Java arm and see whether `[a, c, c, b, b, j:c, j:c,
-  j:b, j:b]` still comes back. Rename the owed change to `java-diamond-resume`,
-  which is what the test comment already calls it.
-
-- **CONFIRMED 2026-08-30, and reproducible for the first time.** The
-  `@tag reference_runtime: true` that masked it is gone, replaced by a skip that
-  names this entry — a pin reported a pass for a runtime that never ran, which
-  is why this P1 went unverified for months.
-
-  ```
-  $ FLEZHA_E2E_RUNTIME=java mix test test/system/workflow_crash_resume_e2e_test.exs --include system
-  # with the skip bypassed
-  Result: 17/19 passed        # both transports fail, uds and quic
-
-  1) test transport=uds a fan-in diamond joins once, and a crash re-runs only
-     the uncommitted producer
-     the join accumulates BOTH producers' contributions:
-     ["a:…", "c:…", "c:…", "b:…", "b:…", "j:c:…", "j:c:…", "j:b:…", "j:b:…"]
-  ```
-
-  `b` and `c` each arrive **twice**, and the join emits `j:b` and `j:c` twice —
-  the resume re-runs producers whose handoff was already journaled, and the join
-  accumulates both copies. The Rust arm passes the same assertion, so the
-  contract is not in doubt; the Java SDK's resume is.
-
-- **A fix must**: journal-gate the Java resume the way the Rust SDK does, so a
-  producer whose handoff is banked is not re-run. It now has a failing test to
-  work against, which is what this entry never had.
-
 ### KI-34 · Java host dispatch costs 27–55 % more than Rust
 
 - **Severity**: P2 · **proposal owed** (`java-host-dispatch-cost`).
@@ -1351,6 +1373,7 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-33 · Java workflow resume re-runs committed producers | `java-diamond-resume` (`4de341b5`) — **and its diagnosis was wrong in both halves: nothing was re-run, and the defect is not in resume.** The mechanism is one line of the emit funnel: `ActivationDispatcher.EmitContext.collectEdgeOutputs` (`ActivationDispatcher.java:841`) added one `Edge` output **per consumer** of the producing channel. That is the correct *stream* shape — `flz_core`'s `host/activation.rs:509` destructures `Edge { channel, consumer }` and routes on it — and the wrong *workflow* one: `host/workflow.rs:70` matches `Edge { channel, .. }`, **discards the consumer**, collects every output as one released value, and the driver then fans that batch out to each child itself (`driver.rs::run_iteration` → `Children::accumulate`). `DiamA`'s `dfan` has two consumers, so every downstream node's work doubled. The fix is the arm the Rust SDK already has (`WorkflowCollectAdapter::emit`, one `sink.collect(value)`): on a structured workflow class one emitted value becomes exactly ONE edge output on the producing channel, untransformed and unkeyed, and each consumer evaluates its own edge at delivery in `valuesForEntity` — the seam a live run and a journal re-seed both cross. **Two probes refuted the filed diagnosis**, both on a `java_runner.jar` rebuilt from HEAD. (1) The journal holds exactly **one** `proc_committed` per `proc_idx` 0…4, every one at `iter=0`, on both runtimes — no procedure was re-run and no journal gate failed. What it shows instead is proc 0 releasing **two** byte-identical values on one channel (`handoff_n=2`, `outbox_n=1`, bytes `[17,17]`) where rust writes `handoff_n=1`; procs 1–3 `handoff_n=2` and the join `outbox_n=4` against rust's `2` all follow from that. (2) **The same 9 payloads arrive with no crash at all** — one runner, `FLEZHA_WORKFLOW_E2E_RELEASE` set, no SIGKILL, no rebind, no resume — `[a, c, c, b, b, j:c, j:c, j:b, j:b]` with the same `handoff_n=2` at proc 0. So the entry's *"the resume re-runs producers whose handoff was already journaled"* and its *"a fix must journal-gate the Java resume"* are both refuted; the resume-skip contract was working the whole time. The `@tag skip:` that hid this is deleted, not narrowed, and a **no-crash** diamond scenario now runs beside the crash one in `test/system/workflow_crash_resume_e2e_test.exs` so the next reader cannot re-acquire the resume reading. Red-then-green, measured: that file on java was **17/21** before the fix (both diamond cells and both no-crash cells failing, uds and quic) and **21/21** after, with rust **21/21** either way; the narrowest proof is `ActivationDispatcherTest.workflowStageReleasesOneEdgeOutputPerValue`, red on HEAD with `Expected size: 1 but was: 2` over `Edge[channel=1, consumer=1]` and `Edge[channel=1, consumer=2]`. The shared contract was what was wrong — `sdk-poll-core`'s producer-side rule stated the stream shape unconditionally — so it is amended for every SDK, and `workflow-branching` gains the scenario that a channel's consumer count SHALL NOT multiply the released batch. One defect found on the way and deliberately not fixed: KI-55 |
 | KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down | `finish-the-suite-log-gate` — `ControlChannel.send_control/3` now wraps its `GenServer.call` in the two-clause `catch` `ControlUnit.ping_runner/2` already used one layer up: `:exit, {:timeout, _} -> {:error, :timeout}` and `:exit, reason -> {:error, {:control_channel_exit, reason}}`. Design D1's Shape B, in the single funnel all six `ControlUnit` `handle_call`s cross; no caller changed (nine sites read, each already carrying an `{:error, reason}` arm) and the child list was **not** reordered — starting `ControlChannel` first would open a window in which `handle_info`'s `GenServer.cast` to an unregistered `ControlUnit` returns `:ok` and drops an SDK reply, trading an `[error]` line for a silent drop. **Two corrections to this entry, both measured.** (1) Its premise was **inverted**: `runner_supervisor.ex:18`–`:39` lists `ControlUnit` **first** and `ControlChannel` third, and the reverse-order terminate sweep is what stops the channel first — so its own fix wording ("stop `ControlUnit` before `ControlChannel` in the child list") reads as *list it earlier*, which is already the case and would change nothing; to stop it first you must move it **later**. (2) Its reproduction claim did not hold: `test/flezha_test.exs` alone printed the line in **0 of 2** runs with the guard removed, against the "2 of 2" recorded when it was filed. The evidence is the full run instead — one hit at baseline, **zero** across four post-fix full runs including two on fixed seeds. Both new cases were run **red first** (`1/3 passed`: the caller *exits* rather than being answered) and are green after |
 | KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub | `finish-the-suite-log-gate` — the six tests that spawn a real bind task now `await_migrate_task/1`, which reads the `%{pid: pid}` handle they already hold and asserts `{:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}`. That is strictly stronger than the `assert migrate_task != nil` it follows, and the `^inst` pin is untouched — the entry forbids loosening it and nothing did. **Two corrections.** (1) **Six tests leak, not one**: `:116`, `:155` (the one filed), `:185`, `:275`, `:320` and `:330`; the last two spawned through `stub_rebind/0` and **discarded the state** as `{:reply, :ok, _}`, so their leak was invisible to anyone grepping for `migrate_task != nil`. (2) The `startup attempt 1 failed … — retrying` line the entry quotes is **unreachable while the test is running**: the module's `setup` overrides `:overwatch_retry_backoff_ms` to `[1]`, so `rest == []` on the first attempt and there is no ladder. It appears because the orphan reaches `resolve_runner/4` only after its test's `on_exit` has **restored the production backoff** — which is the mechanism by which the task survives long enough to reach the next test at all. Measured: **3 of 10** seeds red at HEAD (777, 432113, 5150 — each `20 passed`, exit 0, two `[error]` lines), **0 of 10** on the same ten seeds after, at an unchanged 1.6 s. The await is proved load-bearing: expecting a wrong reason turns exactly those six red |
 | KI-50 · `Extension.PhaseTest` "uncertain health probe" fails about 1 run in 3, in-suite only | `finish-the-suite-log-gate` — the structural defect is fixed and **the rate was never reproduced at this HEAD**; both halves are stated because the second one matters. The module's hand-rolled `:telemetry.attach` is replaced by `MessageTestHelper.forward_telemetry/3`, which gained an optional metadata predicate, and each test now mints its own `plugin_id` and forwards only events carrying it — so a foreign `fail_open` is never delivered rather than merely waited past (no settle, no `async: false`, both of which this entry forbids). **Not reproduced in 15 runs** at this HEAD: `phase_test.exs` alone 5/5 green, the plugin tree 8/8 and then 5/5 green, and two full `mix test` runs green — so the ~1-in-3 claim stands neither confirmed nor refuted here. **The census explains why the window is narrow.** A scratch telemetry recorder plus an `ExUnit` formatter on one monotonic clock, over two full runs: **exactly four `fail_open` emits per run**, identical population both times — three from `phase_test` itself and **one** from `table_health_test.exs` (`plugin_id: "r"`) — and the two `async: true` emitters **never overlapped** in either run. Design D3's second named candidate, `Convergence.Probe`'s Loop tick, emitted **zero** times in both runs and is removed from suspicion. What replaces the missing race as proof is a **deterministic** one: with only the filter argument removed, the change's new scoping case fails with `Unexpectedly received message {:fail_open, …, %{plugin_id: "foreign_fail_open_1380"}}` — the entry's mechanism, on demand |
