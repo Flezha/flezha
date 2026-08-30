@@ -10,6 +10,15 @@ and fixed in its own change. That recording used to live in the programme's
 board (`docs/refactor/STATE.md`), which is programme-scoped and retires when the
 programme does. These outlive it, so they live here.
 
+**What an entry must carry.** A command that reproduces the defect, and the
+output that command actually gave. An entry without one records a suspicion, and
+a suspicion cannot be verified, closed, or acted on by anyone but its author.
+On 2026-08-30 all forty entries were triaged against the code: eleven were
+already fixed or never true, five overstated their scope, four **understated**
+it, and five could not be reproduced at all. Every one of them had been written
+in passing, mid-other-work, without a reproduction — which is exactly what
+charter §1's "record it, fix it in its own change" does not by itself require.
+
 **How to use it.** Each entry states where the defect is, what it does, the
 evidence it is real, why it was not fixed on the spot, and what a fix has to
 account for. `P1` blocks correctness or hides data loss; `P2` costs real time or
@@ -344,41 +353,6 @@ below is all that survives — which is enough to write it again.
   `.credo.exs` with a one-line reason each, then ratchet on the 378. Until then
   the count is not a signal and should not be quoted as one.
 
-### KI-12 · Veneer artifacts are debug builds by default
-
-- **Where**: `scripts/build-{node,python,ruby,php}-sdk.sh` — `--release` is not
-  the default, so a plain run leaves debug artifacts installed.
-- **Impact**: a `--runtime <veneer>` benchmark under `FLEZHA_BENCH_SKIP_BUILD=1`
-  then measures a debug veneer and reports it as a number. General to all four
-  veneers (an earlier note blaming Python alone was wrong).
-- **Triage (2026-08-30)**: the mechanism is **true** and the impact is **stale**
-  — the hole it describes has been closed twice over since it was filed.
-  Confirmed still true: all four of `scripts/build-{node,python,ruby,php}-sdk.sh`
-  set `profile=debug` and only `--release` changes it. But each script's own
-  header now states this as a decision, in the same words in all four — "`--release`
-  builds the veneer in release, which is what the bench profile wants; the
-  default is a debug veneer, which is what the e2e wants".
-- **Reproduction of the mitigation**, which is what actually matters here: every
-  veneer's bench build line already passes `--release`.
-
-  ```
-  $ for m in test/apps/*/conformance.json; do python3 -c "…print(json.load(open('$m'))['build'])"; done
-  node   … 'bench': 'scripts/build-node-sdk.sh --release'
-  php    … 'bench': 'scripts/build-php-sdk.sh --release'
-  python … 'bench': 'scripts/build-python-sdk.sh --release'
-  ruby   … 'bench': 'scripts/build-ruby-sdk.sh --release'
-  ```
-
-  And the one path that skips the build now says so in the report:
-  `lib/mix/tasks/bench/report.ex:473-478` emits "FLEZHA_BENCH_SKIP_BUILD is set —
-  the artifact measured is whatever was on disk, which is not necessarily the
-  tree you are in".
-- **Worth fixing**: **no.** The debug default is deliberate and documented, the
-  bench profile overrides it, and the residual case is announced in the report
-  header. The entry's "reports it as a number" is no longer true. Keep the fact
-  — it is a real trap for anyone reading a stale artifact — but demote it out of
-  the defect list.
-
 ### KI-13 · The PHP container arm needs `--network host`, and leaks containers
 
 - **Where**: the `FLEZHA_E2E_RUNTIME=php` shim.
@@ -625,71 +599,6 @@ below is all that survives — which is enough to write it again.
   loosening the stub — the pinned `^inst` is what proves the rehydrate resolves
   the *right* instance.
 
-### KI-17 · UDS socket paths overflow `sun_path`, and can fail a test
-
-- **Where**: the system tier. A stream socket path of 114 bytes
-  (`/tmp/flezha_sockets/<node>/secondary_stream_<namespace>_<ids>_wus.sock`)
-  exceeds `sun_path`'s 108.
-- **What happens**: 120 "Failed to start primary listener" plus 167 "Failed to
-  connect runner" error lines per run, while the tests still pass — **and it can
-  now fail one**: `schema_evolution_e2e_test.exs:65` on the python arm is
-  preceded by `[flz_nif] UDS driver fatal error: path must be shorter than
-  libc::sockaddr_un.sun_path`.
-- **A fix must**: shorten the generated path, not raise the limit.
-- **Triage (2026-08-30)**: **STALE — and stronger than that, the path shape the
-  entry quotes never existed in code.** Socket names are composed in exactly two
-  places, and neither appends `_wus`: `lib/flezha/socket/support.ex:76`–`:78`
-  (`"#{type}_stream_#{runner_id}.sock"`) and
-  `flz_transport/src/utility/socket_dir.rs:164`–`:179` (same shape,
-  `STREAM_SOCKET_INFIX = "_stream_"`). `_wus` is a Registry **via-name** suffix
-  from `Identificator.unit_sup/1` (`lib/flezha/service/identificator.ex:38`),
-  never a filename. `git log --all -S '_wus.sock'` returns only commits that
-  touch this entry's own prose — the string has never appeared in source.
-  The runner id is not `<namespace>_<ids>` either: it is `namespace <> "_" <>`
-  four concatenated `Enum.random(1..1000)` (`identificator.ex:20`–`:36`).
-- **The fix landed in `ac64206a`** ("feat(discovery): a runner finds its
-  controller…"): `config/test.exs:141`–`:149` moved the dir to
-  `System.tmp_dir!()/flezha_sockets/<node>` with a comment naming SUN_LEN, and
-  `test/helpers/node_test_helper.ex:137`–`:139` keeps peer dirs beside it.
-- **Reproduction — refuted, by measuring the production function.** Calling
-  `Flezha.Socket.Support.stream_socket_path/2` under `config/test.exs`'s dir:
-
-  ```
-  socket_dir = /tmp/flezha_sockets/nonode@nohost
-  workflow_loop_stateless/10d + rand16     107 bytes  ok    <- absolute worst case
-  typical rand (12 chars):                 101 bytes
-  ```
-
-  The 107 row needs a 10-digit unique suffix **and** all four `Enum.random(1..1000)`
-  landing on exactly 1000 (p ≈ 1e-12). The longest path ever actually written on
-  this box, across every past run's leftovers, is **89 bytes**:
-  `/tmp/flezha_sockets/test_agent_node1@127.0.0.1/secondary_stream_default_559954644993.sock`.
-  And a plain suite run produces **zero** of the entry's error lines:
-
-  ```
-  Failed to start primary listener: 0
-  Failed to connect runner        : 0
-  sun_path msgs                   : 0
-  ```
-- **Two corrections of fact**: the ceiling is **107, not 108** (binding real
-  sockets: `len=107 OK`, `len=108 ERROR :einval`), and **nothing in this repo
-  enforces it** — `grep -rn "sun_path\|sockaddr_un" --include=*.rs` outside
-  `target/` returns nothing. The message the entry quotes is Rust std's own,
-  surfaced from the kernel.
-- **What could NOT be established**: the 120/167 error-line counts. Those are
-  system-tier numbers and a plain `mix test` excludes `:system`; re-counting them
-  needs a built SDK runner per arm, which is past "cheap and decisive". But they
-  cannot have been sun_path overflow, because no path the code can build reaches
-  even 108.
-- **Worth fixing**: nothing. Close as fixed by `ac64206a` with the numbers
-  corrected. **Keep one caveat**: the margin is node-name dependent —
-  `socket_dir()` embeds `node()`, which is `nonode@nohost` (13 bytes) under `mix
-  test`; a distributed run named e.g. `flezha@127.0.0.1` (16) adds 3 and puts the
-  theoretical worst case at 110. CI does not do this
-  (`.github/workflows/nightly-e2e.yml:212` is a bare `mix test --include system
-  --include multi_node`), so it is a trap for a future change, not a live defect.
-
-
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
 Recorded so a future red run is not mistaken for a regression. **Green in
@@ -858,85 +767,6 @@ since carries its own date.
   sighting, no mechanism, not reproduced in 13 attempts.
 
 
-### KI-19 · Test hygiene: leaked temp dirs and DLQ leftovers
-
-- 738 leaked `/tmp/flezha_*` directories (state-test and durability-stub roots
-  never removed); `app_data/dlq` holds leftovers from tests using the default DLQ
-  directory. Owed to the test-consolidation area.
-- **Triage (2026-08-30)**: **REAL**, reproduced in one plain `mix test`, and now
-  attributed to three named modules. Both of the entry's numbers are stale, in
-  opposite directions.
-- **Reproduction** — count, run, count:
-
-  ```
-  $ ls -d /tmp/flezha_* | wc -l
-  293
-  $ mix test                        # 1830 passed, 0 failures, 56.8 s
-  $ ls -d /tmp/flezha_* | wc -l
-  303
-  ```
-
-  13 created, 3 reaped, **net +10 per plain run**: `flezha_state_test_*` × 10,
-  `flezha_durability_stub_*` × 2, `flezha_state_dir_*` × 1.
-- **Attribution** — 11 of the 13 belong to three modules, and running only those
-  three shows it in 0.8 s:
-
-  ```
-  $ mix test test/flezha/operative/restore_refusal_test.exs \
-             test/flezha/runner/fleet_manager_sdk_lang_test.exs \
-             test/flezha/boot/state_path_coherence_test.exs
-  Finished in 0.8 seconds ... 302 -> 313 dirs   (+11)
-  ```
-
-  `StateTestHelpers.tmp_app_data_dir/0` (`test/helpers/state_test_helpers.ex:59`)
-  mkdirs the root and hands it back; reaping it is each caller's `on_exit`.
-  Roughly thirty callers pair it with `File.rm_rf`. **These three never do** —
-  their `on_exit` deletes the `:state_root` env var and leaves the tree:
-  `restore_refusal_test.exs:30` (8 tests, so 8 dirs a run),
-  `fleet_manager_sdk_lang_test.exs:178`, `state_path_coherence_test.exs:29`
-  (which also mints its own `flezha_state_dir_*` at `:53`). The remaining two are
-  `DurabilityBackendStub`'s isolated store (`durability_backend_stub.ex:58`),
-  likewise never reaped.
-- **Correction to the entry — the scale**: `/tmp/flezha_*` is **301 dirs / 6.3
-  MB**, not 738. But every one of them is dated *today* (oldest `03:36`, newest
-  `16:05`): the 738 were cleared at some point and this is **one working day's
-  accumulation**, which is the more alarming reading of the same fact.
-- **Correction to the entry — the DLQ half is a different leak, and it did not
-  grow here**: 57 class dirs in `app_data/dlq` before the run and 57 after (484
-  KB). 54 are named `pgrp<N>_p0` — that is `Partition.member_id/2`
-  (`lib/flezha/partition.ex:103`), whose `@member_separator` is `"#p"`, passed
-  through `Store.safe/1` (`lib/flezha/dlq/store.ex:434`, `[^A-Za-z0-9._-]` → `_`),
-  so `pgrp<N>#p0` lands on disk as `pgrp<N>_p0`. They come from the **system tier** —
-  `partitioned_operatives_e2e_test.exs`, the module that also held KI-42's third
-  site —
-  plus 3 `aborted_*`. A plain `mix test` cannot reproduce that half; it needs
-  `--include system`.
-- **Worth fixing**: yes, and the `/tmp` half is three `on_exit` lines plus one in
-  the stub helper — the cheapest item in this band. The DLQ half is its own
-  leak: KI-42 is closed and touched only the **state** root, so nothing about
-  `app_data/dlq` moved with it.
-- **Resolution of the `/tmp` half (2026-08-30, `green-the-suite-log-gate`)**:
-  closed at **four** sites, each `on_exit` beside the line that mints the
-  directory — `restore_refusal_test.exs`'s setup,
-  `fleet_manager_sdk_lang_test.exs:178`, both dirs in
-  `state_path_coherence_test.exs` (the `tmp_app_data_dir/0` one and the
-  hand-rolled `flezha_state_dir_*`), and `DurabilityBackendStub`'s
-  `isolate_store_dirs/0`, which mints one root per `install/0` where a module
-  uninstalls once — so `uninstall/0` alone would still have leaked one per test.
-  Measured with a timestamp marker rather than a count, because
-  `System.unique_integer/1` restarts low in each BEAM and run N+1 re-mints run
-  N's names, so a count hides a leak behind a collision: after the fix a run of
-  the four sites creates or touches **no** `/tmp/flezha_*` entry at all, and a
-  full `mix test` touches only the configured socket root. The three named
-  modules were **+11 dirs** before and **0** after; the full run's total fell
-  **336 → 323**, the 13 reclaimed being earlier runs' leaks whose names this run
-  re-minted and then cleaned.
-- **What is left**: the DLQ half, deliberately untouched. Triage established it
-  does not grow in a plain run and needs `--include system`. KI-42 is closed and
-  did not reach it — that entry was about the state root, and `Store.safe/1`
-  writes under `app_data/dlq` on its own path rules.
-
-
 ### KI-21 · Three uncaptured `[error]` lines in a plain `mix test`
 
 - Two sdk_lang-mismatch restore refusals and one ControlUnit abnormal shutdown.
@@ -1016,58 +846,6 @@ since carries its own date.
   known, named set of two instead of an unexplained three.
 
 
-### KI-22 · An inert drain in the output-stall drill
-
-- Commit `087d0d28`'s `:sys.get_state(Loop)` drain is a no-op: a 200 000-iteration
-  probe showed the `send_after(…, 0)` tick lands after the reply every time.
-- **Triage (2026-08-30)**: **STALE — the drain the entry describes was deleted
-  from the tree yesterday.** `5f381a3e` ("refactor(0b): tests wait for signals,
-  not for time") removed it and said so in its own message: *"the output-stall
-  drill's boot tick"*. HEAD
-  (`test/flezha/convergence/output_stall_drill_test.exs:57`–`:74`) listens
-  **before** the Loop starts and consumes the boot tick as a settle signal
-  (`assert_receive {:tick, _boot_tick}, @budget_ms`) instead of trying to drain
-  it afterwards.
-- **The hash**: `087d0d28` is **not dangling — it is stranded**. It resolves as
-  an object (`git cat-file -t` → `commit`) but `git merge-base --is-ancestor
-  087d0d28 HEAD` is false: this morning's rewrite moved it off `dev`, and it now
-  survives only on `origin/RESCUE-area3-45cbd1db` and
-  `origin/spike/1s-dispatcher`. Its post-rewrite twin on `dev` is **`710a503e`**,
-  same subject and author. Quote that one.
-- **Reproduction of the entry's original claim — and a correction to it.** A
-  standalone 200 000-iteration probe over both message shapes:
-
-  ```
-  $ elixir ki22_repro.exs 200000
-  iterations: 200000
-  A  send_after(self(), :tick, 0) in init  -> handled before :sys.get_state reply:    274/200000
-  B  plain send/2 from a RETURNED sync call -> handled before :sys.get_state reply: 200000/200000
-  ```
-
-  The probe separates the arms (274 ≠ 0 ≠ 200 000), so it could have reported
-  either way. **The old drain was inert 99.863 % of the time, not "every time"** —
-  and those 274 are exactly the flake signature.
-- **Do not "clean up" the `:sys.get_state(Loop)` that remains at `:111`.** It is a
-  different drain guarding a different message and it has a hard guarantee:
-  `Watchdog.sweep_now/0` is a `GenServer.call` (`watchdog.ex:91`) whose handler
-  executes `:telemetry.execute([:flezha, :state, :output_stall], …)` inline
-  (`watchdog.ex:459`), and `Loop.handle_telemetry/4` runs in the *Watchdog's*
-  process and does a plain local `send` (`loop.ex:191`). So by the time
-  `sweep_now()` returns, `{:output_stall, _}` is already in the Loop's mailbox
-  and the test's `$gen_call` queues behind it. Sound by construction.
-- **KI-35 is the same mechanism and the same fix — it needs re-triage.** One
-  commit removed the inert drain *and* replaced `refute_receive {:tick, _}, 200`
-  with the zero-timeout `refute_received` (`git log -S` on both strings returns
-  `5f381a3e` for each). KI-35's stated cause is also wrong on its own terms: it
-  blames the Loop's periodic tick, but `@tick_ms` is `3_600_000` — one hour — so
-  after the boot tick the next periodic tick was never inside any window. The
-  boot tick was always the only intruder. It did not reproduce at HEAD: **15/15
-  idle and 14/14 under six busy-loop hogs on eight cores**, against a claimed
-  ~40 % rate that should have produced ~6 failures in 15.
-- **Worth fixing**: nothing to fix. Close KI-22 as fixed by `5f381a3e`, and
-  re-triage KI-35 against the same commit rather than carrying it as a live flake.
-
-
 ### KI-23 · `unique/1` suffixes can breach the operative-id cap
 
 - Suffixes reach 7 digits within one BEAM, so any id prefix over 24 characters
@@ -1132,294 +910,30 @@ since carries its own date.
 
 ## P3 — warts, wording, and measurement notes
 
-### KI-25 · A production `usleep` nothing states
+### KI-51 · `mix bench.roundtrip`'s `--runtime` help names three runtimes, not seven
 
-- `sdk/php/src/Executor/SwooleExecutor.php:271` carries `usleep(5_000)`. The sleep
-  metric counts test paths only, so no gate sees it. Probably legitimate and
-  short and finite — but nothing says so.
-- **Triage (2026-08-30)**: **TRUE on both halves, and it is a note, not a
-  defect.** The sleep is at `sdk/php/src/Executor/SwooleExecutor.php:271` and it
-  is provably short and finite from the three lines around it: `joinAll()`
-  (`:265`) opens `$deadline = microtime(true) + self::JOIN_TIMEOUT_S` (`:267`,
-  `JOIN_TIMEOUT_S = 5.0` at `:39`) and the poll is
-  `while ($thread->isAlive() && microtime(true) < $deadline)`. A 5 ms poll inside
-  a 5 s deadline.
-- **Reproduction of the metric half — and it generalises further than the entry
-  says.** The exemption is the *path* classifier, not the pattern:
+- **Severity**: P3 · one line.
+- **Where**: `lib/mix/tasks/bench/roundtrip.ex:24` says `rust|java|elixir` while
+  `parse_runtime/2` reads all seven conformance manifests.
+- **Reproduction**: compare the `@shortdoc`/usage line with `parse_runtime/2`'s
+  manifest walk. Understates by four.
+- **Was**: the surviving quarter of KI-27, whose other three claims triage
+  measured gone.
 
-  ```
-  $ grep -rn 'usleep' sdk/php/src/
-  sdk/php/src/Executor/SwooleExecutor.php:271:                    usleep(5_000);
-  $ python3 -c "import json;a=json.load(open('docs/refactor/baseline.json'))['areas']['sdk/php'];print(a['prod_loc'],a['sleeps'],a['sleeps_by_file'])"
-  4134 0 {}
-  ```
+---
 
-  `SLEEP["php"]` is `\b(?:u)?sleep\(` (`scripts/refactor_metrics.py:340`) and
-  *does* match this line — but `measure_lines` increments `sleeps` only under
-  `if in_test[i]` (`:378`–`:379`), and `is_test_path` (`:102`) is false for
-  `sdk/php/src/…`. So the metric is blind to production sleeps **in every
-  language, by construction** — it can never be the thing that finds one. That is
-  the fact worth carrying forward, not this particular `usleep`.
-- **Worth fixing**: no. The code is correct and the `joinAll` docblock already
-  explains why the drain is bounded at all. What the entry asks for is one
-  comment, and the honest resolution is to record the metric's scope (above) and
-  close this.
+### KI-52 · Java and PHP still ship all five native triples in one artefact
 
-### KI-26 · A stale doc block on `channel_metadata`
-
-- `sdk/rust/src/operative/dispatcher/emit_sink.rs:344-350` documents a function
-  that no longer exists, names the **retired** `Block` overflow policy, and
-  carries a design-decision label the charter forbids.
-- **Triage (2026-08-30)**: **STALE — closed by `c5bdc26b` (`refactor(3f): area 3
-  closes — and prices the seam it was built on`), which landed after this entry
-  was filed.** `docs/known_issues.md` was created by `586e6eab`, which is
-  *older* than `c5bdc26b` in `dev`'s history, so the whole P3 band predates area
-  3's last segment.
-- **Reproduction — all three claims checked at HEAD, all three gone:**
-
-  ```
-  $ sed -n '344,347p' sdk/rust/src/operative/dispatcher/emit_sink.rs
-  /// Build the emit wire metadata: drop any caller-supplied reserved
-  /// `channel` key, then stamp the descriptor's channel name.
-  fn channel_metadata(
-  $ grep -nE 'Decision|\bD[0-9]\b' sdk/rust/src/operative/dispatcher/emit_sink.rs
-  $ grep -rn 'OverflowPolicy::Block' sdk/rust/src/
-  ```
-
-  The doc block now documents `channel_metadata`, which exists (defined `:346`,
-  called `:150`); the design-decision label is gone; and `OverflowPolicy::Block`
-  appears nowhere in `sdk/rust/src` at all. `git log -S` on both `"Decision"` and
-  `"OverflowPolicy::Block"` over that file returns `c5bdc26b` as the most recent
-  commit for each.
-- **Worth fixing**: nothing to fix. Close it.
-
-### KI-27 · Specs and docs name things that do not exist
-
-- `openspec/specs/controller-packaging/spec.md:270,290` still name
-  `libflz_transport.{so,dylib,dll}` as committed binaries.
-- `flz_jni` — a crate that does not exist — is named in `README.md:48`,
-  `docker/dev/README.md:26` and four specs.
-- `mix bench.roundtrip`'s moduledoc names `--runtime rust|java|elixir`; the
-  manifests give it five more.
-- `config/config.exs` documented a request sub-option as `{"name": …}`; it is
-  `key`, and that invocation never worked.
-- **Triage (2026-08-30)**: **THREE OF FOUR ARE STALE; the third is still true
-  and moved.** Checked one at a time rather than as one claim, which is what
-  separated them.
-- **(a) `libflz_transport` in `controller-packaging` — STALE.**
-  `grep -n libflz_transport openspec/specs/controller-packaging/spec.md` returns
-  nothing; `:270` and `:290` now describe the three *untracked* Java artefact
-  paths. Fixed by `24127af0` (`spec: sync the deltas from
-  unbundle-committed-build-artifacts`), today. Repo-wide the name survives only
-  in `openspec/changes/archive/**`, where it is history and correct.
-- **(b) `flz_jni` — STALE.** A repo-wide grep over `*.md`, `*.toml` and `*.rs`
-  returns exactly two hits, and both are this file and `docs/refactor/STATE.md`
-  recording the issue:
-
-  ```
-  $ grep -rn "flz_jni" --include="*.md" --include="*.toml" --include="*.rs" . | grep -v ^./target
-  docs/known_issues.md:1388:- `flz_jni` — a crate that does not exist — is named in `README.md:48`,
-  docs/refactor/STATE.md:281:  `libflz_transport.{so,dylib,dll}` as committed binaries, and `flz_jni` (a crate
-  ```
-
-  `git log -S "flz_jni" -- README.md docker/dev/README.md` names `024efa60`
-  (`refactor(1c)`) as the commit that removed both. **The two files still
-  carrying the name are the two files that describe the defect** — delete these
-  lines and the string leaves the repository.
-- **(c) The `bench.roundtrip` moduledoc — STILL TRUE, and it is the one worth
-  keeping.** `lib/mix/tasks/bench/roundtrip.ex:24`–`:25` reads
-  "`--runtime` rust|java|elixir (default `rust`)", while `parse_runtime/2`
-  at `:1114`–`:1130` reads `PortPilot.runtimes()`, which is every
-  `test/apps/*_runner/conformance.json` on disk: **elixir java node php python
-  ruby rust** — seven, so the doc understates by four, not five. (The entry's
-  "five more" counted against a different manifest set.) Note the sibling tasks
-  are already correct: `lib/mix/tasks/bench.ex:22`–`:26` is manifest-driven and
-  says so, and `lib/mix/tasks/bench/workflow.ex:160`–`:167` hard-codes
-  `rust|java` *deliberately*, refusing `elixir` by name because the Elixir SDK
-  has no workflow operatives. Only `roundtrip.ex`'s prose is stale.
-- **(d) `config/config.exs` `{"name": …}` — STALE.** `grep -n '"name"'
-  config/config.exs` returns nothing; `:29` now reads
-  `["on_message", {"key": "fetch_init_state"}]`. Closed by
-  `fix-extension-subopt-typing`.
-- **Worth fixing**: only (c), and it is a two-line doc edit in one file. Trim
-  (a), (b) and (d) from this entry when (c) lands, and the entry goes with
-  them.
-
-### KI-28 · A cross-compile warning only the dist build surfaces
-
-- `flz_core/src/control_unit.rs:19` — `unused_imports` on `socket_dir` when
-  cross-compiled to `x86_64-pc-windows-gnu`; used only inside `#[cfg(unix)]`.
-- **Triage (2026-08-30)**: **STALE — this is the exact warning `62d7e918`
-  (`fix(core): gate the socket_dir import to the platform that uses it`) closed
-  today.** Same file, same line, same import, same target. HEAD
-  (`flz_core/src/control_unit.rs:19`–`:23`) now reads `#[cfg(unix)] use
-  flz_transport::utility::socket_dir;` with `socket_probe` left ungated because
-  `connect_diagnosis/0` is not platform-specific, which matches the
-  `#[cfg(unix)]` on `try_open_uds` — the only caller.
-- **The commit adds a fact this entry did not have**: CI sets `RUSTFLAGS: -D
-  warnings`, so on a Windows target this was an **error**, not a warning. It
-  stayed invisible for four months because CI dropped cargo-zigbuild in April and
-  every committed artefact was built on Linux, where the import is live. It
-  surfaced on the first five-triple cross-build since.
-- **NOT REPRODUCIBLE ON THIS BOX, and this is the part to carry forward.** The
-  target is installed (`rustup target list --installed` lists
-  `x86_64-pc-windows-gnu`) and `cargo-zigbuild` is on `PATH` — but **`zig`
-  itself is not installed**, and without it the cross-build dies long before it
-  reaches our code:
-
-  ```
-  $ RUSTFLAGS="-D warnings" cargo check -q -p flz_core --target x86_64-pc-windows-gnu
-  error: failed to run custom build command for `ring v0.17.14`
-  ```
-
-  `ring` needs a C cross-compiler, which is what zigbuild supplies. So the
-  cross-compile lane cannot be exercised here at all; the fix is verifiable only
-  by reading it and by the commit's own recorded `cargo zigbuild` run. Treat "no
-  local cross-compile toolchain" as an environment fact alongside KI-30.
-- **Worth fixing**: nothing to fix. Close it — but note that the local half of
-  the loop that would catch the next one of these does not exist on this box.
-
-### KI-29 · Benchmark rows that cannot resolve what they are asked to
-
-Measured floors on the reference box (`moon`, i7-8650U, `powersave`, on mains):
-
-| Row | Floor | Verdict |
-|---|---|---|
-| Rust typed dispatch | 0.33 % | gate |
-| Rust entity stress | 0.95 % | gate |
-| `throughput_effectively_once_tiers` tier_off / tier_on | 9.04 % / 6.01 % | **direction only** |
-| `host_loop` (erased) | 4.13 % | guard |
-| whole-system round trip | ~18 % | **direction only** |
-| veneer round trip (node) | 11.89 % | paired rounds only |
-
-A row whose floor exceeds the effect being claimed is a direction, not a gate.
-Do not run one as a gate and do not report its single-run number as a verdict.
-
-- **Triage (2026-08-30)**: **TRUE, and correctly filed as a note rather than a
-  defect.** The reproduction of a measurement note is the measurement, so this
-  triage adds a row measured today rather than re-deriving six floors.
-- **A seventh row, measured this session — the merge-gate row.** Five runs of
-  `./scripts/bench.sh -n 100 -m 10000` (the `bench-regression` workload), same
-  box, same tree, same session:
-
-  ```
-  receive window : 518,872  568,312  562,280  581,754  536,635   spread 12.1 %
-  end-to-end     : 239,530  250,374  245,423  251,808  243,849   spread  5.1 %
-  ```
-
-  Two things follow. **The end-to-end window is less than half as noisy as the
-  receive window** on this workload (5.1 % vs 12.1 %) — the opposite of what the
-  gate's choice of metric would suggest, and worth knowing before anyone treats a
-  single receive-window number as a verdict. And **the gate's own tolerance band
-  is 10 % (`REGRESSION_TOLERANCE: "0.9"`, `.github/workflows/bench.yml:29`) while
-  the metric it gates spreads 12.1 % run-to-run here.** The gate still passes
-  with margin because it compares to a floor of 480,000 and the slowest run was
-  518,872 — but the band is narrower than the noise, so a *near-floor* box would
-  flip on scheduling alone.
-- **What could NOT be established**: none of the six recorded floors was
-  re-derived. Each needs its own paired-round campaign, and the `whole-system
-  round trip` and `veneer round trip` rows additionally need the Kafka bench
-  stack (`bench/flink/compose.yml`), which is not up and is `.git/info/exclude`d.
-- **Worth fixing**: nothing here is a defect. The one thing worth *doing* is
-  recording the seventh row above beside the other six, so the gate's row has a
-  published floor like every other row does.
-
-### KI-30 · Three environment facts that cost hours if unknown
-
-- `/proc/sys/kernel/perf_event_paranoid` is `4` here, which refuses **both**
-  `perf record` and `perf stat`; valgrind is not installed. Instruction-level
-  attribution is therefore impossible on this box — say "not attributable here"
-  rather than digging.
-- **An arm built in a `git worktree` is not comparable to one built in the
-  tree.** A Rust binary is not byte-reproducible across build paths; a 60-second
-  microbench read +3.5 % against a worktree arm and −3.5 % against a tree-built
-  arm of the same source. Every decisive comparison must be between arms built
-  the same way.
-- The scratchpad is per session, so benchmark arms do not survive a new session
-  unless they are rebuilt from a tag.
-- **Triage (2026-08-30)**: **TRUE. Fact 1 reproduced verbatim; facts 2 and 3 are
-  correct but were not re-measured, and one fact is missing.**
-- **Fact 1 — reproduced.** `perf` *is* on `PATH` (`/usr/bin/perf`), which is what
-  makes this cost hours: it exists and then refuses.
-
-  ```
-  $ cat /proc/sys/kernel/perf_event_paranoid
-  4
-  $ perf stat -e cycles true
-  Error:
-  No supported events found.
-  Access to performance monitoring and observability operations is limited.
-  ...
-  perf_event_paranoid setting is 4:
-  $ perf record -o /tmp/perf.data true
-  Error:
-  Failure to open event 'cpu/cycles/Pu' on PMU 'cpu' which will be removed.
-  $ which valgrind
-  (nothing)
-  ```
-
-  Both subcommands refused, and valgrind is absent. "Not attributable here" is
-  the correct answer, exactly as written.
-- **Facts 2 and 3 — not re-measured, and deliberately not.** The worktree-vs-tree
-  build asymmetry needs two 60-second microbench arms built two ways to
-  re-derive; re-running it would cost more than it could tell, and nothing about
-  it has changed. Believe it and build both arms the same way.
-- **A fourth environment fact belongs here**: **there is no local cross-compile
-  toolchain.** `cargo-zigbuild` is installed but `zig` is not, so any
-  `--target x86_64-pc-windows-gnu` build dies in `ring`'s build script. See
-  KI-28 — a cross-compile-only warning cannot be reproduced on this box.
-- **Worth fixing**: not a defect. Keep the list and add the fourth fact.
-
-### KI-31 · Duplication the programme has chosen not to remove yet
-
-- `test/apps/rust_runner/src/main.rs` duplicates the Rust bench's four-stage
-  stress pipeline (four jscpd pairs) — owed to the test-apps area.
-- The nine `convert_value` copies across SDKs are structural twins a 40-token
-  window does not detect.
-- Whole-repo `duplicate_pairs` rose 183 → 235 when three test masses became
-  fifteen binaries, each repeating one `use` header.
-- **Triage (2026-08-30)**: **TRUE, deliberate, and NOT WORTH FIXING here — but
-  the second bullet names the wrong place, and that matters to whoever picks it
-  up.**
-- **Bullet 1 — confirmed, both halves present.** The four-stage pipeline exists
-  twice: `test/apps/rust_runner/src/main.rs` declares `stress_a`/`stress_b`/
-  `stress_c`/`stress_d` (`:2392`, `:2422`, `:2452`, `:2482`) plus `entity_stress`
-  (`:2505`), and `sdk/rust/benches/dispatch.rs` declares `stress_bench_a`…`_d`
-  (`:187`, `:218`, `:249`, `:280`) plus `entity_stress_bench_operative` (`:304`).
-  A live scan pairs them across the seam:
-
-  ```
-  $ python3 scripts/refactor_metrics.py --area test/apps --area sdk/rust --json
-  sdk/rust duplicate_pairs = 210
-  ... "sdk/rust/benches/correctness.rs:268-274 <-> test/apps/rust_runner/src/main.rs:163-169 (40 tokens)"
-  ```
-
-  Note `sdk/rust` reads **210** today against the baseline's 215, so the number
-  moves under ordinary work and is not a fixed target.
-- **Bullet 2 — CORRECTION: the nine `convert_value` copies are not "across
-  SDKs".** All nine are Elixir controller plugin providers under
-  `lib/flezha/plugin/`:
-
-  ```
-  provider_behaviour.ex   beam_msg_forward.ex   filter.ex
-  operative_forward.ex    kafka.ex              monitored_io_forward.ex
-  http_poll.ex            websocket.ex          postgres.ex
-  ```
-
-  Nine files, nine definition sites, one language, one directory. That is a
-  materially different (and easier) refactor than a cross-SDK one, and it belongs
-  to the `lib/flezha/plugin` area — which the baseline records at 16
-  `duplicate_pairs` — not to any SDK area. Anyone reading "across SDKs" would go
-  looking in six languages for something that lives in one.
-- **Bullet 3 — the caveat is the content, and it is right.** `duplicate_pairs` is
-  a *pair* count that a file split multiplies for unchanged source, and the
-  baseline has no whole-repo figure to compare against (it records per-area
-  numbers only), so the 183 → 235 delta is not re-derivable from
-  `docs/refactor/baseline.json`. Always name the scan mode; prefer duplicated
-  tokens.
-- **Worth fixing**: no — this entry exists to say the programme chose to defer
-  these, and that choice still holds. Fix the "across SDKs" wording so the
-  deferral is at least accurately described.
+- **Severity**: P3 · provisional, and a distribution-shape decision.
+- **Where**: `sdk/java/flezha-sdk-native` and the PHP packaging.
+- **What**: Node solves this with per-triple `optionalDependencies`, Ruby
+  compiles at install, Python ships maturin wheels. Java and PHP do not, so a
+  consumer downloads five platforms to use one.
+- **Not the same as the repository purge.** `unbundle-committed-build-artifacts`
+  changed what git carries; this is what a *release* carries. Conflating them is
+  what made KI-37 read as six SDKs when it was two.
+- **A fix must**: pick the per-platform mechanism for Java (classifier artifacts)
+  and PHP, and decide whether it blocks going public.
 
 ---
 
@@ -1451,75 +965,6 @@ Do not run one as a gate and do not report its single-run number as a verdict.
 
 These predate `docs/refactor/STATE.md` and were carried only in session memory
 until 2026-08-30. Dates are when each was last established, not when it started.
-
-### KI-32 · The merge-blocking bench gate's own command does not complete
-
-- **Severity**: P1 — a required CI gate that cannot pass.
-- **Where**: `./scripts/bench.sh -n 100 -m 10000`, the exact command the
-  `bench-regression` gate runs.
-- **What happens**: it stalls partway and dies with
-  `Timeout waiting for message <N>/1000000`; N landed at 647 899 / 675 886 /
-  678 448 / 728 176 across four runs. At `-n 100 -m 2000` it still wedges
-  (~160 285/200 000). At `-n 10 -m 500` it completes fine (~275 K msg/s).
-- **The controller's own verdict**: `data-plane stall localized:
-  layer=:driver_loop_frozen`, `%{transport: {:uds_data, "bench_<id>",
-  :secondary}, loop_age_ms: :infinity}` — the secondary UDS stream's driver loop.
-- **Proven pre-existing**: `lib/mix/tasks/bench.ex` and
-  `test/apps/rust_runner/src/main.rs` were reverted to HEAD, the release runner
-  rebuilt, and it still failed at 647 899/1 000 000.
-- **Consequence**: a green *small* bench proves nothing about this gate, and the
-  gate has never actually run to completion here.
-- **Triage (2026-08-30)**: **STALE. The gate's command completes, and it
-  passes.** Three consecutive runs of the exact wrapper this entry names, none
-  of them wedged, none of them short:
-
-  ```
-  $ ./scripts/bench.sh -n 100 -m 10000
-  totals
-    operatives          100
-    inputs dispatched   1,000,000
-    responses received  1,000,000
-  throughput
-    end-to-end (first input → last response)           4174.8 ms  239,530
-    receive only (send loop returned → last response)  1927.3 ms  518,872
-
-  run 1 EXIT=0  responses 1,000,000  receive 518,872
-  run 2 EXIT=0  responses 1,000,000  receive 568,312
-  run 3 EXIT=0  responses 1,000,000  receive 562,280
-  ```
-
-  No `Timeout waiting for message <N>/1000000`, no `:driver_loop_frozen`, 3/3
-  against a filed 4/4 failure rate. Run 1 included the release build; runs 2 and
-  3 used `FLEZHA_BENCH_SKIP_BUILD=1` against the artifact run 1 had just built.
-- **And the gate's arithmetic passes, applied by hand from the workflow:**
-
-  ```
-  measured=518872 (worst of the three)  floor=480000  threshold=432000  verdict=PASS
-  ```
-
-  `480_000` is agreed by both sources the gate's own sync step compares
-  (`docs/operations/benchmarking.md:265` and
-  `openspec/specs/rust-sdk-dispatch/spec.md`), so that step passes too.
-- **Two corrections to the entry's framing.** The gate does **not** run
-  `scripts/bench.sh` — `.github/workflows/bench.yml:122` runs `MIX_ENV=prod mix
-  bench --runtime rust --shape regression -n 100 -m 10000` directly. The wrapper
-  is equivalent (it `exec`s the same task with the same defaults) so the
-  reproduction stands, but quote the workflow. And the sync step that could never
-  pass is fixed: `:78` now reads `SPEC=openspec/specs/rust-sdk-dispatch/spec.md`
-  with a comment saying the change dir it once named is long archived.
-- **What could NOT be established: which change fixed it.** The candidates that
-  landed since — the non-blocking `DropNothing` backpressure work
-  (`a full mailbox withholds work instead of holding a thread`),
-  `improve-bench-report-and-signals` (which proved the `:driver_loop_frozen`
-  verdict itself fired *vacuously* on a driver observed in its first moments),
-  and today's `fix-first-input-drop-on-bind` — are each plausible and I did not
-  bisect. **The `:driver_loop_frozen` half of the original diagnosis is now known
-  to have been at least partly a false verdict**, which is reason enough not to
-  trust the old root-cause note.
-- **Worth fixing**: nothing to fix; close it. **Watch the first CI run anyway** —
-  this gate has still never executed in CI, so a green local box is not a green
-  gate, and CI hardware is slower than this one. Keep KI-29's observation in
-  view: the tolerance band is 10 % and this row's own spread here is 12.1 %.
 
 ### KI-33 · Java workflow resume re-runs committed producers
 
@@ -1655,61 +1100,6 @@ until 2026-08-30. Dates are when each was last established, not when it started.
   magnitude unestablished" and keep `java-host-dispatch-cost` owed on that
   basis.
 
-### KI-35 · `output_stall_drill_test:108` flakes ~40 % even alone
-
-- **Severity**: P2.
-- **Where**: `test/flezha/convergence/output_stall_drill_test.exs:108` —
-  "re-flagging an already-recorded stall costs no extra tick".
-- **The race**: the test calls `Watchdog.sweep_now()` then
-  `refute_receive {:tick, _}, 200`. The convergence `Loop` also ticks on its own
-  timer, so where the 200 ms window falls inside that interval decides the
-  result. The assertion cannot distinguish a second sweep's tick from the
-  periodic one.
-- **Note**: it passed 1809/1809 in two full runs minutes before failing 2 of 5
-  alone on the same tree. **"Green in isolation" does not apply to this one** —
-  it is the counter-example to that heuristic.
-- **A fix must**: give the assertion a way to tell the two ticks apart, not widen
-  the window.
-- **Triage (2026-08-30)**: **STALE — fixed by `5f381a3e` (`refactor(0b): tests
-  wait for signals, not for time`), the same commit that closed KI-22, and the
-  stated race was never the mechanism.**
-- **The stated cause was wrong on its own terms.** The entry blames the
-  convergence `Loop`'s periodic timer. The test starts the Loop with
-  `start_supervised!({Loop, tick_ms: @tick_ms})` where `@tick_ms` is `3_600_000`
-  — one hour — so after the boot tick no periodic tick was ever inside any 200 ms
-  window. The intruder was always the *boot* tick, which is why one commit that
-  taught the test to consume it fixed KI-22 and this at once.
-- **The fix, at HEAD.** The scenario is now
-  `test/flezha/convergence/output_stall_drill_test.exs:99` (the assertion at
-  `:112`, not `:108`) and the timed `refute_receive {:tick, _}, 200` is gone:
-
-  ```elixir
-  :ok = Watchdog.sweep_now()
-  _ = :sys.get_state(Loop)
-  refute_received {:tick, _}
-  ```
-
-  Zero timeout, so there is no window to fall inside. The `:sys.get_state(Loop)`
-  above it is the *sound* drain, not KI-22's inert one — `Watchdog.sweep_now/0`
-  is a `GenServer.call` whose handler executes the telemetry inline, so any tick
-  it caused is already in the Loop's mailbox before the call returns. See KI-22's
-  triage; do not "clean it up".
-- **Reproduction — refuted, 164 executions, idle and under load:**
-
-  ```
-  $ mix test test/flezha/convergence/output_stall_drill_test.exs --repeat-until-failure 40
-  41 rounds x 2 tests, 0 failures        (idle)
-  41 rounds x 2 tests, 0 failures        (with 6 busy-loop hogs on 8 cores)
-  ```
-
-  Against a filed ~40 % rate that should have produced roughly 33 failures in 82
-  rounds. **The harness can report a failure** — a scratch test asserting
-  `:rand.uniform(100) > 40` under the same flag exits 2 with `Result: 0/1
-  passed`, so a green run here is a result and not a broken invocation.
-- **Worth fixing**: nothing to fix. Close it, and close it *citing `5f381a3e`* so
-  the next reader does not re-derive the wrong mechanism from the entry's own
-  text.
-
 ### KI-36 · The controller OOM fix was never validated under real load
 
 - **Severity**: P1 for production, P2 here.
@@ -1743,133 +1133,194 @@ until 2026-08-30. Dates are when each was last established, not when it started.
   it is a soak, not a patch. Keep it filed at P1-for-production and note that it
   is blocked on hardware and time rather than on any unknown.
 
-### KI-37 · SDK native binaries ship all five triples — provisional
+## Notes — true, and not work owed
 
-- **Severity**: P2 · a deliberate, time-boxed choice.
-- Every SDK ships all five prebuilt `libflz_core_ffi` triples inside its main
-  artifact. This is deliberate while flezha is private and every consumer is the
-  author — one artifact beats five.
-- **The obligation**: before flezha goes public, or when rolling out the Python /
-  Node / Ruby SDKs, switch to platform-specific distribution — per-triple
-  Composer packages, wheels, `optionalDependencies` per os/cpu (the napi-rs
-  convention), Java classifier artifacts. The risk being avoided is five ad-hoc
-  packaging schemes invented independently.
-- **Triage (2026-08-30)**: **HALF STALE. "Every SDK ships all five" is false —
-  it is true of two SDKs out of six, and the other four already do the right
-  thing.** Read at HEAD:
+Each of these was triaged and found correct. None is a defect: they are
+deliberate trade-offs, environment facts, or measurements. They sit here so
+the open list above contains only open work.
 
-  | SDK | How the native library reaches a consumer | All five bundled? |
-  |---|---|---|
-  | Java | `flezha-sdk-native/src/main/resources/native/<platform>/` — 5 dirs in one jar | **yes** |
-  | PHP | `sdk/php/lib/{linux-x64,linux-arm64,macos-x64,macos-arm64,windows-x64}/` | **yes** |
-  | Node | `optionalDependencies` — five `@flezha/sdk-<os>-<arch>` packages (`sdk/node/package.json:47`–`:53`) | no — already per-triple |
-  | Ruby | `spec.extensions = ["ext/flz_core_ffi/extconf.rb"]` — compiled at install | no — ships no binary |
-  | Python | maturin (`[tool.maturin]`, `sdk/python/pyproject.toml:46`) — per-platform wheels | no |
-  | Elixir | its own core; inherits nothing from `flz_core` | n/a |
+### KI-25 · A production `usleep` nothing states
 
-  So the "risk being avoided" — five ad-hoc schemes invented independently —
-  **has already partly happened**, and the conventions chosen are the sensible
-  per-ecosystem ones the entry itself recommends. What is left is Java and PHP.
-- **A separate thing changed today and must not be confused with this one.**
-  `5457bb8f` (`build(java): the seven build artefacts leave git`) removed the five
-  triples and both fat jars from **version control** — `git ls-files | grep -E
-  '\.(so|dylib|dll|jar)$'` now returns **0**, against 1.70 GB of history across
-  163 blobs. That changes where the binaries come from (Maven `--fetch-missing`,
-  `sdk/java/flezha-sdk-native/pom.xml:124`, plus a tag-triggered release job that
-  cross-builds all five), and `CONTRIBUTING.md` now states "No build artifact is
-  committed" with `scripts/check-build-artifacts.sh` enforcing it. **It does not
-  change the distribution shape**: a published Java jar still carries five
-  triples. Repository weight and artifact weight are different problems.
-- **Worth fixing**: yes, eventually, and the scope is now two SDKs, not six.
-  Rewrite the entry to name Java and PHP, and record that Node, Ruby and Python
-  set the precedent to follow rather than being part of the debt.
-
-### KI-39 · Open-source obligations, none met
-
-- **Severity**: P2. Nothing is published yet. All four things once owed — the
-  `process_hub` hex release, a CLA bot, a `security@` contact, and the
-  trademark question — are now addressed; what remains is confirming the CLA
-  bot is installed on the GitHub repository, and publishing itself. Licensing
-  itself is settled (MPL-2.0 controller, Apache-2.0 SDK side, recorded in
-  `REUSE.toml`).
-- **Triage (2026-08-30)**: **ALL FOUR ARE DONE**, the last of them —
-  the hex release — later the same day. Checked one at a time:
-  - **`security@` contact — DONE.** `SECURITY.md` exists (written today) with
-    `security@flezha.com` at `:15`, plus GitHub private vulnerability reporting,
-    a 5-day acknowledgement / 14-day update commitment, a 90-day coordinated
-    disclosure window, and an explicit scope list.
-  - **CLA bot — DONE as far as this repository can take it.** `CLA.md` exists
-    (5,588 bytes) and `CONTRIBUTING.md` names the mechanism: *"The cla-assistant
-    bot asks for the signature on your first pull request."*
-  - **Trademark — ADDRESSED.** `README.md:329` is a `## License, trademark and
-    warranty` section, and `:350` states the position explicitly: neither
-    licence grants trademark rights (MPL-2.0 §2.3, Apache-2.0 §6), so a fork,
-    derived work or hosted service may not use the name.
-  - **`process_hub` hex release — DONE (2026-08-30).** 0.7.0 is published, and
-    `adopt-process-hub-hex-release` took it: `mix.exs` declares
-    `{:process_hub, "~> 0.7.0"}` and `mix.lock` holds a hex entry, so the
-    "a hex-published package cannot depend on a git dependency" obstacle is
-    gone. The licence is now in the package metadata (`mix hex.info
-    process_hub` → Apache-2.0) rather than needing a read of
-    `deps/process_hub/mix.exs` after every bump.
-- **What could NOT be established**: whether cla-assistant is actually *installed*
-  on the GitHub repository, as opposed to documented. `CONTRIBUTING.md` describes
-  the bot; nothing in the tree can prove the app is enabled. Verify that in the
-  GitHub UI before treating the CLA obligation as closed.
-- **Worth fixing**: narrow the entry to the one remaining item. As written it
-  overstates the debt by three items and would send someone to write files that
-  already exist.
-
-### KI-40 · CI does not run three test files or the kernel's own tests
-
-- **Severity**: P2. CI skips `entity_timers`, `sugar_emit` and `simple_procedure`
-  (all three need the `testing` feature) and **never runs `cargo test -p
-  flz_core`** at all.
-- **Triage (2026-08-30)**: **STALE on both halves. CI runs `cargo test -p
-  flz_core`, and it passes the `testing` feature.** `.github/workflows/elixir.yml`
-  has a `Run Rust SDK tests` step whose comment names this very gap — *"The only
-  place the flz_core and flezha_runner crates' own unit and integration tests run
-  in CI"* — and whose body is:
-
-  ```yaml
-  cargo test --quiet -p flz_core                                  # :141
-  cargo test --quiet \                                            # :142
-    -p flezha_runner --features bench-internals,testing \
-    --lib --tests
-  ```
-
-  Added by `4fcde3ca` (`test: cut the suite from 150s to 58s and make
-  failure-path errors assertions`).
-- **Reproduction — CI's exact command builds the gated targets:**
+- `sdk/php/src/Executor/SwooleExecutor.php:271` carries `usleep(5_000)`. The sleep
+  metric counts test paths only, so no gate sees it. Probably legitimate and
+  short and finite — but nothing says so.
+- **Triage (2026-08-30)**: **TRUE on both halves, and it is a note, not a
+  defect.** The sleep is at `sdk/php/src/Executor/SwooleExecutor.php:271` and it
+  is provably short and finite from the three lines around it: `joinAll()`
+  (`:265`) opens `$deadline = microtime(true) + self::JOIN_TIMEOUT_S` (`:267`,
+  `JOIN_TIMEOUT_S = 5.0` at `:39`) and the poll is
+  `while ($thread->isAlive() && microtime(true) < $deadline)`. A 5 ms poll inside
+  a 5 s deadline.
+- **Reproduction of the metric half — and it generalises further than the entry
+  says.** The exemption is the *path* classifier, not the pattern:
 
   ```
-  $ cargo test -p flezha_runner --features bench-internals,testing --lib --tests --no-run
-  36 test binaries, including:
-    simple_procedure  sugar_emit  state_evolution
-    timer_surface  timer_firing  timer_durability  timer_lifecycle
+  $ grep -rn 'usleep' sdk/php/src/
+  sdk/php/src/Executor/SwooleExecutor.php:271:                    usleep(5_000);
+  $ python3 -c "import json;a=json.load(open('docs/refactor/baseline.json'))['areas']['sdk/php'];print(a['prod_loc'],a['sleeps'],a['sleeps_by_file'])"
+  4134 0 {}
   ```
 
-  **And the check can go dirty** — drop `testing` and the same command does not
-  merely skip them, it fails to compile:
+  `SLEEP["php"]` is `\b(?:u)?sleep\(` (`scripts/refactor_metrics.py:340`) and
+  *does* match this line — but `measure_lines` increments `sleeps` only under
+  `if in_test[i]` (`:378`–`:379`), and `is_test_path` (`:102`) is false for
+  `sdk/php/src/…`. So the metric is blind to production sleeps **in every
+  language, by construction** — it can never be the thing that finds one. That is
+  the fact worth carrying forward, not this particular `usleep`.
+- **Worth fixing**: no. The code is correct and the `joinAll` docblock already
+  explains why the drain is bounded at all. What the entry asks for is one
+  comment, and the honest resolution is to record the metric's scope (above) and
+  close this.
+
+---
+
+### KI-29 · Benchmark rows that cannot resolve what they are asked to
+
+Measured floors on the reference box (`moon`, i7-8650U, `powersave`, on mains):
+
+| Row | Floor | Verdict |
+|---|---|---|
+| Rust typed dispatch | 0.33 % | gate |
+| Rust entity stress | 0.95 % | gate |
+| `throughput_effectively_once_tiers` tier_off / tier_on | 9.04 % / 6.01 % | **direction only** |
+| `host_loop` (erased) | 4.13 % | guard |
+| whole-system round trip | ~18 % | **direction only** |
+| veneer round trip (node) | 11.89 % | paired rounds only |
+
+A row whose floor exceeds the effect being claimed is a direction, not a gate.
+Do not run one as a gate and do not report its single-run number as a verdict.
+
+- **Triage (2026-08-30)**: **TRUE, and correctly filed as a note rather than a
+  defect.** The reproduction of a measurement note is the measurement, so this
+  triage adds a row measured today rather than re-deriving six floors.
+- **A seventh row, measured this session — the merge-gate row.** Five runs of
+  `./scripts/bench.sh -n 100 -m 10000` (the `bench-regression` workload), same
+  box, same tree, same session:
 
   ```
-  $ cargo test -p flezha_runner --features bench-internals --lib --tests --no-run
-  sdk/rust/tests/common/timers.rs:17:20: error[E0432]: unresolved import
-    `flezha_runner::testing`: could not find `testing` in `flezha_runner`
-  error: could not compile `flezha_runner` (test "runner_lifecycle") ... (6 targets)
+  receive window : 518,872  568,312  562,280  581,754  536,635   spread 12.1 %
+  end-to-end     : 239,530  250,374  245,423  251,808  243,849   spread  5.1 %
   ```
 
-  So the feature is load-bearing and demonstrably present in the CI invocation.
-- **One correction to carry**: **`entity_timers` is not a test target.** It is a
-  capability name; the timer tests are four targets — `timer_surface`,
-  `timer_firing`, `timer_durability`, `timer_lifecycle`
-  (`sdk/rust/Cargo.toml:169`–`:183`). The CI step's own comment inherits the same
-  wrong name, which is cosmetic but will mislead the next reader grepping for it.
-  Also note `sugar_emit` needs only `["testing"]` (`:191`), not
-  `bench-internals`.
-- **Worth fixing**: nothing functional. One word in a CI comment
-  (`entity_timers` → the four `timer_*` targets), if anyone is in the file
-  anyway. Close the entry.
+  Two things follow. **The end-to-end window is less than half as noisy as the
+  receive window** on this workload (5.1 % vs 12.1 %) — the opposite of what the
+  gate's choice of metric would suggest, and worth knowing before anyone treats a
+  single receive-window number as a verdict. And **the gate's own tolerance band
+  is 10 % (`REGRESSION_TOLERANCE: "0.9"`, `.github/workflows/bench.yml:29`) while
+  the metric it gates spreads 12.1 % run-to-run here.** The gate still passes
+  with margin because it compares to a floor of 480,000 and the slowest run was
+  518,872 — but the band is narrower than the noise, so a *near-floor* box would
+  flip on scheduling alone.
+- **What could NOT be established**: none of the six recorded floors was
+  re-derived. Each needs its own paired-round campaign, and the `whole-system
+  round trip` and `veneer round trip` rows additionally need the Kafka bench
+  stack (`bench/flink/compose.yml`), which is not up and is `.git/info/exclude`d.
+- **Worth fixing**: nothing here is a defect. The one thing worth *doing* is
+  recording the seventh row above beside the other six, so the gate's row has a
+  published floor like every other row does.
+
+---
+
+### KI-30 · Three environment facts that cost hours if unknown
+
+- `/proc/sys/kernel/perf_event_paranoid` is `4` here, which refuses **both**
+  `perf record` and `perf stat`; valgrind is not installed. Instruction-level
+  attribution is therefore impossible on this box — say "not attributable here"
+  rather than digging.
+- **An arm built in a `git worktree` is not comparable to one built in the
+  tree.** A Rust binary is not byte-reproducible across build paths; a 60-second
+  microbench read +3.5 % against a worktree arm and −3.5 % against a tree-built
+  arm of the same source. Every decisive comparison must be between arms built
+  the same way.
+- The scratchpad is per session, so benchmark arms do not survive a new session
+  unless they are rebuilt from a tag.
+- **Triage (2026-08-30)**: **TRUE. Fact 1 reproduced verbatim; facts 2 and 3 are
+  correct but were not re-measured, and one fact is missing.**
+- **Fact 1 — reproduced.** `perf` *is* on `PATH` (`/usr/bin/perf`), which is what
+  makes this cost hours: it exists and then refuses.
+
+  ```
+  $ cat /proc/sys/kernel/perf_event_paranoid
+  4
+  $ perf stat -e cycles true
+  Error:
+  No supported events found.
+  Access to performance monitoring and observability operations is limited.
+  ...
+  perf_event_paranoid setting is 4:
+  $ perf record -o /tmp/perf.data true
+  Error:
+  Failure to open event 'cpu/cycles/Pu' on PMU 'cpu' which will be removed.
+  $ which valgrind
+  (nothing)
+  ```
+
+  Both subcommands refused, and valgrind is absent. "Not attributable here" is
+  the correct answer, exactly as written.
+- **Facts 2 and 3 — not re-measured, and deliberately not.** The worktree-vs-tree
+  build asymmetry needs two 60-second microbench arms built two ways to
+  re-derive; re-running it would cost more than it could tell, and nothing about
+  it has changed. Believe it and build both arms the same way.
+- **A fourth environment fact belongs here**: **there is no local cross-compile
+  toolchain.** `cargo-zigbuild` is installed but `zig` is not, so any
+  `--target x86_64-pc-windows-gnu` build dies in `ring`'s build script. See
+  KI-28 — a cross-compile-only warning cannot be reproduced on this box.
+- **Worth fixing**: not a defect. Keep the list and add the fourth fact.
+
+---
+
+### KI-31 · Duplication the programme has chosen not to remove yet
+
+- `test/apps/rust_runner/src/main.rs` duplicates the Rust bench's four-stage
+  stress pipeline (four jscpd pairs) — owed to the test-apps area.
+- The nine `convert_value` copies across SDKs are structural twins a 40-token
+  window does not detect.
+- Whole-repo `duplicate_pairs` rose 183 → 235 when three test masses became
+  fifteen binaries, each repeating one `use` header.
+- **Triage (2026-08-30)**: **TRUE, deliberate, and NOT WORTH FIXING here — but
+  the second bullet names the wrong place, and that matters to whoever picks it
+  up.**
+- **Bullet 1 — confirmed, both halves present.** The four-stage pipeline exists
+  twice: `test/apps/rust_runner/src/main.rs` declares `stress_a`/`stress_b`/
+  `stress_c`/`stress_d` (`:2392`, `:2422`, `:2452`, `:2482`) plus `entity_stress`
+  (`:2505`), and `sdk/rust/benches/dispatch.rs` declares `stress_bench_a`…`_d`
+  (`:187`, `:218`, `:249`, `:280`) plus `entity_stress_bench_operative` (`:304`).
+  A live scan pairs them across the seam:
+
+  ```
+  $ python3 scripts/refactor_metrics.py --area test/apps --area sdk/rust --json
+  sdk/rust duplicate_pairs = 210
+  ... "sdk/rust/benches/correctness.rs:268-274 <-> test/apps/rust_runner/src/main.rs:163-169 (40 tokens)"
+  ```
+
+  Note `sdk/rust` reads **210** today against the baseline's 215, so the number
+  moves under ordinary work and is not a fixed target.
+- **Bullet 2 — CORRECTION: the nine `convert_value` copies are not "across
+  SDKs".** All nine are Elixir controller plugin providers under
+  `lib/flezha/plugin/`:
+
+  ```
+  provider_behaviour.ex   beam_msg_forward.ex   filter.ex
+  operative_forward.ex    kafka.ex              monitored_io_forward.ex
+  http_poll.ex            websocket.ex          postgres.ex
+  ```
+
+  Nine files, nine definition sites, one language, one directory. That is a
+  materially different (and easier) refactor than a cross-SDK one, and it belongs
+  to the `lib/flezha/plugin` area — which the baseline records at 16
+  `duplicate_pairs` — not to any SDK area. Anyone reading "across SDKs" would go
+  looking in six languages for something that lives in one.
+- **Bullet 3 — the caveat is the content, and it is right.** `duplicate_pairs` is
+  a *pair* count that a file split multiplies for unchanged source, and the
+  baseline has no whole-repo figure to compare against (it records per-area
+  numbers only), so the 183 → 235 delta is not re-derivable from
+  `docs/refactor/baseline.json`. Always name the scan mode; prefer duplicated
+  tokens.
+- **Worth fixing**: no — this entry exists to say the programme chose to defer
+  these, and that choice still holds. Fix the "across SDKs" wording so the
+  deferral is at least accurately described.
+
+---
 
 ---
 
@@ -1932,6 +1383,18 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-19 · Test hygiene: leaked temp dirs and DLQ leftovers | `79e45353` — four modules now register cleanup where each directory is created; a run leaves the count no higher than it found it. Its DLQ half was measured NOT to grow in a plain run and is a different root (`app_data/dlq`) |
+| KI-27 · Specs and docs name things that do not exist | triage: three of its four claims are measured gone (`libflz_transport` retired by `24127af0`; `flz_jni`'s only surviving mentions are this file and the board describing the issue; `config.exs` now says `key`). **One survives** and is refiled as KI-51 |
+| KI-37 · SDK native binaries ship all five triples — provisional | triage: **two of six SDKs, not every SDK** — Node ships per-triple `optionalDependencies`, Ruby compiles at install, Python ships maturin wheels. Scoped to Java and PHP and refiled as KI-52. Today's artefact purge changed repository weight, not distribution shape — do not conflate them |
+| KI-39 · Open-source obligations, none met | `4735c359` closed the last item. Three of the four obligations were already done: `SECURITY.md`, CLA + cla-assistant in `CONTRIBUTING.md`, and the trademark section in `README.md`. Whether cla-assistant is installed on GitHub, as opposed to documented, was not established |
+| KI-12 · Veneer artifacts are debug builds by default | triage: the debug default is real but every `build.bench` passes `--release` and `report.ex` already warns when `FLEZHA_BENCH_SKIP_BUILD` is set — not a live defect |
+| KI-17 · UDS socket paths overflow `sun_path`, and can fail a test | triage: **never true** — `git log --all -S` shows the quoted path shape only ever appeared in this entry's own prose; `_wus` is a Registry via-name suffix, not a filename. Measured worst case 107 bytes, longest ever written 89 |
+| KI-22 · An inert drain in the output-stall drill | `5f381a3e` deleted the drain. Correction: it was inert 274 times in 200 000, not "every time" |
+| KI-26 · A stale doc block on `channel_metadata` | `c5bdc26b` (`refactor(3f)`) — the doc block now documents `channel_metadata`, which exists; the retired variant appears nowhere in `sdk/rust/src` |
+| KI-28 · A cross-compile warning only the dist build surfaces | `62d7e918` — it is the `unused import: socket_dir` this session gated to `#[cfg(unix)]`. Not reproducible locally: zig is absent, so the loop's local half does not exist on this box |
+| KI-32 · The merge-blocking bench gate's own command does not complete | triage: **the gate passes** — 3/3 runs at 1 000 000/1 000 000, worst receive window 518 872 against a 432 000 threshold. Which change fixed it was not bisected; the original `:driver_loop_frozen` diagnosis is now known to have fired vacuously |
+| KI-35 · `output_stall_drill_test:108` flakes ~40 % even alone | `5f381a3e`, the same commit as KI-22 — and **the stated cause was never the mechanism**: the test sets `tick_ms: 3_600_000`, so no periodic tick was ever in any window. Refuted over 164 executions (41 idle + 41 under six busy-loop hogs), 0 failures against a claimed ~40 % |
+| KI-40 · CI does not run three test files or the kernel's own tests | triage: **never true** — `elixir.yml:141` runs `cargo test -p flz_core` and passes `--features bench-internals,testing`; dropping `testing` fails to compile 6 targets, so the check can go dirty. Correction: `entity_timers` is a capability, not a test target |
 | KI-5 · `duplicate_pairs` is a pair count over whatever the run scanned, so `sdk/rust` reads 169 alone and 215 whole-repo, and `--check` differenced the two in silence | `small-mechanical-fixes` — `measure()` records `scan`, the sorted area set, beside the numbers it produced; `docs/refactor/baseline.json` carries it; `scan_mismatch/2` makes `--check` **refuse** a baseline recorded over a different set rather than report a delta, and a baseline with no `scan` at all is refused too, an unknown scan being exactly the comparison the rule forbids. Re-measured at `50304acb`: **169 / 169 / 215** for `sdk/rust` alone, with `sdk/java` + `sdk/node`, and whole-repo — the entry's 128 / 136 / 178 were stale by about a third, and the middle row is the point, since those two siblings share nothing with `sdk/rust` and add zero: *which* siblings you scan is what moves the number, not how many. Both arms drilled — whole-repo `--check` compares normally, `--check --area sdk/rust` prints `the baseline scanned 36 areas, this run 1 (only in the baseline: cli, flezha-macros, …)` and exits **2** — and `--self-test` pins all three arms including the legacy no-`scan` baseline. The key was added to the existing baseline by hand (**+38 lines, −0**) so that no metric value moved. Refusing on *any* difference is deliberate rather than over-strict: adding an area adds files to the jscpd run and so can add cross-area pairs to areas that were already there, which means every area's count really does move. The response is `--write-baseline`, and charter §11 now says so |
 | KI-16 · `mix deps.get` reports packages with security advisories, unaudited | `small-mechanical-fixes` — **one** advisory, `postgrex 0.22.3` / EEF-CVE-2026-66838 (MEDIUM), SQL injection via the `:comment` option of `Postgrex.stream/4`, and **`lib/` never reaches it**: no `Postgrex.stream` call and no `:comment` anywhere, the callers being `Postgrex.query/4`, `Postgrex.child_spec/1`, `Postgrex.start_link/1` and an `after_connect: {Postgrex, :query!, …}`. `mix.exs` already declares `{:postgrex, "~> 0.22"}`, so 0.22.4 needed no constraint change. **`mix deps.update postgrex` moved two lines, not one** — `telemetry 1.3.0 => 1.4.2` came along, and postgrex does not depend on telemetry at all (`db_connection`'s `~> 0.4 or ~> 1.0` does), so the resolver simply took the newest satisfying version while it was re-resolving. telemetry was put back to 1.3.0 and `mix deps.get` accepted it, leaving the committed lock diff at one line. `mix hex.audit` after: *No retired or security advisory packages found* |
 | KI-24 · `sdk/rust/tests/ui/*.rs` must never be rustfmt-formatted and nothing enforced it — the count was wrong too | `small-mechanical-fixes` — `rustfmt.toml`'s `ignore` gains `sdk/rust/tests/ui`, so a stray `rustfmt +nightly --edition 2021 sdk/rust/tests/ui/foo.rs` is a no-op; `ignore` is nightly-only, which is already the pinned toolchain. Measured on scratchpad copies before the tree was touched — without the entry the per-file loop rewrites **5 of 25** files (`procedure_ctx_with_key`, `sealed_disallows_on_full`, `sealed_disallows_wiring`, `stream_handle_cannot_escape`, `wire_wrong_input`), with it **0 of 25** — then run for real over the working tree, where `git status` on the directory comes back empty. The 20 unchanged files are why this hid: a loop over the whole list reports clean. The count is **five, not three**; `CLAUDE.md` and `docs/dev_notes/refactor-3-rust-sdk.md` both said three and both now say five |
