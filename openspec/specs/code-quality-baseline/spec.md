@@ -238,3 +238,44 @@ version.
 - **WHEN** the project is built with it set
 - **THEN** the build SHALL use that checkout, and with it unset SHALL use the published version
 
+### Requirement: An assertion about a path's absence SHALL be shown able to fail
+
+A test asserting that a path does not exist SHALL be demonstrated to fail when
+that path genuinely does exist. An assertion whose subject can never be present
+reports nothing: it passes identically whether the behaviour it guards works or
+has been broken since the day it was written.
+
+A durable path SHALL be derived from the function that owns the layout, not
+rebuilt from its parts at the call site. Where the owning module exposes no
+suitable path, that path SHALL be added to it rather than assembled by the
+caller.
+
+#### Scenario: The assertion fails when its subject is present
+
+- **GIVEN** a test asserting a durable path does not exist
+- **WHEN** that path is genuinely created and the test runs
+- **THEN** the test SHALL fail
+
+#### Scenario: A path is derived, not rebuilt
+
+- **WHEN** a test names a durable directory
+- **THEN** it SHALL obtain it from the module that defines the layout, and SHALL NOT join a root to a name itself
+
+#### Scenario: A test whose subject is the layout builds the path itself
+
+- **GIVEN** a test that exists to pin the layout, or one asserting a layout the code no longer writes
+- **WHEN** it names a durable directory
+- **THEN** it SHALL assemble the path from its parts, because deriving it would make the assertion follow the resolution it exists to prove
+- **AND** it SHALL say so where the path is built
+
+### Requirement: A module's documented layout SHALL match what it implements
+
+Where a module documents a durable path layout, that description SHALL match the
+code in the same module. A description that disagrees with the implementation is
+read and acted on: it is what produced the assertions above.
+
+#### Scenario: The documented layout and the code agree
+
+- **WHEN** a module's documented path layout is compared with the function that builds it
+- **THEN** they SHALL describe the same path
+
