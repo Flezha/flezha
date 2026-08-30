@@ -1,69 +1,29 @@
 name: Format
 
-# Source-shape gate. Runs `cargo fmt --check`, `mix format --check-formatted`,
-# `mvn spotless:check`, `reuse lint` (the per-path license map) and a freshness
-# diff of the generated THIRD_PARTY_NOTICES.md against every PR and
-# `push: main`. Failure blocks merge. The matching local script is `scripts/format-check.sh`; auto-fix
-# with `scripts/format-apply.sh`.
+# Source-shape gate. Installs every toolchain `scripts/format-apply.sh` needs
+# and runs that script in `--check` mode, then `reuse lint` (the per-path
+# license map) and a freshness diff of the generated THIRD_PARTY_NOTICES.md.
+# Failure blocks merge. The matching local script is `scripts/format-check.sh`;
+# auto-fix with `scripts/format-apply.sh`.
+#
+# CI does not keep its own list of formatters. It runs the same script the
+# local gate runs, because two lists drift: for a long time this workflow ran
+# spotless and nothing else, so prettier, ruff, rubocop and php-cs-fixer had
+# never executed in CI at all while `format-check.sh` claimed to cover them.
 
 on:
+  # An ignore-list, not an allow-list. The gate covers seven languages across
+  # the whole tree, and an allow-list that forgets one of them is a gate that
+  # silently stops covering it. Prose is the only thing exempt.
   pull_request:
-    paths:
-      - "cli/**"
-      - "flz_core/**"
-      - "flz_core_ffi/**"
-      - "flz_nif/**"
-      - "flz_transport/**"
-      - "sdk/rust/**"
-      - "test/apps/rust_runner/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "lib/**"
-      - "test/**"
-      - "config/**"
-      - "mix.exs"
-      - "mix.lock"
-      - "sdk/java/**"
-      - "test/apps/java_runner/**"
-      - "rustfmt.toml"
-      - "rust-toolchain.toml"
-      - ".formatter.exs"
-      - ".github/workflows/format.yml"
-      - "REUSE.toml"
-      - "LICENSES/**"
-      - "NOTICE"
-      - "about.toml"
-      - "about.hbs"
-      - "THIRD_PARTY_NOTICES.md"
+    paths-ignore:
+      - "docs/**"
+      - "openspec/**"
   push:
     branches: [main]
-    paths:
-      - "cli/**"
-      - "flz_core/**"
-      - "flz_core_ffi/**"
-      - "flz_nif/**"
-      - "flz_transport/**"
-      - "sdk/rust/**"
-      - "test/apps/rust_runner/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "lib/**"
-      - "test/**"
-      - "config/**"
-      - "mix.exs"
-      - "mix.lock"
-      - "sdk/java/**"
-      - "test/apps/java_runner/**"
-      - "rustfmt.toml"
-      - "rust-toolchain.toml"
-      - ".formatter.exs"
-      - ".github/workflows/format.yml"
-      - "REUSE.toml"
-      - "LICENSES/**"
-      - "NOTICE"
-      - "about.toml"
-      - "about.hbs"
-      - "THIRD_PARTY_NOTICES.md"
+    paths-ignore:
+      - "docs/**"
+      - "openspec/**"
 
 env:
   CARGO_TERM_COLOR: always
@@ -71,14 +31,15 @@ env:
 jobs:
   format:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
       # Nightly rustfmt is required because rustfmt.toml uses
       # `imports_granularity`, `group_imports`, and `ignore` — all
       # nightly-only. Pin the date so style decisions don't drift with
-      # nightly bumps; bump intentionally alongside rustfmt.toml.
+      # nightly bumps; bump intentionally alongside rustfmt.toml and the same
+      # pin in scripts/format-apply.sh.
       - name: Install Rust nightly (rustfmt)
         uses: dtolnay/rust-toolchain@master
         with:
@@ -98,6 +59,30 @@ jobs:
           java-version: 21
           cache: maven
 
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      # `composer install` below resolves sdk/php/composer.json, which requires
+      # ext-ffi even to install.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: ffi
+          tools: composer
+
       - name: Cache Elixir deps + build
         uses: actions/cache@v5
         with:
@@ -111,14 +96,42 @@ jobs:
       - name: Fetch Elixir deps
         run: mix deps.get
 
-      - name: cargo fmt --check
-        run: cargo +nightly-2026-05-07 fmt --all -- --check
+      # Each veneer formatter is that SDK's own pinned development dependency,
+      # and every version comes out of the SDK's manifest rather than being
+      # written a second time here. None of these builds the native library:
+      # the formatters are pure tooling.
+      #
+      # `continue-on-error` on all four for the same reason the script collects
+      # instead of aborting — an install that fails must cost one language, not
+      # the whole report. The check step below still fails the job, and it says
+      # which formatter it could not find and that the others are clean.
+      - name: Install prettier (sdk/node)
+        continue-on-error: true
+        working-directory: sdk/node
+        run: npm ci
 
-      - name: mix format --check-formatted
-        run: mix format --check-formatted
+      - name: Install ruff (sdk/python)
+        continue-on-error: true
+        run: pip install "ruff==$(grep -oP 'ruff==\K[0-9.]+' sdk/python/pyproject.toml)"
 
-      - name: mvn spotless:check
-        run: mvn -B -f sdk/java/pom.xml -DskipTests spotless:check
+      - name: Install rubocop (sdk/ruby)
+        continue-on-error: true
+        run: |
+          gem install --no-document rubocop \
+            -v "$(grep -oP '"rubocop", "\K[^"]+' sdk/ruby/flezha.gemspec)"
+
+      - name: Install php-cs-fixer (sdk/php)
+        continue-on-error: true
+        working-directory: sdk/php
+        run: composer install --no-interaction --no-progress
+
+      # One step, one list — the same list the local gate uses. It covers Rust,
+      # Elixir, Java, Node, Python, Ruby and PHP, and prints a `==>` line per
+      # language. If an install step above ever stops working, the script names
+      # the tool it could not find and still reports every other language,
+      # instead of dropping one silently.
+      - name: Every formatter, in check mode
+        run: scripts/format-apply.sh --check
 
       - name: reuse lint
         uses: fsfe/reuse-action@v5

@@ -261,47 +261,6 @@ below is all that survives — which is enough to write it again.
 
 ## P2 — gates that lie, and time sinks
 
-### KI-4 · The format gate aborts before it checks Rust
-
-- **Where**: `scripts/format-apply.sh` — the `need` preflight (line ~33) runs for
-  every formatter *before* any formatter runs, and `cargo +nightly fmt` is line ~43.
-- **What happens**: on a box missing one veneer formatter (commonly `rubocop`),
-  the script fails loudly about that formatter and never reports that the Rust
-  tree is dirty.
-- **Evidence**: this is exactly how commit `d6f6e16f` landed with six unformatted
-  production files. The worker's "format-check.sh exits 0" was taken on trust.
-- **A fix should**: warn-and-continue on a missing formatter, or run each
-  formatter's check independently and report all failures, so one absent tool
-  cannot mask another language's state.
-- **Meanwhile**: run `cargo +nightly fmt --all --check` directly; it is read-only
-  and takes seconds.
-- **Triage (2026-08-30)**: **REAL**, and it reproduces on this box today with no
-  setup at all — `rubocop` is simply not on `PATH` here. The ordering is
-  unchanged: the `need` preflight is `scripts/format-apply.sh:28-35`, the first
-  formatter is line 43. The cited commit `d6f6e16f` still resolves and is
-  reachable from `dev` (`refactor(2b): one shape reads every veneer's
-  activations and results`), so the history rewrite did not orphan it.
-- **Reproduction** — the gate as the charter invokes it, unmodified:
-
-  ```
-  $ scripts/format-apply.sh --check
-  missing rubocop — install the development dependency in sdk/ruby/flezha.gemspec
-  $ echo $?
-  1
-  ```
-
-  Not one `==> ` line was printed, so no formatter ran. **Control** (proving the
-  Rust half has something to say and is simply never asked): run directly,
-  `cargo +nightly-2026-05-07 fmt --all -- --check` exits **0** with empty output
-  — the tree is clean at HEAD, which the gate above neither knows nor reports.
-- **Correction to the entry**: the "Meanwhile" command is not valid. `cargo fmt`
-  passes flags after `--`; `cargo +nightly fmt --all --check` is rejected. The
-  working form is `cargo +nightly-2026-05-07 fmt --all -- --check`.
-- **Worth fixing**: yes, and it is small — run each formatter's check in a
-  subshell, collect the failures, and exit non-zero at the end. The preflight can
-  stay as a warning. Group with KI-7 and KI-8: all three are one script and one
-  workflow.
-
 ### KI-5 · `duplicate_pairs` depends on which areas are scanned
 
 - **Where**: `scripts/refactor_metrics.py`.
@@ -347,17 +306,21 @@ below is all that survives — which is enough to write it again.
   looking at one area; what must not happen is a per-area number being quoted
   next to a baseline number as though they were the same measurement.
 
-### KI-6 · `ruff check` is red and no gate runs it
+### KI-6 · `ruff check` is red, and is deliberately not gated
 
-- **Where**: `sdk/python`; `scripts/format-check.sh` runs `ruff format` only.
-- **What happens**: `ruff check` reports 68 findings at HEAD, 16 of them `I001`
-  import ordering. Neither CI nor the local gate runs it.
-- **A fix should**: decide whether `ruff check` joins the gate (and fix the 68) or
-  is deliberately out of scope, and say which in the script.
-- **Triage (2026-08-30)**: **REAL**; the count has drifted up. Still no gate:
-  `format-apply.sh:49` runs `ruff format` and nothing runs `ruff check`, in the
-  script or in any workflow (see KI-7's grep, which covers ruff too).
-- **Reproduction**:
+- **Where**: `sdk/python`; `scripts/format-apply.sh` runs `ruff format` only.
+- **Status (2026-08-30)**: the *silence* this entry was really about is closed
+  by `format-gate-tells-the-truth`. The decision is written where a reader
+  looks for it — a comment beside the `ruff format` call in
+  `scripts/format-apply.sh` says the linter is out of the gate, why, and that
+  adopting it is its own change. What is **not** closed is the 77 errors, so
+  the entry stays open rather than becoming folklore.
+- **Why not gated**: clearing it is a Python SDK source change with judgement
+  in it, not a formatting pass. `DTZ005`/`DTZ001` are the ambient-clock family
+  the Python SDK deliberately guards against (`docs/dev_notes/python-sdk.md`)
+  and are worth reading, not silencing; `RUF022`/`RUF023` reorder `__all__` and
+  `__slots__`, and `__slots__` order is not free of meaning.
+- **Reproduction** (unchanged, re-measured 2026-08-30):
 
   ```
   $ sdk/python/.venv/bin/ruff check --statistics sdk/python test/apps/python_runner
@@ -375,95 +338,12 @@ below is all that survives — which is enough to write it again.
   $ echo $?
   1
   ```
-- **Correction to the entry**: **77** findings, not 68; **17** are `I001`, not 16.
-  55 of the 77 are auto-fixable.
-- **Worth fixing**: yes — as a decision, not as 77 edits. Four rules
-  (`I001`/`RUF022`/`UP035`/`RUF023`, 49 findings) are mechanical and fixable in
-  one pass; `DTZ005`/`DTZ001` are the ambient-clock family the Python SDK
-  deliberately guards against and are worth reading rather than silencing. Either
-  outcome must be written into `format-apply.sh` so the next reader knows `ruff
-  check` was considered and not merely forgotten.
-
-### KI-7 · CI does not run the four veneer formatters
-
-- **Where**: `.github/workflows/format.yml`.
-- **What happens**: CI and `scripts/format-check.sh` no longer mirror each other
-  for Node, Python, Ruby and PHP.
-- **Triage (2026-08-30)**: **REAL**, unchanged, and it is total — no workflow
-  runs any of the four, not `format.yml` and not the four veneer SDK workflows.
-- **Reproduction**:
-
-  ```
-  $ grep -rniE "prettier|rubocop|php-cs-fixer|ruff" .github/workflows/
-  $ echo $?
-  1
-  ```
-
-  **Control** (proving the grep can hit): `grep -rl spotless .github/workflows/`
-  → `.github/workflows/format.yml`. So the absence is real, not a bad pattern.
-  `php-sdk.yml`'s "Lint every source file" step is `php -l` — a syntax check, not
-  php-cs-fixer.
-- **Worth fixing**: yes. This is the load-bearing half of KI-4: `format-check.sh`
-  is the only thing that ever runs these four, and KI-4 is the reason it can
-  silently not run them. One job, four steps, each installing that SDK's pinned
-  dev dependency — the veneer workflows already install every one of those
-  toolchains for their own build steps.
-
-### KI-8 · `cargo +nightly fmt` is unpinned locally
-
-- **Where**: `scripts/format-apply.sh` runs `cargo +nightly fmt`; CI pins
-  `nightly-2026-05-07`. A local nightly bump silently diverges from CI.
-- **Triage (2026-08-30)**: **REAL but currently inert.** `format-apply.sh:43` is
-  still `cargo +nightly fmt`; `format.yml:115` still pins
-  `nightly-2026-05-07`. On this box the two are genuinely different builds.
-- **Reproduction**:
-
-  ```
-  $ rustup run nightly rustc --version
-  rustc 1.97.0-nightly (f964de49b 2026-05-07)
-  $ rustup run nightly-2026-05-07 rustc --version
-  rustc 1.97.0-nightly (365c0e1d7 2026-05-06)
-  ```
-
-  But the divergence buys nothing today: both `cargo +nightly fmt --all --
-  --check` and `cargo +nightly-2026-05-07 fmt --all -- --check` exit **0** with
-  byte-identical (empty) output on this tree. The risk is real, the realisation
-  is zero.
-- **Worth fixing**: yes, and it is one word — `cargo +nightly-2026-05-07` in the
-  script, so the pin lives in one place. Do it inside the KI-4/KI-7 change; it
-  does not justify a change of its own.
-
-### KI-9 · `.formatter.exs` misses two scripts
-
-- **Where**: `inputs` omits `scripts/auto_restore_persistence_smoke.exs` and
-  `bench/acceptance/summarize.exs`, so neither is ever formatted.
-- **Triage (2026-08-30)**: **REAL**, and both named files are in fact unformatted
-  right now — so this is not merely "never formatted", it is "and it shows".
-- **Reproduction**:
-
-  ```
-  $ mix format --check-formatted .credo.exs bench/acceptance/summarize.exs \
-      examples/plugins/hello_world/manifest.exs scripts/auto_restore_persistence_smoke.exs
-  ** (Mix) mix format failed due to --check-formatted.
-  The following files are not formatted:
-
-    /home/moon/Code/flezha/bench/acceptance/summarize.exs
-    /home/moon/Code/flezha/scripts/auto_restore_persistence_smoke.exs
-  $ echo $?
-  1
-  ```
-
-  `summarize.exs` alone would take ~150 lines of reflow. **Control**: the same
-  invocation reports the other two files as clean, so the check discriminates.
-- **Correction to the entry**: there are **four** tracked `.exs` outside
-  `inputs`, not two — `.credo.exs` and
-  `examples/plugins/hello_world/manifest.exs` are the other two, and both happen
-  to be formatted already. `inputs` is `["{mix,.formatter}.exs",
-  "{config,lib,test}/**/*.{ex,exs}"]`.
-- **Worth fixing**: yes, one line — but note that widening `inputs` makes CI's
-  `mix format --check-formatted` go **red** until those two files are formatted,
-  so the widening and the reflow are one commit, not two. Landing it in the same
-  change as KI-4/KI-7/KI-8 keeps every format-gate edit together.
+- **What adopting looks like**: four rules (`I001`/`RUF022`/`UP035`/`RUF023`, 49
+  findings) are mechanical and fixable in one pass; the remaining 28 need a
+  site-by-site read. Then one line in `scripts/format-apply.sh` — a
+  `gate_run "ruff check" …` beside the `ruff format` one — turns it on for the
+  local gate and for CI at the same time, because CI runs that script.
+- **Worth fixing**: yes, as its own change.
 
 ### KI-10 · Credo strict contradicts house style
 
@@ -890,6 +770,31 @@ since carries its own date.
   `command_assign_runner_id` timing out at its 5 s budget, which then took the
   20 s `{:runner_connect, …}` call and the `{Flezha.Transport.Server, :uds}`
   child down with it. The module alone: **23 passed**.
+- `test/flezha_test.exs:413` (`a deferring operative is force-migrated at the
+  drain deadline without wedging`) — added 2026-08-30 from
+  `format-gate-tells-the-truth`, and the **third** site in this module after
+  `:383` and `:591`. `assert_receive :deferred, 1_000` times out; the mailbox
+  holds the competing `[:flezha, :shutdown, :drain_progress]` with `migrated: 0,
+  forced: 0, elapsed_ms: 5, remaining_hubs: 0`, so the drain found nothing to
+  drain and the `migration_deferred` hook never had an operative to fire on —
+  a start/registration race ahead of the drain, not a drain defect.
+  **It failed twice in a row, which looked deterministic and was not.**
+  Interleaved A/B, alternating arms: the change's tree **red, red**, then
+  HEAD (worktree at `73f453d3`) **1836 green**, the change's tree **1836
+  green**, HEAD **1836 green**, the change's tree **1836 green** — 3/3 green
+  alone as a single test as well. Causation was independently impossible: that
+  change's diff holds no file under `elixirc_paths(:test)` (`lib`,
+  `test/fixtures`, `test/helpers`, `test/support`), none under `config/` or
+  `test/`, and `mix test` never reads `.formatter.exs`.
+- **Method note for the next A/B here.** A HEAD worktree cannot run this suite
+  beside the main tree without `TMPDIR` isolation: `config/test.exs:148` keys
+  the socket directory on `System.tmp_dir!()` and `node()` alone, so two
+  checkouts land in the same `/tmp/flezha_sockets/<node>` and the second
+  refuses to boot — `is another controller's socket directory … answered a
+  connect`, out of `Flezha.Socket.Support.refuse_live_peer!/1`, taking
+  `Flezha.BootLoader` and the whole run down before the first test. Run the
+  baseline arm under `TMPDIR=/tmp/<short>`; it must be short, because the
+  resolved UDS path still has to fit `SUN_LEN`'s 108 bytes.
 - **Second sightings (2026-08-30, from `green-the-suite-log-gate`'s runs)**: two
   of the five now have a second, and the "exactly one sighting each" below is
   that much weaker. `worker_registry_test.exs:303` failed one plain `mix test`
@@ -2107,6 +2012,10 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-4 · the format gate's `need` preflight tested every formatter BEFORE running any, so one absent veneer tool ended the run and said nothing about the six languages behind it | `format-gate-tells-the-truth` — the preflight's install hint survives; only the abort goes. `scripts/gate_lib.sh` holds one `gate_run`/`gate_report` pair that both format scripts source, keeps "tool unavailable" and "check failed" in separate lists, and carries that distinction **across a process boundary** in the exit status: **2** = a tool was missing, **1** = something is unformatted, failure winning when both are true (which is what lets `format-check.sh` roll `format-apply.sh` up without flattening it — `--nested`, and it has to be asked for, because prettier, ruff and rubocop all use exit 2 for "the tool errored"). Proved on the box the entry was filed from, where `rubocop` and `php` are genuinely absent: the gate now reports cargo fmt / mix format / mvn spotless / prettier / ruff format and NAMES Ruby and PHP as not run, where before it printed **not one `==>` line**. Three arms drilled: every tool present and the tree clean → **exit 0**, seven formatters; two tools absent → **exit 2**, and `reuse lint` plus the notices diff still ran behind them; a deliberately unformatted `.exs` with every tool present → **exit 1**, `UNFORMATTED: mix format`, and the four formatters after Elixir still ran. `format-check.sh` took the same shape, so an absent `reuse` no longer hides a stale `THIRD_PARTY_NOTICES.md` |
+| KI-7 · CI ran no veneer formatter at all — `format-check.sh` was the only caller of prettier, ruff, rubocop and php-cs-fixer anywhere, and KI-4 is why it could silently not | `format-gate-tells-the-truth` — `.github/workflows/format.yml` installs all four (setup-node + `npm ci`, setup-python + `pip install ruff`, setup-ruby + `gem install rubocop`, setup-php with `ext-ffi` + `composer install`) and then runs **`scripts/format-apply.sh --check`** rather than keeping its own list of formatters, which is the drift this entry was: one list now, not two. Every version is read out of the SDK's own manifest (`package-lock.json`, `pyproject.toml`, `flezha.gemspec`, `composer.lock`) so no pin is written twice. The four installs are `continue-on-error` for the same reason the script collects instead of aborting — a failed install costs one language, not the report. The `paths` allow-list became a `paths-ignore` of `docs/**` and `openspec/**`: an allow-list that forgets a source tree is a gate that silently stops covering it, which is how four of the seven languages went unchecked |
+| KI-8 · `scripts/format-apply.sh` ran `cargo +nightly fmt` while CI pinned `nightly-2026-05-07`, two genuinely different builds on this box | `format-gate-tells-the-truth` — the script now invokes `cargo +nightly-2026-05-07`, with the comment beside it naming the workflow and `rust-toolchain.toml` as the other two places to bump together. Re-measured before the change: `nightly` is `f964de49b 2026-05-07`, `nightly-2026-05-07` is `365c0e1d7 2026-05-06`, and both exit 0 with empty output on this tree — the risk was real and the realisation was zero, which is why this rode a change rather than justifying one |
+| KI-9 · `.formatter.exs` `inputs` missed four tracked `.exs`, two of which were unformatted | `format-gate-tells-the-truth` — `inputs` gains `{bench,scripts}/**/*.exs`, `examples/plugins/**/*.exs` and `.credo.exs`, and the two files were reformatted in the same commit (widening alone turns the Elixir check red). `examples/**` is deliberately narrowed to `plugins`: `examples/coding-fleet/` is gitignored, has its own repo, and is unformatted, so the wide glob would fail the check on a file CI cannot see. The reflow is proved semantics-neutral twice — metadata-stripped ASTs are IDENTICAL for both files, and `summarize.exs` driven against the repo's own `results.quick.tsv`/`cells.quick.tsv` produces **byte-identical** stdout, `summary.quick.md` and saved baseline against HEAD's copy on both the report and the `--save-baseline` arm |
 | KI-11 · every second Java build in a checkout failed at shade — `duplicate entry: META-INF/THIRD_PARTY_NOTICES.md`, and the conformance manifest's own build command carries no `clean` | `java-build-runs-twice` (`be1110c9`) — `<forceCreation>true</forceCreation>` on `maven-jar-plugin` in the two modules that shade (`sdk/java/flezha-sdk`, `test/apps/java_runner`), at a **pinned 3.4.1**. The pin is load-bearing, not hygiene: nothing pinned that plugin, so this box's Maven 3.8.7 resolved **2.4** and the release image's Maven 3.9.9 resolves **3.4.1**, and the `jar.forceCreation` user property — the form that avoids declaring the plugin, and so avoids Maven's missing-version warning — exists only up to 2.x. Under a 3.4.1 pin it is silently inert and the duplicate-entry failure reproduces unchanged, which is a fix that would have looked green here and shipped broken. **The filed cause was wrong twice over.** `build-dist.sh` is not involved: `clean verify` → 0 then a bare `verify` → 1 reproduces it with no dist build anywhere, so the condition is a non-empty `target/`, which is every checkout after its first build. And it is not the aggregator's missing sources either — that only makes it total. **Shade replaces the jar plugin's output file in place**, so on the next build the jar plugin's up-to-date check finds the *shaded* jar at its own destination and skips: with no sources it always skips, and with sources it skips whenever nothing is newer than the fat jar. Either way shade re-shades its own 15 MB output; `flezha-sdk` fails loudly only because `IncludeResourceTransformer` then attaches a notices file the jar already carries. **`test/apps/java_runner` had the identical defect and failed silently** — its filter excludes `META-INF/THIRD_PARTY_NOTICES.md` from every artifact including its own, so it re-shaded to a fixpoint and exited 0; measured by `original-java_runner.jar` coming out 16,082,694 bytes (the fat jar) instead of 209,955. Both of the entry's suggested one-line fixes are refuted: `<shadedArtifactAttached>` installs the *empty* jar as `com.flezha:flezha-sdk`, which is what `java_runner` compiles against; moving the notices to `src/main/resources` removes the duplicate-entry symptom and leaves the re-shading, which is the half that can carry a deleted native forward. Proof: the conformance `build.test` command (byte-identical to `build.bench`) three times in one checkout with no `clean`, all exit 0; `unzip -l` on the fat jar → one `META-INF/THIRD_PARTY_NOTICES.md`, exactly the five `native/<os>-<arch>/libflz_core_ffi.*` and no other native library, 1833 entries as before; `mvn -P coverage,native-verify clean verify` green (117 + 17 + 5 tests); `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` 1859 passed |
 | KI-38 · `process_hub` pinned to a GitHub `dev` branch, so no version number described what a build contained | `adopt-process-hub-hex-release` (`4735c359`) — `mix.exs` declares `{:process_hub, "~> 0.7.0"}`; `mix.lock` carries the hex entry. **0.7.0 is the pinned code, published**: 78 `.ex` files each side, exactly one differs (`hub.ex`), and that difference is a pure relocation of `for_workers/1` — sorted, the two files are an identical multiset of lines. What the `.ex` comparison could **not** see is the package's own `mix.exs`, which raises `elector` from `~> 0.3.3` to `~> 0.3.4`; resolution fails until `elector` is unlocked, so the lock diff is two lines, not one. elector 0.3.4 is a real behaviour change on a live path (`erpc:multicall` replaces per-node `send_request`/`wait_response`, so the fan-out timeout is per batch rather than per node, and an election survives a candidate vanishing) — `declared_children` and `centralized_load_balancer` are its callers. `mix compile --force --warnings-as-errors` 272 files clean (negative control: a bogus `ProcessHub` call does fail it); `mix test` 1836 passed and `--include system` 1915 passed / 5 skipped, both unchanged from the HEAD baselines recorded before the swap, and `--include multi_node` 1845 passed — added because of the elector finding, since that tag is not covered by `--include system` and is where leader election actually runs |
 | KI-42 · six sites named `<state_root>/<class>`, a path the system never writes — five `refute File.exists?` that could not fail, and a `File.rm_rf` that reclaimed nothing | `assertions-that-cannot-fail` (`9708e2e5`) — all six now derive from `Flezha.State.Registry.class_dir/1`, and **every one was proved twice**: with the subject genuinely present at the real path the *old* assertion still passed (the two unit sites **34 passed**; `partitioned_operatives_e2e` **2 passed**; `remote_durability_e2e` under `POSTGRES_INTEGRATION=1` **3 passed**), and the *corrected* one goes red on the same subject and green once it is removed. **No deletion is broken** — all five are green against real behaviour, so `ClassRegistry`, `PartitionGroup.rescale/3`, `TierE2EHarness.destroy_local_state/1` and the rescale's tree removal all keep the promises their test names make; there was nothing to escalate. The `rm_rf` is proved by count, not by an assertion: one scenario (`workflow_crash_resume_e2e_test.exs:692`) left `app_data/state/workflow_loop_boot_2082/chat_loop_workflow_2114` with three class sidecars in it after its own `cleanup/3` ran, and leaves nothing after — the module's private `cleanup/3` is gone entirely, it imports `TierE2EHarness.cleanup/3`, which is the one teardown. **The sweep confirms the triage's number**: 46 `refute File.exists?` / `refute File.dir?` in `test/`, **exactly five vacuous** — the five filed — and 41 sound, each read against the layout it asserts on. **The seed is larger than filed**: not two moduledoc blocks but **seven**, across five modules (`state/registry.ex` twice, `operative/class_registry.ex`, `state/completion.ex`, `state/input_log.ex`, `state/proc_inbox.ex`, `state/proc_journal.ex`) plus four in `docs/`, every one dropping the `<namespace>` segment its own code writes. `Registry.namespace_dir/1` now owns that level and `class_dir/1` composes on it, so the two production sites that rebuilt it (`AuthZ.Quotas.compute_disk_bytes/1`, `Convergence.Loop.namespace_dir_mtimes/0`) and the two test sites (`TierE2EHarness.cleanup/3`, `quic_test.exs`) derive it too. Baselines unchanged: `mix test` **1836 passed**, `--include system` **1915 passed / 5 skipped** |

@@ -14,11 +14,16 @@ split coherent over time.
 Run the same gates CI runs:
 
 ```bash
-scripts/format-check.sh        # cargo fmt, mix format, spotless, reuse lint, third-party notices
+scripts/format-check.sh        # every formatter, reuse lint, third-party notices
 scripts/check-sdk-boundary.sh  # the Elixir SDK must not reach into controller internals
 scripts/check-kind-naming.sh   # operative kinds are `stream` and `workflow`
 scripts/check-mimic-global.sh  # a test must release Mimic's global mode
 ```
+
+`format-check.sh` exits **1** when something is unformatted and **2** when a
+formatter is not installed on your box; the summary names which, and every
+other language is still reported either way. Exit 2 means CI has yet to say
+anything about that language — it is not a pass.
 
 Two repo-wide rules that are easy to miss:
 

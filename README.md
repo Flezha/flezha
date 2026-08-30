@@ -149,19 +149,27 @@ Full reference and operator recipes (docker-compose, k8s, CI):
 
 ## Code style
 
-The repo enforces three formatters via the
+The repo enforces one formatter per language via the
 [`format`](.github/workflows/format.yml) workflow on every PR — drift
-blocks merge. Run them locally before pushing:
+blocks merge. The workflow runs the same script you do, so the two cannot
+cover different languages:
 
 ```bash
-scripts/format-check.sh   # cargo fmt --check, mix format --check-formatted, mvn spotless:check
-scripts/format-apply.sh   # auto-fix the same three
+scripts/format-check.sh   # every formatter in check mode, plus the licensing checks
+scripts/format-apply.sh   # auto-fix everything the check reports
 ```
 
+Both report every language they can and name any formatter that is not
+installed, so a missing toolchain removes one language from the report and
+never the rest.
+
 Style sources of truth: [`rustfmt.toml`](rustfmt.toml) for Rust (nightly
-rustfmt — pinned date in `format.yml`), [`.formatter.exs`](.formatter.exs)
-for Elixir, the Spotless block in [`sdk/java/pom.xml`](sdk/java/pom.xml)
-(palantir-java-format) for Java. The format-pass commits are listed in
+rustfmt — pinned date in `format.yml` and `scripts/format-apply.sh`),
+[`.formatter.exs`](.formatter.exs) for Elixir, the Spotless block in
+[`sdk/java/pom.xml`](sdk/java/pom.xml) (palantir-java-format) for Java, and
+each veneer SDK's own pinned development dependency for Node (prettier),
+Python (ruff), Ruby (rubocop) and PHP (php-cs-fixer). The format-pass
+commits are listed in
 [`.git-blame-ignore-revs`](.git-blame-ignore-revs) so `git blame` skips
 them.
 
