@@ -131,11 +131,15 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # respawn re-runs B2 ALONE, and the join runs exactly once — with C's
       # JOURNALED handoff banked and B2's fresh output appended. One contract,
       # both SDKs.
-      # Known open on Java: a resumed diamond re-runs a committed producer
-      # (predates this change; recorded in the dev notes). Pinned to the
-      # reference until `java-diamond-resume` closes it, rather than left
-      # failing where it says nothing new.
-      @tag reference_runtime: true
+      # KI-33: java's resume re-runs the committed producers, so each of B, C
+      # and the join arrives twice. Skipped on java alone — the reference arm
+      # still proves the contract — and skipped, not pinned to the reference,
+      # because a pin reports a pass for a runtime that never ran.
+      @tag skip:
+             FlezhaTest.SystemCase.skip_unless(
+               NodeTestHelper.runtime() != :java,
+               "KI-33: the java SDK's workflow resume re-runs committed producers"
+             )
       test "a fan-in diamond joins once, and a crash re-runs only the uncommitted producer",
            ctx do
         collector = spawn_link(fn -> collect_loop([]) end)

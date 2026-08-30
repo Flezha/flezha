@@ -1585,6 +1585,31 @@ until 2026-08-30. Dates are when each was last established, not when it started.
   j:b, j:b]` still comes back. Rename the owed change to `java-diamond-resume`,
   which is what the test comment already calls it.
 
+- **CONFIRMED 2026-08-30, and reproducible for the first time.** The
+  `@tag reference_runtime: true` that masked it is gone, replaced by a skip that
+  names this entry — a pin reported a pass for a runtime that never ran, which
+  is why this P1 went unverified for months.
+
+  ```
+  $ FLEZHA_E2E_RUNTIME=java mix test test/system/workflow_crash_resume_e2e_test.exs --include system
+  # with the skip bypassed
+  Result: 17/19 passed        # both transports fail, uds and quic
+
+  1) test transport=uds a fan-in diamond joins once, and a crash re-runs only
+     the uncommitted producer
+     the join accumulates BOTH producers' contributions:
+     ["a:…", "c:…", "c:…", "b:…", "b:…", "j:c:…", "j:c:…", "j:b:…", "j:b:…"]
+  ```
+
+  `b` and `c` each arrive **twice**, and the join emits `j:b` and `j:c` twice —
+  the resume re-runs producers whose handoff was already journaled, and the join
+  accumulates both copies. The Rust arm passes the same assertion, so the
+  contract is not in doubt; the Java SDK's resume is.
+
+- **A fix must**: journal-gate the Java resume the way the Rust SDK does, so a
+  producer whose handoff is banked is not re-run. It now has a failing test to
+  work against, which is what this entry never had.
+
 ### KI-34 · Java host dispatch costs 27–55 % more than Rust
 
 - **Severity**: P2 · **proposal owed** (`java-host-dispatch-cost`).
