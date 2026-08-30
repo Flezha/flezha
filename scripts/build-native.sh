@@ -119,6 +119,20 @@ RELEASE_BASE_URL="${FLEZHA_RELEASE_BASE_URL:-https://github.com/alfetahe/flezha/
 MANIFEST_NAME="SHA256SUMS.txt"
 MANIFEST_FILE=""
 
+# One release asset to a path. A repository's browser download URL is public-only:
+# for a private repo it answers 404 whether or not a token is presented, because
+# that endpoint takes no auth. `gh` reaches the same asset through the API and
+# does, so it is preferred when present and curl remains the fallback — which
+# keeps the public path dependency-free, as documented above.
+download_asset() {
+  local asset="$1" dst="$2"
+  if command -v gh >/dev/null 2>&1 &&
+     gh release download "v${FETCH_VERSION}" --pattern "${asset}" --output "${dst}" --clobber >/dev/null 2>&1; then
+    return 0
+  fi
+  curl -fsSL "${RELEASE_BASE_URL}/v${FETCH_VERSION}/${asset}" -o "${dst}"
+}
+
 # The published SHA-256 manifest for --fetch-missing's version, downloaded once
 # into MANIFEST_FILE and reused for every asset. A release that does not exist
 # is refused here, before anything is staged, rather than as five separate 404s.
@@ -131,7 +145,7 @@ ensure_release_manifest() {
   local url="${RELEASE_BASE_URL}/v${FETCH_VERSION}/${MANIFEST_NAME}"
   local tmp
   tmp="$(mktemp)"
-  if ! curl -fsSL "${url}" -o "${tmp}"; then
+  if ! download_asset "${MANIFEST_NAME}" "${tmp}"; then
     rm -f "${tmp}"
     echo "No published release for version ${FETCH_VERSION}: ${url} is not available." >&2
     echo "Cross-build the missing triples locally instead:" >&2
@@ -156,7 +170,7 @@ fetch_triple() {
   fi
 
   tmp="$(mktemp)"
-  if ! curl -fsSL "${RELEASE_BASE_URL}/v${FETCH_VERSION}/${asset}" -o "${tmp}"; then
+  if ! download_asset "${asset}" "${tmp}"; then
     rm -f "${tmp}"
     echo "Release v${FETCH_VERSION} lists ${asset} in ${MANIFEST_NAME} but the asset is not downloadable" >&2
     exit 1
