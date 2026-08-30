@@ -234,9 +234,32 @@ a no-op, so the peer-not-draining condition that makes UDS drop makes QUIC grow
 **without bound**. Any answer here must cover both, or fixing one hands its
 failure mode to the other.
 
+**The recommended shape is a watermark gate, and it does NOT replace the credit
+system** (asked 2026-08-30). The two answer different questions at different
+layers and compose:
+
+- **Credit** answers *"has the receiver made these bytes durable?"* — it gates
+  on fsync, end to end, and needs a session, byte accounting and batched
+  grants to do it. A frame can leave the write buffer and still not be durable,
+  so a watermark cannot express this guarantee.
+- **The watermark** answers *"is this socket's send buffer backing up?"* — one
+  bit, transport-local, per stream. The write buffer's receiver is the kernel
+  socket; there is nothing to account, which is why credit's machinery is the
+  wrong tool here.
+
+On the state stream both apply, and that is not redundancy: credit stops the
+RECEIVER being overwhelmed, the watermark stops the LOCAL buffer growing.
+**Design point for whoever writes it**: `flz_core/src/credit.rs` parks the
+sending THREAD on a 50 ms condvar re-check. A watermark park on the same path
+must not nest inside that one — the driver-side gate parks a BEAM process, and
+the two must be shown not to compose into a double park.
+
 Recommendation: the first now (it is small and makes the defect measurable),
-the third as its own change later, covering UDS and QUIC together. Blocks
-nothing today.
+then the watermark gate as its own change covering UDS and QUIC together — one
+relaxed atomic load per frame on the happy path, reusing the `push_gated` /
+`rearm_deferred_pushes` holdback shape rather than inventing a mechanism, and
+never parking a scheduler thread. QUIC is the easier half: `WriteError::Blocked`
+IS the high-water signal and is currently swallowed. Blocks nothing today.
 
 ### KI-10 — Credo strict: disable two checks, or edit 1 083 sites? (P2)
 
@@ -252,6 +275,12 @@ Why it is yours: it is a house-style decision, not a defect.
   the remaining 378 (139 of which are real nesting depth). Cost: minutes.
 - **Adopt them** and edit ~1 083 sites against the style already chosen. Cost:
   days, and a diff that touches nearly every file.
+
+**DECIDED 2026-08-30 — this is now queued work, not a question.** Row 3.5
+below. The user ruled: `ParenthesesOnZeroArityDefs` is rejected and disabled;
+`AliasUsage` is **adopted**, and with it the underlying naming problem it
+surfaces. The measurement that settled it is in that row. What follows is the
+history.
 
 **Half decided 2026-08-30.** The user has ruled on
 `ParenthesesOnZeroArityDefs` (430 issues): **disable it** — they do not agree
@@ -740,6 +769,7 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | Tests that lie or leak. KI-49 and KI-50 went to row 2's change; KI-54 arrives here — a `ForwardWorker` retry outliving its test, the same shape as the KI-49 row 2 closed, so row 2's await pattern is the candidate fix. |
 | 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
 | 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
+| 3.5 | `fix-opaque-module-names` | KI-10 | **Queued 2026-08-30 by the user, runs after row 3.** Adopt credo's `AliasUsage`, disable `ParenthesesOnZeroArityDefs`, and fix the module names the first check exposes. Survey first — see below. |
 | 7 | `close-input-log-syncer-blindness` | **KI-53 (P1)** | **New, found 2026-08-30 by the gate this programme just proved.** Not a log line: `InputLog` cannot tell that its fsync companion died, and keeps sending to a dead pid. Design question — re-spawn the syncer, or stop the log so its supervisor restarts the pair. Needs its own test; do NOT answer it with a `{:EXIT, _, _}` clause that returns `{:noreply, state}`. |
 | 8 | — | the gate itself | Not a change: after rows 4 and 7 land, re-run the batch-5 proof (a scratch uncaptured `Logger.error` must turn the gate red while `mix test` exits 0) and confirm two full runs clean. Only then is the gate reliable, and only then does `code-quality-baseline`'s new SHALL hold in practice. |
 
@@ -752,6 +782,52 @@ entry before briefing a worker; do not re-derive what triage already measured.
   Kafka stack), KI-14 (rides the next PHP image change), KI-6 (a Python SDK
   source decision), KI-15 (impossible as filed, and says so).
 - **Notes, not work**: KI-25, KI-29, KI-30, KI-31.
+
+### Row 3.5 — `fix-opaque-module-names`, in detail
+
+**The user's instruction**: adopt `AliasUsage`, fix the code, and fix every
+opaque or confusing module name it exposes — either rename to a proper module or
+fold the code into its parent and call it there. Which names deserve which is
+the implementer's judgement; some submodules are valid as they stand.
+
+**The measurement that shapes it (259 modules in `lib/`).** Last-segment
+collisions: `Supervisor` ×7, `Store` ×4, `Stream` ×3, `Snapshot` ×3,
+`Observability` ×3, and `Registry`, `Server`, `Source`, `Sink`, `Telemetry`,
+`Metrics`, `Manifest`, `Retention` ×2 each. The tree also uses Elixir's OWN
+`Registry` by bare name in 7 places (`{:via, Registry, …}`).
+
+**So the work is the OPPOSITE order to the check.** `AliasUsage` forces the last
+segment, and for a large fraction of these the last segment is neither unique
+nor self-describing — `Flezha.State.Registry` **cannot** be aliased in a file
+using the stdlib `Registry` at all, and `Kafka.Telemetry` aliased to `Telemetry`
+is worse than the full name. Enabling the check wholesale would INCREASE the
+confusion it is being adopted to remove. **The naming pass is a prerequisite
+for the alias pass, not a companion to it.**
+
+**The rule for "does this submodule deserve to exist"** — all three, or it is
+renamed or folded:
+1. Its last segment is unique across the tree and means something without its
+   parent. `Plugin.Provider.Kafka.ProducerWorker` passes; `Kafka.Telemetry`
+   fails.
+2. It does not collide with a stdlib name in use — `Registry`, `Stream`,
+   `Supervisor`, `Server`, `IO` fail on sight.
+3. It earns its own file. Otherwise fold into the parent — **but** folding grows
+   the parent and charter §7 caps a file at 800 lines, so for a parent near the
+   ceiling rename is the only option, not fold. Name that constraint per module
+   rather than discovering it late.
+
+**Two things the survey settles BEFORE anything moves:**
+- **Durable module names.** Plugin provider modules are persisted in the durable
+  cspec row. If any stored value is a module name, a rename is a MIGRATION, not
+  a rename, and breaks restore of existing state. Establish this first; it
+  decides whether the rename list is safe or needs a compatibility path.
+- **The rename list itself**, classified against the three rules, shown to the
+  user before it is applied.
+
+**Sequencing**: this runs as its own change immediately after row 3 and BEFORE
+area 5a. Areas 5a–5e refactor exactly these modules; applying a global naming
+rule piecemeal per area produces the inconsistency the change exists to remove,
+and doing it after them means the work twice with invalidated baselines.
 
 ### Phase 2 — the refactor resumes
 
