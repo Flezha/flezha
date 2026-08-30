@@ -192,7 +192,7 @@ with attribution preserved, because the arms are still kept at every checkpoint.
 > as of 2026-08-30, including the pre-existing ones this board never held (the bench
 > gate that cannot complete, Java's workflow resume re-running committed producers,
 > the unvalidated OOM fix, the production items). `fix-outbox-watermark-overwrite`
-> has since closed KI-1; `fix-first-input-drop-on-bind` (KI-2) is still owed.
+> has since closed KI-1; `fix-first-input-drop-on-bind` closed KI-2 (`c09d67b8`). Both are done.
 > Keep appending here as areas find things; move them across when an area closes.
 
 - 0a: `.github/workflows/format.yml` does not run the four veneer formatters, so CI
@@ -211,7 +211,7 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   without `--features flezha_runner/bench-internals`.
 - 0a: `mix deps.get` reports packages with security advisories (pre-existing).
 - 0a: `.git/info/exclude` on this box hides `bench/flink/`; other boxes see reports.
-- 0b **F1 — PRODUCT DEFECT, own change owed, before area 5a touches `wal_writer`**:
+- 0b **F1 — PRODUCT DEFECT, CLOSED by `fix-outbox-watermark-overwrite` (`99b4f201`)**:
   after an effectively-once park, `WalWriter.take_outbox_window/3` re-enters
   `dispatch_outbox_window` via `complete_entry({:cursor,1})` → `try_dispatch_outbox`
   (`wal_writer.ex:1288`) while the outer window is open; the nested window advances
