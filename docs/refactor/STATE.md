@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-30 02:55 (supervisor session 2 — **AREA 3 DONE**; history rewrite undone, hashes repointed, ready for area 4)
+**Last updated**: 2026-08-30 21:05 (defect programme done bar its housekeeping; area 4 is next)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -586,21 +586,51 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. `/loop /refactor` in a new session: it reads this file, finds no worker and every
-   area through 3 `done`, and spawns the **area 4 survey** (`sdk/java`, 8 441 lines).
-2. Then area 4's segments; supervisor commit at each, under the A/B policy below
-   (build every checkpoint, measure once at the last).
-3. The user's stated preference is to clear the open OpenSpec changes BEFORE area 4
-   resumes. Three are open, none blocking the programme:
-   - `fix-first-input-drop-on-bind` — proposal only (1/4 artifacts); the two-faced
-     first-input drop from "Awaiting", touching `state`/`runner`
-   - `fix-outbox-watermark-overwrite` — proposal only (1/4); F1, the watermark
-     overwrite after a park (`wal_writer.ex:1288`, `input_log.ex:189`)
-   - `unbundle-committed-build-artifacts` — complete (4/4), 37 tasks; removes the
-     seven committed Java artefacts and purges 2.05 GB from history
-   The first two refactor exactly the files areas 5a and 5e will touch, so landing
-   them first is cheaper than landing them after. Owed follow-up
-   `sdk-declaration-refusals-in-the-core` after area 4.
-4. **`openspec/changes` is gitignored** — every open change above exists only on this
-   disk until archived. Back them up before any fresh clone.
-5. Plug the laptop in before any checkpoint: every A/B is refused on battery.
+**A defect programme ran on 2026-08-30, between area 3 and area 4.** All forty
+entries in `docs/known_issues.md` were triaged against the code, and nine
+OpenSpec changes landed from it. That work is finished except for one change;
+the refactor resumes at area 4 immediately after it.
+
+1. **Finish `known-issues-housekeeping`** — the only open change
+   (`openspec/changes/known-issues-housekeeping/`, 16 tasks, validated). It is
+   markdown only: move 12 entries that triage closed into *Resolved*, rewrite 5
+   that overstate their scope, and relabel 3 that are notes rather than defects.
+   It was left last on purpose, because every other worker wrote into the same
+   file. One worker, no code.
+2. **Then area 4** (`sdk/java`, 8 441 lines). Its dependency, area 1, is done.
+   Run the survey first, as every area does.
+3. Areas 5a–5e, 6, 7, 8 after it, in dependency order.
+
+### What the defect programme leaves behind
+
+`docs/known_issues.md` is now the durable record, and every entry carries a
+command that reproduces it and that command's output — which none of the
+original forty had. Roughly ten entries stay genuinely open, and they split
+three ways:
+
+- **Two are the user's decision, not work**: KI-3 (what a caller is told when
+  its frame was discarded) and KI-10 (Credo — disable two checks, or edit 1 083
+  sites).
+- **Six are deferred with a reason**: KI-41 folds into `refactor-5a-state`,
+  which restructures that seam anyway; KI-36 needs a soak under real load;
+  KI-34 needs the Kafka stack; KI-14 rides the next PHP image change; KI-6 is a
+  Python SDK source decision; KI-15 is technically impossible as filed and says
+  so.
+- **Five were found during the programme itself**, two of them P1: KI-48
+  (`ControlUnit` exits abnormally whenever a runner tree comes down) and KI-49
+  (a test leaks a retrying task onto the next test's stub). KI-33 is now
+  confirmed and reproducible for the first time.
+
+### Method notes worth keeping
+
+Half the original list was not what it claimed: eleven entries were already
+fixed or never true, five overstated their scope, and four **understated** it.
+The rule that separated them is the one now in the spec — an entry carries a
+reproduction, or it records a suspicion.
+
+Charter §1's "record it, fix it in its own change" is what produced those forty
+entries, and it is right. What it lacked was the requirement that the recording
+be reproducible. The next area should record defects the same way, with the
+command.
+
+4. Plug the laptop in before any checkpoint: every A/B is refused on battery.
