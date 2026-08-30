@@ -29,6 +29,18 @@ reads this file, `git status`, and the open change's `tasks.md`, then continues.
    the gate always measured), §8 (build every checkpoint, measure once), §11
    (lines arriving from a higher layer, and ceiling-forced excess). Read them
    before planning an area; they are not the rules a previous session followed.
+5. **A defect now STOPS the area — charter §1b, amended 2026-08-30 on the
+   user's instruction, and the skill's §6b.** The old rule ("record it, fix it
+   in its own change later") is gone: it produced forty entries of which eleven
+   were already fixed or never true and five could not be reproduced at all.
+   Now — finish the box in flight, stop, write it down, **reproduce it** (a
+   command and the output it gave; 30-minute timebox, after which it is a
+   recorded suspicion and work resumes), establish the mechanism named to the
+   function, and only then triage: real and worth fixing / not a bug / not
+   worth it. The verdict is the supervisor's, never the worker's, and it
+   escalates to the user for a behaviour trade-off or a fix bigger than the
+   area. A fix is its own commit with a red-first regression test, and the code
+   it touched is then refactored to the area's standard like any other code.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
 this machine's disk only; their `tasks.md` is still the fine-grained progress.
 **Rules**: `charter.md`. **Programme**: zero behaviour change, net code down,
@@ -94,7 +106,11 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None.
+**`java-diamond-resume` (KI-33) — investigation + proposal worker spawned 22:08.**
+Phase 1 row 1, P1, and the one row that blocks area 4: `refactor-4-java-sdk`
+rewrites `sdk/java` with zero behaviour change, so refactoring over a live
+effectively-once violation carries it into the new shape and costs the A/B its
+meaning. The entry is reproducible for the first time (17/19, both transports).
 
 **`finish-the-suite-log-gate` is DONE** — `21185253` (KI-48, KI-49) and the
 commit below (KI-50, the gate proof, the close-out); archived as

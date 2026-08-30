@@ -8,8 +8,8 @@ OpenSpec change under `openspec/changes/refactor-*` is the plan for one area.
 
 - **Zero behaviour change per commit.** A refactor commit changes structure,
   names, comments, tests and formatting — never what the system does. A defect
-  found on the way is recorded in `STATE.md` → *Found defects* and fixed in its
-  own change, unless it blocks the area.
+  found on the way is recorded, reproduced and dealt with before the area
+  continues — see §1b — and its fix is always a separate commit.
 - **Every commit is green**: the area's suites, the full ExUnit suite once, the
   gates in §9, and — on a hot path — the A/B in §8.
 - **Net code goes down**, measured over an area, not over a session. A session
@@ -23,6 +23,67 @@ OpenSpec change under `openspec/changes/refactor-*` is the plan for one area.
 - **Cross-SDK rule** stands (see `CLAUDE.md`): a surface every SDK carries
   changes in every SDK in one change, or names the SDK it defers and the
   follow-up that owes it.
+
+## 1b. A defect stops the area until it is understood
+
+Amended 2026-08-30, on the user's instruction, replacing "record it and fix it
+later". The old rule produced forty entries of which eleven were already fixed
+or never true and five could not be reproduced at all: a defect written down in
+passing, mid-other-work, is a suspicion, and a suspicion cannot be verified,
+closed, or acted on by anyone but its author. Reproduction is cheap at the
+moment of discovery and expensive a week later, when the context is gone.
+
+**The sequence, in order, no step skipped:**
+
+1. **Finish the task box in flight, then stop.** Not mid-edit: the tree must
+   compile and the structural move must be whole, or the fix diff and an
+   unfinished refactor become one unreadable change that cannot be committed
+   safely. Not at the batch's end either — a P1 does not wait two hours.
+2. **Write it down** — `docs/known_issues.md`, in the right severity section,
+   with `**Where**` (file:line), what it does, and why it was not fixed on the
+   spot.
+3. **Reproduce it.** A command, and the output that command actually gave. This
+   is not optional and it is not "run the suite again": name the smallest
+   invocation that shows the defect, and record the rate if it is intermittent.
+   **Timebox: 30 minutes of worker time.** If it will not reproduce in that
+   budget, record it as a *suspicion* with everything that was tried and how
+   long, and the area resumes — an unreproducible defect does not halt work.
+4. **Establish the mechanism.** *Why* it happens, named to the function. "The
+   driver probably skips a check" is not a mechanism. If two mechanisms remain
+   possible, name the experiment that separates them.
+5. **Triage, on the evidence** — exactly one of:
+   - **Real and worth fixing** → the area pauses and the fix lands first (6).
+   - **Not a bug** → record why, with the evidence that refutes it, in
+     *Resolved*. Do not delete the entry: "never true" and "fixed" must stay
+     distinguishable.
+   - **Real but not worth fixing** → record the cost and what it would buy.
+     This verdict is the supervisor's, and it **escalates to the user** whenever
+     the fix needs a behaviour or product decision, or would cost more than the
+     rest of the area. A worker never rules a defect away.
+6. **Fix it in its own commit**, with a regression test **shown red first** — a
+   test that never failed on the defective code proves nothing. The refactor
+   commits stay behaviour-free and bisectable; a bisect must always be able to
+   tell a structural regression from a fix.
+7. **Then refactor what the fix touched.** Code that arrives via a fix is not
+   exempt: it re-enters the area's scope, takes the same gates (§7 ceilings,
+   §9 naming, no narrative comments), is re-surveyed for the §2 reuse order,
+   and is covered by the area's final verification. A fix is not a hole in the
+   area's standard.
+8. **Resume the refactor** at the next box.
+
+**Who decides what.** The worker reproduces, establishes the mechanism and
+proposes a verdict; it never rules a defect away by itself. The supervisor
+verifies the reproduction against the repo and rules. The user is asked only
+for a behaviour/product trade-off, or a fix that outweighs the area.
+
+**Severity does not decide whether to reproduce — only whether to pause.**
+Everything found is reproduced and triaged at once, including a P3 wart. Only a
+verdict of *real and worth fixing* pauses the area for a fix; *not a bug* and
+*not worth it* are recorded and the refactor resumes immediately.
+
+**A defect in code the area has already refactored is not a special case.** It
+follows the same eight steps; a finished area is a blocking ratchet, so the fix
+must clear that area's gates too.
 
 ## 2. Reuse
 

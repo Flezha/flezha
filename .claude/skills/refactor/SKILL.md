@@ -124,8 +124,13 @@ the area's dev_notes; tree rules; docker rules; batching; authorisation) plus:
 > end, `python3 scripts/refactor_metrics.py --check` not worse; 3. if
 > `design.md` names a hot path: the interleaved A/B against tag
 > `refactor-baseline-<id>` on this box, numbers in your report; 4. every found
-> defect listed in your report under "Found defects", NOT fixed unless it
-> blocks a task. STOP after that and report: do not archive, commit or stage.
+> defect handled by charter §1b — finish the box in flight, then STOP, write it
+> into `docs/known_issues.md`, reproduce it (a command and the output it gave;
+> 30-minute timebox, after which it is recorded as a suspicion and you resume),
+> and establish the mechanism named to the function. Then report it and WAIT:
+> the verdict — real and worth fixing / not a bug / not worth it — is the
+> supervisor's, never yours. Do not fix it, and do not rule it away, until you
+> are told which. STOP after that and report: do not archive, commit or stage.
 > Report what you did NOT do first. An unvalidated box stays unticked with a
 > one-line reason. Timeouts: never above 600 s on any command.
 
@@ -154,7 +159,12 @@ The report is a hypothesis. Against the repo:
 - `python3 scripts/refactor_metrics.py --check` passes; LOC delta is in the
   report;
 - hot path: the A/B numbers exist and are within 3 %;
-- Found defects are listed, not silently fixed.
+- Found defects: each carries a reproduction (a command and its actual output)
+  or a stated 30-minute timebox that failed, and a mechanism named to the
+  function — charter §1b. None is fixed, and none is ruled away, without your
+  verdict. A fix you authorised is its own commit, has a regression test that
+  was shown red first, and the code it touched clears the area's gates and the
+  §2 reuse order like any other code in the area.
 
 Fail → `SendMessage` to the same worker with the exact findings; row stays
 `checkpoint`. Pass → §5.
@@ -210,6 +220,35 @@ On each wake-up update *Current worker → last seen* in `STATE.md` with the
 time, ticks, and `git diff --stat | tail -1`. Stop the loop (`stop: true`)
 only when every row is `done`, or when the only runnable areas are `blocked`
 on an entry in *Awaiting the user's decision*. Say so in one line.
+
+## 6b. A defect pauses the area — charter §1b
+
+Amended 2026-08-30 on the user's instruction. The old rule ("record it, fix it
+in its own change later") produced forty entries of which eleven were already
+fixed or never true and five could not be reproduced at all. Reproduction is
+cheap at discovery and expensive a week later.
+
+When a worker reports a defect:
+
+1. **Verify the reproduction yourself** — run the command it names and see the
+   output it claims. A reproduction you did not run is a hypothesis.
+2. **Rule on it**: *real and worth fixing* → the area pauses and the fix goes
+   first, as its own change and its own commit, with the regression test shown
+   red on HEAD before it lands. *Not a bug* → record why in `known_issues.md`
+   → *Resolved*, with the evidence that refutes it; never delete the entry.
+   *Real but not worth it* → record the cost and what fixing it would buy.
+3. **Escalate instead of ruling** when the fix needs a behaviour or product
+   decision, or would cost more than the rest of the area: it goes under
+   *Awaiting the user's decision* with options and your recommendation.
+4. **After the fix, the code it touched is refactored** — same gates, same
+   survey, same §2 reuse order, covered by the area's final verification. A fix
+   is not a hole in the area's standard.
+5. Only then does the area resume, at the next box.
+
+A defect that will not reproduce inside the worker's 30-minute timebox is
+recorded as a suspicion with what was tried, and does **not** halt the area.
+Severity decides whether to pause, never whether to reproduce: everything found
+is reproduced and triaged at once, including a P3 wart.
 
 ## 7. Blockers
 
