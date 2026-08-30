@@ -8,11 +8,12 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
   # async: false: Mimic global mode; Mimic stubs; OS environment variables.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Plugin.Provider.Kafka.Producer
   alias Flezha.Plugin.Provider.Kafka.ProducerSup
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   @secret "sup3r-s3cret-sasl-pw"
 

@@ -16,6 +16,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Runner.ControlUnit
@@ -27,7 +28,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   @namespace "op-mgr-request-stop-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     # Isolate the on-disk state dir the teardown deletes-or-retains.

@@ -15,13 +15,14 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.OperativeManager
 
   @namespace "ctrl-chan-task-completed-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     # Isolate the completion record `handle_workflow_completed/2` now writes.

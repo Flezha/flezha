@@ -2,6 +2,7 @@ defmodule Flezha.Schedule.HubTest do
   # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   @moduletag :capture_log
 
@@ -10,7 +11,7 @@ defmodule Flezha.Schedule.HubTest do
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     Helper.isolated_store_setup()

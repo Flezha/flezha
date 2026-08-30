@@ -10,6 +10,7 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -17,7 +18,7 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
 
   @namespace "ctrl-unit-workflow-stop-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   test "workflow_stop/2 sends a WorkflowStop command (cooperative), not RemOperative" do
     test_pid = self()

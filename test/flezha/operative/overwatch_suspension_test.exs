@@ -15,12 +15,13 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.{Builder, ClassRegistry, Overwatch}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{ProcInbox, ProcJournal, TestHelpers}
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     root = TestHelpers.tmp_app_data_dir()

@@ -143,7 +143,7 @@ regression is caught at the commit that causes it.
 - **WHEN** `git rev-list --objects --all` is filtered to the five purged path prefixes
 - **THEN** it SHALL report no blob larger than 5 MB
 
-#### Scenario: A fresh clone is bounded
+#### Scenario: A fresh clone stays under the size ceiling
 
 - **WHEN** the rewritten remote is cloned
 - **THEN** the resulting `.git` SHALL be smaller than 150 MB

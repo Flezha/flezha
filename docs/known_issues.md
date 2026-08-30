@@ -87,6 +87,32 @@ below is all that survives — which is enough to write it again.
 
 ---
 
+### KI-44 · The OTLP codec crashes on any attribute value that is not a string
+
+- **Severity**: P2 · **would break a live export, not just a test**.
+- **Where**: `lib/flezha/observability/export/otlp_codec.ex:222`, `:239`, `:267` —
+  `kv_attribute(to_string(k), to_string(v))`.
+- **What happens**: `to_string/1` raises `Protocol.UndefinedError` for a Map, and
+  Logger metadata *is* a map. Any signal carrying a map-valued attribute takes
+  the exporting process down. Nothing guards the value's shape.
+- **Evidence**: `test/flezha/observability/export_test.exs:320` failed on
+  2026-08-30 with `protocol String.Chars not implemented for Map`, the value
+  being a log event's own metadata
+  (`mfa: {Flezha.Shutdown.Coordinator, :fold_drain_outcome, 2}`). The test is
+  `async: false`, uses no Logger, and the exception arrived as an EXIT from
+  another process — so the map reached the codec from outside the test. It
+  passes 3/3 alone, and the same tree produced 1830 and 1829 on two runs, so it
+  is timing-dependent in *which signals flow*, not flaky in itself.
+- **Not attributable to `close-mimic-global-leak`**: that change touched no
+  observability or shutdown code, and `export_test.exs` is untouched and uses no
+  Mimic global mode.
+- **A fix must**: decide what a non-String.Chars attribute value becomes —
+  `inspect/1` is the obvious answer — and apply it at all three sites, since a
+  guard at one leaves the other two. Check whether the codec should also be
+  refusing such a value at the bus rather than at encode time.
+
+---
+
 ## P2 — gates that lie, and time sinks
 
 ### KI-4 · The format gate aborts before it checks Rust
@@ -224,38 +250,6 @@ isolation is not evidence** — reproduce under load before concluding anything
 - 738 leaked `/tmp/flezha_*` directories (state-test and durability-stub roots
   never removed); `app_data/dlq` holds leftovers from tests using the default DLQ
   directory. Owed to the test-consolidation area.
-
-### KI-43 · 28 modules leave Mimic in global mode, failing the next module's stubs
-
-- **Severity**: P2 · **mechanical fix, no investigation needed**.
-- **Where**: every module using `setup :set_mimic_global` (or a bare
-  `Mimic.set_mimic_global()`) instead of
-  `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1` — 28 files, against
-  10 that already use the safe helper.
-- **What happens**: Mimic resets `:global` to `:private` only when it sees the
-  owner go down, and it monitors the owner only once that owner registers a
-  stub. A global-mode test that stubs nothing leaves `:global` behind, and the
-  next module to call `stub/3` from its own pid dies with
-  `** (ArgumentError) Stub cannot be called by the current process. Only the
-  global owner is allowed.` — every test in it, not just one.
-- **Evidence**: a two-file, two-second reproduction, no seed hunting needed:
-  `mix test test/flezha/service/cli_manager_state_get_test.exs
-  test/flezha/service/cli_manager_schedule_test.exs --seed 0` → 10 failures;
-  `cli_manager_schedule_test.exs` alone → 10 passed. In a full
-  `mix test --include system` it surfaces whenever the seed happens to order a
-  leaky module in front of a private-stub one — observed as 10 failures on seed
-  `682679`, reproducible by re-running that seed.
-- **The remedy already exists and is unused**: `test/helpers/mimic_global.ex`
-  releases the mode in `on_exit`, and its moduledoc describes exactly this
-  failure. The fix is `setup :set_mimic_global` →
-  `import FlezhaTest.Helper.MimicGlobal` + `setup :set_mimic_global_until_exit`,
-  once per file.
-- **Why it may look new**: any change that adds or removes a test module
-  re-permutes ExUnit's module order for a given seed, so a suite that never hit
-  the adjacency can start hitting it without anything about the hazard changing.
-  Do not read a first sighting as a regression in the commit that surfaced it.
-- **Why not fixed on the spot**: 28 unrelated files, none of them in the area of
-  the change that found it.
 
 ### KI-42 · Four e2e sites still name `<state_root>/<class>`, a path that cannot exist
 
@@ -546,6 +540,7 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-43 · 28 test modules set Mimic's global mode without releasing it | `close-mimic-global-leak` — 26 modules moved to `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1`, two dropped global mode entirely (they register no stub anywhere reachable), and `scripts/check-mimic-global.sh` refuses the raw call in `test/` with `test/helpers/mimic_global.ex` exempt by path. Measured, not asserted: `mix test test/flezha/service/cli_manager_state_get_test.exs test/flezha/service/cli_manager_schedule_test.exs --seed 0` was **11/20 passed, 9 failed**, every failure `Only the global owner is allowed`, against **10 passed** for the schedule module alone; after, **20 passed** on the same seed. Read directly (a temporary `ExUnit.after_suite` probe on `:ets.lookup(Mimic.Server, :mode)`): at seed 0 exactly one of the 28 left the mode `:global`; after the change all 36 global-mode modules left it `:private`. The entry's own reading was too broad — see `docs/dev_notes/close-mimic-global-leak.md` for which of the 28 could actually leak and why |
 | KI-2 · first input after `start_operative/2` journaled and never forwarded (both faces: the start window, and the restore re-forward onto a stream a fresh runner has not bound) | `fix-first-input-drop-on-bind` (`e16260a7`) — the operative bind now waits for its data-stream channel (`StreamChannel.await_bind/2`), and an undelivered payload arms `{:stream_bound, _}`, which re-forwards the journal tail through the replay path a restore already used. Deterministic proof: `test/flezha/operative/bind_reforward_test.exs` — its four delivery cases were run red on the pre-fix tree, in 2.1 s, with no sampling. `effectively_once_checkpoint_e2e_test.exs:37` 40x in isolation: **40/40 pass, 0 `[:flezha, :stream, :drop]`** |
 | KI-20 · `sdk_smoke_e2e_test.exs` carried the old re-send workaround | `fix-first-input-drop-on-bind` (`e16260a7`) — `send_until_forwarded` deleted, the single `send_io` stands, and `NodeTestHelper.await_stream_bound/2` is gone from the tree with it (29 call sites across 15 modules) |
 | KI-1 · the consumed watermark overwritten back after an effectively-once park (retention floor and credit under-reporting by one offset) | `fix-outbox-watermark-overwrite` (`9410eea7`) — `InputLog.record_consumed/3` now advances the stored offset or leaves it, atomically. `test/system/dlq_e2e_test.exs:121` in isolation: **0 of 6 runs passed before, 5 of 5 after**; the deterministic proof is `wal_writer_outbox_test.exs` "a nested window's advance survives the outer window closing", which fails on `refactor-baseline-2` as well as on the pre-fix HEAD |

@@ -9,10 +9,11 @@ defmodule Flezha.Service.CliManagerRewindTest do
 
   import ExUnit.CaptureIO
   import Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Service.CliManager
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   defp instance_id(), do: "rw_#{System.unique_integer([:positive])}"
 

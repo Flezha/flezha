@@ -116,8 +116,10 @@ reading it, not plumbing it.
 
 ## Smaller traps
 
-- **`Mimic.set_mimic_global/0` is required** for anything the FleetManager reads:
-  the filter runs in that process, and a per-process stub never reaches it.
+- **Mimic's global mode is required** for anything the FleetManager reads: the
+  filter runs in that process, and a per-process stub never reaches it. Take it
+  through `MimicGlobal.set_mimic_global_until_exit/1`, never the raw call —
+  `scripts/check-mimic-global.sh` refuses the raw one.
 - **`ClassRegistry.put_sdk_lang/2` writes a sidecar under
   `Registry.class_dir(factory_id)`**, creating a directory for a factory that
   may hold no other state. Harmless (`entities_of/1` finds no entity keys under

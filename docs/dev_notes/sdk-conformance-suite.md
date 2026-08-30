@@ -66,8 +66,8 @@ line that declares its capability.
 `AddOperativeResponse.metadata`, so a Mimic pass-through there sees every
 declaration without a debug surface in production code. The stub must
 `Mimic.call_original/3` — the bind depends on the decoded map — and the module
-is `async: false` with `set_mimic_global`, because the decode happens on the
-Overwatch process, not the test's.
+is `async: false` with `set_mimic_global_until_exit`, because the decode
+happens on the Overwatch process, not the test's.
 
 ## `max_entities` had no Java spelling
 

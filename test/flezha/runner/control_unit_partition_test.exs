@@ -11,6 +11,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
   alias Flezha.Partition
@@ -19,7 +20,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
 
   @namespace "ctrl-unit-partition-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     test_pid = self()

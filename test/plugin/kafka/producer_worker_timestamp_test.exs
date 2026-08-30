@@ -8,12 +8,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
-  # async: false: Mimic global mode; Mimic stubs; registered singletons.
+  # async: false: registered singletons.
 
   use ExUnit.Case, async: false
   use Mimic
-
-  setup :set_mimic_global
 
   @topic "ts_topic"
   @partition 0

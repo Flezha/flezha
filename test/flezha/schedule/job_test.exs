@@ -2,6 +2,7 @@ defmodule Flezha.Schedule.JobTest do
   # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   import ExUnit.CaptureLog
 
@@ -10,7 +11,7 @@ defmodule Flezha.Schedule.JobTest do
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
 
   # The job runs in its own process, so stubs must apply beyond the test pid.
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     Helper.isolated_store_setup()

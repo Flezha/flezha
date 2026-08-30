@@ -10,6 +10,13 @@ name: Naming
 # as code — and toolchain-free, so it costs nothing next to the Format gate.
 # Local equivalents: the `scripts/check-*.sh` invoked below.
 #
+# check-mimic-global is the one path-scoped gate here: it reads `test/` only,
+# because the call it refuses has no place in `lib/` at all. Mimic's global
+# mode is process-group state, so a module that sets it without releasing it
+# fails every stub in whichever module ExUnit happens to run next (KI-43).
+# `test/helpers/mimic_global.ex` defines the releasing wrapper and is the one
+# exemption, declared by path.
+#
 # check-build-artifacts is the repository-weight gate: `tracked` refuses a
 # committed build artefact (native libraries and fat jars are build output —
 # `scripts/build-native.sh` produces the one triple a test needs, and a release
@@ -42,6 +49,8 @@ jobs:
         run: scripts/check-overflow-naming.sh
       - name: check-sdk-boundary
         run: scripts/check-sdk-boundary.sh
+      - name: check-mimic-global
+        run: scripts/check-mimic-global.sh
 
   build-artifacts:
     runs-on: ubuntu-latest

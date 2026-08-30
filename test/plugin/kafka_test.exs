@@ -19,6 +19,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   # Some cases start a real ProducerWorker with no broker reachable, so KafkaEx
   # logs an :nxdomain connect error + crash report by design; capture so a green
@@ -28,7 +29,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   @topic "flezha_test_topic"
   @broker {"kafka", 9092}
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     test_pid = self()

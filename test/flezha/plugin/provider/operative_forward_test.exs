@@ -12,13 +12,14 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Plugin.Extension.{Ctx, Table}
   alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
   alias Flezha.Service.HubManager
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     unless Process.whereis(ForwardSup), do: start_supervised!(ForwardSup)

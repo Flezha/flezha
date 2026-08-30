@@ -7,12 +7,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   import ExUnit.CaptureLog
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   @topic "p_topic"
   @partition 0

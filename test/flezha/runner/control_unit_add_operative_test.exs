@@ -11,6 +11,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
   alias Flezha.Runner.ControlChannel
@@ -18,7 +19,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
 
   @namespace "ctrl-unit-add-operative-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     test_pid = self()

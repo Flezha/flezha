@@ -19,6 +19,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
@@ -280,7 +281,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       Mimic.call_original(ClassRegistry, :decode_declarations, [raw])
     end)
 
-    Mimic.set_mimic_global()
+    set_mimic_global_until_exit()
 
     assert {:ok, _} =
              OperativeManager.start_operative(namespace, %Builder{

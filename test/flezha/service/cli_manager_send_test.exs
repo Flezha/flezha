@@ -13,10 +13,11 @@ defmodule Flezha.Service.CliManagerSendTest do
 
   import ExUnit.CaptureIO
   import Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Service.CliManager
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   defp instance_id(), do: "snd_#{System.unique_integer([:positive])}"
 

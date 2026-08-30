@@ -11,6 +11,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   import ExUnit.CaptureIO
 
@@ -20,7 +21,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   @namespace "operative-info-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     # Isolate the state root `operative_info` scans for finished-job records.

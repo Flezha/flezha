@@ -26,13 +26,14 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.HubManager
 
   @namespace "ctrl-chan-shutdown-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     # `config/test.exs` pins the global Logger level to `:error`. The

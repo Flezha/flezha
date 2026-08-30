@@ -13,10 +13,11 @@ defmodule FlezhaTest.Runner.RunnerReconnectBindingTest do
   # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   @moduletag :capture_log
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch

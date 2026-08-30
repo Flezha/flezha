@@ -18,6 +18,7 @@ defmodule Flezha.Service.PluginManagerTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Plugin
   alias Flezha.Operative.PartitionGroup
@@ -26,7 +27,7 @@ defmodule Flezha.Service.PluginManagerTest do
   alias ProcessHub.Service.ProcessRegistry
 
   setup :verify_on_exit!
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   @namespace "default"
   @operative_id "pm_test_p1"

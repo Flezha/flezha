@@ -20,7 +20,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
   alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.State.TestHelpers, as: StateTestHelpers
 
-  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+  # async: false: writes Application env; replaces the FleetManager's state.
 
   use ExUnit.Case, async: false
   use Mimic
@@ -30,9 +30,6 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
   @elixir 3
 
   setup do
-    # The filter runs INSIDE the FleetManager process, so a per-process stub
-    # would never reach it.
-    Mimic.set_mimic_global()
     original = :sys.get_state(FleetManager)
     Logger.put_module_level(FleetManager, :warning)
 

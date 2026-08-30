@@ -10,6 +10,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
@@ -18,7 +19,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   alias Flezha.Service.Identificator
   alias Flezha.State.TestHelpers
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   # Stub SDK control unit: answers the controller's CreditWindowInit offer
   # the way a credit-speaking (:ack), broken (:wrong_session) or pre-credit

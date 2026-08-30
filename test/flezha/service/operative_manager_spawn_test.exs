@@ -10,6 +10,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Runner.FleetManager
@@ -21,7 +22,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   @namespace "spawn-or-deliver-test"
   @factory "worker"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     %{registry: FakeStartRegistry.install(runners: ["runner-1"])}

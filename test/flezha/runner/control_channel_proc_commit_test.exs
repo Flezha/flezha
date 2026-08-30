@@ -13,6 +13,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Operative.ClassRegistry
@@ -395,7 +396,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     :ok = Flezha.State.WalWriter.append(writer, 0, <<0::128>>, "change")
 
     test_pid = self()
-    Mimic.set_mimic_global()
+    set_mimic_global_until_exit()
 
     Mimic.stub(ControlChannel, :send_control, fn _runner, command ->
       send(test_pid, {:control_command, command})
@@ -424,7 +425,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     # park runs in a Task (the eviction's RemOperative reply returns on this very
     # control stream), so the stub must be visible outside the test process.
     test_pid = self()
-    Mimic.set_mimic_global()
+    set_mimic_global_until_exit()
     Mimic.stub(Flezha.Service.HubManager, :get_pid, fn _ns, ^inst -> {:ok, test_pid} end)
 
     payload = build_iter_park_payload(inst, 3, 1_800_000_000_000, "ref-park")

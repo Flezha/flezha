@@ -19,6 +19,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   @namespace "sync_factories_ns_#{System.unique_integer([:positive])}"
 
@@ -88,7 +89,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
   test "a dropped factory with controller-known bound operatives logs a warning" do
     seed(%{"r1" => ["a", "b"]})
 
-    Mimic.set_mimic_global()
+    set_mimic_global_until_exit()
 
     Mimic.stub(HubManager, :operative_rows, fn @namespace ->
       [
@@ -112,7 +113,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
   test "a suspended (unbound) operative warns only when no other runner has the factory" do
     seed(%{"r1" => ["b"], "r2" => ["b"]})
 
-    Mimic.set_mimic_global()
+    set_mimic_global_until_exit()
 
     Mimic.stub(HubManager, :operative_rows, fn @namespace ->
       [%{id: "parked_op", health: :unknown, runner: nil, factory: "b", node: nil}]

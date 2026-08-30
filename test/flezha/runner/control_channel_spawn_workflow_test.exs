@@ -12,6 +12,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   # async: false: Mimic global mode; Mimic stubs; registered runner channels.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.OperativeManager
@@ -19,7 +20,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
 
   @namespace "ctrl-chan-spawn-workflow-test"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     stream_ref = make_ref()

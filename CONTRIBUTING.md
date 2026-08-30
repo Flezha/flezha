@@ -17,6 +17,7 @@ Run the same gates CI runs:
 scripts/format-check.sh        # cargo fmt, mix format, spotless, reuse lint, third-party notices
 scripts/check-sdk-boundary.sh  # the Elixir SDK must not reach into controller internals
 scripts/check-kind-naming.sh   # operative kinds are `stream` and `workflow`
+scripts/check-mimic-global.sh  # a test must release Mimic's global mode
 ```
 
 Two repo-wide rules that are easy to miss:

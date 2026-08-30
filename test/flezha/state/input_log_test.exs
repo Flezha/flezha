@@ -8,6 +8,7 @@ defmodule Flezha.State.InputLogTest do
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
 
@@ -268,7 +269,7 @@ defmodule Flezha.State.InputLogTest do
   end
 
   describe "crash-replay re-forward (§6.1)" do
-    setup :set_mimic_global
+    setup :set_mimic_global_until_exit
 
     # The forward lands on the stream through `StreamChannel.io_in/3`; the
     # test stands in for it.
