@@ -3,9 +3,7 @@
 ## Purpose
 
 The observability-export capability provides built-in `Sink` implementations that fan observability signals out of the BEAM to external collectors. It ships two opt-in exporters: a hand-rolled `:gen_tcp`-based Prometheus text-exposition endpoint (`Flezha.Observability.Export.PrometheusSink` + `PrometheusHttp`) bound to `127.0.0.1` by default and accepting only `GET /metrics` and `GET /`, and an OTLP/HTTP protobuf exporter (`Flezha.Observability.Export.OtlpSink` + `OtlpCodec` + `OtlpClient`) that batches `:metric`, `:event`, `:log`, and `:trace_span` signals to a configured endpoint with bounded exponential backoff. Both sinks run under a dedicated `Flezha.Observability.Export.Supervisor` (`:one_for_one`) added as the last child of `Flezha.Observability.Supervisor`, honour per-exporter enable flags, and remain OFF by default. Operational events (`:otlp_batch_flushed`, `:otlp_batch_dropped`, `:prometheus_scrape`, `:prometheus_label_truncated`) are emitted onto a declarative `:observability_export` source so they participate in the foundation's bus / sink fan-out. The Prometheus sink uses the foundation's `:drop` overflow policy; the OTLP sink uses `:block` so operators turning it on accept workflow producer back-pressure rather than silent loss.
-
 ## Requirements
-
 ### Requirement: Prometheus exporter sink
 
 The system SHALL provide a built-in Sink `Flezha.Observability.Export.PrometheusSink` that aggregates `:metric` signals into in-memory counter / gauge / histogram registers and serves the Prometheus text exposition format on a configurable HTTP port. The sink SHALL implement the foundation's `Flezha.Observability.Sink` behaviour and SHALL register with the foundation Registry when the `:prometheus_enabled` config flag is `true`. The sink SHALL use the foundation's `:drop` overflow policy.
@@ -141,3 +139,55 @@ The system SHALL expose a runtime configuration map `:observability_export` with
 #### Scenario: Test config disables both exporters by default
 - **WHEN** tests run via `mix test`
 - **THEN** both `:prometheus_enabled` and `:otlp_enabled` SHALL be `false` so no port is bound and no network call is attempted unless a test explicitly opts in
+
+### Requirement: Every attribute key and value SHALL be encodable on the OTLP wire
+
+The OTLP encoder SHALL represent any attribute key and any attribute value as a
+string, whatever the term's type. Encoding SHALL NOT raise, and SHALL NOT be
+able to take the export process down, because the terms it receives are ordinary
+telemetry: the Logger bridge attaches a map and a tuple to every log signal it
+forwards, and a signal's metadata is validated as a map without any constraint
+on its keys, so a key is as free in its shape as a value.
+
+A term that is already a binary SHALL be used unchanged. Any term that is not a
+binary, atom, integer or float SHALL be rendered by inspection, **lists
+included** — a list SHALL NOT be converted with `to_string/1`, which returns the
+binary of its elements and silently changes what the attribute says.
+
+The same rule SHALL apply to keys and to values. Two rules would be the same
+question answered twice, and the crash and the corruption both reach the encoder
+through either half.
+
+The rendering SHALL NOT elide. Where a limit applies it SHALL be stated
+explicitly, so a truncated attribute is never mistaken for a complete one.
+
+#### Scenario: A bridged log signal encodes
+
+- **GIVEN** a log signal carrying the metadata the Logger bridge attaches, including a map and an `{module, function, arity}` tuple
+- **WHEN** it is encoded for OTLP
+- **THEN** encoding SHALL succeed and the resulting attributes SHALL carry a readable rendering of both
+
+#### Scenario: A list attribute is not re-encoded as its bytes
+
+- **GIVEN** an attribute whose value is the list `[1, 2, 3]`
+- **WHEN** it is encoded
+- **THEN** the attribute SHALL read as the list, and SHALL NOT be the three-byte binary of its elements
+
+#### Scenario: A non-string attribute key is coerced like a value
+
+- **GIVEN** a signal whose metadata is keyed by a tuple and by a list
+- **WHEN** it is encoded
+- **THEN** encoding SHALL succeed, and neither key SHALL be the binary of its elements
+
+#### Scenario: A string attribute is unchanged
+
+- **GIVEN** an attribute whose value is already a binary
+- **WHEN** it is encoded
+- **THEN** the attribute SHALL be that binary, unmodified
+
+#### Scenario: The exporter survives what it cannot represent typefully
+
+- **GIVEN** a stream of signals carrying values of any term type
+- **WHEN** they are exported
+- **THEN** the export process SHALL remain alive, and no signal SHALL be dropped for the shape of its attribute values
+
