@@ -363,11 +363,6 @@ Prerequisites: **JDK 21+**, a **Rust stable toolchain** (for the `flz_core_ffi` 
 and **[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)** for the
 native cross-build.
 
-> Building the release jars? Run `mvn clean install` in `sdk/java` first.
-> `scripts/build-dist.sh` will otherwise happily shade a **stale** artifact from
-> your local `~/.m2` and report success — the jar builds, it is just not the code
-> you wrote.
-
 ## Test
 
 ```bash

@@ -129,11 +129,9 @@ run_java() {
 
   # PortPilot launches test/apps/java_runner/target/java_runner.jar, which
   # resolves com.flezha:flezha-sdk from ~/.m2.
-  # `clean` where CI gets a fresh checkout: the shade plugin refuses to shade
-  # an already-shaded jar, and the `verify` above left one in target/.
   bold ">>> mvn install (SDK) + mvn package (java_runner)"
-  mvn -B -q -DskipTests -P native-verify -f sdk/java/pom.xml clean install
-  mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml clean package
+  mvn -B -q -DskipTests -P native-verify -f sdk/java/pom.xml install
+  mvn -B -q -DskipTests -f test/apps/java_runner/pom.xml package
 
   # PortPilot launches `cargo run --quiet` for rust_runner at boot;
   # BootLoader's post_hook only gives it 20s to connect (config/test.exs).

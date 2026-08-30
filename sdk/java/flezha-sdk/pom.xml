@@ -34,6 +34,19 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <!-- Shade replaces this jar in place, so the next build's
+                         up-to-date check finds the fat jar at its own destination
+                         and skips, leaving shade to shade its own output. With no
+                         sources here nothing is ever newer, so the skip would be
+                         permanent. `jar.forceCreation` is NOT an alternative: the
+                         user property exists only up to maven-jar-plugin 2.x. -->
+                    <forceCreation>true</forceCreation>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <executions>
                     <execution>

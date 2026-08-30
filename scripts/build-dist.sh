@@ -289,8 +289,9 @@ done
 #    nothing).
 # ---------------------------------------------------------------------------
 step "building SDK fat jar"
-# `clean` is load-bearing: the shade plugin reuses stale target/ output, so
-# without it the fat jar can embed a previous build's native binaries.
+# `clean` keeps the published jar a cold build: the resources plugin copies into
+# target/classes and never deletes, so a native triple removed from the source
+# tree would otherwise still ship.
 mvn -B -q -f sdk/java/pom.xml -P native-build -DskipTests clean install
 
 mkdir -p "${SDK_DIST}"

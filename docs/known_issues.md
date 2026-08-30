@@ -509,53 +509,6 @@ below is all that survives — which is enough to write it again.
   `.credo.exs` with a one-line reason each, then ratchet on the 378. Until then
   the count is not a signal and should not be quoted as one.
 
-### KI-11 · `mvn verify` fails straight after `build-dist.sh`
-
-- **Where**: the Java build. A plain `verify` after `scripts/build-dist.sh` dies
-  at the shade step on a stale `target/`. The working command is `clean verify`.
-- **Triage (2026-08-30)**: **REAL, and much broader than filed — `build-dist.sh`
-  has nothing to do with it.** The Java build is simply not idempotent: any
-  second Maven run over a non-clean `sdk/java` target fails at shade, whatever
-  produced the first one.
-- **Reproduction** — an A/B on the same tree, back to back:
-
-  ```
-  $ mvn -B -f sdk/java/pom.xml -DskipTests clean verify   ;  echo $?
-  0
-  $ mvn -B -f sdk/java/pom.xml -DskipTests verify         ;  echo $?
-  [ERROR] Failed to execute goal org.apache.maven.plugins:maven-shade-plugin:3.6.0:shade
-          (default) on project flezha-sdk: Error creating shaded jar:
-          duplicate entry: META-INF/THIRD_PARTY_NOTICES.md
-  1
-  ```
-
-  **Cause, from the failing run's own log**: `[WARNING] JAR will be empty - no
-  content was marked for inclusion!` at the `maven-jar-plugin:jar` step for
-  `flezha-sdk`. That module has no sources of its own, so the jar plugin writes
-  nothing and leaves the **previous run's shaded jar** in place as the artifact.
-  Shade then re-shades its own output, and the `IncludeResourceTransformer` at
-  `sdk/java/flezha-sdk/pom.xml:74-77` adds `META-INF/THIRD_PARTY_NOTICES.md` to a
-  jar that already carries it.
-- **The consequence the entry misses**: the conformance manifest's own Java build
-  command carries no `clean`. `test/apps/java_runner/conformance.json` →
-  `build.test` and `build.bench` are both `scripts/build-native.sh … && mvn -B
-  -DskipTests -P native-verify -f sdk/java/pom.xml install && mvn -B -DskipTests
-  -f test/apps/java_runner/pom.xml package`. Run verbatim:
-
-  ```
-  run 1 (after a clean):  exit 0
-  run 2 (same command):   exit 1 — duplicate entry: META-INF/THIRD_PARTY_NOTICES.md
-  ```
-
-  So every Java conformance or bench build after the first, in a checkout without
-  an intervening clean, fails to build. That is a harness defect, not a developer
-  footgun, and it is why the entry should not be filed against `build-dist.sh`.
-- **Worth fixing**: yes, and it is the highest-value item in this band. Two
-  candidate fixes, both one line: bind shade to a `<shadedArtifactAttached>`
-  output so the artifact is never overwritten in place, or drop the
-  THIRD_PARTY_NOTICES transformer in favour of a `src/main/resources` copy the
-  jar plugin owns. Either way the proof is the A/B above run twice with no clean.
-
 ### KI-12 · Veneer artifacts are debug builds by default
 
 - **Where**: `scripts/build-{node,python,ruby,php}-sdk.sh` — `--release` is not
@@ -911,11 +864,13 @@ below is all that survives — which is enough to write it again.
   --include multi_node`), so it is a trap for a future change, not a live defect.
 
 
-### KI-18 · Five load-sensitive tests, each seen once and green alone
+### KI-18 · Load-sensitive tests, each seen once and green alone
 
 Recorded so a future red run is not mistaken for a regression. **Green in
 isolation is not evidence** — reproduce under load before concluding anything
-(see `docs/refactor/STATE.md` for the stress-regime method).
+(see `docs/refactor/STATE.md` for the stress-regime method). Five were filed
+together and the dated triage below reasons about those five; anything added
+since carries its own date.
 
 - `test/flezha_test.exs:591` (runner disconnect, preserve) — 1/6 full runs,
   0/10 alone, 0/3 instrumented. Root cause never established.
@@ -925,6 +880,16 @@ isolation is not evidence** — reproduce under load before concluding anything
 - `test/plugin/kafka/worker_registry_test.exs:303` — a controller unit test with
   no runner involved.
 - `flezha_test.exs:383` (live handover) — not the same as `:591`.
+- `test/system/sdk_smoke_e2e_test.exs:55` (`transport=uds` handshake +
+  `AssignRunnerId`) — added 2026-08-30 from `java-build-runs-twice`. One red in
+  three consecutive `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` runs
+  against a `java_runner.jar` whose md5 never changed, so the artifact is not the
+  variable. The red run took **133.9 s against 68.3 s and 69.3 s** for the two
+  green ones and is the only one of the three carrying `[fleet_manager]
+  proceeding past recovery timeout`; the failure itself is
+  `command_assign_runner_id` timing out at its 5 s budget, which then took the
+  20 s `{:runner_connect, …}` call and the `{Flezha.Transport.Server, :uds}`
+  child down with it. The module alone: **23 passed**.
 - **Second sightings (2026-08-30, from `green-the-suite-log-gate`'s runs)**: two
   of the five now have a second, and the "exactly one sighting each" below is
   that much weaker. `worker_registry_test.exs:303` failed one plain `mix test`
@@ -2142,6 +2107,7 @@ every new production freeze to `incident_log.md` at the repository root.
 
 | Issue | Closed by |
 |---|---|
+| KI-11 · every second Java build in a checkout failed at shade — `duplicate entry: META-INF/THIRD_PARTY_NOTICES.md`, and the conformance manifest's own build command carries no `clean` | `java-build-runs-twice` — `<forceCreation>true</forceCreation>` on `maven-jar-plugin` in the two modules that shade (`sdk/java/flezha-sdk`, `test/apps/java_runner`), at a **pinned 3.4.1**. The pin is load-bearing, not hygiene: nothing pinned that plugin, so this box's Maven 3.8.7 resolved **2.4** and the release image's Maven 3.9.9 resolves **3.4.1**, and the `jar.forceCreation` user property — the form that avoids declaring the plugin, and so avoids Maven's missing-version warning — exists only up to 2.x. Under a 3.4.1 pin it is silently inert and the duplicate-entry failure reproduces unchanged, which is a fix that would have looked green here and shipped broken. **The filed cause was wrong twice over.** `build-dist.sh` is not involved: `clean verify` → 0 then a bare `verify` → 1 reproduces it with no dist build anywhere, so the condition is a non-empty `target/`, which is every checkout after its first build. And it is not the aggregator's missing sources either — that only makes it total. **Shade replaces the jar plugin's output file in place**, so on the next build the jar plugin's up-to-date check finds the *shaded* jar at its own destination and skips: with no sources it always skips, and with sources it skips whenever nothing is newer than the fat jar. Either way shade re-shades its own 15 MB output; `flezha-sdk` fails loudly only because `IncludeResourceTransformer` then attaches a notices file the jar already carries. **`test/apps/java_runner` had the identical defect and failed silently** — its filter excludes `META-INF/THIRD_PARTY_NOTICES.md` from every artifact including its own, so it re-shaded to a fixpoint and exited 0; measured by `original-java_runner.jar` coming out 16,082,694 bytes (the fat jar) instead of 209,955. Both of the entry's suggested one-line fixes are refuted: `<shadedArtifactAttached>` installs the *empty* jar as `com.flezha:flezha-sdk`, which is what `java_runner` compiles against; moving the notices to `src/main/resources` removes the duplicate-entry symptom and leaves the re-shading, which is the half that can carry a deleted native forward. Proof: the conformance `build.test` command (byte-identical to `build.bench`) three times in one checkout with no `clean`, all exit 0; `unzip -l` on the fat jar → one `META-INF/THIRD_PARTY_NOTICES.md`, exactly the five `native/<os>-<arch>/libflz_core_ffi.*` and no other native library, 1833 entries as before; `mvn -P coverage,native-verify clean verify` green (117 + 17 + 5 tests); `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` 1859 passed |
 | KI-38 · `process_hub` pinned to a GitHub `dev` branch, so no version number described what a build contained | `adopt-process-hub-hex-release` (`4735c359`) — `mix.exs` declares `{:process_hub, "~> 0.7.0"}`; `mix.lock` carries the hex entry. **0.7.0 is the pinned code, published**: 78 `.ex` files each side, exactly one differs (`hub.ex`), and that difference is a pure relocation of `for_workers/1` — sorted, the two files are an identical multiset of lines. What the `.ex` comparison could **not** see is the package's own `mix.exs`, which raises `elector` from `~> 0.3.3` to `~> 0.3.4`; resolution fails until `elector` is unlocked, so the lock diff is two lines, not one. elector 0.3.4 is a real behaviour change on a live path (`erpc:multicall` replaces per-node `send_request`/`wait_response`, so the fan-out timeout is per batch rather than per node, and an election survives a candidate vanishing) — `declared_children` and `centralized_load_balancer` are its callers. `mix compile --force --warnings-as-errors` 272 files clean (negative control: a bogus `ProcessHub` call does fail it); `mix test` 1836 passed and `--include system` 1915 passed / 5 skipped, both unchanged from the HEAD baselines recorded before the swap, and `--include multi_node` 1845 passed — added because of the elector finding, since that tag is not covered by `--include system` and is where leader election actually runs |
 | KI-42 · six sites named `<state_root>/<class>`, a path the system never writes — five `refute File.exists?` that could not fail, and a `File.rm_rf` that reclaimed nothing | `assertions-that-cannot-fail` (`9708e2e5`) — all six now derive from `Flezha.State.Registry.class_dir/1`, and **every one was proved twice**: with the subject genuinely present at the real path the *old* assertion still passed (the two unit sites **34 passed**; `partitioned_operatives_e2e` **2 passed**; `remote_durability_e2e` under `POSTGRES_INTEGRATION=1` **3 passed**), and the *corrected* one goes red on the same subject and green once it is removed. **No deletion is broken** — all five are green against real behaviour, so `ClassRegistry`, `PartitionGroup.rescale/3`, `TierE2EHarness.destroy_local_state/1` and the rescale's tree removal all keep the promises their test names make; there was nothing to escalate. The `rm_rf` is proved by count, not by an assertion: one scenario (`workflow_crash_resume_e2e_test.exs:692`) left `app_data/state/workflow_loop_boot_2082/chat_loop_workflow_2114` with three class sidecars in it after its own `cleanup/3` ran, and leaves nothing after — the module's private `cleanup/3` is gone entirely, it imports `TierE2EHarness.cleanup/3`, which is the one teardown. **The sweep confirms the triage's number**: 46 `refute File.exists?` / `refute File.dir?` in `test/`, **exactly five vacuous** — the five filed — and 41 sound, each read against the layout it asserts on. **The seed is larger than filed**: not two moduledoc blocks but **seven**, across five modules (`state/registry.ex` twice, `operative/class_registry.ex`, `state/completion.ex`, `state/input_log.ex`, `state/proc_inbox.ex`, `state/proc_journal.ex`) plus four in `docs/`, every one dropping the `<namespace>` segment its own code writes. `Registry.namespace_dir/1` now owns that level and `class_dir/1` composes on it, so the two production sites that rebuilt it (`AuthZ.Quotas.compute_disk_bytes/1`, `Convergence.Loop.namespace_dir_mtimes/0`) and the two test sites (`TierE2EHarness.cleanup/3`, `quic_test.exs`) derive it too. Baselines unchanged: `mix test` **1836 passed**, `--include system` **1915 passed / 5 skipped** |
 | KI-47 · `check-overflow-naming.sh` red on its own evidence — a triage entry has to quote the retired name to prove it is gone | the gate now separates a QUOTED mention from a bare use, scoped to `docs/known_issues.md`; drilled both ways (bare use still exits 1) |
