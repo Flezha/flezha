@@ -154,8 +154,64 @@ both filed defects "fixed", while the transport still discarded **20 % of a burs
 under an `:ok`. Speed comes from not doing work twice, not from believing claims nobody
 checked.
 
-**None. AREA 4 IS COMPLETE, archived and committed.** Next: **area 6 (`cli`)**, whose
-survey is approved and waiting — and whose batch 0 now carries two tool-truth fixes.
+**Area 6 (`cli`) batch 0 is verified and committed** — `b0b27a30` (cli) and `a58f8144`
+(metrics). Next: area 6's structural batch. Area 4 is COMPLETE.
+
+### Area 6 batch 0 — two tools that reported success they had not earned
+
+**KI-79**: five `flz` verbs exited **0** on a refused RPC. Proved red first against a
+shim exiting 7 — all five at 0, the regression test naming all five in one failure —
+and all five exit 1 after. The four *other* exit dialects (1, 7, 3, 7) are unmoved and
+**now pinned by the same test**, so the seam refactor that follows cannot drift them.
+
+**The reuse decision is the good part.** It extended the reference shape to five sites
+rather than extracting a helper, and defended it: the six bodies are **not** one
+function with a parameter, and a helper taking success message, failure message and
+policy **is** `rpc::run(expr, Failure)` from the next batch — so extracting a different
+six-site helper now would be a parallel mechanism that batch then deletes. Charter §2's
+order stops at *extend*. That is the rule applied against its own grain.
+
+**KI-83**: `write_baseline` replaced rather than merged, so recording one timing deleted
+the others. Now a merge, proved red first with a test **in the existing `--self-test`
+mechanism** rather than a second harness — which required splitting the function into a
+pure `baseline_payload` and the write.
+
+### Both silences are now loud, and one of them was mine to notice
+
+- **`--write-baseline` without `--lint` REFUSES** (exit 2, before measuring, file
+  untouched — supervisor-verified byte-identical either side). Refusal rather than
+  merge-forward, because an area's credo count carries **no per-metric stamp**, so
+  carrying the old number forward would attribute a stale count to a new head — the
+  exact objection KI-83 raises about re-passing timings.
+- **`--check` now reports what it could not compare**: *"not compared, unmeasured on
+  this run: clippy_warnings in 36 area(s), credo_warnings in 36 area(s)"*. Printing
+  `0 regression(s); exit 0` while silently skipping **72 ratchets** is the same
+  success-it-did-not-earn as KI-79's exit codes. **Ruled: keep the line.** Exit code
+  and behaviour are unchanged so CI is unaffected (`--check` verified exit 0); silence
+  is what cost this programme, not one line of output.
+
+### Two findings, filed as KI-84 and KI-85
+
+**KI-84** is the best-diagnosed flake of the session. `cli/tests/reset.rs`'s "dead
+controller" fixture hands the command under test a **live** socket, ~1 run in 26.
+Mechanism **demonstrated, not inferred**: the fixture drops a `UnixListener`, and a
+process a *sibling test* forks in the window inherits the listener fd — `CLOEXEC`
+closes at `exec`, not at `fork` — so the socket the parent closed still accepts a
+connect. Rates: 1/26 plain, 3/12 under load, **1/12 at HEAD content with the new test
+removed (pre-existing)**, and **0/150 sequential**, which proves the CLI deterministic
+and the harness at fault. It also leaves a **non-gitignored** `cli/app_data/sockets`
+behind, invisible only because it was empty.
+
+**KI-85** is the production question KI-84 raised and did not answer: `flz reset
+--include-sockets` can `mkdir` on a later rung when the rung it was given looks live.
+Not a defect — `fix-reset-socket-dir-resolution` documents that resolving as the
+Controller *is* what "creatable" means — but a behaviour choice worth making
+deliberately.
+
+**And the worker found and fixed a race in its own new test in flight** — two `#[test]`s
+each copying the binary hit `ExecutableFileBusy`, the same fork/`CLOEXEC` window from
+the other side. Collapsed to one test with two phase functions, the `refactor-3`
+precedent, and re-verified 0 failures in 12 loaded runs.
 
 ### Area 4 — `sdk/java` is DONE — `352af734`
 

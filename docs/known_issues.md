@@ -1776,6 +1776,62 @@ every new production freeze to `incident_log.md` at the repository root.
   others survive. It should also consider making `--lint`'s omission loud, since the
   same class of silence is the reason both exist as traps.
 
+### KI-84 · `cli/tests/reset.rs`'s "dead controller" fixture hands the command a LIVE socket
+
+- **Severity**: P2 · a test asserting a precondition it has not established. ~1 run in
+  26 plain, 3 in 12 under load.
+- **Where**: `cli/tests/reset.rs:19-28` (`stale_control_socket`), decided at
+  `flz_transport/src/utility/socket_probe.rs:238` (`connect_probe`), consumed at
+  `cli/src/reset.rs:381` (`Reach::Reachable => Action::Keep`) and
+  `socket_dir.rs:227` (`first_creatable` skipping a rung another controller holds).
+- **Mechanism, demonstrated rather than inferred**: the fixture makes its dead
+  controller with `drop(UnixListener::bind(path))` — a socket that has been through
+  `listen(2)`. A process a **sibling test** forks in the window between that `bind` and
+  the `drop` **inherits the listener fd**, because `CLOEXEC` closes at `exec`, not at
+  `fork`, and Rust's `Command` is fork-then-exec. Until that child execs, the socket
+  the parent closed **still accepts a connect**:
+
+  ```
+  no concurrent fork             -> StaleSocket (ECONNREFUSED)
+  a child forked in the window   -> Reachable  (connect succeeded)
+  after that child exec'd/exited -> StaleSocket (ECONNREFUSED)
+  ```
+
+- **Rates measured**: 1/26 plain; 3/12 under eight busy loops at `--test-threads=32`;
+  1/20 with the `reset` binary alone under load, so the concurrency is *inside* that
+  binary; **1/12 at HEAD content with the new test file moved out — pre-existing**; and
+  **0/150** driving `flz reset` sequentially against the same fixture, so the CLI is
+  deterministic and the trigger is the harness.
+- **It also leaves a directory behind.** On the ladder path `first_creatable` steps
+  over the "live" rung and walks to `<cwd>/app_data/sockets`, which `Role::Controller`
+  resolution then **creates** — `cli/app_data/sockets`, **not gitignored**, invisible
+  only because it was empty and git does not track empty directories.
+- **A fix must** stop the fixture asserting what it has not established: after
+  dropping the listener, poll `UnixStream::connect` until it is refused (bounded), so
+  no command under test can be handed a socket that still answers. **Not
+  `--test-threads=1`**, which hides it. And not "never enter LISTEN" — that needs a raw
+  `libc::bind`, since `UnixDatagram::bind` yields a SOCK_DGRAM inode a stream connect
+  fails with `EPROTOTYPE` → `Reach::Unreachable`, breaking the tests that depend on the
+  stale classification.
+
+### KI-85 · `flz reset --include-sockets` can create a directory the operator did not name
+
+- **Severity**: P3 · documented behaviour with a surprising edge, surfaced by KI-84.
+- **Where**: `flz_transport/src/utility/socket_dir.rs:227` (`first_creatable`) reached
+  from `cli/src/reset.rs`'s socket resolution.
+- **What happens**: when the rung the operator pointed at looks **live**,
+  `first_creatable` steps over it and resolves to a later rung — and `Role::Controller`
+  resolution **creates** that directory. So a `reset` can `mkdir` somewhere the
+  operator did not name. Observed as `cli/app_data/sockets` during KI-84's
+  investigation.
+- **It is not a bug in `first_creatable`**: `docs/dev_notes/fix-reset-socket-dir-resolution.md`
+  records that resolving as the Controller *is* what "creatable" means, and that a run
+  not asked about sockets must not consult the ladder at all. This run **was** asked.
+- **A fix must** decide whether "reset the socket directory" should ever resolve past
+  the rung it was given — the alternative being to refuse with the peer named, which is
+  the shape colocation already uses. Cheap either way; it is a behaviour choice, not a
+  defect.
+
 ## Resolved
 
 ### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT` — RESOLVED

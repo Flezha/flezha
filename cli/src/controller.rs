@@ -94,8 +94,15 @@ fn handle_start(args: &[String]) {
 
     match status {
         Ok(status) if status.success() => println!("Controller started successfully."),
-        Ok(status) => eprintln!("Unknown code returned: {}", status),
-        Err(e) => eprintln!("Failed to start program: {}", e),
+        // flzvm halts non-zero when the node refuses to boot.
+        Ok(status) => {
+            eprintln!("Unknown code returned: {}", status);
+            exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to start program: {}", e);
+            exit(1);
+        }
     }
 }
 

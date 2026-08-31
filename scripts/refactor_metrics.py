@@ -2,7 +2,7 @@
 """Measure the repository's structure per area and ratchet it (charter §11).
 
     refactor_metrics.py [--area NAME] [--json] [--lint]
-    refactor_metrics.py --write-baseline [--timing NAME=SECONDS]... [--bench NAME=VALUE]...
+    refactor_metrics.py --write-baseline --lint [--timing N=SECS]... [--bench N=VALUE]...
     refactor_metrics.py --check [--timing NAME=SECONDS]...   # docs/refactor/baseline.json
     refactor_metrics.py --targets                             # docs/refactor/targets.md
     refactor_metrics.py --self-test
@@ -15,6 +15,10 @@ opt-in). A ratcheted metric must never rise; timings tolerate 5 % and compare on
 recording box; an area under `blocking` in the baseline fails `--check`, the rest only report.
 `duplicate_pairs` counts pairs among the files scanned, so a recording names its area set and
 `--check` refuses a baseline recorded under a different one instead of differencing the two.
+A recording MERGES: `--timing`/`--bench` add to what the baseline holds, so recording one
+number never retires another and never re-stamps a measurement it did not take — retire a
+stale entry by deleting its key from the file. For the same reason `--write-baseline` demands
+`--lint`: recording the lint metrics as unmeasured would disarm those ratchets for good.
 """
 
 import argparse
@@ -616,9 +620,36 @@ def compare(current, baseline, timings=None, current_box=None):
     return regressions
 
 
+def unmeasured(current, baseline):
+    """Ratchets this run cannot compare, per metric: recorded in the baseline
+    but not measured here — `--lint` left off, or a toolchain absent. `compare`
+    skips them silently, so `--check` has to say so or it reports a green it
+    did not earn."""
+    counts = defaultdict(int)
+    for area, now in current["areas"].items():
+        then = baseline["areas"].get(area, {})
+        for metric in RATCHETED:
+            if then.get(metric) is not None and now.get(metric) is None:
+                counts[metric] += 1
+    return dict(counts)
+
+
 def exit_code(regressions, baseline):
     blocking = set(baseline.get("blocking", []))
     return 1 if any(area in blocking for area, *_ in regressions) else 0
+
+
+def baseline_payload(data, baseline, timing_arg, bench_arg):
+    """This run's measurements, plus every recorded timing and bench number the
+    invocation was not given. A recording adds to the record; it never drops a
+    measurement it was not asked about, and it never re-stamps one it did not
+    take. Retire a stale entry by deleting its key from the file."""
+    stamp = {**data["box"], "head": data["head"]}
+    data["blocking"] = baseline.get("blocking", [])
+    for key, unit, arg in (("timings", "seconds", timing_arg), ("bench", "value", bench_arg)):
+        given = {n: {unit: v, **stamp} for n, v in parse_kv(arg).items()}
+        data[key] = {**baseline.get(key, {}), **given}
+    return data
 
 
 def render_table(data):
@@ -760,10 +791,49 @@ def self_test_ratchet():
         r[0] == "timings" for r in compare(cur, base, {"suite": 106.0}, {"hostname": "elsewhere"})
     )
     assert exit_code(regs, {"blocking": []}) == 0 and exit_code(regs, {"blocking": ["a"]}) == 1
+    lint_off = {"areas": {"a": {**area(10, 0, []), "credo_warnings": None}}}
+    assert not compare(lint_off, {"areas": {"a": {"credo_warnings": 3}}})
+    assert unmeasured(lint_off, {"areas": {"a": {"credo_warnings": 3}}}) == {"credo_warnings": 1}
+    assert unmeasured(lint_off, {"areas": {"a": {"credo_warnings": None}}}) == {}
     assert scan_mismatch({"scan": ["a", "b"]}, {"scan": ["a", "b"]}) is None
     assert "only in the baseline: b" in scan_mismatch({"scan": ["a"]}, {"scan": ["a", "b"]})
     assert "only here: b" in scan_mismatch({"scan": ["a", "b"]}, {"scan": ["a"]})
     assert "records no scan" in scan_mismatch({"scan": ["a"]}, base)
+
+
+def self_test_baseline():
+    measured = {"box": {"hostname": "here"}, "head": "new", "areas": {}}
+    recorded = {
+        "blocking": ["a"],
+        "timings": {
+            "mix_test_exunit": {"seconds": 56.2, "head": "old", "hostname": "here"},
+            "mix_test_wall": {"seconds": 68.0, "head": "old", "hostname": "here"},
+        },
+        "bench": {"row_1": {"value": 1.0, "head": "old", "hostname": "here"}},
+    }
+
+    out = baseline_payload(dict(measured), recorded, ["mvn_test_sdk_java=77.3"], None)
+    assert out["timings"]["mvn_test_sdk_java"] == {
+        "seconds": 77.3,
+        "head": "new",
+        "hostname": "here",
+    }
+    # The two this invocation said nothing about survive, at the head they were
+    # taken on — recording one timing does not retire the others.
+    assert out["timings"]["mix_test_exunit"] == recorded["timings"]["mix_test_exunit"]
+    assert out["timings"]["mix_test_wall"] == recorded["timings"]["mix_test_wall"]
+    # `bench` is governed by the same line, and a timing run is not a bench run.
+    assert out["bench"] == recorded["bench"]
+    assert out["blocking"] == ["a"]
+
+    # A name given again is replaced, not duplicated, and re-stamped.
+    again = baseline_payload(dict(measured), recorded, ["mix_test_exunit=60.0"], None)
+    assert again["timings"]["mix_test_exunit"] == {
+        "seconds": 60.0,
+        "head": "new",
+        "hostname": "here",
+    }
+    assert len(again["timings"]) == 2
 
 
 # --- main --------------------------------------------------------------------
@@ -786,11 +856,7 @@ def parse_args(argv):
 
 
 def write_baseline(data, baseline, args):
-    stamp = {**data["box"], "head": data["head"]}
-    data["blocking"] = baseline.get("blocking", [])
-    for key, unit, arg in (("timings", "seconds", args.timing), ("bench", "value", args.bench)):
-        given = {n: {unit: v, **stamp} for n, v in parse_kv(arg).items()}
-        data[key] = given or baseline.get(key, {})
+    data = baseline_payload(data, baseline, args.timing, args.bench)
     with open(os.path.join(ROOT, BASELINE), "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=1, sort_keys=True)
         fh.write("\n")
@@ -811,6 +877,10 @@ def check(data, baseline, args):
         tag = "BLOCKING" if area in blocking else "measuring"
         where = f"  [{', '.join(culprits)}]" if culprits else ""
         print(f"{tag} {area} {metric}: {then} -> {now}{where}")
+    skipped = unmeasured(data, baseline)
+    if skipped:
+        named = ", ".join(f"{m} in {n} area(s)" for m, n in sorted(skipped.items()))
+        print(f"not compared, unmeasured on this run: {named}")
     code = exit_code(regressions, baseline)
     print(f"{len(regressions)} regression(s) against {baseline.get('head')}; exit {code}")
     return code
@@ -821,8 +891,20 @@ def main(argv):
     if args.self_test:
         self_test_classifiers()
         self_test_ratchet()
+        self_test_baseline()
         print("self-test OK")
         return 0
+    if args.write_baseline and not args.lint:
+        # Without --lint every credo_warnings and clippy_warnings is measured
+        # None, and `compare` skips a metric that is None on either side: a
+        # baseline written here would disarm those ratchets for every later run.
+        print(
+            f"refusing to write {BASELINE} without --lint: credo_warnings and "
+            "clippy_warnings would be recorded as unmeasured and no later --check "
+            "could ratchet them. Re-run with --lint (slow).",
+            file=sys.stderr,
+        )
+        return 2
     baseline_path = os.path.join(ROOT, BASELINE)
     baseline = {}
     if os.path.exists(baseline_path):

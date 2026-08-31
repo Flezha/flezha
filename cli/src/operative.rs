@@ -218,8 +218,15 @@ fn handle_stop(args: &[String]) {
 
     match status {
         Ok(status) if status.success() => println!("Operative stopped successfully."),
-        Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to stop operative: {}", e),
+        // operative_stop halts non-zero on error verdicts (not_found / refused).
+        Ok(_) => {
+            eprintln!("Unknown status returned.");
+            exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to stop operative: {}", e);
+            exit(1);
+        }
     }
 }
 
@@ -317,8 +324,15 @@ fn handle_rewind(args: &[String]) {
 
     match status {
         Ok(status) if status.success() => {}
-        Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to rewind operative: {}", e),
+        // operative_rewind halts non-zero on error verdicts (not_found / refused).
+        Ok(_) => {
+            eprintln!("Unknown status returned.");
+            exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to rewind operative: {}", e);
+            exit(1);
+        }
     }
 }
 
@@ -364,8 +378,15 @@ fn handle_replay(args: &[String]) {
 
     match status {
         Ok(status) if status.success() => {}
-        Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to replay entity: {}", e),
+        // operative_replay halts non-zero on error verdicts (not_found / refused).
+        Ok(_) => {
+            eprintln!("Unknown status returned.");
+            exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to replay entity: {}", e);
+            exit(1);
+        }
     }
 }
 
@@ -389,8 +410,15 @@ fn handle_state(args: &[String]) {
 
     match status {
         Ok(status) if status.success() => {}
-        Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to get operative state: {}", e),
+        // entity_state halts non-zero on error verdicts (not_found / refused).
+        Ok(_) => {
+            eprintln!("Unknown status returned.");
+            exit(1);
+        }
+        Err(e) => {
+            eprintln!("Failed to get operative state: {}", e);
+            exit(1);
+        }
     }
 }
 
