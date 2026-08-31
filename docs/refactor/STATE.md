@@ -109,7 +109,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 5e-a | `runner` + `operative` | `refactor-5e-a-runtime` | — | **done** | `2b1355f4` | **every ceiling 0/0, credo 25+2→0, 11 edges cut**, area −33 |
 | 5e-b | `convergence`, `sdk`, `authz`, root, rest | `refactor-5e-b-platform` | — | **done** | `2b1355f4` | **every ceiling row 0 across 15 areas, credo 80→39, 9 edges cut, repo cycles 2→1** |
 | 6 | `cli` | `refactor-6-cli` | 1 | **done** | `b73c940c`, `b5b0b1d8` | **every ceiling 0** (files>800, fn>50, long_names, markers); prod_loc 2831, duplicate_pairs 3; **−438 honest** (raw −513, 75 lines a classifier artefact); 31 help screens golden-pinned; both A/B rows `direction`, sha256 recorded in their place |
-| 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | surveying | | |
+| 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | **proposed** (approved 2026-09-01) | | |
 | 8 | Docs reconcile (`CLAUDE.md` index, dev_notes names) | `refactor-8-docs` | 7 | pending | | |
 
 Status values: `pending` → `surveying` → `proposed` → `implementing` →
@@ -117,38 +117,63 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**Session 4 opened 2026-08-31 ~21:40.** Tree clean at `887bf308`, `refactor_metrics.py
---check` **exit 0** (0 regressions against `4cd41f5e`), machine clean (no zombies, no
-leaked build/test processes, load 1.30/1.42/1.42).
+**Session 4, 2026-08-31 21:40 → 2026-09-01.** All decisions in this session were taken
+with the user present; every one is recorded in *Next steps* → **THE WORK QUEUE** and in
+`docs/known_issues.md`. Nothing agreed lives only in a transcript.
 
-**Board rows 4 and 6 were STALE and are corrected above** — both areas are committed
-(`352af734`, `b5b0b1d8`) and both appear in `baseline.json`'s 35 blocking areas, but the
-table still read `pending` with no commit. A fresh session classifying off the table
-alone would have re-surveyed two finished areas.
+**NO WORKER IS ALIVE. Session 4 closed cleanly 2026-09-01 on the user's request.**
 
-**Worker: area 7 survey (`refactor-7-tests`)** — spawned 2026-08-31 ~21:45, lane
-`$SCRATCH/area7/`. Area 7 is the first `pending` row whose dependencies (2, 3, 4, 5e, 6)
-are all `done`.
+Row 1's worker (the `check-kind-naming` gate) was **stopped deliberately** three minutes
+in, for a clean handover. **It wrote nothing** — `git status --short` is empty, both
+gates are byte-identical to how it found them (`check-kind-naming` **exit 1**,
+`check-overflow-naming` **exit 0**), and no analysis was lost that is not already in its
+brief. Row 1 starts from scratch; the brief is in the row-1 detail below.
 
-- last seen: (spawned; first heartbeat pending)
+**A finding from the kill, and the successor needs it: the count moved 19 → 22 while
+nobody touched code.** The three new hits are **this board's own prose** — the supervisor
+writing *about* the gate ("a bounded fix", "the bounded await") makes the gate redder.
+`docs/refactor/` was already the largest single source at 8 of 19. Two consequences: the
+allowlist must cover `docs/refactor/STATE.md` as a path rather than chase individual
+phrases, and **the count in any brief goes stale as soon as the board is edited** — always
+re-run the gate before quoting a number.
+
+**Two workers completed and were committed this session**: the area 7 survey (approved,
+see below) and `retire-cluster-snapshot-remnants` (`f3c30502`, archived).
 
 ## START HERE IF YOU ARE A FRESH SESSION
 
-**All 35 production areas are blocking. 100 % of `lib/` production lines are ratcheted.**
-The controller is finished. **163 commits today**; six areas closed this session
-(4 `sdk/java`, 6 `cli`, 5a `state`, 5b `plugin`, 5c `service`, 5d `observability`+`mix`)
-plus **5e-a** (`runner`+`operative`) and **5e-b** (fifteen trees) closing tonight.
+**Run `/loop /refactor`. It reads this file, `git status` and the open change's
+`tasks.md`, then continues. Everything you need is below — in this file.**
 
-**What remains — two areas, neither surveyed:**
+**Do these three things in order:**
 
-| area | subject | size | note |
-|---|---|---|---|
-| **7** | tests, helpers, test apps | **38 737 test_loc**, 202 files | `test` is ALREADY blocking, so it ratchets while you work |
-| **8** | docs reconcile | — | depends on 7 |
+1. **Read *Next steps* → THE WORK QUEUE.** Ten rows, each with status and the date the
+   user decided it. Row 0 is done; row 1 was in flight when session 4 ended (see *Current
+   worker* above for how to tell where it got to). Rows 1–5 and 8–10 are small-to-medium
+   and independent of the areas.
+2. **Check for a live worker.** `ListAgents` — **a fresh session has no subagents no
+   matter what this file says.** If *Current worker* names one and none is running, the
+   tree holds whatever it finished; resume from there.
+3. **Area 7 is APPROVED and ready to implement** — it is the last big refactor area.
+   Its proposal is at `openspec/changes/refactor-7-tests/` and `openspec list` shows it
+   with 0/47 tasks ticked.
 
-**Resume with `/loop /refactor`.** The skill reads this file, `git status` and the open
-change's `tasks.md`, then continues. It will pick area 7 because it is the first
-`pending` row whose dependencies are all `done`.
+**The one thing that does NOT survive a machine change**: `openspec/changes/` is
+gitignored (`.gitignore:55`), so area 7's 1 052-line proposal exists on THIS machine only.
+It is not in any commit and appears in no diff. If you are on a different box, it must be
+re-surveyed — the survey took ~20 minutes and its findings are summarised under *Area 7
+survey — VERIFIED and APPROVED* below, which is committed and does survive.
+
+**Status in one paragraph.** All 35 production areas are blocking ratchets; 100 % of
+`lib/` production lines are ratcheted; the controller is finished. Areas 0a, 0b, 1s, 1, 2,
+3, 4, 5a–5e and 6 are done. **Area 7 (tests) is approved and unstarted; area 8 (docs)
+follows it.** `refactor_metrics.py --check` exits 0. The full suite is 1922 passing.
+**`## Awaiting the user's decision` is empty of open items** — KI-3, KI-52, KI-80, KI-81,
+KI-100 and the Kafka rename were all answered on 2026-08-31/09-01 and are queued or done.
+
+**CI is red on `main` and mostly not our problem** — six failing workflows, four causes,
+and two of them are fixed on `dev` already (`main` is 287 commits behind). See *CI is red*
+below. Only the naming gate (row 1) was red on `dev`.
 
 ### The five things area 7 must know before it starts
 
@@ -2564,74 +2589,6 @@ can act on decays into a red CI nobody reads.
 
 ## Awaiting the user's decision
 
-### The `Source` behaviour has no implementers — delete it, or make it true?
-
-**What it is.** `Flezha.Observability.Source` declares a behaviour that **nothing in the
-tree implements** — verified: `grep -rn "@behaviour Flezha.Observability.Source"` over
-`lib/` and `test/` returns nothing. The five real sources `use
-OtpBackend.Source`, a macro that never declares it, and none defines `config_schema/0`;
-registration inserts a plain ETS row and never calls `function_exported?`, so nothing
-enforces it either. Filed as **KI-100**.
-
-**Why it is yours.** It is a published extension point in a spec'd subsystem. Whether
-the platform offers third-party observability sources is a product question, not a
-refactor one. The part that actively misleads — two moduledocs asserting the sources
-implement it — is **already fixed** (`374a4031`), so nothing is urgent.
-
-| option | cost |
-|---|---|
-| **Make the claim true** (my recommendation) | the macro declares `@behaviour`, five small `config_schema/0` implementations, registration starts enforcing. Keeps the extension point and removes the false statement |
-| Delete the behaviour | smaller, and gives up a documented third-party seam nobody currently uses |
-| Leave it | free, and the next person to read `source.ex` believes a contract that is not enforced anywhere |
-
-**Recommendation: make it true**, as its own small change after 5d — it preserves the
-surface and is reversible, where deletion is not.
-
-
-### KI-80 — `--json` and `--output json` are two dialects (P3)
-
-`cluster status --json` works and `--output json` is ignored; `audit list --output
-json` works and `--json` is ignored. Each is silently dropped by the other's verbs.
-
-**Yours because there is no technically correct answer** — it is a CLI surface
-preference. Both spellings are cheap to standardise on; picking is the whole question.
-**Recommendation: `--output <fmt>`**, since it extends to formats beyond JSON and the
-audit verbs already use it. Area 6 will **not** unify them unasked — a refactor whose
-contract is zero behaviour change is the wrong vehicle for choosing a flag.
-
-### KI-52 — do Java and PHP ship five native triples, or one? (P3, blocks going public)
-
-**What it is.** `sdk/java/flezha-sdk-native` and the PHP packaging each ship **all
-five native triples in one artefact**, so a consumer downloads five platforms to use
-one. The other three SDKs already solved it differently: Node uses per-triple
-`optionalDependencies`, Ruby compiles at install, Python ships maturin wheels.
-
-**Why it is yours and not mine.** It is not a defect — nothing is broken, and there
-is no reproduction to run. It is a **distribution-shape decision** with a cost on
-both sides, and its real question is *does this block going public*, which is a
-product call. `docs/known_issues.md` files it as provisional for exactly this reason.
-
-**Not the same as the artefact purge.** `unbundle-committed-build-artifacts` changed
-what **git** carries; this is what a **release** carries. Conflating the two is what
-made the predecessor entry read as six SDKs when it was two.
-
-**Options, with costs:**
-
-| option | cost | consequence |
-|---|---|---|
-| **Java classifier artifacts + a PHP per-platform mechanism** | the larger piece of work — a Maven classifier build per triple, a PHP packaging decision that has no in-tree precedent, and CI matrix changes to publish them | consumers download one platform; consistent with the other three SDKs |
-| **Ship as-is and say so** | ~an hour: document the artefact shape where a consumer meets it | a Java consumer downloads ~5× what they need. Defensible while unpublished, hard to defend at launch |
-| **Defer until a publish date exists** | zero now | the decision returns, and later it is a breaking packaging change rather than a first shape |
-
-**My recommendation: option 3 until a publish date exists, then option 1.** Nothing
-is published yet (`open-source-licensing`: "nothing is published"), so the cost today
-is zero and the information needed to choose well — who consumes the jar, on which
-platforms — does not exist yet. What I would *not* do is option 2: documenting a
-shape you intend to change is work spent twice.
-
-**Blocks**: nothing in the programme. It was Phase 1 row 6's second half; row 6 is
-now KI-51 alone, and this entry replaces its other half.
-
 ### Gate finding — allowlist rules erase in file order
 
 `scripts/naming_gate.py`'s `pattern_check` applies allowlist rules **destructively
@@ -3066,6 +3023,191 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
+### THE WORK QUEUE — everything agreed with the user, in order (2026-09-01)
+
+Nothing agreed in conversation is allowed to live only in a transcript. Every row below
+was decided with the user; the detail blocks follow further down this section.
+
+| # | Change | Status | Decided |
+|---|---|---|---|
+| 0 | `retire-cluster-snapshot-remnants` | **DONE** `f3c30502`, archived | 2026-08-31 |
+| 1 | **CI cause C** — `check-kind-naming` red on `dev` (19 hits, 15 prose, 4 in `lib/`) | queued, next | 2026-08-31 |
+| 2 | `rename-kafka-queue-overflow` — `:block` → `:drop_nothing`, **plain rename, no accept-both**, + widen `check-overflow-naming.sh:47` which requires adjacency and so missed it | queued | 2026-08-31 |
+| 3 | `collapse-observability-source-behaviours` — KI-100: rename `OtpBackend.Source` → `Poller`, macro declares the real behaviour | queued | 2026-09-01 |
+| 4 | **CI cause D** — Ruby SDK `NoMethodError: undefined method 'stub' for module Process` on 3.3 and 3.4. **Reproduce on `dev` first** (`cd sdk/ruby && rake test`); it has only been seen on `main` | queued | 2026-08-31 |
+| 5 | **CI cause D′** — Ruby `cross-gem` fails on all three triples with no error of its own. One look to decide external-vs-ours before spending | queued | 2026-08-31 |
+| 6 | **Area 7** (`refactor-7-tests`) — proposal written and `--strict` valid, **awaiting supervisor verification** before implementation | in flight | — |
+| 7 | **Area 8** (docs reconcile) — depends on 7 | pending | — |
+| 8 | `unify-cli-output-flag` — KI-80: **`--output <fmt>` wins**; `--json` becomes its alias or is dropped. Today `cluster status --json` ignores `--output json` and `audit list --output json` ignores `--json` | queued | 2026-09-01 |
+| 9 | `add-publish-readiness-checklist` — the pre-publish gate the user asked for; see below | queued | 2026-09-01 |
+| 10 | `sdk-durable-fixture-parity` — **every SDK carries every capability, and proves it with a test.** The user's instruction 2026-09-01. Large; phased; see below | queued | 2026-09-01 |
+
+**`## Awaiting the user's decision` is now EMPTY of open items for the first time since
+the section was created.** KI-52 is deferred into row 9's checklist; KI-80, KI-100,
+KI-81 and the Kafka rename are all decided and queued above.
+
+### Area 7 survey — VERIFIED and APPROVED 2026-09-01
+
+`openspec/changes/refactor-7-tests/`, `--strict` valid, tree untouched. Verified against
+the repo, not re-read from the report.
+
+**Passes §2 on every count.** All **23 helper modules** carry an explicit one-clause
+decision — use-as-is / extend / generalise — in one table; the six files over 800 each
+name their split AND its `duplicate_pairs` cost; the five folds are budget-accounted; the
+36 markers and 81 credo warnings are classified by cause. Six candidates are **refused
+with a price**, which is the part that makes the rest credible: the helper-namespace
+rename (200 sites, zero metric movement), the `cert_fixtures` ↔ `cert_generator` merge (a
+behaviour question about a finished blocking area), KI-31's de-duplication, chasing the
+filed flakes, any `async: true` conversion, and the websocket fold — the last because five
+of those seven files are already `async: true` and folding them would spend the very
+budget the plan is funded by.
+
+**It caught a hot-path subtlety I would have missed.** §8's fence is "this area edits no
+file under `lib/`, `flz_core/`, `flz_transport/`, `flz_nif/`, `cli/` or `sdk/*/src`" — a
+scope fence checkable from the diff rather than a claim. But it then names the exception
+itself: **`test/apps/rust_runner` IS on a measured path**, because `mix bench.roundtrip
+--runtime rust` spawns that binary through `PortPilot`, so §8's "an unchanged binary is
+not re-measured" does not apply. Declared `direction` and not run — a module split inside
+one binary crate gives rustc the same crate, MIR and codegen units, so the claimed effect
+is zero against measured floors of 1.93 % (area 3) and a 0.3–3.3 ms spread (area 6) — with
+each arm's `sha256sum` plus one `--include sdk_smoke` run recorded in the row's place.
+
+**The correction that matters most**: the async budget has **zero** headroom, not the +2
+this board claimed. Held is 43 true of 203 → `0.788`, and `round(1 − 43/204, 3) = 0.789`
+reds the gate — so **one added `async: false` file breaks the ratchet**. The six mandatory
+splits add ≥ 7 files on their own, which is why the batch order (templates → folds →
+splits) is load-bearing rather than stylistic. The plan folds 18 `async: false` files
+away, splits 6 into 14, and lands at **193 files / 43 true / 0.777** with +1 file of slack
+and no `async: true` conversion.
+
+**Also corrected**: charter §11f's fold formula was wrong by a rounding step
+(`ceil((1−0.788)×203) = 44` declares the tree already short while `--check` exits 0; the
+exact condition is `round(1 − true/files, 3) ≤ 0.788`); the `grep -rl 'async: true'`
+warning over-reads by **seven**, not four; `targets.md` is stale for the sixth area running
+**and names four paths that do not exist**; and `refactor-0-tests.md` cites
+`NodeTestHelper.await_stream_bound/2`, which no longer exists — area 8's row.
+
+**`test/apps` has never been ratcheted** (8 717 lines, 2 files over 800, 127 pairs, 8
+sleeps). Batch 7 arms it as the 36th blocking area. Its recording must name which
+`duplicate_pairs` rows are peer-driven: **61 of 127 have their other half in `sdk/rust`
+(36), `sdk/java` (12), `sdk/php` (5) and `lib/mix` (2)**, all blocking, so a later edit
+there must not read as a regression here.
+
+### Row 10 — SDK capability parity, measured before it was queued
+
+**The user's instruction**: every SDK carries the same features, and each is covered by a
+test. This is the largest row in the queue and it is phased.
+
+**Where it stands, read from the manifests, not from memory:**
+
+| SDK | fixtures carried | deferred |
+|---|---|---|
+| rust (reference) | 16 | 0 |
+| java | 16 | 0 |
+| **python** | **15** | **1** (`workflow`) |
+| node · ruby · php · elixir | 7 | **9 each** |
+
+The nine are identical in all four: `state_persistence`, `effectively_once`,
+`entity_timers`, `correction_window`, `keyed_channels`, `workflow`, `dynamic_entity`,
+`entry_idle`, `schema_evolution` — which is, between them, most of the reason to choose
+this platform over a queue.
+
+**The fact that sizes the work: PYTHON ALREADY DID EIGHT OF THE NINE.** Python is a
+veneer over the same `flz_core` C ABI as Node, Ruby and PHP, so the porting template is
+**Python, not Rust** — a veneer has already been shown to carry `state_persistence`,
+`effectively_once`, `entity_timers`, `correction_window`, `keyed_channels`,
+`dynamic_entity`, `entry_idle` and `schema_evolution`. That converts most of this row
+from "unknown feasibility" into repetition.
+
+**Not all of it is fixtures, and the estimate must not pretend otherwise:**
+- `keyed_channels` is a REAL mechanism gap in Node, Ruby and PHP — the SDK mints the
+  identity stamps (`flz.entity`/`flz.seq`/`flz.key`) on a non-tier keyed plugin emit,
+  which Java and Python do and those three do not.
+- `workflow` is deferred by EVERY veneer including Python, owing two builder surfaces
+  (an inter-proc `codec()` and a hybrid `sink().into()`). It is mechanism everywhere.
+- **Elixir is the odd one out**: its SDK is its own core and inherits NOTHING from
+  `flz_core`, so its nine cannot ride the veneer template at all.
+
+**Phases:**
+- **A · audit** — for each of the 9 × 4, is it a missing fixture or missing mechanism?
+  Python's result predicts "fixture" for most; the answer is written down per cell
+  before any code is written.
+- **B · mechanism** — the identity stamps in Node/Ruby/PHP, and `workflow`'s two builder
+  surfaces across the veneers.
+- **C · fixtures** — port Python's, SDK by SDK. Elixir separately.
+- **D · the ratchet, and the reason this sticks.** `test/sdk_conformance/gate_test.exs`
+  already refuses a manifest that leaves a capability unaccounted, and refuses deferring
+  anything in `NodeTestHelper.@required_capabilities` — today only six
+  (`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`,
+  `pool_wedge`). **Each capability moves into that list the moment every SDK carries
+  it.** That makes parity un-regressable and shrinks the remaining list visibly, rather
+  than relying on anyone remembering.
+
+**Sequencing**: this does not block the refactor and the refactor does not block it —
+they touch different trees (`sdk/**` + `test/apps/**` versus `lib/**`). It is a
+candidate for the second lane once area 7 is under way, at the user's call.
+
+### Row 9 — the pre-publish readiness checklist (the user's idea, 2026-09-01)
+
+**Why it exists**: publishing is a **one-way door**. While nothing is published, a
+breaking change costs a commit; afterwards every one of these costs a deprecation cycle,
+an accept-both parser and a migration note. `feedback_no_legacy_shims` — "no legacy
+shims; the library is unpublished" — is a standing rule that **expires the day we
+publish**, and several open items are only cheap because it still holds.
+
+**Shape**: a tracked `docs/publishing/readiness.md`, one line per item with status, plus
+the OpenSpec change that creates it and states the gate. NOT a section of
+`docs/known_issues.md` — that file is defects, and most of this is packaging, policy and
+end-user ergonomics, which is a different question with a different bar.
+
+**Seed, from what is already known today** (the point is to capture it while it is fresh,
+not the ceremony):
+- **KI-52** — Java and PHP ship five native triples in one artefact; Node/Ruby/Python
+  each solved it differently. Decide the distribution shape before the first release,
+  never after.
+- **KI-104** — a public API surface, so `flezha_ui` (and anyone else) stops consuming
+  controller internals. This is the largest item and the most valuable.
+- **SDK capability parity** — Node, Ruby, PHP and Elixir each defer nine capabilities on
+  FIXTURES not mechanism (`sdk-durable-fixture-parity`); Python defers `workflow`. A
+  published SDK matrix with nine holes is a support burden.
+- **Licensing and governance** — `open-source-licensing` records what is still owed: a
+  CLA bot, a `security@` contact and disclosure policy, and trademark. `process_hub` is
+  now a hex release, so that half is done.
+- **CLI consistency** — row 8 is one instance; sweep for others before operators' muscle
+  memory sets.
+- **Naming** — `check-kind-naming` is red (row 1) and `check-overflow-naming` misses the
+  Kafka shape (row 2). Both gates exist precisely so published vocabulary is one rule.
+- **CI gaps** — the suite skips `entity_timers`/`sugar_emit`/`simple_procedure` and never
+  runs `cargo test -p flz_core`.
+- **Versioning** — a semver policy and a real CHANGELOG discipline; there is no stated
+  compatibility promise today.
+- **First-run experience** — quickstart, error-message quality, and the defaults an
+  evaluator meets in the first ten minutes.
+
+**Not to be built now.** Seed it, keep adding to it as the refactor turns things up, and
+work it when a publish date exists. Its value is that nothing is silently carried past
+the one-way door.
+
+**RULED BY THE USER 2026-09-01 — CI red on `main` is ACCEPTED until `main` is updated.**
+Do not treat a red `main` as an incident, do not "fix" causes A and B, and do not open a
+change for them. They are already fixed on `dev`; `main` is 287 commits behind and the
+merge is the user's call on commits they have not reviewed. **What a session SHOULD do is
+check whether a failure is red on `dev`** — that is the only question that matters here,
+and the method is in *CI is red* below: reproduce the cause against this branch rather
+than reading `main`'s run log. Only the naming gate (row 1) was ever red on `dev`.
+
+**Not queued, and deliberately so:**
+- **KI-104** (`flezha_ui` on controller internals) — the owed fix is a **public API
+  surface**, and how big that surface is is the user's design call, not a refactor task.
+  The user ruled the programme does not slow down for it and the UI is updated after.
+- **CI causes A and B** — already fixed on `dev`; they are red only because `main` is
+  287 commits behind. What they argue for is a `dev` → `main` merge, which is the
+  user's call on 287 commits they have not reviewed.
+
+**Still awaiting the user**: KI-80 (`--json` vs `--output json`), KI-52 (five native
+triples vs one).
+
+
 **DONE `f3c30502` (archived, three specs updated) — `retire-cluster-snapshot-remnants`.**
 Net −207, `service` prod_loc 5828 → 5778 and `cli` 2831 → 2809, ceilings unchanged at
 zero, full suite 1922 passed, `--check --lint` 0 regressions.
@@ -3152,6 +3294,28 @@ it. Do not add one back without asking.
 **Also widen `scripts/check-overflow-naming.sh:47`** — it matches
 `:block\s*[,|]\s*:drop_(newest|oldest)` and so requires ADJACENCY, which is exactly why
 it passed over the text it exists to catch. The gate missing this is part of the defect.
+
+**Queued and DECIDED 2026-09-01: `collapse-observability-source-behaviours`.** KI-100,
+shape chosen by me on the user's "delete or collapse — you choose". **Collapse.**
+`OtpBackend.Source` declares `init_state/1` + `poll/1` and its moduledoc calls itself
+*"shared GenServer plumbing"* — it is a POLLER, and calling it `Source` is what made the
+real contract look redundant for months. Rename it `OtpBackend.Poller`; its macro also
+declares `@behaviour Flezha.Observability.Source` with an overridable default
+`config_schema/0`. Deletion refused on a measurement: three live registrations are
+`flavour: :declarative` and the template cannot describe them (`use GenServer`).
+Touches `openspec/specs/observability-otp-backend/spec.md:5`, whose sentence about the
+behaviour is already false, and `registry.ex:61` + `docs/operations/observability.md:261`.
+
+**Filed 2026-09-01: KI-104 — `flezha_ui` is built on controller internals.** The user
+asked whether the UI used the module being renamed; it does not, but the check found it
+names ~30 internal `Flezha.*` modules over `erpc` and **two are already broken by this
+programme** (`State.Registry` → `State.Paths`, `Service.Identificator` →
+`Identificator`), four more gone with no successor and untraced. They fail at RUNTIME —
+`flezha_ui` has an `{:error, {:api_missing, …}}` path — so no build anywhere reports
+them and six accumulated unseen. **The user ruled the programme does NOT slow down for
+this and `flezha_ui` is updated after the refactor**; what is owed is a **public API
+surface** so the UI stops consuming internals. Not queued as work yet — it is the
+user's design call how big that surface is.
 
 **Queued on the user's instruction 2026-08-31 (session 4): fix CI.** See *CI is red*
 above. Only two of the four causes are work on this branch — the naming gate (cause C,

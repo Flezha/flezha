@@ -2199,6 +2199,44 @@ path, so none needs a red-first test.
 - **Checking the pair turned up the fact that matters** and is now [[KI-100]]:
   `Flezha.Observability.Source` has **zero implementers in the tree.**
 
+### KI-104 · `flezha_ui` is built on controller internals, and the refactor has already broken two
+
+- **Severity**: P2 · a sibling product depends on ~30 internal `Flezha.*` modules with
+  no public API between them, and the breakage is invisible until a user clicks.
+- **Where**: `/home/moon/Code/flezha_ui` (a separate repo) reaches the controller by
+  `erpc` through its own `NodeManager.erpc_call/3`. Confirmed broken today:
+  `Flezha.State.Registry` (renamed `Flezha.State.Paths` by `fix-opaque-module-names`)
+  and `Flezha.Service.Identificator` (moved to `Flezha.Identificator` by area 5c).
+- **Evidence**: every `Flezha.*` name in `flezha_ui`, resolved against
+  `defmodule … do` in this tree:
+
+  ```
+  MISSING: Flezha.State.Registry
+  MISSING: Flezha.Service.Identificator
+  MISSING: Flezha.Service.ConfigManager
+  MISSING: Flezha.Service.PluginHelper
+  MISSING: Flezha.Plugin.OperativeStdout
+  MISSING: Flezha.Plugin.Provider.OperativeWebsocket
+  ```
+
+  The first two are ours and dated. The other four have no same-named successor and
+  are NOT traced — they may predate the programme. `Flezha.Totally.Gone` also appears
+  and is a deliberate fixture (`node_manager_distributed_test.exs:28`), not a break.
+- **Mechanism**: the calls resolve at RUNTIME, not compile time, and `flezha_ui`
+  already handles the miss — `{:error, {:api_missing, Module, fun, arity}}`. So a
+  renamed module does not fail a build anywhere; one UI feature stops working, quietly,
+  and the next rename takes another. That error path is why six breaks accumulated with
+  nobody noticing.
+- **Why this is not "the refactor should stop renaming"**: the user ruled explicitly
+  that the programme should NOT slow down for this, and that `flezha_ui` is updated
+  after the refactor. The defect is the missing seam, not the renames.
+- **A fix must** give the controller a **public API surface** that `flezha_ui` consumes
+  instead of internals — the user's own framing. Until that exists, the cheap
+  mitigation is a resolver check (every `Flezha.*` name in the consumer against this
+  tree's exports) so a break is reported at build time rather than discovered by a
+  click. Note the consumer names things the tree has no module for at all, so the check
+  must report unknown-and-unresolved separately from known-and-moved.
+
 ### KI-100 · The `Source` behaviour has no implementers, and two moduledocs said it did
 
 - **Severity**: P3 · a published extension point that is a false statement about the
@@ -2225,6 +2263,24 @@ path, so none needs a red-first test.
   in 5d**: it is a product-surface decision, not a refactor, and the false moduledocs —
   the part that actively misleads — are already fixed.
 
+
+- **RULED 2026-09-01 (the user's call, shape chosen by the supervisor): COLLAPSE, not
+  delete.** The root defect is a NAME COLLISION, found by the user asking why two
+  modules share a name. They are not two versions of one idea — they declare different
+  callbacks: `Flezha.Observability.Source` is `init/1` + `config_schema/0` (the
+  registration contract), while `Flezha.Observability.OtpBackend.Source` is
+  `init_state/1` + `poll/1` and its own moduledoc calls it *"shared GenServer plumbing
+  for the periodic observability sources"*. **That second module is a poller template,
+  not a source**, and naming it `Source` is what made the real contract look redundant
+  and the helper look authoritative. The fix: rename it
+  `Flezha.Observability.OtpBackend.Poller`, and have its macro also declare
+  `@behaviour Flezha.Observability.Source` with an overridable default
+  `config_schema/0`. Deletion was the alternative and is REFUSED for a measured reason:
+  three sources register with `flavour: :declarative` today
+  (`telemetry_bridge.ex:171`, `registry.ex:252`, `:259`) and the poller template cannot
+  describe them because it is `use GenServer` — so deleting removes the only written
+  contract for the half that is actually in use. Collapse also matches the direction
+  the user set in [[KI-104]]: the platform should offer a public surface, not internals.
 
 ### KI-98 · The cycle metrics silently drop every annotated cycle member
 

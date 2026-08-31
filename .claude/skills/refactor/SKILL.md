@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: Supervise the codebase refactor programme — resume from docs/refactor/STATE.md, run one fresh worker at a time per area (survey → implement → verify → commit), keep the board current. Run as `/loop /refactor`.
+description: Supervise the engineering programme — refactor areas AND the queued defects, CI failures, renames and cross-SDK work that sit beside them. Resume from docs/refactor/STATE.md, run one fresh worker at a time (survey → implement → verify → commit), keep the board current. Run as `/loop /refactor`.
 argument-hint: "[status | next | area-id]"
 ---
 
@@ -42,12 +42,23 @@ Then classify:
 Unrecognised uncommitted changes outside the area's paths: leave them, note
 them in `STATE.md`, continue.
 
-## 0.5 A defect queue comes before the areas
+## 0.5 The work queue comes before the areas
 
-If `STATE.md`'s *Next steps* opens with a **Phase 1** table, work it to
-completion before any area. Each row is one OpenSpec change, run with the same
-discipline as an area: one fresh `general-purpose` worker, sequential, the §4
-checkpoint, and you commit — never the worker.
+**`STATE.md`'s *Next steps* opens with a queue table — a section whose heading
+contains "WORK QUEUE" or "Phase 1", or failing that the first table in *Next
+steps* whose rows carry a status. Work it to completion before any board area.**
+Do not skip to the board because the queue is not about refactoring: the
+programme carries defects, CI failures, renames, cross-SDK parity and packaging
+decisions beside the areas, and every row in that table was agreed with the user.
+A row is only ever removed by being done or by the user withdrawing it.
+
+If a queue row and a board area both look runnable, the **queue wins** unless the
+row says otherwise. Rows are ordered, and the order is load-bearing where a row
+says so.
+
+Each row is one OpenSpec change, run with the same discipline as an area: one
+fresh `general-purpose` worker, sequential, the §4 checkpoint, and you commit —
+never the worker.
 
 The rows are ordered, and the order is load-bearing where a row says so (a
 correctness defect inside an area's code must land before that area refactors
