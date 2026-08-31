@@ -126,7 +126,8 @@ for hosts that configure neither.
 
 Anything whose path defaults to `app_data/*` (relative to the image working dir)
 therefore has to be redirected onto the persistent volume, which is what
-`FLEZHA_STATE_DIR`, `FLEZHA_DLQ_DIR` and `FLEZHA_SNAPSHOT_DIR` in the ConfigMap do. **If
+`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_STATE_DIR` and `FLEZHA_DLQ_DIR` in the
+ConfigMap do. **If
 you enable the audit log, authn/authz, or the plugin installer, point their directories
 at `/var/lib/flezha` too** (`FLEZHA_AUDIT_DIR`, `FLEZHA_AUTHZ_DIR`, the plugin install
 root) — otherwise they land on the read-only rootfs.
@@ -152,8 +153,9 @@ release's own binary, which needs no write access to the rootfs.
 
 ## Persistent state
 
-The DaemonSet mounts a node-local volume at `/var/lib/flezha` (`FLEZHA_DATA_DIR`). It
-carries **everything the controller must not lose**:
+The DaemonSet mounts a node-local volume at `/var/lib/flezha`, which is where
+`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_STATE_DIR` and `FLEZHA_DLQ_DIR` all point.
+It carries **everything the controller must not lose**:
 
 - ProcessHub's persistent registry (`FLEZHA_PROCESS_HUB_REGISTRY_ROOT`) — the recovery
   DETS files, i.e. operative child specs and recoverable plugin bindings.

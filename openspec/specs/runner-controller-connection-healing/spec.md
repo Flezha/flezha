@@ -139,15 +139,6 @@ The Controller SHALL retain a disconnected Runner's peer entry (including its as
 - **WHEN** no reconnect occurs within 30 seconds
 - **THEN** the Controller SHALL discard the inactive entry; ProcessHub SHALL redistribute the Operatives to other Runners via normal placement
 
-### Requirement: Existing `cluster-snapshot-restore` capability SHALL be preserved unchanged
-
-This change SHALL NOT modify any code path used by the manual `flz cluster snapshot` or `flz cluster restore` CLI commands, and SHALL NOT modify the per-operative periodic state-capture mechanism (`overwatch_state_snapshot_interval_ms`). Runners relying on the snapshot/restore CLI for whole-cluster recovery SHALL continue to use it identically.
-
-#### Scenario: Whole-cluster snapshot/restore continues to work end-to-end
-- **GIVEN** an agent with several operatives running with non-trivial state captured via the periodic snapshot mechanism
-- **WHEN** the runner runs `flz cluster snapshot /tmp/x.flz` then shuts down the agent then starts a fresh agent then runs `flz cluster restore /tmp/x.flz`
-- **THEN** the operatives SHALL be restored with their captured state binaries, exactly as before this change
-
 ### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
 
 When the Rust/Java SDK shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call), it SHALL synchronously serialize each local operative's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{operative_id, serialized_state}` on the control channel for each operative. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(operative_id)`), which SHALL replace `state.snapshot` with the supplied binary atomically. The agent SHALL respond with `RunnerShutdownAck{operative_id}` once the snapshot is enqueued.

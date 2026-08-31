@@ -171,47 +171,35 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 
 `docker/prod/Dockerfile.controller`'s runtime stage SHALL replace the direct `CMD ["bin/flzvm", "start"]` with `CMD ["/usr/local/bin/agent-entrypoint.sh"]`. Tini SHALL remain the ENTRYPOINT. The entrypoint script SHALL:
 
-1. Background `bin/flzvm start`.
+1. Remove a stale `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` left by a previous container on a reused volume, then background `bin/flzvm start`. Only the controller's own control socket is removed; SDK-owned sockets are held open by external processes and MUST NOT be touched.
 2. If `FLEZHA_TESTNET_WS_PORT` is set and `/flezha/testnet/dist/index.js` exists, also background the testnet WS server (no-op in `:latest`; consumed by `:latest-dev` via inheritance).
-3. If `FLEZHA_SNAPSHOT_ENABLED` is unset or truthy AND a snapshot file exists at `${FLEZHA_SNAPSHOT_DIR:-/flezha/app_data/snapshots}/latest.flz`, optionally wait up to `${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}` seconds for an SDK socket matching `${FLEZHA_RESTORE_WAIT_SOCKET_GLOB}` (empty default = no wait), then run `flz cluster restore` against the snapshot file with `--warn-if-older-than ${FLEZHA_SNAPSHOT_STALENESS_THRESHOLD_S:-86400}s --peer-timeout-ms ${FLEZHA_SNAPSHOT_PEER_TIMEOUT_MS:-5000}`.
+3. Wait up to `${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}` seconds for the BEAM to bind `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` — the same readiness signal the HEALTHCHECK keys on. It SHALL exit 1, naming the cause, if the agent process exits before the socket appears or if the socket has not appeared when the budget elapses.
 4. Install a SIGTERM/SIGINT trap whose behaviour depends on `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (default `true`):
-   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise). `snapshot-on-stop.sh` is NOT invoked on this branch — HotSwap migration replaces snapshot-driven restart-survival for steady-state Operatives.
-   - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL run `/usr/local/bin/snapshot-on-stop.sh` then `kill -TERM` the agent — today's behaviour. This branch exists as the kill-switch fall-through and is removed once `auto-restore-on-boot` lands and `cluster-snapshot-restore` is deleted.
+   - **Enabled** (default): the trap SHALL `exec /flezha/bin/flz controller stop --timeout-ms "${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}"`. The CLI's RPC drives `Flezha.Shutdown.Coordinator` inside the BEAM (quiesce → drain via HotSwap → finalise).
+   - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL `kill -TERM` the agent directly, bypassing the coordinator. This is the kill-switch fall-through, and it matches what the same variable means inside the BEAM (`controller-graceful-shutdown`: `SignalHandler` installs no OS handlers, so kernel's `erl_signal_handler` stays the owner).
 5. `wait` on the agent PID.
 
-`/usr/local/bin/snapshot-on-stop.sh` SHALL remain a separate script invoked both by the (disabled-branch) SIGTERM trap and (in k8s with snapshot-mode) by `lifecycle.preStop.exec.command`. It atomically writes `${FLEZHA_SNAPSHOT_DIR}/latest.flz.tmp` then renames to `latest.flz`. It SHALL no-op (exit 0) when `FLEZHA_SNAPSHOT_ENABLED` is set to any of `false`, `0`, `no`, `off` (case-insensitive).
+Restart survival SHALL come from ProcessHub's durable registry and the per-Entity WAL (`auto-restore-on-boot`, `operative-state-persistence`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
 
 The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`.
-
-#### Scenario: Cold start with no snapshot file
-
-- **GIVEN** an empty `/flezha/app_data/snapshots` volume
-- **WHEN** the container starts
-- **THEN** the entrypoint logs `graceful-restart: no snapshot file at <path>, cold start`, the agent starts normally, and `flz cluster restore` is NOT invoked
-
-#### Scenario: Warm start restores from existing snapshot
-
-- **GIVEN** `/flezha/app_data/snapshots/latest.flz` written by a prior graceful stop with snapshot mode
-- **WHEN** the container starts
-- **THEN** the entrypoint waits for SDK readiness (if `FLEZHA_RESTORE_WAIT_SOCKET_GLOB` is set) then logs `graceful-restart: restoring from <path>` and runs `flz cluster restore`; the CLI exits 0 and the agent serves restored operatives
 
 #### Scenario: SIGTERM with graceful shutdown enabled drives the BEAM coordinator
 
 - **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=true` (default), one Operative locally hosted, and a peer container reachable
 - **WHEN** the orchestrator sends SIGTERM (e.g. `docker stop`)
-- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Operative is alive on the peer; `snapshot-on-stop.sh` is NOT invoked
+- **THEN** the entrypoint trap execs `/flezha/bin/flz controller stop --timeout-ms <timeout>`; the CLI streams drain progress; the BEAM exits cleanly within `stop_grace_period`; the Operative is alive on the peer
 
-#### Scenario: SIGTERM with graceful shutdown disabled writes a snapshot before exit
+#### Scenario: SIGTERM with graceful shutdown disabled terminates the agent directly
 
-- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` and `FLEZHA_SNAPSHOT_ENABLED=true`
+- **GIVEN** a running container with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`
 - **WHEN** the orchestrator sends SIGTERM
-- **THEN** the entrypoint logs `graceful-restart: SIGTERM received` and invokes `snapshot-on-stop.sh`, which atomically writes `latest.flz.tmp` then renames to `latest.flz`; the file is preserved across the container teardown — equivalent to today's behaviour
+- **THEN** the entrypoint logs `graceful-restart: SIGTERM received` and sends SIGTERM to the agent PID without invoking `flz controller stop`; no snapshot file is written and none is looked for
 
-#### Scenario: FLEZHA_SNAPSHOT_ENABLED=false disables both restore and snapshot
+#### Scenario: Control socket does not appear within the budget
 
-- **GIVEN** `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` and `FLEZHA_SNAPSHOT_ENABLED=false`
-- **WHEN** the container starts and is later sent SIGTERM
-- **THEN** the entrypoint logs `restore disabled` on start (skipping any restore) and `snapshot disabled` on stop (leaving any existing `latest.flz` untouched)
+- **GIVEN** a container whose BEAM refuses to boot — for example with `FLEZHA_DURABILITY_BACKEND` unset — and `FLEZHA_RESTORE_WAIT_TIMEOUT_S=20`
+- **WHEN** the container starts
+- **THEN** the entrypoint exits non-zero within the budget, naming the missing control socket or the agent's early exit, rather than waiting indefinitely
 
 #### Scenario: Healthcheck reports unhealthy until the control socket appears
 

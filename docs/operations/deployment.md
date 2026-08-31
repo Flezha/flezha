@@ -193,23 +193,20 @@ Stage 2 never runs cargo. `bin/flzvm` is the release binary (renamed from
 `ENTRYPOINT` is `tini`; `CMD` is `/usr/local/bin/controller-entrypoint.sh`,
 which removes a stale control socket left on a reused volume, starts
 `bin/flzvm start`, waits up to `FLEZHA_RESTORE_WAIT_TIMEOUT_S` (60) for
-`runner_control_channel.sock` to appear, then waits on the BEAM. On SIGTERM or
-SIGINT it runs `flz controller stop --timeout-ms $FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`
+`runner_control_channel.sock` to appear, then waits on the BEAM. It exits 1 if
+the BEAM dies first or the socket never appears — which is how a boot refusal,
+such as an unset `FLEZHA_DURABILITY_BACKEND`, surfaces to the orchestrator. On
+SIGTERM or SIGINT it runs
+`flz controller stop --timeout-ms $FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`
 (quiesce, drain, finalise); when `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` is
-`false`/`0`/`no`/`off` it instead runs `snapshot-on-stop.sh` and SIGTERMs the
-BEAM. A `HEALTHCHECK` probes the control socket every 10 s after a 120 s start
-period.
+`false`/`0`/`no`/`off` it instead SIGTERMs the BEAM directly, bypassing the
+coordinator. A `HEALTHCHECK` probes the control socket every 10 s after a 120 s
+start period.
 
-The entrypoint also carries a snapshot/restore branch (`FLEZHA_SNAPSHOT_*`,
-`FLEZHA_RESTORE_WAIT_SOCKET_GLOB`, `FLEZHA_SNAPSHOT_PEER_TIMEOUT_MS`,
-`FLEZHA_SNAPSHOT_STALENESS_THRESHOLD_S`) that invokes `flz cluster snapshot`
-and `flz cluster restore`. The CLI implements neither verb (`flz cluster`
-answers only `status`), so the branch cannot succeed: with graceful shutdown on
-no snapshot is ever written, and a `latest.flz` found under
-`FLEZHA_SNAPSHOT_DIR` (`/flezha/app_data/snapshots`) at boot makes the
-container exit 1. Set `FLEZHA_SNAPSHOT_ENABLED=false` to skip the branch
-entirely. Restart survival comes from the durable ProcessHub registry and
-per-Entity WAL instead — see [`auto_restore_on_boot.md`](auto_restore_on_boot.md).
+The entrypoint writes and reads no cluster-wide snapshot file. Restart survival
+comes from the durable ProcessHub registry and the per-Entity WAL — see
+[`auto_restore_on_boot.md`](auto_restore_on_boot.md) — plus the remote
+durability tier where one is configured.
 
 Attach to a running container through the release's own entry points:
 
@@ -410,7 +407,7 @@ The DaemonSet loads `flezha-config` via `envFrom`, then sets per-pod values:
 | `FLEZHA_CA_CERT_PATH` / `FLEZHA_SERVER_CERT_PATH` / `FLEZHA_SERVER_KEY_PATH` | `/flezha/app_data/certs/{ca.pem,server.pem,server.key}` — persisted on the `flezha-certs` hostPath |
 | `FLEZHA_LOG_PATH` | `/var/log/flezha/flezha.log` |
 | `FLEZHA_AUTO_RESTORE_ENABLED` / `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `true` / `60000` |
-| `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` / `FLEZHA_STATE_DIR` / `FLEZHA_DLQ_DIR` / `FLEZHA_SNAPSHOT_DIR` | `/var/lib/flezha/{process_hub,state,dlq,snapshots}` — on the `flezha-recovery` hostPath |
+| `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` / `FLEZHA_STATE_DIR` / `FLEZHA_DLQ_DIR` | `/var/lib/flezha/{process_hub,state,dlq}` — on the `flezha-recovery` hostPath |
 | `FLEZHA_HEALTHZ_ENABLED` / `FLEZHA_HEALTHZ_PORT` / `FLEZHA_HEALTHZ_BIND` | `true` / `9569` / `0.0.0.0` (the kubelet probes the pod IP, not loopback) |
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | `60000`, paired with `terminationGracePeriodSeconds: 75` |
 

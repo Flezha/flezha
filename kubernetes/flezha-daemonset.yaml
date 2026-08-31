@@ -194,13 +194,14 @@ spec:
             - name: flezha-logs
               mountPath: /var/log/flezha
             - name: flezha-recovery
-              # Must match FLEZHA_DATA_DIR in the ConfigMap. Hosts ProcessHub's
-              # persistent registry (under
-              # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT=/var/lib/flezha/process_hub`)
-              # plus per-Entity WAL/snapshot files (under
-              # `FLEZHA_STATE_DIR=/var/lib/flezha/state`), the DLQ store and the
-              # plugin install root. Losing this volume reverts controllers to
-              # empty recovery on restart.
+              # Must contain every durable path the ConfigMap sets:
+              # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT=/var/lib/flezha/process_hub`
+              # (ProcessHub's persistent registry),
+              # `FLEZHA_STATE_DIR=/var/lib/flezha/state` (per-Entity WAL and
+              # snapshot files) and `FLEZHA_DLQ_DIR=/var/lib/flezha/dlq`. Point
+              # the plugin install root here too if you enable the installer.
+              # Losing this volume reverts controllers to empty recovery on
+              # restart.
               mountPath: /var/lib/flezha
             # readOnlyRootFilesystem: true — the two paths the BEAM writes that
             # are NOT persistent state. RELEASE_TMP (<release_root>/tmp) is

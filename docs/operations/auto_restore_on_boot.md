@@ -64,11 +64,9 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
 ## Operator surface
 
 ```bash
-flz boot status                                     # per-namespace recovery_state + registry row count
-flz boot await --timeout 60                         # block until every hub reports :normal (exit 1 otherwise)
-flz boot import-legacy-snapshot /path/to/snap.flz   # import a legacy `.flz` snapshot into the registry;
-                                                    # refuses on a non-empty hub unless --force
-flz cluster status                                  # recovery_state per node
+flz boot status                # per-namespace recovery_state + registry row count
+flz boot await --timeout 60    # block until every hub reports :normal (exit 1 otherwise)
+flz cluster status             # recovery_state per node
 ```
 
 Telemetry under `[:flezha, :boot, …]`, each with `%{hub_id, namespace}` metadata:

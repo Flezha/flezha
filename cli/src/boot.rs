@@ -5,15 +5,10 @@ use crate::{help, rpc};
 
 pub(crate) const TABLE: Command = Command {
     help: help::BOOT,
-    verbs: &[
-        ("status", handle_status),
-        ("await", handle_await),
-        ("import-legacy-snapshot", handle_import),
-    ],
+    verbs: &[("status", handle_status), ("await", handle_await)],
     help_verbs: dispatch::HELP_VERBS,
     missing: Some("Error: Invalid number of arguments. See `flz boot help`."),
-    unknown:
-        "Error: Invalid argument '{}'. Use 'status', 'await', 'import-legacy-snapshot', or 'help'.",
+    unknown: "Error: Invalid argument '{}'. Use 'status', 'await', or 'help'.",
     unknown_prints_help: false,
 };
 
@@ -51,24 +46,6 @@ fn handle_await(args: &[String]) {
 
     rpc::run(
         format!("Flezha.Service.CliManager.boot_await({})", timeout_ms),
-        rpc::PROPAGATE,
-    );
-}
-
-fn handle_import(args: &[String]) {
-    if args.len() < 2 {
-        eprintln!("Usage: flz boot import-legacy-snapshot <file> [--force]");
-        exit(1);
-    }
-
-    let path = &args[1];
-    let force = args.iter().any(|a| a == "--force");
-
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.boot_import_legacy_snapshot(\"{}\", {})",
-            path, force
-        ),
         rpc::PROPAGATE,
     );
 }

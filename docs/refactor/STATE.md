@@ -1,12 +1,16 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 3. **Phase 1 complete (8 rows), AREA 4 and AREA 6
-both COMPLETE.** `sdk/java` and `cli` are blocking ratchets with **every ceiling at
-zero**; `cli` is the first area to end **smaller** (−438). `refactor_metrics.py --check`
-**exit 0**; `mix test` **1872 passed, zero uncaptured-log gate hits**. **Next: areas
-5a–5e** — the controller, ~32 K lines and the 55-file dependency cycle, the hardest work
-in the programme and not yet started; then 7 and 8. Two workers may run on disjoint
-lanes (§11c/§11d). Awaiting the user: KI-52, KI-80, KI-81.
+**Last updated**: 2026-08-31 — session 4. **Phase 1 complete (8 rows); areas 0a, 0b, 1s,
+1, 2, 3, 4, 5a, 5b, 5c, 5d, 5e-a, 5e-b and 6 are ALL DONE.** **35 areas are blocking
+ratchets and 100 % of `lib/` production lines are ratcheted** — the controller is
+finished. `refactor_metrics.py --check` **exit 0** at `887bf308`. **Next: area 7**
+(tests, helpers, test apps — 38 737 test_loc over 203 files, the last production-shaped
+row), then area 8 (docs reconcile). Awaiting the user: KI-52, KI-80, KI-81, KI-100.
+
+**The board table's rows 4 and 6 read `pending` until session 4 corrected them** — both
+areas had been committed and armed hours earlier. Session 3's own header said so and the
+table did not. **Fix the table in the same edit as the header, or the next session
+classifies off a lie.**
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -97,15 +101,15 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `379d795c`, `65d0dc9a`, `024efa60` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `8981157e`, B `d6f6e16f`, fmt `ec0a8725`, C `7decf389`, D `3939cdac`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `119a20d4`, `024daaaa`, `be54a5cc`, `d54b61f4`, `588094e4`, `c5bdc26b` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
-| 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
+| 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | **done** | `91699f03`…`352af734` | **files>800 4→0, fn>50 0, long_names 0, markers 0**; prod_loc 8829, duplicate_pairs 92; prod +372 / test −62; javap diff empty (163 public types each side); J1 detects nothing (+0.03 % trimmed vs an 11.61 % floor) |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | **done** | `9bb349dc` (+6) | **files>800 3→0, fn>50 1→0, long_names 2→0, markers 17→0, cycles 2→1, 14 edges cut**; prod_loc +67 ceiling-forced; KI-41+KI-61 red-first; 14th blocking |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | **none (5a dep refuted)** | **done** | `826c227c` (+9) | **cycles 4→0, mcf 3→0, fn>50 9→0, markers 8→0, credo 51→0**, files>800 3→1 by ruling, prod_loc −66; KI-93+KI-95 red-first; 15th blocking |
 | 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | **done** | `a92b79a1` (+7) | **files>800 3→0, fn>50 4→0, markers 4→0, dup 8→0, credo 53→42; 23 edges cut**; cli_manager 4294→15 modules; 16th blocking |
 | 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | **none (5c dep refuted)** | **done** | `a92b79a1` (+5) | **fn>50 2→0 and 13→0, files>800 2→0, cycles 1→0, markers→0**; obs prod_loc −215; 17th+18th blocking |
 | 5e-a | `runner` + `operative` | `refactor-5e-a-runtime` | — | **done** | `2b1355f4` | **every ceiling 0/0, credo 25+2→0, 11 edges cut**, area −33 |
 | 5e-b | `convergence`, `sdk`, `authz`, root, rest | `refactor-5e-b-platform` | — | **done** | `2b1355f4` | **every ceiling row 0 across 15 areas, credo 80→39, 9 edges cut, repo cycles 2→1** |
-| 6 | `cli` | `refactor-6-cli` | 1 | pending | | |
-| 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | pending | | |
+| 6 | `cli` | `refactor-6-cli` | 1 | **done** | `b73c940c`, `b5b0b1d8` | **every ceiling 0** (files>800, fn>50, long_names, markers); prod_loc 2831, duplicate_pairs 3; **−438 honest** (raw −513, 75 lines a classifier artefact); 31 help screens golden-pinned; both A/B rows `direction`, sha256 recorded in their place |
+| 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | surveying | | |
 | 8 | Docs reconcile (`CLAUDE.md` index, dev_notes names) | `refactor-8-docs` | 7 | pending | | |
 
 Status values: `pending` → `surveying` → `proposed` → `implementing` →
@@ -113,8 +117,20 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**NONE. Session closed cleanly 2026-08-31 ~21:40. No subagent alive, tree clean, every
-area committed and archived.**
+**Session 4 opened 2026-08-31 ~21:40.** Tree clean at `887bf308`, `refactor_metrics.py
+--check` **exit 0** (0 regressions against `4cd41f5e`), machine clean (no zombies, no
+leaked build/test processes, load 1.30/1.42/1.42).
+
+**Board rows 4 and 6 were STALE and are corrected above** — both areas are committed
+(`352af734`, `b5b0b1d8`) and both appear in `baseline.json`'s 35 blocking areas, but the
+table still read `pending` with no commit. A fresh session classifying off the table
+alone would have re-surveyed two finished areas.
+
+**Worker: area 7 survey (`refactor-7-tests`)** — spawned 2026-08-31 ~21:45, lane
+`$SCRATCH/area7/`. Area 7 is the first `pending` row whose dependencies (2, 3, 4, 5e, 6)
+are all `done`.
+
+- last seen: (spawned; first heartbeat pending)
 
 ## START HERE IF YOU ARE A FRESH SESSION
 
@@ -2444,6 +2460,108 @@ This is also the first time the seam has been priced at all. The 1s spike put it
 rewritten §8. That is the policy working as designed — the cost was found, and found
 attributably, for one 7-minute bisect instead of six measured checkpoints.
 
+## CI is red — added to the work list 2026-08-31 (session 4, on the user's instruction)
+
+**Six workflows are failing, and they are FOUR causes, not six.** Every failing run is
+on **`main`**, which is **287 commits behind `dev`**. Diagnosed by reading the run logs
+and then testing each cause against `dev` — which is the only question that matters,
+because `main`'s red says nothing about the branch we are working on.
+
+| workflow | run | failing step | cause | red on `dev`? |
+|---|---|---|---|---|
+| Nightly E2E | `33374859562` | Compile Elixir (warnings as errors) | **A** | **no** |
+| Rust SDK Bench Cron | `33378395915` | mix deps.get + compile | **A** | **no** |
+| Elixir | `33310818915` | Compile Elixir (warnings as errors) | **A** | **no** |
+| Java SDK · mix-integration-matrix | `33310818924` | shared smoke tier vs the Java runtime | **A** | **no** |
+| Java SDK · java-unit-tests | `33310818924` | Verify vs committed natives | **B** | **no** |
+| Naming | `33310818916` | check-kind-naming | **C** | **YES** |
+| Ruby SDK · gem (3.3), gem (3.4) | `33310818919` | Unit tests | **D** | unverified |
+| Ruby SDK · cross-build ×3 | `33310818919` | `oxidize-rb/actions/cross-gem@v1` | **D′** | unverified |
+
+### Cause A — `process_hub` will not compile (4 of the 6 workflows). ALREADY FIXED ON `dev`.
+
+    error: ProcessHub.Hub.__struct__/1 is undefined, cannot expand struct ProcessHub.Hub
+    └─ lib/process_hub/hub.ex:79:19: ProcessHub.Hub.for_workers/1
+    == Compilation error in file lib/process_hub/hub.ex ==
+
+`main`'s `mix.exs` still carries `process_hub_dep/0` returning
+`[git: "https://github.com/alfetahe/process-hub", branch: "dev"]`, and something in CI
+takes the branch **tip** over the committed lock — `adopt-process-hub-hex-release`'s own
+notes record `docker/prod/Dockerfile.controller` doing exactly that, and the failing
+function is `for_workers/1`, **the one function that change measured as having moved**.
+`dev` resolves `"~> 0.7.0"` with `mix.lock` pinning hex 0.7.0. **No new work: this is
+`adopt-process-hub-hex-release`, already landed on `dev`.**
+
+### Cause B — the Maven enforcer requires natives that no longer exist. ALREADY FIXED ON `dev`.
+
+    [ERROR] maven-enforcer-plugin:3.5.0:enforce (require-all-native-binaries)
+    [ERROR] native-verify: one or more of the five committed libflz_core_ffi binaries
+            are missing. Refresh them with `scripts/build-dist.sh` and `git add`.
+
+`main` carries the rule at `sdk/java/flezha-sdk-native/pom.xml:170` while tracking
+**zero** natives — `unbundle-committed-build-artifacts` untracked them and `main` got
+the purge without the pom change. `dev` removed the rule in `5457bb8f`
+(*build(java): the seven build artefacts leave git*); `git grep require-all-native-binaries`
+over `dev` returns nothing. **No new work.**
+
+### Cause C — `check-kind-naming.sh` is red, on `main` AND on `dev`. REAL WORK. This is KI-94.
+
+Measured on `dev` at `887bf308`: **exit 1, 19 occurrences** (`main` had 24).
+`check-overflow-naming.sh` is **green**. The 19 split:
+
+| where | count | note |
+|---|---|---|
+| `docs/refactor/` | **8** | **this board's own prose** — supervisor-authored, including two lines *about* the gate being red |
+| `docs/` | 6 | prose |
+| `docs/dev_notes/` | 1 | prose |
+| `lib/` | **4** | `http_poll.ex:251`,`:256` (`bounded_put`), `service/cli/boot.ex:3`, `service/operative_manager/placement.ex:4` |
+
+Every one is the **capacity or plain-English sense of "bounded"**, which is precisely
+what `scripts/kind-naming-allowlist.txt` exists to absorb — the gate's own failure
+message says so. KI-94 already files this as *red on prose hits, none in code*; the
+count has since grown because the programme keeps writing the word.
+
+**This gate has been red for the entire refactor programme and nobody has been able to
+merge past it.** It is cheap to fix and it is the only one of the four causes that
+blocks `dev`.
+
+### Cause D — Ruby SDK unit tests fail on both 3.3 and 3.4. REAL WORK, unverified on `dev`.
+
+    RunnerTest#test_warmup_runs_after_the_last_declaration_and_before_the_first_poll:
+    NoMethodError: undefined method 'stub' for module Process
+        test/runner_test.rb:60:in 'RunnerTest#boot_recording'
+
+`Object#stub` comes from `minitest/mock`; it is not available on a **module** the way
+the test uses it, and it fails identically on 3.3 and 3.4. `Process.warmup` is the
+3.3+ call `ruby-sdk` made an unconditional requirement, so this test is stubbing the
+very thing that pinned the floor. **Not yet reproduced on `dev` — do that first.**
+
+### Cause D′ — Ruby `cross-build` fails on all three triples.
+
+`oxidize-rb/actions/cross-gem@v1` exits 1 with no error line of its own. The only
+diagnostics are benign (absent git credentials; a `402 Payment Required` from the
+`warehouse-clerk-tmp.vercel.app` quickinstall mirror, which is a third-party binary
+cache, not ours). **Likely external/infra rather than our code — confirm before
+spending on it**, and note it is the same three-triple cross-build that KI-52's
+distribution question is about.
+
+### The order this should be worked
+
+1. **Cause C first** — it is red on `dev`, it is minutes of work, and it is the only
+   one gating the branch. Mostly an allowlist edit; the four `lib/` hits want reading
+   before they are allowlisted rather than renamed.
+2. **Cause D** — reproduce on `dev` (`cd sdk/ruby && rake test`) before writing
+   anything. If it reproduces it is a genuine SDK test defect.
+3. **Cause D′** — one look to decide external-vs-ours.
+4. **Causes A and B need no code at all.** They are `main` being 287 commits stale.
+   What they actually argue for is a **`dev` → `main` merge**, which is the user's
+   call and is not something this programme does unasked — the branch carries 287
+   unreviewed-by-them commits including the whole refactor.
+
+**A CI honesty note worth keeping**: four of six red workflows were fixed days ago and
+stayed red because nothing re-ran them on a branch that had the fix. A red CI nobody
+can act on decays into a red CI nobody reads.
+
 ## Awaiting the user's decision
 
 ### The `Source` behaviour has no implementers — delete it, or make it true?
@@ -2469,80 +2587,6 @@ implement it — is **already fixed** (`374a4031`), so nothing is urgent.
 **Recommendation: make it true**, as its own small change after 5d — it preserves the
 surface and is reversible, where deletion is not.
 
-
-### The Kafka plugin queue still names a mechanism, not a guarantee — F4
-
-**What it is.** `rename-block-to-drop-nothing` renamed the SDK channel policy
-`Block` → `DropNothing` on every SDK, the wire and the docs, precisely because a
-mechanism-shaped name goes false the moment nothing parks. The **Kafka plugin queue**
-policy was not in that change and is still `:block` / `:drop_oldest` / `:drop_newest`
-(`kafka.ex:31`, `:70`, `:243`, `:389`–`:399`; `docs/configuration.md:582`). Two of the
-three names say what they discard; the third names the mechanism — the §4 synonym the
-rename existed to remove.
-
-**Why the gate did not catch it.** `scripts/check-overflow-naming.sh:47` matches
-`:block\s*[,|]\s*:drop_(newest|oldest)` — it requires adjacency, and the doc line reads
-`` `:block` (default), `:drop_oldest` ``. Verified: the gate passes on text it exists to
-catch.
-
-**Why it is yours and not mine.** This is not a refactor. `block` is an operator-facing
-CLI value (`--Xqueue_overflow=block`) stored in **durable cspecs**, so a rename needs
-accept-both parsing, a migration for existing rows, and a deprecation window — a
-behaviour change with a compatibility tail, on a surface real operators have typed.
-
-| option | cost |
-|---|---|
-| **Rename to `drop_nothing`, accept both** (my recommendation) | one change: accept-both coercion, cspec migration, docs, gate widened. The vocabulary is then one rule everywhere, which is the point of §4 |
-| Leave it, widen the gate to allow it | ~zero, and the codebase keeps two names for one idea — the exact drift the earlier rename spent a change removing |
-| Leave it, say nothing | free, and the next person to read §4 finds it contradicted in the tree |
-
-**Recommendation: rename with accept-both**, as its own small change after 5b, not
-inside it. 5b is a zero-behaviour-change area and this is a behaviour change.
-
-
-**This section is read by the user, roughly daily, and answered in a
-conversation. It must therefore be TRUE: an item that has landed is deleted
-from here the moment it lands.** On 2026-08-30 it still listed two defects
-(F1's watermark overwrite and the first-input drop) that had both been fixed
-and archived — which is exactly the failure that makes a list stop being read.
-
-**Nothing here blocks work.** An item lands here precisely so the programme does
-NOT stop for it: record it, move to the next runnable thing, and raise it when
-the user asks. When the user agrees a shape and says to fix it, the item is
-queued as the next work — the session finishes the segment in flight, commits
-it, and takes the agreed item before the next queued row.
-
-**Each entry carries**: what it is and where; why it is the user's call and not
-the supervisor's; the options with the cost of each; a recommendation; and what
-it blocks, if anything. An entry without a recommendation is a question the
-supervisor has not finished thinking about.
-
-### KI-81 — `docker/prod/` calls two `flz cluster` verbs that do not exist (P2)
-
-**What it is.** `docker/prod/snapshot-on-stop.sh:32` runs `flz cluster snapshot` and
-`docker/prod/controller-entrypoint.sh:104` runs `flz cluster restore`.
-`cli/src/cluster.rs` implements **only** `status` — supervisor-verified,
-`grep -cE '"snapshot"|"restore"'` returns **0**, and `CliManager` has neither. The verbs
-were removed by `9235bcde` (`auto-restore-on-boot`) and the scripts were never updated.
-
-**Why it matters more than P2 suggests**: the controller's **pre-stop hook** calls a
-command that cannot succeed, so every graceful shutdown runs a snapshot step that
-fails, and the entrypoint's restore path is dead too. It is quiet because the script's
-own handler logs *"snapshot failed; leaving previous file in place"* — which reads as a
-transient failure, not a missing verb.
-
-**Why it is yours.** Restoring the verbs or deleting their use is a decision about
-**whether cluster snapshot/restore is a supported operation**, which is a product call.
-
-| option | cost | consequence |
-|---|---|---|
-| **Delete the calls from both scripts** | ~an hour | Honest immediately. The pre-stop hook stops pretending to snapshot; whatever `auto-restore-on-boot` replaced it with is what actually protects you. |
-| **Re-implement both verbs** | days — a CLI surface, a `CliManager` path, and the controller capability behind them | Only worth it if a *manual* cluster snapshot is something you want, distinct from the automatic restore that replaced it |
-| **Leave it** | zero | A shutdown hook that logs a failure on every stop, and the next person to read that log chases a phantom |
-
-**My recommendation: delete the calls.** `auto-restore-on-boot` deliberately replaced
-this mechanism, so the scripts are the stale half of a change that already landed —
-not a missing feature. **Blocks nothing.**
 
 ### KI-80 — `--json` and `--output json` are two dialects (P3)
 
@@ -2587,88 +2631,6 @@ shape you intend to change is work spent twice.
 
 **Blocks**: nothing in the programme. It was Phase 1 row 6's second half; row 6 is
 now KI-51 alone, and this entry replaces its other half.
-
-### KI-3 — what is a caller told when its frame was discarded? (P1)
-
-The last silent-drop default in a platform whose stated guarantee is that
-nothing drops by default. `enqueue_write` (`flz_nif/src/uds_driver.rs:474`)
-drops on overflow and bumps `write_buffer_dropped`; `send_frame`
-(`flz_nif/src/stream.rs:25`) answers `:ok` unconditionally and does not even
-check the `cmd_tx.send` result, so a dead driver thread is a second, uncounted
-drop path. **Nothing in `lib/` reads the drop counter** — not the liveness
-verdicts, not the observability source; the only reader in the tree is a bench
-printout. So the loss is invisible to the caller *and* to the platform.
-
-Why it is yours: every answer changes behaviour a user of the SDK can see, and
-the cast path cannot simply block without reintroducing the wedge that
-`nonblocking-drop-nothing-backpressure` removed.
-
-- **Surface the loss only** — make the platform able to see it (read the counter
-  into a liveness verdict and the observability source) while `send_frame` still
-  answers `:ok`. Cheapest, honest, does not change the guarantee.
-- **Answer the caller** — `send_frame` returns an error on a full buffer. Changes
-  a hot-path signature and every caller, in every SDK.
-- **Hold the frame** — apply the `DropNothing` holdback shape the Entity path
-  already uses. Largest, and the one that actually satisfies the guarantee.
-
-**Why the credit system does not already cover this** (asked 2026-08-30): it
-does exactly what it looks like — `flz_core/src/credit.rs` says "an exhausted
-window parks the sending thread and **never drops**" — but its scope is the
-**runner → controller state stream** plus the per-Operative source-ingestion
-ledger in `InputLog` (`CreditLedger`'s own moduledoc names both). The
-controller → runner input dispatch (`StreamChannel.io_in` → `send_frame`) and
-the control channel are **not** credited. The unit is "bytes debited on
-receipt, freed when durably drained", which fits a receiver that must fsync;
-on the input path the far-end backpressure is the Entity mailbox's own
-`on_full` policy, which acts AFTER the transport hop with no signal back to
-the sender.
-
-**And the two transports fail differently — see KI-56, filed the same day.**
-The QUIC driver calls `would_overflow_write_buffer` nowhere: `write_stream`
-extends its buffer unconditionally and treats a blocked flow-control window as
-a no-op, so the peer-not-draining condition that makes UDS drop makes QUIC grow
-**without bound**. Any answer here must cover both, or fixing one hands its
-failure mode to the other.
-
-**The recommended shape is a watermark gate, and it does NOT replace the credit
-system** (asked 2026-08-30). The two answer different questions at different
-layers and compose:
-
-- **Credit** answers *"has the receiver made these bytes durable?"* — it gates
-  on fsync, end to end, and needs a session, byte accounting and batched
-  grants to do it. A frame can leave the write buffer and still not be durable,
-  so a watermark cannot express this guarantee.
-- **The watermark** answers *"is this socket's send buffer backing up?"* — one
-  bit, transport-local, per stream. The write buffer's receiver is the kernel
-  socket; there is nothing to account, which is why credit's machinery is the
-  wrong tool here.
-
-On the state stream both apply, and that is not redundancy: credit stops the
-RECEIVER being overwhelmed, the watermark stops the LOCAL buffer growing.
-**Design point for whoever writes it**: `flz_core/src/credit.rs` parks the
-sending THREAD on a 50 ms condvar re-check. A watermark park on the same path
-must not nest inside that one — the driver-side gate parks a BEAM process, and
-the two must be shown not to compose into a double park.
-
-Recommendation: the first now (it is small and makes the defect measurable),
-then the watermark gate as its own change covering UDS and QUIC together — one
-relaxed atomic load per frame on the happy path, reusing the `push_gated` /
-`rearm_deferred_pushes` holdback shape rather than inventing a mechanism, and
-never parking a scheduler thread. QUIC is the easier half: `WriteError::Blocked`
-IS the high-water signal and is currently swallowed. Blocks nothing today.
-
-### Gate finding — the format gate aborts before it checks Rust
-
-`scripts/format-apply.sh` runs a `need` preflight for every formatter (line 33,
-rubocop) BEFORE running any of them, and `cargo +nightly fmt --all` is line 43. On a
-box missing one veneer formatter the script fails loudly about that formatter and
-never reports that Rust is dirty. That is how segment B's six unformatted production
-files reached commit `d6f6e16f`: the worker's "format-check.sh exits 0" was taken on
-trust and the supervisor ran the naming and metrics gates but not the format gate.
-Corrected by a `fmt(2)` commit; the lesson is that **the supervisor runs
-`cargo +nightly fmt --all --check` itself at every close** — it is read-only and
-takes seconds. Worth considering whether the preflight should warn-and-continue
-rather than abort, so a missing veneer formatter cannot mask a dirty Rust tree.
 
 ### Gate finding — allowlist rules erase in file order
 
@@ -3103,6 +3065,101 @@ per test; both naming gates RED at HEAD; `mix format` differs local (1.20) vs
 CI (1.19); no formatter for the four veneers.
 
 ## Next steps
+
+**DONE `f3c30502` (archived, three specs updated) — `retire-cluster-snapshot-remnants`.**
+Net −207, `service` prod_loc 5828 → 5778 and `cli` 2831 → 2809, ceilings unchanged at
+zero, full suite 1922 passed, `--check --lint` 0 regressions.
+
+**The worker reversed four of my instructions and was right on all four**, which is the
+value of the checkpoint and is recorded so the next brief is better: the
+disabled-shutdown branch STAYS (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` is a live kill-switch
+read by `runtime.exs:261`, spec'd, and set by three compose files — deleting it would
+have been a behaviour change inside a zero-behaviour-change task);
+`FLEZHA_RESTORE_WAIT_TIMEOUT_S` bounds the SURVIVING control-socket wait so
+`durability_posture.sh` needed no edit; FOUR scenarios leave `controller-packaging`, not
+one; and `safe_registry_count/1` still has a caller in `boot_status/0`. It also found
+sites the brief missed — `.dockerignore`, the authz action and its admin grant, two
+further capability specs, and `docker/README.md`'s recovery section stale in five places.
+
+**Session 3's open format discrepancy is RESOLVED.** `lib/flezha/service/cli_manager.ex`
+IS unformatted, and it is unformatted **at HEAD** — verified by running
+`mix format --check-formatted` on a `git show HEAD:` copy and on the worktree, both red.
+Session 3 recorded it as exiting 0 twice; that reading was wrong. This is the documented
+local-1.20 / CI-1.19 divergence, so it is NOT reformatted — see the standing rule never
+to run a bare `mix format` here.
+
+_(superseded queue entry below, kept for the reasoning)_
+**Was queued on the user's instruction 2026-08-31 (session 4): `retire-cluster-snapshot-remnants`.**
+KI-81 is DECIDED — **delete both**, the user's call, taken after a code review that
+corrected the entry on four points. It goes FIRST, ahead of CI.
+
+The decisive fact is not a judgement: `openspec/specs/controller-packaging/spec.md`
+says of the snapshot branch *"is removed once `auto-restore-on-boot` lands and
+`cluster-snapshot-restore` is deleted"* — **both happened in `9235bcde`, 2026-05-09.**
+The spec scheduled its own deletion and the trigger fired three and a half months ago.
+
+Corrections to the KI-81 entry, all verified at the source:
+1. The k8s preStop does **not** run `snapshot-on-stop.sh` — `flezha-daemonset.yaml:179`
+   runs `flz controller stop`. Three comments in the tree still claim otherwise.
+2. The default shutdown path never invokes it either (`controller-entrypoint.sh:122`
+   says so explicitly). It runs ONLY under `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`,
+   so "every graceful shutdown fails" — this board's own words — was wrong.
+3. `docs/operations/deployment.md:203`–`:211` **already documents the whole defect
+   accurately**, crashloop and workaround included. The docs were right; the code and
+   the spec are the stale halves.
+4. The upgrade-crashloop I priced as the reason to REPOINT rather than delete is not
+   reachable: the verbs existed 2026-04-25 → 2026-05-09, a two-week window, and
+   `9235bcde` introduced the durable registry in the SAME commit — so a node holding a
+   `latest.flz` predates the registry entirely and would have crashlooped on its first
+   upgrade past May. My repoint recommendation is retired.
+
+Scope (pure deletion, ~half a day — the spec delta is why it is not an hour):
+`snapshot-on-stop.sh`; the entrypoint's restore branch and every `FLEZHA_SNAPSHOT_*` /
+`FLEZHA_RESTORE_WAIT_*` knob; `Dockerfile.controller:125`'s COPY/chmod;
+`flz boot import-legacy-snapshot` **and** `CliManager.boot_import_legacy_snapshot/2`
+(the user's call — it reads a format nothing has written since May); the ConfigMap's
+`FLEZHA_SNAPSHOT_DIR` and its **dead `FLEZHA_DATA_DIR`** (set at `:38`, read by NOTHING
+in `lib/`, `cli/`, `scripts/` or `docker/`, while `flezha-daemonset.yaml:197` tells
+operators to match it); `test/scripts/durability_posture.sh:141`; the three false
+preStop comments; and docs at `deployment.md` 195–211 + 413, `docker/prod/README.md:44`,
+`kubernetes/README.md:129`, `docs/internals/process_hub.md`, `README.md`.
+
+**Spec delta required** on `controller-packaging`: requirement point 3, point 4's
+disabled branch, the `snapshot-on-stop.sh` paragraph, and the *"Cold start with no
+snapshot file"* scenario. A `## MODIFIED Requirements` block REPLACES the whole
+requirement — carry every surviving scenario across or they are deleted silently.
+
+**Ruled and NOT in scope**: the prod boot refusal on an unset
+`FLEZHA_DURABILITY_BACKEND` STAYS. The user agreed. A data platform makes the operator
+state a durability posture once; `posture()` already surfaces `:local_only` on
+`/healthz` and `flz controller status` so an audit can find such a node.
+
+**Queued and DECIDED 2026-08-31 (session 4): `rename-kafka-queue-overflow`.**
+The user ruled: **plain rename, no accept-both, no deprecation window** — asked twice
+whether a real reason existed to keep both spellings and told to proceed. So
+`:block` → `:drop_nothing` in `kafka.ex` (the option docs at `:31`, the default at `:70`,
+the coercion at `:389`–`:394`, the guard at `:398`–`:399`), `producer_worker.ex`'s
+`overflow/4` clauses and its `:95`/`:419` comments, `docs/configuration.md:582`.
+
+**The one exposure, priced and accepted**: plugin opts are written to the DURABLE cspec
+(`plugin_manager.ex:384`, `Plugin.strip_transient/1`), so a stored row containing
+`queue_overflow: :block` stops matching the guard and that plugin fails to enable on the
+next boot. Small because `:block` is the DEFAULT — a row only carries it if an operator
+typed the value already in force. Remedy if hit is re-enabling that plugin. I offered a
+one-line read-side `"block" -> {:ok, :drop_nothing}` migration clause; the user declined
+it. Do not add one back without asking.
+
+**Also widen `scripts/check-overflow-naming.sh:47`** — it matches
+`:block\s*[,|]\s*:drop_(newest|oldest)` and so requires ADJACENCY, which is exactly why
+it passed over the text it exists to catch. The gate missing this is part of the defect.
+
+**Queued on the user's instruction 2026-08-31 (session 4): fix CI.** See *CI is red*
+above. Only two of the four causes are work on this branch — the naming gate (cause C,
+red on `dev`, minutes) and the Ruby SDK unit tests (cause D, reproduce first). It is
+queued **after** the area 7 survey returns, because one worker at a time in a shared
+tree means a new worker cannot start over another's uncommitted edits; the survey
+writes no code, so the boundary comes as soon as it reports.
+
 
 Two phases, in this order. **Phase 1 first** — area 4 refactors `sdk/java`
 with zero behaviour change, and KI-33 is a live correctness defect in exactly

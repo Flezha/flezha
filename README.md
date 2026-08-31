@@ -293,7 +293,6 @@ Operator surface:
 ```bash
 flz boot status                              # per-namespace recovery_state + registry rows
 flz boot await --timeout 60                  # block until every hub reports :normal
-flz boot import-legacy-snapshot snap.flz     # one-shot migration from the removed `flz cluster snapshot` format
 ```
 
 Disable the auto-replay state machine (registry mutations still

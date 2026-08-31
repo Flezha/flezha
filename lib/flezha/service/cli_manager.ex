@@ -29,7 +29,6 @@ defmodule Flezha.Service.CliManager do
   defdelegate authz_render_whoami(arg1 \\ []), to: Cli.Authz
   defdelegate authz_whoami(arg1 \\ []), to: Cli.Authz
   defdelegate boot_await(arg1 \\ 60_000), to: Cli.Boot
-  defdelegate boot_import_legacy_snapshot(arg1, arg2 \\ false), to: Cli.Boot
   defdelegate boot_status(), to: Cli.Boot
   defdelegate build_mem_top_snapshot(), to: Cli.MemTop
   defdelegate cluster_status(arg1, arg2 \\ "text"), to: Cli.Listing

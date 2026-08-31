@@ -56,11 +56,7 @@ const COMMANDS: &[(&str, &[&str], &str)] = &[
         ],
         "Invalid argument",
     ),
-    (
-        "boot",
-        &["status", "await", "import-legacy-snapshot", "help"],
-        "Invalid argument",
-    ),
+    ("boot", &["status", "await", "help"], "Invalid argument"),
     (
         "state",
         &[

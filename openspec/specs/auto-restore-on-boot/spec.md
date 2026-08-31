@@ -233,7 +233,8 @@ The CLI SHALL provide:
 
 - `flz boot status` — for each namespace hub, print: hub_id, ProcessHub `recovery_state` (queried via `ProcessHub.recovery_state/1`), persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers.
 - `flz boot await [--timeout=N]` — block until every namespace hub reports `:normal` (calls `ProcessHub.await_normal/2` per hub).
-- `flz boot import-legacy-snapshot <file> [--force]` — one-shot tool that reads a `.flz` ETF file from the deleted `flz cluster snapshot` and writes its child specs into ProcessHub's persistent registry via `ProcessHub.start_children/3` (which the persistent backend captures durably). Refuses on non-empty registry without `--force`. Scheduled for removal in the next release.
+
+`flz boot` SHALL expose no import path for the `.flz` ETF format written by the deleted `flz cluster snapshot`. Nothing has written that format since `9235bcde` (2026-05-09), which deleted the producing verb and introduced the durable registry in the same commit, so no reachable node holds a file it could read.
 
 #### Scenario: flz boot status reports per-hub state
 
@@ -244,6 +245,11 @@ The CLI SHALL provide:
 
 - **WHEN** the runner runs `flz boot await --timeout=30000` while one hub is still in `:recovery_pending`
 - **THEN** the CLI blocks; once all hubs reach `:normal` (or the timeout), it returns; on timeout, exits non-zero with which hubs are still pending
+
+#### Scenario: The legacy snapshot import is refused as an unknown verb
+
+- **WHEN** the runner runs `flz boot import-legacy-snapshot /path/to/snap.flz`
+- **THEN** the CLI refuses it as an unrecognised subcommand, names the verbs `flz boot` does accept, and exits non-zero
 
 ### Requirement: Recovery replay SHALL NOT resurrect operatives onto dead nodes
 

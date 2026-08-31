@@ -157,7 +157,7 @@ repeated operator-issued signals: the first SIGTERM starts graceful shutdown and
 installs no OS handlers and registers nothing on `erl_signal_server`, so kernel's
 `erl_signal_handler` stays the owner (the BEAM terminates on SIGTERM) and `Application.prep_stop/1` calls
 `Flezha.Service.HubManager.stop_hub_manager/0` directly; the prod container entrypoint's
-disabled branch runs `snapshot-on-stop.sh` and then SIGTERMs the BEAM. `config/test.exs`
+disabled branch SIGTERMs the BEAM instead of calling `flz controller stop`. `config/test.exs`
 sets the flag to `false` so application teardown stays fast.
 
 ## See also

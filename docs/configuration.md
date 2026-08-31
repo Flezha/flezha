@@ -193,7 +193,7 @@ present; otherwise the `config/config.exs` defaults stand.
 |---|---|---|
 | `FLEZHA_PROCESS_HUB_PATH` | `mix.exs` | build a release against a local `process_hub` checkout instead of the published hex release |
 | `RUSTLER_SKIP_COMPILATION` | Rustler, via `mix compile` | `true` makes the build pick up a pre-built `priv/native/flz_nif.so` instead of invoking cargo (prod image Stage 2) |
-| `FLEZHA_SNAPSHOT_ENABLED`, `FLEZHA_SNAPSHOT_DIR`, `FLEZHA_RESTORE_WAIT_TIMEOUT_S`, `FLEZHA_TESTNET_WS_PORT` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; see [`operations/deployment.md`](operations/deployment.md) |
+| `FLEZHA_RESTORE_WAIT_TIMEOUT_S`, `FLEZHA_TESTNET_WS_PORT` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; `FLEZHA_RESTORE_WAIT_TIMEOUT_S` bounds the wait for the controller's control socket. See [`operations/deployment.md`](operations/deployment.md) |
 
 ### Runner-process environment (SDK side)
 

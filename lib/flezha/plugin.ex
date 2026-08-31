@@ -87,8 +87,7 @@ defmodule Flezha.Plugin do
   @doc """
   Strip transient fields that cannot be persisted across a BEAM
   restart, returning a value safe to embed in any persistence layer
-  (HotSwap handover state, ProcessHub child-spec, cluster snapshots,
-  DETS, ...).
+  (HotSwap handover state, ProcessHub child-spec, DETS, ...).
 
   Today every field on `%Flezha.Plugin{}` (`:id`, `:provider`, `:opts`,
   `:subscriptions`, `:namespace`, `:operative_id`) is inert data —

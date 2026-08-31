@@ -54,7 +54,6 @@ defmodule Flezha.AuthZ.Policy do
     :"plugin.upgrade",
     :"reset.run",
     :"controller.stop",
-    :"boot.import_legacy_snapshot",
     :"state.retention",
     :"state.delete",
     :"authz.bootstrap",

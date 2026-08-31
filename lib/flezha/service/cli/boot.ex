@@ -1,10 +1,9 @@
 defmodule Flezha.Service.Cli.Boot do
   @moduledoc """
-  `flz boot` — boot status, the bounded await, and the legacy snapshot import.
+  `flz boot` — boot status and the bounded await.
   """
 
   alias Flezha.Identificator
-  alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery
 
@@ -87,74 +86,5 @@ defmodule Flezha.Service.Cli.Boot do
 
         exit(:cli_error)
     end
-  end
-
-  @doc """
-  `flz boot import-legacy-snapshot <file> [--force]` — read a legacy `.flz`
-  ETF snapshot and write each operative's child spec into ProcessHub's
-  persistent registry via `start_children/3`. Refuses to import on a
-  non-empty hub unless `force?` is `true`.
-  """
-  def boot_import_legacy_snapshot(path, force? \\ false) do
-    with {:ok, blob} <- File.read(path),
-         {:ok, decoded} <- safe_binary_to_term(blob),
-         {:ok, payload} <- validate_legacy_payload(decoded),
-         :ok <- ensure_force_or_empty(payload, force?) do
-      run_legacy_import(payload)
-    else
-      {:error, reason} ->
-        Context.cli_error!("boot import-legacy-snapshot: #{inspect(reason)}", :stderr)
-    end
-  end
-
-  defp safe_binary_to_term(blob) do
-    try do
-      {:ok, :erlang.binary_to_term(blob, [:safe])}
-    rescue
-      _ -> {:error, :corrupt_snapshot}
-    end
-  end
-
-  defp validate_legacy_payload({:flezha_snapshot, 1, payload}) when is_map(payload),
-    do: {:ok, payload}
-
-  defp validate_legacy_payload(_), do: {:error, :unsupported_snapshot_format}
-
-  defp ensure_force_or_empty(_payload, true), do: :ok
-
-  defp ensure_force_or_empty(payload, false) do
-    namespaces = Map.get(payload, :namespaces, [])
-
-    Enum.find_value(namespaces, :ok, fn ns ->
-      hub_id = Identificator.hub(ns)
-
-      if safe_registry_count(hub_id) > 0 do
-        {:error, {:hub_not_empty, ns}}
-      else
-        nil
-      end
-    end)
-  end
-
-  defp run_legacy_import(payload) do
-    operatives = Map.get(payload, :operatives, [])
-
-    Enum.each(operatives, fn entry ->
-      namespace = Map.fetch!(entry, :namespace)
-      cspec = Map.fetch!(entry, :cspec)
-      hub_id = Identificator.hub(namespace)
-
-      # Declared like any operator start: an imported operative the declared
-      # set never learns about would be invisible to the reconcile — imported
-      # once, restored never.
-      _ =
-        ProcessHub.start_children(hub_id, [cspec],
-          async_wait: false,
-          durable: HubManager.durable_starts?()
-        )
-    end)
-
-    IO.puts("boot import-legacy-snapshot: imported #{length(operatives)} operatives")
-    :ok
   end
 end

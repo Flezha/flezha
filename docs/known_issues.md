@@ -660,52 +660,6 @@ below is all that survives — which is enough to write it again.
   right that one commit would leave a bisect unable to separate an exit-code change
   from a structural regression.
 
-### KI-81 · Two `docker/prod` scripts call `flz cluster` verbs that do not exist
-
-- **Severity**: P2 · a production recovery path that logs an error and does
-  nothing, on every controller stop and every controller boot.
-- **Where**: `docker/prod/snapshot-on-stop.sh:32` runs
-  `"$FLZ" cluster snapshot "$SNAPSHOT_TMP" --peer-timeout-ms "$PEER_TIMEOUT_MS"`;
-  `docker/prod/controller-entrypoint.sh:104` runs `"$FLZ" cluster restore
-  "$SNAPSHOT_FILE"`. `cli/src/cluster.rs` implements **`status` and `help`, and
-  nothing else**, and `lib/flezha/service/cli_manager.ex` has no
-  `cluster_snapshot` / `cluster_restore` (only `cluster_status/2` and
-  `cluster_status_recovery/2`).
-- **Evidence**:
-
-  ```
-  $ ./flz cluster snapshot /tmp/x --peer-timeout-ms 5000
-  Error: Unknown cluster subcommand 'snapshot'
-  ... (the cluster help screen) ...
-  exit=1
-  $ ./flz cluster restore /tmp/x
-  Error: Unknown cluster subcommand 'restore'
-  exit=1
-  $ grep -n 'def cluster_' lib/flezha/service/cli_manager.ex
-  777:  def cluster_status(namespace, output_format \\ "text") do
-  805:  def cluster_status_recovery(namespace, nodes) do
-  ```
-
-- **Mechanism**: the verbs existed — `git log -S'cluster snapshot'` names
-  `d80d8511 "Add cluster snapshot/restore for operator-driven recovery"` — and
-  were removed when `9235bcde auto-restore-on-boot` replaced operator-driven
-  recovery with an orphan reconcile. The two prod scripts were never updated. The
-  failure is soft in both directions: the snapshot step logs
-  `"ERROR: flz cluster snapshot failed; leaving previous ... in place"` and
-  continues, and the restore step is guarded by `if [ -f "$SNAPSHOT_FILE" ]`,
-  which is never true because nothing writes it. Auto-restore-on-boot covers the
-  recovery these were for, so this is dead code that lies rather than a live data
-  path — which is why it is P2 and not P1.
-- **Why it was not fixed on the spot**: found by the `refactor-6-cli` survey,
-  which changes no code and whose scope is `cli/**`. The remedy is a **product
-  decision** (charter §1c): delete the dead path, or re-implement the two verbs.
-- **A fix must** pick one and say why. Deleting is the smaller change and matches
-  the architecture that replaced them; re-implementing needs a
-  `CliManager.cluster_snapshot/2` and a spec, because operator-driven snapshot is
-  a capability nothing currently specifies. Either way the entrypoint's comment
-  block (`controller-entrypoint.sh:11`) must stop describing a step that does not
-  run.
-
 ## P2 — tests that lie or leak
 
 - **Supervisor verdict 2026-08-31 — real, P2, and split.** The **gate half** —
@@ -725,26 +679,6 @@ below is all that survives — which is enough to write it again.
   recorded it as *"environment, pre-existing"* — accurate, and without a mechanism.
   This entry supplies the mechanism, which is why the dismissals were not wrong so much
   as unfinished.
-
-- **Supervisor verdict 2026-08-31 — CONFIRMED FROM SOURCE, and escalated.** Verified
-  independently: `docker/prod/snapshot-on-stop.sh:32` invokes `flz cluster snapshot`
-  and `controller-entrypoint.sh` invokes `flz cluster restore`, while
-  `cli/src/cluster.rs` matches **only** `"status"` — `grep -cE '"snapshot"|"restore"'`
-  returns **0**.
-- **What that means in production**: the controller's pre-stop hook calls a command
-  that does not exist, so **every graceful shutdown runs a snapshot step that cannot
-  succeed**, and the entrypoint's restore path is equally dead. The scripts' own error
-  handling makes this quiet — `snapshot-on-stop.sh:42` logs *"snapshot failed; leaving
-  previous file in place"*, which reads like a transient failure rather than a missing
-  verb.
-- **Why it is the user's call, not mine**: the verbs were removed by `9235bcde`
-  (`auto-restore-on-boot`) and the scripts were never updated. Restoring them, or
-  deleting the scripts' use of them, is a decision about **whether cluster
-  snapshot/restore is a supported operation at all** — a product question. Recorded
-  under *Awaiting the user's decision* with options.
-- **Not area 6's work.** It is `docker/prod/` and a controller capability, not the CLI
-  refactor, and folding it in would put a behaviour decision inside a zero-behaviour-
-  change area.
 
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
@@ -2130,6 +2064,120 @@ path, so none needs a red-first test.
   note in the same commit** — the note is the reason this looked like a capability.
 
 ## Resolved
+
+### KI-81 · Two `docker/prod` scripts call `flz cluster` verbs that do not exist — RESOLVED
+
+- **Severity**: P2 · a production recovery path that logs an error and does
+  nothing, on every controller stop and every controller boot.
+- **Where**: `docker/prod/snapshot-on-stop.sh:32` runs
+  `"$FLZ" cluster snapshot "$SNAPSHOT_TMP" --peer-timeout-ms "$PEER_TIMEOUT_MS"`;
+  `docker/prod/controller-entrypoint.sh:104` runs `"$FLZ" cluster restore
+  "$SNAPSHOT_FILE"`. `cli/src/cluster.rs` implements **`status` and `help`, and
+  nothing else**, and `lib/flezha/service/cli_manager.ex` has no
+  `cluster_snapshot` / `cluster_restore` (only `cluster_status/2` and
+  `cluster_status_recovery/2`).
+- **Evidence**:
+
+  ```
+  $ ./flz cluster snapshot /tmp/x --peer-timeout-ms 5000
+  Error: Unknown cluster subcommand 'snapshot'
+  ... (the cluster help screen) ...
+  exit=1
+  $ ./flz cluster restore /tmp/x
+  Error: Unknown cluster subcommand 'restore'
+  exit=1
+  $ grep -n 'def cluster_' lib/flezha/service/cli_manager.ex
+  777:  def cluster_status(namespace, output_format \\ "text") do
+  805:  def cluster_status_recovery(namespace, nodes) do
+  ```
+
+- **Mechanism**: the verbs existed — `git log -S'cluster snapshot'` names
+  `d80d8511 "Add cluster snapshot/restore for operator-driven recovery"` — and
+  were removed when `9235bcde auto-restore-on-boot` replaced operator-driven
+  recovery with an orphan reconcile. The two prod scripts were never updated. The
+  failure is soft in both directions: the snapshot step logs
+  `"ERROR: flz cluster snapshot failed; leaving previous ... in place"` and
+  continues, and the restore step is guarded by `if [ -f "$SNAPSHOT_FILE" ]`,
+  which is never true because nothing writes it. Auto-restore-on-boot covers the
+  recovery these were for, so this is dead code that lies rather than a live data
+  path — which is why it is P2 and not P1.
+- **Why it was not fixed on the spot**: found by the `refactor-6-cli` survey,
+  which changes no code and whose scope is `cli/**`. The remedy is a **product
+  decision** (charter §1c): delete the dead path, or re-implement the two verbs.
+- **A fix must** pick one and say why. Deleting is the smaller change and matches
+  the architecture that replaced them; re-implementing needs a
+  `CliManager.cluster_snapshot/2` and a spec, because operator-driven snapshot is
+  a capability nothing currently specifies. Either way the entrypoint's comment
+  block (`controller-entrypoint.sh:11`) must stop describing a step that does not
+  run.
+- **Supervisor verdict 2026-08-31 — CONFIRMED FROM SOURCE, and escalated.** Verified
+  independently: `docker/prod/snapshot-on-stop.sh:32` invokes `flz cluster snapshot`
+  and `controller-entrypoint.sh` invokes `flz cluster restore`, while
+  `cli/src/cluster.rs` matches **only** `"status"` — `grep -cE '"snapshot"|"restore"'`
+  returns **0**.
+- **What that means in production**: the controller's pre-stop hook calls a command
+  that does not exist, so **every graceful shutdown runs a snapshot step that cannot
+  succeed**, and the entrypoint's restore path is equally dead. The scripts' own error
+  handling makes this quiet — `snapshot-on-stop.sh:42` logs *"snapshot failed; leaving
+  previous file in place"*, which reads like a transient failure rather than a missing
+  verb.
+- **Why it is the user's call, not mine**: the verbs were removed by `9235bcde`
+  (`auto-restore-on-boot`) and the scripts were never updated. Restoring them, or
+  deleting the scripts' use of them, is a decision about **whether cluster
+  snapshot/restore is a supported operation at all** — a product question. Recorded
+  under *Awaiting the user's decision* with options.
+- **Not area 6's work.** It is `docker/prod/` and a controller capability, not the CLI
+  refactor, and folding it in would put a behaviour decision inside a zero-behaviour-
+  change area.
+
+- **RESOLVED 2026-08-31 by `retire-cluster-snapshot-remnants`** — deleted, not
+  re-implemented. The decisive fact was not a judgement: the published spec
+  (`openspec/specs/controller-packaging/spec.md:179`) said of the snapshot branch
+  *"is removed once `auto-restore-on-boot` lands and `cluster-snapshot-restore` is
+  deleted"*, and both landed in `9235bcde` on 2026-05-09. The spec scheduled its own
+  deletion three and a half months before this entry was filed.
+- **Re-reproduced at `d4e62240` before anything was removed**, so the entry closes on a
+  measurement and not on a reading:
+
+  ```
+  $ ./target/release/flz cluster snapshot /tmp/x --peer-timeout-ms 5000
+  Error: Unknown cluster subcommand 'snapshot'
+  ... (the cluster help screen) ...
+  $ echo $?
+  1
+  $ ./target/release/flz cluster restore /tmp/x
+  Error: Unknown cluster subcommand 'restore'
+  $ echo $?
+  1
+  $ grep -cE '"snapshot"|"restore"' cli/src/cluster.rs
+  0
+  ```
+
+- **What went**: `docker/prod/snapshot-on-stop.sh` (whole file), the entrypoint's
+  restore branch and its `FLEZHA_SNAPSHOT_*` / `FLEZHA_RESTORE_WAIT_SOCKET_GLOB`
+  reads, `Dockerfile.controller`'s `COPY`/`chmod` of the script, `.dockerignore`'s
+  re-include, the `flz boot import-legacy-snapshot` verb on both sides (Rust verb,
+  help, golden, dispatch row, `CliManager` delegate, `Cli.Boot` implementation, four
+  private functions, the `:"boot.import_legacy_snapshot"` authz action and its admin
+  grant), the ConfigMap's `FLEZHA_SNAPSHOT_DIR` and dead `FLEZHA_DATA_DIR`, and every
+  stale document. Three spec deltas: `controller-packaging` modified,
+  `runner-controller-connection-healing`'s preservation requirement removed,
+  `auto-restore-on-boot`'s import bullet dropped.
+- **Two claims in the verdict above were wrong, and stay visible so the file keeps
+  "fixed" apart from "never true".** (a) *"every graceful shutdown runs a snapshot step
+  that cannot succeed"* — it never ran on the default path;
+  `controller-entrypoint.sh:122` said so explicitly, and the branch fired only under
+  `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`. (b) *"the controller's pre-stop hook calls a
+  command that does not exist"* — the Kubernetes `preStop` runs `flz controller stop`
+  (`kubernetes/flezha-daemonset.yaml:179`) and never ran this script; three comments in
+  the tree claimed otherwise and went with it.
+- **What was NOT deleted, each with the measurement that saved it**: the entrypoint's
+  disabled-shutdown branch (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` is read by
+  `config/runtime.exs:261` and specified by `controller-graceful-shutdown`, so removing
+  the branch would kill a live operator kill-switch); `FLEZHA_RESTORE_WAIT_TIMEOUT_S`
+  (it bounds the surviving control-socket wait, so it never became unread — only its
+  name is now a wart); and `Cli.Boot`'s `safe_registry_count/1`, which `boot_status/0`
+  still calls.
 
 ### KI-99 · `Source.handle_signal/2` is a ninth dead callback
 

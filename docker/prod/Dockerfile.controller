@@ -118,12 +118,11 @@ RUN addgroup --system --gid 1000 flezha \
 
 COPY --from=elixir-build /app/_build/prod/rel/flezha /flezha/
 
-# Graceful-restart entrypoint and pre-stop hook. See the controller-packaging
-# spec ("Prod image entrypoint SHALL provide graceful-restart lifecycle")
+# Graceful-restart entrypoint. See the controller-packaging spec
+# ("Prod image entrypoint SHALL provide graceful-restart lifecycle")
 # for the full env-var contract.
 COPY docker/prod/controller-entrypoint.sh /usr/local/bin/controller-entrypoint.sh
-COPY docker/prod/snapshot-on-stop.sh /usr/local/bin/snapshot-on-stop.sh
-RUN chmod +x /usr/local/bin/controller-entrypoint.sh /usr/local/bin/snapshot-on-stop.sh
+RUN chmod +x /usr/local/bin/controller-entrypoint.sh
 
 # Named volumes inherit the mount-point's image-time ownership, so each
 # overlaid dir must exist with flezha:flezha or the non-root process

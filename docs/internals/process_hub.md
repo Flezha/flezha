@@ -252,7 +252,7 @@ migrate the child back, and the loop re-applies.
   through the same call (`Lifecycle.spawn_migrate_task/1`).
 - **Cold boot** — the durable registry plus the per-Entity WAL and snapshots under
   `app_data/state/...` ([state persistence](state_persistence.md)). There is no periodic
-  in-memory snapshot loop and no `flz cluster snapshot` CLI.
+  in-memory snapshot loop and no cluster-wide snapshot CLI.
 
 ## Plugin subscriptions
 

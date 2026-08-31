@@ -68,8 +68,6 @@ USAGE:
 COMMANDS:
     status                    Print per-namespace recovery state and registry counts
     await [--timeout SECS]    Block until every namespace hub reports :normal
-    import-legacy-snapshot <file> [--force]
-                              Import a legacy `.flz` snapshot into ProcessHub's persistent registry
     help                      Show this help message"#;
 
 pub(crate) const CLUSTER: Help = r#"flz cluster - Controller cluster status

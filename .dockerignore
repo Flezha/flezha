@@ -41,7 +41,6 @@ scripts
 # path, so they MUST stay in the build context.
 !docker/prod/agent-entrypoint.sh
 !docker/prod/controller-entrypoint.sh
-!docker/prod/snapshot-on-stop.sh
 
 # Java SDK is a separate deliverable — not needed for the agent build.
 sdk/java
