@@ -2,6 +2,12 @@ pub mod config;
 pub mod liveness;
 pub mod protocol;
 pub mod quic;
+/// The in-memory `quinn_proto` pair both send-buffer test suites drive. Test
+/// code, compiled into the library only for `flz_nif`'s tests, which reach it
+/// through the `test-support` feature.
+#[cfg(any(test, feature = "test-support"))]
+#[path = "quic_pair_tests.rs"]
+pub mod quic_pair;
 pub mod send_gate;
 pub mod tls;
 

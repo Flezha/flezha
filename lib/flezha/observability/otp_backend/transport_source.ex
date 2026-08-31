@@ -12,7 +12,14 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
       `:driver_loop_iterations` (heartbeat counter), `:driver_loop_age_ms`
       (gauge; a large value means the driver thread is wedged),
       `:driver_cmd_queue_depth`, `:driver_write_buffer_bytes`,
-      `:driver_streams`.
+      `:driver_write_buffer_dropped`, `:driver_streams`.
+
+  **The driver self-report is UDS-only.** The QUIC driver produces no
+  `DriverStats` at all, so for a QUIC controller every `:driver_*` metric above
+  is emitted zero times — including `:driver_write_buffer_dropped`, the
+  send-buffer loss counter. A QUIC deployment is therefore NOT covered by this
+  source's data-plane half, and a green `/healthz` on QUIC is not evidence
+  about its transport. Tracked as KI-72.
     * global BEAM aggregates from
       `Flezha.Transport.LivenessCounters` — `:channel_io_in_received`,
       `:channel_send_frame_calls`, `:channel_nil_drops`,
@@ -82,22 +89,29 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     end
   end
 
-  # Driver self-report (UDS only; QUIC has no `:driver` key). `loop_age_ms`
-  # is the headline liveness signal — a value far above the poll interval
-  # means the flz-uds-driver thread is wedged.
+  # Driver self-report (UDS only; QUIC has no `:driver` key — see the moduledoc).
+  # `loop_age_ms` is the headline liveness signal — a value far above the poll
+  # interval means the flz-uds-driver thread is wedged.
+  #
+  # `write_buffer_dropped` is not a metric to trend: the send gate holds a
+  # sender rather than discarding its frame, so any non-zero value is a frame
+  # the transport lost and is a defect to report.
   defp emit_driver_stats(_transport, nil), do: :ok
 
   defp emit_driver_stats(transport, driver) do
     meta = %{transport: transport}
     age = max(driver.now_ms - driver.last_loop_ms, 0)
-    write_buffer = Enum.reduce(driver.streams, 0, fn s, acc -> acc + s.write_buffer_len end)
 
     emit(:driver_loop_iterations, %{count: driver.loop_iterations}, meta)
     emit(:driver_loop_age_ms, %{value: age}, meta)
     emit(:driver_cmd_queue_depth, %{value: driver.cmd_queue_depth}, meta)
-    emit(:driver_write_buffer_bytes, %{value: write_buffer}, meta)
+    emit(:driver_write_buffer_bytes, %{value: sum_streams(driver, :write_buffer_len)}, meta)
+    emit(:driver_write_buffer_dropped, %{count: sum_streams(driver, :write_buffer_dropped)}, meta)
     emit(:driver_streams, %{value: length(driver.streams)}, meta)
   end
+
+  defp sum_streams(driver, key),
+    do: Enum.reduce(driver.streams, 0, fn s, acc -> acc + Map.fetch!(s, key) end)
 
   # Global BEAM aggregates — no per-entity label, so cardinality is flat.
   defp poll_beam_counters() do
@@ -132,6 +146,11 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit_sum(:mailbox_drops_newest, channels, :hb_drops_newest)
     emit_sum(:mailbox_drops_oldest, channels, :hb_drops_oldest)
     emit_sum(:mailbox_pending_pushes, channels, :hb_pending_pushes)
+
+    # Send-side backpressure, the mirror of `credit_parked`: senders held on a
+    # stream's send-buffer gate. Climbing while `channel_nil_drops` stays flat
+    # is congestion being absorbed rather than data being lost.
+    emit_sum(:send_gate_held, channels, :send_gate_held)
 
     ledger =
       Enum.reduce(channels, 0, fn row, acc -> acc + Map.get(row, :credit_ledger_level, 0) end)

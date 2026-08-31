@@ -7,8 +7,9 @@ defmodule Flezha.Transport.Stream do
   runner can coexist on one Controller; the NIF arm delegates to
   `Flezha.Transport.Native` unchanged.
 
-  `send_data/2` is deliberately absent: it carries pre-framed bytes and only the
-  control channel used it, which now frames once in Rust via `send_frame/4`.
+  There is one send: `send_frame/4`, which frames in Rust. A raw-bytes send
+  existed beside it, reached nothing, and is deleted — a second send path that
+  must track the send gate forever is a trap for the next reader.
   `set_passive/1` is absent too (zero callers). The invariant this seam protects
   is grep-simple — no per-stream `Native.` call outside `native.ex` and here.
   """

@@ -462,12 +462,13 @@ defmodule Flezha.Operative.Replay do
   defp reforward(%Overwatch{} = state, payloads) do
     dropped? =
       Enum.reduce(payloads, false, fn payload, any_dropped? ->
-        Overwatch.deliver(state, payload) == {:error, :no_stream} or any_dropped?
+        Overwatch.deliver(state, payload) != :ok or any_dropped?
       end)
 
-    # A re-forward onto a stream that has not bound is dropped exactly as a fresh
+    # A re-forward the channel could not carry — no binding, or a send buffer
+    # that never drained under the held sender — is dropped exactly as a fresh
     # ingest is, and the tail this pass could not deliver is still the tail the
-    # next bind owes — so it arms the same re-forward the ingest path arms.
+    # next bind owes, so it arms the same re-forward the ingest path arms.
     if dropped?, do: arm_bind_reforward(state)
 
     :ok

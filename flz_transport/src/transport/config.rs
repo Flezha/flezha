@@ -32,9 +32,8 @@ pub fn max_frame_bytes() -> usize {
 }
 
 /// Per-stream send-buffer ceiling. Every send buffer in the tree derives its
-/// bound from this one number: both server drivers through
-/// [`super::send_gate::SendGate`], and the QUIC client through
-/// [`would_overflow_write_buffer`] directly.
+/// bound from this one number, and every one of them reaches it through
+/// [`super::send_gate::SendGate`]: both server drivers, and the QUIC client.
 pub fn max_write_buffer_bytes() -> usize {
     parse_positive_bytes(
         env::var("FLEZHA_MAX_WRITE_BUFFER_BYTES").ok().as_deref(),
@@ -46,10 +45,10 @@ pub fn max_write_buffer_bytes() -> usize {
 /// exceed `cap`. An empty buffer always accepts (so a single oversized frame on
 /// an idle stream is never dropped); once non-empty it stays at or below `cap`.
 ///
-/// This is the ceiling, not the bound a healthy stream lives under: the
-/// drivers reach it through [`super::send_gate::SendGate::over_ceiling`], and a
-/// sender honouring the gate never gets here. The QUIC client calls it
-/// directly and still discards what it refuses.
+/// This is the ceiling, not the bound a healthy stream lives under: every
+/// send buffer reaches it through [`super::send_gate::SendGate::over_ceiling`],
+/// and a sender honouring the gate never gets here. What it refuses is
+/// answered to its caller, never discarded under an `Ok`.
 pub fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize) -> bool {
     buffered != 0 && buffered + incoming > cap
 }

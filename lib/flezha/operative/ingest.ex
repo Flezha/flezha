@@ -232,7 +232,11 @@ defmodule Flezha.Operative.Ingest do
   defp verdict(%Overwatch{} = state, payload) do
     case Overwatch.deliver(state, payload) do
       :ok -> :ok
-      {:error, :no_stream} -> undeliverable(state)
+      # Undelivered is undelivered, whatever the channel could not carry it
+      # for — an unbound stream, or a send buffer that never drained under a
+      # held sender. Both leave the payload where it was and both are answered
+      # the same way, so the reason belongs in the channel's own reporting.
+      {:error, _reason} -> undeliverable(state)
     end
   end
 

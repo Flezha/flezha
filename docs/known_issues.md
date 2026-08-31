@@ -40,6 +40,152 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-73 · The send gate holds the sender one frame too late, and ~20 % of a burst is still discarded under an `:ok`
+
+- **Severity**: P1 · **REPRODUCED**, 4 of 4 runs, deterministic. Found while
+  implementing the sender-side hold for `close-transport-send-buffer-loss`
+  (row 6.5 segment B), by the test written to prove the hold works.
+- **Where**: `flz_nif/src/stream.rs` `send_frame` reads
+  `SendGate::is_raised`, which is written only by `SendGate::observe` —
+  called from `uds_driver::flush_pending` **on the driver thread**.
+  `flz_nif/src/uds_driver.rs` `enqueue_write` then offers each queued frame to
+  `SendGate::offer`, which discards at the ceiling and answers `false`; that
+  answer is used only to decide whether to close the stream.
+- **What happens**: the gate bit lives on the far side of an unbounded command
+  channel and nothing accounts for what the sender has already queued into it.
+  A sender in a burst therefore issues hundreds of `send_frame` calls before
+  the driver has crossed the high-water mark and set the bit. Every one of
+  those is queued, offered to a buffer already at the cap, and **discarded** —
+  and `send_frame` answered `:ok` for all of them. The hold itself works: the
+  sender is refused exactly once and released when the buffer drains. It is
+  simply taken after the loss.
+- **Why it matters**: this is KI-3 surviving its own fix at one fifth the
+  rate. The row's stated guarantee — a bounded send buffer signals congestion
+  rather than discarding — and the `controller-send-buffer-bound` scenario
+  *"Congestion increments nothing"* are both false while it stands.
+- **It refutes a design claim that was measured**: `design.md` D13 recorded 83
+  overshoot frames on the ungated build and stated *"The residual 83 are what
+  batch 3 removes, by parking the sender instead of letting it discover the
+  refusal one frame at a time."* Parking removes the *repeat* refusals, not the
+  overshoot: the overshoot is everything the sender queued before the bit was
+  set, and the park cannot begin until it is.
+- **Reproduction** — KI-3's harness with the channel and the hold in the path:
+  a real UDS driver, a real peer that connects and never reads, a real
+  `StreamChannel` owning the stream, and one sender on `io_in/3`. The sender
+  runs in its own process because `io_in/3` holds the calling one.
+
+  ```elixir
+  # /tmp/ki73.exs
+  alias Flezha.Runner.StreamChannel
+  alias Flezha.Transport.{LivenessCounters, Native}
+  Application.ensure_all_started(:telemetry)
+  LivenessCounters.ensure_table()
+
+  path = Path.join(System.tmp_dir!(), "ki73_#{System.unique_integer([:positive])}.sock")
+  {:ok, server} = Native.start_uds_server(path, self())
+  {:ok, peer} =
+    :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
+  stream = receive do: ({:flz_connection, s} -> s), after: (5_000 -> raise "no conn")
+
+  name = :ki73_channel
+  {:ok, pid} = StreamChannel.start_link({"ki73_runner", name, :primary})
+  :ok = Native.controlling_process(stream, pid)
+  :ok = GenServer.call(pid, {:bind, stream})
+
+  test = self()
+  payload = :binary.copy("x", 64 * 1024)
+  spawn(fn ->
+    r = Enum.map(1..400, fn i -> StreamChannel.io_in(name, "op_#{i}", {payload, %{}}) end)
+    send(test, {:done, Enum.frequencies(r)})
+  end)
+
+  Process.sleep(700)
+  st = hd(Native.driver_stats(server).streams)
+  %{channels: ch} = LivenessCounters.snapshot_all()
+  c = Enum.find(ch, &(&1.name == name))
+  IO.puts("HELD: send_gate_held=#{c.send_gate_held} send_frame_calls=#{c.send_frame_calls}")
+  IO.puts("DRIVER: frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
+
+  # Drain, so the gate lowers and the held sender is released.
+  spawn(fn ->
+    d = fn d -> if match?({:ok, _}, :gen_tcp.recv(peer, 0, 3_000)), do: d.(d) end
+    d.(d)
+  end)
+
+  receive do: ({:done, f} -> IO.puts("SENDER: #{inspect(f)}")), after: (20_000 -> IO.puts("hung"))
+  st = hd(Native.driver_stats(server).streams)
+  IO.puts("FINAL: frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
+  _ = Native.stream_id(stream)
+  Native.stop_server(server)
+  ```
+
+  ```
+  $ MIX_ENV=test mix run --no-start /tmp/ki73.exs
+  HELD: send_gate_held=1 send_frame_calls=211
+  DRIVER: frames_written=131 write_buffer_dropped=79
+  SENDER: %{ok: 400}
+  FINAL: frames_written=321 write_buffer_dropped=79
+  ```
+
+  321 written + 79 discarded = 400, and the sender was told `:ok` 400 times.
+  Four runs: 78, 79, 79, 92 discarded. The loss is a single burst at the
+  crossing — the counter does not move again once the sender is pacing with
+  the driver — so it is bounded by how far ahead the sender got, which nothing
+  bounds.
+- **A fix must** make the sender's own read exact rather than lagging, since
+  no widening of the watermark gap bounds "how far ahead a sender can get".
+  The shape that does it, for the verdict to weigh: `SendGate` gains
+  `inflight` (bytes `send_frame` has queued and the driver has not yet
+  offered) and `buffered` (the depth the driver last observed).
+  `send_frame` adds its length to `inflight` and raises the bit itself when
+  `buffered + inflight` crosses the high-water mark; `enqueue_write`
+  subtracts before offering; the driver still lowers on the drain. The cost is
+  one `fetch_add` and one extra relaxed load on a path that already crosses
+  into a NIF — the same order as the load `design.md` D9 already argues from
+  placement, so the declared A/B rows are unaffected. It also gives the
+  invariant a test that can be written: `write_buffer_dropped == 0` after a
+  congested burst, which is the assertion
+  `test/flezha/runner/stream_channel_send_gate_test.exs` deliberately does not
+  make today.
+- **Not fixed in segment B**: the remedy changes the gate's mechanism rather
+  than a caller, and the verdict on that is the supervisor's.
+
+- **Supervisor verdict 2026-08-31 — REPRODUCED INDEPENDENTLY, and row 6.5 does not
+  close until it is fixed.** I extracted the harness from this entry and ran it
+  unchanged; it matches the filed numbers to the frame on the first run:
+
+  ```
+  HELD:   send_gate_held=1 send_frame_calls=211
+  DRIVER: frames_written=131 write_buffer_dropped=79
+  SENDER: %{ok: 400}
+  ```
+
+  **79 of 400 frames discarded, and all 400 answered `:ok`.** That is KI-3's exact
+  symptom, still reproducing after the gate and the park are in place.
+- **Why this blocks the row rather than being queued.** Row 6.5 exists so the
+  platform's stated guarantee — nothing drops by default — becomes true. Closing it
+  here would commit a change claiming to resolve KI-3 while KI-3's own reproduction
+  still returns 79. Worse, the spec delta's *Congestion increments nothing* scenario
+  is **not satisfiable in this state**, so archiving would publish a requirement the
+  code does not meet. A requirement that is false on the day it lands is the failure
+  this programme spent the session removing from `docs/known_issues.md`.
+- **The mechanism is sound and the fix is small.** The gate bit is written by
+  `SendGate::observe` on the **driver thread**, behind an unbounded command channel,
+  so the sender's view is always behind by whatever is queued — ~210 frames here. The
+  park cannot begin before the bit is set, so it removes the *repeat* refusals and not
+  the *overshoot*. Fix shape, from the entry: `SendGate` gains `inflight` + `buffered`
+  and **`send_frame` raises the bit itself** — one `fetch_add` and one relaxed load,
+  the same order of cost D9 already argues from placement.
+- **It refutes `design.md` D13**, which claimed the residual 83 frames measured at
+  segment A were "what batch 3 removes". They are not: parking removes repeats, and
+  the overshoot is everything queued before the bit was set. D13 must be corrected,
+  not quietly dropped — it is a measured claim that turned out wrong.
+- **Credit where due**: this was found by the test written to prove the hold works,
+  and the worker then declined to assert `write_buffer_dropped == 0` in that test
+  because the assertion would have been false. A test that quietly omits the
+  assertion its subject cannot yet pass is how KI-67 happened; naming the omission is
+  the opposite.
+
 ### KI-70 · The QUIC client drops a frame and tells its caller every byte was written
 
 - **Severity**: P1 · **read-established from the code; not driven at runtime**

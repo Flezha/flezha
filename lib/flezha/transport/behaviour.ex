@@ -8,7 +8,6 @@ defmodule Flezha.Transport.Behaviour do
 
   @type conn :: any()
 
-  @callback send_data(conn, binary()) :: :ok | {:error, term()}
   @callback set_active(conn) :: :ok | {:error, term()}
   @callback close(conn) :: :ok | {:error, term()}
   @callback controlling_process(conn, pid()) :: :ok | {:error, term()}

@@ -3,6 +3,7 @@ rustler::atoms! {
     error,
     undefined,
     send_buffer_full,
+    driver_gone,
 
     // Messages sent to Elixir processes
     flz_data,

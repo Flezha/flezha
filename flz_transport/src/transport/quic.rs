@@ -14,7 +14,7 @@ use quinn_proto::{
     StreamEvent, StreamId, Transmit,
 };
 
-use super::config::{max_write_buffer_bytes, would_overflow_write_buffer};
+use super::send_gate::SendGate;
 
 const UDP_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
@@ -35,9 +35,14 @@ enum DriverCommand {
 struct StreamSlot {
     read_tx: channel::Sender<Bytes>,
     write_buf: Vec<u8>,
-    pending_write_reply: Option<(usize, channel::Sender<io::Result<usize>>)>,
-    max_write_buffer_bytes: usize,
-    write_buffer_dropped: u64,
+    /// Writers whose bytes are in `write_buf`, in the order they appended.
+    /// Every one is answered when the buffer drains: a writer blocks on its
+    /// reply, so this is where the backpressure of a stalled peer is felt.
+    pending_write_replies: Vec<(usize, channel::Sender<io::Result<usize>>)>,
+    /// The ceiling and its counter, in the one form every send buffer in the
+    /// tree shares. The gate's raised bit is unused here: this stream signals
+    /// congestion by withholding the reply, which is a stronger signal.
+    gate: SendGate,
 }
 
 struct ChannelReader {
@@ -491,9 +496,8 @@ fn handle_command(
                     StreamSlot {
                         read_tx,
                         write_buf: Vec::new(),
-                        pending_write_reply: None,
-                        max_write_buffer_bytes: max_write_buffer_bytes(),
-                        write_buffer_dropped: 0,
+                        pending_write_replies: Vec::new(),
+                        gate: SendGate::new(),
                     },
                 );
                 let _ = reply.send(Ok(stream_id));
@@ -527,11 +531,19 @@ fn handle_command(
     false
 }
 
-/// Write an app thread's bytes onto its stream, buffering what the stream
-/// will not take now and deferring the reply until the buffer drains. At the
-/// send-buffer cap the frame is dropped rather than growing the buffer
-/// without bound (DropNewest — the peer is not draining; the data stream is
-/// at-least-once with downstream dedup).
+/// Write an app thread's bytes onto its stream, buffering what the stream will
+/// not take now and deferring the reply until the buffer drains.
+///
+/// Two rules make several writers on one stream safe, and this is the only
+/// place either can be stated. **Bytes already buffered are bytes this frame
+/// queues behind**: writing past them would put this frame on the wire ahead
+/// of the last one's remainder. And **a buffered writer is appended, never
+/// replaced** — its reply sender is kept beside its bytes, so it is answered
+/// rather than dropped.
+///
+/// Only the ceiling can refuse, and it answers the caller with an error: a
+/// `Write` that returns `Ok(n)` has promised `n` bytes were accepted, so it
+/// may never be the answer to a frame this function discarded.
 fn write_or_buffer(
     connection: &mut quinn_proto::Connection,
     stream_id: StreamId,
@@ -540,31 +552,29 @@ fn write_or_buffer(
     reply: channel::Sender<io::Result<usize>>,
 ) {
     let total_len = data.len();
-    if would_overflow_write_buffer(slot.write_buf.len(), total_len, slot.max_write_buffer_bytes) {
-        slot.write_buffer_dropped += 1;
-        tracing::warn!(
-            target: "flezha::transport",
-            transport = "quic",
-            dropped = slot.write_buffer_dropped,
-            "QUIC send buffer at cap; dropping frame"
-        );
-        let _ = reply.send(Ok(total_len));
+
+    if !slot.write_buf.is_empty() {
+        if slot.gate.offer(&mut slot.write_buf, &data) {
+            slot.pending_write_replies.push((total_len, reply));
+        } else {
+            let _ = reply.send(Err(refused_at_ceiling(slot.write_buf.len())));
+        }
         return;
     }
+
     match connection.send_stream(stream_id).write(&data) {
+        Ok(written) if written == total_len => {
+            let _ = reply.send(Ok(total_len));
+        }
+        // Partially taken, or the peer's flow-control window is shut: buffer
+        // what is left and answer once it has gone out.
         Ok(written) => {
-            if written < total_len {
-                // Partial write — buffer remainder, defer reply
-                slot.write_buf.extend_from_slice(&data[written..]);
-                slot.pending_write_reply = Some((total_len, reply));
-            } else {
-                let _ = reply.send(Ok(total_len));
-            }
+            slot.write_buf.extend_from_slice(&data[written..]);
+            slot.pending_write_replies.push((total_len, reply));
         }
         Err(quinn_proto::WriteError::Blocked) => {
-            // Fully blocked — buffer everything, defer reply
-            slot.write_buf = data;
-            slot.pending_write_reply = Some((total_len, reply));
+            slot.write_buf.extend_from_slice(&data);
+            slot.pending_write_replies.push((total_len, reply));
         }
         Err(e) => {
             let _ = reply.send(Err(io::Error::new(
@@ -573,6 +583,21 @@ fn write_or_buffer(
             )));
         }
     }
+}
+
+/// The one answer a refused frame gets. `WouldBlock` and not `BrokenPipe`:
+/// the stream is healthy, the peer is behind, and the caller may try again.
+fn refused_at_ceiling(buffered: usize) -> io::Error {
+    tracing::warn!(
+        target: "flezha::transport",
+        transport = "quic",
+        buffered,
+        "QUIC send buffer at its ceiling; frame refused"
+    );
+    io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "QUIC send buffer at its ceiling; frame not written",
+    )
 }
 
 /// Serve every event the connection has for its streams. `true` when the
@@ -657,9 +682,11 @@ fn flush_write_buffer(
     match connection.send_stream(id).write(&slot.write_buf) {
         Ok(written) => {
             slot.write_buf.drain(..written);
+            // An empty buffer means every appended writer's bytes have gone
+            // out, in the order they appended them — so every one is owed its
+            // answer, not just the last.
             if slot.write_buf.is_empty() {
-                // All buffered data sent — reply to the app
-                if let Some((total, reply)) = slot.pending_write_reply.take() {
+                for (total, reply) in slot.pending_write_replies.drain(..) {
                     let _ = reply.send(Ok(total));
                 }
             }
@@ -669,7 +696,7 @@ fn flush_write_buffer(
         }
         Err(e) => {
             slot.write_buf.clear();
-            if let Some((_, reply)) = slot.pending_write_reply.take() {
+            for (_, reply) in slot.pending_write_replies.drain(..) {
                 let _ = reply.send(Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
                     format!("QUIC write error: {}", e),
@@ -717,51 +744,9 @@ pub fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Re
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "quic_client_tests.rs"]
+mod client_tests;
 
-    // A QUIC read timeout is a real deadline: an idle stream returns
-    // `TimedOut`, so control-channel liveness holds on QUIC as on UDS.
-    #[test]
-    fn channel_reader_honors_read_timeout_when_idle() {
-        let (_tx, rx) = channel::bounded::<Bytes>(4);
-        let mut reader = ChannelReader {
-            rx,
-            buf: Bytes::new(),
-            read_timeout: Some(Duration::from_millis(120)),
-        };
-
-        let started = Instant::now();
-        let mut out = [0u8; 64];
-        let res = reader.read(&mut out);
-
-        assert!(
-            matches!(&res, Err(e) if e.kind() == io::ErrorKind::WouldBlock),
-            "idle QUIC read with a deadline must return WouldBlock, got {:?}",
-            res
-        );
-        assert!(
-            started.elapsed() >= Duration::from_millis(100),
-            "read returned before the deadline elapsed"
-        );
-    }
-
-    #[test]
-    fn channel_reader_returns_data_then_eof_on_disconnect() {
-        let (tx, rx) = channel::bounded::<Bytes>(4);
-        tx.send(Bytes::from_static(b"hello")).unwrap();
-        drop(tx); // disconnect after one chunk
-
-        let mut reader = ChannelReader {
-            rx,
-            buf: Bytes::new(),
-            read_timeout: Some(Duration::from_millis(500)),
-        };
-
-        let mut out = [0u8; 64];
-        let n = reader.read(&mut out).unwrap();
-        assert_eq!(&out[..n], b"hello");
-        // Disconnected channel = stream finished = EOF (Ok(0)), not WouldBlock.
-        assert_eq!(reader.read(&mut out).unwrap(), 0);
-    }
-}
+#[cfg(test)]
+#[path = "quic_tests.rs"]
+mod tests;

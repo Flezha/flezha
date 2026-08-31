@@ -453,10 +453,6 @@ impl QuicDriver {
     /// One NIF command. `true` means the driver was asked to shut down.
     fn handle_command(&mut self, cmd: ServerCommand) -> bool {
         match cmd {
-            ServerCommand::SendData {
-                stream_id: nif_id,
-                data,
-            } => self.write_stream(nif_id, data),
             ServerCommand::SendFrame {
                 stream_id: nif_id,
                 payload_id,
@@ -724,56 +720,6 @@ fn flush_quic_write(
             (true, None)
         }
     }
-}
-
-/// Build a rustls ServerConfig and wrap it into a quinn-proto ServerConfig.
-///
-/// A non-empty `client_ca_path` makes the handshake require a client
-/// certificate chaining to that trust anchor; an empty one is the explicit
-/// wide-open opt-out the Elixir side warns about on every boot.
-pub fn build_quic_server_config(
-    cert_path: &str,
-    key_path: &str,
-    client_ca_path: &str,
-) -> io::Result<ServerConfig> {
-    use flz_transport::transport::tls;
-
-    let certs = tls::load_certs(cert_path)?;
-    if certs.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "No certificates found in cert file",
-        ));
-    }
-
-    let key = tls::load_private_key(key_path)?;
-
-    let builder = rustls::ServerConfig::builder();
-    let builder = if client_ca_path.is_empty() {
-        builder.with_no_client_auth()
-    } else {
-        let roots = tls::load_root_store(client_ca_path)?;
-        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
-            .build()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        builder.with_client_cert_verifier(verifier)
-    };
-    let mut server_crypto = builder
-        .with_single_cert(certs, key)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    server_crypto.alpn_protocols = vec![b"flezha".to_vec()];
-
-    let quic_server_config = quinn_proto::crypto::rustls::QuicServerConfig::try_from(server_crypto)
-        .map_err(io::Error::other)?;
-    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-
-    // The client's transport settings, plus enough bidi streams for control +
-    // data streams.
-    let mut transport = flz_transport::transport::quic::transport_config();
-    transport.max_concurrent_bidi_streams(128u32.into());
-    server_config.transport_config(Arc::new(transport));
-
-    Ok(server_config)
 }
 
 #[cfg(test)]

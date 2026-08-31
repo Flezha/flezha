@@ -284,4 +284,34 @@ mod tests {
             .expect("disarm must release parked senders to the legacy path");
         sender.join().unwrap();
     }
+
+    /// The credit hold and the transport's send gate must never nest: the
+    /// window's mutex is held across `acquire`'s whole body, and `arm`/`grant`
+    /// are documented as never blocking, so a wait for a send buffer taken
+    /// inside that body would stall the coordinator.
+    ///
+    /// It cannot be a comment, and it cannot be a runtime assertion either —
+    /// what makes nesting impossible is that `acquire` takes a byte count and
+    /// returns nothing, so no caller can run anything inside its hold, and
+    /// this module reaches neither the gate nor the sink. This reads the
+    /// source rather than trusting either statement.
+    #[test]
+    fn nothing_in_the_credit_hold_can_reach_a_send() {
+        let src = include_str!("credit.rs");
+        let body = &src[..src.find("#[cfg(test)]").expect("the test module")];
+
+        for forbidden in ["send_gate", "SendGate", "state_sink", "FlezhaStream"] {
+            assert!(
+                !body.contains(forbidden),
+                "the credit window must not reach `{}`: a send taken inside \
+                 `acquire`'s mutex hold blocks `arm` and `grant`",
+                forbidden
+            );
+        }
+        assert!(
+            body.contains("pub fn acquire(&self, frame_len: usize) {"),
+            "acquire takes a length and no callback, which is what makes a \
+             nested wait unwritable rather than merely absent"
+        );
+    }
 }

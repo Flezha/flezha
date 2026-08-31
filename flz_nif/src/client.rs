@@ -284,12 +284,6 @@ fn spawn_writer(mut write_stream: FlezhaStream, cmd_rx: Receiver<ServerCommand>)
                     }
                 }
 
-                ServerCommand::SendData { data, .. } => {
-                    if write_stream.write_all(&data).is_err() {
-                        break;
-                    }
-                }
-
                 ServerCommand::CloseStream { .. } => {
                     let _ = write_stream.shutdown(Shutdown::Both);
                     break;

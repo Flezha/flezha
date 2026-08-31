@@ -10,6 +10,11 @@ description = "Flezha shared transport library — QUIC, UDS, binary framing"
 name = "flz_transport"
 crate-type = ["rlib"]
 
+[features]
+# The in-memory QUIC pair harness, compiled into the library so `flz_nif`'s
+# tests drive one definition of a stalled peer rather than a second copy.
+test-support = []
+
 [dependencies]
 byteorder = "1.4"
 crossbeam = "0.8"

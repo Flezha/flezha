@@ -10,9 +10,13 @@
 //! Below the gate sits a last-resort ceiling at
 //! [`crate::transport::config::max_write_buffer_bytes`]. A sender that honours
 //! the gate never reaches it, which is what makes [`SendGate::refused`] an
-//! invariant rather than a metric: a non-zero value means a sender ignored the
-//! signal, or outran it, and that is a defect to report — not a policy that
-//! quietly discarded data.
+//! invariant rather than a metric: a non-zero value means a frame the sender
+//! was told about arrived anyway, and that is a defect to report — not a
+//! policy that quietly discarded data.
+//!
+//! Only the ceiling counts. Being turned away at the gate is the signal
+//! working: the sender is told, holds, and offers the frame again — nothing
+//! is lost, so nothing is counted.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -78,9 +82,11 @@ impl SendGate {
         self.raised.load(Ordering::Relaxed)
     }
 
-    /// Record a frame this stream refused rather than buffered. Nothing may
-    /// reach this once senders honour the gate — see the module doc.
-    pub fn refuse(&self) {
+    /// Record a frame this stream discarded at the ceiling. Private because
+    /// [`SendGate::offer`] is the one place a buffer can turn a frame away,
+    /// which is what makes the count an invariant rather than a tally several
+    /// callers contribute to.
+    fn refuse(&self) {
         self.refused.fetch_add(1, Ordering::Relaxed);
     }
 

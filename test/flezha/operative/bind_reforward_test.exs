@@ -177,7 +177,7 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
       # which is the window the gate exists for, and why deciding and recording
       # cannot be two calls.
       assert NodeTestHelper.wait_until(
-               fn -> MapSet.member?(:sys.get_state(ctx.channel_pid).bind_waiters, gate) end,
+               fn -> MapSet.member?(:sys.get_state(ctx.channel_pid).waiters.bind, gate) end,
                1_000
              )
 

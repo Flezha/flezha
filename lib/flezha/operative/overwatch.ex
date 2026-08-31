@@ -141,9 +141,11 @@ defmodule Flezha.Operative.Overwatch do
   Push one payload at the bound stream channel. The single statement of the
   frame shape a delivery takes, shared by a fresh ingest and by both durability
   tiers' re-forward. An unbound or absent stream answers `{:error, :no_stream}`,
-  counted and emitted by the channel itself so a stall stays observable.
+  counted and emitted by the channel itself so a stall stays observable; a send
+  buffer that never drained under a held sender answers
+  `{:error, :send_buffer_full}`, with the frame unsent and nothing discarded.
   """
-  @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream}
+  @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream | :send_buffer_full}
   def deliver(%__MODULE__{} = state, payload),
     do: StreamChannel.io_in(state.channel, state.id, payload)
 

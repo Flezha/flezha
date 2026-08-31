@@ -26,6 +26,13 @@ defmodule Flezha.Convergence.StallClassifier do
       draining them. Judged only once the driver has demonstrably written,
       so "nothing written since" means it stopped rather than that there was
       nothing to drain
+    * `:send_buffer_dropping`   — a stream's send buffer discarded a frame at
+      its ceiling since the last tick. Under the send gate a congested sender
+      is held rather than dropped, so this counter is an invariant and any
+      increment is transport data loss. Detection only: it declares NO scope,
+      so it mints no heal op — a rebind does not bring the frame back, and the
+      condition is the peer being behind, which `:socket_write_blocked` below
+      already localises
     * `:socket_write_blocked`   — driver writing into a buffer the peer won't drain
     * `:runner_not_consuming` — controller sending fine, runner reads nothing back
     * `:runner_pool_wedged`   — runner alive (heartbeats flowing) and fed, but its
@@ -48,6 +55,13 @@ defmodule Flezha.Convergence.StallClassifier do
   Each check has a built-in "is it actually being fed?" precondition (a count
   that must be *advancing* between ticks), so an idle operative never reads as a
   stall.
+
+  **The driver verdicts are UDS-only.** `:driver_loop_frozen`,
+  `:nif_queue_backing_up`, `:socket_write_blocked`, `:send_buffer_dropping` and
+  `:runner_not_consuming` all read the NIF driver self-report, and the QUIC
+  driver produces none — `drivers` is empty for a QUIC controller, so those
+  five clauses cannot fire on one at all. That is a gap in coverage, not a
+  clean bill of health (KI-72).
   """
 
   @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
@@ -78,6 +92,9 @@ defmodule Flezha.Convergence.StallClassifier do
   @layer_scopes %{
     driver_loop_frozen: :fabric,
     nif_queue_backing_up: :fabric,
+    # Declared with no scope on purpose: the frame is already gone, and the
+    # congestion this reports is what `:socket_write_blocked` heals.
+    send_buffer_dropping: nil,
     socket_write_blocked: :connection,
     runner_not_consuming: :runner,
     runner_pool_wedged: :runner,
@@ -112,6 +129,7 @@ defmodule Flezha.Convergence.StallClassifier do
 
     driver_loop_frozen(current, previous, o) ||
       nif_queue_backing_up(current, previous, o) ||
+      send_buffer_dropping(current, previous) ||
       socket_write_blocked(current, previous, o) ||
       runner_not_consuming(current, previous, o) ||
       runner_pool_wedged(current, previous) ||
@@ -172,6 +190,24 @@ defmodule Flezha.Convergence.StallClassifier do
   end
 
   # ---------- driver per-stream checks ----------
+
+  # The one verdict with no threshold and no fed precondition: a counter that
+  # moved is itself the evidence. It says a frame was discarded between these
+  # two ticks, which under the send gate cannot happen to a sender that was
+  # told — so it is reported the moment it is seen, rather than waiting for a
+  # window to establish that it kept happening.
+  defp send_buffer_dropping(current, previous) do
+    find_stream(current, previous, fn d, s, prev_s ->
+      if s.write_buffer_dropped > prev_s.write_buffer_dropped do
+        {:send_buffer_dropping,
+         %{
+           transport: d.transport,
+           stream_id: s.stream_id,
+           dropped: s.write_buffer_dropped - prev_s.write_buffer_dropped
+         }}
+      end
+    end)
+  end
 
   defp socket_write_blocked(current, previous, o) do
     find_stream(current, previous, fn d, s, prev_s ->

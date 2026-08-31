@@ -180,8 +180,7 @@ an opaque handle with its later events.
 | `start_quic_server` | `(bind_address, cert_path, key_path, client_ca_path, acceptor_pid) -> {:ok, server}` | `client_ca_path == ""` disables client auth |
 | `stop_server` | `(server) -> :ok` | `Shutdown` to the driver |
 | `driver_stats` | `(server) -> map \| :undefined` | UDS self-report; `:undefined` for QUIC |
-| `send_data` | `(handle, binary) -> :ok` | raw bytes; kept for the behaviour, not in the seam |
-| `send_frame` | `(handle, payload_id, message, metadata) -> :ok` | frame built in Rust by `payloader::build_from_binary` |
+| `send_frame` | `(handle, payload_id, message, metadata) -> `:ok` \| `{:error, :send_buffer_full \| :driver_gone}` | frame built in Rust by `payloader::build_from_binary`; refuses on a raised send gate, and answers rather than discarding when the driver thread is gone |
 | `set_active` / `set_passive` | `(handle) -> :ok` | deliver frames as messages / queue them |
 | `close` | `(handle) -> :ok` | |
 | `controlling_process` | `(handle, pid) -> :ok` | transfers ownership |
@@ -198,11 +197,11 @@ Every stream NIF enqueues a `ServerCommand` and wakes the driver; none blocks.
 **`Flezha.Transport.Stream`** is the per-handle dispatch seam: `send_frame/4`, `set_active/1`,
 `close/1`, `controlling_process/2`, `stream_id/1`. A `%Flezha.Transport.Local.Stream{}` (the
 in-node `:native` transport used by the in-BEAM Elixir SDK) takes the Elixir arm; any other term
-is a NIF resource and goes to `Flezha.Transport.Native`. `send_data/2` is deliberately absent:
-the control channel frames once, in Rust, through `send_frame(ref, "control_command" |
-"control_ping", bytes, %{})`. The invariant is grep-simple: no per-stream `Native.` call outside
-`native.ex` and the seam. `Flezha.Transport.Native` implements `Flezha.Transport.Behaviour`
-(`send_data/2`, `set_active/1`, `close/1`, `controlling_process/2`).
+is a NIF resource and goes to `Flezha.Transport.Native`. There is one send: the control channel
+frames once, in Rust, through `send_frame(ref, "control_command" | "control_ping", bytes, %{})`.
+The invariant is grep-simple: no per-stream `Native.` call outside `native.ex` and the seam.
+`Flezha.Transport.Native` implements `Flezha.Transport.Behaviour` (`set_active/1`, `close/1`,
+`controlling_process/2`).
 
 **`Flezha.Transport.Server`** runs one GenServer per entry in the `:transports` app env
 (`FLEZHA_TRANSPORTS`, default `[:uds]`, `[:uds, :quic]` in the test env; `:native` is opt-in),

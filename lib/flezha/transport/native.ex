@@ -50,9 +50,6 @@ defmodule Flezha.Transport.Native do
   # --- Behaviour callbacks (stream procedures) ---
 
   @impl true
-  def send_data(_stream_ref, _data), do: :erlang.nif_error(:not_loaded)
-
-  @impl true
   def set_active(_stream_ref), do: :erlang.nif_error(:not_loaded)
 
   @impl true

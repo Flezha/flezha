@@ -47,6 +47,9 @@ defmodule Flezha.Transport.LivenessCounters do
   # withholds work would otherwise read as a runner doing nothing.
   # `stale_writer_refused` counts durable-write forwards refused on a fenced
   # (takeover-superseded) channel.
+  # `send_gate_held` counts senders held on this stream's send-buffer gate —
+  # the send-side mirror of `hb_credit_parked`: advancing while `nil_drops`
+  # stays flat is congestion being absorbed, not data being lost.
   @channel_slots [
     :io_in_received,
     :send_frame_calls,
@@ -66,7 +69,8 @@ defmodule Flezha.Transport.LivenessCounters do
     :credit_active,
     :credit_ledger_level,
     :credit_overrun_total,
-    :stale_writer_refused
+    :stale_writer_refused,
+    :send_gate_held
   ]
   @operative_slots [:io_in_received, :forwarded, :filtered_nil]
   @channel_size length(@channel_slots)

@@ -20,10 +20,6 @@ const STREAM_TOKEN_BASE: usize = 2;
 
 /// Commands sent from NIF functions to the driver thread.
 pub enum ServerCommand {
-    SendData {
-        stream_id: u64,
-        data: Vec<u8>,
-    },
     SendFrame {
         stream_id: u64,
         payload_id: String,
@@ -249,9 +245,6 @@ impl UdsDriver {
     /// stream is deregistered and the socket file removed.
     fn handle_command(&mut self, cmd: ServerCommand, now_ms: u64) -> bool {
         match cmd {
-            ServerCommand::SendData { stream_id, data } => {
-                self.enqueue_or_close(stream_id, data, now_ms)
-            }
             ServerCommand::SendFrame {
                 stream_id,
                 payload_id,

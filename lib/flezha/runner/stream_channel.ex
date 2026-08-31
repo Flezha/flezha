@@ -25,6 +25,7 @@ defmodule Flezha.Runner.StreamChannel do
   @io_liveness_interval_ms 10_000
   @io_liveness_threshold_ms 30_000
   @credit_handshake_timeout_ms 10_000
+  @send_gate_hold_ms 5_000
 
   # Every payload-id this channel forwards onto an Entity's durable write path;
   # the takeover fence (`:fence_write_path`) refuses exactly this set.
@@ -46,19 +47,82 @@ defmodule Flezha.Runner.StreamChannel do
   ingest pays no round trip through the one process every operative on the
   runner shares. Unbound, unknown or dead channels answer
   `{:error, :no_stream}`, counted and emitted as `[:flezha, :stream, :drop]`.
+
+  A stream whose send buffer is over its watermark refuses the frame rather
+  than buffering it, and this holds the CALLING process until the driver
+  reports the buffer drained — never a scheduler thread, and never the
+  channel's own. `{:error, :send_buffer_full}` means the hold ran out of
+  patience with the frame still unsent; nothing was discarded on the way.
   """
-  @spec io_in(GenServer.name() | nil, binary(), {binary(), map()}) :: :ok | {:error, :no_stream}
+  @spec io_in(GenServer.name() | nil, binary(), {binary(), map()}) ::
+          :ok | {:error, :no_stream | :send_buffer_full}
   def io_in(channel, operative_id, {message, metadata}) do
     case :persistent_term.get({__MODULE__, channel}, nil) do
       {stream_ref, liveness_ref} when stream_ref != nil ->
         bump_send(liveness_ref)
-        Flezha.Transport.Stream.send_frame(stream_ref, operative_id, message, metadata)
-        :ok
+        send_held(channel, stream_ref, liveness_ref, operative_id, message, metadata)
 
       published ->
-        if published, do: bump_drop(elem(published, 1))
-        :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: operative_id})
-        {:error, :no_stream}
+        if published, do: LivenessCounters.bump_channel(elem(published, 1), :io_in_received)
+        undeliverable(published, operative_id)
+    end
+  end
+
+  # The send, and the hold the send gate asks for. `send_frame/4` answers
+  # `{:error, :send_buffer_full}` from one relaxed atomic load, on a crossing
+  # this caller already pays — the answer is a congestion signal, not a loss,
+  # so the frame is offered again once the buffer has drained. Any other error
+  # is a driver that is gone: the frame IS lost, and it is reported through the
+  # same counter and event an unbound stream uses rather than a second one.
+  defp send_held(channel, stream_ref, liveness_ref, operative_id, message, metadata) do
+    case Flezha.Transport.Stream.send_frame(stream_ref, operative_id, message, metadata) do
+      :ok ->
+        :ok
+
+      {:error, :send_buffer_full} ->
+        LivenessCounters.bump_channel(liveness_ref, :send_gate_held)
+
+        case await_send_gate(channel, send_gate_hold_ms()) do
+          :open -> send_held(channel, stream_ref, liveness_ref, operative_id, message, metadata)
+          :closed -> undeliverable({nil, liveness_ref}, operative_id)
+          :timeout -> {:error, :send_buffer_full}
+        end
+
+      {:error, _driver_gone} ->
+        undeliverable({nil, liveness_ref}, operative_id)
+    end
+  end
+
+  # One statement of "this channel could not carry the frame", for the three
+  # ways that happens: no binding, a stream that closed under a held sender,
+  # and a driver thread that is gone.
+  defp undeliverable(published, operative_id) do
+    if published, do: LivenessCounters.bump_channel(elem(published, 1), :nil_drops)
+    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: operative_id})
+    {:error, :no_stream}
+  end
+
+  # How long a held sender waits for the driver to report the buffer drained.
+  # It is a lost-wake fallback, not a pacing dial: the wake arrives on the
+  # crossing, and this only bounds a wake that never came.
+  defp send_gate_hold_ms,
+    do: Application.get_env(:flezha, :send_gate_hold_ms, @send_gate_hold_ms)
+
+  # Register interest and wait, in the calling process. Deciding and recording
+  # happen in the channel's own turn, so a drain landing between the two cannot
+  # be missed; the wait is a selective receive, so everything else the caller
+  # is holding stays queued.
+  defp await_send_gate(channel, timeout_ms) do
+    case GenServer.whereis(channel) && GenServer.call(channel, {:await_send_gate, self()}) do
+      :held ->
+        receive do
+          {:send_gate, ^channel, result} -> result
+        after
+          timeout_ms -> :timeout
+        end
+
+      _open_or_no_channel ->
+        :open
     end
   end
 
@@ -162,10 +226,15 @@ defmodule Flezha.Runner.StreamChannel do
         # Terminal — the session is evicted right after, never re-bound.
         fenced?: false,
         refused_entities: MapSet.new(),
-        # Processes owed a `{:stream_bound, name}` when this channel next binds.
-        # Cleared by the bind that serves them, so it never outlives the window
-        # it exists for.
-        bind_waiters: MapSet.new()
+        # Whether the driver has reported this stream's send buffer over its
+        # high-water mark. Set from `{:flz_send_gate, ...}`, and the answer
+        # `{:await_send_gate, pid}` is decided against.
+        gate_raised?: false,
+        # Processes owed word of an event they are held on: `:bind` (this
+        # channel has no stream yet) and `:send_gate` (its send buffer is over
+        # the mark). Each set is cleared by the event that serves it, so
+        # neither outlives the window it exists for.
+        waiters: %{bind: MapSet.new(), send_gate: MapSet.new()}
       }
     }
   end
@@ -201,17 +270,21 @@ defmodule Flezha.Runner.StreamChannel do
     LivenessCounters.set_channel(ref, :last_send_ms, System.monotonic_time(:millisecond))
   end
 
-  # Count an io_in that hit an unbound stream: fed, but dropped (not sent).
-  defp bump_drop(ref) do
-    LivenessCounters.bump_channel(ref, :io_in_received)
-    LivenessCounters.bump_channel(ref, :nil_drops)
-  end
-
   # What `io_in/3` reads, under the channel's registered name — the identity an
   # Overwatch holds. Written at init, bind and close only: a persistent_term
   # write is a global operation, a read is free.
   defp publish_stream(name, stream_ref, liveness_ref),
     do: :persistent_term.put({__MODULE__, name}, {stream_ref, liveness_ref})
+
+  # One waiter set per event, so the bind hold and the send-gate hold are one
+  # mechanism rather than two that can drift.
+  defp record_waiter(state, event, pid),
+    do: %{state | waiters: Map.update!(state.waiters, event, &MapSet.put(&1, pid))}
+
+  defp wake_waiters(state, event, message) do
+    Enum.each(state.waiters[event], &send(&1, message))
+    %{state | waiters: Map.put(state.waiters, event, MapSet.new())}
+  end
 
   @impl true
   def handle_call({:operative_pid_update, operative_id, updated_pids}, _from, state) do
@@ -254,15 +327,9 @@ defmodule Flezha.Runner.StreamChannel do
 
     # After the publish: a waiter woken before `io_in/3` could read the new ref
     # would forward onto the channel it was told is up and be dropped again.
-    Enum.each(state.bind_waiters, &send(&1, {:stream_bound, state.name}))
+    state = wake_waiters(state, :bind, {:stream_bound, state.name})
 
-    {:reply, :ok,
-     %{
-       state
-       | stream_ref: new_ref,
-         last_seen: System.monotonic_time(:millisecond),
-         bind_waiters: MapSet.new()
-     }}
+    {:reply, :ok, %{state | stream_ref: new_ref, last_seen: System.monotonic_time(:millisecond)}}
   end
 
   @impl true
@@ -278,7 +345,19 @@ defmodule Flezha.Runner.StreamChannel do
 
   @impl true
   def handle_call({:notify_on_bind, pid}, _from, state) do
-    {:reply, :unbound, %{state | bind_waiters: MapSet.put(state.bind_waiters, pid)}}
+    {:reply, :unbound, record_waiter(state, :bind, pid)}
+  end
+
+  # Send-gate interest, decided and recorded in this process's own turn — the
+  # same contract `notify_on_bind/2` has, against the same race.
+  @impl true
+  def handle_call({:await_send_gate, _pid}, _from, %{gate_raised?: false} = state) do
+    {:reply, :open, state}
+  end
+
+  @impl true
+  def handle_call({:await_send_gate, pid}, _from, state) do
+    {:reply, :held, record_waiter(state, :send_gate, pid)}
   end
 
   # Takeover fence: unbind this channel from the Entity write path.
@@ -474,6 +553,19 @@ defmodule Flezha.Runner.StreamChannel do
   # Drain report tagged with a superseded session (reconnect voided it) — stale.
   def handle_info({:credit_drained, _session, _bytes}, state), do: {:noreply, state}
 
+  # The driver crossed a watermark on this stream's send buffer. Raised means
+  # senders must hold; lowered releases every one that is holding. Nothing is
+  # sent on a raise: a sender discovers it from `send_frame/4`'s own answer,
+  # and holding it here would be a second copy of the same bit.
+  def handle_info({:flz_send_gate, _stream_id, true}, state) do
+    {:noreply, %{state | gate_raised?: true}}
+  end
+
+  def handle_info({:flz_send_gate, _stream_id, false}, state) do
+    {:noreply,
+     wake_waiters(%{state | gate_raised?: false}, :send_gate, {:send_gate, state.name, :open})}
+  end
+
   # NIF transport: stream closed. Synchronous rebindability contract — once
   # this clause runs, state.stream_ref is nil and no outbound send may use
   # the dead ref. The acceptor will pick this channel up via :stream_ref_status
@@ -496,7 +588,12 @@ defmodule Flezha.Runner.StreamChannel do
 
     publish_stream(state.name, nil, state.liveness_ref)
 
-    {:noreply, %{state | stream_ref: nil} |> reset_credit()}
+    # A sender held on this stream's gate is waiting for a buffer that will
+    # never drain now. It is told the stream went, so it reports the frame
+    # undelivered instead of waiting out its hold on a dead binding.
+    state = wake_waiters(state, :send_gate, {:send_gate, state.name, :closed})
+
+    {:noreply, %{state | stream_ref: nil, gate_raised?: false} |> reset_credit()}
   end
 
   def handle_info(msg, state) do

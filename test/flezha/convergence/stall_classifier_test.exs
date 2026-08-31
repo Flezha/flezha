@@ -98,6 +98,55 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert ctx.cmd_queue_depth == 900
   end
 
+  test "send_buffer_dropping: a drop counter that moved outranks the block it happened under" do
+    prev =
+      snapshot(
+        drivers: [
+          driver(
+            loop_iterations: 1,
+            streams: [stream(write_buffer_len: 100, frames_written: 10, write_buffer_dropped: 3)]
+          )
+        ]
+      )
+
+    curr =
+      snapshot(
+        drivers: [
+          driver(
+            loop_iterations: 2,
+            streams: [
+              stream(
+                write_buffer_len: 5_000,
+                frames_written: 25,
+                last_write_ms: 0,
+                write_buffer_dropped: 9
+              )
+            ]
+          )
+        ]
+      )
+
+    # The same snapshot pair satisfies `socket_write_blocked`; the loss wins,
+    # because a frame the transport discarded is the more specific fact.
+    assert {:send_buffer_dropping, ctx} = StallClassifier.classify(curr, prev)
+    assert ctx.stream_id == 1
+    assert ctx.dropped == 6
+
+    # It mints no heal op: the frame is already gone, and the congestion it
+    # reports is what the verdict below heals.
+    assert StallClassifier.layer_scope(:send_buffer_dropping) == nil
+  end
+
+  test "send_buffer_dropping does NOT fire on a counter that merely stands non-zero" do
+    prev =
+      snapshot(drivers: [driver(loop_iterations: 1, streams: [stream(write_buffer_dropped: 9)])])
+
+    curr =
+      snapshot(drivers: [driver(loop_iterations: 2, streams: [stream(write_buffer_dropped: 9)])])
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
   test "socket_write_blocked: buffer rising, frames submitted, writes stale" do
     prev =
       snapshot(
@@ -531,6 +580,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
     %{
       stream_id: Keyword.get(opts, :stream_id, 1),
       write_buffer_len: Keyword.get(opts, :write_buffer_len, 0),
+      write_buffer_dropped: Keyword.get(opts, :write_buffer_dropped, 0),
       frames_written: Keyword.get(opts, :frames_written, 0),
       frames_read: Keyword.get(opts, :frames_read, 0),
       last_write_ms: Keyword.get(opts, :last_write_ms, @now),

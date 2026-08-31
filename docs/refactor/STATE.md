@@ -118,46 +118,77 @@ COMPLETE, archived and committed.
 **Row 6.5 (`close-transport-send-buffer-loss`) is APPROVED; segment A is running.**
 Rows 5+6 are COMPLETE, archived and committed.
 
-**Segment B of row 6.5 is running (batches 3-4 + KI-70/71 + `send_data` + the
-narrative marker).** Spawned ~06:19.
+**Segment B is committed (`443903f9`), but ROW 6.5 IS NOT CLOSEABLE.** Segment C
+must fix **KI-73** first.
 
-*Last seen 06:52* — 32 m in, **24 files +476/−405**. Machine clean: no zombies, no
-containers, load 0.94. **Scope checked, not assumed**: three files sit outside the
-proposal's declared Impact — `convergence/stall_classifier.ex` (in scope; the
-proposal names "the liveness verdict that gains the clause" without the filename) and
-`operative/ingest.ex` + `operative/overwatch.ex`, which are the **new error term
-propagating to callers that must handle it**: `{:error, :no_stream}` widens to
-`{:error, _reason}` because an undrained send buffer is undeliverable the same way,
-plus a `@spec` and a moduledoc. Necessary consequence, not creep — and it is what
-D11's scope correction anticipated, that the Impact list is not exhaustive at
-filename granularity.
+### Row 6.5 segment B — verified 2026-08-31, commit `443903f9`
 
-*Last seen 06:30 — STALL CHECK SENT.* Ten minutes in with **no observable progress
-on any instrument**: `git status` clean, no `cargo`/`rustc`/`beam.smp`, load 0.08,
-nothing written to the scratchpad, and `tasks.md`'s mtime still 06:13 — segment A's
-last write, not this worker's. That is the skill's stall definition exactly, and the
-rule is to act at the first heartbeat rather than wait a second one.
+Batches 3-4 plus KI-70/71 and the `send_data` deletion. `mix test` **1870 passed,
+exit 0, zero uncaptured-log gate hits**; `--include system` **1951**; cargo
+**20 + 39 + 147**; clippy 0 warnings.
 
-*Resolved 06:41 — it was reading, and the nudge worked.* Eleven minutes later the
-same instruments read **13 files, +180/−356**, a `rustc` six minutes in, load 1.29,
-and `flz_nif/Cargo.toml` touched (the `quinn_proto` harness port KI-71's driven
-reproduction needs). The net **−176** says the `send_data` deletion landed — the
-deliberately small first step the nudge named, chosen so progress would become
-visible fast. **No worker was lost and no context was thrown away.**
+**KI-70 and KI-71 are driven, not argued.** The `quinn_proto` pair harness moved
+**down** into `flz_transport` so one harness covers both send buffers, and each fix
+has an isolated red-first control: restoring the assign loses the first writer's
+4-byte remainder mid-frame (`left: 65536, right: 65540`); restoring the ceiling arm
+answers `Ok(n)` for a discarded frame. The control — a reading peer refuses nothing —
+stays green on both reverted arms. The same function held an **unfiled third
+defect**: a non-empty buffer did not stop a later frame going on the wire ahead of an
+earlier frame's remainder.
 
-The lesson to keep: on this harness a subagent that is *reading* is indistinguishable
-from one that is *stalled* — no process, no write, no tick, an idle box. The skill's
-"act at the first heartbeat" is still right, but the action should be a message that
-is useful either way, never a kill. A brief that asks for six documents buys itself
-one silent heartbeat, and a first step that produces a visible artefact is what
-converts the ambiguity back into evidence.
+**Two callers would have broken silently on the new error term** — `Ingest.verdict/2`
+matched `{:error, :no_stream}` exhaustively (a `CaseClauseError` waiting), and
+`Replay.reforward/1` compared with `==`, so a gate-timed-out re-forward would **never
+have armed the bind re-forward**. Widening the error term is the kind of change whose
+damage is in the callers, and this one went looking.
 
-**Nudged, not killed** (charter §1: a worker's context is worth more than a restart,
-and a worker mid-read looks identical to a stalled one from outside — this brief asks
-for six documents including `design.md` in full). The message asks for one line on
-where it is and names a deliberately small first step, the `send_data` deletion, so
-that progress becomes visible quickly. If it does not answer by the next heartbeat, a
-fresh worker takes the resume brief.
+### KI-73 — the row's own goal is not met, and this is why it stays open
+
+**Reproduced independently by the supervisor**, from the entry's own harness,
+unchanged, matching to the frame on the first run:
+
+```
+HELD:   send_gate_held=1 send_frame_calls=211
+DRIVER: frames_written=131 write_buffer_dropped=79
+SENDER: %{ok: 400}
+```
+
+**79 of 400 frames discarded, all 400 answered `:ok`** — KI-3's exact symptom, still
+reproducing with the gate and the park in place. The bit is written by
+`SendGate::observe` on the **driver thread** behind an unbounded channel, so the
+sender's view lags by whatever is queued; the park removes the *repeat* refusals and
+not the *overshoot*.
+
+**Ruled: segment C fixes it before the row closes.** Two reasons, and the second is
+the harder one. Committing this as done would claim to resolve KI-3 while KI-3's own
+reproduction returns 79 — and the spec delta's *Congestion increments nothing*
+scenario is **not satisfiable in this state**, so archiving would publish a
+requirement the code does not meet. A requirement that is false on the day it lands
+is exactly what this session spent the day removing from `known_issues.md`.
+
+**It refutes D13**, a *measured* claim from segment A that the residual 83 frames
+were "what batch 3 removes". D13 is corrected, not dropped.
+
+**The worker found this with the test written to prove its own work correct**, then
+declined to assert `write_buffer_dropped == 0` because the assertion would have been
+false, and said so. A test that quietly omits the assertion its subject cannot pass
+is how KI-67 happened; naming the omission is the opposite, and it is why this row
+will close honestly.
+
+### Two metric rows the worker could not see, and what they are
+
+`git add -N` on its four new files surfaced **two blocking rows its own `--check`
+missed** — the trap that bit this supervisor at row 4 segment A, now caught by doing
+the intent-add first:
+
+- **`test refutes` 13 → 16.** Three `refute_receive {:sender_done, _}, 500` in the
+  park test. **Earned**: proving a sender is *held* is inherently a negative
+  assertion — there is no positive signal for "still parked". Re-baseline at row
+  close with that reason recorded, do not remove them.
+- **`test narrative_markers` 47 → 48.** A **false positive**: the detector matches
+  "no longer" in `# … a hold on a binding that no longer exists`, which describes
+  current behaviour, not history. One word fixes it; segment C does, because a
+  supervisor does not edit `test/` files.
 
 ### Row 6.5 segment A — verified 2026-08-31, commit `269072b9`
 
@@ -276,8 +307,8 @@ otherwise excellent; a rewrite cycle would cost more than it buys):
 | segment | batches | content | state |
 |---|---|---|---|
 | A | 1, 2 | make both defects reproducible; the shared gate | **done**, `269072b9` |
-| B | 3, 4 (+KI-70/71, send_data) | the sender side; make the loss reportable; the QUIC client fix; delete the dead NIF | next |
-| C | 5, 6 | configuration; prove it and close out | |
+| B | 3, 4 (+KI-70/71, send_data) | the sender side; the QUIC client fix; the dead NIF | **done**, `443903f9` |
+| C | 5, 6 (+**KI-73**) | **fix KI-73 first — the row cannot close without it**; configuration; prove it and close out | next |
 
 
 
