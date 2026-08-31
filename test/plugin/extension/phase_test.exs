@@ -174,7 +174,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
 
     # Now unsubscribe one and partially tear down. Teardown should not
     # raise regardless of phase mix.
-    teardown_table = Table.teardown_all(table)
+    {teardown_table, _dropped} = Table.teardown_all(table)
     assert teardown_table.plugins == %{}
     assert teardown_table.phases == %{}
   end

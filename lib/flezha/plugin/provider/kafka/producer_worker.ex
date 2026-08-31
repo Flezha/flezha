@@ -20,7 +20,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   require Logger
 
   alias Flezha.Plugin.Provider.Kafka
-  alias Flezha.Plugin.Provider.Kafka.ProducerSup
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
   alias Flezha.State.Outbox
   alias KafkaEx.Client, as: KafkaClient
@@ -81,18 +80,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   ]
   @force_replace_throttle_ms 2_000
 
-  @spec via(binary(), binary(), non_neg_integer()) :: {:via, Registry, term()}
-  def via(plugin_id, topic, partition) do
-    {:via, Registry, {ProducerSup.registry_name(), {plugin_id, topic, partition}}}
-  end
-
-  def start_link(opts) when is_list(opts) do
-    plugin_id = Keyword.fetch!(opts, :plugin_id)
-    topic = Keyword.fetch!(opts, :topic)
-    partition = Keyword.fetch!(opts, :partition)
-    name = Keyword.get(opts, :name, via(plugin_id, topic, partition))
-    GenServer.start_link(__MODULE__, opts, name: name)
-  end
+  def start_link(opts) when is_list(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
 
   def child_spec(opts) do
     plugin_id = Keyword.fetch!(opts, :plugin_id)

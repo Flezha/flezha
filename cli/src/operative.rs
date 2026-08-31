@@ -1,36 +1,44 @@
 use std::collections::HashMap;
-use std::process::{exit, Command};
+use std::process::exit;
 
-use crate::utils::{
-    escape_rpc_arg, extract_param, get_flezha_command, get_json, get_namespace, get_output_format,
+use crate::dispatch::{self, Command};
+use crate::rpc::{self, escape_rpc_arg};
+use crate::{args, help};
+
+pub(crate) const TABLE: Command = Command {
+    help: help::OPERATIVE,
+    verbs: &[
+        ("start", handle_start),
+        ("scale", handle_scale),
+        ("stop", handle_stop),
+        ("state", handle_state),
+        ("list", handle_list),
+        ("info", handle_info),
+        ("io_listen", handle_io_listen),
+        ("send", handle_send),
+        ("rewind", handle_rewind),
+        ("replay", handle_replay),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: Some("Error: Invalid number of arguments. See help for more information."),
+    unknown: "Error: Invalid argument '{}'. Use 'start', 'scale', 'stop', 'state', 'list', 'info', 'io_listen', 'send', 'rewind', 'replay', or 'help'.",
+    unknown_prints_help: false,
 };
 
-pub fn handle_operative_command(args: &[String]) {
-    if args.is_empty() {
-        eprintln!("Error: Invalid number of arguments. See help for more information.");
-        exit(1);
+/// The JSON opts object `operative_start` takes: the flags that are neither
+/// the operative's identity nor its init values.
+fn start_opts(args: &[String]) -> String {
+    let mut opts: HashMap<String, String> = HashMap::new();
+
+    if let Some(spt) = args::extract_param(args, "--snapshot-interval", "-si") {
+        opts.insert("snapshot_interval".to_string(), spt);
     }
 
-    match args[0].as_str() {
-        "start" => handle_start(args),
-        "scale" => handle_scale(args),
-        "stop" => handle_stop(args),
-        "state" => handle_state(args),
-        "list" => handle_list(args),
-        "info" => handle_info(args),
-        "io_listen" => handle_io_listen(args),
-        "send" => handle_send(args),
-        "rewind" => handle_rewind(args),
-        "replay" => handle_replay(args),
-        "help" | "--help" | "-h" => print_operative_help(),
-        _ => {
-            eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'scale', 'stop', 'state', 'list', 'info', 'io_listen', 'send', 'rewind', 'replay', or 'help'.",
-                args[0]
-            );
-            exit(1);
-        }
+    if let Some(partitions) = args::extract_param(args, "--partitions", "--partitions") {
+        opts.insert("partitions".to_string(), partitions);
     }
+
+    serde_json::to_string(&opts).unwrap()
 }
 
 fn handle_start(args: &[String]) {
@@ -41,11 +49,8 @@ fn handle_start(args: &[String]) {
         exit(1);
     }
 
-    let operative_id = &args[1];
-    let factory_id = &args[2];
-    let init_values = get_json(&args[3..], "--init_values", "-iv");
-    let plugins_raw = get_json(&args[3..], "--plugins", "--plugins");
-    let plugins_json = match parse_plugins_json(&plugins_raw) {
+    let rest = &args[3..];
+    let plugins_json = match parse_plugins_json(&args::json(rest, "--plugins", "--plugins")) {
         Ok(canonical) => canonical,
         Err(reason) => {
             eprintln!("Error: invalid --plugins JSON: {}", reason);
@@ -53,50 +58,20 @@ fn handle_start(args: &[String]) {
         }
     };
 
-    let kind =
-        extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "stream".to_string());
-
-    let mut opts: HashMap<String, String> = HashMap::new();
-
-    if let Some(spt) = extract_param(&args[3..], "--snapshot-interval", "-si") {
-        opts.insert("snapshot_interval".to_string(), spt);
-    }
-
-    if let Some(partitions) = extract_param(&args[3..], "--partitions", "--partitions") {
-        opts.insert("partitions".to_string(), partitions);
-    }
-
-    let opts_json = serde_json::to_string(&opts).unwrap();
-    let command = get_flezha_command();
-    let namespace = get_namespace(&args[3..]);
-
-    let escaped_init_values = escape_rpc_arg(&init_values);
-    let escaped_opts_json = escape_rpc_arg(&opts_json);
-    let escaped_plugins_json = escape_rpc_arg(&plugins_json);
-
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        namespace,
-        operative_id,
-        factory_id,
-        escaped_init_values,
-        escaped_opts_json,
-        escaped_plugins_json,
-        kind,
+        args::namespace(rest),
+        &args[1],
+        &args[2],
+        escape_rpc_arg(&args::json(rest, "--init_values", "-iv")),
+        escape_rpc_arg(&start_opts(rest)),
+        escape_rpc_arg(&plugins_json),
+        args::extract_param(rest, "--kind", "--kind").unwrap_or_else(|| "stream".to_string()),
     );
 
     println!("Starting operative...");
 
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
+    rpc::run(rpc_command, rpc::REFUSED);
 }
 
 /// `flz operative scale <group> <partitions>` — rescale a partition group.
@@ -114,13 +89,13 @@ fn handle_scale(args: &[String]) {
     let partitions = &args[2];
 
     let mut opts: HashMap<String, String> = HashMap::new();
-    if let Some(timeout) = extract_param(&args[3..], "--timeout", "-t") {
+    if let Some(timeout) = args::extract_param(&args[3..], "--timeout", "-t") {
         opts.insert("timeout_ms".to_string(), timeout);
     }
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_scale(\"{}\", \"{}\", \"{}\", \"{}\")",
-        get_namespace(&args[3..]),
+        args::namespace(&args[3..]),
         group_id,
         partitions,
         escape_rpc_arg(&serde_json::to_string(&opts).unwrap()),
@@ -128,16 +103,7 @@ fn handle_scale(args: &[String]) {
 
     println!("Scaling operative group {} to {}...", group_id, partitions);
 
-    let status = Command::new(get_flezha_command())
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
+    rpc::run(rpc_command, rpc::REFUSED);
 }
 
 /// Validate the `--plugins` JSON blob at the CLI layer so parse errors are
@@ -199,35 +165,22 @@ fn handle_stop(args: &[String]) {
         exit(1);
     }
 
-    let operative_id = &args[1];
-    let namespace = get_namespace(&args[2..]);
-
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_stop(\"{}\", \"{}\", {})",
-        namespace,
-        operative_id,
-        crate::utils::token_opts_fragment(&args[2..]),
+        args::namespace(&args[2..]),
+        &args[1],
+        rpc::token_opts_fragment(&args[2..]),
     );
-
-    let command = get_flezha_command();
 
     println!("Stopping operative...");
 
-    // Attempt to execute the external command.
-    let status = Command::new(command).arg("rpc").arg(rpc_command).status();
+    // operative_stop halts non-zero on error verdicts (not_found / refused).
+    rpc::run(
+        rpc_command,
+        rpc::UNKNOWN_STATUS.diagnosing("Failed to stop operative"),
+    );
 
-    match status {
-        Ok(status) if status.success() => println!("Operative stopped successfully."),
-        // operative_stop halts non-zero on error verdicts (not_found / refused).
-        Ok(_) => {
-            eprintln!("Unknown status returned.");
-            exit(1);
-        }
-        Err(e) => {
-            eprintln!("Failed to stop operative: {}", e);
-            exit(1);
-        }
-    }
+    println!("Operative stopped successfully.");
 }
 
 /// `flz operative send <operative_id> --text <payload> [--channel <ch>]` —
@@ -243,10 +196,9 @@ fn handle_send(args: &[String]) {
         exit(1);
     }
 
-    let operative_id = &args[1];
-    let namespace = get_namespace(&args[2..]);
+    let rest = &args[2..];
 
-    let text = match extract_param(&args[2..], "--text", "-t") {
+    let text = match args::extract_param(rest, "--text", "-t") {
         Some(value) => value,
         None => {
             eprintln!("Error: --text <payload> is required.");
@@ -254,32 +206,21 @@ fn handle_send(args: &[String]) {
         }
     };
 
-    let channel = extract_param(&args[2..], "--channel", "-c").unwrap_or_default();
-
     // Escape embedded quotes so the payload/channel survive being wrapped in
     // quotes inside the Elixir RPC expression (same as handle_start).
-    let escaped_text = escape_rpc_arg(&text);
-    let escaped_channel = escape_rpc_arg(&channel);
-
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_send(\"{}\", \"{}\", \"{}\", \"{}\")",
-        namespace, operative_id, escaped_text, escaped_channel,
+        args::namespace(rest),
+        &args[1],
+        escape_rpc_arg(&text),
+        escape_rpc_arg(&args::extract_param(rest, "--channel", "-c").unwrap_or_default()),
     );
 
-    let status = Command::new(get_flezha_command())
-        .arg("rpc")
-        .arg(rpc_command)
-        .status();
-
-    match status {
-        Ok(status) if status.success() => {}
-        // operative_send halts non-zero on error verdicts (not_found / not_ready / refused).
-        Ok(_) => exit(1),
-        Err(e) => {
-            eprintln!("Failed to send input to operative: {}", e);
-            exit(1);
-        }
-    }
+    // operative_send halts non-zero on error verdicts (not_found / not_ready / refused).
+    rpc::run(
+        rpc_command,
+        rpc::QUIET.diagnosing("Failed to send input to operative"),
+    );
 }
 
 /// `flz operative rewind <instance> --to-iteration N` — take a workflow loop back
@@ -295,10 +236,7 @@ fn handle_rewind(args: &[String]) {
         exit(1);
     }
 
-    let operative_id = &args[1];
-    let namespace = get_namespace(&args[2..]);
-
-    let to_iter = match extract_param(&args[2..], "--to-iteration", "-i") {
+    let to_iter = match args::extract_param(&args[2..], "--to-iteration", "-i") {
         Some(value) => match value.parse::<u32>() {
             Ok(n) => n,
             Err(_) => {
@@ -312,28 +250,16 @@ fn handle_rewind(args: &[String]) {
         }
     };
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_rewind(\"{}\", \"{}\", {})",
-        namespace, operative_id, to_iter,
+    // operative_rewind halts non-zero on error verdicts (not_found / refused).
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.operative_rewind(\"{}\", \"{}\", {})",
+            args::namespace(&args[2..]),
+            &args[1],
+            to_iter,
+        ),
+        rpc::UNKNOWN_STATUS.diagnosing("Failed to rewind operative"),
     );
-
-    let status = Command::new(get_flezha_command())
-        .arg("rpc")
-        .arg(rpc_command)
-        .status();
-
-    match status {
-        Ok(status) if status.success() => {}
-        // operative_rewind halts non-zero on error verdicts (not_found / refused).
-        Ok(_) => {
-            eprintln!("Unknown status returned.");
-            exit(1);
-        }
-        Err(e) => {
-            eprintln!("Failed to rewind operative: {}", e);
-            exit(1);
-        }
-    }
 }
 
 /// `flz operative replay <operative/procedure/key> --from <seq|ts>` — re-run a
@@ -352,10 +278,7 @@ fn handle_replay(args: &[String]) {
         exit(1);
     }
 
-    let entity = &args[1];
-    let namespace = get_namespace(&args[2..]);
-
-    let from = match extract_param(&args[2..], "--from", "-f") {
+    let from = match args::extract_param(&args[2..], "--from", "-f") {
         Some(value) => value,
         None => {
             eprintln!(
@@ -366,28 +289,16 @@ fn handle_replay(args: &[String]) {
         }
     };
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_replay(\"{}\", \"{}\", \"{}\")",
-        namespace, entity, from,
+    // operative_replay halts non-zero on error verdicts (not_found / refused).
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.operative_replay(\"{}\", \"{}\", \"{}\")",
+            args::namespace(&args[2..]),
+            &args[1],
+            from,
+        ),
+        rpc::UNKNOWN_STATUS.diagnosing("Failed to replay entity"),
     );
-
-    let status = Command::new(get_flezha_command())
-        .arg("rpc")
-        .arg(rpc_command)
-        .status();
-
-    match status {
-        Ok(status) if status.success() => {}
-        // operative_replay halts non-zero on error verdicts (not_found / refused).
-        Ok(_) => {
-            eprintln!("Unknown status returned.");
-            exit(1);
-        }
-        Err(e) => {
-            eprintln!("Failed to replay entity: {}", e);
-            exit(1);
-        }
-    }
 }
 
 fn handle_state(args: &[String]) {
@@ -396,100 +307,23 @@ fn handle_state(args: &[String]) {
         exit(1);
     }
 
-    let operative_id = &args[1];
-    let namespace = get_namespace(&args[2..]);
-
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.entity_state(\"{}\", \"{}\")",
-        namespace, operative_id,
+    // entity_state halts non-zero on error verdicts (not_found / refused).
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.entity_state(\"{}\", \"{}\")",
+            args::namespace(&args[2..]),
+            &args[1],
+        ),
+        rpc::UNKNOWN_STATUS.diagnosing("Failed to get operative state"),
     );
-
-    let command = get_flezha_command();
-
-    let status = Command::new(command).arg("rpc").arg(rpc_command).status();
-
-    match status {
-        Ok(status) if status.success() => {}
-        // entity_state halts non-zero on error verdicts (not_found / refused).
-        Ok(_) => {
-            eprintln!("Unknown status returned.");
-            exit(1);
-        }
-        Err(e) => {
-            eprintln!("Failed to get operative state: {}", e);
-            exit(1);
-        }
-    }
 }
 
 fn handle_list(args: &[String]) {
-    let namespace = get_namespace(&args[1..]);
-    let output_format = get_output_format(&args[1..]);
-
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.list_operatives(\"{}\", \"{}\")",
-        namespace, output_format
-    );
-
-    // Only show progress message for text output
-    if output_format == "text" {
-        let display_namespace = if namespace.is_empty() {
-            "default"
-        } else {
-            &namespace
-        };
-        println!(
-            "Fetching operatives for namespace '{}'...",
-            display_namespace
-        );
-    }
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
+    rpc::scoped_read(&args[1..], "list_operatives", Some("operatives"));
 }
 
 fn handle_info(args: &[String]) {
-    let namespace = get_namespace(&args[1..]);
-    let output_format = get_output_format(&args[1..]);
-
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_info(\"{}\", \"{}\")",
-        namespace, output_format
-    );
-
-    // Only show progress message for text output
-    if output_format == "text" {
-        let display_namespace = if namespace.is_empty() {
-            "default"
-        } else {
-            &namespace
-        };
-        println!(
-            "Fetching operative information for namespace '{}'...",
-            display_namespace
-        );
-    }
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
+    rpc::scoped_read(&args[1..], "operative_info", Some("operative information"));
 }
 
 fn handle_io_listen(args: &[String]) {
@@ -503,7 +337,6 @@ fn handle_io_listen(args: &[String]) {
     let io_type = &args[1];
     let operative_id = &args[2];
 
-    // Validate io_type
     if io_type != "input" && io_type != "output" {
         eprintln!(
             "Error: Invalid IO type '{}'. Use 'input' or 'output' only.",
@@ -512,12 +345,11 @@ fn handle_io_listen(args: &[String]) {
         exit(1);
     }
 
-    let namespace = get_namespace(&args[3..]);
-    let command = get_flezha_command();
-
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_listen(\"{}\", \"{}\", \"{}\")",
-        namespace, operative_id, io_type
+        args::namespace(&args[3..]),
+        operative_id,
+        io_type
     );
 
     println!(
@@ -526,49 +358,7 @@ fn handle_io_listen(args: &[String]) {
     );
     println!("Press Ctrl+C to stop listening");
 
-    // Set up signal handling to clean up on Ctrl+C
-    let mut child = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .spawn()
-        .expect("Failed to execute command");
-
-    // Wait for the child process and handle signals
-    let status = child.wait().expect("Failed to wait for command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
-}
-
-fn print_operative_help() {
-    println!("flz operative - Operative management commands");
-    println!();
-    println!("USAGE:");
-    println!("    flz operative <COMMAND>");
-    println!();
-    println!("COMMANDS:");
-    println!("    start       Start an operative");
-    println!("    scale       Rescale a partition group to N partitions");
-    println!("    stop        Stop an operative");
-    println!("    state       Get operative state");
-    println!("    list        List operatives");
-    println!("    info        Get operative info");
-    println!("    io_listen   Listen to operative I/O");
-    println!("    send        Send a payload to an operative's input stream");
-    println!("    rewind      Rewind a workflow loop to a committed iteration");
-    println!("    replay      Re-run an Entity's retained inputs from a point in the past");
-    println!("    help        Show this help message");
-    println!();
-    println!("EXAMPLES:");
-    println!("    flz operative start ohlc candles --partitions 3");
-    println!("    flz operative scale ohlc 5");
-    println!("    flz operative send orchestrator --text '{{\"task\":\"refactor\"}}'");
-    println!("    flz operative rewind chat-1 --to-iteration 3");
-    println!("    flz operative replay candles/aggregate/BTC --from 1720000000000");
-    println!();
-    println!("Use 'flz operative <COMMAND> --help' for more information on a specific command.");
+    rpc::run(rpc_command, rpc::REFUSED);
 }
 
 #[cfg(test)]

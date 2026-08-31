@@ -1,108 +1,20 @@
 defmodule Flezha.State.ProcJournal do
   @moduledoc """
-  Per-instance append-only proc-progress journal for durable structured
-  workflow operatives (`workflow-proc-journal`) and their transactional outbox
-  (`workflow-transactional-outbox`).
+  Per-instance append-only proc-progress journal for a durable structured
+  workflow operative, and its transactional outbox.
 
-  One `proc.journal` per instance at
-  `<state_root>/<namespace>/<instance_id>/<instance_id>/proc.journal`, written
-  through the existing `WalWriter` framing + `FsyncBatcher` path under the
-  reserved
-  identity `Paths.journal_id/1` — no parallel persistence machinery. Each
-  WAL record's change-bytes carry one typed journal entry, and its 16-byte
-  record header carries the instance epoch and the entry's identity:
+  One `proc.journal` per instance, written through the `WalWriter` framing +
+  `FsyncBatcher` path under the reserved identity `Paths.journal_id/1`. Each
+  record's change-bytes carry one typed journal entry and its header the
+  instance epoch and the entry's identity, which a commit barrier dedups on. The
+  entry types and payload layouts are in `docs/internals/state_persistence.md`.
 
-  ```
-  header: [epoch: u32 BE][type: u8][proc_idx: u16 BE][iter: u32 BE][0: 40 bits]
-  body:   [type: u8][proc_idx: u16 BE][iter: u32 BE][payload]
-  ```
-
-  The header is what the writer dedups a commit barrier on: a re-sent
-  `proc_committed` / `iter_committed` / `compensated` for an identity the
-  journal already holds is answered from the existing entry, never appended
-  twice.
-
-  Entry types: `1 = proc_committed` (the entities that ran, the serialized
-  inter-proc handoff, and the procedure's staged outbox — ONE durable write),
-  `2 = outbox_flushed` (that outbox reached the plugins),
-  `3 = iter_committed` (a loop iteration finished: the inbox offset it
-  consumed plus its terminal handoff — `workflow-durable-loop`),
-  `4 = parked` (the loop is suspended at a committed boundary, with an
-  optional wake deadline — `workflow-durable-suspension`), `5 = compensated`
-  (a compensation hook's undo outbox), `6 = rewound` (the loop was rewound to
-  the iteration in this entry's `iter` field — `workflow-loop-rewind`). Torn
-  tails are truncated by the `WalWriter` open scan; the read path stops at the
-  first invalid record.
-
-  Payloads:
-
-  ```
-  proc_committed:   [n_entities: u16 BE] n × ([len: u16 BE][entity_identity])
-                  [handoff]
-                  [outbox]
-  iter_committed: [consumed_offset: u64 BE][handoff]
-  parked:         [wake_deadline_ms: u64 BE]   # 0 = no deadline
-  compensated:    [outbox]
-  outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
-  rewound:        <empty>          # the target iteration is the `iter` field
-  handoff:        [n: u32 BE] n × ([channel_id: u32 BE][len: u32 BE][payload])
-  outbox:         [n: u32 BE] n × ([len: u16 BE][entity_identity][seq_in_proc: u32 BE]
-                                   [len: u16 BE][channel][len: u32 BE][payload])
-  ```
-
-  The `iter` field of every entry is the enclosing loop iteration (0 for a
-  non-looping chain), so redo-vs-skip works at both the procedure and the
-  iteration granularity from one scan.
-
-  ## Rewind
-
-  The journal is append-only, so a rewind to iteration N is a `rewound` marker,
-  not a truncation. Every fold runs over `live_entries/1`, which replays the
-  markers: on `rewound(N)`, entries accumulated so far with `iter > N` are
-  purged. Entries appended *after* a marker (the undo records, and the re-run of
-  the iterations that were unwound) accumulate normally — "purge what came
-  before the marker, keep what came after" is exact, because a pre-rewind
-  iteration is journaled before it and its re-run after it.
-
-  So a rewound iteration is not merely skipped on resume: its unflushed outbox
-  ceases to be owed (`pending_entries/1` folds the same way) and
-  `consumed_offset/1` moves back with the resume point. The inbox items it
-  consumed are NOT re-delivered: the inbox released them when they committed
-  (`released_offset/1`, which no rewind lowers, is `ProcInbox.undelivered/1`'s
-  floor), so a rewind is undo-and-continue — the next input is the first turn
-  after the rewound-to iteration. The marker carries `current_epoch + 1`, and
-  since `current_epoch/1` reads the last record's header, every post-rewind
-  append inherits the bumped epoch — which is what makes a re-run's output
-  supersede the unwound run's at a guarded sink.
-
-  ## Durability
-
-  A barrier is written through the writer and made durable by the
-  `FsyncBatcher` tick like an Entity change, and its answer follows the sync:
-  every barrier that lands in one tick shares one fsync. The control channel's
-  commit worker issues them without waiting (`append_async/4`) and acks each
-  as its answer arrives. Only a rewind syncs inline — it is rare, and it must be
-  durable before the eviction that follows it.
-
-  ## Cut
-
-  A loop's journal is cut at every iteration commit (`cut/1`): once
-  `iter_committed(N)` is durable, everything below the oldest entry the fold
-  still needs is dropped, so the journal a loop keeps is bounded by one
-  iteration. A class with compensable procedures keeps its history — the saga
-  and a rewind replan from it.
-
-  ## Flush
-
-  A procedure's plugin-bound output is staged in the runner and journaled
-  WITH its commit, so progress and outbox cannot tear apart. Delivery happens
-  only after that fsync, through the same `:on_output` fan-out a stream
-  operative's effectively-once outbox uses, stamped with the deterministic key
-  `(entity, proc_idx, seq_in_proc, epoch)`. `flush_pending/1` is the single flush
-  path — driven post-ack by the `ControlChannel` and again on restore, it reads
-  the journal, delivers every entry with no matching `outbox_flushed`, and
-  records the flush. Journal state (not memory) decides what is owed, so a
-  crash between commit and flush re-drives with identical keys.
+  **Journal state, not memory, decides what is owed.** Every fold runs over
+  `live_entries/1`, which replays `rewound` markers — a rewind is a marker, not
+  a truncation, so a rewound iteration's outbox stops being owed and
+  `consumed_offset/1` moves back while `released_offset/1`, which no rewind
+  lowers, holds the inbox floor. The marker bumps the epoch, so a re-run's
+  output supersedes the unwound run's at a guarded sink.
   """
 
   require Logger
@@ -340,7 +252,7 @@ defmodule Flezha.State.ProcJournal do
   @doc """
   The entries whose outbox is journaled but not yet recorded flushed, in
   journal order. An entry carrying no output needs no delivery and is not
-  pending, and a rewound entry's outbox is no longer owed at all.
+  pending, and a rewound entry's outbox stops being owed at all.
   """
   @spec pending_entries(binary()) :: [entry()]
   def pending_entries(instance_id) when is_binary(instance_id),
@@ -765,7 +677,7 @@ defmodule Flezha.State.ProcJournal do
   @doc """
   Record one entry's outbox as delivered — the sinks confirmed it. Called by the
   instance's journal writer through `Flezha.State.Outbox`, never by the flush:
-  the marker is what a restore reads to know an entry is no longer owed, so it
+  the marker is what a restore reads to know an entry stopped being owed, so it
   may only follow a confirmed delivery.
   """
   @spec mark_flushed(

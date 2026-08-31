@@ -1,0 +1,13 @@
+flz token - Scoped-token management
+
+USAGE:
+    flz token <COMMAND>
+
+COMMANDS:
+    issue <principal> <namespace> <role>   Issue a token (printed once)
+        [--ttl <seconds>]
+    revoke <token-id>                      Revoke by id (prefix of the token hash)
+    list                                   List tokens visible to the caller
+    help                                   Show this help message
+
+Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

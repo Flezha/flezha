@@ -1,38 +1,41 @@
 use std::process::exit;
 
-use crate::utils::{get_output_format, run_rpc, token_opts_fragment};
+use crate::dispatch::{self, Command};
+use crate::rpc::{self, token_opts_fragment};
+use crate::{args, help};
 
-pub fn handle_state_command(args: &[String]) {
-    if args.is_empty() {
-        eprintln!("Error: Invalid number of arguments. See `flz state help`.");
-        exit(1);
-    }
-
-    match args[0].as_str() {
-        "get" => handle_read(
-            args,
-            "get",
-            "<operative/procedure[/entity_key]>",
-            "state_get",
-        ),
-        "list" => handle_read(args, "list", "<operative_class>", "state_list"),
-        "at" => handle_at(args),
-        "rotate" => handle_entity_verb(args, "rotate", "state_rotate"),
-        "retention" => handle_retention(args),
-        "delete" => handle_entity_verb(args, "delete", "state_delete"),
-        "outbox" => handle_entity_verb(args, "outbox", "state_outbox"),
-        "journal" => handle_read(args, "journal", "<operative/instance>", "state_journal"),
-        "inbox" => handle_read(args, "inbox", "<operative/instance>", "state_inbox"),
-        "help" | "--help" | "-h" => print_state_help(),
-        _ => {
-            eprintln!(
-                "Error: Invalid argument '{}'. Use 'get', 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', 'inbox', or 'help'.",
-                args[0]
-            );
-            exit(1);
-        }
-    }
-}
+pub(crate) const TABLE: Command = Command {
+    help: help::STATE,
+    verbs: &[
+        ("get", |args| {
+            handle_read(args, "get", "<operative/procedure[/entity_key]>", "state_get")
+        }),
+        ("list", |args| {
+            handle_read(args, "list", "<operative_class>", "state_list")
+        }),
+        ("at", handle_at),
+        ("rotate", |args| {
+            handle_entity_verb(args, "rotate", "state_rotate")
+        }),
+        ("retention", handle_retention),
+        ("delete", |args| {
+            handle_entity_verb(args, "delete", "state_delete")
+        }),
+        ("outbox", |args| {
+            handle_entity_verb(args, "outbox", "state_outbox")
+        }),
+        ("journal", |args| {
+            handle_read(args, "journal", "<operative/instance>", "state_journal")
+        }),
+        ("inbox", |args| {
+            handle_read(args, "inbox", "<operative/instance>", "state_inbox")
+        }),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: Some("Error: Invalid number of arguments. See `flz state help`."),
+    unknown: "Error: Invalid argument '{}'. Use 'get', 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', 'inbox', or 'help'.",
+    unknown_prints_help: false,
+};
 
 fn handle_at(args: &[String]) {
     if args.len() < 3 {
@@ -40,12 +43,15 @@ fn handle_at(args: &[String]) {
         exit(1);
     }
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.state_at(\"{}\", \"{}\", \"{}\")",
-        &args[1],
-        &args[2],
-        get_output_format(&args[3..]),
-    ));
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.state_at(\"{}\", \"{}\", \"{}\")",
+            &args[1],
+            &args[2],
+            args::output_format(&args[3..]),
+        ),
+        rpc::PROPAGATE,
+    );
 }
 
 fn handle_retention(args: &[String]) {
@@ -54,10 +60,13 @@ fn handle_retention(args: &[String]) {
         exit(1);
     }
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.state_retention(\"{}\", \"{}\")",
-        &args[1], &args[2],
-    ));
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.state_retention(\"{}\", \"{}\")",
+            &args[1], &args[2],
+        ),
+        rpc::PROPAGATE,
+    );
 }
 
 /// The Entity-scoped write verbs — `rotate`, `delete`, `outbox` — take one
@@ -70,12 +79,15 @@ fn handle_entity_verb(args: &[String], verb: &str, rpc_fun: &str) {
         exit(1);
     }
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.{}(\"{}\", {})",
-        rpc_fun,
-        &args[1],
-        token_opts_fragment(&args[2..]),
-    ));
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.{}(\"{}\", {})",
+            rpc_fun,
+            &args[1],
+            token_opts_fragment(&args[2..]),
+        ),
+        rpc::PROPAGATE,
+    );
 }
 
 /// The read verbs — `list`, `journal`, `inbox` — take one scope argument plus an
@@ -87,52 +99,14 @@ fn handle_read(args: &[String], verb: &str, scope: &str, rpc_fun: &str) {
         exit(1);
     }
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.{}(\"{}\", \"{}\", {})",
-        rpc_fun,
-        &args[1],
-        get_output_format(&args[2..]),
-        token_opts_fragment(&args[2..]),
-    ));
-}
-
-fn print_state_help() {
-    println!("flz state - Per-Entity state inspection and time-travel queries");
-    println!();
-    println!("USAGE:");
-    println!("    flz state <SUBCOMMAND>");
-    println!();
-    println!("SUBCOMMANDS:");
-    println!(
-        "    get <operative/procedure[/key]>          Current in-memory state of a live Entity, with its change_seq"
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.{}(\"{}\", \"{}\", {})",
+            rpc_fun,
+            &args[1],
+            args::output_format(&args[2..]),
+            token_opts_fragment(&args[2..]),
+        ),
+        rpc::PROPAGATE,
     );
-    println!("    list <operative>                         List Entities under an Operative class");
-    println!("    at <operative/procedure/key> <seq|ts>    Query state at a point in time");
-    println!("    rotate <operative/procedure/key>         Force a compaction snapshot");
-    println!("    retention <operative> <hours>            Set time-travel retention");
-    println!(
-        "    delete <operative/procedure/key>         Hard-delete an Entity's persisted state"
-    );
-    println!(
-        "    outbox <operative/procedure/key>         Effectively-once outbox status (lag, cursor, watermark)"
-    );
-    println!(
-        "    journal <operative/instance>             Workflow instance proc-journal (committed procs, iterations, park)"
-    );
-    println!(
-        "    inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)"
-    );
-    println!();
-    println!("EXAMPLES:");
-    println!("    flz state get MarketOperative/OhlcProcedure/M1");
-    println!("    flz state get MarketOperative/OhlcProcedure --output json");
-    println!("    flz state list MarketOperative");
-    println!("    flz state at MarketOperative/OhlcProcedure/M1 12345");
-    println!("    flz state at MarketOperative/OhlcProcedure/M1 2026-05-01T12:00:00Z");
-    println!("    flz state rotate MarketOperative/OhlcProcedure/M1");
-    println!("    flz state retention MarketOperative 6");
-    println!("    flz state delete MarketOperative/OhlcProcedure/M1");
-    println!("    flz state outbox MarketOperative/OhlcProcedure/M1");
-    println!("    flz state journal etl-job-42");
-    println!("    flz state inbox chat-session-7");
 }

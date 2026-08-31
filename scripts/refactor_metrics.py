@@ -15,6 +15,9 @@ opt-in). A ratcheted metric must never rise; timings tolerate 5 % and compare on
 recording box; an area under `blocking` in the baseline fails `--check`, the rest only report.
 `duplicate_pairs` counts pairs among the files scanned, so a recording names its area set and
 `--check` refuses a baseline recorded under a different one instead of differencing the two.
+`cycles` is how many cycles an area appears in, `max_cycle_files` how many of its own files sit
+in the largest one; fragmenting one cycle into several raises the first while lowering the
+second, so both are ratcheted and untangling an area is visible (charter §11f).
 A recording MERGES: `--timing`/`--bench` add to what the baseline holds, so recording one
 number never retires another and never re-stamps a measurement it did not take — retire a
 stale entry by deleting its key from the file. For the same reason `--write-baseline` demands
@@ -44,7 +47,7 @@ TIMING_TOLERANCE = 0.05
 
 RATCHETED = (
     "prod_loc narrative_markers files_over_800 functions_over_50 long_names duplicate_pairs "
-    "cycles async_false_share sleeps refutes credo_warnings clippy_warnings"
+    "cycles max_cycle_files async_false_share sleeps refutes credo_warnings clippy_warnings"
 ).split()
 LISTED = {
     m: f"{m}_list" for m in "files_over_800 functions_over_50 long_names duplicate_pairs".split()
@@ -53,7 +56,7 @@ BY_FILE = {m: f"{m}_by_file" for m in "prod_loc narrative_markers sleeps refutes
 COLUMNS = list(
     zip(
         RATCHETED[:1] + ["test_loc", "comment_density"] + RATCHETED[1:],
-        "prod test cmt% narr >800 fn>50 name>32 dups cyc async_f sleep refute credo clippy".split(),
+        "prod test cmt% narr >800 fn>50 name>32 dups cyc cycmax async_f sleep refute credo clippy".split(),
     )
 )
 LANG_EXTS = {
@@ -524,6 +527,9 @@ def summarise(files, pairs, cycles, credo, clippy):
         test_files=len(async_cases),
         comment_density=round(comments / total, 3) if total else 0.0,
         cycles=sum(any(f in files for f in c) for c in cycles) if cycles is not None else None,
+        max_cycle_files=max((sum(f in files for f in c) for c in cycles), default=0)
+        if cycles is not None
+        else None,
         async_false_share=round(1 - sum(async_cases) / len(async_cases), 3)
         if async_cases
         else None,
@@ -801,6 +807,34 @@ def self_test_ratchet():
     assert "records no scan" in scan_mismatch({"scan": ["a"]}, base)
 
 
+def self_test_cycle_depth():
+    """`cycles` and `max_cycle_files` move in opposite directions when one large
+    cycle fragments into several small ones, which is what untangling an area does."""
+
+    def area_of(paths, cycles):
+        files = {p: measure_lines(p, "elixir", ["x = 1"]) for p in paths}
+        return summarise(files, [], cycles, None, None)
+
+    mine = ["a.ex", "b.ex", "c.ex"]
+    whole = area_of(mine, [["a.ex", "b.ex", "c.ex", "x.ex"]])
+    frags = area_of(mine, [["a.ex", "x.ex"], ["b.ex", "y.ex"], ["c.ex", "z.ex"]])
+    assert (whole["cycles"], whole["max_cycle_files"]) == (1, 3), whole
+    assert (frags["cycles"], frags["max_cycle_files"]) == (3, 1), frags
+    # In no cycle reads 0; without mix both metrics are unmeasured, never 0.
+    assert area_of(["q.ex"], [["a.ex", "x.ex"]])["max_cycle_files"] == 0
+    assert area_of(mine, None)["max_cycle_files"] is None
+
+    # A baseline that predates the metric skips it on both sides, so the new key
+    # is recorded and uncompared until the next --write-baseline.
+    old = {"areas": {"a": {"cycles": 1}}}
+    assert [m for _, m, *_ in compare({"areas": {"a": frags}}, old)] == ["cycles"]
+    # Once recorded it ratchets, and the fragmenting case is the one it catches.
+    now = {"areas": {"a": {"cycles": 3, "max_cycle_files": 2}}}
+    assert [m for _, m, *_ in compare({"areas": {"a": whole}}, now)] == ["max_cycle_files"]
+    blind = {"areas": {"a": {**frags, "max_cycle_files": None}}}
+    assert unmeasured(blind, now) == {"max_cycle_files": 1}
+
+
 def self_test_baseline():
     measured = {"box": {"hostname": "here"}, "head": "new", "areas": {}}
     recorded = {
@@ -891,6 +925,7 @@ def main(argv):
     if args.self_test:
         self_test_classifiers()
         self_test_ratchet()
+        self_test_cycle_depth()
         self_test_baseline()
         print("self-test OK")
         return 0

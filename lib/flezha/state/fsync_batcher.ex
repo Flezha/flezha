@@ -1,21 +1,20 @@
 defmodule Flezha.State.FsyncBatcher do
   @moduledoc """
-  Single shared `GenServer` that drives `:file.datasync/1` across every
-  dirty `WalWriter` on a configurable cadence.
+  Single shared `GenServer` that drives `:file.datasync/1` across every dirty
+  `WalWriter` on a configurable cadence.
 
-  Writers cast `mark_dirty/1` on the first append of an fsync window; the
-  tick then casts one `:fsync` to every dirty writer, so the writers sync
-  concurrently in their own processes and a writer busy behind a deep
-  mailbox delays no one else's durability. Default tick interval is `5 ms`
-  (≈ 200 Hz), giving ≤10 ms total durability when paired with the SDK
-  flusher's 5 ms linger.
+  Writers cast `mark_dirty/1` on the first append of an fsync window; the tick
+  casts one `:fsync` to every dirty writer, so they sync in their own processes
+  and a writer behind a deep mailbox delays no one else's durability. Default
+  tick interval is `5 ms` (~200 Hz), giving <=10 ms total durability when paired
+  with the SDK flusher's 5 ms linger.
 
   A (re)started batcher seeds its dirty set with every registered writer: a
-  writer marks once per window, so a dirty set lost with a crashed batcher
-  would otherwise never be rebuilt.
+  writer marks once per window, so a dirty set lost with a crashed batcher would
+  otherwise never be rebuilt.
 
-  Validates `:flezha, :agent_fsync_interval_ms` at `init/1`. Legal range
-  `[1, 1000]`; out-of-range values prevent the batcher from booting.
+  Validates `:flezha, :agent_fsync_interval_ms` at `init/1`. Legal range `[1,
+  1000]`; out-of-range values prevent the batcher from booting.
   """
 
   use GenServer
@@ -29,13 +28,6 @@ defmodule Flezha.State.FsyncBatcher do
   defstruct [:dirty_set, :tick_ref, :tick_interval_ms]
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]}
-    }
-  end
 
   def start_link(opts) when is_list(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

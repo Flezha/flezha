@@ -1,43 +1,26 @@
 defmodule Flezha.State.DurabilityTier.Artifact do
   @moduledoc """
   The local side of the remote durability tier: what a shippable reference maps
-  onto on disk, how a seq range is read out of it, and how a fetched artifact is
-  written back.
+  onto on disk, how a seq range is read out of it, how a fetched one is written
+  back.
 
-  References come in two families. **Seq-addressed** ones are read as a range of
-  WAL records:
+  **Seq-addressed** references are read as a range of WAL records —
+  `{:entity, entity_id}` (an Entity's WAL and snapshots; a workflow instance's
+  proc-journal and inbox are this shape too, under `Paths`'s reserved entity
+  keys) and `{:input_log, operative_class}`. **Whole-payload** ones are the
+  files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
+  {operative_class, procedure_id}}` and `{:control, {store, writer}}`, each
+  keyed by its writer or claim-fenced because their replicas are per-node.
 
-    * `{:entity, entity_id}` — an Entity's WAL plus its snapshots. A workflow
-      instance's proc-journal and durable inbox are *also* this shape: they ride
-      the Entity persistence substrate under `Flezha.State.Paths`'s reserved
-      entity keys, so they need no separate machinery here.
-    * `{:input_log, operative_class}` — the effectively-once tier's durable
-      input log, which shares the WAL record framing and so shares the
-      seq-range reader.
-
-  **Whole-payload** ones are read as the files they name, packed into one blob
-  by `pack/1` (`payload_files/1` is the only thing that differs between them):
-
-    * `{:cspec, {hub_id, writer}}` — the ProcessHub durable registry. Every node
-      in a namespace holds its own replica, so the writer is part of the
-      identity rather than something to arbitrate.
-    * `{:dlq, {operative_class, procedure_id}}` — one procedure's parked
-      failures: the JSONL index and one blob per payload. Claim-fenced, because
-      exactly one node runs the operative that produced them.
-    * `{:control, {store, writer}}` — a control-plane store's DETS tables
-      (`"authz"`, `"schedules"`). Node-local and unreplicated, so it keys per
-      writer like the cspec.
-
-  Record bundles are read **at ship time** through `WalWriter.fold_path/3` and
-  re-framed with `WalWriter.encode_record/3`, never copied as file byte ranges: compaction (`truncate_up_to`) and correction (`rewind_to`)
-  rewrite the live WAL in place, so an offset recorded yesterday addresses
-  different records today. A seq range does not move.
+  Record bundles are read at ship time and re-framed, never copied as file byte
+  ranges: compaction and correction rewrite the live WAL in place, so a byte
+  offset moves where a seq range does not.
   """
 
   alias Flezha.AuthZ.Config
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{Outbox, Paths, Restore, WalWriter, Wire}
+  alias Flezha.State.{Outbox, Paths, RecordFrame, Restore, Wire}
 
   @type ref :: Manifest.ref()
 
@@ -281,7 +264,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
           true ->
             {:cont,
-             {[WalWriter.encode_record(seq, header, body) | acc], count + 1,
+             {[RecordFrame.encode_record(seq, header, body) | acc], count + 1,
               max_consumed(offset, header, body)}}
         end
       end)
@@ -304,7 +287,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   defp fold_wal(ref, acc, fun) do
     case wal_path(ref) do
       nil -> acc
-      path -> WalWriter.fold_path(path, acc, fun)
+      path -> RecordFrame.fold_path(path, acc, fun)
     end
   end
 

@@ -1,47 +1,20 @@
 defmodule Flezha.State.Watchdog do
   @moduledoc """
-  Sweeper that makes a stalled per-Entity persistence/output path
-  *detectable* instead of silently frozen. Holds its own sweep timer
-  (`:output_watchdog_interval_ms`, default 10 s); the convergence `Loop`
-  consumes the `:output_stall` telemetry the sweep emits.
+  Sweeper that makes a stalled per-Entity persistence/output path *detectable*
+  instead of silently frozen. Holds its own sweep timer
+  (`:output_watchdog_interval_ms`, 10 s); the convergence `Loop` consumes the
+  telemetry it emits.
 
-  This is a **sensor**: it observes and emits, and decides no remedy of its
-  own. The one exception is the compaction handshake it owns end to end —
-  it dispatched the `CompactEntity`, so it is also the one that can time it
-  out and, at give-up, re-dispatch it. Every operative-level remedy belongs
-  to the convergence `Loop`, which is why an output stall produces telemetry
-  and nothing else.
+  This is a **sensor**: it observes and emits, and decides no remedy of its own.
+  The one exception is the compaction handshake it owns end to end — it
+  dispatched the `CompactEntity`, so it also times it out. Each completed sweep
+  stamps `Convergence.Snapshot`, so a Watchdog that wedges without crashing is
+  visible on `/healthz` rather than turning detection off in silence.
 
-  Each completed sweep stamps `Flezha.Convergence.Snapshot` so a Watchdog
-  that wedges without crashing is visible on `/healthz` within one poll
-  rather than silently turning detection off.
-
-  Three sweeps run on each pass:
-
-    * **Output staleness.** For every persistence-enabled Entity with a
-      live `WalWriter`, compare `last_change_seen_at` (any Change frame
-      arriving) against `last_advance_at` (the persisted seq actually
-      moving). An Entity that is still *receiving* Changes but whose seq
-      has not advanced within `output_stall_timeout_ms` is stalled — its
-      outbox has wedged while the SDK keeps emitting. A genuinely idle
-      Entity (no Changes arriving) is NOT flagged, because a
-      non-advancing seq is correct when nothing is being produced.
-
-    * **Compaction trigger (size + age).** An Entity whose un-snapshotted
-      WAL bytes exceed its resolved `compact_after_bytes`, or whose oldest
-      un-snapshotted record is older than `compact_after_age_ms` (`0`
-      disables age), gets a `CompactEntity` dispatched to its owning
-      runner. The in-flight `compactions` map guards re-enqueue, so size
-      and age can never double-enqueue.
-
-    * **Compaction timeout.** A `CompactEntity` whose
-      `entity_state_snapshot` response does not arrive within
-      `compaction_timeout_ms` is timed out so it cannot block persistence.
-
-    * **Remote RPO.** When a remote durability backend is configured, a
-      reference whose local progress has gone unshipped past the RPO target
-      raises an alarm — a stalled shipper must never be discoverable only by
-      inspecting the backend. Inert (one ETS read) while the tier is off.
+  Four sweeps run on each pass: **output staleness** (Changes still arriving
+  while the persisted seq has not advanced — an idle Entity is not flagged),
+  **compaction trigger** on un-snapshotted bytes or age, **compaction timeout**,
+  and **remote RPO** when a durability backend is configured.
   """
 
   use GenServer
@@ -79,10 +52,6 @@ defmodule Flezha.State.Watchdog do
             backoff: Backoff.new()
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
-  end
 
   def start_link(opts) when is_list(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -511,9 +480,8 @@ defmodule Flezha.State.Watchdog do
   # Entity fixes nothing and risks availability). At the threshold the WAL has
   # grown across every backoff rung, so the loud alarm fires; and when a
   # `runner_id` is known (the timeout path carries one; the stub-response path
-  # does not), it ALSO dispatches a real resync — the fix for the previously
-  # silent `_ = Recovery.resync/2` no-op whose `{:error, :no_runner_id}` was
-  # discarded.
+  # does not), it ALSO dispatches a real resync. Its `{:error, :no_runner_id}`
+  # must not be discarded: a resync that cannot name a runner is a silent no-op.
   defp maybe_give_up({rc, sh, pk} = pid, attempt, runner_id \\ nil) do
     if attempt >= @compaction_give_up_attempts do
       emit_give_up(pid, attempt)

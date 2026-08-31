@@ -1,0 +1,17 @@
+flz namespace - Namespace management commands
+
+USAGE:
+    flz namespace <COMMAND>
+
+COMMANDS:
+    list                                 List running namespaces
+    create <name> [--X<quota>=<value>]   Create a namespace in the auth catalog
+    delete <name>                        Delete a namespace from the auth catalog
+    show <name>                          Show a namespace's quotas
+    set-quota <name> --X<quota>=<value>  Update quota overrides
+    help                                 Show this help message
+
+Quota fields: max_operatives, max_entities_per_operative, max_mailbox_bytes_total,
+              max_message_rate_per_second, max_state_bytes, max_runners
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

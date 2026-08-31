@@ -54,12 +54,13 @@ unknown suffixes, so nothing surfaces as a phantom Entity.
 
 | Module | Role |
 |---|---|
+| `Flezha.State.RecordFrame` | The on-disk record frame every durable log shares: `encode_record/3`, `decode_record/2`, `fold_records/3`, `fold_path/3`, `scan_for_last_valid_seq/1`, and the `cut_below/5` / `cut_above/4` byte-range rewrites. Names only `SeqIndex`; holds no handle and no process. |
 | `Flezha.State.Paths` | Path resolution, namespace claims, enumeration; no GenServer, I/O limited to `File.ls/1` and `atomic_install/2`. |
 | `Flezha.State.Wire` | Codec for the `entity_state_change` / `entity_effect_record` / `entity_state_snapshot` / `delete_entity_state` / `park_payload` / compensation payload-ids, the postcard `EffectRecordBody`, the `flz.entity` / `flz.seq` / `flz.key` output stamps. |
 | `Flezha.State.Metrics` | Per-Entity `:counters` (`persisted_changes_total`, `wal_size_bytes`, `snapshot_seq`, `wal_shed_total`, `stale_writer_refused_total`, `fsync_total`, ...) in an ETS table. |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Entity `WalWriter`s plus the `WriterRegistry` process registry: `find_or_start/1`, `delete_entity/1`, `registered_ids/0`. Creates the claims, watermark and `ClassRegistry` tables so they outlive any one process. |
 | `Flezha.State.WalWriter` | One GenServer per Entity: WAL handle, seq accounting, dedup, credit attribution, outbox cursors, realign and baseline logic. |
-| `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved logs over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
+| `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved logs over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
 | `Flezha.State.FsyncBatcher` | One shared GenServer casting `:fsync` to every dirty writer per tick. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
 | `Flezha.State.Outbox` | Per-Entity dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`; advanced at fsync cadence, repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always a `WalWriter`: the Entity's for a stream, the journal writer for a workflow. |
@@ -109,10 +110,63 @@ its Operatives' state with it unless the remote durability tier is enabled.
 [crc32:  u32 BE]      :erlang.crc32(header <> change_bytes)
 ```
 
-`WalWriter.scan_for_last_valid_seq/2` forward-scans the file at open (there is no length at the
+`RecordFrame.scan_for_last_valid_seq/1` forward-scans the file at open (there is no length at the
 record tail, so a backward scan is impossible) and truncates any bytes past the last record whose
-CRC verifies; `WalWriter.fold_records/3` is the one walk every reader uses. A snapshot file is
+CRC verifies; `RecordFrame.fold_records/3` is the one walk every reader uses. A snapshot file is
 `<<header::16-bytes, snapshot_bytes, crc32::32-big>>`.
+
+## Reserved-log record formats
+
+`proc.journal` and `inbox.wal` reuse the WAL record framing above; what differs is what the
+16-byte header and the change-bytes carry.
+
+The journal's header is what the writer dedups a commit barrier on: a re-sent
+`proc_committed` / `iter_committed` / `compensated` for an identity the journal already holds
+is answered from the existing entry, never appended twice. The `iter` field is the enclosing
+loop iteration (`0` for a non-looping chain), so redo-vs-skip works at both the procedure and
+the iteration granularity from one scan.
+
+```text
+proc.journal
+header: [epoch: u32 BE][type: u8][proc_idx: u16 BE][iter: u32 BE][0: 40 bits]
+body:   [type: u8][proc_idx: u16 BE][iter: u32 BE][payload]
+
+inbox.wal
+header: [sha256(dedup_id)[0..16]]
+body:   [dedup_len: u16 BE][dedup_id][meta_len: u32 BE][meta][payload]
+```
+
+Journal entry types: `1 = proc_committed` (the entities that ran, the serialized inter-proc
+handoff and the procedure's staged outbox — ONE durable write), `2 = outbox_flushed` (that
+outbox reached the plugins), `3 = iter_committed` (a loop iteration finished: the inbox offset
+it consumed plus its terminal handoff), `4 = parked` (the loop is suspended at a committed
+boundary, with an optional wake deadline), `5 = compensated` (a compensation hook's undo
+outbox), `6 = rewound` (the loop was rewound to the iteration in this entry's `iter` field).
+
+```text
+proc_committed: [n_entities: u16 BE] n × ([len: u16 BE][entity_identity])
+                [handoff]
+                [outbox]
+iter_committed: [consumed_offset: u64 BE][handoff]
+parked:         [wake_deadline_ms: u64 BE]   # 0 = no deadline
+compensated:    [outbox]
+outbox_flushed: [for_type: u8]   # which entry type's outbox was flushed
+rewound:        <empty>          # the target iteration is the `iter` field
+handoff:        [n: u32 BE] n × ([channel_id: u32 BE][len: u32 BE][payload])
+outbox:         [n: u32 BE] n × ([len: u16 BE][entity_identity][seq_in_proc: u32 BE]
+                                 [len: u16 BE][channel][len: u32 BE][payload])
+```
+
+A torn tail is truncated by the `WalWriter` open scan; the read path stops at the first invalid
+record.
+
+## Outbox dedup file format
+
+`<key>.outbox.dedup` v2 is three 8-byte big-endian integers —
+`last_persisted_seq` (unsigned), `outbox_flushed_seq` (signed, `-1` = nothing flushed yet),
+`epoch` (unsigned) — written through `.tmp` + rename. A legacy 8-byte file reports its value as
+`last_persisted_seq` with cursor `-1` and epoch `0`; shorter or unreadable files report the
+empty triple.
 
 ## Schema evolution
 
@@ -488,7 +542,7 @@ instance metadata → SDK declaration → global default.
 | `:output_stall_timeout_ms` / `:default_output_stall_timeout_ms` | `%{}` / `60_000` | Output-staleness window; `0` disables. |
 | `:time_travel_retention_check_interval_ms` | `60_000` (`FLEZHA_RETENTION_CHECK_INTERVAL_MS`) | Retention tick. |
 | `:time_travel_retention_hours` / `:default_time_travel_retention_hours` | `%{}` / `6` | Snapshot history kept; `0` keeps only the latest. |
-| `:default_workflow_completed_retention_hours` | `72` (`FLEZHA_WORKFLOW_RETENTION_HOURS`) | Finished workflow data kept before the sweeper reclaims it. |
+| `:workflow_completed_retention_hours` / `:default_workflow_completed_retention_hours` | `%{}` / `72` (`FLEZHA_WORKFLOW_RETENTION_HOURS`) | Finished workflow data kept before the sweeper reclaims it. |
 | `:input_log_hold_window_ms` | `0` (`FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`) | Floor on how long a consumed input stays in `input.log`; a declared correction window raises it. |
 | `:operative_persistence` | `%{}` (default `true`) | Per-class persistence on/off (workflow kinds; a stream is always persistent). |
 | `:sync_durability` | `%{}` (default: the SDK declaration) | Per-class: commit barriers wait for the remote tier. |

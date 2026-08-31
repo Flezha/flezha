@@ -734,7 +734,7 @@ defmodule Flezha.Operative.Lifecycle do
     unless is_nil(state.runner_id) do
       ControlUnit.stop_operative_async(state.runner_id, state.id)
       Plugins.fire_on_terminate(state, reason)
-      _ = Table.teardown_all(state.extensions)
+      _ = Plugins.unregister(Table.teardown_all(state.extensions))
     end
 
     Logger.info(

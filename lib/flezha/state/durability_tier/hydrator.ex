@@ -2,20 +2,19 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   @moduledoc """
   Rebuilds local durable files from the remote manifest, so a controller with an
   empty state directory can adopt an operative that lived on a node whose disk
-  is gone — and, at boot, can come back as itself rather than as a blank cluster.
+  is gone — and, at boot, can come back as itself rather than as a blank
+  cluster.
 
-  Recovery reads **only** the manifest. Blobs the manifest does not name are
-  invisible here whatever they are — a torn upload, a superseded range, a
-  half-finished correction — which is what makes manifest-last atomicity a
-  recovery property rather than a hope.
+  Recovery reads **only** the manifest. Blobs it does not name are invisible
+  here whatever they are — a torn upload, a superseded range, a half-finished
+  correction — which is what makes manifest-last atomicity a recovery property.
 
   Nothing is hydrated over local state: a reference with local durable files is
   left exactly as it is. Local is authoritative, always, so a partially-restored
   node can never lose a record that a stale remote copy would have overwritten.
 
-  Once the files land, the ordinary restore path runs unchanged —
-  `Flezha.Operative.Replay` enumerates the Entities it now finds on disk and
-  ships each a `RestoreInitState`. There is no second restore implementation.
+  Once the files land, the ordinary restore path runs unchanged — there is no
+  second restore implementation.
   """
 
   require Logger

@@ -1,0 +1,11 @@
+flz runner - Runner management commands
+
+USAGE:
+    flz runner <COMMAND>
+
+COMMANDS:
+    list    List runners
+    check   Report whether a runner on this host can reach a controller
+    help    Show this help message
+
+Use 'flz runner <COMMAND> --help' for more information on a specific command.

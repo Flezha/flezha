@@ -2,28 +2,22 @@ use std::fs;
 use std::io::Write;
 use std::process::exit;
 
-use crate::utils::{app_data_root, run_rpc, token_opts_fragment};
+use crate::dispatch::{self, Command};
+use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
+use crate::{args, help};
 
-pub fn handle_auth_command(args: &[String]) {
-    if args.is_empty() {
-        print_auth_help();
-        exit(1);
-    }
-
-    match args[0].as_str() {
-        "bootstrap" => handle_bootstrap(args),
-        "whoami" => handle_whoami(args),
-        "rebootstrap" => handle_rebootstrap(args),
-        "help" | "--help" | "-h" => print_auth_help(),
-        _ => {
-            eprintln!(
-                "Error: Invalid argument '{}'. Use 'bootstrap', 'whoami', 'rebootstrap', or 'help'.",
-                args[0]
-            );
-            exit(1);
-        }
-    }
-}
+pub(crate) const TABLE: Command = Command {
+    help: help::AUTH,
+    verbs: &[
+        ("bootstrap", handle_bootstrap),
+        ("whoami", handle_whoami),
+        ("rebootstrap", handle_rebootstrap),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: None,
+    unknown: "Error: Invalid argument '{}'. Use 'bootstrap', 'whoami', 'rebootstrap', or 'help'.",
+    unknown_prints_help: false,
+};
 
 fn handle_bootstrap(args: &[String]) {
     if args.len() < 2 {
@@ -33,17 +27,17 @@ fn handle_bootstrap(args: &[String]) {
         exit(1);
     }
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.authz_render_bootstrap(\"{}\")",
-        crate::utils::escape_rpc_arg(&args[1])
-    ));
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.authz_render_bootstrap(\"{}\")",
+            rpc::escape_rpc_arg(&args[1])
+        ),
+        rpc::PROPAGATE,
+    );
 }
 
 fn handle_whoami(args: &[String]) {
-    run_rpc(format!(
-        "Flezha.Service.CliManager.authz_render_whoami({})",
-        token_opts_fragment(&args[1..])
-    ));
+    rpc::token_only(args, "authz_render_whoami");
 }
 
 // Break-glass recovery for a lost admin@_system: OFFLINE by design — it
@@ -53,7 +47,7 @@ fn handle_whoami(args: &[String]) {
 // invalidates the stale admin bindings/tokens, and re-enters the ordinary
 // bootstrap flow with a fresh token.
 fn handle_rebootstrap(args: &[String]) {
-    if crate::reset::controller_is_up(crate::reset::DEFAULT_PROBE_TIMEOUT_MS) {
+    if controller_is_up(DEFAULT_PROBE_TIMEOUT_MS) {
         eprintln!(
             "flz auth rebootstrap refuses to run while the controller is up. \
              Stop it first with: flz controller stop"
@@ -63,7 +57,7 @@ fn handle_rebootstrap(args: &[String]) {
 
     let auth_dir = match std::env::var("FLEZHA_AUTHZ_DIR") {
         Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
-        _ => app_data_root(&args[1..]).join("auth"),
+        _ => args::app_data_root(&args[1..]).join("auth"),
     };
 
     if !auth_dir.is_dir() {
@@ -89,22 +83,4 @@ fn handle_rebootstrap(args: &[String]) {
             exit(1);
         }
     }
-}
-
-fn print_auth_help() {
-    println!("flz auth - Authentication bootstrap and identity");
-    println!();
-    println!("USAGE:");
-    println!("    flz auth <COMMAND>");
-    println!();
-    println!("COMMANDS:");
-    println!("    bootstrap <token>   Claim the one-time bootstrap token as admin@_system");
-    println!("    whoami              Show the identity the current token resolves to");
-    println!("    rebootstrap         OFFLINE break-glass: reset a lost admin@_system");
-    println!(
-        "                        (controller must be stopped; writes app_data/auth/REBOOTSTRAP)"
-    );
-    println!("    help                Show this help message");
-    println!();
-    println!("Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.");
 }

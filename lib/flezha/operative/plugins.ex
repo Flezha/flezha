@@ -155,7 +155,7 @@ defmodule Flezha.Operative.Plugins do
   @spec restart(Overwatch.t(), term(), Plugin.t()) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
   def restart(%Overwatch{} = state, plugin_id, %Plugin{} = plugin) do
-    table = Table.unsubscribe(state.extensions, plugin_id)
+    table = unregister(Table.unsubscribe(state.extensions, plugin_id))
 
     case Table.subscribe(table, plugin_id, plugin) do
       {:ok, table} -> activated(state, table, plugin_id)
@@ -186,6 +186,17 @@ defmodule Flezha.Operative.Plugins do
   """
   @spec env(Overwatch.t()) :: map()
   def env(%Overwatch{} = state), do: %{effectively_once: state.effectively_once}
+
+  @doc """
+  Drop the `PluginManager` registrations a teardown released and answer the
+  table it left. `Extension.Table` is a data structure and issues no effects,
+  so it reports the ids it dropped and the Overwatch that owns it casts.
+  """
+  @spec unregister({Table.t(), [binary()]}) :: Table.t()
+  def unregister({table, plugin_ids}) do
+    Enum.each(plugin_ids, &PluginManager.unregister_plugin/1)
+    table
+  end
 
   @doc """
   A provider committed durable state of its own (the websocket provider's

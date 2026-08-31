@@ -1,0 +1,16 @@
+flz controller mem-top - Snapshot Controller memory hot spots
+
+USAGE:
+    flz controller mem-top [--json]
+
+OUTPUT (default text format):
+    Top-20 processes by :erlang.process_info(self, :memory),
+    sorted descending. Each row carries name / registered name /
+    initial call / :message_queue_len / :heap_size / :total_heap_size.
+
+    ETS tables sorted by :ets.info(tab, :memory) (bytes).
+    DETS files under app_data/process_hub/ sorted by file size.
+    :recon_alloc.memory(:allocated_types) allocator breakdown.
+
+FLAGS:
+    --json    Emit a single JSON document for machine consumption.

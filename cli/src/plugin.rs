@@ -1,35 +1,33 @@
-use std::process::{exit, Command};
+use std::process::exit;
 
-use crate::utils::{
-    extract_extension_flags, extract_opts_with_default_namespace, extract_x_flags,
-    filter_out_extension_entries, get_flezha_command, serialize_flags,
+use crate::args::{
+    extract_extension_flags, extract_opts, extract_x_flags, filter_out_extension_entries,
+    serialize_flags,
 };
+use crate::dispatch::Command;
+use crate::help;
+use crate::rpc::{self, token_opts_fragment, token_opts_json_literal};
 
-pub fn handle_plugin_command(args: &[String]) {
-    if args.is_empty() {
-        eprintln!("Error: No plugin command specified.");
-        exit(1);
-    }
-
-    match args[0].as_str() {
-        "enable" => handle_enable(args),
-        "disable" => handle_disable(args),
-        "help" => handle_help(args),
-        "list" => handle_list(args),
-        "install" => handle_install(args),
-        "upgrade" => handle_upgrade(args),
-        "uninstall" => handle_uninstall(args),
-        "info" => handle_info(args),
-        _ => {
-            eprintln!(
-                "Error: Invalid argument '{}'. Use 'install', 'upgrade', 'uninstall', \
-                 'info', 'enable', 'disable', 'help', or 'list'.",
-                args[0]
-            );
-            exit(1);
-        }
-    }
-}
+pub(crate) const TABLE: Command = Command {
+    help: help::PLUGIN,
+    verbs: &[
+        ("enable", handle_enable),
+        ("disable", handle_disable),
+        // `help` is a verb here, not a spelling of the screen: with a provider
+        // id it asks the controller for that provider's own help.
+        ("help", handle_help),
+        ("list", handle_list),
+        ("install", handle_install),
+        ("upgrade", handle_upgrade),
+        ("uninstall", handle_uninstall),
+        ("info", handle_info),
+    ],
+    help_verbs: &[],
+    missing: Some("Error: No plugin command specified."),
+    unknown: "Error: Invalid argument '{}'. Use 'install', 'upgrade', 'uninstall', \
+              'info', 'enable', 'disable', 'help', or 'list'.",
+    unknown_prints_help: false,
+};
 
 fn handle_install(args: &[String]) {
     if args.len() < 2 {
@@ -37,24 +35,14 @@ fn handle_install(args: &[String]) {
         exit(1);
     }
 
-    let path = &args[1];
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.install_plugin(\"{}\", {})",
-        path.replace('"', "\\\""),
-        crate::utils::token_opts_json_literal(&args[2..])
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.install_plugin(\"{}\", {})",
+            rpc::escape_rpc_arg(&args[1]),
+            token_opts_json_literal(&args[2..])
+        ),
+        rpc::REFUSED,
     );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
 }
 
 fn handle_upgrade(args: &[String]) {
@@ -63,25 +51,14 @@ fn handle_upgrade(args: &[String]) {
         exit(1);
     }
 
-    let plugin_id = &args[1];
-    let path = &args[2];
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.upgrade_plugin(\"{}\", \"{}\", \"{{}}\")",
-        plugin_id,
-        path.replace('"', "\\\"")
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.upgrade_plugin(\"{}\", \"{}\", \"{{}}\")",
+            &args[1],
+            rpc::escape_rpc_arg(&args[2])
+        ),
+        rpc::REFUSED,
     );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
 }
 
 fn handle_uninstall(args: &[String]) {
@@ -90,24 +67,14 @@ fn handle_uninstall(args: &[String]) {
         exit(1);
     }
 
-    let plugin_id = &args[1];
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.uninstall_plugin(\"{}\", {})",
-        plugin_id,
-        crate::utils::token_opts_json_literal(&args[2..])
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.uninstall_plugin(\"{}\", {})",
+            &args[1],
+            token_opts_json_literal(&args[2..])
+        ),
+        rpc::REFUSED,
     );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
 }
 
 fn handle_info(args: &[String]) {
@@ -116,37 +83,24 @@ fn handle_info(args: &[String]) {
         exit(1);
     }
 
-    let plugin_id = &args[1];
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.installed_plugin_info(\"{}\")",
-        plugin_id
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.installed_plugin_info(\"{}\")",
+            &args[1]
+        ),
+        rpc::REFUSED,
     );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
 }
 
 // Check whether an id is tracked by the installer. Returns true/false based
 // on the stdout output of the RPC call.
 fn is_installed_plugin(plugin_id: &str) -> bool {
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.installed_plugin?(\"{}\") |> IO.puts()",
-        plugin_id
-    );
-
-    let output = Command::new(command)
+    let output = rpc::flzvm()
         .arg("rpc")
-        .arg(rpc_command)
+        .arg(format!(
+            "Flezha.Service.CliManager.installed_plugin?(\"{}\") |> IO.puts()",
+            plugin_id
+        ))
         .output()
         .ok();
 
@@ -171,25 +125,16 @@ fn handle_enable(args: &[String]) {
 
     // Dispatch installed plugins through the Installer service.
     if is_installed_plugin(plugin_id) {
-        let command = get_flezha_command();
-        let rpc_command = format!(
-            "Flezha.Service.CliManager.installer_enable_plugin(\"{}\", {})",
-            plugin_id,
-            crate::utils::token_opts_json_literal(&args[2..])
-        );
-
         println!("Enabling installed plugin {}...", plugin_id);
 
-        let status = Command::new(command)
-            .arg("rpc")
-            .arg(rpc_command)
-            .status()
-            .expect("Failed to execute command");
-
-        if !status.success() {
-            eprintln!("Error: Command execution failed.");
-            exit(1);
-        }
+        rpc::run(
+            format!(
+                "Flezha.Service.CliManager.installer_enable_plugin(\"{}\", {})",
+                plugin_id,
+                token_opts_json_literal(&args[2..])
+            ),
+            rpc::REFUSED,
+        );
 
         return;
     }
@@ -199,52 +144,36 @@ fn handle_enable(args: &[String]) {
         exit(1);
     }
 
-    let provider_id = &args[2];
-    let command = get_flezha_command();
-
-    // Extract X-prefixed flags (plugin settings)
-    let x_flags = extract_x_flags(&args[3..]);
-    let x_flags_json_base = serialize_flags(&x_flags);
-
-    // Remove `--extension=...` and `--NAME.key=value` before the opts parser
-    // runs so they are not misclassified as CLI options.
-    let filtered_rest = filter_out_extension_entries(&args[3..]);
-
-    // Extract opts flags (CLI options with default namespace)
-    let opts_flags = extract_opts_with_default_namespace(&filtered_rest);
-    let opts_json_base = serialize_flags(&opts_flags);
-
-    // Extract repeatable `--extension=NAME` with `--NAME.key=value` sub-options.
-    let extensions = extract_extension_flags(&args[3..]);
-
-    // Embed `extensions` JSON array into plugin flags so the Elixir side sees it.
-    let x_flags_json = if extensions.is_empty() {
-        x_flags_json_base
-    } else {
-        embed_extensions_into_json(&x_flags_json_base, &extensions)
-    };
-
     let rpc_command = format!(
         "Flezha.Service.CliManager.enable_plugin(\"{}\", \"{}\", {}, {})",
         plugin_id,
-        provider_id,
-        serde_json::to_string(&x_flags_json).unwrap(),
-        serde_json::to_string(&opts_json_base).unwrap()
+        &args[2],
+        serde_json::to_string(&plugin_flags_json(&args[3..])).unwrap(),
+        serde_json::to_string(&opts_json(&args[3..])).unwrap()
     );
 
     println!("Enabling plugin...");
 
-    // Attempt to execute the external command.
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
+    rpc::run(rpc_command, rpc::REFUSED);
+}
 
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
+/// The plugin's own settings: the `--X` flags, with any declared
+/// `--extension=NAME` sub-options embedded so the Elixir side sees them.
+fn plugin_flags_json(args: &[String]) -> String {
+    let base = serialize_flags(&extract_x_flags(args));
+    let extensions = extract_extension_flags(args);
+
+    if extensions.is_empty() {
+        base
+    } else {
+        embed_extensions_into_json(&base, &extensions)
     }
+}
+
+/// The plain CLI options. The extension entries are removed first, so the
+/// option parser does not read them as options of their own.
+fn opts_json(args: &[String]) -> String {
+    serialize_flags(&extract_opts(&filter_out_extension_entries(args)))
 }
 
 fn handle_disable(args: &[String]) {
@@ -256,7 +185,6 @@ fn handle_disable(args: &[String]) {
     }
 
     let plugin_id = &args[1];
-    let command = get_flezha_command();
 
     // Dispatch installed plugins through the Installer service; legacy
     // plugins keep their existing code path.
@@ -264,122 +192,54 @@ fn handle_disable(args: &[String]) {
         format!(
             "Flezha.Service.CliManager.installer_disable_plugin(\"{}\", {})",
             plugin_id,
-            crate::utils::token_opts_json_literal(&args[2..])
+            token_opts_json_literal(&args[2..])
         )
     } else {
         format!(
             "Flezha.Service.CliManager.disable_plugin(\"{}\", {})",
             plugin_id,
-            crate::utils::token_opts_fragment(&args[2..])
+            token_opts_fragment(&args[2..])
         )
     };
 
     println!("Disabling plugin...");
 
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
+    rpc::run(rpc_command, rpc::REFUSED);
 }
 
 fn handle_help(args: &[String]) {
     if args.len() < 2 {
-        print_plugin_help();
+        help::render(help::PLUGIN);
         return;
     }
 
     let provider_id = &args[1];
-    let command = get_flezha_command();
-
-    let rpc_command = format!("Flezha.Service.CliManager.plugin_help(\"{}\")", provider_id);
 
     println!("Getting help for plugin '{}'...", provider_id);
 
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
+    rpc::run(
+        format!("Flezha.Service.CliManager.plugin_help(\"{}\")", provider_id),
+        rpc::REFUSED,
+    );
 }
 
 fn handle_list(args: &[String]) {
-    let command = get_flezha_command();
     let want_json = args.iter().any(|a| a == "--json");
-    let scope = args
-        .iter()
-        .find(|a| a.as_str() == "--installed" || a.as_str() == "--providers");
+    let installed = args.iter().any(|a| a == "--installed");
 
-    let rpc_command = match scope.map(|s| s.as_str()) {
-        Some("--installed") => {
-            if want_json {
-                "Flezha.Service.CliManager.list_installed_plugins(\"json\")".to_string()
-            } else {
-                "Flezha.Service.CliManager.list_installed_plugins(\"text\")".to_string()
-            }
-        }
-        _ => {
-            // Default: provider registry (legacy behaviour). `--json` also
-            // works for the installed list via the explicit --installed
-            // switch, so no surprise for users of the old command.
-            if want_json {
-                "Flezha.Service.CliManager.list_installed_plugins(\"json\")".to_string()
-            } else {
-                "Flezha.Service.CliManager.list_plugins()".to_string()
-            }
-        }
+    // Default is the provider registry (legacy behaviour). `--json` reaches
+    // the installed list either way, so the old command holds no surprise.
+    let rpc_command = if installed || want_json {
+        let format = if want_json { "json" } else { "text" };
+        format!(
+            "Flezha.Service.CliManager.list_installed_plugins(\"{}\")",
+            format
+        )
+    } else {
+        "Flezha.Service.CliManager.list_plugins()".to_string()
     };
 
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        eprintln!("Error: Command execution failed.");
-        exit(1);
-    }
-}
-
-fn print_plugin_help() {
-    println!("flz plugin - Plugin management commands");
-    println!();
-    println!("USAGE:");
-    println!("    flz plugin <COMMAND>");
-    println!();
-    println!("COMMANDS:");
-    println!("    install    Install a plugin from a .fpz package");
-    println!("    upgrade    Upgrade an installed plugin to a new version");
-    println!("    uninstall  Remove an installed plugin");
-    println!("    enable     Enable a plugin (installed package or legacy provider)");
-    println!("    disable    Disable a plugin");
-    println!("    list       List plugins: `--installed` (catalog) or providers (default)");
-    println!("    info       Show details for an installed plugin");
-    println!("    help       Show help for a specific plugin provider");
-    println!();
-    println!("EXAMPLES:");
-    println!("    flz plugin install /path/to/kafka_ingest-1.0.0.fpz");
-    println!("    flz plugin list --installed");
-    println!("    flz plugin list --installed --json");
-    println!("    flz plugin info kafka_ingest");
-    println!("    flz plugin enable kafka_ingest");
-    println!("    flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz");
-    println!("    flz plugin uninstall kafka_ingest");
-    println!("    # Legacy provider enable (compile-time providers):");
-    println!("    flz plugin enable ws_id operative_websocket --Xuri=ws://localhost:4500 \\");
-    println!("        --extension=on_input --on_input.position=0");
-    println!("    flz plugin disable ws_id");
+    rpc::run(rpc_command, rpc::REFUSED);
 }
 
 // Serialize a `"extensions": [{"name": "...", "opts": {...}}, ...]` list into

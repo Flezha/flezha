@@ -2,26 +2,19 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
   @moduledoc """
   Remote durability backend over an S3-compatible object store.
 
-  The client is hand-rolled AWS Signature V4 over `:mint`, following the OTLP
-  exporter precedent — an object store is four HTTP verbs and one signing
-  algorithm, which is not worth a heavyweight SDK and its transitive tree.
-  Addressing is path-style (`<endpoint>/<bucket>/<key>`), which every
-  S3-compatible implementation accepts and MinIO requires.
+  The client is hand-rolled AWS Signature V4 over `:mint`: an object store is
+  four HTTP verbs and one signing algorithm, not worth a heavyweight SDK and its
+  transitive tree. Addressing is path-style, which every S3-compatible
+  implementation accepts and MinIO needs.
 
-  `put_if/4` is read-then-conditional-write: the stored claim counter rides
-  `x-amz-meta-epoch`, and the write carries `If-Match` on the observed ETag (or
-  `If-None-Match: *` when the object is absent). A guard the stored counter does
-  not admit reports `{:claim_held, stored}`; a lost race on the precondition is
-  an ordinary error the shipper retries — and it is that precondition, not the
-  counter comparison, that separates two claimants reading the same value.
+  `put_if/4` is read-then-conditional-write: the counter rides
+  `x-amz-meta-epoch`, the write carries `If-Match` on the observed ETag (or
+  `If-None-Match: *` when absent), and a guard the counter does not admit
+  reports `{:claim_held, stored}`. It is that precondition, not the comparison,
+  that separates two claimants reading one value.
 
-  Options (from `:flezha, :durability_tier, :backend_opts`):
-
-    * `:endpoint` — `https://s3.eu-north-1.amazonaws.com`, `http://minio:9000`
-    * `:bucket` / `:region`
-    * `:access_key_id`
-    * `:secret_access_key_env` — env var holding the secret, never in config
-    * `:prefix` — key prefix inside the bucket, default `flezha`
+  Options: `:endpoint`, `:bucket`, `:region`, `:access_key_id`,
+  `:secret_access_key_env`, `:prefix` (`flezha`).
   """
 
   @behaviour Flezha.State.DurabilityTier.Backend

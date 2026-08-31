@@ -1,34 +1,36 @@
 use std::process::exit;
 
+use crate::dispatch::{self, Command};
 use crate::operative::parse_plugins_json;
-use crate::utils::{escape_rpc_arg, extract_param, get_json, get_namespace, run_rpc};
+use crate::rpc::{self, escape_rpc_arg};
+use crate::{args, help};
 
-pub fn handle_schedule_command(args: &[String]) {
-    if args.is_empty() {
-        print_schedule_help();
-        exit(1);
-    }
+pub(crate) const TABLE: Command = Command {
+    help: help::SCHEDULE,
+    verbs: &[
+        ("add", handle_add),
+        ("list", handle_list),
+        ("remove", |args| handle_named("remove", args)),
+        ("run", |args| handle_named("run", args)),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: None,
+    unknown: "Error: Unknown schedule command '{}'. Valid: add, list, remove, run, help",
+    unknown_prints_help: false,
+};
 
-    match args[0].as_str() {
-        "add" => handle_add(&args[1..]),
-        "list" => run_rpc("Flezha.Service.CliManager.schedule_list()".to_string()),
-        "remove" => handle_named("remove", &args[1..]),
-        "run" => handle_named("run", &args[1..]),
-        "help" | "--help" | "-h" => print_schedule_help(),
-        other => {
-            eprintln!(
-                "Error: Unknown schedule command '{}'. Valid: add, list, remove, run, help",
-                other
-            );
-            exit(1);
-        }
-    }
+fn handle_list(_args: &[String]) {
+    rpc::run(
+        "Flezha.Service.CliManager.schedule_list()".to_string(),
+        rpc::PROPAGATE,
+    );
 }
 
 fn handle_add(args: &[String]) {
     let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind workflow]";
+    let rest = &args[1..];
 
-    let name = match args.first() {
+    let name = match rest.first() {
         Some(name) if !name.starts_with('-') => name.clone(),
         _ => {
             eprintln!("Error: missing schedule name.\n {}", usage);
@@ -36,14 +38,15 @@ fn handle_add(args: &[String]) {
         }
     };
 
-    let cron = require_param(args, "--cron", usage);
-    let tz = require_param(args, "--tz", usage);
-    let factory = require_param(args, "--factory", usage);
-    let kind = extract_param(args, "--kind", "--kind").unwrap_or_else(|| "workflow".to_string());
-    let namespace = get_namespace(args);
-    let init_values = get_json(args, "--init_values", "-iv");
+    let cron = require_param(rest, "--cron", usage);
+    let tz = require_param(rest, "--tz", usage);
+    let factory = require_param(rest, "--factory", usage);
+    let kind =
+        args::extract_param(rest, "--kind", "--kind").unwrap_or_else(|| "workflow".to_string());
+    let namespace = args::namespace(rest);
+    let init_values = args::json(rest, "--init_values", "-iv");
     let escaped_init_values = escape_rpc_arg(&init_values);
-    let plugins = match parse_plugins_json(&get_json(args, "--plugins", "-p")) {
+    let plugins = match parse_plugins_json(&args::json(rest, "--plugins", "-p")) {
         Ok(canonical) => canonical,
         Err(reason) => {
             eprintln!("Error: invalid --plugins JSON: {}", reason);
@@ -52,14 +55,17 @@ fn handle_add(args: &[String]) {
     };
     let escaped_plugins = escape_rpc_arg(&plugins);
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        name, cron, tz, factory, namespace, escaped_init_values, kind, escaped_plugins,
-    ));
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
+            name, cron, tz, factory, namespace, escaped_init_values, kind, escaped_plugins,
+        ),
+        rpc::PROPAGATE,
+    );
 }
 
 fn handle_named(verb: &str, args: &[String]) {
-    let name = match args.first() {
+    let name = match args.get(1) {
         Some(name) => name.clone(),
         None => {
             eprintln!("Usage: flz schedule {} <name>", verb);
@@ -67,45 +73,18 @@ fn handle_named(verb: &str, args: &[String]) {
         }
     };
 
-    run_rpc(format!(
-        "Flezha.Service.CliManager.schedule_{}(\"{}\")",
-        verb, name
-    ));
+    rpc::run(
+        format!("Flezha.Service.CliManager.schedule_{}(\"{}\")", verb, name),
+        rpc::PROPAGATE,
+    );
 }
 
 fn require_param(args: &[String], key: &str, usage: &str) -> String {
-    match extract_param(args, key, key) {
+    match args::extract_param(args, key, key) {
         Some(value) if !value.is_empty() => value,
         _ => {
             eprintln!("Error: {} is required.\n {}", key, usage);
             exit(1);
         }
     }
-}
-
-fn print_schedule_help() {
-    println!("flz schedule - cron-scheduled workflow operative spawns");
-    println!();
-    println!("USAGE:");
-    println!("    flz schedule <SUBCOMMAND>");
-    println!();
-    println!("SUBCOMMANDS:");
-    println!("    add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id>");
-    println!(
-        "        [--namespace <ns>] [--init_values <json>] [--plugins <json>] [--kind workflow]"
-    );
-    println!("                 Add a durable schedule (workflow operatives only).");
-    println!("                 --plugins takes the same array as `operative start --plugins`;");
-    println!("                 each firing prefixes the plugin ids with its instance id.");
-    println!("    list         List schedules with their next fire time");
-    println!("    remove <name>  Remove a schedule");
-    println!("    run <name>     Fire one instance immediately with the stored config");
-    println!("    help         Show this help message");
-    println!();
-    println!("EXAMPLES:");
-    println!(
-        "    flz schedule add digest --cron \"0 8 * * *\" --tz Europe/Tallinn --factory ai_digest"
-    );
-    println!("    flz schedule list");
-    println!("    flz schedule run digest");
 }

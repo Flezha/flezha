@@ -38,6 +38,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     InputLog,
     Outbox,
     Paths,
+    RecordFrame,
     Supervisor,
     TestHelpers,
     WalWriter,
@@ -100,6 +101,29 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   defp output(key, payload, metadata \\ []) do
     %{channel: "out", key: key, metadata: metadata, payload: payload}
+  end
+
+  # The writer's own call order for the two facts KI-41 relates: the DLQ append
+  # that materializes a park, and the input-log watermark advance. Tracing
+  # observes without displacing either collaborator.
+  defp trace_park_and_watermark(pid) do
+    patterns = [{DlqStore, :append, 1}, {InputLog, :record_consumed, 3}]
+    Enum.each(patterns, &:erlang.trace_pattern(&1, true, [:local]))
+    :erlang.trace(pid, true, [:call])
+    on_exit(fn -> Enum.each(patterns, &:erlang.trace_pattern(&1, false, [:local])) end)
+  end
+
+  # Drains only the trace messages, so the dispatched-output mailbox is intact.
+  defp traced_order(acc \\ []) do
+    receive do
+      {:trace, _pid, :call, {DlqStore, :append, [%{origin_offset: offset}]}} ->
+        traced_order([{:park, offset} | acc])
+
+      {:trace, _pid, :call, {InputLog, :record_consumed, [_class, _entity, offset]}} ->
+        traced_order([{:consumed, offset} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
   end
 
   defp start_writer(entity_id) do
@@ -429,6 +453,47 @@ defmodule Flezha.State.WalWriterOutboxTest do
            "the outer window's furthest offset of 1 overwrote the nested window's 2"
   end
 
+  # KI-41: a zero-output entry is what a park produces, and it completes inside
+  # `await_entry/4`, so `complete_entry/2` re-enters dispatch while the window
+  # is still open. The park's own DLQ record must be durable before that nested
+  # window advances the watermark past the input the park owns.
+  test "a park is stored before any watermark advance", %{
+    rc: rc,
+    entity_id: entity_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+    trace_park_and_watermark(pid)
+
+    in_one_window(fn ->
+      :ok =
+        WalWriter.append(
+          pid,
+          0,
+          effect_header(),
+          effect_body([], 1, %{channel: "in", error: "poison", attempts: 3, payload: "kp:poison"})
+        )
+
+      :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k2", "b")], 2))
+    end)
+
+    :ok = WalWriter.fsync(pid)
+    assert {"b", _, _} = next_output()
+
+    order = traced_order()
+
+    assert {:park, 1} in order, "the park was never stored: #{inspect(order)}"
+    assert Enum.any?(order, &match?({:consumed, _}, &1)), "nothing consumed: #{inspect(order)}"
+
+    assert Enum.find_index(order, &(&1 == {:park, 1})) <
+             Enum.find_index(order, &match?({:consumed, _}, &1)),
+           "the watermark advanced before the park was stored: #{inspect(order)}"
+
+    assert InputLog.watermark(rc) == 2
+  end
+
   test "re-drive of a park record is idempotent: no duplicate DLQ entry", %{
     rc: rc,
     entity_id: entity_id,
@@ -477,7 +542,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     ClassRegistry.put_overwatch(rc, self())
 
     body = effect_body([], 9, %{channel: "in", error: "e", attempts: 1, payload: "p"})
-    effect = WalWriter.encode_record(0, effect_header(), body)
+    effect = RecordFrame.encode_record(0, effect_header(), body)
     wal_path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(wal_path))
 
@@ -511,9 +576,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
     ClassRegistry.put_overwatch(rc, self())
 
     # Build the on-disk bytes of record 0 (plain) + record 1 (effect).
-    plain = WalWriter.encode_record(0, plain_header(), "base")
+    plain = RecordFrame.encode_record(0, plain_header(), "base")
     body = effect_body([output("k", "torn?")], 9)
-    effect = WalWriter.encode_record(1, effect_header(), body)
+    effect = RecordFrame.encode_record(1, effect_header(), body)
 
     wal_path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(wal_path))
@@ -584,8 +649,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     # Two output-bearing records land durably, but the flush cursor never advances
     # (crash before flush): the re-drive owes both.
-    plain = WalWriter.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
-    second = WalWriter.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
+    plain = RecordFrame.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
+    second = RecordFrame.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
 
     wal_path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(wal_path))

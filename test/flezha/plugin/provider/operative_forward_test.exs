@@ -381,7 +381,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     worker = table.plugins["fwd"].opts.worker_pid
     assert Process.alive?(worker)
 
-    _table = Table.unsubscribe(table, "fwd")
+    {_table, _dropped} = Table.unsubscribe(table, "fwd")
 
     wait_until(fn -> not Process.alive?(worker) end)
     # The supervisor has handled the exit (a call queues behind it): a
@@ -632,7 +632,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       assert length(workers) == 3
       assert Enum.all?(workers, &Process.alive?/1)
 
-      _table = Table.unsubscribe(table, "fwd_grp")
+      {_table, _dropped} = Table.unsubscribe(table, "fwd_grp")
 
       wait_until(fn -> Enum.all?(workers, &(not Process.alive?(&1))) end)
     end

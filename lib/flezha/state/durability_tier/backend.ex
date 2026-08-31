@@ -11,17 +11,10 @@ defmodule Flezha.State.DurabilityTier.Backend do
 
   `put_if/4` is the one conditional operation, and it is what makes the remote
   store a fencing arbiter: a manifest write carries a claim counter and is
-  refused when another writer holds the lineage. A refusal means this node no
-  longer owns the reference — it stops shipping rather than retrying
-  (`docs/operations/remote_durability_tier.md`).
-
-  The counter is stored by the backend and read by nobody else, which is the
-  whole point: it is the one fact about a reference that never travels with the
-  local state, so it can separate two writers where the WAL epoch — copied by
-  migration and restored by hydration — cannot.
-
-  `resolve/0` is the one place configuration becomes a `{module, opts}` pair;
-  `:none` (the default) means the tier is off and nothing is started.
+  refused when another writer holds the lineage. The counter is stored by the
+  backend and read by nobody else, which is the whole point — it is the one fact
+  about a reference that never travels with the local state, so it separates two
+  writers where the WAL epoch, copied by migration, cannot.
   """
 
   @type key :: binary()

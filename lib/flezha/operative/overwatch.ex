@@ -316,7 +316,8 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_call({:plugin_unsubscribe, plugin_id}, _from, %__MODULE__{} = state) do
-    {:reply, :ok, %{state | extensions: Table.unsubscribe(state.extensions, plugin_id)}}
+    table = Plugins.unregister(Table.unsubscribe(state.extensions, plugin_id))
+    {:reply, :ok, %{state | extensions: table}}
   end
 
   @impl true

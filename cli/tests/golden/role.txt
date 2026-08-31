@@ -1,0 +1,12 @@
+flz role - Principal → role bindings
+
+USAGE:
+    flz role <COMMAND>
+
+COMMANDS:
+    bind <principal> <role> <namespace>   Bind a principal to a role in a namespace
+    unbind <principal>                    Remove a principal's binding
+    list                                  List bindings visible to the caller
+    help                                  Show this help message
+
+Identity for these verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

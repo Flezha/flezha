@@ -1,0 +1,14 @@
+flz audit - Durable audit log inspection
+
+USAGE:
+    flz audit <COMMAND> [OPTIONS]
+
+COMMANDS:
+    list      List the on-disk catalog of rotated files
+    read      Read records from a specific file with optional filters
+    tail      Stream live audit records until a duration elapses
+    stats    Show operational snapshot (file path, size, totals, drops)
+    rotate    Force an immediate rotation of the active file
+
+OPTIONS:
+    --json    Emit machine-readable output (NDJSON for tail/read)

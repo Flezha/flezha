@@ -14,7 +14,18 @@ defmodule Flezha.State.WalRewindTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers, WalWriter, Wire}
+
+  alias Flezha.State.{
+    FsyncBatcher,
+    InputLog,
+    Paths,
+    RecordFrame,
+    Supervisor,
+    TestHelpers,
+    WalWriter,
+    Wire
+  }
+
   alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
@@ -82,7 +93,7 @@ defmodule Flezha.State.WalRewindTest do
   end
 
   defp collect(device, position, acc) do
-    case WalWriter.decode_record(device, position) do
+    case RecordFrame.decode_record(device, position) do
       {:ok, seq, _h, _b, consumed} -> collect(device, position + consumed, [seq | acc])
       {:error, _} -> Enum.reverse(acc)
     end

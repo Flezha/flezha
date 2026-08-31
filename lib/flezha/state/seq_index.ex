@@ -7,13 +7,12 @@ defmodule Flezha.State.SeqIndex do
   records on the kept side of the boundary, never the whole file, in the loop
   the data plane waits on.
 
-  Pure state: a log that opens a file starts from `new/1` with the file's size
-  and notes every record it appends; a prefix cut rebases the samples, a
-  suffix cut keeps the ones below the boundary. Records written before a
-  restart are not sampled, so the first cut after one walks from the start.
+  Pure state, and no file I/O: a log that opens a file starts from `new/1` with
+  the file's size and notes every record it appends; a prefix cut rebases the
+  samples, a suffix cut keeps the ones below the boundary. Records written
+  before a restart are not sampled, so the first cut after one walks from the
+  start.
   """
-
-  alias Flezha.State.WalWriter
 
   @every 256
 
@@ -36,30 +35,18 @@ defmodule Flezha.State.SeqIndex do
   end
 
   @doc """
-  The file position where the first record with seq >= `floor` starts, found
-  from the newest sample at or below `floor`; the end of the valid records when
-  no such record exists. Leaves `device` positioned at its end, where appends
-  go.
+  The file position of the newest sample at or below `floor` — where a scan for
+  the first record with seq >= `floor` starts, at most one span away from it.
   """
-  @spec position_of(t(), :file.io_device(), non_neg_integer()) :: non_neg_integer()
-  def position_of(%__MODULE__{samples: samples}, device, floor) do
+  @spec sample_at(t(), non_neg_integer()) :: non_neg_integer()
+  def sample_at(%__MODULE__{samples: samples}, floor) do
     {_seq, start} =
       samples
       |> :queue.to_list()
       |> Enum.take_while(fn {seq, _} -> seq <= floor end)
       |> List.last({0, 0})
 
-    position = scan(device, start, floor)
-    {:ok, _} = :file.position(device, :eof)
-    position
-  end
-
-  defp scan(device, position, floor) do
-    case WalWriter.decode_record(device, position) do
-      {:ok, seq, _header, _body, _consumed} when seq >= floor -> position
-      {:ok, _seq, _header, _body, consumed} -> scan(device, position + consumed, floor)
-      {:error, _} -> position
-    end
+    start
   end
 
   @doc """

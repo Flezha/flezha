@@ -1,0 +1,50 @@
+flz reset - Clear Controller durable runtime data on disk
+
+USAGE:
+    flz reset [OPTIONS]
+
+DESCRIPTION:
+    Clears the contents of the Controller's durable on-disk state so the
+    next boot starts from a clean slate. Refuses to run while the
+    Controller is up; stop it first with `flz controller stop`.
+
+    By default clears:
+        app_data/state/         (per-Entity WAL/snapshot/outbox)
+        app_data/process_hub/   (ProcessHub durable registry)
+
+    Opt-in clears (off by default):
+        app_data/certs/         (--include-certs)
+        <socket directory>      (--include-sockets)
+
+    The socket directory is resolved through the same ladder the Controller
+    and its runners walk -- $FLEZHA_SOCKET_FILES_PATH, else
+    $XDG_RUNTIME_DIR/flezha, else /run/flezha, else app_data/sockets -- so it
+    is frequently not under app_data/ at all. Only the socket files Flezha
+    itself creates are unlinked there, and a directory a Controller is still
+    serving in is kept.
+
+OPTIONS:
+    --yes                     Apply the reset. REQUIRED for any destructive action.
+    --dry-run                 Print the plan without touching the filesystem (exit 0).
+    --include-certs           Also clear app_data/certs/
+    --include-sockets         Also clear Flezha's sockets in the resolved socket directory
+    --all                     Equivalent to --include-certs --include-sockets
+    --app-data-root <PATH>    Override the `app_data/` root (else FLEZHA_APP_DATA_ROOT or ./app_data)
+    --probe-timeout-ms <N>    Live-node probe timeout (default 1000)
+    --json                    Machine-readable output
+    --help, -h, help          Show this help message
+
+EXIT CODES:
+    0   Success (apply succeeded, or --dry-run preview)
+    1   Invalid usage (missing --yes without --dry-run, conflicting flags,
+        malformed --app-data-root, refusal to delete the root itself)
+    2   Partial success (some roots cleared, then a filesystem error)
+    3   I/O error before any action
+    4   Refused: Controller is up
+
+EXAMPLES:
+    flz reset                          # plan only, exit 1
+    flz reset --dry-run                # plan only, exit 0
+    flz reset --yes                    # default scope (state, process_hub)
+    flz reset --yes --all              # also clear certs and sockets
+    flz reset --yes --json             # machine-readable output

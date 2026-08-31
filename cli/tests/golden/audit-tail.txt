@@ -1,0 +1,1 @@
+flz audit tail [--json] [--duration-ms N]

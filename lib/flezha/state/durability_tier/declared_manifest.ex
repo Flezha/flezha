@@ -1,22 +1,20 @@
 defmodule Flezha.State.DurabilityTier.DeclaredManifest do
   @moduledoc """
   `ProcessHub.Storage.RemoteManifest` adapter over the durability tier: the
-  hub's declared list ships off-cluster as one more tier artifact class,
-  through whichever backend the tier is already configured with (`:postgres`,
-  `:s3`, `:local_path`, or a custom `{module, opts}`) — so the declared list
-  gets the same storage options as every other durable artifact without a
-  second remote-storage path beside the tier.
+  hub's declared list ships off-cluster as one more tier artifact class, through
+  whichever backend the tier is already configured with — so the declared list
+  gets the same storage options as every other durable artifact without a second
+  remote-storage path beside the tier.
 
-  The version-monotonic store contract ("never overwrite a higher version")
-  maps onto the backend's `put_if/4` with the list version as the claim
-  counter: `{:extend, version}` admits equal-or-lower stored versions, and a
-  refusal means a newer copy is already stored — reported as superseded `:ok`,
-  exactly as the behaviour specifies. The key lives outside the tier GC's
-  `blob/` scope, so collection never touches it.
+  The version-monotonic store contract ("never overwrite a higher version") maps
+  onto the backend's `put_if/4` with the list version as the claim counter:
+  `{:extend, version}` admits equal-or-lower stored versions, and a refusal
+  means a newer copy is stored — reported as superseded `:ok`, exactly as the
+  behaviour specifies. The key lives outside the tier GC's `blob/` scope.
 
-  Configured by `HubManager` on the namespace hubs whenever the tier is
-  enabled; upstream ships the blob asynchronously off the command path, so a
-  backend outage never fails or delays a start/stop.
+  Configured by `HubManager` on the namespace hubs whenever the tier is enabled;
+  upstream ships the blob asynchronously off the command path, so a backend
+  outage never fails or delays a start/stop.
   """
 
   @behaviour ProcessHub.Storage.RemoteManifest

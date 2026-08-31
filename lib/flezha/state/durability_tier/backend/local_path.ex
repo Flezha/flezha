@@ -3,21 +3,18 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
   Remote durability backend over a filesystem directory. Dependency-free.
 
   Only protects against whole-cluster loss when `:path` points at storage that
-  outlives the cluster — an NFS mount, a persistent volume provisioned outside
-  the cluster's disks. A path on a cluster node's own disk shares that disk's
-  fate.
+  outlives the cluster — an NFS mount, a volume provisioned outside the
+  cluster's disks. A path on a node's own disk shares that disk's fate.
 
   Each key maps to one file under the root; the claim counter lives in a
-  `.claim` sidecar so an unconditional `put` preserves it, matching the
-  Postgres backend's insert-0 / update-preserves semantics. Writes are atomic
-  (fsynced temp file + rename). A filesystem offers no compare-and-set, so
-  `put_if/4` is read-then-write: two simultaneous claimants can race it, which
-  the single-writer-per-lineage shipping model tolerates and a fencing-critical
+  `.claim` sidecar so an unconditional `put` preserves it, matching the Postgres
+  backend's insert-0 / update-preserves semantics. Writes are atomic (fsynced
+  temp file + rename). A filesystem offers no compare-and-set, so `put_if/4` is
+  read-then-write: two simultaneous claimants can race it, which the
+  single-writer-per-lineage shipping model tolerates and a fencing-critical
   deployment should answer with the Postgres or S3 backend instead.
 
-  Options (from `:flezha, :durability_tier, :backend_opts`):
-
-    * `:path` — root directory for the artifact files. Created if missing.
+  Option: `:path`, the artifact root directory, created if missing.
   """
 
   @behaviour Flezha.State.DurabilityTier.Backend

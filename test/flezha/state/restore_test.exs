@@ -2,7 +2,7 @@ defmodule Flezha.State.RestoreTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{RecordFrame, Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -60,8 +60,8 @@ defmodule Flezha.State.RestoreTest do
 
     # change_log_bytes contains exactly seq 4 and seq 5 in WAL framing.
     expected =
-      WalWriter.encode_record(4, header, "x4") <>
-        WalWriter.encode_record(5, header, "x5")
+      RecordFrame.encode_record(4, header, "x4") <>
+        RecordFrame.encode_record(5, header, "x5")
 
     assert payload.change_log_bytes == expected
   end

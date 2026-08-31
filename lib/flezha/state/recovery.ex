@@ -4,7 +4,7 @@ defmodule Flezha.State.Recovery do
   `RestoreInitState` handshake so a desynced or stalled Entity resumes
   from a consistent point.
 
-  Used by the three failure edges that were previously silent:
+  Used by the failure edges that are otherwise silent:
 
     * a seq gap detected on append (`Flezha.Runner.StreamChannel`),
     * an output-staleness or compaction timeout
@@ -55,8 +55,8 @@ defmodule Flezha.State.Recovery do
   Resolve the `runner_id` currently owning `operative_class` from the
   ProcessHub registry. Returns `{:ok, runner_id}` or `{:error, term}`.
 
-  Retained for the CLI `flz state rotate` surface — the resync path
-  itself no longer relies on this lookup (see `resync_for_overwatch/2`).
+  The CLI `flz state rotate` surface is its only caller; the resync path
+  resolves its runner through `resync_for_overwatch/2` instead.
   """
   @spec resolve_runner(tuple()) :: {:ok, binary()} | {:error, term()}
   def resolve_runner({rc, _sh, _pk}) do

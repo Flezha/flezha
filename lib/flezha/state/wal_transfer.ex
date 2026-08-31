@@ -2,28 +2,19 @@ defmodule Flezha.State.WalTransfer do
   @moduledoc """
   Cross-controller pull of one Entity's durable files.
 
-  A controller that loses every runner drains its operatives to a peer
-  (`ProcessHub.Service.Migration.drain/2`). The handover carries the SDK's
-  in-memory state — but it sources that state from the **runner**, and the
-  runner is dead by construction on that path, so the handover arrives empty.
-  The state that survives is on the source controller's disk, and nothing else
-  can move it: `state_root` is node-local and MUST NOT be assumed shared.
+  A controller that loses every runner drains its operatives to a peer. The
+  handover carries the SDK's in-memory state — but it sources that from the
+  **runner**, dead by construction on that path, so it arrives empty. What
+  survives is on the source controller's disk, and nothing else can move it:
+  `state_root` is node-local and MUST NOT be assumed shared.
 
-  This module is that mover. The destination pulls; the source only answers
+  This module is that mover. The destination pulls and the source only answers
   reads, so a source that dies mid-transfer fails the pull instead of stranding
-  a half-written file:
-
-    * `manifest/1` — runs on the source, lists the Entity's existing files
-      with sizes (`Flezha.State.Paths.entity_files/1` is the one definition
-      of that set).
-    * `read_chunk/3` — runs on the source, returns one workflow slice.
-    * `pull_entity/3` — runs on the destination, loops the two above per file,
-      writing to a `.transferring` sibling that is fsynced and atomically
-      renamed. A failure removes the artefact and leaves the destination cold,
-      never half-restored.
-
-  One-shot per Entity per migration. This is NOT ongoing replication — a
-  controller that dies with its disk takes its state with it.
+  a half-written file: `manifest/1` and `read_chunk/3` run on the source,
+  `pull_entity/3` on the destination, through a fsynced-then-renamed
+  `.transferring` sibling. A failure removes the artefact and leaves the
+  destination cold, never half-restored. One-shot per Entity per migration;
+  this is NOT ongoing replication.
   """
 
   alias Flezha.State.Paths
@@ -187,7 +178,7 @@ defmodule Flezha.State.WalTransfer do
 
       {:ok, files} ->
         # Only now: the destination copy is on disk and fsynced, so dropping
-        # the source can no longer lose the Entity.
+        # the source cannot lose the Entity.
         _ = :erpc.call(source_node, Paths, :delete_files, [source], @call_timeout_ms)
         emit(:wal_moved, %{entity_id: source, destination: destination, files: files})
         {:ok, files}

@@ -143,3 +143,32 @@ Once `refactor-4-java-sdk` lands, the area `sdk/java` SHALL be listed under `blo
 - **WHEN** this change reports its interleaved A/B for the Java host
 - **THEN** each row SHALL be declared `gate`, `guard` or `direction` with its measured floor, the whole-system receive window SHALL be reported as `direction` only, and a row whose floor cannot resolve the effect being claimed SHALL be recorded as such rather than run as a gate
 
+### Requirement: The CLI area ratchets as blocking and every operator verb runs one RPC through one seam
+
+Once `refactor-6-cli` lands, the area `cli` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree over the full scan set, so that any later rise in a ratcheted metric for that area fails `scripts/refactor_metrics.py --check`. The `flz` binary SHALL carry no source file over 800 lines and no production function over 50 lines; every invocation of `flzvm rpc` SHALL go through a single shared function that owns spawning, failure reporting and the process exit code, so that no operator verb can reach the controller by a path that reports failure differently from its siblings; and the help text for every command SHALL be rendered from one declarative table by one renderer, so that two screens describing the same command grammar cannot drift apart.
+
+#### Scenario: A CLI metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `cli` has more files over 800 lines, more production functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: A verb reaches the controller without the shared seam
+
+- **WHEN** a `cli` source file spawns the controller launcher with an `rpc` argument other than through the shared run function
+- **THEN** that SHALL be treated as a regression of this requirement, because the exit code a verb returns is then decided in a second place
+
+#### Scenario: An RPC that fails is never reported as success
+
+- **WHEN** the controller launcher exits non-zero for any `flz` verb that issues an RPC
+- **THEN** `flz` SHALL exit non-zero, and a test driving a stand-in launcher that always fails SHALL assert this for at least one verb of every failure policy the seam offers
+
+#### Scenario: The help text is regenerated from the table
+
+- **WHEN** a batch of this change converts a hand-written help printer to a table entry
+- **THEN** the rendered output SHALL equal, byte for byte, the output captured from the binary before the change, and any correction to that text SHALL land in a separate commit that also updates the captured file
+
+#### Scenario: The CLI is measured by rows that can resolve the claim
+
+- **WHEN** this change reports its interleaved A/B
+- **THEN** each row SHALL be declared `gate`, `guard` or `direction` with its measured floor before it is run, and a row whose measured floor exceeds the effect being claimed SHALL be recorded as `direction` with the binary's checksum as its evidence rather than run
+

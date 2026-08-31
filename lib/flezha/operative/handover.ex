@@ -80,7 +80,7 @@ defmodule Flezha.Operative.Handover do
     end
 
     # Tear down existing, then rehydrate; activate so providers reconnect.
-    table = Table.teardown_all(state.extensions)
+    table = Plugins.unregister(Table.teardown_all(state.extensions))
     rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
 
     # A provider that fails to reconnect on the migrated side stays `:prepared`;

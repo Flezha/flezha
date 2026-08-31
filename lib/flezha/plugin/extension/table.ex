@@ -33,7 +33,6 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Service.PluginManager
 
   require Logger
 
@@ -343,13 +342,15 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc """
   Remove every subscription owned by `plugin_id`, cancel its monitors,
-  timers, and owned pids, and rebuild affected dispatch chains.
+  timers, and owned pids, and rebuild affected dispatch chains. Answers the
+  table and the ids it dropped — `[]` for a plugin it never held — which the
+  caller unregisters.
   """
-  @spec unsubscribe(t(), binary()) :: t()
+  @spec unsubscribe(t(), binary()) :: {t(), [binary()]}
   def unsubscribe(%__MODULE__{} = table, plugin_id) do
     case Map.get(table.plugins, plugin_id) do
-      nil -> table
-      plugin -> do_unsubscribe(table, plugin_id, plugin)
+      nil -> {table, []}
+      plugin -> {do_unsubscribe(table, plugin_id, plugin), [plugin_id]}
     end
   end
 
@@ -435,10 +436,11 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
-  Tear down every subscription. Cancels timers, demonitors pids, signals
-  owned pids to stop, and removes PluginManager registrations.
+  Tear down every subscription: cancel timers, demonitor pids, signal owned
+  pids to stop. Answers the emptied table and the ids it dropped, which the
+  caller unregisters.
   """
-  @spec teardown_all(t()) :: t()
+  @spec teardown_all(t()) :: {t(), [binary()]}
   def teardown_all(%__MODULE__{} = table) do
     Enum.each(table.plugins, fn {plugin_id, plugin} ->
       terminate_provider(table, plugin_id, plugin)
@@ -451,15 +453,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
     Enum.each(table.timers, fn {timer_ref, _} -> safe_cancel_timer(timer_ref) end)
 
-    Enum.each(table.plugins, fn {plugin_id, _plugin} ->
-      try do
-        PluginManager.unregister_plugin(plugin_id)
-      catch
-        _, _ -> :ok
-      end
-    end)
-
-    new(table.catalog)
+    {new(table.catalog), Enum.map(table.plugins, fn {plugin_id, _plugin} -> plugin_id end)}
   end
 
   @doc """
@@ -984,12 +978,6 @@ defmodule Flezha.Plugin.Extension.Table do
               monitors: Map.delete(table.monitors, ref)
           }
       end
-
-    try do
-      PluginManager.unregister_plugin(plugin_id)
-    catch
-      _, _ -> :ok
-    end
 
     %{
       table

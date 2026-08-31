@@ -1,32 +1,25 @@
 defmodule Flezha.State.Snapshot do
   @moduledoc """
-  Snapshot file lifecycle: write `.tmp`, fsync, atomically rename, then
-  truncate the WAL up to the snapshot's seq.
+  Snapshot file lifecycle: write `.tmp`, fsync, atomically rename, then truncate
+  the WAL up to the snapshot's seq. The on-disk format is in
+  `docs/internals/state_persistence.md`.
 
-  The on-disk format is `<<header::binary-16, snapshot_bytes::binary, crc32::32-big>>`
-  where `crc32 = :erlang.crc32(<<header::binary, snapshot_bytes::binary>>)`.
-
-  ## Crash safety
-
-  The write sequence is `open .tmp → write → fsync → close → rename →
-  truncate WAL`. There are three failure windows:
+  The sequence has three failure windows, and no boot-time reconciliation step
+  is required for any of them:
 
     1. **Crash before rename** — leaves an orphan `.tmp`. `Paths.scan_dir/1`
        ignores `.tmp` files; the orphan is overwritten on the next compaction.
-    2. **Crash between rename and WAL-truncate** — the snapshot is durable
-       but the WAL still contains records covered by the snapshot. Restore
-       applies the snapshot then folds the redundant WAL records: because
-       `apply_change` is required to be idempotent over `(seq, change)`
-       pairs (umbrella spec), the result is identical to having truncated.
+    2. **Crash between rename and WAL-truncate** — the snapshot is durable but
+       the WAL still holds records it covers. Restore applies the snapshot then
+       folds the redundant records, and because `apply_change` is required to be
+       idempotent over `(seq, change)` the result is identical.
     3. **Crash mid-WAL-truncate** — handled by `WalWriter.truncate_up_to/2`'s
-       own `entity.wal.rewriting → rename` sequence.
-
-  No reconciliation step is required at boot.
+       own `entity.wal.rewriting` -> rename sequence.
   """
 
-  alias Flezha.State.{Metrics, Paths, Supervisor, WalWriter}
+  alias Flezha.State.{Metrics, Paths, Supervisor, WalWriter, Wire}
 
-  @header_size 16
+  @header_size Wire.header_size()
 
   @doc """
   Persist a snapshot for `entity_id`. Truncates the WAL up to `seq`

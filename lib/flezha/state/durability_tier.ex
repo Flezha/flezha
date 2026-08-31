@@ -1,32 +1,20 @@
 defmodule Flezha.State.DurabilityTier do
   @moduledoc """
   Ships flezha's durable artifacts to a remote backend so a controller that dies
-  **with its disk** is recoverable.
+  **with its disk** is recoverable. See
+  `docs/operations/remote_durability_tier.md`.
 
-  Everything local is unchanged. Every ack path — append-before-forward,
-  journal-then-ack, park-then-advance — still gates on local fsync and nothing
-  else, and the local files stay authoritative: shipping never mutates or
-  deletes them, and turning the tier off is a complete rollback.
+  Local files stay authoritative: every ack path gates on local fsync alone,
+  shipping neither mutates nor deletes one, and turning the tier off is a
+  complete rollback. What ships are immutable artifacts at boundaries that
+  already exist: snapshots, WAL record bundles, proc-journal and inbox suffixes,
+  the input log, the registry cspec, parked DLQ records, the control-plane
+  registries. The per-entity manifest is written last, so a torn upload is
+  invisible to recovery.
 
-  What ships are immutable artifacts at boundaries that already exist —
-  compaction snapshots, seq-addressed WAL record bundles, proc-journal and inbox
-  suffixes, the input log, the registry cspec — plus the platform stores a
-  replacement controller needs to come back as itself: the dead-letter queue's
-  parked records and the control-plane registries (authz, schedules). One
-  backstop timer covers entities that reach no boundary at all. The per-entity
-  manifest is written last, so a torn upload is invisible to recovery.
-
-  The public surface is triggers (`ship/1`, `on_compaction_completed/1`,
-  `on_effect_flushed/2`, `commit_sync/1`), recovery (`hydrate_operative/1`,
-  `hydrate_entities/3`) and status (`status/0`). All of them are cheap no-ops
-  while `backend: :none`, under which `children/0` returns `[]` and nothing at
-  all is started — the boot-time hydration among those children included.
-
-  A **production** boot must say which it is: `config/runtime.exs` resolves an
-  unset `FLEZHA_DURABILITY_BACKEND` to `:unset`, and `children/0` refuses to
-  start on it. Local-only durability is available, but only by asking for it.
-
-  See `docs/operations/remote_durability_tier.md`.
+  Every trigger, recovery and status function is a no-op while `backend: :none`,
+  under which `children/0` starts nothing; a production boot must choose, and
+  `children/0` refuses an unset `FLEZHA_DURABILITY_BACKEND`.
   """
 
   alias Flezha.Operative.ClassRegistry
@@ -298,7 +286,7 @@ defmodule Flezha.State.DurabilityTier do
   @spec all_refs(binary()) :: [Artifact.ref()]
   def all_refs(writer) when is_binary(writer) do
     # Classes with Entity state UNION classes with parked failures: a stopped
-    # operative keeps its parks and no longer has state, and its parks are still
+    # operative keeps its parks without holding state, and its parks are still
     # this node's to ship.
     (Paths.operative_classes() ++ Artifact.dlq_classes())
     |> Enum.uniq()

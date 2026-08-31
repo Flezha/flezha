@@ -6,22 +6,15 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   One process, one queue, one reference at a time — per-reference ordering is
   then structural rather than a lock, and a garbage collection can never race an
   upload it is about to declare orphaned. Nothing here is on an ack path: an
-  enqueue is a cast, a failing backend retries on a timer with the shared
+  enqueue is a cast, a failing backend retries on the shared
   `ProviderBehaviour.retry_backoff_ms/3` ladder, and local operation continues
-  at full speed throughout.
+  at full speed.
 
   The ship itself is manifest-last. Blobs go up first, under content-addressed
-  keys so no two writers can ever address one another's bytes; the per-reference
+  keys so no two writers can address one another's bytes; the per-reference
   manifest entry naming them is written last, through the backend's
-  claim-conditional write. A crash in between leaves the previous entry
-  authoritative and the new blobs unreferenced — invisible to recovery, and
-  collected later by `gc/0`.
-
-  A conditional write refused because another writer holds the claim is *not*
-  retried: that writer owns this reference's remote lineage now, so shipping
-  stops here. Retrying would be a split-brain writing over a claimant that
-  legitimately superseded it — and since an ordinary migration produces exactly
-  this outcome, it is reported as a routine handover rather than an alarm.
+  claim-conditional write. A refused conditional write is *not* retried: that
+  writer owns this reference's remote lineage, so shipping stops here.
   """
 
   use GenServer
@@ -52,8 +45,6 @@ defmodule Flezha.State.DurabilityTier.Shipper do
             adopted: MapSet.new()
 
   # ---------- API ----------
-
-  def child_spec(opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -484,7 +475,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # A shipped range is superseded only when the local WAL no longer holds it AND
+  # A shipped range is superseded only when the local WAL has dropped it AND
   # a retained snapshot covers it. Both halves matter: dropping ranges on the
   # WAL floor alone would strand a rewound Entity whose snapshot was deleted
   # with the records above it.
@@ -523,7 +514,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   # Losing a lineage is ORDINARY now — every migration produces a loser — so
   # this is not an alarm and must not latch. `pending_since_ms` is cleared with
-  # it: a reference this node no longer owns cannot be behind on shipping, and
+  # it: a reference this node does not own cannot be behind on shipping, and
   # leaving it set would report a permanent RPO breach (and a permanently
   # degraded `/healthz`) for every handover the cluster performs.
   #

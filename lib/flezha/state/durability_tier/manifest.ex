@@ -2,28 +2,19 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @moduledoc """
   What a shipped artifact set *is*, and the naming that addresses it.
 
-  A manifest entry describes one shippable unit — an Entity (its WAL and
-  snapshots), a workflow instance's proc-journal or durable inbox (which ride
-  the same substrate under reserved entity keys), an operative's input log, its
-  parked failures, the ProcessHub registry cspec, or a control-plane store — as
-  of one shipped cut. It is written **last**
-  in every ship, so a crash mid-upload leaves the previous entry authoritative
-  and the half-uploaded blobs invisible (`docs/operations/remote_durability_tier.md`).
+  A manifest entry describes one shippable unit — an Entity, a workflow
+  instance's proc-journal or durable inbox, an operative's input log, its parked
+  failures, the ProcessHub registry cspec, or a control-plane store — as of one
+  shipped cut. It is written **last** in every ship, so a crash mid-upload
+  leaves the previous entry authoritative and the half-uploaded blobs invisible.
 
-  The algebra here is pure and is the whole recovery contract:
-
-    * `put_snapshots/2` mirrors the local snapshot set — a snapshot that
-      retention deleted locally stops being referenced remotely.
-    * `prune_above/2` is the correction case: `WalWriter.rewind_to/3` dropped
-      the local records above a seq, so the ranges covering them stop being
-      truth. The next ship re-covers whatever remains.
-    * `prune_below/2` is the compaction case: a snapshot subsumes every range
-      fully below the WAL's new floor.
-    * `put_range/2` appends the cut just shipped.
-
-  Ranges are half-open on the low side (`from` is the first seq *in* the
-  bundle) and stay disjoint and ordered, so hydration concatenates them into a
-  WAL file verbatim.
+  The algebra here is pure and is the whole recovery contract: `put_snapshots/2`
+  mirrors the local snapshot set, so a snapshot retention deleted locally stops
+  being referenced remotely; `prune_above/2` is the correction case, dropping
+  ranges over records `rewind_to/3` removed; `prune_below/2` is the compaction
+  case, where a snapshot subsumes every range below the WAL's new floor; and
+  `put_range/2` appends the cut just shipped. Ranges are half-open on the low
+  side, disjoint and ordered, so hydration concatenates them verbatim.
   """
 
   alias Flezha.State.Paths
@@ -197,14 +188,13 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   The owner extends its own lineage at the claim it already holds; anyone else
   bids one above it. The bid is a strict compare at the backend, which is what
   makes it a compare-and-set: two nodes bidding the same number cannot both
-  win, and "whoever wrote last" — the way the cspec used to behave — stops
-  being reachable.
+  win, and "whoever wrote last" is not a reachable outcome.
 
-  This replaces the WAL epoch as the guard. The epoch is copied with the state
-  it protects (`WalTransfer` carries the dedup file, `Hydrator` restores it
-  verbatim), so it can order one writer's own writes but can never tell two
-  writers apart. It stays in the entry as the supersession fact `prune_above/2`
-  reads; it is no longer the gate.
+  The guard is this claim counter and not the WAL epoch. The epoch is copied
+  with the state it protects (`WalTransfer` carries the dedup file, `Hydrator`
+  restores it verbatim), so it can order one writer's own writes but can never
+  tell two writers apart. It stays in the entry as the supersession fact
+  `prune_above/2` reads.
   """
   @spec guard_for(t(), binary()) :: {:extend, non_neg_integer()} | {:claim, non_neg_integer()}
   def guard_for(%__MODULE__{owner: owner, claim: claim}, writer) when owner == writer,

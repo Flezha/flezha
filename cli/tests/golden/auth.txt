@@ -1,0 +1,13 @@
+flz auth - Authentication bootstrap and identity
+
+USAGE:
+    flz auth <COMMAND>
+
+COMMANDS:
+    bootstrap <token>   Claim the one-time bootstrap token as admin@_system
+    whoami              Show the identity the current token resolves to
+    rebootstrap         OFFLINE break-glass: reset a lost admin@_system
+                        (controller must be stopped; writes app_data/auth/REBOOTSTRAP)
+    help                Show this help message
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

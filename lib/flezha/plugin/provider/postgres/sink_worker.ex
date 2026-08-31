@@ -17,7 +17,6 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   the controller's flush cursor advance (`Flezha.State.Outbox`).
   """
 
-  alias Flezha.Plugin.Provider.Postgres.SinkSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
 
@@ -95,13 +94,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     consecutive_failures: 0
   ]
 
-  def start_link(opts) do
-    plugin_id = Keyword.fetch!(opts, :plugin_id)
-
-    GenServer.start_link(__MODULE__, opts,
-      name: {:via, Registry, {SinkSup.registry_name(), plugin_id}}
-    )
-  end
+  def start_link(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
 
   @doc """
   Enqueue one output record. Replies `:ok` immediately while the buffer is

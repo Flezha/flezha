@@ -1,12 +1,12 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 3. **Phase 1 complete (8 rows) and AREA 4
-COMPLETE.** `sdk/java` is a blocking ratchet with **every ceiling at zero**;
-`refactor_metrics.py --check` **exit 0**; `mix test` **1872 passed, zero uncaptured-log
-gate hits**. **Next: area 6 (`cli`)** — survey approved, batch 0 carries KI-79 and
-KI-83, both "a tool reports success it did not earn". Then areas 5a–5e (the controller,
-~32 K lines and the 55-file cycle), 7 and 8. Two workers run concurrently on disjoint
-lanes (charter §11c/§11d). Awaiting the user: KI-52, KI-80, KI-81.
+**Last updated**: 2026-08-31 — session 3. **Phase 1 complete (8 rows), AREA 4 and AREA 6
+both COMPLETE.** `sdk/java` and `cli` are blocking ratchets with **every ceiling at
+zero**; `cli` is the first area to end **smaller** (−438). `refactor_metrics.py --check`
+**exit 0**; `mix test` **1872 passed, zero uncaptured-log gate hits**. **Next: areas
+5a–5e** — the controller, ~32 K lines and the 55-file dependency cycle, the hardest work
+in the programme and not yet started; then 7 and 8. Two workers may run on disjoint
+lanes (§11c/§11d). Awaiting the user: KI-52, KI-80, KI-81.
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -98,8 +98,8 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `8981157e`, B `d6f6e16f`, fmt `ec0a8725`, C `7decf389`, D `3939cdac`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `119a20d4`, `024daaaa`, `be54a5cc`, `d54b61f4`, `588094e4`, `c5bdc26b` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
-| 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
-| 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
+| 5a | Controller `state` | `refactor-5a-state` | 0b | **implementing** (b0–1 done) | `7e5b9884`, `e32f1c99`, `c6137a8b` | ruler `max_cycle_files`; KI-41 + KI-61 fixed red-first |
+| 5b | Controller `plugin` | `refactor-5b-plugin` | **none (5a dep refuted)** | **implementing** | | |
 | 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | pending | | |
 | 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | 5c | pending | | |
 | 5e | Controller `operative`, `runner`, `convergence`, rest | `refactor-5e-runtime` | 5d | pending | | |
@@ -112,14 +112,240 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**Segment A of row 4 is verified and committed; segment B is next.** Row 3.5 is
-COMPLETE, archived and committed.
+**TWO IMPLEMENT WORKERS RUNNING IN PARALLEL — the first of the programme.**
 
-**Row 6.5 (`close-transport-send-buffer-loss`) is APPROVED; segment A is running.**
-Rows 5+6 are COMPLETE, archived and committed.
+| worker | area | segment | lane | state |
+|---|---|---|---|---|
+| `a33563…` | **5a** `lib/flezha/state` | batches 2–3 | `lib/flezha/state/**` + its tests | running |
+| `a2d617…` | **5b** `lib/flezha/plugin` | batches 0–1 | `lib/flezha/plugin/**` + its tests | running |
 
-**Area 4 (`sdk/java`) is APPROVED; segment A is running.** Phase 1 is COMPLETE.
-Baseline tag **`refactor-baseline-4` at `8e038e36`**.
+**Last seen** 14:54 — 5a 21 min / 23 boxes ticked, 5b 22 min / 0 ticked (it ticks at
+validation). Load 1.07, no leaked process, no polling loop, no BEAM alive — so **no
+suite overlap at this sample**. Three new files in flight: `state/record_frame.ex` (5a's
+split), `kafka/telemetry.ex` and `operative_forward/telemetry.ex` (5b's cycle cut).
+
+**One file is outside both lanes and it is NOT a breach**: `cli_manager.ex` (5c's) has a
+one-line edit, and reading the hunk shows it is 5a's `B3` rename updating its own caller.
+Charter §11d now carries the rule this exposed — **a rename owns its callers, wherever
+they live**; the alternative would freeze half the programme's cheapest work behind areas
+that have not started. Verified by reading the hunk, not by trusting the line count.
+5b's four `lib/flezha/operative/` files (2/2/3/13 lines) are its authorised teardown cut
+and get the same hunk-level check at the checkpoint.
+
+`scripts/refactor_metrics.py` is **read-only for both** from `7e5b9884` — 5a had the one
+write window and it is closed. The retry ladder belongs to neither. Neither may take the
+git index, `known_issues.md` or this file. Both must announce their suite runs with
+wall-clock windows so an overlap is visible.
+
+### Area 5b segment A — VERIFIED and COMMITTED `c78f7deb` — and the area's OWN PLAN was wrong
+
+**The headline is that the plan was the defect.** Tasks A1.3/A1.4 would have recreated
+`Kafka.Telemetry` and `OperativeForward.Telemetry` — **the exact inverse of `055054f2`**,
+which deleted both on the judgement that a `Telemetry` sibling is its parent's own event
+block and not an earned namespace. Both paths sit in `check-module-naming.sh`'s RETIRED
+list; building them turns a **blocking** gate red. The worker built it, measured the gate
+red, and **reverted** rather than routing around, and its own grep refuted the design's
+justification: the emitters have **one** caller, not the two D3 claimed. I confirmed the
+deletion commit and the gate entries myself.
+
+**RULING: the telemetry placement DEFERS to segment C, after the split.** Not a dodge —
+the split decides whether those emitters serve one module or several, so choosing now is
+choosing without the information, and §2 forbids creating a module before it is earned.
+If the split leaves several callers, the module becomes earned and the RETIRED entry is a
+decision to revisit **with evidence**, not to route around. A2.4's `cycles → 0` moves to
+segment C; **`cycles` 4 → 2 stands and is real** (postgres's 2-cycle genuinely cut).
+
+**What landed is a layering fix, not metric-chasing.** `Extension.Table` is a data
+structure that was issuing effects — two `PluginManager` casts inside `unsubscribe/2` and
+`teardown_all/1` — and that single edge was `plugin`'s only route into the 55-file cycle.
+The pair now answers `{table, dropped_ids}` and `Operative.Plugins.unregister/1` casts.
+All four call sites stay one line; `plugin → service` **9 → 8**, `operative → service`
+unchanged at 12. `prod_loc` **7 581 → 7 551**.
+
+**Its neutrality was proved, not argued** — the `try/catch` around the cast was dead code
+(a cast to an unregistered name returns `:ok`), the reported set equals what the old loop
+cast in the same enumeration order, and a beam-chunk import check on `Table` was observed
+**red against the HEAD-compiled module and green after**. I verified the source side: 0
+`PluginManager` references remain in `table.ex`, and I read the four `lib/flezha/operative/`
+hunks — each is the mechanical consequence, per §11d's new rule.
+
+**KI-93 filed and ruled fix-first.** The generated `build/1` **raises where its own
+`@callback` says it returns**: `Enum.reduce_while` halts with `{:error, binary}`, the next
+expression destructures it as `{status, map}` and calls `Map.has_key?/2` on the binary, so
+the `convert_status == :error` arm — the author's own evidence of intent — is unreachable.
+**7 of 9 providers, 41 fields.** I reproduced it. It is invisible because `build/1` has no
+production caller, and it sits inside the exact macro segment B rewrites, so §1b.6 puts
+the fix first. The worker stopped for that reason and stopping was right.
+
+**A caveat that matters for the record**: every one of 5b's suite runs (1878 passed) was
+against a tree carrying 5a's uncommitted work. That is the cost of two workers in one
+tree, it is not a clean read of either area, and 5b re-runs once 5a's next commit lands.
+
+### Area 5a batches 0–1 — VERIFIED and COMMITTED
+
+| commit | what |
+|---|---|
+| `7e5b9884` | the ruler: `max_cycle_files` beside `cycles` |
+| `e32f1c99` | **KI-41** — a park is durable before a nested window can pass it |
+| `c6137a8b` | **KI-61** — `RecordLog`'s specs name the module that has the type |
+
+**I re-drove KI-41's red myself** rather than accepting the claim: reverted the two-line
+swap in a copy-protected edit, ran the single test, got
+`[consumed: 2, park: 1, consumed: 1]` — KI-41's published order function for function —
+then restored the file and verified it byte-identical by sha256. **This is the KI-67
+discipline**: the one time a negative-control claim was accepted unrun, a regression
+test that passed on defective code shipped. It costs two minutes.
+
+**The ruler's own control is load-bearing, also verified by me**: dropping
+`max_cycle_files` from `RATCHETED` fails `self_test_cycle_depth` on the ratchet
+assertion by name. And the new metric immediately justifies itself — `plugin` has the
+**highest** cycle count (4) and the **shallowest** tangle (3); `state` has 2 cycles and
+depth **20**. The old number ranked them backwards.
+
+Every one of the eleven area rows re-measured and unchanged; `--check` exit 0 both
+sides; full suite **1873 passed** in 64 s with the uncaptured-log gate clean.
+
+**KI-61's proof is the honest kind.** No red-first test was constructible — the defect
+is invisible to the compiler and only Dialyzer sees it, and this repo gates no Dialyzer.
+The worker **did not manufacture one**; it read the compiled artefact instead, which is
+stronger than the entry's own check because it reads what the spec resolved to:
+`{Registry, :entity_id}` → `{Flezha.State.Paths, :entity_id}`, with `Elixir.Registry`
+confirmed to export no such type. A sweep of every spec in the directory found this was
+the only instance, and the residue (stdlib plus one Protox module) was verified to
+really export what it names.
+
+**KI-92 filed, and charter §8 now carries the rule.** Batch 0's floor measurement found
+this box's `bench.workflow` chain row runs **93.2 / 33.3 / 23.1 / 24.2 / 23.1** on five
+identical runs of one arm — 303 % spread over five, 4.8 % over the plateau — with disk
+accumulation and thermal throttling both refuted (a sixth cold run after idle: 91.1; the
+throttle counter flat). **A floor computed from a series containing its own warm-up is
+not a floor**, and a row whose arms are not interleaved can read a warm-up as an effect.
+S1 stays `direction` — 4.8 % on three plateau samples does not earn `guard`, and the
+worker was right to refuse the promotion and leave it to me.
+
+### Area 5b survey — VERIFIED and APPROVED 2026-08-31 — and 5a/5b are INDEPENDENT
+
+Proposal at `openspec/changes/refactor-5b-plugin/`, `--strict` valid. Row → `proposed`.
+Measured at `ecdafbf5` — it noticed HEAD had moved under it and said so, which is the
+right instinct.
+
+**THE SCHEDULE CHANGES. The board's `5b depends on 5a` is NOT REAL, and I verified the
+edge count myself.** 5b → 5a is **8 references, every one `Flezha.State.Outbox`**, 5 of
+its 16 public functions, no internal reach. 5a → 5b is **one call**:
+`shipper.ex:517` → `ProviderBehaviour.retry_backoff_ms/3`, three pure lines. My own
+grep found *three* module references and the other two are inside a `wire.ex` doc
+comment — the survey's "one call" survived a check that tried to refute it.
+
+**So 5a and 5b implement in parallel**, and the one thing that belongs to neither is the
+retry ladder: 5 callers across `plugin`, `state` and `schedule`, so moving it would put
+both workers in `shipper.ex` and `job.ex`. Recorded as owed cross-area, in both briefs.
+
+**RULING — F1 is the second ruler defect of the day, and §11f is now a pattern.**
+`async_false_share` is an unweighted **file** count and `test` is blocking at 0.813.
+Folding nine websocket test files into three — exactly what §9 mandates — costs 3
+`async: true` of 6 files and reports `0.821`, **a blocking regression for obeying the
+charter**. I sharpened the condition beyond the report: a fold regresses iff the removed
+set is more than **18.7 %** `async: true`, which also names the cheap path — consolidate
+`async: false` files first. **Ruled: accept the arithmetic and fund it** (`async: true ≥
+⌈0.187 × N⌉` after folding, each conversion naming the global the test does not need).
+Reweighting by test LOC would move an already-armed baseline under all 36 areas at once;
+that is a re-baseline, not a fix.
+
+**KI-90 filed** — `narrative_markers` cannot see `task 2.7` or `§5`, so `describe`
+blocks naming task ids that no future reader can resolve are uncounted; widening the
+regex raises every area at once, so it needs the widening and a re-baseline in one
+commit. **KI-91 filed** — a production `Process.sleep(2)` × 50 poll at
+`worker_sup.ex:82` that the `sleeps` metric is *designed* not to see (`in_test` gate);
+**real, not taken in 5b**, because replacing a bounded poll with a monitor changes a
+restart path under a zero-behaviour-change contract with no instrument to prove it
+neutral. **KI-31's count corrected** — its "nine `convert_value` copies" is nine
+*definition* sites of which only four are folds, which sent readers hunting one that is
+not there.
+
+**KI-10 independently re-confirmed resolved** by this survey, on evidence gathered
+separately from 5a's. Two workers reached the same verdict without seeing each other.
+
+**Cycle work is real and cheap here**: area `cycles` **4 → 0**, repo 7 → 4, and the
+55-file cycle 55 → 53 — from cutting `table.ex`'s two `PluginManager.unregister_plugin`
+casts (`:456`, `:989`, both verified) plus three supervisor↔worker back-edges. The
+charter's `plugin → service` breach count of **9** is confirmed exactly; this change
+cuts one and the other eight need a callback surface that is 5c's to design.
+
+**Seven provider-twin seams priced, four REFUSED with the price stated** — the three
+`*_sup.ex` wrappers ("a `use` macro trades 45 readable lines for ~0"), `on_input`/
+`on_output` (the matched tokens are the two dispatch lines; the bodies differ entirely),
+the six `Ctx.*` structs, and kafka's overflow policy against the extracted bounded-queue
+pair ("a parameter two of three callers never set is not a generalisation"). That is
+§2 applied properly: reuse is the default, not an obligation to merge anything that
+rhymes.
+
+**A/B**: P1 provisionally `guard` **contingent on its own floor** — no floor for
+`bench.extension` exists anywhere in the programme, so A vs A′ is measured first and it
+reclassifies to `direction` if the instrument cannot hold 3 %. P2 and P3 are `direction`
+and NOT RUN, P2 against a measured 5.1–12.1 % floor. **And it stated what a clean P1
+cannot conclude**: `bench.extension` drives a provider that returns immediately, so it
+says nothing about the Kafka producer path, and no row on this box can — the close-out
+must say the producer split's per-record cost is unmeasured.
+
+**`targets.md` is accurate for this area** (one line of drift), unlike 5a's and area
+4's. It is stale where it is stale, not uniformly — so check it, don't assume either way.
+
+### Area 5a survey — VERIFIED and APPROVED 2026-08-31
+
+Proposal at `openspec/changes/refactor-5a-state/`. Row → `proposed`. Nothing outside
+its lane was written; `git status --short` empty, confirmed by me.
+
+**Every measured number re-derived and exact**: `prod_loc` 6 844, `files_over_800` 3
+(`wal_writer` 2 021, `proc_journal` 946, `input_log` 907), `functions_over_50` 1
+(`wal_writer.ex:586`, 51), `long_names` 2, `narrative_markers` 17, `cycles` 2,
+`duplicate_pairs` 2, `comment_density` 0.348. Not one figure needed correcting.
+
+**RULING 1 — the ruler is wrong and gets fixed first.** `cycles` counts *how many
+cycles this area appears in*. Doing the whole job takes it **1 → 3** while taking the
+area's largest cycle from **20 files to 3**: a worker optimising the number banks a
+fourteen-line move and never touches the eighteen. **`max_cycle_files` is approved**,
+in batch 0, before any file of the area moves, with area 4's cross-area simulation
+guard. It degrades safely — `--check` skips a metric null on either side, so it is
+recorded-but-uncompared until 5a's close-out `--write-baseline --lint`. Written up as
+**charter §11f**: §11e is the instrument reporting *better* than the truth; this is the
+other sign, and it is worse, because it makes a worker choose the wrong work.
+
+**RULING 2 — KI-41 is fixed here, first, its own commit, red-first**, as the board has
+said for weeks. Verified myself at HEAD: `await_entry/4` at `wal_writer.ex:1060`,
+`apply_effect/2` at `:1062`. **The entry said `:1058`/`:1060`** — two lines of drift,
+corrected in `known_issues.md`. The re-entrancy itself stays; a guard flag would be a
+37th struct field and a second control-flow mechanism.
+
+**RULING 3 — KI-10 is RESOLVED and 5a owes nothing.** The survey went looking for a
+decision the register told it it owed, and found the whole thing already in the tree:
+`.credo.exs` disables `ParenthesesOnZeroArityDefs`, row 3.5 *adopted* the other half
+(`AliasUsage` 689 → 0), all 36 areas carry a recorded `credo_warnings`, and the spec
+requirement exists. Moved to *Resolved*; the "area 5a owes the decision" line is struck
+from both files. **An entry whose remedy lands elsewhere must be closed by whoever
+lands it** — otherwise the next area's worker believes it.
+
+**`targets.md` is stale on every row this area owns**, a second area finding the same
+thing: `input_log` 822 → 907 (the KI-53 fix), `wal_writer` 2 019 → 2 021, `proc_journal`
+945 → 946, and four line numbers drifted. It is a Phase-0 snapshot. **Read it for
+orientation, never for a number.**
+
+**Also established**: state owns 20 of the 55-file cycle and reaches out through 16
+edges — and cutting all sixteen removes **no** cycle, because the area contains an
+18-file SCC entirely of its own files. The cycle work is internal and needs no other
+area to move. The A/B is one row (`bench.workflow --scenario chain`), floor measured in
+batch 0 before any arm; `scripts/bench.sh` is **excluded with a reason worth keeping** —
+every stress procedure declares `NoChange`, so the merge-gate row never calls
+`WalWriter.append/4`. Cross-SDK: nothing owed, with the check recorded for the
+implement worker.
+
+**Not a defect, recorded so it is not re-diagnosed as one**: `wal_writer.ex`'s `@type t`
+declares 23 of 36 struct fields. Elixir expands the rest to `term()`, so nothing is
+mis-typed — but the spec stopped describing its struct, and the split is when to fix or
+drop it.
+
+**Held**: the 5a implement worker is NOT spawned while the 5b survey runs. Batch 0
+edits `scripts/refactor_metrics.py`, which the 5b survey executes — a §11d singleton,
+and the one real collision between these two lanes.
 
 ### TWO WORKERS FROM 2026-08-31 — charter §11c
 
@@ -154,8 +380,98 @@ both filed defects "fixed", while the transport still discarded **20 % of a burs
 under an `:ok`. Speed comes from not doing work twice, not from believing claims nobody
 checked.
 
-**Area 6 (`cli`) batch 0 is verified and committed** — `b0b27a30` (cli) and `a58f8144`
-(metrics). Next: area 6's structural batch. Area 4 is COMPLETE.
+**None. AREA 6 IS COMPLETE, archived and committed.** Areas 4 and 6 both closed today.
+
+### Area 6 — `cli` is DONE — `b5b0b1d8`
+
+Three batches, archived as `2026-08-31-refactor-6-cli`. **`cli` is the thirteenth
+BLOCKING ratchet.**
+
+| batch | commit | what |
+|---|---|---|
+| 0 | `b0b27a30`, `a58f8144` | KI-79 (five verbs exiting 0 on a failed RPC) and KI-83 (`--timing` deleting timings) |
+| 1 | `b73c940c` | one rpc seam, one help renderer, one dispatcher |
+| close | `b5b0b1d8` | the baseline, the flip, the dev note |
+
+**`prod_loc` 3 344 → 2 831, honest −438** (raw −513; 75 lines are the classifier
+artefact of blank lines inside raw strings). Every ceiling zero,
+`duplicate_pairs` **22 → 3**. **This is the first area in the programme to end
+smaller.**
+
+**The flip was proved armed, not assumed** — and that matters because these numbers now
+block every future change. With `cli`'s baseline `prod_loc` lowered by one, the same
+regression reports **BLOCKING / exit 1** with `cli` in the list and **measuring / exit
+0** without it. Baseline restored from a byte copy and checksum-verified. Testing that
+a newly-armed gate actually fires is the same instinct as proving a regression test red.
+
+**It refused a flattering number twice.** The `include_str!` help encoding would have
+looked like **−466** and was rejected because a `.txt` is invisible to every metric
+while the text still exists. And the suite timing — **60.5 s against the baseline's
+56.2** — was measured and **deliberately not recorded**, because this area changes no
+Elixir, a release build had just run on the box, and recording it would relax a §9
+ratchet on a load artefact. The time ratchet needs a re-measure on an idle box by
+someone who means it.
+
+**Neither A/B row ran, and that is a complete answer rather than a gap**: `cli` is on
+none of §8's hot paths, nothing benchmarks the binary, and both floors were measured
+*before* deciding — a 0.3–3.3 ms spread on a 1.7–3.8 ms median against an effect three
+orders smaller. The arm shas are the evidence, with arm A taken at `dd04cd33` rather
+than `81b3010c`, because batch 0 is a deliberate behaviour change and the pair that
+isolates the *refactor* is the one after it. That distinction is easy to get wrong and
+it got it right.
+
+**KI-89 filed** for the two help misalignments the golden capture now pins — same
+family as KI-88, and they should land together: one commit, three cosmetic
+corrections, three golden re-captures.
+
+### Area 6 batch 1 — three parallel mechanisms become one each
+
+`prod_loc` **3344 → 2831**, `files_over_800` **1 → 0**, `functions_over_50` **8 → 0**,
+`long_names` **1 → 0**, `duplicate_pairs` **22 → 3**. All supervisor-verified after
+intent-adding the 42 new files; `cargo test -p flz` **77 passed**, `--check` exit 0.
+
+**The golden file was captured before any edit** — 31 screens from the HEAD binary,
+both known misalignments preserved byte-for-byte, negative control run twice. And the
+renderer model was **proved in Python first** by decomposing and re-rendering all 31,
+which found two screens the obvious model breaks on. That is how you refactor 506 lines
+of hand-aligned text without changing output nobody would notice.
+
+**It refuted its own survey's estimate by measuring.** The survey projected ≈ −200 lines
+for the help table. Three encodings priced: structured tables **623 lines (670 after
+rustfmt)**, a flat array ≈ 516, raw strings **468** against 506 today — a real saving of
+**−38**. The win is 27 functions becoming one renderer, **not LOC**. And it **refused**
+the encoding that would have looked like −466 (`include_str!` from a `.txt`), because
+that file is invisible to every metric and the text would still exist. Refusing a
+flattering number is the same instinct as [[KI-87]] below.
+
+**Batch 0's reasoning was right in shape and wrong in detail, which only doing it
+exposed**: six live failure policies, not three, and the message is not one string — 17
+sites, four sites, and one embedding the child's `ExitStatus`.
+
+**`duplicate_pairs` measured after the split ALONE: 22, unchanged.** Area 3's 5 → 65
+shape did not repeat, because the cut is at function boundaries with no repeated
+prologue. That is the risk the survey named, priced, and then found absent — which is
+worth as much as finding it present.
+
+**KI-84 fixed and measured**: 3 failures in 60 loaded runs before, **0 in 180** after,
+and the non-gitignored directory went with it.
+
+**Honest LOC −438, not −513** — 75 lines are a classifier artefact (blank lines inside
+raw strings count as blank where `println!()` counted as code). It gave both numbers
+and said which to quote.
+
+### Charter §11e — the instrument flatters, and that is now written down
+
+KI-87 is the **third** silence of one family, and the pattern is worth more than the
+three fixes: `--lint` omitted wrote `null` and `--check` skipped it; `--timing`
+replaced rather than merged; and the file walk reads `git ls-files`, so **untracked
+files are invisible — and since refactors add files, the error only ever flatters**.
+Batch 1 measured a phantom **−599** on `cli` that way.
+
+**The operational rule is now charter §11e**: the supervisor runs `git add -N` on every
+new file **before reading any number**. It has caught a wrong number **five times this
+session**. A worker cannot do it — the git index is the supervisor's singleton under
+§11d — so a worker names its new files and the supervisor intent-adds them.
 
 ### Area 6 batch 0 — two tools that reported success they had not earned
 
@@ -1655,6 +1971,36 @@ attributably, for one 7-minute bisect instead of six measured checkpoints.
 
 ## Awaiting the user's decision
 
+### The Kafka plugin queue still names a mechanism, not a guarantee — F4
+
+**What it is.** `rename-block-to-drop-nothing` renamed the SDK channel policy
+`Block` → `DropNothing` on every SDK, the wire and the docs, precisely because a
+mechanism-shaped name goes false the moment nothing parks. The **Kafka plugin queue**
+policy was not in that change and is still `:block` / `:drop_oldest` / `:drop_newest`
+(`kafka.ex:31`, `:70`, `:243`, `:389`–`:399`; `docs/configuration.md:582`). Two of the
+three names say what they discard; the third names the mechanism — the §4 synonym the
+rename existed to remove.
+
+**Why the gate did not catch it.** `scripts/check-overflow-naming.sh:47` matches
+`:block\s*[,|]\s*:drop_(newest|oldest)` — it requires adjacency, and the doc line reads
+`` `:block` (default), `:drop_oldest` ``. Verified: the gate passes on text it exists to
+catch.
+
+**Why it is yours and not mine.** This is not a refactor. `block` is an operator-facing
+CLI value (`--Xqueue_overflow=block`) stored in **durable cspecs**, so a rename needs
+accept-both parsing, a migration for existing rows, and a deprecation window — a
+behaviour change with a compatibility tail, on a surface real operators have typed.
+
+| option | cost |
+|---|---|
+| **Rename to `drop_nothing`, accept both** (my recommendation) | one change: accept-both coercion, cspec migration, docs, gate widened. The vocabulary is then one rule everywhere, which is the point of §4 |
+| Leave it, widen the gate to allow it | ~zero, and the codebase keeps two names for one idea — the exact drift the earlier rename spent a change removing |
+| Leave it, say nothing | free, and the next person to read §4 finds it contradicted in the tree |
+
+**Recommendation: rename with accept-both**, as its own small change after 5b, not
+inside it. 5b is a zero-behaviour-change area and this is a behaviour change.
+
+
 **This section is read by the user, roughly daily, and answered in a
 conversation. It must therefore be TRUE: an item that has landed is deleted
 from here the moment it lands.** On 2026-08-30 it still listed two defects
@@ -1878,7 +2224,7 @@ with attribution preserved, because the arms are still kept at every checkpoint.
 - 0a: the Elixir controller has no layering today — one 55-file cycle across nine
   subtrees (charter §3 records the measured graph; areas 5a–5e cut it).
 - 0a: credo strict reports 1349 issues, 967 of them `AliasUsage` and
-  `ParenthesesOnZeroArityDefs`, which contradict house style — area 5a decides
+  `ParenthesesOnZeroArityDefs`, which contradict house style — RESOLVED by row 3.5 — see KI-10
   disable-or-adopt before the count is ratcheted as blocking.
 - 0a: `cargo clippy --workspace --all-targets` and `cargo test --workspace` are red
   without `--features flezha_runner/bench-internals`.

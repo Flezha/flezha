@@ -1,14 +1,13 @@
 defmodule Flezha.State.Commands do
   @moduledoc """
-  The controller→SDK control commands that carry durable state.
+  The controller->SDK control commands that carry durable state.
 
   Restoring an Entity, pulling a snapshot, threading a workflow instance's
   proc-journal onto its bind, and telling a Procedure its target Entity's
   mailbox is full are all one thing: a control command the State subsystem
-  issues on behalf of an operative it does not own a process for. The callers
-  are `Flezha.State.Watchdog`, `Flezha.State.Recovery`,
-  `Flezha.State.WalWriter`, `Flezha.Runner.ControlChannel` and
-  `Flezha.Service.CliManager` — none of them an Overwatch, none of them holding
+  issues on behalf of an operative it does not own a process for. Its callers —
+  `Watchdog`, `Recovery`, `WalWriter`, `Runner.ControlChannel`,
+  `Service.CliManager` — are none of them an Overwatch and none of them holding
   operative state.
 
   Each entity-scoped function takes the controller-side `runner_id` and a

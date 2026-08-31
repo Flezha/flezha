@@ -7,7 +7,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   # async: false: registered singletons.
   use ExUnit.Case, async: false
 
-  alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
+  alias Flezha.Plugin.Provider.Kafka.ProducerSup
+  alias Flezha.Plugin.Provider.WorkerSup
   alias FlezhaTest.Helper.NodeTestHelper
 
   # A stub supervised by the producer dyn-sup and registered under the worker's
@@ -17,8 +18,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
     use GenServer
 
     def start_link(opts) do
-      name = ProducerWorker.via(opts[:plugin_id], opts[:topic], opts[:partition])
-      GenServer.start_link(__MODULE__, opts, name: name)
+      key = {opts[:plugin_id], opts[:topic], opts[:partition]}
+      GenServer.start_link(__MODULE__, opts, name: WorkerSup.via(ProducerSup, key))
     end
 
     def child_spec(opts) do

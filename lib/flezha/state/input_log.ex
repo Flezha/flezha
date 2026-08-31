@@ -1,30 +1,20 @@
 defmodule Flezha.State.InputLog do
   @moduledoc """
-  Per-operative offset-addressable ingest journal for the effectively-once
-  tier (`durable-input-log`).
+  Per-operative offset-addressable ingest journal for the effectively-once tier.
 
   One GenServer per tier-enabled operative journals every inbound payload
   (post-`:on_input`) at `<state_root>/<namespace>/<operative_class>/input.log`
-  before the Overwatch forwards it, assigning strictly monotonic offsets.
-  Records reuse
-  the `WalWriter` framing (`encode_record`/`decode_record`, crc-protected,
-  torn tail discarded on open) with a zeroed header, and durability rides the
-  shared `FsyncBatcher`: the server registers in the `WriterRegistry` under
-  `{operative_class, :input_log}` and answers the same `:fsync` call a
-  `WalWriter` does, so the batcher drains it unchanged.
+  before the Overwatch forwards it, at strictly monotonic offsets. Records reuse
+  the `WalWriter` framing, and durability rides the shared `FsyncBatcher`: the
+  server registers in the `WriterRegistry` under `{operative_class, :input_log}`
+  and answers the same `:fsync` call, so the batcher drains it unchanged.
 
   Retention is watermark-driven: each Entity's durable consumed-offset is
-  reported into a public ETS table (`record_consumed/3`, repopulated from the
-  WAL after a restart — the table is a rebuildable cache, owned by
-  `Flezha.State.Supervisor`) and `sweep/1`
-  truncates strictly below `min(watermark, now - hold_window)` with
-  `hold_window` defaulting to zero. An Entity that has consumed nothing holds
-  the watermark at the log start; a frozen watermark with a growing log emits
-  `[:flezha, :state, :input_log_frozen_watermark]` naming the lagging Entity
-  instead of silently accumulating.
-
-  Operatives without the tier never start an InputLog and never touch this
-  module — the cost-free-default contract.
+  reported into a public ETS table (`record_consumed/3`) and `sweep/1` truncates
+  strictly below `min(watermark, now - hold_window)`. An Entity that consumed
+  nothing holds the watermark at the log start; a frozen watermark over a
+  growing log emits `[:flezha, :state, :input_log_frozen_watermark]` naming the
+  lagging Entity instead of silently accumulating.
   """
 
   use GenServer
@@ -38,9 +28,9 @@ defmodule Flezha.State.InputLog do
     FsyncBatcher,
     Paths,
     PersistenceResolver,
+    RecordFrame,
     SeqIndex,
-    Supervisor,
-    WalWriter
+    Supervisor
   }
 
   # Input-log records reuse the WalWriter framing, so they carry its 16-byte
@@ -254,7 +244,7 @@ defmodule Flezha.State.InputLog do
 
   @doc """
   Move an Entity's consumed-offset *backwards* after a correction rewound its
-  WAL — the records that reported the old, higher offset no longer exist.
+  WAL — the records that reported the higher offset are gone.
 
   Distinct from `record_consumed/3` only in intent, and that is the point: a
   watermark that could silently move either way would be a bug waiting to
@@ -385,7 +375,7 @@ defmodule Flezha.State.InputLog do
     {:ok, file} = :file.open(state.path, [:raw, :read, :write, :binary])
 
     # Torn-tail discard + last-offset recovery, shared with the WAL.
-    last = WalWriter.scan_for_last_valid_seq(file, state.path)
+    last = RecordFrame.scan_for_last_valid_seq(file)
     {:ok, size} = :file.position(file, :eof)
 
     # Offsets reported before this log (re)started are in the published table.
@@ -435,7 +425,7 @@ defmodule Flezha.State.InputLog do
   # The retention sweep's truncation. It runs in this loop — ingest waits
   # behind it — so it costs the retained tail, never the log.
   def handle_cast({:truncate_below, floor}, state) do
-    case WalWriter.cut_below(state.path, state.file_handle, state.positions, floor) do
+    case RecordFrame.cut_below(state.path, state.file_handle, state.positions, floor) do
       {:ok, _cut, file, positions} ->
         # The companion's descriptor still names the file the rename replaced.
         send(state.syncer, {:reopen, state.path})
@@ -663,7 +653,7 @@ defmodule Flezha.State.InputLog do
   defp encode_append(state, body) do
     offset = state.next_offset
     header = record_header(System.system_time(:millisecond))
-    record = WalWriter.encode_record(offset, header, body)
+    record = RecordFrame.encode_record(offset, header, body)
 
     {offset, record,
      %{
@@ -728,7 +718,7 @@ defmodule Flezha.State.InputLog do
   # GenServer, blocking every append behind it.
   defp collect_range(device, from, to) do
     device
-    |> WalWriter.fold_records([], fn {seq, _header, body}, acc ->
+    |> RecordFrame.fold_records([], fn {seq, _header, body}, acc ->
       cond do
         seq > to ->
           {:halt, acc}
@@ -749,7 +739,7 @@ defmodule Flezha.State.InputLog do
   # no timestamp are never eligible — an unknown age cannot be judged against a
   # window.
   defp scan_offset_before(device, ts_ms) do
-    WalWriter.fold_records(device, nil, fn {seq, header, _body}, found ->
+    RecordFrame.fold_records(device, nil, fn {seq, header, _body}, found ->
       case header_time(header) do
         ts when is_integer(ts) and ts < ts_ms -> {:cont, seq}
         _ -> {:cont, found}
@@ -802,8 +792,8 @@ defmodule Flezha.State.InputLog do
   # With the default `hold_window = 0` the time bound is "now", which every
   # retained record predates, so the watermark alone decides. A raised window
   # holds the tail: `nil` from the scan means nothing has aged out yet, which is
-  # "hold everything" — but now as a workflow, self-clearing state rather than
-  # the permanent one it used to be.
+  # "hold everything", and it clears itself: the first record to age out
+  # releases the tail.
   defp truncation_floor(_operative_class, nil), do: nil
 
   defp truncation_floor(operative_class, watermark) do

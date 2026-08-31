@@ -10,8 +10,8 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   Each family is its own instance (own Registry, own DynamicSupervisor) so
   a crash-looping worker exhausts only its family's restart budget.
 
-  Workers register themselves under
-  `{:via, Registry, {registry_name(family), key}}` in their `start_link`.
+  `ensure_worker/4` names the child: it puts `via/2` into the worker's opts,
+  so a worker never has to name the supervisor that started it.
   """
 
   use Supervisor
@@ -36,16 +36,21 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   def registry_name(family), do: Module.concat(family, Registry)
   def dyn_sup_name(family), do: Module.concat(family, DynSup)
 
+  @doc "The registered name a worker of `family` takes under `key`."
+  @spec via(module(), term()) :: {:via, module(), {atom(), term()}}
+  def via(family, key), do: {:via, Registry, {registry_name(family), key}}
+
   @doc """
-  Start (or look up) the worker registered under `key`. Returns
-  `{:ok, pid}` either way; a registered worker is shared while
-  `reusable?.(pid)` holds, else it is reaped first so the caller gets a
-  fresh, healthy one.
+  Start (or look up) the worker registered under `key`, naming the child
+  `via(family, key)`. Returns `{:ok, pid}` either way; a registered worker is
+  shared while `reusable?.(pid)` holds, else it is reaped first so the caller
+  gets a fresh, healthy one.
   """
-  @spec ensure_worker(module(), term(), Supervisor.child_spec() | {module(), term()}, (pid() ->
-                                                                                         boolean())) ::
+  @spec ensure_worker(module(), term(), {module(), keyword()}, (pid() -> boolean())) ::
           {:ok, pid()} | {:error, term()}
-  def ensure_worker(family, key, child, reusable? \\ &Process.alive?/1) do
+  def ensure_worker(family, key, {worker, opts}, reusable? \\ &Process.alive?/1) do
+    child = {worker, Keyword.put(opts, :name, via(family, key))}
+
     case Registry.lookup(registry_name(family), key) do
       [{pid, _}] ->
         if reusable?.(pid), do: {:ok, pid}, else: reap_and_start(family, pid, key, child)

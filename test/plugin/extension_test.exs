@@ -533,6 +533,53 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     end
   end
 
+  describe "the table reports what it dropped and issues no effect" do
+    test "teardown_all names every plugin it held, in the order it tore them down" do
+      table = table_with(["a", "b", "c"])
+      held = Enum.map(table.plugins, fn {plugin_id, _plugin} -> plugin_id end)
+
+      {emptied, dropped} = Table.teardown_all(table)
+
+      assert dropped == held
+      assert Enum.sort(dropped) == ["a", "b", "c"]
+      assert emptied.plugins == %{}
+    end
+
+    test "teardown_all of a table holding nothing reports nothing" do
+      assert {_table, []} = Table.teardown_all(Table.new(@catalog))
+    end
+
+    test "unsubscribe names the one plugin it dropped" do
+      assert {_table, ["b"]} = Table.unsubscribe(table_with(["a", "b"]), "b")
+    end
+
+    test "unsubscribe of a plugin the table never held reports nothing" do
+      assert {_table, []} = Table.unsubscribe(table_with(["a"]), "ghost")
+    end
+
+    test "the table names no Flezha.Service module" do
+      {:ok, {_module, [imports: imports]}} =
+        :beam_lib.chunks(:code.which(Table), [:imports])
+
+      assert Enum.filter(imports, fn {module, _fun, _arity} ->
+               module |> Atom.to_string() |> String.starts_with?("Elixir.Flezha.Service.")
+             end) == []
+    end
+  end
+
+  defp table_with(plugin_ids) do
+    Enum.reduce(plugin_ids, Table.new(@catalog), fn plugin_id, table ->
+      {:ok, table} =
+        Table.subscribe(table, plugin_id, %Plugin{
+          id: plugin_id,
+          provider: FoldA,
+          subscriptions: [{:on_operative_init, []}]
+        })
+
+      table
+    end)
+  end
+
   describe "active_mask" do
     test "bit toggles on first and last subscriber" do
       table = Table.new(@catalog)
@@ -547,7 +594,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
       assert table.active_mask != 0
 
-      table = Table.unsubscribe(table, "a")
+      {table, _dropped} = Table.unsubscribe(table, "a")
       assert table.active_mask == 0
     end
   end

@@ -153,24 +153,24 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
   end
 
-  describe "workflow_completed_retention_hours/2" do
+  describe "completed_retention_hours/2" do
     test "defaults to 72" do
-      assert PersistenceResolver.workflow_completed_retention_hours("c") == 72
+      assert PersistenceResolver.completed_retention_hours("c") == 72
     end
 
     test "honours the global default override" do
       Application.put_env(:flezha, :default_workflow_completed_retention_hours, 5)
-      assert PersistenceResolver.workflow_completed_retention_hours("c") == 5
+      assert PersistenceResolver.completed_retention_hours("c") == 5
     end
 
     test "honours a per-class operator override; other classes fall back to default" do
       Application.put_env(:flezha, :workflow_completed_retention_hours, %{"c" => 1})
-      assert PersistenceResolver.workflow_completed_retention_hours("c") == 1
-      assert PersistenceResolver.workflow_completed_retention_hours("d") == 72
+      assert PersistenceResolver.completed_retention_hours("c") == 1
+      assert PersistenceResolver.completed_retention_hours("d") == 72
     end
 
     test "honours an instance-metadata override" do
-      assert PersistenceResolver.workflow_completed_retention_hours("c", %{
+      assert PersistenceResolver.completed_retention_hours("c", %{
                "workflow_completed_retention_hours" => 3
              }) == 3
     end

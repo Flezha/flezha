@@ -1089,7 +1089,7 @@ defmodule Flezha.Service.CliManager do
         {:ok, %{namespace: ns, finished_at: fa} = rec}
         when ns == namespace and is_integer(fa) ->
           window =
-            PersistenceResolver.workflow_completed_retention_hours(operative_id)
+            PersistenceResolver.completed_retention_hours(operative_id)
 
           if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
 

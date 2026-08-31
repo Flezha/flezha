@@ -1,102 +1,69 @@
-use std::process::{exit, Command};
+use crate::dispatch::{self, Command};
+use crate::{args, help, rpc};
 
-use crate::utils::get_flezha_command;
-
-pub fn handle_audit_command(args: &[String]) {
-    if args.is_empty() {
-        print_audit_help();
-        exit(1);
-    }
-
-    match args[0].as_str() {
-        "list" => handle_list(&args[1..]),
-        "read" => handle_read(&args[1..]),
-        "tail" => handle_tail(&args[1..]),
-        "stats" => handle_stats(&args[1..]),
-        "rotate" => handle_rotate(&args[1..]),
-        "help" | "--help" | "-h" => print_audit_help(),
-        other => {
-            eprintln!(
-                "Error: Unknown audit subcommand '{}'. Use list, read, tail, stats, rotate.",
-                other
-            );
-            exit(1);
-        }
-    }
-}
-
-fn want_json(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--json" || a == "-o=json")
-}
-
-fn extract_named(args: &[String], name: &str) -> Option<String> {
-    let prefix = format!("--{}=", name);
-    let flag = format!("--{}", name);
-    let mut iter = args.iter();
-    while let Some(a) = iter.next() {
-        if a == &flag {
-            if let Some(v) = iter.next() {
-                return Some(v.clone());
-            }
-        } else if let Some(v) = a.strip_prefix(&prefix) {
-            return Some(v.to_string());
-        }
-    }
-    None
-}
+pub(crate) const TABLE: Command = Command {
+    help: help::AUDIT,
+    verbs: &[
+        ("list", handle_list),
+        ("read", handle_read),
+        ("tail", handle_tail),
+        ("stats", handle_stats),
+        ("rotate", handle_rotate),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: None,
+    unknown: "Error: Unknown audit subcommand '{}'. Use list, read, tail, stats, rotate.",
+    unknown_prints_help: false,
+};
 
 fn extract_u64(args: &[String], name: &str) -> Option<u64> {
-    extract_named(args, name).and_then(|v| v.parse::<u64>().ok())
+    args::extract_param(args, &format!("--{}", name), &format!("--{}", name))
+        .and_then(|v| v.parse::<u64>().ok())
 }
 
 fn extract_i64(args: &[String], name: &str) -> Option<i64> {
-    extract_named(args, name).and_then(|v| v.parse::<i64>().ok())
+    args::extract_param(args, &format!("--{}", name), &format!("--{}", name))
+        .and_then(|v| v.parse::<i64>().ok())
 }
 
 fn handle_list(args: &[String]) {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("flz audit list [--json]");
+    if dispatch::subcommand_help(&args[1..], help::AUDIT_LIST, dispatch::HELP_FLAGS) {
         return;
     }
 
-    let format = if want_json(args) { "json" } else { "text" };
-
-    let rpc = format!(
-        "Flezha.Service.CliManager.audit_log_render_list(\"{}\")",
-        format
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.audit_log_render_list(\"{}\")",
+            args::json_or_text(&args[1..])
+        ),
+        rpc::DIAGNOSED,
     );
-
-    run_rpc(&rpc);
 }
 
 fn handle_read(args: &[String]) {
-    if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
-        print_read_help();
+    let given = &args[1..];
+    if given.is_empty() || given.iter().any(|a| a == "--help" || a == "-h") {
+        help::render(help::AUDIT_READ);
         return;
     }
 
-    let file = &args[0];
-    let format = if want_json(&args[1..]) {
-        "json"
-    } else {
-        "text"
-    };
-
+    let file = &given[0];
+    let rest = &given[1..];
     let mut opts = String::new();
 
-    if let Some(source) = extract_named(&args[1..], "source") {
+    if let Some(source) = args::extract_param(rest, "--source", "--source") {
         opts.push_str(&format!("source: \"{}\", ", source));
     }
-    if let Some(name) = extract_named(&args[1..], "name") {
+    if let Some(name) = args::extract_param(rest, "--name", "--name") {
         opts.push_str(&format!("name: \"{}\", ", name));
     }
-    if let Some(since) = extract_i64(&args[1..], "since") {
+    if let Some(since) = extract_i64(rest, "since") {
         opts.push_str(&format!("since_us: {}, ", since));
     }
-    if let Some(until) = extract_i64(&args[1..], "until") {
+    if let Some(until) = extract_i64(rest, "until") {
         opts.push_str(&format!("until_us: {}, ", until));
     }
-    if let Some(limit) = extract_u64(&args[1..], "limit") {
+    if let Some(limit) = extract_u64(rest, "limit") {
         opts.push_str(&format!("limit: {}, ", limit));
     }
 
@@ -106,102 +73,59 @@ fn handle_read(args: &[String]) {
         format!("[{}]", opts.trim_end_matches(", "))
     };
 
-    let rpc = format!(
-        "Flezha.Service.CliManager.audit_log_render_read(\"{}\", \"{}\", {})",
-        file, format, opts_kw
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.audit_log_render_read(\"{}\", \"{}\", {})",
+            file,
+            args::json_or_text(rest),
+            opts_kw
+        ),
+        rpc::DIAGNOSED,
     );
-
-    run_rpc(&rpc);
 }
 
 fn handle_tail(args: &[String]) {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("flz audit tail [--json] [--duration-ms N]");
+    if dispatch::subcommand_help(&args[1..], help::AUDIT_TAIL, dispatch::HELP_FLAGS) {
         return;
     }
 
-    let format = if want_json(args) { "json" } else { "text" };
-    let duration_ms = extract_u64(args, "duration-ms").unwrap_or(30_000);
+    let rest = &args[1..];
+    let duration_ms = extract_u64(rest, "duration-ms").unwrap_or(30_000);
 
-    let rpc = format!(
-        "Flezha.Service.CliManager.audit_log_render_tail(\"{}\", [duration_ms: {}])",
-        format, duration_ms
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.audit_log_render_tail(\"{}\", [duration_ms: {}])",
+            args::json_or_text(rest),
+            duration_ms
+        ),
+        rpc::DIAGNOSED,
     );
-
-    run_rpc(&rpc);
 }
 
 fn handle_stats(args: &[String]) {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("flz audit stats [--json]");
+    if dispatch::subcommand_help(&args[1..], help::AUDIT_STATS, dispatch::HELP_FLAGS) {
         return;
     }
 
-    let format = if want_json(args) { "json" } else { "text" };
-
-    let rpc = format!(
-        "Flezha.Service.CliManager.audit_log_render_stats(\"{}\")",
-        format
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.audit_log_render_stats(\"{}\")",
+            args::json_or_text(&args[1..])
+        ),
+        rpc::DIAGNOSED,
     );
-
-    run_rpc(&rpc);
 }
 
 fn handle_rotate(args: &[String]) {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("flz audit rotate [--json]");
+    if dispatch::subcommand_help(&args[1..], help::AUDIT_ROTATE, dispatch::HELP_FLAGS) {
         return;
     }
 
-    let format = if want_json(args) { "json" } else { "text" };
-
-    let rpc = format!(
-        "Flezha.Service.CliManager.audit_log_render_rotate(\"{}\")",
-        format
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.audit_log_render_rotate(\"{}\")",
+            args::json_or_text(&args[1..])
+        ),
+        rpc::DIAGNOSED,
     );
-
-    run_rpc(&rpc);
-}
-
-fn run_rpc(rpc: &str) {
-    let command = get_flezha_command();
-    let status = Command::new(command).arg("rpc").arg(rpc).status();
-
-    match status {
-        Ok(s) if s.success() => {}
-        Ok(s) => exit(s.code().unwrap_or(3)),
-        Err(e) => {
-            eprintln!("error: failed to spawn rpc: {}", e);
-            exit(3);
-        }
-    }
-}
-
-fn print_audit_help() {
-    println!("flz audit - Durable audit log inspection");
-    println!();
-    println!("USAGE:");
-    println!("    flz audit <COMMAND> [OPTIONS]");
-    println!();
-    println!("COMMANDS:");
-    println!("    list      List the on-disk catalog of rotated files");
-    println!("    read      Read records from a specific file with optional filters");
-    println!("    tail      Stream live audit records until a duration elapses");
-    println!("    stats    Show operational snapshot (file path, size, totals, drops)");
-    println!("    rotate    Force an immediate rotation of the active file");
-    println!();
-    println!("OPTIONS:");
-    println!("    --json    Emit machine-readable output (NDJSON for tail/read)");
-}
-
-fn print_read_help() {
-    println!("flz audit read <FILE> [OPTIONS]");
-    println!();
-    println!("OPTIONS:");
-    println!("    --json              Emit NDJSON");
-    println!("    --source <S>        Match records whose source equals S");
-    println!("    --name <N>          Match records whose name equals N");
-    println!("    --since <TS_US>     Match records with ts_us >= TS_US (monotonic)");
-    println!("    --until <TS_US>     Match records with ts_us <= TS_US");
-    println!("    --limit <N>         Return at most N records (default 1000)");
 }

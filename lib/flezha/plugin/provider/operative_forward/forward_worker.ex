@@ -20,7 +20,6 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   """
 
   alias Flezha.Plugin.Provider.OperativeForward
-  alias Flezha.Plugin.Provider.OperativeForward.ForwardSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
   alias Flezha.Service.OperativeManager
@@ -50,11 +49,8 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
     attempts: 0
   ]
 
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts,
-      name: {:via, Registry, {ForwardSup.registry_name(), ForwardSup.key(opts)}}
-    )
-  end
+  def start_link(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
 
   @doc """
   Enqueue one payload for delivery. Replies `:ok` immediately while the buffer

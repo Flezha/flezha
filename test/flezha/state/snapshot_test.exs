@@ -2,7 +2,7 @@ defmodule Flezha.State.SnapshotTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{Paths, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Paths, RecordFrame, Snapshot, Supervisor, TestHelpers, WalWriter}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -35,9 +35,9 @@ defmodule Flezha.State.SnapshotTest do
 
     # WAL retains records 4, 5.
     {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
-    assert {:ok, 4, _, "x4", c1} = WalWriter.decode_record(dev, 0)
-    assert {:ok, 5, _, "x5", c2} = WalWriter.decode_record(dev, c1)
-    assert {:error, _} = WalWriter.decode_record(dev, c1 + c2)
+    assert {:ok, 4, _, "x4", c1} = RecordFrame.decode_record(dev, 0)
+    assert {:ok, 5, _, "x5", c2} = RecordFrame.decode_record(dev, c1)
+    assert {:error, _} = RecordFrame.decode_record(dev, c1 + c2)
     :file.close(dev)
   end
 

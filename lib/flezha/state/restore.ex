@@ -14,9 +14,9 @@ defmodule Flezha.State.Restore do
   cold start), `terminal_seq_hint = 0` and both bodies are empty.
   """
 
-  alias Flezha.State.{Paths, Snapshot}
+  alias Flezha.State.{Paths, Snapshot, Wire}
 
-  @header_size 16
+  @header_size Wire.header_size()
 
   @type payload :: %{
           snapshot_bytes: binary(),

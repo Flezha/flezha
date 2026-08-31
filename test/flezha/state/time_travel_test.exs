@@ -3,7 +3,7 @@ defmodule Flezha.State.TimeTravelTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Snapshot, Supervisor, TestHelpers, TimeTravel, WalWriter}
+  alias Flezha.State.{RecordFrame, Snapshot, Supervisor, TestHelpers, TimeTravel, WalWriter}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -35,8 +35,8 @@ defmodule Flezha.State.TimeTravelTest do
     assert result.terminal_seq == 4
 
     expected =
-      WalWriter.encode_record(3, header, "v3") <>
-        WalWriter.encode_record(4, header, "v4")
+      RecordFrame.encode_record(3, header, "v3") <>
+        RecordFrame.encode_record(4, header, "v4")
 
     assert result.change_log_bytes == expected
   end

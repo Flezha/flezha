@@ -1,41 +1,18 @@
 defmodule Flezha.State.Wire do
   @moduledoc """
-  Wire-protocol helpers for the per-Entity persistence path.
+  Wire-protocol codec for the per-Entity persistence path.
 
-  Two new payload-id strings are reserved on the data stream:
+  Two payload-id strings are reserved on the data stream, both SDK ->
+  controller: `"entity_state_change"`, carrying one Change record destined for
+  the per-Entity WAL, and `"entity_state_snapshot"`, carrying a serialized
+  `Self::State` produced by a controller-initiated `CompactEntity`. Both share
+  one frame structure — the difference is only what the body means — and that
+  structure is specified in `docs/sdk/protocol_spec.md`.
 
-    * `"entity_state_change"` — SDK → controller. Carries one Change record
-      destined for the per-Entity WAL.
-    * `"entity_state_snapshot"` — SDK → controller. Carries a serialized
-      `Self::State` snapshot produced by an controller-initiated `CompactEntity`.
-
-  ## Frame layout
-
-  Both payload-ids share the same on-wire structure (the difference is
-  the semantic of `change_or_snapshot_bytes`):
-
-  ```
-  [entity_id_len: u16 BE]
-  [entity_id_bytes]
-  [seq: u64 BE]
-  [header: 16B]
-  [body_len: u32 BE]
-  [body]
-  [crc32: u32 BE over body]
-  ```
-
-  ## `entity_id_bytes` structure
-
-  ```
-  [operative_class_len: u8][operative_class]
-  [procedure_id_len: u8][procedure_id]
-  [entity_key_len: u16 BE][entity_key]
-  ```
-
-  This is structured (not opaque) so the controller can route to the right
-  per-Entity `WalWriter` without a side-table mapping. The controller's
-  `runner_id` is implicit — the controller knows which runner
-  sent the frame from the connection.
+  `entity_id_bytes` is structured rather than opaque so the controller can route
+  a frame to the right per-Entity `WalWriter` without a side table. The
+  controller's `runner_id` is implicit: the controller knows which runner sent
+  the frame from the connection it arrived on.
   """
 
   alias Flezha.State.Outbox

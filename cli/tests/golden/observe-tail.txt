@@ -1,0 +1,8 @@
+flz observe tail <SOURCE> [--json] [--duration-ms N]
+
+Stream live signals from SOURCE via the PubSub sink. Requires
+:pubsub_sink_enabled to be true in :observability config.
+
+OPTIONS:
+    --json              Emit NDJSON (one JSON object per signal per line)
+    --duration-ms <N>   Stream for at most N milliseconds (default 30000)

@@ -1,49 +1,20 @@
 defmodule Flezha.State.Outbox do
   @moduledoc """
-  Per-Entity dedup file (`<key>.outbox.dedup`): the persistence watermark
-  `last_persisted_seq`, the outbox flush cursor `outbox_flushed_seq`, and
-  the realign `epoch`, written together with the atomic
-  `<key>.outbox.dedup.tmp` → rename pattern so a crash mid-write leaves
-  either the previous triple or the new one — never a torn write.
+  Per-Entity dedup file (`<key>.outbox.dedup`) and the delivery-confirmation
+  seam over it.
 
-  The file is a rebuildable cache advanced at fsync-batch cadence (plus
-  snapshot, rotation, realign, and clean shutdown) — never per record. On
-  boot, `WalWriter`'s WAL scan is the authoritative `last_persisted_seq`
-  source; a stale `outbox_flushed_seq` only widens the restart re-drive
-  (sink dedup absorbs the repeats — the cursor may lag, never lead).
-
-  On-disk format v2 is three 8-byte big-endian integers
-  `last_persisted_seq (unsigned) | outbox_flushed_seq (signed, -1 ≡ nothing
-  flushed yet) | epoch (unsigned)`. A legacy 8-byte file reports its value
-  as `last_persisted_seq` with cursor `-1` and epoch `0`; shorter or
-  unreadable files report the empty triple.
-
-  ## Delivery confirmation
+  The file holds the persistence watermark `last_persisted_seq`, the outbox
+  flush cursor `outbox_flushed_seq` and the realign `epoch`, written together
+  through `.tmp` -> rename so a crash leaves either the previous triple or the
+  new one. It is a rebuildable cache advanced at fsync-batch cadence, never per
+  record: on boot the WAL scan is authoritative for `last_persisted_seq`, and a
+  stale cursor only widens the restart re-drive — it may lag, never lead.
 
   The cursor is durable proof that a sink HAS the output, so it advances on the
-  sink's confirmation — never on the in-memory hand-off into the plugin chain.
-  Every flushed output carries an opaque `flz.ack` token naming the writer that
-  owns its cursor and the entry one confirmation completes. A
-  delivery-guaranteed sink `hold/1`s the token as it takes ownership and
-  `confirm/1`s it once its write is durable, or `park/4`s it when its retry
-  ladder is permanently exhausted; the dispatcher `settled/1`s each output once
-  the chain has run it. An entry completes when every output has settled and
-  every hold has answered — so a chain with no guaranteed sink completes as
-  soon as the chain has run, exactly as before.
-
-  The dispatcher runs each output's chain inside `run/2`, which counts the
-  holds that run takes and reports them on its settlement — one report, no
-  token decode, and a hold can never be seen after the settlement it belongs
-  to. A confirmation that overtakes them is still counted: completion needs the
-  settlements, which only the dispatcher sends. A `hold/1` outside any run (a
-  sink fed by something other than the dispatcher) reports through the token.
-
-  The reports are batched, never the facts. One dispatch pass hands its whole
-  window to the chain as one `{:io_out_batch, outputs}` cast, settles it with
-  one `{:outbox_settled_many, entries}` report, and a sink answers a completed
-  batch with one `confirm_many/1`. Each entry still completes on its own
-  outputs and its own holds — a batch report is the same per-entry facts
-  delivered at once.
+  sink's confirmation, never on the in-memory hand-off. Every flushed output
+  carries an opaque `flz.ack` token; a delivery-guaranteed sink `hold/1`s it and
+  `confirm/1`s or `park/4`s it, while the dispatcher `settled/1`s each output.
+  An entry completes when every output has settled and every hold has answered.
   """
 
   require Logger

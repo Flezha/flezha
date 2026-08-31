@@ -1,0 +1,3 @@
+flz observe sinks [--json]
+
+Print one row per registered sink (name, module, overflow, watermark).

@@ -1,0 +1,1 @@
+flz audit rotate [--json]

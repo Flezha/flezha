@@ -1,26 +1,20 @@
 defmodule Flezha.State.DurabilityTier.Backend.Postgres do
   @moduledoc """
   Remote durability backend over PostgreSQL: one table of `bytea` blobs keyed by
-  artifact key, with an epoch column that makes the conditional manifest write a
-  single statement.
+  artifact key, with an epoch column making the conditional write one statement.
 
   `postgrex` is already a tree dependency (the Postgres output sink) and
   Postgres is already present in the reference deployment, which is why this is
-  the first backend rather than object storage. It stores blobs and nothing
-  else — no WAL framing, no seq arithmetic, no supersession.
+  the first backend rather than object storage. It stores blobs and nothing else
+  — no WAL framing, no seq arithmetic, no supersession.
 
   Credential hygiene follows the sink precedent: the password travels only
   inside the `:configure` closure, so it never lands in the connection child
   args, the process state, or a log line.
 
-  Options (from `:flezha, :durability_tier, :backend_opts`):
-
-    * `:hostname` / `:port` / `:database` / `:username` — connection
-    * `:password` / `:password_env` — prefer the env-var form
-    * `:ssl` — default `false`
-    * `:pool_size` — default `2`
-    * `:table` — default `flezha_durability_artifacts`
-    * `:auto_create` — default `true`; creates the table on connect
+  Options: `:hostname`, `:port`, `:database`, `:username`, `:password` /
+  `:password_env` (prefer the env form), `:ssl` (`false`), `:pool_size` (`2`),
+  `:table` (`flezha_durability_artifacts`), `:auto_create` (`true`).
   """
 
   @behaviour Flezha.State.DurabilityTier.Backend

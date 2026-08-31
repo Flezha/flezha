@@ -287,7 +287,9 @@ below is all that survives — which is enough to write it again.
   `9410eea7` ("fix(state): the consumed watermark stops moving backwards", an
   ancestor of HEAD). It clamped `InputLog.record_consumed/3` monotonically and
   did not touch `take_outbox_window/3`, which still calls `await_entry/4` at
-  `lib/flezha/state/wal_writer.ex:1058` and `apply_effect/2` at `:1060`. The
+  `lib/flezha/state/wal_writer.ex:1060` and `apply_effect/2` at `:1062` (the
+  entry said `:1058`/`:1060`; two lines of drift, corrected 2026-08-31 against
+  HEAD by area 5a's survey). The
   trigger is precisely a **zero-output** entry: `await_entry/4` →
   `register_entry/4` ends in `tally(key, & &1)`, and `complete?/1` holds on
   `pending: 0`, so `complete_entry({:cursor, seq})` fires inside the very call
@@ -410,50 +412,6 @@ below is all that survives — which is enough to write it again.
   `gate_run "ruff check" …` beside the `ruff format` one — turns it on for the
   local gate and for CI at the same time, because CI runs that script.
 - **Worth fixing**: yes, as its own change.
-
-### KI-10 · Credo strict contradicts house style
-
-- **Where**: `.credo.exs`. Strict reports 1349 issues, **967** of them
-  `AliasUsage` and `ParenthesesOnZeroArityDefs`, both of which the codebase
-  deliberately does not follow.
-- **Blocks**: the credo count cannot be ratcheted until this is decided
-  (disable those two checks, or adopt them and fix 967 sites). Area 5a owes the
-  decision.
-- **Triage (2026-08-30)**: **REAL**, the shape is exactly as filed and the
-  numbers have grown. Nothing has decided this; the ratchet is still absent.
-- **Reproduction**:
-
-  ```
-  $ mix credo --strict
-  7156 mods/funs, found 13 warnings, 215 refactoring opportunities,
-  569 code readability issues, 664 software design suggestions.
-  $ echo $?
-  30
-  ```
-
-  1461 in total, by message:
-
-  ```
-    653  Nested modules could be aliased at the top of the invoking module.   (AliasUsage)
-    430  Do not use parentheses when defining a function which has no arguments.
-    125  Function body is nested too deep (max depth is 2, was 3).
-     37  Prefer using an implicit `try` rather than explicit `try`.
-     30  Cond statements should contain at least two conditions besides `true`.
-  … 74 distinct messages in all
-  ```
-
-  The ratchet claim holds and is checkable: every one of the 36 areas in
-  `docs/refactor/baseline.json` carries `"credo_warnings": null`, so no area
-  compares this metric at all.
-- **Correction to the entry**: **1461** issues, not 1349; the two contested
-  checks are **1083** of them (653 + 430), not 967 — 74 % of the count.
-- **Worth fixing**: yes, but as a **decision**, and the decision is nearly made
-  for it. Adopting either check means editing ~1083 sites against the house
-  style the codebase already chose deliberately; disabling both leaves 378
-  issues, of which 139 are real nesting depth and the rest are a readable tail.
-  Recommend: disable `AliasUsage` and `ParenthesesOnZeroArityDefs` in
-  `.credo.exs` with a one-line reason each, then ratchet on the 378. Until then
-  the count is not a signal and should not be quoted as one.
 
 ### KI-14 · `flezha-php-zts` has no coverage driver
 
@@ -1543,7 +1501,7 @@ Do not run one as a gate and do not report its single-run number as a verdict.
 
 - `test/apps/rust_runner/src/main.rs` duplicates the Rust bench's four-stage
   stress pipeline (four jscpd pairs) — owed to the test-apps area.
-- The nine `convert_value` copies across SDKs are structural twins a 40-token
+- The nine `convert_value` copies (**count corrected 2026-08-31**: nine callback DEFINITION sites, of which 2 already delegate, 3 are genuinely per-provider coercion at 18/10/2 clauses, and only **4 small folds** exist — `parse_int` and `parse_bool` reimplemented, one deferred `:recv_pid` clause. The deferral verdict stands; the count sent readers hunting a fold that is not there) across SDKs are structural twins a 40-token
   window does not detect.
 - Whole-repo `duplicate_pairs` rose 183 → 235 when three test masses became
   fifteen binaries, each repeating one `use` header.
@@ -1565,7 +1523,7 @@ Do not run one as a gate and do not report its single-run number as a verdict.
 
   Note `sdk/rust` reads **210** today against the baseline's 215, so the number
   moves under ordinary work and is not a fixed target.
-- **Bullet 2 — CORRECTION: the nine `convert_value` copies are not "across
+- **Bullet 2 — CORRECTION: the nine `convert_value` copies (**count corrected 2026-08-31**: nine callback DEFINITION sites, of which 2 already delegate, 3 are genuinely per-provider coercion at 18/10/2 clauses, and only **4 small folds** exist — `parse_int` and `parse_bool` reimplemented, one deferred `:recv_pid` clause. The deferral verdict stands; the count sent readers hunting a fold that is not there) are not "across
   SDKs".** All nine are Elixir controller plugin providers under
   `lib/flezha/plugin/`:
 
@@ -1832,7 +1790,244 @@ every new production freeze to `incident_log.md` at the repository root.
   the shape colocation already uses. Cheap either way; it is a behaviour choice, not a
   defect.
 
+### KI-86 · `extract_opts`'s `-o=value` branch is unreachable, so a short `=` flag is silently lost
+
+- **Severity**: P2 · silent option loss, no error.
+- **Where**: `cli/src/args.rs` (was `cli/src/utils.rs:385`), preserved byte-for-byte by
+  area 6 batch 1's zero-behaviour-change contract.
+- **Mechanism**: the chain is
+  `if let Some(eq) = arg.find('=') { if arg.starts_with("--") { … } } else if …`. An
+  argument containing `=` that does **not** start with `--` enters the outer branch,
+  matches no inner arm, **does nothing**, and never reaches the three `else if`s. So
+  `flz plugin enable p prov -o=json` **silently drops the flag**, and the short-key
+  alias table for the `=` form has never executed.
+- **A fix must** be the one missing `else` — and must decide, deliberately, whether a
+  short flag with `=` is supported or **refused**, because silently accepting it after
+  years of silently dropping it is a behaviour change either way. Prefer refusal with
+  the flag named: an operator who typed it meant something.
+
+### KI-87 · `refactor_metrics.py` is blind to untracked files, and the blindness always flatters
+
+- **Severity**: P2 · the programme's own instrument, third silence of the same family.
+- **Where**: `scripts/refactor_metrics.py`'s file walk, which reads `git ls-files`.
+- **What happens**: a file that exists on disk but is not tracked is **invisible to
+  every metric**. Because refactors *add* files, the error is one-directional — it
+  **silently improves every count**. Area 6 batch 1 measured a naive `--area cli` at
+  `prod_loc` **2745**, a phantom **−599**, with the whole `reset/` directory absent from
+  every ceiling.
+- **How often it has bitten**: five times this session, caught each time only because
+  the supervisor runs `git add -N` before reading any number — segment B's
+  `duplicate_pairs` read 83 instead of 88, segment C's `--area` read 7846 instead of
+  8733, area 4 segment F's own dev note was invisible to `check-kind-naming`.
+- **It is the third of a family**: `--lint`'s omission wrote `null` and `--check`
+  skipped it ([[KI-83]]); `--timing` replaced rather than merged ([[KI-83]]); and this.
+  **Every one silently reports better than the truth.** That is a design tendency in
+  the tool, not three accidents.
+- **A fix must** make the walk see the working tree — `git ls-files --others
+  --exclude-standard` alongside the tracked set — or, if reading only tracked files is
+  deliberate, **say so loudly** when untracked source files exist in a scanned area,
+  the way `--check` now names the metrics it could not compare.
+
+### KI-88 · `flz state help` omits `help` from its own subcommand list
+
+- **Severity**: P4 · cosmetic, one line.
+- **Where**: `cli/src/help.rs`'s `state` screen. It is the only screen of 31 that does
+  not list `help` among its subcommands, while `flz state help` works.
+- Pinned as a deliberate exception in `cli/tests/dispatch.rs` with a comment naming it,
+  so the golden-file capture reproduces today's text rather than quietly fixing it.
+- **A fix must** add the row **and** update the golden capture in the same commit, so
+  the control still proves what it claims.
+
+### KI-89 · Two `flz` help rows are misaligned, and the golden capture now pins them
+
+- **Severity**: P4 · operator-visible cosmetics, two source lines.
+- **Where**: `flz help`'s `runner` description at **column 18** against its **16**
+  siblings at 20; `flz audit help`'s `stats` at **column 14** against its four siblings
+  at 15. Both verified against `cli/tests/golden/flz.txt` and `audit.txt`.
+- **Why it is filed rather than fixed**: area 6 batch 1's contract was zero behaviour
+  change, so the golden capture reproduces today's text **including** the
+  misalignments. That is what made "regenerate the table correctly" impossible as an
+  approach — there was no correct version to regenerate to — and it is why the capture
+  had to be taken from the HEAD binary before any edit.
+- **A fix must** change the two source lines **and** re-capture the two golden files in
+  the same commit, or the control stops proving what it claims. It is the same family
+  as [[KI-88]] (`flz state help` omitting `help` from its own list) and the two should
+  land together — one commit, three cosmetic corrections, three golden updates.
+
+### KI-90 · `narrative_markers` cannot see a task or section id
+
+- **Severity**: P4 · a gate that under-reports, found by area 5b's survey.
+- **Where**: `scripts/refactor_metrics.py:351` — the regex matches `\btasks?\.md\b`
+  and `\bD\d{1,2}\b`, but not a bare `task N.N` or `§N`.
+- **Evidence**: `test/plugin/provider/websocket_subscription_source_test.exs` has
+  `describe` blocks named `"8.5 validation"`, `"8.1 reconcile"`, `"8.2 commit
+  gating"`; `producer_worker_test.exs` has `"worker swap on {:kafka_worker_dead,
+  ...} (task 2.7)"` and `"effectively-once tier records (§5)"`. The `test` area's
+  `narrative_markers` is **47** and none of these is among them — every one names a
+  task id a future reader cannot resolve, which is precisely what §5 forbids.
+- **Why it is a report and not an edit**: widening the regex raises the count in
+  **every area at once**, and eleven of them are already blocking. It needs the
+  widening and a re-baseline in one commit, which is a programme-level change, not
+  an area's.
+- **A fix must** land the regex and `--write-baseline --lint` together, and say how
+  many of the new hits are genuine history versus correct prose reworded for a regex
+  — area 5a measured that ratio at **9 of 17**, and 5b at **8 of 8**.
+
+### KI-91 · A production busy-wait the `sleeps` metric is designed not to see
+
+- **Severity**: P3 · real, small, behaviour-adjacent.
+- **Where**: `lib/flezha/plugin/provider/worker_sup.ex:82` — `await_unregistered/3`,
+  `Process.sleep(2)` for up to 50 attempts, on the worker-swap path.
+- **Evidence**: `refactor_metrics.py` reports `sleeps: 0` for `lib/flezha/plugin`.
+  The counter at `:401` is gated on `if in_test[i]`, so a `Process.sleep` in `lib/`
+  is invisible **by design** — charter §9's sleep rule is a test rule, and this is
+  production.
+- **Mechanism**: `DynamicSupervisor.terminate_child/2` returns once the child exits,
+  but `Registry` unregisters asynchronously on the `:DOWN`, so a wait is genuinely
+  required or the restart is handed back `{:already_started, dead_pid}`. The code
+  says so in its own comment. A monitor on the reaped pid would be exact.
+- **Verdict (supervisor, 2026-08-31)**: **real but not taken in area 5b.** Replacing
+  a bounded poll with a monitor changes the shape of a restart path under a zero-
+  behaviour-change contract, and the area has no instrument that would prove it
+  neutral. Recorded here so the next change touching `worker_sup.ex` takes it.
+- **A fix must** monitor the reaped pid and wait for its `:DOWN` rather than poll,
+  and prove the swap path unchanged under a forced worker death.
+
+### KI-92 · The workflow bench's first run on this box is ~4× the plateau
+
+- **Severity**: P2 for the refactor programme — it is an instrument defect, and
+  **every A/B row measured on `mix bench.workflow` is exposed to it.**
+- **Where**: the instrument, not the repo. `mix bench.workflow --scenario chain
+  --procs 4 -n 1000 -c 100` on this laptop.
+- **Evidence**: five consecutive runs of **one identical arm** (release
+  `sha256sum` verified unchanged before and after the series):
+
+  ```
+  93.2  33.3  23.1  24.2  23.1   workflows/s
+  wall 16 / 36 / 51 / 47 / 50 s
+  1-min load 1.12 / 5.18 / 6.94 / 8.54 / 9.47
+  ```
+
+  **303 % spread over the five; 4.8 % over the plateau (runs 3–5).**
+- **Two mechanisms refuted, which is what makes the number usable**: a sixth run
+  of the same arm after 4.5 minutes idle read **91.1 workflows/s** at load 0.39,
+  so nothing accumulates on disk or in the tree — and `state dir 0 MiB, 4080 wal,
+  1020 retained` was identical on every run. `package_throttle_count` read
+  **67467 before the cooldown, after the idle and after the cold run** — flat, so
+  package thermal throttling is not it either. What remains is the box's
+  sustained-load clock behaviour under the `powersave` governor, unseparated.
+- **Why it matters beyond one row**: charter §8 requires a measured floor before a
+  row is classified. **A floor computed from a series whose first sample is a cold
+  run is not a floor** — it is 303 % here and 4.8 % one run later. Any past row
+  whose arms were not interleaved could have read a warm-up as an effect.
+- **A fix must** either state a settling protocol for every row on this driver
+  (discard until the plateau, then interleave, with the sample count reported) or
+  record the transient beside §8's rules so no future worker reads a first-run arm
+  as a result. **The operational rule, in force now: the first run of a series on
+  this box is not a result.**
+
+### KI-93 · The generated `build/1` raises where its own `@callback` says it returns
+
+- **Severity**: P2 · a documented public callback surface that cannot return its
+  documented error. Found by area 5b, reproduced by the supervisor.
+- **Where**: `lib/flezha/plugin/provider_behaviour.ex:329` `__using__`, body
+  `:334`–`:388`.
+- **Evidence** (run at `c78f7deb`):
+
+  ```
+  $ mix run -e 'try do IO.inspect(Flezha.Plugin.Provider.Kafka.Producer.build(
+      %{"hosts" => "h:1", "topic" => "t", "linger_ms" => "zz"})) rescue e ->
+      IO.puts("RAISED #{inspect(e.__struct__)}: " <> Exception.message(e)) end'
+  RAISED BadMapError: expected a map, got:
+      "Invalid value for linger_ms: Invalid value for linger_ms: zz"
+  ```
+
+- **Mechanism, named to the line**: `:347`'s `Enum.reduce_while(struct_fields,
+  {:ok, %{}}, …)` accumulates `{:ok, map}` on `:cont` and `{:error, binary}` on
+  `:halt` (`:362`). The next expression, `:368`–`:371`, destructures that as
+  `{convert_status, params_data}` and calls `Map.has_key?(params_data, key)` **on
+  the binary**. So `:377`'s `convert_status == :error -> {:error, "Failed to
+  convert fields: …"}` arm **can never run** — and that arm is the author's own
+  evidence the raise is unintended. The guard that hides it is `enforce_keys ==
+  []`: with no required fields `Enum.filter/2` never calls the fun, which is why
+  `StdOut` returns `{:ok, …}` and `Kafka.Producer` raises.
+- **Blast radius, measured** by driving every optional field of all nine
+  providers: **7 of 9 providers, 41 fields** — Filter 1, HttpPoll 5,
+  Kafka.Producer 17, MonitoredIOForward 2, OperativeForward 4, Postgres 10,
+  Websocket 5 (four of those `Protocol.UndefinedError`). Clean: StdOut,
+  BeamMsgForward.
+- **Why it has gone unnoticed**: `build/1` has **no production caller** in `lib/`
+  — plugins are constructed as `%Flezha.Plugin{}` with typed opts ([[KI-62]]). It
+  is reachable through the documented `@callback` and from tests only.
+- **Secondary wart at `:362`**: the reason is re-wrapped although `parse_int/2`
+  (`:86`) already formatted it, hence the doubled `Invalid value for linger_ms:`
+  in the message above.
+- **Verdict (supervisor, 2026-08-31)**: **real and worth fixing, and it goes
+  FIRST** — before area 5b's segment B, which rewrites this exact macro. §1b.6:
+  a fix precedes the refactor of the code it touches, or the bug is carried into
+  the new shape.
+- **A fix must** make the reduce's failure value reach the `cond` in the shape
+  the `cond` already expects, restore the unreachable arm, stop double-wrapping
+  the reason, and be shown RED first against at least one raising provider. It
+  must also confirm **no test asserts the raise** before changing it.
+
+### KI-94 · `check-kind-naming` has been red for weeks on the programme's own prose
+
+- **Severity**: P3 · a permanently-red gate is worse than no gate, because people
+  learn to skip it.
+- **Where**: `scripts/check-kind-naming.sh`. **13 occurrences at `9b85b425`**, and
+  **every one is prose in `docs/` using "bounded"/"unbounded" in the capacity or
+  plain-English sense** — "a bounded poll", "a bounded spin on the clock", "OOM
+  from unbounded WAL buffers". Not one is a kind-sense use.
+- **Three of the hits are the gate's own reflection**: `known_issues.md:1639`–`:1640`
+  and `STATE.md:1799`, `:1869` are text *about this gate being red*, which adds hits
+  by describing the problem. The count has been driven up three separate times by
+  supervisor prose and reworded away three separate times — **rewording correct
+  prose to satisfy a regex**, which is precisely what area 5a's batch 2 identified
+  as a false economy in `narrative_markers` (9 of its 17 were the same thing).
+- **The mechanism to fix it already exists and has never been used for this.** The
+  allowlist header names two: `scope:pattern` entries for narrow phrases, and
+  `kind-naming-record:begin` / `:end` comments for a block that deliberately spells
+  the words out — the latter chosen precisely because it "does not pin the prose's
+  exact wording the way a regex here would".
+- **Verdict (supervisor, 2026-08-31)**: **real, and to be fixed as its own small
+  change — not inline by a worker and not by a fourth rewording.** Blinding whole
+  files with a bare-word scope is refused: it would let a genuine kind-sense error
+  hide in the two documents the programme reads most.
+- **A fix must** wrap the recurring prose in `kind-naming-record` markers where it
+  clusters, add narrow `scope:phrase` entries in the existing house style for the
+  scattered ones, and **leave the gate green at HEAD** — then say what coverage, if
+  any, was given up. Until it lands, `check-kind-naming` being red is not evidence
+  about any change, and no worker should reword prose for it.
+
 ## Resolved
+
+### KI-10 · Credo strict contradicts house style — RESOLVED 2026-08-31
+
+- **Filed as**: strict credo reports 1349 issues, 967 of them `AliasUsage` and
+  `ParenthesesOnZeroArityDefs`, both against house style; the credo count could
+  not be ratcheted until someone decided. The entry said *"Area 5a owes the
+  decision"* — and so did `STATE.md`.
+- **RESOLVED, and it was resolved before 5a was ever surveyed.** Area 5a's survey
+  went looking for the decision it was told it owed and found all four parts of it
+  already in the tree:
+  - `.credo.exs:19`–`:21` puts `ParenthesesOnZeroArityDefs` under **`disabled:`** —
+    the check is off by decision, not by accident.
+  - The other half was **adopted, not disabled**: row 3.5's alias pass took
+    `AliasUsage` **689 → 0** (`STATE.md`, row 3.5's record).
+  - The ratchet the entry said was "still absent" exists: **all 36 areas carry a
+    recorded `credo_warnings`** in `docs/refactor/baseline.json`
+    (`lib/flezha/state` = 28, which the survey re-measured to the digit).
+  - `openspec/specs/code-quality-baseline/spec.md:489` carries the requirement
+    *"A contested lint check SHALL be settled by decision, and the settled count
+    SHALL be ratcheted"*.
+- **The lesson is about the register, not about credo.** The 2026-08-30 triage
+  marked this **REAL** and *"Nothing has decided this"* — and it was, by then,
+  half decided; the rest landed in row 3.5 without anyone striking the entry. An
+  open item that names a future area as its owner will be believed by that area's
+  worker, so **an entry whose remedy lands elsewhere must be closed by whoever
+  lands it**. Area 5a owes nothing here.
+
 
 ### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT` — RESOLVED
 

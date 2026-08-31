@@ -9,7 +9,7 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
+  alias Flezha.State.{FsyncBatcher, Outbox, Paths, RecordFrame, Supervisor, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
   # The outputs of a received dispatch batch not yet asserted on.
@@ -270,7 +270,7 @@ defmodule Flezha.State.TestHelpers do
   @doc """
   Build a 16-byte WAL header. The controller treats the header as opaque
   bytes; tests only need a stable shape to round-trip records through
-  `WalWriter.encode_record/3` and back.
+  `RecordFrame.encode_record/3` and back.
   """
   @spec stub_header() :: binary()
   def stub_header() do
@@ -283,7 +283,7 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec build_wal_record(non_neg_integer(), binary()) :: binary()
   def build_wal_record(seq, change_bytes) do
-    WalWriter.encode_record(seq, stub_header(), change_bytes)
+    RecordFrame.encode_record(seq, stub_header(), change_bytes)
   end
 
   @doc """
@@ -308,7 +308,7 @@ defmodule Flezha.State.TestHelpers do
   """
   @spec build_wal_record(non_neg_integer(), binary(), binary()) :: binary()
   def build_wal_record(seq, header, change_bytes) do
-    WalWriter.encode_record(seq, header, change_bytes)
+    RecordFrame.encode_record(seq, header, change_bytes)
   end
 
   @doc """

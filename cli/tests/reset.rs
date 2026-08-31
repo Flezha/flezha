@@ -1,8 +1,9 @@
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
@@ -18,7 +19,29 @@ const OPERATOR_FILE: &str = "operator-notes.txt";
 /// `Unreachable` (ENOTSOCK), not stale.
 fn stale_control_socket(dir: &Path) {
     fs::create_dir_all(dir).unwrap();
-    drop(UnixListener::bind(dir.join(CONTROL_SOCKET)).expect("bind"));
+    let path = dir.join(CONTROL_SOCKET);
+    drop(UnixListener::bind(&path).expect("bind"));
+    await_refused(&path);
+}
+
+/// Dropping a `UnixListener` does not always kill it at once. A process a
+/// sibling test forks between the `bind` and the `drop` inherits the listener
+/// fd — `CLOEXEC` closes at `exec`, not at `fork` — so the socket this process
+/// closed keeps accepting until that child execs. Without this wait the
+/// command under test is occasionally handed a controller that answers, and
+/// then keeps the socket directory it was asked to clear (KI-84).
+fn await_refused(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while UnixStream::connect(path).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "{} still accepts connections: the fixture has not established a dead controller",
+            path.display()
+        );
+        // A yield, not a sleep: the window closes as soon as the inheriting
+        // child reaches `exec`, and nothing here is waiting on a duration.
+        std::thread::yield_now();
+    }
 }
 
 /// A socket directory as a controller leaves it, plus a file that is not ours.

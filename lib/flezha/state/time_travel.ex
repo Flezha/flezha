@@ -18,7 +18,7 @@ defmodule Flezha.State.TimeTravel do
   """
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Paths, Snapshot, WalWriter, Wire}
+  alias Flezha.State.{Paths, RecordFrame, Snapshot, Wire}
 
   defmodule TimeTravelError do
     @moduledoc "Reasons a `TimeTravel.query/2` cannot be served."
@@ -129,7 +129,7 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp scan_seq_at_or_before_path(path, ts) do
-    WalWriter.fold_path(path, nil, fn {seq, header, body}, found ->
+    RecordFrame.fold_path(path, nil, fn {seq, header, body}, found ->
       case Wire.decode_effect_record(header, body) do
         %{event_time: event_time} when event_time <= ts -> {:cont, seq}
         _ -> {:cont, found}
@@ -153,7 +153,7 @@ defmodule Flezha.State.TimeTravel do
 
   defp read_wal_in_range(entity_id, snapshot_seq, target_seq) do
     {acc, terminal} =
-      WalWriter.fold_path(
+      RecordFrame.fold_path(
         Paths.wal_path(entity_id),
         {[], snapshot_seq},
         &gather(&1, &2, snapshot_seq, target_seq)
@@ -168,7 +168,7 @@ defmodule Flezha.State.TimeTravel do
         {:halt, unchanged}
 
       seq > snapshot_seq ->
-        {:cont, {[WalWriter.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
+        {:cont, {[RecordFrame.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
 
       true ->
         {:cont, unchanged}

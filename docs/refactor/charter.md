@@ -214,6 +214,15 @@ per-language host half stays per language.
 
 ## 8. Performance
 
+**The first run of a series on this box is not a result** (2026-08-31, [[KI-92]]).
+Five consecutive runs of *one identical arm* of `bench.workflow --scenario chain` read
+93.2 / 33.3 / 23.1 / 24.2 / 23.1 workflows/s — a **303 % spread over the five, 4.8 %
+over the plateau**. Disk accumulation and package thermal throttling were both refuted
+(a sixth cold run after idle came back at 91.1; the throttle counter never moved). So a
+floor computed from a series that includes its own warm-up is not a floor, and a row
+whose arms are not interleaved can read a warm-up as an effect. **Discard until the
+plateau, then interleave, and report how many plateau samples you took.**
+
 Hot paths: `flz_core` poll core and host, the dispatchers, `flz_transport`,
 `wal_writer`, `input_log`, the Kafka producer worker, the plugin routing seam.
 
@@ -484,6 +493,95 @@ has.
 ignores its brief can still write anywhere, and the check catches it after the fact
 rather than before. The scheme buys a small, checkable invariant and a clear owner for
 every shared thing — not a sandbox.
+
+**A whole-repo metric is not attributable while a second worker is dirty** (2026-08-31,
+found by 5a mid-segment). `cycles`, `max_cycle_files` and full-scan `duplicate_pairs` are
+computed over the tree, not over the lane. 5a watched `max_cycle_files` read 20 at HEAD
+and 17 after a batch that touched no dependency edge, and `mix xref` report 4 cycles
+where its own survey measured 7 — all of it 5b's uncommitted work. So: **read a
+whole-repo number only against a tree that holds one area's work**, take every close-out
+measurement when the other lane is committed, and say which commit the baseline was.
+Per-file metrics (`prod_loc`, `files_over_800`, `functions_over_50`) are unaffected and
+stay readable at any time.
+
+**A rename owns its callers, wherever they live** (2026-08-31, first parallel segment).
+Area 5a's `workflow_completed_retention_hours` → `completed_retention_hours` has a caller
+in `lib/flezha/service/cli_manager.ex` — area **5c**'s file. That one-line edit is not a
+lane breach and must not be sent back: a rename that leaves its callers broken is not a
+rename, and the alternative — deferring every rename whose callers cross a boundary —
+would freeze half the programme's cheapest work behind areas that have not started.
+
+The rule: **a worker may edit a call site outside its lane when, and only when, the edit
+is the mechanical consequence of a change inside it** — a rename, a signature change, a
+deleted function's last caller. It may not edit anything else there, and it names every
+such file in its report so the supervisor checks the diff is only the consequence. The
+supervisor verifies by reading the hunk, not by trusting the count.
+
+## 11e. The instrument flatters — three silences, one tendency
+
+Added 2026-08-31 after the third was found. `scripts/refactor_metrics.py` has a design
+tendency, not three bugs: **when it cannot measure something, it reports better than
+the truth and says nothing.**
+
+| silence | what it did | found by |
+|---|---|---|
+| `--lint` omitted | wrote `null` into every `credo_warnings`/`clippy_warnings`, and `--check` **skips a null on either side** — disarming 72 ratchets | area 4 segment A, in the diff |
+| `--timing` given | **replaced** the timings map rather than merging, so recording one deleted the rest | area 4 segment F, recording one |
+| **untracked files** | invisible to every metric, and since refactors *add* files the error is **one-directional** — a phantom −599 on `cli` | area 6 batch 1 |
+
+**The operational rule, until [[KI-87]] lands**: the supervisor runs
+**`git add -N` on every new file before reading any number** — a gate's exit code, a
+metric, a `--check` verdict. It has caught a wrong number **five times** in one
+session. A worker cannot do it (the git index is the supervisor's singleton, §11d), so
+**a worker names its new files and the supervisor intent-adds them**. A number read
+before that step is not evidence.
+
+Two of the three are now loud: `--write-baseline` refuses without `--lint`, and
+`--check` names the metrics it could not compare. The third is filed.
+
+## 11f. The ruler can also punish — a metric that moves against the work
+
+Added 2026-08-31, from area 5a's survey. §11e is about the instrument reporting
+**better** than the truth. This is the other sign, and it is more dangerous, because a
+worker who trusts the number will *choose the wrong work*.
+
+`cycles` is, per area, **how many of the repo's dependency cycles contain at least one
+of this area's files**. `lib/flezha/state` sits in 2, and one of them is an 18-file
+strongly-connected component of its own files. Simulated on the real graph:
+
+| change | area `cycles` | largest cycle, in this area's files |
+|---|---|---|
+| HEAD | 2 | **20** |
+| move three module names out of one 14-line function | **1** | 20 |
+| the whole job — every cycle edge cut | **3** | **3** |
+
+**Doing the work reports as a regression.** A worker optimising the ratchet banks the
+fourteen-line move and never touches the eighteen files. The count is not wrong; it is
+measuring the wrong thing — the *number* of cycles rather than how deeply the area is
+tangled in any one of them.
+
+**A second instance, found the same day by area 5b's survey — it is a pattern, not an
+incident.** `async_false_share` is `1 − (async:true files) / (test files)`, an unweighted
+**file** count, and `test` is BLOCKING at 0.813 (43 of 230). Charter §9 mandates folding
+incident files into behaviour files. Folding nine websocket test files into three costs
+3 `async: true` and 6 total: `1 − 40/224 = 0.821` — **a blocking regression produced by
+obeying §9**.
+
+The exact condition, which is more useful than "folding regresses": removing `k` files
+of which `j` are `async: true` regresses iff **`j/k > 0.187`**, the current share of
+true files. So a fold is free when it consolidates predominantly `async: false` files,
+and must be funded when it does not. **Ruled: the programme accepts this arithmetic and
+funds it** rather than reweighting — after folding to `N` files an area holds
+`async: true ≥ ⌈0.187 × N⌉`, each conversion naming the global state the test does not
+need. Reweighting by test LOC would move an already-armed baseline under all 36 areas
+at once, which is a re-baseline, not a fix.
+
+**The rule**: when a metric's direction and the work's direction disagree, **fix the
+ruler before the area starts, in its own commit, with a cross-area simulation showing
+exactly which rows move** — the guard area 4 segment A's classifier correction
+established. Never leave it and "explain the regression in the report": the next area
+inherits the gate, not the report. And never optimise the number you know to be
+measuring the wrong thing — say so, and change it.
 
 ## 12. The session contract
 

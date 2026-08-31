@@ -1,0 +1,9 @@
+flz audit read <FILE> [OPTIONS]
+
+OPTIONS:
+    --json              Emit NDJSON
+    --source <S>        Match records whose source equals S
+    --name <N>          Match records whose name equals N
+    --since <TS_US>     Match records with ts_us >= TS_US (monotonic)
+    --until <TS_US>     Match records with ts_us <= TS_US
+    --limit <N>         Return at most N records (default 1000)

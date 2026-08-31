@@ -1,0 +1,19 @@
+flz controller start - Start the flezha controller
+
+USAGE:
+    flz controller start [OPTIONS]
+
+OPTIONS:
+    --mode <MODE>     Controller start mode
+    -m <MODE>         Short form of --mode
+
+AVAILABLE MODES:
+    attached          Start in attached mode (default)
+    daemon            Start as daemon
+    attached_iex      Start in attached IEx mode
+    daemon_iex        Start as daemon with IEx
+
+EXAMPLES:
+    flz controller start
+    flz controller start --mode daemon
+    flz controller start -m attached_iex

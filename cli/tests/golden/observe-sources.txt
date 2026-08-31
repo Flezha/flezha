@@ -1,0 +1,3 @@
+flz observe sources [--json]
+
+Print one row per registered source (name, status, kinds, cardinality budget).

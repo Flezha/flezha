@@ -1,51 +1,20 @@
 defmodule Flezha.State.ProcInbox do
   @moduledoc """
-  Per-instance durable inbox for a durable workflow operative
-  (`workflow-durable-suspension`).
+  Per-instance durable inbox for a durable workflow operative.
 
-  One `inbox.wal` per instance at
-  `<state_root>/<namespace>/<instance_id>/<instance_id>/inbox.wal`, written
-  through the same `WalWriter` framing + `FsyncBatcher` path as the sibling
-  `proc.journal` under the reserved identity
-  `Paths.inbox_id/1` — no parallel persistence machinery. Every post-start
-  input is appended here **before** it is forwarded to the runner, so an
-  input that arrives while the instance is suspended, crashed, or migrating is
-  delivered on rehydrate instead of being dropped.
+  One `inbox.wal` per instance, written through the same `WalWriter` framing +
+  `FsyncBatcher` path as the sibling `proc.journal` under the reserved identity
+  `Paths.inbox_id/1`. Every post-start input is appended here **before** it is
+  forwarded to the runner, so one arriving while the instance is suspended,
+  crashed or migrating is delivered on rehydrate rather than dropped. The record
+  layout is in `docs/internals/state_persistence.md`.
 
-  ```
-  header: [sha256(dedup_id)[0..16]]
-  body:   [dedup_len: u16 BE][dedup_id][meta_len: u32 BE][meta][payload]
-  ```
-
-  Offsets are the record's WAL seq **plus one**, so they run from 1 and `0` is
-  free to mean "nothing consumed yet" (the journal's floor before the first
-  iteration commit) and "not journaled" (an opted-out class's memory-only
-  inbox). They are monotonic and survive truncation. `meta` is the forwarded
-  frame's metadata map, so a rehydrated delivery is byte-identical to the
-  original.
-
-  ## Dedup and truncation
-
-  `dedup_id` is the sender-supplied message id (`flz.msg_id` metadata) when
-  present, else a SHA-256 of the payload. Its digest is the record header, and
-  the inbox writer keeps the headers of everything still in the file
-  (`WalWriter` `dedup: true` — rebuilt from the file when the writer opens,
-  trimmed by every truncate): an append whose header is already there is
-  dropped and answers with the existing entry's offset, so a re-sent message is
-  absorbed rather than delivered twice, and the append reads no file and folds
-  no journal. The window is therefore the file above its last truncate — the
-  undelivered tail, plus, after a truncate that never landed, the consumed turns
-  the next truncate releases.
-
-  Iteration commit truncates everything at or below the consumed offset
-  (`truncate/2` → `WalWriter.truncate_up_to/2`, which preserves the surviving
-  records' seqs). Truncation is advisory cleanup: a lost truncate costs disk and
-  a wider dedup window, never correctness, because delivery is filtered by the
-  journal's consumed offset (`undelivered/1`).
-
-  Durability is batched: an append is made durable by the `FsyncBatcher` tick
-  and answered after it, never before (`append_async/5` is the ingest's form —
-  the Overwatch carries on and the answer settles the reply it owes).
+  Offsets are the record's WAL seq **plus one**, so `0` is free to mean "nothing
+  consumed yet" and "not journaled"; they are monotonic and survive truncation.
+  A re-sent message is absorbed rather than delivered twice, the record header
+  being a digest of `dedup_id`. Truncation is advisory cleanup — a lost truncate
+  costs disk and a wider dedup window, never correctness, because delivery is
+  filtered by the journal's consumed offset.
   """
 
   alias Flezha.State.{

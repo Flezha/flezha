@@ -1,94 +1,65 @@
+mod args;
 mod audit;
 mod auth;
 mod boot;
 mod cluster;
 mod controller;
+mod dispatch;
 mod dlq;
+mod help;
 mod namespace;
 mod observe;
 mod operative;
 mod plugin;
 mod reset;
 mod role;
+mod rpc;
 mod runner;
 mod schedule;
 mod state;
 mod token;
-mod utils;
 
 use std::env;
-use std::process::exit;
+
+use dispatch::Command;
+
+/// `flz` itself is a command table like the sixteen below it: same bare-invocation
+/// rule, same help spellings, same refusal.
+const FLZ: Command = Command {
+    help: help::FLZ,
+    verbs: &[
+        ("controller", |args| {
+            dispatch::run(&controller::TABLE, &args[1..])
+        }),
+        ("cluster", |args| dispatch::run(&cluster::TABLE, &args[1..])),
+        ("operative", |args| {
+            dispatch::run(&operative::TABLE, &args[1..])
+        }),
+        ("namespace", |args| {
+            dispatch::run(&namespace::TABLE, &args[1..])
+        }),
+        ("runner", |args| dispatch::run(&runner::TABLE, &args[1..])),
+        ("plugin", |args| dispatch::run(&plugin::TABLE, &args[1..])),
+        ("boot", |args| dispatch::run(&boot::TABLE, &args[1..])),
+        ("state", |args| dispatch::run(&state::TABLE, &args[1..])),
+        ("reset", |args| reset::handle_reset_command(&args[1..])),
+        ("observe", |args| dispatch::run(&observe::TABLE, &args[1..])),
+        ("audit", |args| dispatch::run(&audit::TABLE, &args[1..])),
+        ("dlq", |args| dispatch::run(&dlq::TABLE, &args[1..])),
+        ("schedule", |args| {
+            dispatch::run(&schedule::TABLE, &args[1..])
+        }),
+        ("auth", |args| dispatch::run(&auth::TABLE, &args[1..])),
+        ("token", |args| dispatch::run(&token::TABLE, &args[1..])),
+        ("role", |args| dispatch::run(&role::TABLE, &args[1..])),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: None,
+    unknown: "Error: Unknown command '{}'",
+    unknown_prints_help: true,
+};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
-        print_help();
-        exit(1);
-    }
-
-    match args[1].as_str() {
-        "controller" => controller::handle_controller_command(&args[2..]),
-        "cluster" => cluster::handle_cluster_command(&args[2..]),
-        "operative" => operative::handle_operative_command(&args[2..]),
-        "namespace" => namespace::handle_namespace_command(&args[2..]),
-        "runner" => runner::handle_runner_command(&args[2..]),
-        "plugin" => plugin::handle_plugin_command(&args[2..]),
-        "boot" => boot::handle_boot_command(&args[2..]),
-        "state" => state::handle_state_command(&args[2..]),
-        "reset" => reset::handle_reset_command(&args[2..]),
-        "observe" => observe::handle_observe_command(&args[2..]),
-        "audit" => audit::handle_audit_command(&args[2..]),
-        "dlq" => dlq::handle_dlq_command(&args[2..]),
-        "schedule" => schedule::handle_schedule_command(&args[2..]),
-        "auth" => auth::handle_auth_command(&args[2..]),
-        "token" => token::handle_token_command(&args[2..]),
-        "role" => role::handle_role_command(&args[2..]),
-        "help" | "--help" | "-h" => print_help(),
-        _ => {
-            eprintln!("Error: Unknown command '{}'", args[1]);
-            print_help();
-            exit(1);
-        }
-    }
-}
-
-fn print_help() {
-    println!("flz - Flezha CLI");
-    println!();
-    println!("USAGE:");
-    println!("    flz <COMMAND>");
-    println!();
-    println!("COMMANDS:");
-    println!("    controller     Controller management commands");
-    println!("    cluster        Controller cluster status (nodes, leader, operative health)");
-    println!("    operative      Operative management commands");
-    println!("    namespace      Namespace management commands");
-    println!("    runner       Runner management commands");
-    println!("    plugin         Plugin management commands");
-    println!("    boot           Boot/recovery status, await, and legacy snapshot import");
-    println!("    state          Per-Entity state queries (time-travel, retention, list)");
-    println!("    reset          Clear Controller durable runtime data on disk (controller must be stopped)");
-    println!("    observe        Observability foundation inspection (sources, sinks, tail)");
-    println!("    audit          Durable audit log inspection (list, read, tail, stats, rotate)");
-    println!("    dlq            Dead-letter queue: inspect, replay, or drop parked payloads");
-    println!(
-        "    schedule       Cron-scheduled workflow operative spawns (add, list, remove, run)"
-    );
-    println!("    auth           Bootstrap claim, identity (whoami), offline break-glass recovery");
-    println!("    token          Scoped-token management (issue, revoke, list)");
-    println!("    role           Principal → role bindings (bind, unbind, list)");
-    println!("    help           Show this help message");
-    println!();
-    println!("Use 'flz <COMMAND> help' for more information on a specific command.");
-    println!();
-    println!("EXAMPLES:");
-    println!("    flz controller start");
-    println!("    flz operative start my_operative my_factory --namespace prod");
-    println!("    flz plugin install /path/to/my_plugin-1.0.0.fpz");
-    println!("    flz plugin list --installed");
-    println!("    flz plugin enable kafka_producer provider1 Xhosts=localhost:9092");
-    println!("    flz namespace list --output json");
-    println!("    flz boot status");
-    println!("    flz boot await --timeout 60");
+    dispatch::run(&FLZ, &args[1..]);
 }

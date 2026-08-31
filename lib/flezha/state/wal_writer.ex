@@ -18,8 +18,8 @@ defmodule Flezha.State.WalWriter do
   require Logger
 
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Runner.FleetManager
   alias Flezha.State.Commands
 
   alias Flezha.State.{
@@ -30,12 +30,12 @@ defmodule Flezha.State.WalWriter do
     Outbox,
     Paths,
     PersistenceResolver,
+    RecordFrame,
     Recovery,
     SeqIndex,
     Wire
   }
 
-  @header_size 16
   @reservoir_capacity 1024
   @reserved_entity_keys Paths.reserved_entity_keys()
 
@@ -49,10 +49,10 @@ defmodule Flezha.State.WalWriter do
     :owning_runner,
     :pending_bytes,
     :pending_since_us,
-    :high_watermark,
-    :low_watermark,
-    :hard_watermark,
-    :pending_msg_cap,
+    # The bounds resolved once at `init/1` and never re-read: the soft/low/hard
+    # un-fsynced byte watermarks, the un-credited mailbox-depth cap, and the
+    # outbox's confirmation window and resettle interval.
+    :limits,
     :metrics,
     :latency_reservoir,
     :backpressured?,
@@ -80,8 +80,6 @@ defmodule Flezha.State.WalWriter do
     # out-of-order confirmation from advancing it past unconfirmed output.
     :outbox_awaiting,
     :outbox_inflight,
-    :outbox_inflight_max,
-    :outbox_resettle_ms,
     # Highest seq of an OUTPUT-BEARING effect record queued. Producing-liveness
     # compares it against `outbox_flushed_seq` to see an outbox that accumulates
     # without draining. It must count only output-bearing records:
@@ -110,10 +108,7 @@ defmodule Flezha.State.WalWriter do
           owning_runner: binary() | nil,
           pending_bytes: non_neg_integer(),
           pending_since_us: non_neg_integer() | nil,
-          high_watermark: pos_integer(),
-          low_watermark: pos_integer(),
-          hard_watermark: pos_integer(),
-          pending_msg_cap: pos_integer(),
+          limits: limits(),
           metrics: :counters.counters_ref(),
           latency_reservoir: :queue.queue(),
           backpressured?: boolean(),
@@ -123,7 +118,27 @@ defmodule Flezha.State.WalWriter do
           oldest_unsnapshotted_at: integer() | nil,
           credit_pending: %{optional({pid(), binary()}) => pos_integer()},
           credit_active?: boolean(),
-          refused_sessions: MapSet.t(binary())
+          refused_sessions: MapSet.t(binary()),
+          pending_outbox: :queue.queue(map()),
+          outbox_durable_seq: integer(),
+          outbox_flushed_seq: integer(),
+          outbox_epoch: non_neg_integer(),
+          outbox_retry_timer: reference() | nil,
+          outbox_awaiting: %{optional(Outbox.key()) => map()},
+          outbox_inflight: :queue.queue({non_neg_integer(), integer()}),
+          outbox_last_seq: integer(),
+          seq_index: SeqIndex.t(),
+          sync_waiters: [{GenServer.from(), term()}],
+          header_index: %{optional(binary()) => non_neg_integer()} | nil
+        }
+
+  @type limits :: %{
+          high_watermark: pos_integer(),
+          low_watermark: pos_integer(),
+          hard_watermark: pos_integer(),
+          pending_msg_cap: pos_integer(),
+          outbox_inflight_max: pos_integer(),
+          outbox_resettle_ms: pos_integer()
         }
 
   @typedoc """
@@ -350,64 +365,6 @@ defmodule Flezha.State.WalWriter do
     {:via, Elixir.Registry, {Flezha.State.Supervisor.registry_name(), entity_id}}
   end
 
-  # ---------- Encode / decode ----------
-
-  @doc """
-  Frame a record for on-disk storage.
-  """
-  @spec encode_record(non_neg_integer(), binary(), binary()) :: binary()
-  def encode_record(seq, header, change_bytes)
-      when is_integer(seq) and seq >= 0 and is_binary(header) and is_binary(change_bytes) do
-    if byte_size(header) != @header_size do
-      raise ArgumentError, "header must be #{@header_size} bytes, got #{byte_size(header)}"
-    end
-
-    len = @header_size + byte_size(change_bytes)
-    crc = :erlang.crc32(<<header::binary, change_bytes::binary>>)
-    <<seq::64-big, len::32-big, header::binary, change_bytes::binary, crc::32-big>>
-  end
-
-  @doc """
-  Read one record at `position` from `device`. Returns the decoded
-  `{seq, header, change_bytes}` triple plus the byte length consumed,
-  or an error tag.
-  """
-  @spec decode_record(:file.io_device(), non_neg_integer()) ::
-          {:ok, non_neg_integer(), binary(), binary(), non_neg_integer()}
-          | {:error, :crc_mismatch | :short_read | :bad_len}
-  def decode_record(device, position) do
-    with {:ok, <<seq::64-big, len::32-big>>} <- pread(device, position, 12),
-         true <- len >= @header_size or {:error, :bad_len},
-         {:ok, payload_and_crc} <- pread(device, position + 12, len + 4) do
-      change_len = len - @header_size
-
-      <<header::binary-size(@header_size), change_bytes::binary-size(^change_len), crc::32-big>> =
-        payload_and_crc
-
-      computed = :erlang.crc32(<<header::binary, change_bytes::binary>>)
-
-      if computed == crc do
-        {:ok, seq, header, change_bytes, 12 + len + 4}
-      else
-        {:error, :crc_mismatch}
-      end
-    else
-      # `len >= @header_size or {:error, :bad_len}` yields `true` or the
-      # error tuple, so the tuple clause carries :bad_len too.
-      :eof -> {:error, :short_read}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp pread(device, position, count) do
-    case :file.pread(device, position, count) do
-      {:ok, bin} when byte_size(bin) == count -> {:ok, bin}
-      {:ok, _} -> :eof
-      :eof -> :eof
-      {:error, _} = err -> err
-    end
-  end
-
   # ---------- GenServer ----------
 
   @impl true
@@ -430,10 +387,7 @@ defmodule Flezha.State.WalWriter do
       owning_runner: nil,
       pending_bytes: 0,
       pending_since_us: nil,
-      high_watermark: high_watermark(),
-      low_watermark: low_watermark(),
-      hard_watermark: hard_watermark(),
-      pending_msg_cap: pending_msg_cap(),
+      limits: limits(),
       metrics: Metrics.for_entity(entity_id),
       latency_reservoir: :queue.new(),
       backpressured?: false,
@@ -451,8 +405,6 @@ defmodule Flezha.State.WalWriter do
       outbox_retry_timer: nil,
       outbox_awaiting: %{},
       outbox_inflight: :queue.new(),
-      outbox_inflight_max: outbox_inflight_max(),
-      outbox_resettle_ms: outbox_resettle_ms(),
       outbox_last_seq: -1,
       seq_index: SeqIndex.new(),
       sync_waiters: [],
@@ -467,7 +419,7 @@ defmodule Flezha.State.WalWriter do
     File.mkdir_p!(Path.dirname(state.wal_path))
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
-    last_seq = scan_for_last_valid_seq(file, state.wal_path)
+    last_seq = RecordFrame.scan_for_last_valid_seq(file)
     size = file_size(state.wal_path)
 
     Metrics.put(state.metrics, :wal_seq, last_seq)
@@ -583,57 +535,8 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call(:fsync, _from, state), do: {:reply, :ok, do_fsync(state)}
 
-  def handle_call({:rewind_to, seq, epoch}, _from, state) do
-    {:ok, file, seq_index} =
-      cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1)
-
-    # Only the snapshots ABOVE the boundary die. The ones at or below it are
-    # exactly the baselines a restore to `seq` needs — dropping them all, as a
-    # realign does, would be a wipe, not a rewind.
-    Enum.each(Paths.snapshot_paths(state.entity_id), fn {snap_seq, path} ->
-      if snap_seq > seq, do: File.rm(path)
-    end)
-
-    state = flush_credit_pending(state)
-
-    # Records at or below the boundary are untouched history: those already
-    # flushed stay flushed (re-emitting them under the new epoch would be churn
-    # that overwrites each row with itself). Only what the boundary left
-    # un-flushed is still owed. Re-derive it from the rewritten file rather than
-    # filtering the in-memory queue — the file is the authority on what survived,
-    # and the same scan yields the consumed-offset the input-log watermark must
-    # fall back to.
-    flushed = min(state.outbox_flushed_seq, seq)
-    {surviving, max_consumed} = scan_effect_records_above(file, flushed)
-    rewind_input_watermark(state, max_consumed)
-
-    size = file_size(state.wal_path)
-    now = now_ms()
-    Metrics.put(state.metrics, :wal_size_bytes, size)
-    Metrics.put(state.metrics, :wal_seq, seq)
-    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.entity_id))
-    emit_rewind(state.entity_id, state.last_persisted_seq, seq, epoch)
-
-    state = %{
-      state
-      | file_handle: file,
-        seq_index: seq_index,
-        header_index: nil,
-        last_persisted_seq: seq,
-        last_advance_at: now,
-        pending_bytes: 0,
-        pending_since_us: nil,
-        oldest_unsnapshotted_at: if(size > 0, do: now)
-    }
-
-    {:reply, :ok,
-     bump_epoch(state, %{
-       pending: :queue.from_list(surviving),
-       durable_seq: seq,
-       flushed_seq: flushed,
-       epoch: epoch
-     })}
-  end
+  def handle_call({:rewind_to, seq, epoch}, _from, state),
+    do: {:reply, :ok, rewind(state, seq, epoch)}
 
   # Drop the records at or below `seq` (compaction's prefix, a retention
   # cut). The cut runs in this loop — under the effectively-once tier every
@@ -646,7 +549,13 @@ defmodule Flezha.State.WalWriter do
     min_bytes = Keyword.get(opts, :min_bytes, 0)
     state = trim_header_index(state, seq)
 
-    case cut_below(state.wal_path, state.file_handle, state.seq_index, seq + 1, min_bytes) do
+    case RecordFrame.cut_below(
+           state.wal_path,
+           state.file_handle,
+           state.seq_index,
+           seq + 1,
+           min_bytes
+         ) do
       {:ok, _cut, file, seq_index} ->
         {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
 
@@ -876,20 +785,67 @@ defmodule Flezha.State.WalWriter do
     %{state | sync_waiters: []}
   end
 
+  # Cut the WAL and the snapshots above `seq`, re-derive what the boundary left
+  # un-flushed from the rewritten file, and open the next epoch on it.
+  defp rewind(state, seq, epoch) do
+    {:ok, file, seq_index} =
+      RecordFrame.cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1)
+
+    # Only the snapshots ABOVE the boundary die. The ones at or below it are
+    # exactly the baselines a restore to `seq` needs — dropping them all, as a
+    # realign does, would be a wipe, not a rewind.
+    Enum.each(Paths.snapshot_paths(state.entity_id), fn {snap_seq, path} ->
+      if snap_seq > seq, do: File.rm(path)
+    end)
+
+    state = flush_credit_pending(state)
+
+    # Records at or below the boundary are untouched history: those already
+    # flushed stay flushed (re-emitting them under the new epoch would be churn
+    # that overwrites each row with itself). Only what the boundary left
+    # un-flushed is still owed. Re-derive it from the rewritten file rather than
+    # filtering the in-memory queue — the file is the authority on what survived,
+    # and the same scan yields the consumed-offset the input-log watermark must
+    # fall back to.
+    flushed = min(state.outbox_flushed_seq, seq)
+    {surviving, max_consumed} = scan_effect_records_above(file, flushed)
+    rewind_input_watermark(state, max_consumed)
+
+    size = file_size(state.wal_path)
+    now = now_ms()
+    Metrics.put(state.metrics, :wal_size_bytes, size)
+    Metrics.put(state.metrics, :wal_seq, seq)
+    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.entity_id))
+    emit_rewind(state.entity_id, state.last_persisted_seq, seq, epoch)
+
+    state = %{
+      state
+      | file_handle: file,
+        seq_index: seq_index,
+        header_index: nil,
+        last_persisted_seq: seq,
+        last_advance_at: now,
+        pending_bytes: 0,
+        pending_since_us: nil,
+        oldest_unsnapshotted_at: if(size > 0, do: now)
+    }
+
+    bump_epoch(state, %{
+      pending: :queue.from_list(surviving),
+      durable_seq: seq,
+      flushed_seq: flushed,
+      epoch: epoch
+    })
+  end
+
   # ---------- Header dedup ----------
 
   # `header => seq` for every record in the file, built once per writer
   # lifetime by the first keyed append. The file is the set a keyed log dedups
   # against: a prefix cut trims it, a rewrite of the lineage drops it for a
   # rebuild.
-  defp ensure_header_index(%{header_index: nil} = state) do
-    index =
-      fold_records(state.file_handle, %{}, fn {seq, header, _body}, acc ->
-        {:cont, Map.put(acc, header, seq)}
-      end)
-
-    %{state | header_index: index}
-  end
+  defp ensure_header_index(%{header_index: nil} = state),
+    do: %{state | header_index: RecordFrame.header_index(state.file_handle)}
 
   defp ensure_header_index(state), do: state
 
@@ -925,7 +881,7 @@ defmodule Flezha.State.WalWriter do
   # ---------- Append / realign ----------
 
   defp write_record(state, seq, header, change_bytes, runner_id, now) do
-    record = encode_record(seq, header, change_bytes)
+    record = RecordFrame.encode_record(seq, header, change_bytes)
     :ok = :file.write(state.file_handle, record)
     size = byte_size(record)
 
@@ -1057,9 +1013,12 @@ defmodule Flezha.State.WalWriter do
         else
           key = {:cursor, seq}
           outputs = entry_outputs(state, key, entry)
-          state = await_entry(%{state | pending_outbox: rest}, key, entry, length(outputs))
 
+          # An entry with no outputs completes inside `await_entry/4`, which
+          # re-enters dispatch: the entry's own durable effects have to be
+          # written before a nested window can advance the watermark past them.
           apply_effect(state, entry)
+          state = await_entry(%{state | pending_outbox: rest}, key, entry, length(outputs))
 
           take_outbox_window(state, [outputs | chunks], furthest_consumed(consumed, entry))
         end
@@ -1073,7 +1032,7 @@ defmodule Flezha.State.WalWriter do
   # awaiting set. `:queue.len/1` on the inflight queue is O(n), which made every
   # refill of a 1 000-deep window quadratic.
   defp window_full?(state),
-    do: map_size(state.outbox_awaiting) >= state.outbox_inflight_max
+    do: map_size(state.outbox_awaiting) >= state.limits.outbox_inflight_max
 
   # The stamped outputs alone — what a re-dispatch owes, and how many the
   # entry's tally waits on before the cursor may pass it.
@@ -1235,7 +1194,7 @@ defmodule Flezha.State.WalWriter do
 
       {state, chunks} =
         Enum.reduce(state.outbox_awaiting, {state, []}, fn {key, tally}, {acc, chunks} ->
-          if tally.pending > 0 and now_ms() - tally.at >= acc.outbox_resettle_ms,
+          if tally.pending > 0 and now_ms() - tally.at >= acc.limits.outbox_resettle_ms,
             do: resettle_entry(overwatch, acc, chunks, key, tally),
             else: {acc, chunks}
         end)
@@ -1252,7 +1211,7 @@ defmodule Flezha.State.WalWriter do
   # sweep out on a healthy stream writer.
   defp resettle_due?(state) do
     case :queue.peek(state.outbox_inflight) do
-      {:value, {_seq, at}} -> now_ms() - at >= state.outbox_resettle_ms
+      {:value, {_seq, at}} -> now_ms() - at >= state.limits.outbox_resettle_ms
       :empty -> map_size(state.outbox_awaiting) > 0
     end
   end
@@ -1384,7 +1343,7 @@ defmodule Flezha.State.WalWriter do
   # the new runner's history: empty the WAL file and drop its snapshots, then
   # reset the seq baseline so the incoming `seq` appends contiguously.
   defp realign_epoch(state, seq, runner_id, now) do
-    # The truncated epoch's un-fsynced bytes no longer occupy the buffer;
+    # The truncated epoch's un-fsynced bytes have left the buffer;
     # release them to the stream ledger so the window is not leaked.
     state = flush_credit_pending(state)
     {:ok, _} = :file.position(state.file_handle, 0)
@@ -1508,7 +1467,7 @@ defmodule Flezha.State.WalWriter do
   defp scan_correction_baseline(device, target) do
     # `{-1, -1}` = no baseline seen yet; a first record already at or after the
     # target means the rewind would have to go below the retained history.
-    fold_records(device, {-1, -1}, fn {seq, header, body}, {seq_acc, offset_acc} ->
+    RecordFrame.fold_records(device, {-1, -1}, fn {seq, header, body}, {seq_acc, offset_acc} ->
       case Wire.decode_effect_record(header, body) do
         %{event_time: event_time} when event_time >= target ->
           {:halt, baseline_result(seq_acc, offset_acc)}
@@ -1530,7 +1489,7 @@ defmodule Flezha.State.WalWriter do
   defp baseline_result(seq, offset), do: {:ok, %{seq: seq, consumed_offset: offset}}
 
   defp scan_consumed_at(device, upto) do
-    fold_records(device, -1, fn {seq, header, body}, acc ->
+    RecordFrame.fold_records(device, -1, fn {seq, header, body}, acc ->
       if seq > upto,
         do: {:halt, acc},
         else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
@@ -1566,107 +1525,12 @@ defmodule Flezha.State.WalWriter do
     InputLog.rewind_consumed(operative_class, state.entity_id, max_consumed || -1)
   end
 
-  # ---------- Scan / rewrite helpers ----------
+  # ---------- Effect-record scan ----------
 
-  @doc """
-  Reduce over a WAL file's framed records, oldest first.
-
-  `fun.({seq, header, body}, acc)` returns `{:cont, acc}` or `{:halt, acc}`; the
-  walk also stops at the first undecodable record, which is the torn-tail
-  contract every reader here shares.
-
-  The one place the `decode_record/2` recursion lives. The framing is shared by
-  the Entity WAL, the input log, the proc-journal and the retention rewriter, and
-  each of them used to carry its own copy of this loop.
-  """
-  @spec fold_records(:file.io_device(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
-                                                {:cont, acc} | {:halt, acc})) :: acc
-        when acc: term()
-  def fold_records(device, acc, fun), do: fold_records(device, 0, acc, fun)
-
-  @doc """
-  `fold_records/3` over a path: open read-only, fold, close. A file that is
-  missing or unreadable folds to `acc` unchanged — absent history is no records,
-  which is what every reader of this framing already means by it.
-
-  The one definition of the open-fold-close dance, shared by the record-log
-  reader, time travel, and the remote durability tier's ship.
-  """
-  @spec fold_path(binary(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
-                                    {:cont, acc} | {:halt, acc})) :: acc
-        when acc: term()
-  def fold_path(path, acc, fun) do
-    case :file.open(path, [:raw, :read, :binary]) do
-      {:ok, device} ->
-        try do
-          fold_records(device, acc, fun)
-        after
-          :file.close(device)
-        end
-
-      {:error, _} ->
-        acc
-    end
-  end
-
-  defp fold_records(device, position, acc, fun) do
-    case decode_record(device, position) do
-      {:ok, seq, header, body, consumed} ->
-        case fun.({seq, header, body}, acc) do
-          {:cont, acc} -> fold_records(device, position + consumed, acc, fun)
-          {:halt, acc} -> acc
-        end
-
-      {:error, _} ->
-        acc
-    end
-  end
-
-  @doc """
-  Walk the WAL from offset 0, returning the seq of the last record
-  whose crc validates. Truncates any partial-write tail past that point.
-
-  Backward scan would require a second copy of the length field at the
-  record tail; we use forward scan and rely on monotonic seqs for the
-  "last valid record" answer. The cost is O(records-since-snapshot)
-  at boot; acceptable because compaction keeps WALs short.
-  """
-  @spec scan_for_last_valid_seq(:file.io_device(), binary()) :: integer()
-  def scan_for_last_valid_seq(device, _wal_path) do
-    # `-1`, not `0`, for an empty WAL: the SDK's per-Entity seq is 0-based
-    # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
-    # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
-    # operative. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
-    do_scan(device, 0, -1, 0)
-  end
-
-  defp do_scan(device, position, last_seq, last_end) do
-    case decode_record(device, position) do
-      {:ok, seq, _header, _bytes, consumed} ->
-        do_scan(device, position + consumed, seq, position + consumed)
-
-      {:error, _} ->
-        # Truncate any partial-write tail past the last valid record.
-        case :file.position(device, last_end) do
-          {:ok, _} ->
-            _ = :file.truncate(device)
-            last_seq
-
-          _ ->
-            last_seq
-        end
-    end
-  end
-
-  # Effect records above the flush cursor, oldest first — the restart
-  # re-drive set (already durable, dispatched once the Overwatch resolves).
-  # One pass over the WAL's effect records: the re-drive set (records above
-  # the flush cursor, oldest first, already durable) plus the highest
-  # consumed-offset across ALL effect records — the Entity's durable
-  # input-log watermark, repopulated at open (the ETS is a rebuildable cache).
   defp scan_effect_records_above(device, cursor) do
     {acc, max_consumed} =
-      fold_records(device, {[], nil}, fn {seq, header, body}, {acc, max_consumed} = unchanged ->
+      RecordFrame.fold_records(device, {[], nil}, fn {seq, header, body},
+                                                     {acc, max_consumed} = unchanged ->
         case Wire.decode_effect_record(header, body) do
           nil ->
             {:cont, unchanged}
@@ -1691,92 +1555,6 @@ defmodule Flezha.State.WalWriter do
   defp max_offset(nil, offset), do: offset
   defp max_offset(current, offset), do: max(current, offset)
 
-  @doc """
-  Drop the records below `floor` from the record log at `path`, whose live
-  handle is `device` and whose index is `index`. The boundary is found within
-  one sample span, the kept tail is copied as bytes into `<path>.rewriting`,
-  fsynced and renamed into place, and the handle is reopened on the new file
-  at its end. Answers `{:ok, cut_bytes, device, index}` with the index
-  rebased; `:none` when nothing is below the floor, or fewer than `min_bytes`
-  are (the rewrite is not worth its fsync yet); `{:error, reason}` when the
-  file is gone (a cut queued behind its directory's removal), with the
-  caller's handle untouched. Both record logs cut through this, so a cut costs
-  the tail, never the file.
-  """
-  @spec cut_below(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer(), non_neg_integer()) ::
-          {:ok, non_neg_integer(), :file.io_device(), SeqIndex.t()} | :none | {:error, term()}
-  def cut_below(path, device, index, floor, min_bytes \\ 0) do
-    case SeqIndex.position_of(index, device, floor) do
-      cut when cut == 0 or cut < min_bytes ->
-        :none
-
-      cut ->
-        with {:ok, file} <- replace_with_range(path, device, cut, :eof) do
-          {:ok, cut, file, SeqIndex.after_cut(index, floor, cut)}
-        end
-    end
-  end
-
-  @doc """
-  Drop the records at or above `floor` — the mirror of `cut_below/4`: a
-  correction's rewind drops the suffix it invalidated, keeping the prefix as
-  bytes. The samples below the boundary stay valid. Answers `{:ok, device,
-  index}`.
-  """
-  @spec cut_above(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
-          {:ok, :file.io_device(), SeqIndex.t()}
-  def cut_above(path, device, index, floor) do
-    bound = SeqIndex.position_of(index, device, floor)
-    {:ok, file} = replace_with_range(path, device, 0, bound)
-    {:ok, file, SeqIndex.cut_above(index, floor, bound)}
-  end
-
-  # Copy the bytes `[from, to)` of `path` into `<path>.rewriting`, fsync it,
-  # rename it into place and reopen `device` on it at its end. The two-step is
-  # what makes a crash mid-rewrite leave the original intact
-  # (`Paths.scan_dir/1` skips `.rewriting` residue); the rename happens
-  # before the old handle closes, so a failure before it leaves that handle
-  # valid. Records are self-delimiting and CRC-framed, so a record-aligned
-  # byte range is the same log the records would re-encode to.
-  defp replace_with_range(path, device, from, to) do
-    new_path = path <> ".rewriting"
-
-    with {:ok, src} <- :file.open(path, [:raw, :read, :binary]),
-         {:ok, dst} <- open_or_close(new_path, src),
-         :ok <- copy_range(src, dst, from, to),
-         :ok <- :file.rename(new_path, path),
-         :ok = :file.close(device),
-         {:ok, file} <- :file.open(path, [:raw, :read, :write, :binary]),
-         {:ok, _} <- :file.position(file, :eof) do
-      {:ok, file}
-    end
-  end
-
-  defp copy_range(src, dst, from, to) do
-    try do
-      with {:ok, _} <- :file.position(src, from),
-           {:ok, _} <-
-             if(to == :eof, do: :file.copy(src, dst), else: :file.copy(src, dst, to - from)),
-           :ok <- :file.sync(dst) do
-        :ok
-      end
-    after
-      _ = :file.close(src)
-      _ = :file.close(dst)
-    end
-  end
-
-  defp open_or_close(path, src) do
-    case :file.open(path, [:raw, :write, :binary]) do
-      {:ok, dst} ->
-        {:ok, dst}
-
-      {:error, _} = error ->
-        _ = :file.close(src)
-        error
-    end
-  end
-
   # ---------- Hard bound (shed) ----------
 
   # Last-resort safety net above the soft watermark: cooperative SDKs throttle on
@@ -1791,8 +1569,8 @@ defmodule Flezha.State.WalWriter do
   # Changes 25x early. Credit already bounds mailbox + un-fsynced bytes to the
   # window (the channel debits at admit, before the cast).
   defp over_hard_bound?(state) do
-    state.pending_bytes >= state.hard_watermark or
-      (not state.credit_active? and message_queue_len() >= state.pending_msg_cap)
+    state.pending_bytes >= state.limits.hard_watermark or
+      (not state.credit_active? and message_queue_len() >= state.limits.pending_msg_cap)
   end
 
   defp message_queue_len() do
@@ -1861,13 +1639,13 @@ defmodule Flezha.State.WalWriter do
   # ---------- Backpressure ----------
 
   defp maybe_signal_backpressure(%{backpressured?: false} = state, pending)
-       when pending >= state.high_watermark do
+       when pending >= state.limits.high_watermark do
     emit_backpressure(state, :full, pending)
     %{state | backpressured?: true}
   end
 
   defp maybe_signal_backpressure(%{backpressured?: true} = state, pending)
-       when pending <= state.low_watermark do
+       when pending <= state.limits.low_watermark do
     emit_backpressure(state, :open, pending)
     %{state | backpressured?: false}
   end
@@ -1975,40 +1753,29 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
-  defp high_watermark(), do: PersistenceResolver.wal_high_watermark_bytes()
+  # Resolved once at `init/1`. The hard bound sits strictly above the soft
+  # watermark (default 4x) so cooperative back-pressure takes effect before
+  # anything is shed; the mailbox-depth cap backstops an un-credited stream,
+  # where a cast flood grows the mailbox even when each record is small;
+  # `outbox_inflight_max` is how many effect records may be inside the plugin
+  # chain unconfirmed before the flush stops handing over more (the durable
+  # entries keep queueing behind it, only the flush waits); and
+  # `outbox_resettle_ms` is how long a dispatched entry may go without its chain
+  # run reporting back before it is re-dispatched — long enough that a merely
+  # backlogged Overwatch is not duplicated into, and a re-dispatch is safe
+  # either way.
+  @spec limits() :: limits()
+  defp limits() do
+    high = PersistenceResolver.wal_high_watermark_bytes()
 
-  defp low_watermark() do
-    Application.get_env(
-      :flezha,
-      :wal_low_watermark_bytes,
-      div(high_watermark(), 2)
-    )
-  end
-
-  # Hard in-memory bound, strictly above the soft watermark (default 4x) so
-  # cooperative back-pressure takes effect before anything is shed.
-  defp hard_watermark() do
-    Application.get_env(:flezha, :wal_hard_watermark_bytes, high_watermark() * 4)
-  end
-
-  # Pending mailbox-depth cap: a cast flood can grow the mailbox even when each
-  # record is small.
-  defp pending_msg_cap() do
-    Application.get_env(:flezha, :wal_pending_msg_cap, 5_000)
-  end
-
-  # How many effect records may be inside the plugin chain unconfirmed before
-  # the flush stops handing over more. The durable entries keep queueing behind
-  # it; only the flush waits.
-  defp outbox_inflight_max() do
-    Application.get_env(:flezha, :outbox_inflight_max, 1_000)
-  end
-
-  # How long a dispatched entry may go without its chain run reporting back
-  # before it is re-dispatched. Long enough that a merely backlogged Overwatch
-  # is not duplicated into; a re-dispatch is safe either way.
-  defp outbox_resettle_ms() do
-    Application.get_env(:flezha, :outbox_resettle_ms, 60_000)
+    %{
+      high_watermark: high,
+      low_watermark: Application.get_env(:flezha, :wal_low_watermark_bytes, div(high, 2)),
+      hard_watermark: Application.get_env(:flezha, :wal_hard_watermark_bytes, high * 4),
+      pending_msg_cap: Application.get_env(:flezha, :wal_pending_msg_cap, 5_000),
+      outbox_inflight_max: Application.get_env(:flezha, :outbox_inflight_max, 1_000),
+      outbox_resettle_ms: Application.get_env(:flezha, :outbox_resettle_ms, 60_000)
+    }
   end
 
   # Floor between resync attempts for one Entity. Low enough that a genuine gap

@@ -1,48 +1,18 @@
 defmodule Flezha.State.PersistenceResolver do
   @moduledoc """
-  Resolves per-Operative persistence configuration from three sources, in
-  order of precedence:
+  Resolves per-Operative persistence configuration from three sources, in order
+  of precedence: a runner runtime override (`Application.get_env(:flezha, <key>)
+  :: %{<OperativeClass> => value}`), the per-instance metadata shipped with
+  `AddOperative`, then a hard-coded global default.
 
-    1. Runner runtime override:
-       `Application.get_env(:flezha, <key>) :: %{<OperativeClass> => value}`
-    2. Per-instance metadata shipped with `AddOperative`
-       (passed in as the `metadata` argument).
-    3. Hard-coded global default.
+  One resolver per key, each named for the key it resolves. The keys and their
+  defaults are `docs/internals/state_persistence.md`'s configuration table,
+  which is the one place they are enumerated; the module's job is the
+  precedence, not the catalogue.
 
-  Configuration keys:
-
-    * `:operative_persistence` — `%{<OperativeClass> => boolean}`. Default `true`.
-      Resolves both `persistence_enabled?/2` and, for `:workflow`,
-      `persistent_state?/3` (durable-by-default, opt-out per class).
-    * `:time_travel_retention_hours` — `%{<OperativeClass> => non_neg_integer}`.
-       Global default `6`. `0` disables time-travel for that Operative class.
-    * `:workflow_completed_retention_hours` — `%{<OperativeClass> => non_neg_integer}`
-       per-class override for how long a finished workflow operative's data is
-       retained; global default `:default_workflow_completed_retention_hours`
-       (`72`, env `FLEZHA_WORKFLOW_RETENTION_HOURS`).
-    * `:compact_after_bytes` — per-Procedure threshold, sourced from SDK
-       metadata first; global default `8 * 1024 * 1024`.
-    * `:output_stall_timeout_ms` — `%{<OperativeClass> => non_neg_integer}`.
-       Global default `60_000`. `0` disables the output-staleness
-       watchdog for that Operative class.
-    * `:compaction_timeout_ms` — global; the bound on the
-       `CompactEntity` → `entity_state_snapshot` handshake.
-       Default `30_000`. `0` disables the compaction-timeout sweep.
-    * `:compact_after_age_ms` — global; an Entity whose oldest
-       un-snapshotted WAL record is older than this is compacted even
-       if it never reaches `compact_after_bytes`. Default `300_000`.
-       `0` disables the age trigger.
-    * `:sync_durability` — `%{<OperativeClass> => boolean}`. Whether a commit
-       barrier must be remotely durable before it is acked. Default: the SDK
-       declaration, else `false`.
-    * `:credit_window_bytes` — `%{<OperativeClass> => pos_integer}`.
-       Byte window offered in `CreditWindowInit` for a state stream whose
-       first Change belongs to that class. Global default
-       `:wal_high_watermark_bytes` (16 MiB).
-    * `:record_log_cut_after_bytes` — global; how many released bytes a
-       workflow instance's proc-journal or inbox accumulates before its
-       prefix cut rewrites the file. Default `64 * 1024`; `0` rewrites at
-       every release.
+  A resolver returns the resolved value and never `nil`: an absent override
+  falls through to the metadata and then to the default, so every caller gets a
+  usable value without repeating the fallback.
   """
 
   alias Flezha.AuthZ.NamespaceStore
@@ -115,8 +85,8 @@ defmodule Flezha.State.PersistenceResolver do
   instance metadata → global `:default_workflow_completed_retention_hours`
   (`72`, env `FLEZHA_WORKFLOW_RETENTION_HOURS`).
   """
-  @spec workflow_completed_retention_hours(binary(), map()) :: non_neg_integer()
-  def workflow_completed_retention_hours(operative_class, metadata \\ %{})
+  @spec completed_retention_hours(binary(), map()) :: non_neg_integer()
+  def completed_retention_hours(operative_class, metadata \\ %{})
       when is_binary(operative_class) do
     resolve(
       :workflow_completed_retention_hours,
@@ -150,12 +120,12 @@ defmodule Flezha.State.PersistenceResolver do
   def compact_after_bytes(operative_class, metadata \\ %{}) when is_binary(operative_class) do
     resolve(:compact_after_bytes, :compact_after_bytes, operative_class, metadata,
       valid: &(is_integer(&1) and &1 > 0),
-      default: fn -> class_or_global_compact_after_bytes(operative_class) end
+      default: fn -> declared_compact_after_bytes(operative_class) end
     )
   end
 
   # SDK-declared threshold (durable in ClassRegistry) → global default.
-  defp class_or_global_compact_after_bytes(operative_class) do
+  defp declared_compact_after_bytes(operative_class) do
     case ClassRegistry.compact_after_bytes(operative_class) do
       v when is_integer(v) and v > 0 ->
         v
@@ -276,7 +246,7 @@ defmodule Flezha.State.PersistenceResolver do
 
   @doc """
   The age floor BEFORE a declared correction window raises it — what the operator
-  actually configured. Used to announce a derivation, never to compact against.
+  actually configured. For announcing a derivation, never for compacting against.
   """
   @spec configured_compact_after_age_ms(binary(), map()) :: non_neg_integer()
   def configured_compact_after_age_ms(operative_class, metadata \\ %{})

@@ -1,0 +1,15 @@
+flz controller status - Print controller status
+
+USAGE:
+    flz controller status [--json]
+
+OUTPUT FIELDS:
+    shutdown_in_progress       True while quiesce/drain/finalise is running
+    shutdown_phase             :quiesce | :drain | :finalise | nil
+    signal_handler_status      :ok | :degraded (degraded if :os.set_signal/2 unavailable)
+    graceful_shutdown_enabled  Configured kill-switch state
+    graceful_shutdown_timeout_ms  Configured drain timeout
+    durability_backend         none | postgres | s3 | local_path
+    durability_posture         local_only | remote_tier
+    durability_rpo_breaches    References past the remote RPO target
+    durability_superseded      References another controller now ships

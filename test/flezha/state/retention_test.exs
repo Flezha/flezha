@@ -7,6 +7,7 @@ defmodule Flezha.State.RetentionTest do
   alias Flezha.State.{
     Completion,
     Paths,
+    RecordFrame,
     Retention,
     Snapshot,
     Supervisor,
@@ -80,8 +81,8 @@ defmodule Flezha.State.RetentionTest do
       :ok = Retention.rewrite_wal_excluding_pre_seq(pid, 2)
 
       {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
-      assert {:ok, 3, _, "y3", c1} = WalWriter.decode_record(dev, 0)
-      assert {:ok, 4, _, "y4", _} = WalWriter.decode_record(dev, c1)
+      assert {:ok, 3, _, "y3", c1} = RecordFrame.decode_record(dev, 0)
+      assert {:ok, 4, _, "y4", _} = RecordFrame.decode_record(dev, c1)
       :file.close(dev)
     end
   end
@@ -196,7 +197,7 @@ defmodule Flezha.State.RetentionTest do
       header = TestHelpers.stub_header()
 
       seqs = fn ->
-        WalWriter.fold_path(Paths.wal_path(pid), [], fn {s, _, _}, acc ->
+        RecordFrame.fold_path(Paths.wal_path(pid), [], fn {s, _, _}, acc ->
           {:cont, [s | acc]}
         end)
         |> Enum.reverse()

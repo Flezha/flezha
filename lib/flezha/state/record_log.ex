@@ -6,19 +6,17 @@ defmodule Flezha.State.RecordLog do
   `proc.journal` (`Flezha.State.ProcJournal`) and its `inbox.wal`
   (`Flezha.State.ProcInbox`). Both are WAL-framed record streams written through
   the existing `WalWriter` + `FsyncBatcher` path under a reserved
-  `Flezha.State.Paths` identity, and both need exactly two procedures from
-  that substrate: a **durable append** (assign the next seq, write, answer once
-  the record is synced — by the caller's own fsync or by the batch that holds
-  it) and a **torn-tail-tolerant read**. Those live here, so neither log owns a
-  copy of the substrate protocol and the next per-instance log gets both for
-  free.
+  `Flezha.State.Paths` identity, and both need exactly two procedures from that
+  substrate: a **durable append** (assign the next seq, write, answer once the
+  record is synced) and a **torn-tail-tolerant read**. Those live here, so
+  neither log owns a copy of the substrate protocol.
 
   A log is not an Entity: its reserved identity carries no effect records and no
-  dedup side-file (`WalWriter` skips it), and `Registry.scan_dir/1` never
-  surfaces it.
+  dedup side-file (`WalWriter` skips it), and `Paths.scan_dir/1` never surfaces
+  it.
   """
 
-  alias Flezha.State.{Supervisor, WalWriter}
+  alias Flezha.State.{Paths, RecordFrame, Supervisor, WalWriter}
 
   @typedoc """
   Turns one raw record into an entry. `{:error, _}` skips the record, which is
@@ -33,7 +31,7 @@ defmodule Flezha.State.RecordLog do
   the record has synced, `dedup: true` answers `{:duplicate, seq}` for a record
   whose header is already in the log.
   """
-  @spec append(Registry.entity_id(), binary(), binary(), keyword()) ::
+  @spec append(Paths.entity_id(), binary(), binary(), keyword()) ::
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
   def append(log_id, header, body, opts \\ []) when is_binary(header) and is_binary(body) do
     with {:ok, pid} <- Supervisor.find_or_start(log_id),
@@ -54,7 +52,7 @@ defmodule Flezha.State.RecordLog do
   the record's batch has synced, never before.
   """
   @spec append_async(
-          Registry.entity_id(),
+          Paths.entity_id(),
           binary(),
           binary(),
           keyword(),
@@ -75,7 +73,7 @@ defmodule Flezha.State.RecordLog do
   @spec read(binary(), decoder()) :: [term()]
   def read(path, decode) when is_binary(path) and is_function(decode, 3) do
     path
-    |> WalWriter.fold_path([], fn {seq, header, body}, acc ->
+    |> RecordFrame.fold_path([], fn {seq, header, body}, acc ->
       case decode.(seq, header, body) do
         {:ok, entry} -> {:cont, [entry | acc]}
         {:error, _} -> {:cont, acc}

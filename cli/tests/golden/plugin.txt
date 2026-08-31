@@ -1,0 +1,27 @@
+flz plugin - Plugin management commands
+
+USAGE:
+    flz plugin <COMMAND>
+
+COMMANDS:
+    install    Install a plugin from a .fpz package
+    upgrade    Upgrade an installed plugin to a new version
+    uninstall  Remove an installed plugin
+    enable     Enable a plugin (installed package or legacy provider)
+    disable    Disable a plugin
+    list       List plugins: `--installed` (catalog) or providers (default)
+    info       Show details for an installed plugin
+    help       Show help for a specific plugin provider
+
+EXAMPLES:
+    flz plugin install /path/to/kafka_ingest-1.0.0.fpz
+    flz plugin list --installed
+    flz plugin list --installed --json
+    flz plugin info kafka_ingest
+    flz plugin enable kafka_ingest
+    flz plugin upgrade kafka_ingest /path/to/kafka_ingest-1.1.0.fpz
+    flz plugin uninstall kafka_ingest
+    # Legacy provider enable (compile-time providers):
+    flz plugin enable ws_id operative_websocket --Xuri=ws://localhost:4500 \
+        --extension=on_input --on_input.position=0
+    flz plugin disable ws_id

@@ -2,27 +2,19 @@ defmodule Flezha.State.Retention do
   @moduledoc """
   Sweeper enforcing `time_travel_retention_hours` per Operative class.
 
-  On each pass, walks every Entity under `Paths.state_root/0` and
-  prunes:
+  On each pass, walks every Entity under `Paths.state_root/0` and prunes
+  snapshots strictly older than `now - retention_hours` (keeping at minimum the
+  latest snapshot) and WAL records whose `seq <= kept_snapshot_seq`, by chunk
+  rewrite through `entity.wal.rewriting` -> rename.
 
-    * Snapshots strictly older than `now - retention_hours`, keeping at
-      minimum the latest snapshot.
-    * WAL records whose `seq <= kept_snapshot_seq` (chunk-rewrite via
-      `entity.wal.rewriting → rename`).
+  `retention_hours = 0` disables time-travel for that Operative class: the WAL
+  is truncated to the latest snapshot's seq on every pass — compact and forget.
 
-  `retention_hours = 0` disables time-travel for that Operative class:
-  the WAL is truncated to the latest snapshot's seq immediately on
-  every pass ("compact and forget").
+  On the same tick it also runs the **finished-job** sweep: a finished workflow
+  operative's retained state and completion record (`Flezha.State.Completion`)
+  are removed once `finished_at + completed_retention_hours` is past.
 
-  On the same tick it also runs the **finished-job** sweep: a finished
-  workflow operative's retained state + completion record
-  (`Flezha.State.Completion`) is removed once `finished_at +
-  workflow_completed_retention_hours` is in the past.
-
-  Holds its own sweep timer (`:time_travel_retention_check_interval_ms`,
-  default 60 000 ms) after `convergence-self-healing` §4
-  removed the `Flezha.Reconciler.Loop` periodic sweep that previously
-  drove it.
+  Holds its own sweep timer, `:time_travel_retention_check_interval_ms`.
   """
 
   use GenServer
@@ -35,6 +27,7 @@ defmodule Flezha.State.Retention do
     Metrics,
     Paths,
     PersistenceResolver,
+    RecordFrame,
     SeqIndex,
     Supervisor,
     WalWriter
@@ -43,10 +36,6 @@ defmodule Flezha.State.Retention do
   defstruct []
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
-  end
 
   def start_link(opts) when is_list(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -106,7 +95,7 @@ defmodule Flezha.State.Retention do
   end
 
   # Finished-job retention: reclaim a finished workflow operative's retained
-  # state + completion record once `finished_at + workflow_completed_retention_hours`
+  # state + completion record once `finished_at + completed_retention_hours`
   # is in the past. A finished operative is fully torn down (no live writer), so
   # the whole class dir is safe to remove wholesale.
   defp sweep_completed() do
@@ -115,7 +104,7 @@ defmodule Flezha.State.Retention do
     Enum.each(Paths.operative_classes(), fn operative_class ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
              Completion.read(operative_class),
-           window = PersistenceResolver.workflow_completed_retention_hours(operative_class),
+           window = PersistenceResolver.completed_retention_hours(operative_class),
            true <- finished_at + window * 3600 < now do
         _ = File.rm_rf(Paths.class_dir(operative_class))
       else
@@ -206,7 +195,7 @@ defmodule Flezha.State.Retention do
 
     case :file.open(wal_path, [:raw, :read, :write, :binary]) do
       {:ok, device} ->
-        case WalWriter.cut_below(
+        case RecordFrame.cut_below(
                wal_path,
                device,
                SeqIndex.new(file_size(wal_path)),

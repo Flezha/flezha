@@ -1,41 +1,27 @@
-use std::process::{exit, Command};
+use std::process::exit;
 
-use crate::utils::get_flezha_command;
+use crate::dispatch::{self, Command};
+use crate::{help, rpc};
 
-pub fn handle_boot_command(args: &[String]) {
-    if args.is_empty() {
-        eprintln!("Error: Invalid number of arguments. See `flz boot help`.");
-        exit(1);
-    }
-
-    match args[0].as_str() {
-        "status" => handle_status(args),
-        "await" => handle_await(args),
-        "import-legacy-snapshot" => handle_import(args),
-        "help" | "--help" | "-h" => print_boot_help(),
-        _ => {
-            eprintln!(
-                "Error: Invalid argument '{}'. Use 'status', 'await', 'import-legacy-snapshot', or 'help'.",
-                args[0]
-            );
-            exit(1);
-        }
-    }
-}
+pub(crate) const TABLE: Command = Command {
+    help: help::BOOT,
+    verbs: &[
+        ("status", handle_status),
+        ("await", handle_await),
+        ("import-legacy-snapshot", handle_import),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: Some("Error: Invalid number of arguments. See `flz boot help`."),
+    unknown:
+        "Error: Invalid argument '{}'. Use 'status', 'await', 'import-legacy-snapshot', or 'help'.",
+    unknown_prints_help: false,
+};
 
 fn handle_status(_args: &[String]) {
-    let command = get_flezha_command();
-    let rpc_command = "Flezha.Service.CliManager.boot_status()".to_string();
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+    rpc::run(
+        "Flezha.Service.CliManager.boot_status()".to_string(),
+        rpc::PROPAGATE,
+    );
 }
 
 fn handle_await(args: &[String]) {
@@ -63,18 +49,10 @@ fn handle_await(args: &[String]) {
         }
     }
 
-    let command = get_flezha_command();
-    let rpc_command = format!("Flezha.Service.CliManager.boot_await({})", timeout_ms);
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
+    rpc::run(
+        format!("Flezha.Service.CliManager.boot_await({})", timeout_ms),
+        rpc::PROPAGATE,
+    );
 }
 
 fn handle_import(args: &[String]) {
@@ -86,35 +64,11 @@ fn handle_import(args: &[String]) {
     let path = &args[1];
     let force = args.iter().any(|a| a == "--force");
 
-    let command = get_flezha_command();
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.boot_import_legacy_snapshot(\"{}\", {})",
-        path, force
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.boot_import_legacy_snapshot(\"{}\", {})",
+            path, force
+        ),
+        rpc::PROPAGATE,
     );
-
-    let status = Command::new(command)
-        .arg("rpc")
-        .arg(rpc_command)
-        .status()
-        .expect("Failed to execute command");
-
-    if !status.success() {
-        exit(status.code().unwrap_or(1));
-    }
-}
-
-fn print_boot_help() {
-    println!("flz boot - Boot/recovery commands");
-    println!();
-    println!("USAGE:");
-    println!("    flz boot <COMMAND>");
-    println!();
-    println!("COMMANDS:");
-    println!(
-        "    status                    Print per-namespace recovery state and registry counts"
-    );
-    println!("    await [--timeout SECS]    Block until every namespace hub reports :normal");
-    println!("    import-legacy-snapshot <file> [--force]");
-    println!("                              Import a legacy `.flz` snapshot into ProcessHub's persistent registry");
-    println!("    help                      Show this help message");
 }

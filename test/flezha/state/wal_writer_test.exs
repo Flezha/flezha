@@ -4,7 +4,7 @@ defmodule Flezha.State.WalWriterTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.State.{Metrics, Paths, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Metrics, Paths, RecordFrame, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
@@ -24,7 +24,7 @@ defmodule Flezha.State.WalWriterTest do
   describe "encode/decode round-trip" do
     test "encode_record produces a byte-identical, crc-valid record", %{} do
       header = TestHelpers.stub_header()
-      bytes = WalWriter.encode_record(7, header, "hello")
+      bytes = RecordFrame.encode_record(7, header, "hello")
 
       assert <<7::64-big, len::32-big, ^header::binary, "hello", crc::32-big>> = bytes
       assert len == 16 + byte_size("hello")
@@ -34,11 +34,11 @@ defmodule Flezha.State.WalWriterTest do
     test "decode_record/2 reads the same record back", %{base: base} do
       path = Path.join(base, "round_trip.bin")
       header = TestHelpers.stub_header()
-      bytes = WalWriter.encode_record(42, header, "payload-bytes")
+      bytes = RecordFrame.encode_record(42, header, "payload-bytes")
       File.write!(path, bytes)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
-      assert {:ok, 42, ^header, "payload-bytes", consumed} = WalWriter.decode_record(dev, 0)
+      assert {:ok, 42, ^header, "payload-bytes", consumed} = RecordFrame.decode_record(dev, 0)
       assert consumed == byte_size(bytes)
 
       :file.close(dev)
@@ -47,14 +47,14 @@ defmodule Flezha.State.WalWriterTest do
     test "decode_record/2 detects crc mismatch", %{base: base} do
       path = Path.join(base, "corrupt.bin")
       header = TestHelpers.stub_header()
-      record = WalWriter.encode_record(1, header, "x")
+      record = RecordFrame.encode_record(1, header, "x")
       prefix_size = byte_size(record) - 1
       <<prefix::binary-size(^prefix_size), _last>> = record
 
       File.write!(path, prefix <> <<0>>)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
-      assert {:error, :crc_mismatch} = WalWriter.decode_record(dev, 0)
+      assert {:error, :crc_mismatch} = RecordFrame.decode_record(dev, 0)
       :file.close(dev)
     end
 
@@ -63,7 +63,7 @@ defmodule Flezha.State.WalWriterTest do
       File.write!(path, <<1::64-big, 100::32-big>>)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
-      assert {:error, :short_read} = WalWriter.decode_record(dev, 0)
+      assert {:error, :short_read} = RecordFrame.decode_record(dev, 0)
       :file.close(dev)
     end
   end
@@ -217,8 +217,8 @@ defmodule Flezha.State.WalWriterTest do
 
       # File should be truncated back to the end of the last valid record.
       {:ok, info} = :file.read_file_info(Paths.wal_path(pid))
-      r1 = WalWriter.encode_record(0, header, "a")
-      r2 = WalWriter.encode_record(1, header, "bb")
+      r1 = RecordFrame.encode_record(0, header, "a")
+      r2 = RecordFrame.encode_record(1, header, "bb")
       assert elem(info, 1) == byte_size(r1) + byte_size(r2)
     end
   end
@@ -235,8 +235,8 @@ defmodule Flezha.State.WalWriterTest do
 
       # File now contains records 4 and 5 only.
       {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
-      assert {:ok, 4, _, "x4", c1} = WalWriter.decode_record(dev, 0)
-      assert {:ok, 5, _, "x5", _} = WalWriter.decode_record(dev, c1)
+      assert {:ok, 4, _, "x4", c1} = RecordFrame.decode_record(dev, 0)
+      assert {:ok, 5, _, "x5", _} = RecordFrame.decode_record(dev, c1)
       :file.close(dev)
     end
   end
@@ -259,9 +259,9 @@ defmodule Flezha.State.WalWriterTest do
 
       File.write!(
         wal_path,
-        WalWriter.encode_record(0, header, "a") <>
-          WalWriter.encode_record(1, header, "b") <>
-          WalWriter.encode_record(2, header, "c")
+        RecordFrame.encode_record(0, header, "a") <>
+          RecordFrame.encode_record(1, header, "b") <>
+          RecordFrame.encode_record(2, header, "c")
       )
 
       {:ok, srv} = Supervisor.find_or_start(pid)

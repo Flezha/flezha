@@ -95,7 +95,7 @@ header (16 bytes), entity WAL:
 ```
 
 A torn tail — a partial record from a crash mid-write — is detected by the CRC on the forward
-scan at open and truncated. `WalWriter.fold_records/3` is the one place that walk lives; every
+scan at open and truncated. `RecordFrame.fold_records/3` is the one place that walk lives; every
 reader (entity WAL, input log, proc journal, retention rewriter, time-travel) goes through it.
 
 The workflow proc journal reuses byte 0–3 of the header for its **epoch**, which is safe because
