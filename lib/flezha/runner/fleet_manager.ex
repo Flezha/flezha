@@ -9,7 +9,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.FleetSupervisor
   alias Flezha.Runner.StreamSup
-  alias Flezha.Service.Identificator
+  alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
   alias Flezha.Service.PluginManager

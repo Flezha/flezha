@@ -106,7 +106,23 @@ defmodule Mix.Tasks.Bench.Extension do
     IO.puts(String.duplicate("=", 78))
 
     fake_kayrock = spawn(fn -> Process.sleep(:infinity) end)
+    {:ok, worker} = start_fake_producer(fake_kayrock)
+    {:ok, table} = Table.subscribe(Table.new(catalog), "kafka-bench", kafka_plugin(worker))
+    {:ok, _} = Application.ensure_all_started(:telemetry)
 
+    host = spawn(fn -> chain_host_loop(table, ctx) end)
+    {total, send_us, final_qlen} = drive_host(host)
+
+    Process.exit(host, :kill)
+    GenServer.stop(worker)
+    Process.exit(fake_kayrock, :kill)
+
+    report_chain(total, send_us, final_qlen)
+  end
+
+  # A producer worker wired to a broker that answers every Produce after 50 ms
+  # and never fails: the point is the mailbox in front of it, not the network.
+  defp start_fake_producer(fake_kayrock) do
     send_fn = fn _w, _r, _ns ->
       Process.sleep(50)
 
@@ -115,9 +131,9 @@ defmodule Mix.Tasks.Bench.Extension do
          responses: [
            %{
              topic: "bench",
-             entity_responses: [
+             partition_responses: [
                %{
-                 entity: 0,
+                 partition: 0,
                  error_code: 0,
                  base_offset: 0,
                  log_append_time: -1,
@@ -130,43 +146,39 @@ defmodule Mix.Tasks.Bench.Extension do
        }}
     end
 
-    {:ok, worker} =
-      ProducerWorker.start_link(
-        plugin_id: "bench",
-        topic: "bench",
-        entity: 0,
-        worker_pid: fake_kayrock,
-        send_fn: send_fn,
-        queue_max: 10_000,
-        queue_overflow: :drop_oldest,
-        linger_ms: 10,
-        idempotent: false,
-        init_producer_id_fn: fn _w, _t -> {:ok, %{producer_id: 1, producer_epoch: 0}} end,
-        metadata_refresh_fn: fn _w, _t -> :ok end,
-        create_topic_fn: fn _w, _t, _o, _to -> :ok end,
-        name: nil
-      )
+    ProducerWorker.start_link(
+      plugin_id: "bench",
+      topic: "bench",
+      partition: 0,
+      worker_pid: fake_kayrock,
+      send_fn: send_fn,
+      queue_max: 10_000,
+      queue_overflow: :drop_oldest,
+      linger_ms: 10,
+      idempotent: false,
+      init_producer_id_fn: fn _w, _t -> {:ok, %{producer_id: 1, producer_epoch: 0}} end,
+      metadata_refresh_fn: fn _w, _t -> :ok end,
+      create_topic_fn: fn _w, _t, _o, _to -> :ok end,
+      name: nil
+    )
+  end
 
-    plugin = %Plugin{
+  defp kafka_plugin(worker) do
+    %Plugin{
       id: "kafka-bench",
       provider: KafkaBenchProvider,
       opts: %{producer_pid: worker},
       subscriptions: [{:on_input, [position: 0]}]
     }
+  end
 
-    {:ok, table} = Table.subscribe(Table.new(catalog), "kafka-bench", plugin)
-
-    {:ok, _} = Application.ensure_all_started(:telemetry)
-
-    host = spawn(fn -> chain_host_loop(table, ctx) end)
-
+  defp drive_host(host) do
     duration_ms = 5_000
     rate_ev_s = 80
     interval_us = div(1_000_000, rate_ev_s)
     total = div(duration_ms * rate_ev_s, 1_000)
 
-    {sample_pid, sample_ref} =
-      spawn_monitor(fn -> sample_mailbox(host, duration_ms) end)
+    {sample_pid, sample_ref} = spawn_monitor(fn -> sample_mailbox(host, duration_ms) end)
 
     {send_us, _} =
       :timer.tc(fn ->
@@ -185,10 +197,10 @@ defmodule Mix.Tasks.Bench.Extension do
       duration_ms + 500 -> :ok
     end
 
-    Process.exit(host, :kill)
-    GenServer.stop(worker)
-    Process.exit(fake_kayrock, :kill)
+    {total, send_us, final_qlen}
+  end
 
+  defp report_chain(total, send_us, final_qlen) do
     IO.puts(
       :io_lib.format("~-48s  ~10w events    ~12w µs total", [
         "drove host @ 80 ev/s",
@@ -200,15 +212,13 @@ defmodule Mix.Tasks.Bench.Extension do
 
     IO.puts("Final host mailbox depth: #{final_qlen}")
 
-    cond do
-      final_qlen <= 1 ->
-        IO.puts("PASS: host mailbox bounded (≤ 1) — chain dispatch is non-blocking.")
-
-      true ->
-        IO.puts(
-          "FAIL: host mailbox is #{final_qlen} — chain dispatch is blocking " <>
-            "(would have grown without bound under sustained input)."
-        )
+    if final_qlen <= 1 do
+      IO.puts("PASS: host mailbox bounded (≤ 1) — chain dispatch is non-blocking.")
+    else
+      IO.puts(
+        "FAIL: host mailbox is #{final_qlen} — chain dispatch is blocking " <>
+          "(would have grown without bound under sustained input)."
+      )
     end
   end
 

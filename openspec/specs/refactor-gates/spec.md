@@ -172,3 +172,127 @@ Once `refactor-6-cli` lands, the area `cli` SHALL be listed under `blocking` in 
 - **WHEN** this change reports its interleaved A/B
 - **THEN** each row SHALL be declared `gate`, `guard` or `direction` with its measured floor before it is run, and a row whose measured floor exceeds the effect being claimed SHALL be recorded as `direction` with the binary's checksum as its evidence rather than run
 
+### Requirement: The plugin area ratchets as blocking, a worker never names its supervisor, and the extension table issues no service call
+
+Once `refactor-5b-plugin` lands, the area `lib/flezha/plugin` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree over the full scan set, so that any later rise in a ratcheted metric for that area fails `scripts/refactor_metrics.py --check`. The area SHALL carry no source file over 800 lines and no production function over 50 lines. No provider worker module SHALL name its own supervisor module or its own provider module, so that the supervisor-worker pair cannot form a dependency cycle; and `Flezha.Plugin.Extension.Table` SHALL name no module under `Flezha.Service`, so that the extension table — a data structure, not a process — leaves the repository's 55-file dependency cycle.
+
+#### Scenario: A plugin-area metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `lib/flezha/plugin` has more files over 800 lines, more production functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, more dependency cycles, more credo warnings, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: A worker reintroduces the supervisor back-edge
+
+- **WHEN** a module under `lib/flezha/plugin/provider/` that is started by `Flezha.Plugin.Provider.WorkerSup` references its supervisor module or its provider module
+- **THEN** that SHALL be treated as a regression of this requirement, because `mix xref graph --format cycles` will report a supervisor-worker cycle that this change removed
+
+#### Scenario: The extension table reaches back into the service layer
+
+- **WHEN** `lib/flezha/plugin/extension/table.ex` or a module under `lib/flezha/plugin/extension/table/` calls any function on a module under `Flezha.Service`
+- **THEN** that SHALL be treated as a regression, because the table re-enters the 55-file cycle the moment it does
+
+#### Scenario: The provider contract is generated once and rendered identically
+
+- **WHEN** `Flezha.Plugin.ProviderBehaviour.__using__/1` injects a function body into a provider module
+- **THEN** that body SHALL delegate to a named function in `Flezha.Plugin.ProviderBehaviour` rather than carry the implementation, except where the body must reach a function private to the provider; and the help text every provider renders SHALL equal, byte for byte, the text captured in `cli/tests/golden/plugin.txt` before the change
+
+#### Scenario: A refactor of the plugin area is measured by rows that can resolve the claim
+
+- **WHEN** this change reports its interleaved A/B
+- **THEN** each row SHALL be declared `gate`, `guard` or `direction` with its measured floor before it is run; a row whose measured floor exceeds the effect being claimed SHALL be recorded as `direction` with the arm's checksum as its evidence rather than run; and the report SHALL state which hot path remains unmeasured because no row could resolve it
+
+#### Scenario: Test consolidation moves a blocking share
+
+- **WHEN** a batch of this change folds test files together in the `test` area
+- **THEN** the resulting `async_false_share` SHALL be no worse than the baseline value, and any fold that reduces the count of `async: true` files SHALL be funded by converting an `async: false` file whose test names no global it needs
+
+### Requirement: The service area ratchets as blocking, and a module name reached over the wire is a public surface
+
+Once `refactor-5c-service` lands, the area `lib/flezha/service` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree over the full scan set, so that any later rise in a ratcheted metric for that area fails `scripts/refactor_metrics.py --check`. The area SHALL carry no source file over 800 lines and no production function over 50 lines.
+
+A module name that another artefact builds into a call it makes at run time — an RPC expression string, a registered process name, a `Mimic.copy` target, a closure propagated to a peer node — is a public surface. A refactor SHALL keep such a name and its exported functions, arities and default arguments unchanged, moving the bodies and delegating rather than renaming, and SHALL prove the surface unchanged by diffing the module's exports before and after rather than by argument.
+
+#### Scenario: A service-area metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `lib/flezha/service` has more files over 800 lines, more production functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, more dependency cycles, more files in its largest cycle, more credo warnings, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: The RPC surface loses a name
+
+- **WHEN** a function name that `cli/src` builds into a `Flezha.Service.CliManager.…` RPC expression is no longer exported by that module at the arity the call site passes
+- **THEN** that SHALL be treated as a regression, and a test SHALL detect it by reading the call sites from `cli/src` rather than from a hand-maintained list
+
+#### Scenario: An extracted sibling calls back through the facade
+
+- **WHEN** a module extracted from `Flezha.Service.CliManager`, `Flezha.Service.OperativeManager` or `Flezha.Service.HubManager` names the module it was extracted from
+- **THEN** that SHALL be treated as a regression, because a call that was local before the split becomes a remote call to a module the test suite may replace, changing which calls a stub intercepts
+
+#### Scenario: A propagated registry closure is bound to a replaceable module
+
+- **WHEN** a function handed to `ProcessHub.Service.ProcessRegistry.update/3` with `propagate: true` is built in, or names, a module listed in `test/test_helper.exs`'s `Mimic.copy` calls
+- **THEN** that SHALL be treated as a regression, because the closure is bound to an in-memory test artefact that does not exist on a peer node
+
+### Requirement: A graph metric counts every member of the graph it reads
+
+A metric derived from a tool's graph output SHALL count every member that output names, including members the tool annotates. Where an annotation is present, the metric SHALL strip it before testing membership, and a self-test SHALL cover an annotated member.
+
+This is the third instance of the instrument reporting better than the truth and saying nothing. `mix xref graph --format cycles` annotates a cycle member whose edge is compile-time or export-time; keeping the annotation on the path made ten of a fifty-six-member cycle invisible to both `cycles` and `max_cycle_files`, and the invisible member was the one edge the area most needed to cut.
+
+#### Scenario: A cycle member carries a compile or export annotation
+
+- **WHEN** `mix xref graph --format cycles` names a member as `<path> (compile)` or `<path> (export)` and that path belongs to an area
+- **THEN** the area's `cycles` and `max_cycle_files` SHALL count it
+
+#### Scenario: The ruler is corrected before the area that depends on it starts
+
+- **WHEN** a metric is found to move against the work an area is about to do
+- **THEN** the correction SHALL land in its own commit before that area's first file moves, with a simulation over the real graph naming every area whose rows move and by how much
+
+### Requirement: A refusal to fold names the difference that forbids it
+
+Where two modules carry near-identical helpers and a refactor folds only part of them, the change SHALL name the parts it did not fold and the observable difference that forbids the fold, so the refusal is not re-proposed as an oversight.
+
+#### Scenario: Two audit emitters differ in one metadata key
+
+- **WHEN** `Flezha.Service.AuditLog` and `Flezha.Service.Observability` share a caller-context guard but emit different metadata
+- **THEN** only the parts whose behaviour is identical SHALL be folded, and the change SHALL record which parts were left and what each emits
+
+### Requirement: The observability and mix areas ratchet as blocking, the registry emits outside its own call, and the bench instrument's contracts are pinned
+
+Once `refactor-5d-observability` lands, the areas `lib/flezha/observability` and `lib/mix` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree over the full scan set, so that any later rise in a ratcheted metric for either area fails `scripts/refactor_metrics.py --check`. Neither area SHALL carry a source file over 800 lines or a production function over 50 lines, and `lib/flezha/observability` SHALL appear in no dependency cycle. `Flezha.Observability.Registry` SHALL make no call that can block while inside one of its own `handle_call/3` clauses. Every bench task's `mix help` output and every machine-readable field of its report SHALL be unchanged by a refactor of that task.
+
+#### Scenario: An area metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `lib/flezha/observability` or `lib/mix` has more files over 800 lines, more production functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, more dependency cycles, more credo warnings, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: The registry emits a signal from inside its own call
+
+- **WHEN** `Flezha.Observability.Registry` handles a call and, while handling it, reaches `Flezha.Observability.Bus.emit/1` or any other function that can perform a synchronous `GenServer.call/3`
+- **THEN** that SHALL be treated as a regression of this requirement, because a sink registered with `overflow: :block` makes the registry unavailable for the duration of its `block_timeout_ms`, and every source registration, sink registration and status change queues behind it
+
+#### Scenario: The observability module graph regains a cycle
+
+- **WHEN** `mix xref graph --format cycles` reports a cycle containing any file under `lib/flezha/observability/`
+- **THEN** that SHALL be treated as a regression, because the area left every cycle in this change and the only back-edge it had was `Registry` naming `Bus`
+
+#### Scenario: A refactor of a bench task changes what an operator or CI reads
+
+- **WHEN** a change edits a module under `lib/mix/tasks/bench` or `lib/mix/tasks/flezha.bench.observability.ex`
+- **THEN** the `mix help` output of every bench task SHALL be byte-identical to a capture taken from the tree before the first edit, and the key set of the JSON report written by `mix bench.roundtrip` and of the `BENCH_RESULT` line printed by `mix bench.workflow` SHALL be unchanged, unless the change states the new key and the consumer it was agreed with
+
+#### Scenario: A refactor moves work across a timed window
+
+- **WHEN** a change extracts a function from a bench task whose body spans a measurement boundary — the assignment of a `System.monotonic_time/1` value that a later expression subtracts from
+- **THEN** that SHALL be refused, because the extraction changes what the instrument measures and no A/B can detect it: both arms would run the new code
+
+#### Scenario: A hot path is claimed unchanged rather than measured
+
+- **WHEN** a change touches `lib/flezha/observability` and claims the Prometheus record funnel is unaffected
+- **THEN** the claim SHALL be supported by a diff showing no hunk inside `Flezha.Observability.Export.PrometheusRegistry`'s recording functions or inside `Flezha.Observability.Signal.metadata_text/1`, and the report SHALL state that no benchmark in the tree can reach that funnel
+
+#### Scenario: A test split moves a blocking share
+
+- **WHEN** a batch of this change splits or folds test files in the `test` area
+- **THEN** the resulting `async_false_share` SHALL be no worse than the baseline value, and any split that adds an `async: false` file SHALL be funded by a file that is `async: true` because it names no global state, not by relabelling one that does
+

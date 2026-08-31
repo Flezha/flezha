@@ -21,8 +21,8 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Plugin
-  alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager

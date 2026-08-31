@@ -3,9 +3,7 @@
 ## Purpose
 
 The observability-foundation capability provides the Flezha Controller's first-class, pluggable subsystem that unifies metrics, events, logs, and in-process trace spans behind one contract. It defines a single signal envelope (`kind` ∈ `:metric | :event | :log | :trace_span`), a `Source` behaviour for producers and a `Sink` behaviour for consumers, an ETS-backed `Registry` enumerating live sources and sinks with per-source cardinality budgets, and a fan-out bus that is non-blocking on the producer side (default policy: drop-with-counter — observability never back-pressures the hot path). The capability ships two default sinks (an in-memory per-source ring buffer queryable via the service API, and a `Phoenix.PubSub` fan-out for a future LiveView UI), a `:logger` handler that bridges Elixir log records onto the bus, and a single dispatching `:telemetry` handler that lifts the existing `[:flezha, ...]` events onto the bus without modifying any call-site. The service-API module `Flezha.Service.Observability` is callable from both the CLI (via `Flezha.Service.CliManager`) and the planned Phoenix UI directly, with a `caller_context` argument on every public function so a future authorization capability can plug in without a breaking API change. External exporters, built-in VM/host probes, and cross-transport trace-context propagation are explicitly out of scope and deferred to follow-up capabilities.
-
 ## Requirements
-
 ### Requirement: Unified signal taxonomy
 
 The observability subsystem SHALL define exactly one signal envelope structure used by all producers and all consumers. The structure SHALL include the fields `kind`, `source`, `name`, `measurements`, `metadata`, and `ts`. The field `kind` SHALL be one of the atoms `:metric`, `:event`, `:log`, or `:trace_span`. The structure SHALL be exposed as a module struct under the foundation namespace and SHALL be the only on-bus signal shape.
@@ -40,15 +38,17 @@ The observability subsystem SHALL define a `Source` contract under which any pro
 
 ### Requirement: Sink contract
 
-The observability subsystem SHALL define a `Sink` contract under which any consumer of signals can be registered. Each Sink SHALL be implemented as a behaviour with at minimum an `init/1` callback and a `handle_signal/2` callback. Each registered Sink SHALL run as a supervised process under a dedicated DynamicSupervisor using a one-for-one strategy so that one Sink crash does not affect peer Sinks or producers.
+The observability subsystem SHALL define a `Sink` contract under which any consumer of signals can be registered. Each Sink SHALL be a process that receives each accepted signal as the message `{:signal, signal}` and SHALL export `config_schema/0` and `filter/0`, which the registry consults before the sink process is started. Each registered Sink SHALL run as a supervised process under a dedicated DynamicSupervisor using a one-for-one strategy so that one Sink crash does not affect peer Sinks or producers.
+
+The contract names the message rather than a callback because that is the mechanism the bus uses: the bus sends `{:signal, signal}` to the sink's pid, asynchronously under the `:drop` overflow policy and as a synchronous call under `:block`. A behaviour callback in place of the message would be a second delivery mechanism, and a sink that has to serve a mailbox anyway cannot be reached by one.
 
 #### Scenario: Sink receives every signal that passes its filter
 - **WHEN** a sink is registered with filter `kinds: [:metric]` and a `:metric` signal is emitted
-- **THEN** the sink's `handle_signal/2` SHALL be invoked exactly once with that signal
+- **THEN** the sink process SHALL receive `{:signal, signal}` exactly once with that signal
 
 #### Scenario: Sink filter excludes non-matching signal
 - **WHEN** a sink is registered with filter `kinds: [:metric]` and a `:log` signal is emitted
-- **THEN** the sink's `handle_signal/2` SHALL NOT be invoked
+- **THEN** the sink process SHALL NOT receive that signal
 
 #### Scenario: Crashing sink does not affect peer sinks
 - **WHEN** sink A is registered to crash on every signal, sink B is registered as well, and a signal is emitted
@@ -57,6 +57,10 @@ The observability subsystem SHALL define a `Sink` contract under which any consu
 #### Scenario: Crashing sink does not affect producers
 - **WHEN** a sink crashes during dispatch of a signal
 - **THEN** the producer's emit call SHALL return normally and SHALL NOT raise
+
+#### Scenario: A declared contract has no implementation behind it
+- **WHEN** the `Sink` behaviour declares a callback that no module in the tree invokes
+- **THEN** that callback SHALL be removed rather than left declared, because a contract nothing enforces teaches a mechanism that does not exist and every implementer writes a stub for it
 
 ### Requirement: Registry tracks live sources and sinks
 
@@ -99,12 +103,16 @@ The bus SHALL dispatch signals from producers to sinks without blocking the prod
 - **THEN** the signal SHALL NOT be delivered to that sink, the sink's `:dropped_count` SHALL increment by `1`, and the producer SHALL return immediately
 
 #### Scenario: Producer is never blocked by a slow sink under default policy
-- **WHEN** a sink is intentionally slow (sleeps in `handle_signal/2`) and a producer emits 1,000 signals in rapid succession
+- **WHEN** a sink is intentionally slow (it parks on receiving `{:signal, signal}`) and a producer emits 1,000 signals in rapid succession
 - **THEN** the producer SHALL complete all 1,000 emits in bounded time and SHALL NOT exceed the time taken by 1,000 emits when the slow sink is absent by more than a fixed small constant (registry lookup + `Process.info/2` check)
 
 #### Scenario: Block policy is opt-in
 - **WHEN** a sink is registered with `overflow: :block` and its mailbox is at watermark
 - **THEN** producer emits targeted at the sink SHALL synchronously wait until the sink accepts the message; no drop counter SHALL increment for that sink
+
+#### Scenario: The registry itself is the producer
+- **WHEN** the observability registry needs a signal emitted as a consequence of a call it is handling
+- **THEN** the emit SHALL happen in the calling producer's process and not inside the registry's own `handle_call/3`, because a sink registered with `overflow: :block` would otherwise hold the registry for its whole `block_timeout_ms` and every source registration, sink registration and status change would queue behind it
 
 ### Requirement: Default ring-buffer sink
 
@@ -262,3 +270,4 @@ The producer-side emit function SHALL be allocation-light: it SHALL accept `meas
 #### Scenario: Emit accepts map measurements without conversion
 - **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{operative: "r"}`
 - **THEN** the signal SHALL be delivered without the producer being required to convert the maps to lists or keyword lists
+

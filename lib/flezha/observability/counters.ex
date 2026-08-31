@@ -47,8 +47,17 @@ defmodule Flezha.Observability.Counters do
   end
 
   @doc """
+  The class of a caught error: the exception's module, the `:exit` / `:throw`
+  kind, or the term itself. Half the key `first_seen?/1` is asked about.
+  """
+  @spec error_class(term()) :: term()
+  def error_class(%{__struct__: mod}), do: mod
+  def error_class({kind, _reason}) when kind in [:exit, :throw], do: kind
+  def error_class(other), do: other
+
+  @doc """
   Returns `true` the first time `class` is seen, `false` thereafter.
-  Used to log dispatch failures once per unique error class.
+  A caller logs a dispatch failure once per unique error class.
   """
   @spec first_seen?(term()) :: boolean()
   def first_seen?(class) do

@@ -13,7 +13,7 @@ defmodule Flezha.Convergence.RecoveryGateTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.{Intent, RecoveryGate, Snapshot}
-  alias Flezha.Service.Identificator
+  alias Flezha.Identificator
   alias FlezhaTest.Helper.NodeTestHelper
 
   describe "ready_namespaces/1" do

@@ -20,15 +20,6 @@ defmodule Flezha.Observability.AuditLog.Retention do
 
   @audit_source :audit_log
 
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
-      type: :worker
-    }
-  end
-
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end

@@ -2,28 +2,18 @@ defmodule Flezha.Observability.AuditLog.Sink do
   @moduledoc """
   Durable audit sink.
 
-  Subscribes to the foundation bus under the `:audit_log` registry
-  name with overflow policy `:block`. The foundation Bus filter is
-  coarse (`kinds: :any, sources: :any`); the fine-grained
-  `(source, name | :any)` allow-list is applied inside the handler
-  so policy decisions stay inside the sink.
+  Registered as `:audit_log` with overflow `:block`. The bus filter is
+  coarse (`kinds: :any, sources: :any`) and the fine-grained
+  `(source, name | :any)` allow-list is applied inside the handler, so
+  the policy decision stays in the sink.
 
-  Default allow-list:
+  `Codec.encode/1` then a synchronous `Writer.write/1`: the
+  `GenServer.call` chain from producer through sink to writer is what
+  makes `:block` back-pressure end to end. Once the Writer is closed,
+  signals are discarded against a `:post_close_dropped` counter.
 
-      [{:observability_service, :any},
-       {:flezha_shutdown, :any},
-       {:flezha_plugin_installer, :any}]
-
-  Extended at runtime via `:audit_log, :extra_subscriptions`.
-
-  Records are encoded via `Codec.encode/1` and handed to `Writer.write/1`
-  synchronously; the `GenServer.call` chain from the producer through
-  the sink to the writer gives the `:block` overflow policy
-  end-to-end back-pressure under sustained load.
-
-  Post-close gate: once the Writer is closed (graceful shutdown),
-  signals are discarded and a per-sink `:post_close_dropped` counter
-  is incremented.
+  The default allow-list and `:extra_subscriptions`:
+  `docs/operations/audit_log.md`.
   """
 
   use GenServer
@@ -56,24 +46,12 @@ defmodule Flezha.Observability.AuditLog.Sink do
   # ---------- Sink behaviour ----------
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
   def filter(), do: %{kinds: :any, sources: :any}
 
   # ---------- GenServer ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
-      type: :worker
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

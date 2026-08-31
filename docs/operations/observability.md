@@ -53,6 +53,11 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   discarded — the only handle on that loss from outside the runner);
   gauge `credit_ledger_level`. No bytes in/out. Reading them:
   [../internals/transport_liveness.md](../internals/transport_liveness.md).
+  **The driver self-report is UDS-only, and that is an operator-visible hole.** The QUIC driver
+  produces no `DriverStats` at all, so on a QUIC controller every `driver_*` metric above is emitted
+  zero times — including `driver_write_buffer_dropped`, the send-buffer loss counter. A QUIC
+  deployment is therefore not covered by this source's data-plane half, and a green `/healthz` on
+  QUIC is not evidence about its transport. Tracked as KI-72.
 - `:flezha_bounded_mailbox` (`[:metric, :event]`, 1_000 ms, 5_000) — registered so it shows in
   `flz observe sources`; emits one `:bounded_mailbox_unavailable` event (`metadata.reason:
   :nif_surface_pending`) on its first poll and nothing else — its poll body (`poll_mailboxes/0`)
@@ -249,17 +254,41 @@ still fans out, unchecked. A `kind` outside the registered `kinds` is dropped an
 `:source_kind_violation` event on `:observability_registry` (`metadata: %{source, attempted_kind}`).
 
 The shipped pollers are GenServers built with `use Flezha.Observability.OtpBackend.Source,
-source: :name, default_poll_ms: n` (injects `child_spec/1`, `start_link/1` and `poll_interval_ms/0`
+source: :name, default_poll_ms: n` (injects `start_link/1` and `poll_interval_ms/0`
 honouring `:otp_backend` → `:poll_intervals`); each registers itself in `init/1` and schedules its own
 `:poll`. The built-in list is `@sources` in `OtpBackend.Supervisor`; a third-party poller runs under its
 own supervisor or via `DynamicSupervisor.start_child/2` on `Flezha.Observability.SourceSupervisor`.
-The `Flezha.Observability.Source` behaviour (`init/1`, `config_schema/0` required; `handle_poll/2`,
-`handle_signal/2` optional) declares the callback shape, but no foundation driver invokes
-`handle_poll/2` — a poller drives itself.
+The `Flezha.Observability.Source` behaviour declares `init/1` and `config_schema/0`. No foundation
+driver calls a source back at all — a poller drives itself — so the behaviour is documentation of the
+shape, not a dispatch contract.
+
+A process-backed source in full — it registers itself, arms its own tick, and emits from it:
+
+```elixir
+defmodule MyPolledSource do
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @impl true
+  def init(_opts) do
+    Registry.register_source(%{name: :mine, kinds: [:metric], flavour: :process_backed})
+    Process.send_after(self(), :poll, 1_000)
+    {:ok, %{count: 0}}
+  end
+
+  @impl true
+  def handle_info(:poll, state) do
+    Bus.emit(Signal.new(%{kind: :metric, source: :mine, name: :ticks}))
+    Process.send_after(self(), :poll, 1_000)
+    {:noreply, %{state | count: state.count + 1}}
+  end
+end
+```
 
 ### Sink contract
 
-A sink implements `Flezha.Observability.Sink` — `handle_signal/2`, `config_schema/0` and `filter/0`
+A sink implements `Flezha.Observability.Sink` — `config_schema/0` and `filter/0`
 returning `%{kinds: :any | [kind], sources: :any | [atom]}` — and is registered with
 `Registry.register_sink(%{name, module, config, overflow, mailbox_high_watermark, block_timeout_ms})`,
 which checks that the module is loaded and exports `config_schema/0` and `filter/0`, that every schema
@@ -269,12 +298,38 @@ key is present in `config` (`{:error, {:missing_config_keys, keys}}` otherwise),
 
 Delivery is a raw message, not a callback: under `:drop` the bus sends `{:signal, signal}`
 (handle it in `handle_info/2`); under `:block` it issues
-`GenServer.call(pid, {:signal, signal}, block_timeout_ms)` (handle it in `handle_call/3`). The
-foundation never calls `handle_signal/2`; the built-in sinks implement it as a pass-through.
+`GenServer.call(pid, {:signal, signal}, block_timeout_ms)` (handle it in `handle_call/3`).
 `Registry.register_external_sink/1` inserts a row for a sink whose process another supervisor
 owns (pass `pid`; this is how the exporters register); `unregister_sink/1` terminates a
 `SinkSupervisor` child and removes the row. `Registry.sink_counter(name, :dropped | :crashes)`
 reads the per-sink counters; `:dropped` increments on every watermark drop.
+
+`filter/0` is consulted before the bus sends, so a sink never sees a signal it did not ask for.
+`:kinds` is `:any` or a list of `Flezha.Observability.Signal.kinds/0`; `:sources` is `:any` or a
+list of source atoms — `%{kinds: [:metric, :event], sources: :any}`, `%{kinds: [:log], sources: [:logger]}`.
+
+A sink in full:
+
+```elixir
+defmodule MyCounterSink do
+  use GenServer
+  @behaviour Flezha.Observability.Sink
+
+  @impl Flezha.Observability.Sink
+  def config_schema, do: %{}
+
+  @impl Flezha.Observability.Sink
+  def filter, do: %{kinds: :any, sources: :any}
+
+  @impl GenServer
+  def init(_config), do: {:ok, %{count: 0}}
+
+  @impl GenServer
+  def handle_info({:signal, _signal}, %{count: c} = state) do
+    {:noreply, %{state | count: c + 1}}
+  end
+end
+```
 
 ### Registry
 

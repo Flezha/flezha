@@ -1,31 +1,18 @@
 defmodule Flezha.Observability.Export.OtlpCodec do
   @moduledoc """
-  Hand-rolled protobuf wire-format encoder for the subset of OTLP/HTTP
-  messages the OTLP sink needs.
+  Hand-rolled protobuf encoder for the OTLP/HTTP messages the OTLP sink
+  sends: `ExportMetricsServiceRequest`, `ExportLogsServiceRequest` and
+  `ExportTraceServiceRequest`, v1 schema, only the fields the
+  `Flezha.Observability.Signal` shape populates.
 
-  Implements only the fields actually populated by the Flezha
-  `Flezha.Observability.Signal` shape. The output matches the OpenTelemetry
-  v1 protobuf schema for
-  `opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest`,
-  `…logs.v1.ExportLogsServiceRequest`,
-  `…trace.v1.ExportTraceServiceRequest`.
+  Deliberately minimal — no varint table, no schema introspection. Each
+  public function documents the field-number → wire-type mapping it
+  emits. Timestamps are absolute nanoseconds since the Unix epoch;
+  Signal carries monotonic microseconds and this module converts.
 
-  All timestamps are absolute nanoseconds since the Unix epoch — Signal
-  carries `System.monotonic_time(:microsecond)`, which we convert via
-  `System.monotonic_to_system_time/2` per the OTLP spec.
-
-  The encoder is intentionally minimal — no varint table-driven
-  generation, no proto schema introspection. Each public function
-  documents the field-number → wire-type mapping it emits, mirroring
-  the upstream `.proto` definitions.
-
-  Attribute keys and values cross as OTLP strings, and a signal's metadata
-  holds arbitrary terms. Every one of them is representable: a UTF-8 binary is
-  used unchanged, an atom, integer or float takes its `String.Chars` rendering,
-  and anything else — a map, a tuple, a pid, **a list**, a binary that is not
-  valid UTF-8 — is inspected in full. Encoding therefore never raises on the
-  shape of an attribute, never silently re-encodes one, and never puts bytes a
-  protobuf `string` field cannot carry on the wire. See
+  One invariant: encoding never raises on the shape of an attribute and
+  never puts bytes a protobuf `string` cannot carry on the wire. Every
+  term is representable through
   `Flezha.Observability.Signal.metadata_text/1`.
   """
 

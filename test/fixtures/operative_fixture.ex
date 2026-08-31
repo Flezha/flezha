@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Fixtures.OperativeFixture do
+  alias Flezha.Identificator
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
 
   use Flezha.Constant

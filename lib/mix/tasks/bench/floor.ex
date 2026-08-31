@@ -4,9 +4,8 @@ defmodule Mix.Tasks.Bench.Floor do
   @shortdoc "Print the recorded BENCH_FLOOR_MSG_PER_SEC from docs/operations/benchmarking.md"
   @moduledoc """
   Prints the `BENCH_FLOOR_MSG_PER_SEC` value recorded in
-  `docs/operations/benchmarking.md` to stdout. Used by the `bench-regression` CI job
-  per `operative-bench-harness/design.md` Decision 6 to fetch the floor at
-  runtime instead of hard-coding it in workflow YAML.
+  `docs/operations/benchmarking.md` to stdout. The `bench-regression` CI job reads
+  it at runtime so the floor is not hard-coded in workflow YAML as well.
 
   Output format: a single integer line with no surrounding whitespace.
   Exits non-zero if the doc is missing or the value cannot be parsed.

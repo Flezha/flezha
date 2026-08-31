@@ -7,8 +7,8 @@ defmodule Flezha.Observability.Export.OtlpClient do
   against the system CA store).
 
   Applies bounded exponential backoff on transient failures
-  (`5xx`, `:econnrefused`, `:timeout`) per proposal D8: 250 ms, 500,
-  1_000, 2_000, 4_000 (cap), max 5 attempts. Sets
+  (`5xx`, `:econnrefused`, `:timeout`): 250 ms, 500, 1_000, 2_000,
+  4_000 (cap), max 5 attempts. Sets
   `Content-Type: application/x-protobuf` on every request and
   injects any configured `:otlp_headers`.
   """
@@ -22,15 +22,6 @@ defmodule Flezha.Observability.Export.OtlpClient do
   alias Flezha.Http.Client, as: HttpClient
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

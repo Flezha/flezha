@@ -15,8 +15,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.Identificator
   alias Flezha.Runner.StreamChannel
-  alias Flezha.Service.Identificator
   alias Flezha.State.Metrics
   alias Flezha.State.TestHelpers
   alias Flezha.State.WalWriter

@@ -4,36 +4,81 @@ defmodule Flezha.Observability.OtpBackend.Source do
   (`:beam_vm`, `:host`, `:processhub`, `:flezha_transport`,
   `:flezha_bounded_mailbox`).
 
-  `use Flezha.Observability.OtpBackend.Source, source: :name, default_poll_ms: N`
-  injects `child_spec/1`, `start_link/1`, the `@source` / `@default_poll_ms`
-  attributes, and `poll_interval_ms/0` (per-source override under
-  `:flezha, :observability, :otp_backend, :poll_intervals`, else default).
-  The using module supplies its own `init/1`, `handle_info/2`, and collection
-  logic.
+  `use Flezha.Observability.OtpBackend.Source, source: :name, kinds: [...],
+  cardinality_budget: N, default_poll_ms: N` injects the whole lifecycle:
+  `start_link/1`, `init/1` (registers the source and arms the first tick),
+  `handle_info(:poll, …)` with its catch-all, and `poll_interval_ms/0`
+  (per-source override under `:flezha, :observability, :otp_backend,
+  :poll_intervals`, else the default).
+
+  A source supplies only what varies: `init_state/1` for state beyond
+  `:interval`, and `poll/1`, which does the work and returns the new state.
+  Both are overridable, so a source that needs neither writes neither.
   """
 
-  defmacro __using__(opts) do
-    source = Keyword.fetch!(opts, :source)
-    default_poll_ms = Keyword.fetch!(opts, :default_poll_ms)
+  @doc "State the source needs beyond `:interval`, built at `init/1`."
+  @callback init_state(opts :: term()) :: map()
 
+  @doc "One poll. Emits, and returns the state the next tick sees."
+  @callback poll(state :: map()) :: map()
+
+  defmacro __using__(opts) do
     quote do
       use GenServer
 
-      @source unquote(source)
-      @default_poll_ms unquote(default_poll_ms)
+      @behaviour Flezha.Observability.OtpBackend.Source
 
-      def child_spec(opts) do
-        %{
-          id: __MODULE__,
-          start: {__MODULE__, :start_link, [opts]},
-          restart: :permanent,
-          type: :worker
-        }
-      end
+      @source unquote(Keyword.fetch!(opts, :source))
+      @kinds unquote(Keyword.fetch!(opts, :kinds))
+      @cardinality_budget unquote(Keyword.fetch!(opts, :cardinality_budget))
+      @default_poll_ms unquote(Keyword.fetch!(opts, :default_poll_ms))
 
+      unquote(driven_half())
+      unquote(source_half())
+    end
+  end
+
+  # What the foundation drives: start, register, arm the first tick, and keep
+  # re-arming it. A source never writes any of this.
+  defp driven_half() do
+    quote do
       def start_link(opts \\ []) do
         GenServer.start_link(__MODULE__, opts, name: __MODULE__)
       end
+
+      @impl GenServer
+      def init(opts) do
+        Flezha.Observability.Registry.register_source(%{
+          name: @source,
+          kinds: @kinds,
+          flavour: :process_backed,
+          cardinality_budget: @cardinality_budget
+        })
+
+        interval = poll_interval_ms()
+        Process.send_after(self(), :poll, interval)
+        {:ok, Map.put(init_state(opts), :interval, interval)}
+      end
+
+      @impl GenServer
+      def handle_info(:poll, state) do
+        new_state = poll(state)
+        Process.send_after(self(), :poll, state.interval)
+        {:noreply, new_state}
+      end
+
+      def handle_info(_msg, state), do: {:noreply, state}
+    end
+  end
+
+  # What a source may supply, with the answer for one that supplies neither.
+  defp source_half() do
+    quote do
+      @impl Flezha.Observability.OtpBackend.Source
+      def init_state(_opts), do: %{}
+
+      @impl Flezha.Observability.OtpBackend.Source
+      def poll(state), do: state
 
       defp poll_interval_ms() do
         Application.get_env(:flezha, :observability, [])
@@ -41,6 +86,8 @@ defmodule Flezha.Observability.OtpBackend.Source do
         |> Keyword.get(:poll_intervals, %{})
         |> Map.get(@source, @default_poll_ms)
       end
+
+      defoverridable init: 1, handle_info: 2, init_state: 1, poll: 1
     end
   end
 end

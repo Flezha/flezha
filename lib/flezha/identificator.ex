@@ -1,4 +1,4 @@
-defmodule Flezha.Service.Identificator do
+defmodule Flezha.Identificator do
   def child_spec(opts) do
     %{
       id: __MODULE__,
@@ -62,7 +62,7 @@ defmodule Flezha.Service.Identificator do
   def namespace_from_hub(_), do: nil
 
   @doc """
-  Whether `id` has the shape `hub/1` produces. Used to sift hub children
+  Whether `id` has the shape `hub/1` produces. Sifts hub children
   out of a supervisor's child list.
   """
   @spec hub_id?(term()) :: boolean()

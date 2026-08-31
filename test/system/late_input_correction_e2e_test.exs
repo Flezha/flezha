@@ -25,8 +25,8 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Payloader
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Payloader
 
   @moduletag :correction_e2e
   @moduletag timeout: 300_000

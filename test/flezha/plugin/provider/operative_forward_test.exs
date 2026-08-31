@@ -14,11 +14,11 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Config
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin.Extension.{Ctx, Table}
   alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
-  alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
   alias Flezha.State.Outbox
   alias Flezha.State.TestHelpers
@@ -110,7 +110,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   test "the provider is reachable by name, so the CLI can attach it" do
     # The only registry the CLI resolves a `--plugins` / `flz plugin enable`
     # provider id through; absent here, every non-Elixir caller is locked out.
-    assert ConfigManager.get_enabled_plugins()["operative_forward"] ==
+    assert Config.get_enabled_plugins()["operative_forward"] ==
              OperativeForward
   end
 

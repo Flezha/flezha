@@ -2,27 +2,14 @@ defmodule Flezha.Observability.Export.Supervisor do
   @moduledoc """
   Supervisor for the observability exporters (Prometheus, OTLP).
 
-  Sits under `Flezha.Observability.Supervisor`, started AFTER
-  `OtpBackend.Supervisor` so built-in sources exist before exporters
-  register their sink interest. `:one_for_one` so a crash in the
-  Prometheus subtree leaves OTLP running and vice-versa.
+  Started AFTER `OtpBackend.Supervisor`, so the built-in sources exist
+  before an exporter registers its sink interest. `:one_for_one`, so a
+  crash in the Prometheus subtree leaves OTLP running and vice versa;
+  each exporter has its own enable flag and both off means zero
+  children.
 
-  Each exporter has its own enable flag:
-
-    * `:observability_export, :prometheus_enabled` — gates the
-      Prometheus aggregation registry, sink, and HTTP listener.
-    * `:observability_export, :otlp_enabled` — gates the OTLP codec,
-      client, and sink.
-
-  When both flags are `false`, the supervisor starts with zero
-  children. When the master `:observability, :enabled` flag is
-  `false`, the whole foundation tree is suppressed, transitively
-  suppressing this subtree too.
-
-  Also registers the declarative `:observability_export` source on
-  the foundation Registry so the exporters' operational events
-  (`:otlp_batch_flushed`, `:prometheus_scrape`, etc.) participate
-  in the bus fan-out.
+  Also registers the declarative `:observability_export` source, so the
+  exporters' own operational events ride the bus like any other.
   """
 
   use Supervisor

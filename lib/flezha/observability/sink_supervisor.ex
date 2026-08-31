@@ -10,14 +10,6 @@ defmodule Flezha.Observability.SinkSupervisor do
 
   use DynamicSupervisor
 
-  def child_spec(_opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [[]]},
-      type: :supervisor
-    }
-  end
-
   def start_link(_opts) do
     DynamicSupervisor.start_link(__MODULE__, nil, name: __MODULE__)
   end

@@ -31,8 +31,9 @@ defmodule Flezha.Shutdown.Coordinator do
   use GenServer
   require Logger
 
+  alias Flezha.Identificator
   alias Flezha.Observability.AuditLog.Writer
-  alias Flezha.Service.{HubManager, Identificator}
+  alias Flezha.Service.HubManager
   alias Flezha.Shutdown.SignalHandler
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer

@@ -29,24 +29,12 @@ defmodule Flezha.Observability.Export.OtlpSink do
   # ---------- Sink behaviour ----------
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
   def filter(), do: %{kinds: :any, sources: :any}
 
   # ---------- GenServer ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

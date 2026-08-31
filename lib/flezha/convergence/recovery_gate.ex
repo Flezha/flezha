@@ -16,7 +16,8 @@ defmodule Flezha.Convergence.RecoveryGate do
   """
 
   alias Flezha.Convergence.{Intent, Snapshot}
-  alias Flezha.Service.{HubManager, Identificator}
+  alias Flezha.Identificator
+  alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
   require Logger

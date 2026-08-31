@@ -99,9 +99,9 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `119a20d4`, `024daaaa`, `be54a5cc`, `d54b61f4`, `588094e4`, `c5bdc26b` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | **done** | `9bb349dc` (+6) | **files>800 3→0, fn>50 1→0, long_names 2→0, markers 17→0, cycles 2→1, 14 edges cut**; prod_loc +67 ceiling-forced; KI-41+KI-61 red-first; 14th blocking |
-| 5b | Controller `plugin` | `refactor-5b-plugin` | **none (5a dep refuted)** | **implementing** | | |
-| 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | **proposed** (approved) | | |
-| 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | **none (5c dep refuted)** | **proposed** (approved) | | |
+| 5b | Controller `plugin` | `refactor-5b-plugin` | **none (5a dep refuted)** | **done** | `826c227c` (+9) | **cycles 4→0, mcf 3→0, fn>50 9→0, markers 8→0, credo 51→0**, files>800 3→1 by ruling, prod_loc −66; KI-93+KI-95 red-first; 15th blocking |
+| 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | **done** | `a92b79a1` (+7) | **files>800 3→0, fn>50 4→0, markers 4→0, dup 8→0, credo 53→42; 23 edges cut**; cli_manager 4294→15 modules; 16th blocking |
+| 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | **none (5c dep refuted)** | **done** | `a92b79a1` (+5) | **fn>50 2→0 and 13→0, files>800 2→0, cycles 1→0, markers→0**; obs prod_loc −215; 17th+18th blocking |
 | 5e | Controller `operative`, `runner`, `convergence`, rest | `refactor-5e-runtime` | 5d | pending | | |
 | 6 | `cli` | `refactor-6-cli` | 1 | pending | | |
 | 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | pending | | |
@@ -112,13 +112,140 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**AREA 5a IS COMPLETE, archived and committed.** `lib/flezha/plugin` (5b) is on its
-final batches.
+**Two surveys running on the LAST controller block.** Areas 5c and 5d are COMPLETE,
+archived and committed.
 
-| worker | area | segment | state |
+| worker | area | subject | lane |
 |---|---|---|---|
-| `a2d617…` | **5b** `lib/flezha/plugin` | C2 `Wire`, C3 websocket, close-out | running |
-| — | **5a** `lib/flezha/state` | — | **DONE**, lane frozen |
+| `ab214d…` | **5e-a** | `runner` + `operative` — 5 099 lines, 3 files >800, both at `max_cycle_files` **9** | `openspec/changes/refactor-5e-a-runtime/` |
+| `a28626…` | **5e-b** | `convergence`, `sdk`, `authz`, root, `transport`, and eight small trees — ~9 750 lines | `openspec/changes/refactor-5e-b-platform/` |
+
+**5e is split in two because it is 14 846 lines, not the ~10 000 the board estimated.**
+The split is by shape as much as size: 5e-a is a *splitting* job (three files over 800,
+four functions over 50, both trees nine files deep in the cycle), while 5e-b has **one
+file over 800 in 9 750 lines** — its value is cycles, dead code and layering, and its
+brief says so rather than sending a worker hunting splits that are not there.
+
+**Those `max_cycle_files` of 9 are true numbers for the first time**: before KI-98 was
+fixed this afternoon, `runner` and `operative` under-reported at 4 and 1 because every
+compile- or export-annotated member was invisible.
+
+**5e-b's brief carries the dead-code sweep explicitly**, because three areas today found
+genuinely dead code by grep — `Service.Warden` (a never-started GenServer with a typo'd
+ETS table), `Service.PluginHelper`, and `Payloader.construct_operative!/2`, whose removal
+let a file **leave the 63-member cycle outright**. That shape is worth looking for
+deliberately rather than stumbling on.
+
+ Four areas closed today
+(4, 6, 5a, 5b) plus these two — six in one session.
+
+**Next: area 5e** (`runner`, `operative`, `convergence`, `sdk`, `authz`, and the rest,
+~10 000 lines), then 7 (tests, helpers, test apps) and 8 (docs). 5e is the last
+controller area and inherits the 62-file cycle.
+
+### Areas 5c and 5d — DONE — `a92b79a1`, both archived
+
+**Eighteen blocking areas** (`service`, `observability`, `lib/mix` all armed at
+`e0055657`).
+
+| | 5c `service` | 5d `observability` / `lib/mix` |
+|---|---|---|
+| `files_over_800` | **3 → 0** | 0 / **2 → 0** |
+| `functions_over_50` | **4 → 0** | **2 → 0** / **13 → 0** |
+| `narrative_markers` | **4 → 0** | **3 → 0** / **1 → 0** |
+| `duplicate_pairs` (full) | 11 → **3** | 27 → **13** / 3 → **2** |
+| `cycles` | 1 | **1 → 0** / 0 |
+| credo | 53 → **42** | 32 → **31** / 20 → **15** |
+| `prod_loc` | 5 792 → 5 817 (+25) | 4 148 → **3 933** / 3 360 → 3 474 |
+
+**`cli_manager.ex`, 4 294 lines — the largest file in the repository — is fifteen
+modules and a 109-line facade**, largest piece 535. Its module name could not move:
+`Flezha.Service.CliManager` is a **wire identifier** built into RPC strings at 55 sites
+across 14 `cli/src` files. The surface is proved, not assumed — 178 exported pairs → 139,
+and I checked independently that **none of the 20 dropped names is called from `cli/src`**,
+statically or through the seven generic helpers that build a name from a variable. A
+guard test now resolves 67 call sites out of the Rust source and was driven red twice.
+
+**The area's real result is the edge ledger: `lib/flezha/** → service` 60 → 37, twenty-
+three cut, accounted by name** — 17 `Identificator` + 2 `Payloader` + 4 `ConfigManager`.
+`transport → service` and `boot → service` reach **zero**. I re-derived the 17 myself:
+the union at the pre-move commit is exactly 17, one file carrying both alias forms.
+And `payloader.ex` **left the cycle outright** (63 → 62) because the worker checked
+`construct_operative!/2`'s callers instead of believing the design — nothing calls it.
+
+**5d's ledger is one edge, and the metric was its smaller half**: `Registry → Bus`, a
+single `Bus.emit/1` inside `emit_budget_exceeded_event/1`, was also the P2 that let a
+`:block` sink hold the registry for **30 s** while every source registration queued
+behind it on a 5 s default.
+
+**Four defects fixed red-first, three filed.** KI-98 (the ruler), KI-99 + the `Sink`
+callback, KI-97, F1/F3 — and **KI-100** and **KI-101** filed.
+
+**What today proves about the method, in three lines.**
+
+- **Five designed splits were refuted by measurement** before a file moved — 5a's two
+  destinations, 5b's D5/D6/D7, 5c's `hub_manager` and `operative_manager`, 5d's
+  `roundtrip`. Not one shipped wrong. A split nobody checked for cycles is not a design.
+- **The baseline diff caught an unattributed rise for the fifth time today.**
+  `operative credo_warnings` +1 from alias order the rename disturbed: baseline
+  restored rather than committed, cause fixed, area now **two below** its baseline.
+- **A refusal found a defect.** 5d was told to fold four duration renderers, measured
+  first, found **5 of 2 016** inputs disagree, and stopped on its own rule — which is
+  how KI-101 (`in 1.0e3 ms`) was found. Taking a rule literally beat eyeballing two
+  functions that look alike.
+
+### Area 5b — `lib/flezha/plugin` is DONE — `826c227c`, archived
+
+**The fifteenth blocking ratchet.** Ten commits.
+
+| metric | before | after |
+|---|---|---|
+| **`cycles` / `max_cycle_files`** | 4 / 3 | **0 / 0** |
+| `functions_over_50` | 9 | **0** |
+| `narrative_markers` | 8 | **0** |
+| `credo_warnings` | 51 | **0** |
+| `files_over_800` | 3 | **1** (by ruling) |
+| `duplicate_pairs` (full scan) | 14 | **13** |
+| `prod_loc` | 7 581 | **7 515** (−66) |
+
+**No `lib/flezha/plugin` file is in any dependency cycle** — six edges across four
+cycles, each named. The ledger records what the metric hides: **the `:via` inversion
+alone does not cut the kafka and forwarder cycles**, because with the worker→sup edge
+gone the supervisor is an *intermediate* node, not the back-edge. Only the telemetry
+edge closes them.
+
+**Two defects fixed red-first** — KI-93 (`build/1` raising where its own `@callback`
+says it returns: 44 fields across 7 providers → 0 across 9) and KI-95 (the operator-
+facing parameter order coming from the **atom table**, so it varied with what the VM had
+loaded). KI-95's fix also **deleted a mechanism that read `@enforce_keys` out of the text
+of a compiler error message.** **KI-97 filed** — `mix bench.extension` dead since a
+false-positive rename treated a *Kafka* partition as a Flezha Entity.
+
+**Its judgement, which is what the numbers do not show.**
+
+- **Its own plan was the defect, twice.** A1.3/A1.4 would have recreated two modules a
+  landed commit deleted on purpose; it built them, measured a blocking gate red, and
+  **reverted**. Then D5, D6 and D7 were all cyclic as designed — measured before a file
+  moved, all three.
+- **It reported two of its own 24 extractions as behaviour changes**, naming the suite
+  rather than its reading as what caught them. Two-in-twenty-four is the rate to assume;
+  a batch claiming zero is the one to distrust.
+- **It refused four folds with the price stated**, including *"6 lines before, 6 after,
+  and the shared function's answer discarded"* — a helper whose answer you throw away is
+  not shared.
+- **It corrected a figure I had already endorsed** (41 → 44 raising fields), unprompted.
+- **`files_over_800` finishes at 1 and that is the answer**: `producer_worker.ex` at
+  1 322, four genuine mutual lifecycle edges, **no struct to pull** because the state is
+  a bare map. A recorded 1 322 beats a split that re-forms the cycle just removed.
+
+**The task record is honest**: 126 ticked, **18 unticked each with its verdict inline** —
+reverted, refuted, ruled out, refused with its price, condition false, instrument
+produces no number, held and owed. **Two boxes whose own text asserted something now
+known false are marked FALSE in place**, because that text goes into the archive and
+someone will read it as a claim.
+
+**Owed to area 7**: E2.4's three test files over 800 need a shared case module under
+`test/support/`, which area 7 owns. `test` `files_over_800` holds at its baseline 7.
 
 ### Areas 5c and 5d — surveys VERIFIED and APPROVED 2026-08-31
 
@@ -2160,6 +2287,30 @@ rewritten §8. That is the policy working as designed — the cost was found, an
 attributably, for one 7-minute bisect instead of six measured checkpoints.
 
 ## Awaiting the user's decision
+
+### The `Source` behaviour has no implementers — delete it, or make it true?
+
+**What it is.** `Flezha.Observability.Source` declares a behaviour that **nothing in the
+tree implements** — verified: `grep -rn "@behaviour Flezha.Observability.Source"` over
+`lib/` and `test/` returns nothing. The five real sources `use
+OtpBackend.Source`, a macro that never declares it, and none defines `config_schema/0`;
+registration inserts a plain ETS row and never calls `function_exported?`, so nothing
+enforces it either. Filed as **KI-100**.
+
+**Why it is yours.** It is a published extension point in a spec'd subsystem. Whether
+the platform offers third-party observability sources is a product question, not a
+refactor one. The part that actively misleads — two moduledocs asserting the sources
+implement it — is **already fixed** (`374a4031`), so nothing is urgent.
+
+| option | cost |
+|---|---|
+| **Make the claim true** (my recommendation) | the macro declares `@behaviour`, five small `config_schema/0` implementations, registration starts enforcing. Keeps the extension point and removes the false statement |
+| Delete the behaviour | smaller, and gives up a documented third-party seam nobody currently uses |
+| Leave it | free, and the next person to read `source.ex` believes a contract that is not enforced anywhere |
+
+**Recommendation: make it true**, as its own small change after 5d — it preserves the
+surface and is reversible, where deletion is not.
+
 
 ### The Kafka plugin queue still names a mechanism, not a guarantee — F4
 

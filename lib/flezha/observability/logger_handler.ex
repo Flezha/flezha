@@ -1,24 +1,18 @@
 defmodule Flezha.Observability.LoggerHandler do
   @moduledoc """
-  OTP `:logger` handler that converts every log record into a
-  `:log` signal on the observability bus.
+  OTP `:logger` handler turning every log record into a `:log` signal
+  on the observability bus.
 
-  Uses the native `:logger` handler-module API (`log/2`,
-  `adding_handler/1`, `removing_handler/1`) — *not* the deprecated
-  `Logger.Backends`.
+  Uses the native handler-module API (`log/2`, `adding_handler/1`,
+  `removing_handler/1`), never `Logger.Backends`.
 
-  A broken observability subsystem must never lose application logs:
-  if `Bus.emit/1` raises, the handler catches the error, increments
-  `:logger_bridge_failures`, and returns normally so the `Logger`
-  pipeline continues.
-
-  Lifecycle:
-
-    * `start_link/1` installs the handler under id `:flezha_observability`.
-    * `terminate/2` removes the handler when the GenServer stops.
+  One invariant: a broken observability subsystem must never lose an
+  application log. If `Bus.emit/1` raises, the handler catches it,
+  increments `:logger_bridge_failures` and returns normally, so the
+  `Logger` pipeline continues.
   """
 
-  use GenServer
+  use GenServer, restart: :transient
 
   alias Flezha.Observability.{Bus, Counters, Signal}
 
@@ -26,16 +20,6 @@ defmodule Flezha.Observability.LoggerHandler do
   @source :logger
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :transient,
-      type: :worker,
-      shutdown: 5_000
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

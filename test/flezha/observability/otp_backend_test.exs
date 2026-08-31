@@ -190,6 +190,52 @@ defmodule Flezha.Observability.OtpBackendTest do
     end
   end
 
+  # `use Flezha.Observability.OtpBackend.Source` writes every source's
+  # registration and its first state. Read both back — from the registry and
+  # from `init/1` itself — so a change to the macro that moves either fails
+  # here rather than producing a quietly different source.
+  @lifecycle [
+    {BeamVmSource, :beam_vm, [:metric], 50, 1_000, [:last_scheduler_sample]},
+    {HostSource, :host, [:metric, :event], 50, 5_000, [:prev_cpu_jiffies, :status]},
+    {ProcessHubSource, :processhub, [:metric], 200, 1_000, []},
+    {TransportSource, :flezha_transport, [:metric], 40, 1_000, []},
+    {BoundedMailboxSource, :flezha_bounded_mailbox, [:metric, :event], 5_000, 1_000,
+     [:announced?]}
+  ]
+
+  describe "source lifecycle" do
+    test "each source registers what it declares and starts in its own state" do
+      original = Application.get_env(:flezha, :observability, [])
+
+      on_exit(fn ->
+        Application.put_env(:flezha, :observability, original)
+        :erlang.system_flag(:scheduler_wall_time, false)
+      end)
+
+      # An empty override map makes every source fall back to its declared
+      # default, so the intervals below are the defaults and not a neighbour's
+      # leftover `put_env`.
+      Application.put_env(
+        :flezha,
+        :observability,
+        Keyword.put(original, :otp_backend, poll_intervals: %{})
+      )
+
+      for {mod, source, kinds, budget, interval, extra} <- @lifecycle do
+        Registry.unregister_source(source)
+
+        assert {:ok, state} = mod.init([])
+        assert {:ok, row} = Registry.lookup_source(source)
+
+        assert {row.name, row.kinds, row.flavour, row.cardinality_budget} ==
+                 {source, kinds, :process_backed, budget}
+
+        assert state.interval == interval
+        assert Enum.sort(Map.keys(state)) == Enum.sort([:interval | extra])
+      end
+    end
+  end
+
   describe "OtpBackend.Supervisor (already-running instance)" do
     test "the application instance starts with zero children when test config disables the OTP backend" do
       # In :test the runtime config sets otp_backend_enabled: false,

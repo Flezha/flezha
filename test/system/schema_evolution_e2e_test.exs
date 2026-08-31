@@ -26,9 +26,9 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   use FlezhaTest.SystemCase, capability: :schema_evolution
 
   alias Flezha.Operative.Builder
+  alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Payloader
   alias Flezha.State.TestHelpers
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA

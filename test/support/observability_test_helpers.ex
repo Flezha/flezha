@@ -63,9 +63,6 @@ defmodule Flezha.Observability.TestSinks.Counting do
   @behaviour Flezha.Observability.Sink
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{counter_ref: :term, parent: :term}
 
   @impl Flezha.Observability.Sink
@@ -117,9 +114,6 @@ defmodule Flezha.Observability.TestSinks.Slow do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
@@ -159,9 +153,6 @@ defmodule Flezha.Observability.TestSinks.Blocking do
   @behaviour Flezha.Observability.Sink
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{parent: :term}
 
   @impl Flezha.Observability.Sink
@@ -182,9 +173,30 @@ defmodule Flezha.Observability.TestSinks.Blocking do
   def init(opts), do: {:ok, opts}
 
   @impl true
-  def handle_call({:signal, signal}, _from, %{config: %{parent: parent}} = state) do
+  def handle_call({:signal, signal}, from, %{config: config} = state) do
+    parent = Map.get(config, :parent)
     if is_pid(parent), do: send(parent, {:blocked_received, signal})
-    {:reply, :ok, state}
+
+    # `hold: <signal name>` keeps that one signal's caller waiting until the
+    # sink is sent `:release`, so a test can observe what else the emitting
+    # process is holding up meanwhile.
+    if Map.get(config, :hold) == signal.name do
+      {:noreply, Map.put(state, :held, from)}
+    else
+      {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_info(:release, state) do
+    case Map.pop(state, :held) do
+      {nil, state} ->
+        {:noreply, state}
+
+      {from, state} ->
+        GenServer.reply(from, :ok)
+        {:noreply, state}
+    end
   end
 
   @impl true

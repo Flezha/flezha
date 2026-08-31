@@ -24,10 +24,10 @@ defmodule FlezhaTest do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Operative.Replay
-  alias Flezha.Service.Identificator
+  alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.Payloader
+  alias Flezha.Payloader
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.PluginManager

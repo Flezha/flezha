@@ -22,15 +22,6 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
 
   # ---------- Public API ----------
 
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent
-    }
-  end
-
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end

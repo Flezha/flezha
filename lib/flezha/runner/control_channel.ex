@@ -2,7 +2,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Operative.Lifecycle
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Identificator
+  alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Completion

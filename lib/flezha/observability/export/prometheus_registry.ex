@@ -3,20 +3,15 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   In-memory aggregation registers for the Prometheus exporter.
 
   One GenServer owns three protected ETS `:set` tables — counters,
-  gauges, histograms — each keyed by
-  `{source_atom, metric_name_atom, label_tuple}`. The Sink calls
-  `record/1` on signal receipt; the HTTP server calls `render/0` to
-  produce the Prometheus text exposition body via direct ETS reads.
+  gauges, histograms — keyed by
+  `{source, metric_name, label_tuple}`. The sink calls `record/1` per
+  signal; the HTTP server calls `render/0`, which reads ETS directly
+  rather than going through this process.
 
-  Metric type is inferred from `Signal.measurements` keys per
-  proposal D6; producers can override via `metadata.prometheus_type`.
-
-  Per-`{source, name}` value-cardinality cap honours the source's
-  declared `cardinality_budget` (read from the foundation
-  `Flezha.Observability.Registry`). When new label-values would push
-  the metric over budget the registry aggregates the over-budget
-  emit into a synthetic `__truncated__: "true"` series and increments
-  `:prometheus_label_truncations` on the source's counter.
+  A metric's type is inferred from its measurement keys unless
+  `metadata.prometheus_type` says otherwise, and label-values over the
+  source's declared `cardinality_budget` are folded into one synthetic
+  `__truncated__` series rather than dropped.
   """
 
   use GenServer
@@ -61,20 +56,11 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   @truncated_label_value "true"
   @truncated_label_key "__truncated__"
 
-  # Reserved by the histogram renderer: `render_histogram_rows/3` appends its
-  # own `{"le", …}` to every bucket line.
+  # Reserved by the histogram renderer: `histogram_rows/2` appends its own
+  # `{"le", …}` to every bucket line.
   @bucket_label "le"
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -103,9 +89,9 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   def render() do
     ensure_tables!()
 
-    counters = render_counters()
-    gauges = render_gauges()
-    histograms = render_histograms()
+    counters = render_metrics(@counters_tab, "counter", &value_row/2)
+    gauges = render_metrics(@gauges_tab, "gauge", &value_row/2)
+    histograms = render_metrics(@histograms_tab, "histogram", &histogram_rows/2)
 
     series_count =
       :ets.info(@counters_tab, :size) +
@@ -438,67 +424,39 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
 
   # ---------- Rendering ----------
 
-  defp render_counters() do
-    grouped = group_by_metric(@counters_tab)
-
-    Enum.map(grouped, fn {{source, name}, rows} ->
+  # One exposition block per metric name: the two HELP/TYPE header lines, then
+  # the metric's rows in label order. `row` is what a single stored row of this
+  # table renders as — one line for a counter or gauge, a bucket family for a
+  # histogram.
+  defp render_metrics(table, type, row) do
+    table
+    |> group_by_metric()
+    |> Enum.map(fn {{source, name}, rows} ->
       metric_name = exposition_name(source, name)
 
       [
         "# HELP ",
         metric_name,
-        " (counter)\n",
+        " (",
+        type,
+        ")\n",
         "# TYPE ",
         metric_name,
-        " counter\n",
-        Enum.map(Enum.sort_by(rows, fn {labels, _v} -> labels end), fn {labels, value} ->
-          [metric_name, render_labels(labels), " ", format_number(value), "\n"]
-        end)
+        " ",
+        type,
+        "\n",
+        rows
+        |> Enum.sort_by(fn {labels, _v} -> labels end)
+        |> Enum.map(&row.(metric_name, &1))
       ]
     end)
   end
 
-  defp render_gauges() do
-    grouped = group_by_metric(@gauges_tab)
-
-    Enum.map(grouped, fn {{source, name}, rows} ->
-      metric_name = exposition_name(source, name)
-
-      [
-        "# HELP ",
-        metric_name,
-        " (gauge)\n",
-        "# TYPE ",
-        metric_name,
-        " gauge\n",
-        Enum.map(Enum.sort_by(rows, fn {labels, _v} -> labels end), fn {labels, value} ->
-          [metric_name, render_labels(labels), " ", format_number(value), "\n"]
-        end)
-      ]
-    end)
+  defp value_row(metric_name, {labels, value}) do
+    [metric_name, render_labels(labels), " ", format_number(value), "\n"]
   end
 
-  defp render_histograms() do
-    grouped = group_by_metric(@histograms_tab)
-
-    Enum.map(grouped, fn {{source, name}, rows} ->
-      metric_name = exposition_name(source, name)
-
-      [
-        "# HELP ",
-        metric_name,
-        " (histogram)\n",
-        "# TYPE ",
-        metric_name,
-        " histogram\n",
-        Enum.map(Enum.sort_by(rows, fn {labels, _v} -> labels end), fn {labels, state} ->
-          render_histogram_rows(metric_name, labels, state)
-        end)
-      ]
-    end)
-  end
-
-  defp render_histogram_rows(metric_name, labels, state) do
+  defp histogram_rows(metric_name, {labels, state}) do
     bucket_lines =
       Enum.map(state.buckets, fn {ub, hits} ->
         label_pairs = labels ++ [{"le", format_number(ub)}]

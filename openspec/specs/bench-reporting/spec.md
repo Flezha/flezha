@@ -98,3 +98,23 @@ Every bench task SHALL take its logger level from `FLEZHA_BENCH_LOG`, defaulting
 #### Scenario: No suppression layer exists
 - **WHEN** the bench harness is inspected
 - **THEN** no module filters, drops or rewrites log messages emitted by the controller during a bench
+
+### Requirement: A bench task derives its accepted runtime set and states no list of its own
+
+Every bench task SHALL decide which `--runtime` values it accepts by reading the conformance manifests (`test/apps/<runtime>_runner/conformance.json`) at run time, and SHALL refuse a runtime the task cannot measure by naming the capability that runtime's manifest defers and the path of the manifest that says so. No bench task SHALL enumerate runtimes in a clause list, a literal collection, or a documentation line; a per-runtime clause is a list a new SDK has to remember to join, and a task carrying one silently refuses a runtime whose test app already exists.
+
+#### Scenario: A task is asked for a runtime whose manifest defers the capability it measures
+
+- **WHEN** `mix bench.workflow --runtime node` is run and `test/apps/node_runner/conformance.json` lists `workflow` under `deferred`
+- **THEN** the task SHALL refuse by naming `workflow` and the manifest path, and SHALL NOT name a hard-coded set of runtimes in the refusal
+
+#### Scenario: A new SDK gains a test app
+
+- **WHEN** a new `test/apps/<runtime>_runner/conformance.json` is added with an empty `deferred` list
+- **THEN** every bench task SHALL accept that runtime with no edit to any task, because each derives the set from the manifests
+
+#### Scenario: A task carries a runtime list in code
+
+- **WHEN** a module under `lib/mix/tasks/bench` decides an accepted runtime set from a clause list or literal collection rather than from `Flezha.Service.PortPilot.runtimes/0` and the manifest's `deferred` key
+- **THEN** the conformance gate SHALL fail naming that task, the set it enumerates and the set the manifests advertise
+

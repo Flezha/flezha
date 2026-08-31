@@ -20,6 +20,44 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Mix.Tasks.Bench.ElixirFactories
   alias Mix.Tasks.Bench.Report
 
+  @doc """
+  Resolve a `--runtime` value against the SDK test-app manifests.
+
+  `nil` is the default fleet. `capability` is the one this bench cannot run
+  without — a runtime whose manifest defers it is refused, so a new SDK's
+  refusals arrive with its manifest rather than with a clause here.
+  `needed_by` names what asked for the capability, for the refusal text.
+  """
+  @spec parse_runtime(String.t() | nil, atom() | nil, String.t() | nil) :: atom()
+  def parse_runtime(name, capability \\ nil, needed_by \\ nil)
+
+  def parse_runtime(nil, _capability, _needed_by), do: :rust
+
+  def parse_runtime(name, capability, needed_by) do
+    runtimes = PortPilot.runtimes()
+
+    runtime =
+      Enum.find(runtimes, &(Atom.to_string(&1) == name)) ||
+        Mix.raise(
+          "unknown --runtime #{inspect(name)}; expected one of: " <>
+            Enum.map_join(runtimes, ", ", &Atom.to_string/1)
+        )
+
+    deferred = PortPilot.manifest(runtime)["deferred"] || []
+
+    if capability && Atom.to_string(capability) in deferred do
+      asked_for = needed_by || "#{capability} fixture"
+
+      Mix.raise(
+        "--runtime #{runtime} carries no #{asked_for}: its SDK defers " <>
+          "#{capability} (#{PortPilot.manifest_path(runtime)}), so there is no " <>
+          "fixture to measure"
+      )
+    end
+
+    runtime
+  end
+
   @doc "True when `namespace` already has at least one connected runner."
   def runners_available?(namespace) do
     case FleetManager.active_runners(namespace) do

@@ -134,9 +134,13 @@ shape), and one worker pair. Each priced and refused rather than merged.
   three async:false folds took `test` 228 → 223 files with 43 `async: true`
   untouched, landing **0.807**.
 - **All three test files over 800 share a large helper preamble** (http_poll's
-  is a whole fake HTTP origin server, ~250 lines). Splitting any of them needs
-  a shared case module under `test/support/`; duplicating the preamble would
-  add a large jscpd pair to a ratcheted metric. Held, not forced.
+  is a whole fake HTTP origin server, ~250 lines; websocket_subscription_source's
+  ~120; producer_worker's second half needs `start_worker` 16 times, `attach` 8,
+  `dispatched?` 7 and six aliases). Splitting any of them needs a shared case
+  module under `test/support/`; duplicating the preamble would add a large jscpd
+  pair to a ratcheted metric. Held, not forced — and **owed to area 7**, which
+  owns `test/support/` and can build the case module all three need. `test`
+  `files_over_800` holds at its baseline 7, so nothing regressed by waiting.
 - **24 credo `Refactor.Nesting` extractions in one batch, and two were wrong** —
   a `&verify_entry(&1, dir)` capture is arity-1 where `reduce_while` needs 2,
   and that first version read the file TWICE where the original read once; and

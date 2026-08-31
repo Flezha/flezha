@@ -143,8 +143,8 @@ defmodule Mix.Tasks.Bench.Report do
   # A bench run is opened before the controller boots, emitted once the fleet
   # is up (the artifacts block reports what the run will actually launch, and
   # its build has only just produced it), and finished when the numbers exist.
-  # The three tasks used to keep that sequence — and its process-dictionary
-  # keys, its default payload and its log-level lookup — in triplicate.
+  # That sequence lives here, once, with its process-dictionary keys, its
+  # default payload and its log-level lookup.
 
   @doc """
   Open a run: record its title and header rows, mint its id, and apply the

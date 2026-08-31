@@ -12,8 +12,8 @@ defmodule Flezha.Plugin.SpecDecoder do
   `{:invalid_subscription, details}`, `{:invalid_opts, details}`.
   """
 
+  alias Flezha.Config
   alias Flezha.Plugin
-  alias Flezha.Service.ConfigManager
 
   @doc """
   Decode `plugins_json` into plugin structs bound to `namespace` and
@@ -34,7 +34,7 @@ defmodule Flezha.Plugin.SpecDecoder do
         {:ok, []}
 
       {:ok, specs} ->
-        providers = ConfigManager.get_enabled_plugins()
+        providers = Config.get_enabled_plugins()
 
         specs
         |> Enum.reduce_while(

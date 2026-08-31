@@ -2,7 +2,7 @@ defmodule Flezha.Runner.RunnerSupervisor do
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.StreamAcceptor
-  alias Flezha.Service.Identificator
+  alias Flezha.Identificator
 
   use Supervisor
 

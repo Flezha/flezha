@@ -1,47 +1,33 @@
 defmodule Flezha.Service.AuditLog do
   @moduledoc """
-  Service-API surface for the durable audit log.
+  Service-API surface for the durable audit log. Every public function takes a
+  `Flezha.Service.CallerContext` as its last argument.
 
-  Callable from both the CLI (via `Flezha.Service.CliManager.audit_log_*`
-  wrappers) and the planned Phoenix UI. Every public function takes a
-  `caller_context` (last argument) with the same shape and validation
-  as `Flezha.Service.Observability`.
+  Disabled state has two answers: the master flag off
+  (`:observability, :enabled: false`) gives `{:error, :observability_disabled}`,
+  the subsystem flag off (`:audit_log, :enabled: false`) gives
+  `{:error, :audit_log_disabled}`.
 
-  Disabled-state behaviour:
-
-    * Master flag off (`:observability, :enabled: false`) →
-      `{:error, :observability_disabled}`.
-    * Subsystem flag off (`:audit_log, :enabled: false`) →
-      `{:error, :audit_log_disabled}`.
-
-  Every public function emits an `:event` audit-of-audit signal on
-  the `:audit_log` source BEFORE doing the work so reads are
-  themselves auditable.
+  Every public function emits its audit-of-audit `:event` on the `:audit_log`
+  source BEFORE doing the work, so a read is itself auditable.
   """
 
   alias Flezha.AuthZ
   alias Flezha.Observability
-  alias Flezha.Observability.AuditLog.Rotation
-  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.{Reader, Sink, Writer}
+  alias Flezha.Observability.AuditLog.Rotation
+  alias Flezha.Service.CallerContext
 
-  @valid_sources [:cli, :ui, :sdk, :internal]
   @audit_source :audit_log
 
-  @type caller_context :: %{
-          required(:source) => :cli | :ui | :sdk | :internal,
-          optional(:principal) => term() | nil,
-          optional(:request_id) => binary() | nil
-        }
+  @type caller_context :: CallerContext.t()
 
   # ---------- Public API ----------
 
   @spec list_files(caller_context()) :: {:ok, [map()]} | {:error, term()}
   def list_files(caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context),
-         :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
+         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
       emit_audit(:list_files, caller_context, %{})
       {:ok, Writer.catalog()}
     end
@@ -59,9 +45,7 @@ defmodule Flezha.Service.AuditLog do
   @spec read(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
   def read(%{} = params, caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context),
-         :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
+         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
       emit_audit(:read, caller_context, %{file: Map.get(params, :file)})
 
       dir = audit_dir()
@@ -90,9 +74,7 @@ defmodule Flezha.Service.AuditLog do
   @spec tail(map(), caller_context()) :: {:ok, reference()} | {:error, term()}
   def tail(_params, caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context),
-         :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
+         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
       emit_audit(:tail, caller_context, %{})
       Writer.subscribe_tail()
     end
@@ -101,7 +83,7 @@ defmodule Flezha.Service.AuditLog do
   @spec unsubscribe(reference(), caller_context()) :: :ok | {:error, term()}
   def unsubscribe(ref, caller_context) when is_reference(ref) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context),
+         :ok <- CallerContext.validate(caller_context),
          :ok <- AuthZ.require_bound_principal(caller_context) do
       Writer.unsubscribe_tail(ref)
     end
@@ -110,9 +92,7 @@ defmodule Flezha.Service.AuditLog do
   @spec stats(caller_context()) :: {:ok, map()} | {:error, term()}
   def stats(caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context),
-         :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"audit.read", scope_for(caller_context)) do
+         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
       emit_audit(:stats, caller_context, %{})
 
       snapshot = Writer.stats()
@@ -132,9 +112,7 @@ defmodule Flezha.Service.AuditLog do
   @spec rotate(caller_context()) :: {:ok, map()} | {:error, term()}
   def rotate(caller_context) do
     with :ok <- check_enabled(),
-         :ok <- validate_caller(caller_context),
-         :ok <- AuthZ.require_bound_principal(caller_context),
-         :ok <- AuthZ.authorize(caller_context, :"audit.rotate", scope_for(caller_context)) do
+         :ok <- CallerContext.authorize(caller_context, :"audit.rotate") do
       emit_audit(:rotate, caller_context, %{})
 
       case Rotation.rotate_now() do
@@ -145,10 +123,6 @@ defmodule Flezha.Service.AuditLog do
   end
 
   # ---------- AuthZ helpers ----------
-
-  defp scope_for(caller_context) do
-    %{namespace: Map.get(caller_context, :namespace) || "_system"}
-  end
 
   # Filter JSONL records to the caller's namespace except for
   # `admin@_system` and internal callers. Records that pre-date the
@@ -192,32 +166,16 @@ defmodule Flezha.Service.AuditLog do
     end
   end
 
-  defp validate_caller(%{source: src}) when src in @valid_sources, do: :ok
-  defp validate_caller(_), do: {:error, :invalid_caller_context}
-
+  # The principal rides the audit log's own signals and nothing else's, so it
+  # goes on the metadata here rather than into the shared emit.
   defp emit_audit(action, caller_context, extra) do
-    metadata =
-      extra
-      |> Map.put(:action, action)
-      |> Map.put(:caller_source, Map.get(caller_context, :source))
-      |> maybe_put(:request_id, Map.get(caller_context, :request_id))
-      |> maybe_put(:principal, Map.get(caller_context, :principal))
-
-    signal =
-      Signal.new(%{
-        kind: :event,
-        source: @audit_source,
-        name: action,
-        measurements: %{count: 1},
-        metadata: metadata
-      })
-
-    Bus.emit(signal)
-    :ok
+    CallerContext.emit(
+      @audit_source,
+      action,
+      caller_context,
+      CallerContext.put_unless_nil(extra, :principal, Map.get(caller_context, :principal))
+    )
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp audit_dir() do
     Application.get_env(:flezha, :audit_log, [])

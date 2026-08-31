@@ -8,9 +8,9 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   Optional: `:heartbeat_interval` (ms, default 5000).
   """
 
+  alias Flezha.Identificator
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Service.Identificator
   alias Flezha.Service.PluginManager
 
   use GenServer

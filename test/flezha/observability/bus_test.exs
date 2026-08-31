@@ -110,6 +110,126 @@ defmodule Flezha.Observability.BusTest do
     assert_receive {:blocked_received, %Signal{}}, 500
   end
 
+  test "a first budget breach does not hold the registry's own process" do
+    sink = :"obs_bus_budget_hold_sink_#{:erlang.unique_integer([:positive])}"
+
+    {:ok, sink_pid} =
+      Registry.register_sink(%{
+        name: sink,
+        module: Blocking,
+        config: %{parent: self(), hold: :cardinality_budget_exceeded},
+        overflow: :block,
+        block_timeout_ms: 2_000
+      })
+
+    on_exit(fn ->
+      send(sink_pid, :release)
+      Registry.unregister_sink(sink)
+    end)
+
+    src = :"obs_bus_budget_src_#{:erlang.unique_integer([:positive])}"
+
+    :ok =
+      Registry.register_source(%{
+        name: src,
+        kinds: [:metric],
+        flavour: :declarative,
+        cardinality_budget: 1
+      })
+
+    on_exit(fn -> Registry.unregister_source(src) end)
+
+    # First shape fits the budget of 1 and is delivered normally.
+    emit_metric(src, %{a: 1})
+    assert_receive {:blocked_received, %Signal{kind: :metric}}, 500
+
+    # Second shape breaches it. The breach event is dispatched to a `:block`
+    # sink that never answers, so whichever process emits it is held.
+    producer = spawn(fn -> emit_metric(src, %{b: 1}) end)
+    on_exit(fn -> Process.exit(producer, :kill) end)
+
+    assert_receive {:blocked_received,
+                    %Signal{name: :cardinality_budget_exceeded, metadata: %{source: ^src}}},
+                   1_000
+
+    # The held process must not be the Registry: with the sink still holding,
+    # a registration from a third process has to answer promptly.
+    other = :"obs_bus_budget_other_#{:erlang.unique_integer([:positive])}"
+
+    entry = %{
+      name: other,
+      kinds: [:metric],
+      flavour: :declarative,
+      cardinality_budget: 10
+    }
+
+    {elapsed_us, result} =
+      :timer.tc(fn ->
+        try do
+          GenServer.call(Registry, {:register_source, entry}, 500)
+        catch
+          :exit, {:timeout, _} -> :registry_blocked
+        end
+      end)
+
+    on_exit(fn -> Registry.unregister_source(other) end)
+    send(sink_pid, :release)
+
+    assert result == :ok
+    assert elapsed_us < 250_000
+  end
+
+  test "a disabled :observability_registry suppresses the kind-violation event" do
+    src = :"obs_bus_kv_disabled_#{:erlang.unique_integer([:positive])}"
+    marker = :"obs_bus_kv_marker_#{:erlang.unique_integer([:positive])}"
+
+    for {name, kinds} <- [{src, [:metric]}, {marker, [:event]}] do
+      :ok =
+        Registry.register_source(%{
+          name: name,
+          kinds: kinds,
+          flavour: :declarative
+        })
+
+      on_exit(fn -> Registry.unregister_source(name) end)
+    end
+
+    sink_name = :"obs_bus_kv_disabled_sink_#{:erlang.unique_integer([:positive])}"
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: sink_name,
+        module: Counting,
+        config: %{
+          counter_ref: :counters.new(1, [:atomics]),
+          parent: self(),
+          sources: [:observability_registry, marker]
+        }
+      })
+
+    on_exit(fn -> Registry.unregister_sink(sink_name) end)
+
+    marker_signal = Signal.new(%{kind: :event, source: marker, name: :marker})
+    violating_signal = Signal.new(%{kind: :log, source: src, name: :uh_oh})
+
+    # Enabled: the violation event is delivered — the positive control that
+    # makes the refutation below load-bearing.
+    Bus.emit(violating_signal)
+    Bus.emit(marker_signal)
+
+    assert Enum.any?(drain_counted(500), &(&1.name == :source_kind_violation))
+
+    :ok = Registry.disable_source(:observability_registry)
+    on_exit(fn -> Registry.enable_source(:observability_registry) end)
+
+    Bus.emit(violating_signal)
+    Bus.emit(marker_signal)
+
+    seen = drain_counted(500)
+    assert Enum.any?(seen, &(&1.name == :marker))
+    refute Enum.any?(seen, &(&1.name == :source_kind_violation))
+  end
+
   test "kind violation: source emits a kind it did not declare" do
     src = :"obs_bus_kind_violation_#{:erlang.unique_integer([:positive])}"
 

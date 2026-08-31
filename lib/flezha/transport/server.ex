@@ -27,8 +27,8 @@ defmodule Flezha.Transport.Server do
     correct StreamChannel based on the most recently established compute engine.
   """
 
-  alias Flezha.Service.Identificator
-  alias Flezha.Service.Payloader
+  alias Flezha.Identificator
+  alias Flezha.Payloader
   alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream

@@ -17,20 +17,20 @@ defmodule Flezha.Operative.Lifecycle do
   and its callbacks; this owns what happens between them.
   """
 
+  alias Flezha.Config
+  alias Flezha.Identificator
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
+  alias Flezha.Payloader
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamSup
-  alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Payloader
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.PersistenceResolver
@@ -501,7 +501,7 @@ defmodule Flezha.Operative.Lifecycle do
     do: Application.get_env(:flezha, :overwatch_runner_wait_ms, 30_000)
 
   # The runner's control unit GenServer registers itself in
-  # `Flezha.Service.Identificator` as the first child of its supervision
+  # `Flezha.Identificator` as the first child of its supervision
   # tree (`RunnerSupervisor.init/1` → `ControlUnit.start_link/1`).
   # Registration alone is NOT sufficient: a SIGKILL'd runner can leave
   # the cu registered as a zombie (the `{:flz_closed}` disconnect never
@@ -889,7 +889,7 @@ defmodule Flezha.Operative.Lifecycle do
 
   defp attach_channel(operative_id, runner_id) do
     operative_int = String.to_charlist(operative_id) |> Enum.sum()
-    count = ConfigManager.concurrent_channel_count()
+    count = Config.concurrent_channel_count()
     channel_index = rem(operative_int, count)
 
     StreamSup.stream_ids(runner_id, :primary) |> Enum.at(channel_index)

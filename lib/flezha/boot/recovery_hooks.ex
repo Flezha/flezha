@@ -26,7 +26,7 @@ defmodule Flezha.Boot.RecoveryHooks do
 
   require Logger
 
-  alias Flezha.Service.Identificator
+  alias Flezha.Identificator
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
 

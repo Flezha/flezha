@@ -3,7 +3,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Payloader
+  alias Flezha.Payloader
   alias Flezha.State.TestHelpers
 
   use ExUnit.Case

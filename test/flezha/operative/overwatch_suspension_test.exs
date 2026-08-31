@@ -17,9 +17,9 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Identificator
   alias Flezha.Operative.{Builder, ClassRegistry, Overwatch}
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Service.Identificator
   alias Flezha.State.{ProcInbox, ProcJournal, TestHelpers}
 
   setup :set_mimic_global_until_exit

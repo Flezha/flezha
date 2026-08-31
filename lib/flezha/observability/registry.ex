@@ -9,14 +9,14 @@ defmodule Flezha.Observability.Registry do
 
   Per-source cardinality enforcement (`check_cardinality/2`) and per-source /
   per-sink counter access live here too. The first time a source
-  exceeds its cardinality budget, the registry emits a single
-  `:cardinality_budget_exceeded` event on the bus carrying only the
-  source name — never the offending metadata.
+  exceeds its cardinality budget, `check_cardinality/2` answers `:first`
+  and the calling process owes the single `:cardinality_budget_exceeded`
+  event; the registry itself never dispatches to a sink.
   """
 
   use GenServer
 
-  alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Observability.Signal
 
   @sources :flezha_observability_sources
   @sinks :flezha_observability_sinks
@@ -51,14 +51,6 @@ defmodule Flezha.Observability.Registry do
         }
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -195,15 +187,16 @@ defmodule Flezha.Observability.Registry do
   signal's metadata-key-shape is already known, when it is new and
   fits within the per-source budget, or when the source is not
   registered (no enforcement possible). Returns
-  `{:dropped, :cardinality_budget_exceeded}` when the shape is new and
-  the source is at or over its budget.
+  `{:dropped, :cardinality_budget_exceeded, :first | :repeat}` when the
+  shape is new and the source is at or over its budget.
 
-  When the source first crosses its budget, emits a single
-  `:cardinality_budget_exceeded` event on the bus carrying only the
-  source name.
+  `:first` marks the crossing of the budget and is the caller's cue to
+  emit the single `:cardinality_budget_exceeded` event. The event is
+  owed by the calling process and never by this one: a `:block` sink
+  would otherwise hold the registry, and every registration behind it.
   """
   @spec check_cardinality(atom(), map()) ::
-          :ok | {:dropped, :cardinality_budget_exceeded}
+          :ok | {:dropped, :cardinality_budget_exceeded, :first | :repeat}
   def check_cardinality(source, metadata) when is_atom(source) and is_map(metadata) do
     shape = shape_hash(metadata)
 
@@ -305,17 +298,9 @@ defmodule Flezha.Observability.Registry do
         [{^source, entry}] ->
           if MapSet.size(entry.metadata_shapes) >= entry.cardinality_budget do
             :counters.add(entry.counters, counter_slot(:budget_exceeded), 1)
-
-            entry =
-              if entry.budget_exceeded_emitted? do
-                entry
-              else
-                emit_budget_exceeded_event(source)
-                %{entry | budget_exceeded_emitted?: true}
-              end
-
-            :ets.insert(@sources, {source, entry})
-            {:dropped, :cardinality_budget_exceeded}
+            breach = if entry.budget_exceeded_emitted?, do: :repeat, else: :first
+            :ets.insert(@sources, {source, %{entry | budget_exceeded_emitted?: true}})
+            {:dropped, :cardinality_budget_exceeded, breach}
           else
             entry = %{entry | metadata_shapes: MapSet.put(entry.metadata_shapes, shape)}
             :ets.insert(@sources, {source, entry})
@@ -395,6 +380,17 @@ defmodule Flezha.Observability.Registry do
     module = entry.module
     config = Map.get(entry, :config, %{})
 
+    case sink_module_ready(module, config) do
+      :ok -> start_and_record_sink(entry, module, config)
+      {:error, _} = err -> err
+    end
+  end
+
+  # Everything checkable before a process exists: the module is loaded, it
+  # exports the two functions the bus reads, and its config satisfies the
+  # schema it declares. An invalid sink is refused at registration, never at
+  # start.
+  defp sink_module_ready(module, config) do
     cond do
       not Code.ensure_loaded?(module) ->
         {:error, {:invalid_sink_module, module}}
@@ -406,41 +402,37 @@ defmodule Flezha.Observability.Registry do
         {:error, {:missing_filter, module}}
 
       true ->
-        case validate_config(module.config_schema(), config) do
-          :ok ->
-            spec = %{
-              id: entry.name,
-              start: {module, :start_link, [%{name: entry.name, config: config}]},
-              restart: :transient,
-              type: :worker
-            }
+        validate_config(module.config_schema(), config)
+    end
+  end
 
-            case DynamicSupervisor.start_child(Flezha.Observability.SinkSupervisor, spec) do
-              {:ok, pid} ->
-                counters_ref = :counters.new(sink_counter_slots(), [:atomics])
+  defp start_and_record_sink(entry, module, config) do
+    spec = %{
+      id: entry.name,
+      start: {module, :start_link, [%{name: entry.name, config: config}]},
+      restart: :transient,
+      type: :worker
+    }
 
-                row = %{
-                  name: entry.name,
-                  module: module,
-                  config: config,
-                  filter: module.filter(),
-                  overflow: Map.get(entry, :overflow, :drop),
-                  mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
-                  block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
-                  pid: pid,
-                  counters: counters_ref
-                }
+    case DynamicSupervisor.start_child(Flezha.Observability.SinkSupervisor, spec) do
+      {:ok, pid} ->
+        row = %{
+          name: entry.name,
+          module: module,
+          config: config,
+          filter: module.filter(),
+          overflow: Map.get(entry, :overflow, :drop),
+          mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
+          block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
+          pid: pid,
+          counters: :counters.new(sink_counter_slots(), [:atomics])
+        }
 
-                :ets.insert(@sinks, {entry.name, row})
-                {:ok, pid}
+        :ets.insert(@sinks, {entry.name, row})
+        {:ok, pid}
 
-              {:error, reason} ->
-                {:error, {:sink_start_failed, reason}}
-            end
-
-          {:error, _} = err ->
-            err
-        end
+      {:error, reason} ->
+        {:error, {:sink_start_failed, reason}}
     end
   end
 
@@ -466,19 +458,6 @@ defmodule Flezha.Observability.Registry do
   end
 
   defp validate_config(_schema, _config), do: {:error, :invalid_config}
-
-  defp emit_budget_exceeded_event(source) do
-    signal =
-      Signal.new(%{
-        kind: :event,
-        source: @system_source,
-        name: :cardinality_budget_exceeded,
-        measurements: %{count: 1},
-        metadata: %{source: source}
-      })
-
-    Bus.emit(signal)
-  end
 
   defp broadcast(message) do
     if Process.whereis(Flezha.Observability.PubSub) do

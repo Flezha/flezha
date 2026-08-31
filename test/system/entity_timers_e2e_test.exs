@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
 
   use FlezhaTest.SystemCase, capability: :entity_timers
 
-  alias Flezha.Service.Payloader
+  alias Flezha.Payloader
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager

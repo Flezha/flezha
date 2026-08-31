@@ -2,27 +2,17 @@ defmodule Flezha.Observability.RingBufferSink do
   @moduledoc """
   In-memory per-source ring buffer of recent signals.
 
-  Owns one ETS `:ordered_set` table per registered source, each
-  `:protected` (read from any process, written by this sink only).
-  Entries are `{{ts, seq}, signal}` where `seq` disambiguates same-tick
-  emits. Range queries via `query/3` run in the caller process — they
-  do not serialize through this GenServer.
+  One `:protected` ETS `:ordered_set` per registered source, written by
+  this sink alone and read from any process: `query/3` runs in the
+  caller and never serializes through this GenServer. Entries are
+  keyed `{ts, seq}` — `seq` is what keeps two same-tick emits apart.
 
-  Two retention layers:
-
-    * **Opportunistic cap.** On insert, when the table size exceeds
-      `:ring_buffer_max_entries_per_source` (default `10_000`), the
-      oldest entry is dropped.
-    * **Periodic age sweep.** Every `retention_check_interval_ms`
-      (default `5_000`) entries older than `:ring_buffer_retention_ms`
-      (default `900_000` — 15 min) are deleted with
-      `:ets.select_delete/2`.
-
-  The sink subscribes to `Flezha.Observability.Registry` registration
-  events via `Phoenix.PubSub` and creates / drops tables on the fly.
+  Two retention layers, an opportunistic cap on insert and a periodic
+  age sweep; both bounds are in
+  `docs/operations/observability.md` → Default sinks.
   """
 
-  use GenServer
+  use GenServer, restart: :transient
 
   @behaviour Flezha.Observability.Sink
 
@@ -33,24 +23,12 @@ defmodule Flezha.Observability.RingBufferSink do
   # ---------- Sink behaviour ----------
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
   def filter(), do: %{kinds: :any, sources: :any}
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :transient,
-      type: :worker
-    }
-  end
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

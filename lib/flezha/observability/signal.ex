@@ -1,24 +1,15 @@
 defmodule Flezha.Observability.Signal do
   @moduledoc """
-  Unified signal envelope produced by every observability source and
-  consumed by every observability sink.
+  Unified signal envelope: one struct, four kinds
+  (`:metric`, `:event`, `:log`, `:trace_span`), produced by every
+  observability source and consumed by every sink.
 
-  One struct, four kinds — sinks pattern-match on `:kind` when they
-  care and ignore it when they don't. See the rationale in
-  `docs/operations/observability.md`.
+  `:measurements` carries the numbers, `:metadata` the categorical
+  tags, `:source` and `:name` the identity, `:ts` the emit time as
+  `System.monotonic_time(:microsecond)`.
 
-  ## Fields
-
-    * `:kind` — one of `:metric`, `:event`, `:log`, `:trace_span`.
-    * `:source` — atom name of a source registered with
-      `Flezha.Observability.Registry`.
-    * `:name` — atom signal name within the source.
-    * `:measurements` — numeric measurements as a map.
-    * `:metadata` — categorical tags / fields as a map.
-    * `:ts` — `System.monotonic_time(:microsecond)` at emit time.
-
-  Construct via `new/1`; the constructor validates field shapes and
-  auto-fills `:ts` when omitted.
+  Construct via `new/1`, which validates the field shapes and fills
+  `:ts` when it is omitted.
   """
 
   @enforce_keys [:kind, :source, :name]

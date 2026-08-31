@@ -17,9 +17,9 @@ defmodule Flezha.State.Commands do
   per-Entity restore.
   """
 
+  alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
-  alias Flezha.Service.Identificator
   alias Flezha.State.Paths
   alias Flezha.State.ProcJournal
   alias Flezha.State.Restore

@@ -13,8 +13,8 @@ defmodule Flezha.Operative.Handover do
   states defer rather than move.
   """
 
-  alias Flezha.Operative.Plugins
   alias Flezha.Operative.Overwatch
+  alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit

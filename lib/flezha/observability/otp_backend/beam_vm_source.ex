@@ -12,38 +12,22 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :beam_vm`.
   """
 
-  use Flezha.Observability.OtpBackend.Source, source: :beam_vm, default_poll_ms: 1_000
+  use Flezha.Observability.OtpBackend.Source,
+    source: :beam_vm,
+    kinds: [:metric],
+    cardinality_budget: 50,
+    default_poll_ms: 1_000
 
-  alias Flezha.Observability.{Bus, Registry, Signal}
+  alias Flezha.Observability.{Bus, Signal}
 
   @memory_buckets [:total, :processes, :atom, :binary, :ets]
 
-  @impl GenServer
-  def init(_opts) do
-    Registry.register_source(%{
-      name: @source,
-      kinds: [:metric],
-      flavour: :process_backed,
-      cardinality_budget: 50
-    })
-
-    # Enable scheduler-wall-time sampling so we can compute deltas.
+  @impl Flezha.Observability.OtpBackend.Source
+  def init_state(_opts) do
+    # Scheduler-wall-time sampling must be on before the first delta.
     _ = :erlang.system_flag(:scheduler_wall_time, true)
-
-    interval = poll_interval_ms()
-    Process.send_after(self(), :poll, interval)
-
-    {:ok, %{interval: interval, last_scheduler_sample: nil}}
+    %{last_scheduler_sample: nil}
   end
-
-  @impl GenServer
-  def handle_info(:poll, state) do
-    new_state = do_poll(state)
-    Process.send_after(self(), :poll, state.interval)
-    {:noreply, new_state}
-  end
-
-  def handle_info(_msg, state), do: {:noreply, state}
 
   @impl GenServer
   def terminate(_reason, _state) do
@@ -51,9 +35,8 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
     :ok
   end
 
-  # ---------- Internals ----------
-
-  defp do_poll(state) do
+  @impl Flezha.Observability.OtpBackend.Source
+  def poll(state) do
     emit_memory()
     emit_run_queues()
     emit_gc_counts()

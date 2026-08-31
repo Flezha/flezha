@@ -12,9 +12,13 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :host`.
   """
 
-  use Flezha.Observability.OtpBackend.Source, source: :host, default_poll_ms: 5_000
+  use Flezha.Observability.OtpBackend.Source,
+    source: :host,
+    kinds: [:metric, :event],
+    cardinality_budget: 50,
+    default_poll_ms: 5_000
 
-  alias Flezha.Observability.{Bus, Registry, Signal}
+  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.OtpBackend.ProcParser
 
   @stat_path "/proc/self/stat"
@@ -22,34 +26,13 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   @loadavg_path "/proc/loadavg"
   @fd_dir "/proc/self/fd"
 
-  @impl GenServer
-  def init(_opts) do
-    Registry.register_source(%{
-      name: @source,
-      kinds: [:metric, :event],
-      flavour: :process_backed,
-      cardinality_budget: 50
-    })
+  @impl Flezha.Observability.OtpBackend.Source
+  def init_state(_opts), do: %{status: :probing, prev_cpu_jiffies: nil}
 
-    interval = poll_interval_ms()
-    Process.send_after(self(), :poll, interval)
-    {:ok, %{interval: interval, status: :probing, prev_cpu_jiffies: nil}}
-  end
+  @impl Flezha.Observability.OtpBackend.Source
+  def poll(%{status: :degraded} = state), do: state
 
-  @impl GenServer
-  def handle_info(:poll, state) do
-    new_state = do_poll(state)
-    Process.send_after(self(), :poll, state.interval)
-    {:noreply, new_state}
-  end
-
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  # ---------- Internals ----------
-
-  defp do_poll(%{status: :degraded} = state), do: state
-
-  defp do_poll(state) do
+  def poll(state) do
     case File.read(@stat_path) do
       {:ok, stat_bytes} ->
         handle_proc_read(state, stat_bytes)

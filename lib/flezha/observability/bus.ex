@@ -20,6 +20,7 @@ defmodule Flezha.Observability.Bus do
   alias Flezha.Observability.{Counters, Registry, Signal}
 
   @sinks :flezha_observability_sinks
+  @system_source :observability_registry
 
   @doc """
   Emit a signal. Always returns `:ok`. Never raises.
@@ -47,13 +48,21 @@ defmodule Flezha.Observability.Bus do
       {:ok, %{kinds: kinds} = _entry} ->
         cond do
           kind not in kinds ->
-            emit_kind_violation(source, kind)
-            :ok
+            emit_system_event(:source_kind_violation, %{
+              source: source,
+              attempted_kind: kind
+            })
 
           kind == :metric ->
             case Registry.check_cardinality(source, signal.metadata) do
-              :ok -> fan_out(signal)
-              {:dropped, :cardinality_budget_exceeded} -> :ok
+              :ok ->
+                fan_out(signal)
+
+              {:dropped, :cardinality_budget_exceeded, :first} ->
+                emit_system_event(:cardinality_budget_exceeded, %{source: source})
+
+              {:dropped, :cardinality_budget_exceeded, :repeat} ->
+                :ok
             end
 
           true ->
@@ -149,23 +158,29 @@ defmodule Flezha.Observability.Bus do
     end
   end
 
-  defp emit_kind_violation(source, kind) do
+  # The foundation's own diagnostics, both dispatched at one depth: suppressed
+  # when an operator disables the source they carry, and never subject to its
+  # own kind check, which no `:event` on `@system_source` can fail.
+  defp emit_system_event(name, metadata) do
     signal =
       Signal.new(%{
         kind: :event,
-        source: :observability_registry,
-        name: :source_kind_violation,
+        source: @system_source,
+        name: name,
         measurements: %{count: 1},
-        metadata: %{source: source, attempted_kind: kind}
+        metadata: metadata
       })
 
-    fan_out(signal)
+    case Registry.lookup_source(@system_source) do
+      {:ok, %{status: :disabled}} -> :ok
+      _ -> fan_out(signal)
+    end
   end
 
   defp handle_dispatch_error(error, stacktrace) do
     Counters.bump(:dispatcher_failure_count)
 
-    class = error_class(error)
+    class = Counters.error_class(error)
 
     # A sink that is shutting down (subsystem teardown, reconfigure) surfaces as
     # an exit with :noproc/:shutdown/:normal — expected, not a producer fault.
@@ -184,8 +199,4 @@ defmodule Flezha.Observability.Bus do
   defp benign_exit_reason?(reason) when reason in [:noproc, :normal, :shutdown], do: true
   defp benign_exit_reason?({reason, _}) when reason in [:noproc, :normal, :shutdown], do: true
   defp benign_exit_reason?(_), do: false
-
-  defp error_class(%{__struct__: mod}), do: mod
-  defp error_class({kind, _reason}) when kind in [:exit, :throw], do: kind
-  defp error_class(other), do: other
 end

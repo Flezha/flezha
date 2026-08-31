@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Validator do
-  alias Flezha.Service.Identificator
-  alias Flezha.Service.HubManager
+  alias Flezha.Identificator
   alias Flezha.Operative.Kind
+  alias Flezha.Service.HubManager
 
   use Flezha.Constant
 

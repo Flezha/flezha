@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Runner.ControlChannelDisconnectTest do
+  alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
-  alias Flezha.Service.Identificator
   alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: the live controller and its fleet; registered runner channels.

@@ -24,11 +24,11 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
+  alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
   alias Flezha.State.DurabilityTier.DeclaredManifest
   alias Flezha.State.TestHelpers

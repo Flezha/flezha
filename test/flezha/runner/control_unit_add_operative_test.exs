@@ -13,10 +13,10 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
-  alias Flezha.Service.Identificator
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-unit-add-operative-test"

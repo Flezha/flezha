@@ -6,18 +6,9 @@ defmodule Flezha.Observability.DefaultSinks do
   # the work is done — restart policy is `:temporary` so the
   # supervisor does not bring it back.
 
-  use GenServer
+  use GenServer, restart: :temporary
 
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink}
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :temporary,
-      type: :worker
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts)

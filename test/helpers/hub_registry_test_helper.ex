@@ -4,8 +4,8 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   tests can exercise registry reads and hub lifecycle without a live SDK or
   runner process.
   """
+  alias Flezha.Identificator
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Identificator
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry

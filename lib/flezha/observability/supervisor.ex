@@ -2,28 +2,14 @@ defmodule Flezha.Observability.Supervisor do
   @moduledoc """
   Top-level supervisor for the observability foundation.
 
-  Children, in start order:
+  Starts, in order: `Registry` (ETS state and the cardinality tracker),
+  `Phoenix.PubSub`, `SinkSupervisor`, `SourceSupervisor`,
+  `LoggerHandler`, `TelemetryBridge`, and the one-shot `DefaultSinks`
+  that registers the two built-in sinks.
 
-    1. `Flezha.Observability.Registry` — owns ETS state and the
-       cardinality tracker.
-    2. `Phoenix.PubSub` (name `Flezha.Observability.PubSub`) — used by
-       the PubSub sink and by the Registry to broadcast registration
-       events.
-    3. `Flezha.Observability.SinkSupervisor` — `DynamicSupervisor`
-       (`:one_for_one`) holding live sink processes.
-    4. `Flezha.Observability.SourceSupervisor` — `DynamicSupervisor`
-       (`:one_for_one`) holding process-backed sources.
-    5. `Flezha.Observability.LoggerHandler` — installs the `:logger`
-       handler.
-    6. `Flezha.Observability.TelemetryBridge` — attaches the
-       `:telemetry` bridge handler.
-    7. `Flezha.Observability.DefaultSinks` — one-shot worker that
-       registers the two default sinks with the Registry.
-
-  When the master flag `:observability` → `enabled: false`, the
-  supervisor starts with no children at all (no sinks, no logger
-  handler, no telemetry bridge). Service-API calls return
-  `{:error, :observability_disabled}`.
+  Under `:observability` → `enabled: false` it starts **no children at
+  all** — no sinks, no logger handler, no telemetry bridge — and every
+  service-API call answers `{:error, :observability_disabled}`.
   """
 
   use Supervisor

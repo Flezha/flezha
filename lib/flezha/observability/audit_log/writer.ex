@@ -2,24 +2,15 @@ defmodule Flezha.Observability.AuditLog.Writer do
   @moduledoc """
   Owns the active append-only audit file (`audit-current.jsonl`).
 
-  Synchronously accepts `{:write, record_bin}` GenServer calls from
-  the sink. In `:per_record` fsync mode the writer fsyncs after every
-  write before replying — so the sink's producer-side `GenServer.call`
-  observes durable acceptance. In `:batched` mode a timer schedules
-  `:fsync_now` no later than `:fsync_interval_ms` after the first
-  buffered write.
+  Accepts `{:write, record_bin}` synchronously. Under `:per_record` the
+  fsync happens before the reply, so the sink's producer-side
+  `GenServer.call` observes **durable** acceptance rather than
+  acceptance; under `:batched` a timer bounds the unsynced window.
 
-  The Writer also computes the running SHA-256 of the active file so
-  rotation does not have to re-read it.
-
-  Catalog updates: on rotation, the writer atomically rewrites the
-  on-disk `INDEX` via `Flezha.Observability.AuditLog.Index.write/2`
-  with the rotated entry appended.
-
-  A best-effort post-write fan-out to local in-process tail
-  subscribers (registered via `subscribe_tail/0` / `unsubscribe_tail/1`)
-  is fired after every successful write so `Flezha.Service.AuditLog.tail/2`
-  can stream live records without going through Phoenix.PubSub.
+  Keeps the running SHA-256 of the active file, so a rotation never
+  re-reads it, and rewrites the on-disk `INDEX` atomically as it
+  rotates. A post-write fan-out to in-process tail subscribers is
+  best-effort and never blocks a write.
   """
 
   use GenServer
@@ -50,15 +41,6 @@ defmodule Flezha.Observability.AuditLog.Writer do
         }
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
-      type: :worker
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -399,42 +381,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
     case File.rename(state.path, rotated_path) do
       :ok ->
-        {first_ts, last_ts, _n} = file_ts_range(rotated_path)
-
-        entry = %{
-          filename: rotated_name,
-          first_ts_us: first_ts,
-          last_ts_us: last_ts,
-          record_count: state.record_count,
-          size_bytes: state.size_bytes,
-          sha256: sha
-        }
-
-        catalog = state.catalog ++ [entry]
-        _ = Index.write(state.dir, catalog)
-
-        {fd, _, hash_ctx, count} = open_active(state.path)
-
-        new_state = %{
-          state
-          | fd: fd,
-            opened_at_ms: System.system_time(:millisecond),
-            size_bytes: 0,
-            record_count: count,
-            hash_ctx: hash_ctx,
-            catalog: catalog
-        }
-
-        info = %{
-          rotated_to: rotated_name,
-          size_bytes: entry.size_bytes,
-          record_count: entry.record_count,
-          sha256: sha
-        }
-
-        send(self(), {:emit_rotated_event, info})
-
-        {:ok, info, new_state}
+        commit_rotation(state, rotated_name, rotated_path, sha)
 
       {:error, reason} ->
         # Rotation failed — re-open the active file so we can keep accepting writes.
@@ -450,6 +397,47 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
         {:error, reason, restored}
     end
+  end
+
+  # The rename landed: catalogue what moved, open a fresh active file, and
+  # report the entry the rotated event carries.
+  defp commit_rotation(state, rotated_name, rotated_path, sha) do
+    {first_ts, last_ts, _n} = file_ts_range(rotated_path)
+
+    entry = %{
+      filename: rotated_name,
+      first_ts_us: first_ts,
+      last_ts_us: last_ts,
+      record_count: state.record_count,
+      size_bytes: state.size_bytes,
+      sha256: sha
+    }
+
+    catalog = state.catalog ++ [entry]
+    _ = Index.write(state.dir, catalog)
+
+    {fd, _, hash_ctx, count} = open_active(state.path)
+
+    new_state = %{
+      state
+      | fd: fd,
+        opened_at_ms: System.system_time(:millisecond),
+        size_bytes: 0,
+        record_count: count,
+        hash_ctx: hash_ctx,
+        catalog: catalog
+    }
+
+    info = %{
+      rotated_to: rotated_name,
+      size_bytes: entry.size_bytes,
+      record_count: entry.record_count,
+      sha256: sha
+    }
+
+    send(self(), {:emit_rotated_event, info})
+
+    {:ok, info, new_state}
   end
 
   defp file_ts_range(path) do

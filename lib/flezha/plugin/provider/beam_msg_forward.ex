@@ -13,9 +13,9 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
     * `:include_metadata` (boolean, default `false`)
   """
 
+  alias Flezha.Identificator
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Service.Identificator
 
   use ProviderBehaviour
 

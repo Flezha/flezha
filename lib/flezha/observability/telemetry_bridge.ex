@@ -12,7 +12,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   increments and the error is logged once per unique error class.
   """
 
-  use GenServer
+  use GenServer, restart: :transient
 
   require Logger
 
@@ -87,16 +87,6 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   # ---------- Public API ----------
 
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :transient,
-      type: :worker,
-      shutdown: 5_000
-    }
-  end
-
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -157,7 +147,7 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   defp handle_error(event, error, stacktrace) do
     Counters.bump(:telemetry_bridge_failures)
-    class = error_class(error)
+    class = Counters.error_class(error)
 
     if Counters.first_seen?({:telemetry_bridge, event, class}) do
       Logger.error(
@@ -167,10 +157,6 @@ defmodule Flezha.Observability.TelemetryBridge do
       )
     end
   end
-
-  defp error_class(%{__struct__: mod}), do: mod
-  defp error_class({kind, _reason}) when kind in [:exit, :throw], do: kind
-  defp error_class(other), do: other
 
   # ---------- GenServer ----------
 

@@ -9,8 +9,8 @@ defmodule Flezha.Service.RegistryUpdate do
   # in-memory test artifact that does not exist on peers, and crashes the
   # remote registry with `UndefinedFunctionError`.
 
-  alias Flezha.Service.HubManager
   alias Flezha.Plugin
+  alias Flezha.Service.HubManager
 
   @doc """
   Registry transform that re-tags an operative's owning runner. A partition
@@ -63,9 +63,9 @@ defmodule Flezha.Service.RegistryUpdate do
 
   @doc """
   Plugin-list transform that sets one option on an existing plugin entry, for
-  provider state that must survive a controller restart. A plugin_id no longer
-  in the manifest is left alone rather than resurrected — it was disabled while
-  the write was in flight, and its state is no longer owed.
+  provider state that must survive a controller restart. A plugin_id absent
+  from the manifest is left alone rather than resurrected — it was disabled
+  while the write was in flight, and its state is not owed.
   """
   @spec put_plugin_opt(binary(), atom(), term()) ::
           ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])

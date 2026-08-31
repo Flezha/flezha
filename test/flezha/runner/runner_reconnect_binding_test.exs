@@ -19,11 +19,11 @@ defmodule FlezhaTest.Runner.RunnerReconnectBindingTest do
 
   setup :set_mimic_global_until_exit
 
+  alias Flezha.Identificator
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper

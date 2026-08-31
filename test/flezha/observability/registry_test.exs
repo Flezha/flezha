@@ -88,10 +88,10 @@ defmodule Flezha.Observability.RegistryTest do
       assert :ok = Registry.check_cardinality(name, %{a: 1})
       assert :ok = Registry.check_cardinality(name, %{b: 1})
 
-      assert {:dropped, :cardinality_budget_exceeded} =
+      assert {:dropped, :cardinality_budget_exceeded, :first} =
                Registry.check_cardinality(name, %{c: 1})
 
-      assert {:dropped, :cardinality_budget_exceeded} =
+      assert {:dropped, :cardinality_budget_exceeded, :repeat} =
                Registry.check_cardinality(name, %{d: 1})
     end
 

@@ -63,7 +63,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # Bench tasks whose `--runtime` resolves against `PortPilot.runtimes/0`. Their
   # help text may name a runtime as an example but may not enumerate the set: a
   # second copy of it goes stale the run after an SDK is added.
-  @manifest_runtime_tasks [Mix.Tasks.Bench, Mix.Tasks.Bench.Roundtrip]
+  @manifest_runtime_tasks [Mix.Tasks.Bench, Mix.Tasks.Bench.Roundtrip, Mix.Tasks.Bench.Workflow]
 
   defp runtimes, do: PortPilot.runtimes()
 
@@ -76,6 +76,10 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   defp moduledoc(module) do
     {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(module)
     doc
+  end
+
+  defp source(module) do
+    module.module_info(:compile)[:source] |> to_string() |> File.read!()
   end
 
   describe "manifests" do
@@ -328,6 +332,22 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
         unless File.read!(docs) =~ path do
           fail("#{docs} does not reference #{path}; the manifest is where the scope is declared")
+        end
+      end
+    end
+
+    test "no bench task decides its runtime set in code" do
+      for task <- @manifest_runtime_tasks do
+        src = source(task)
+        named = Enum.filter(runtimes(), &(src =~ ~s("#{&1}")))
+
+        if named != [] do
+          fail(
+            "#{inspect(task)} names #{inspect(named)} as string literals in its own source, " <>
+              "so it decides the accepted `--runtime` set from a clause list rather than from " <>
+              "the manifests. Derive it: `Mix.Tasks.Bench.Fleet.parse_runtime/3` reads " <>
+              "`PortPilot.runtimes/0` and the manifest's `deferred` key"
+          )
         end
       end
     end

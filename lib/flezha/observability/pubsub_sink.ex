@@ -14,7 +14,7 @@ defmodule Flezha.Observability.PubSubSink do
   `subscribe/1` returns `{:error, :pubsub_sink_disabled}`.
   """
 
-  use GenServer
+  use GenServer, restart: :transient
 
   @behaviour Flezha.Observability.Sink
 
@@ -23,24 +23,12 @@ defmodule Flezha.Observability.PubSubSink do
   # ---------- Sink behaviour ----------
 
   @impl Flezha.Observability.Sink
-  def handle_signal(_signal, state), do: {:ok, state}
-
-  @impl Flezha.Observability.Sink
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
   def filter(), do: %{kinds: :any, sources: :any}
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      restart: :transient,
-      type: :worker
-    }
-  end
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

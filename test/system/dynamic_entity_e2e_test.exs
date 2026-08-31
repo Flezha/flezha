@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Service.Payloader
+  alias Flezha.Payloader
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager

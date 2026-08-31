@@ -2,68 +2,36 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   @moduledoc """
   Polled source emitting per-transport (`:uds`, `:quic`) metrics.
 
-  Reads the public `Flezha.Transport.Server.list_active_transports/0`
-  + `get_stats/1` surface. Emits `:open_connections` per transport (a
-  gauge sourced from the server's pending-stream count).
+  Reads `Flezha.Transport.Server.list_active_transports/0` + `get_stats/1`
+  for `:open_connections`, and — under `:data_plane_liveness` — the NIF
+  driver self-report per transport plus the global BEAM aggregates from
+  `Flezha.Transport.LivenessCounters`.
 
-  Data-plane liveness (always-on, gated by `:data_plane_liveness`):
+  Cardinality is bounded by construction: driver metrics are per
+  transport (at most two) and the BEAM aggregates carry no per-entity
+  label, so nothing here grows with runner or operative churn.
 
-    * per transport, from the NIF driver self-report —
-      `:driver_loop_iterations` (heartbeat counter), `:driver_loop_age_ms`
-      (gauge; a large value means the driver thread is wedged),
-      `:driver_cmd_queue_depth`, `:driver_write_buffer_bytes`,
-      `:driver_write_buffer_dropped`, `:driver_streams`.
-
-  **The driver self-report is UDS-only.** The QUIC driver produces no
-  `DriverStats` at all, so for a QUIC controller every `:driver_*` metric above
-  is emitted zero times — including `:driver_write_buffer_dropped`, the
-  send-buffer loss counter. A QUIC deployment is therefore NOT covered by this
-  source's data-plane half, and a green `/healthz` on QUIC is not evidence
-  about its transport. Tracked as KI-72.
-    * global BEAM aggregates from
-      `Flezha.Transport.LivenessCounters` — `:channel_io_in_received`,
-      `:channel_send_frame_calls`, `:channel_nil_drops`,
-      `:channel_flz_data_received`, `:operative_io_in_received`,
-      `:operative_forwarded`, `:operative_filtered_nil`.
-
-  Cardinality stays bounded: driver metrics are per transport (≤ 2);
-  BEAM aggregates carry no per-entity label (the stall classifier, not
-  this source, does the per-entity localisation), so the label-value set
-  never grows with runner/operative churn.
-
-  Default poll interval `1_000` ms; overridable via
-  `:flezha, :observability, :otp_backend, :poll_intervals, :flezha_transport`.
+  The driver self-report is UDS-only; the metric list and what that
+  leaves uncovered on QUIC are in
+  `docs/operations/observability.md` → Shipped sources.
   """
 
-  use Flezha.Observability.OtpBackend.Source, source: :flezha_transport, default_poll_ms: 1_000
+  use Flezha.Observability.OtpBackend.Source,
+    source: :flezha_transport,
+    kinds: [:metric],
+    cardinality_budget: 40,
+    default_poll_ms: 1_000
 
-  alias Flezha.Observability.{Bus, Registry, Signal}
+  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Server, as: TransportServer
 
-  @impl GenServer
-  def init(_opts) do
-    Registry.register_source(%{
-      name: @source,
-      kinds: [:metric],
-      flavour: :process_backed,
-      cardinality_budget: 40
-    })
-
-    interval = poll_interval_ms()
-    Process.send_after(self(), :poll, interval)
-    {:ok, %{interval: interval}}
-  end
-
-  @impl GenServer
-  def handle_info(:poll, state) do
+  @impl Flezha.Observability.OtpBackend.Source
+  def poll(state) do
     poll_transports()
     if LivenessCounters.poll_enabled?(), do: poll_beam_counters()
-    Process.send_after(self(), :poll, state.interval)
-    {:noreply, state}
+    state
   end
-
-  def handle_info(_msg, state), do: {:noreply, state}
 
   # ---------- Internals ----------
 

@@ -190,7 +190,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   defp secondary_channels(runner_id) do
     prefix = runner_id <> "_scs_"
 
-    Registry.select(Flezha.Service.Identificator, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    Registry.select(Flezha.Identificator, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
     |> Enum.filter(fn {key, _pid} -> is_binary(key) and String.starts_with?(key, prefix) end)
     |> Enum.map(&elem(&1, 1))
   end

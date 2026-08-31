@@ -3,7 +3,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   Polled source emitting per-hub ProcessHub metrics.
 
   Enumerates active hubs via the `Flezha.Service.HubManager` /
-  `Flezha.Service.Identificator` surface and queries ProcessHub for
+  `Flezha.Identificator` surface and queries ProcessHub for
   registered-process counts and recovery state.
 
   Cardinality math: one metadata shape per hub. A cluster with N
@@ -16,38 +16,19 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :processhub`.
   """
 
-  use Flezha.Observability.OtpBackend.Source, source: :processhub, default_poll_ms: 1_000
+  use Flezha.Observability.OtpBackend.Source,
+    source: :processhub,
+    kinds: [:metric],
+    cardinality_budget: 200,
+    default_poll_ms: 1_000
 
-  alias Flezha.Observability.{Bus, Registry, Signal}
-  alias Flezha.Service.{HubManager, Identificator}
+  alias Flezha.Identificator
+  alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
-  @impl GenServer
-  def init(_opts) do
-    Registry.register_source(%{
-      name: @source,
-      kinds: [:metric],
-      flavour: :process_backed,
-      cardinality_budget: 200
-    })
-
-    interval = poll_interval_ms()
-    Process.send_after(self(), :poll, interval)
-    {:ok, %{interval: interval}}
-  end
-
-  @impl GenServer
-  def handle_info(:poll, state) do
-    poll_hubs()
-    Process.send_after(self(), :poll, state.interval)
-    {:noreply, state}
-  end
-
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  # ---------- Internals ----------
-
-  defp poll_hubs() do
+  @impl Flezha.Observability.OtpBackend.Source
+  def poll(state) do
     namespaces =
       try do
         HubManager.get_running_namespaces()
@@ -56,6 +37,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
       end
 
     Enum.each(namespaces, &emit_for_namespace/1)
+    state
   end
 
   defp emit_for_namespace(namespace) do

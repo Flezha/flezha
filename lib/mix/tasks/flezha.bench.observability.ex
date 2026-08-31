@@ -19,14 +19,7 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
 
   @impl Mix.Task
   def run(args) do
-    # Boot just the observability foundation — the rest of the
-    # Controller (transports, runner fleet, BootLoader) is not
-    # needed for an isolated bus microbenchmark and pulls in
-    # external dependencies (test runners, sockets).
-    Application.load(:flezha)
-    {:ok, _} = Application.ensure_all_started(:telemetry)
-    {:ok, _} = Application.ensure_all_started(:phoenix_pubsub)
-    {:ok, _} = Flezha.Observability.Supervisor.start_link([])
+    boot()
 
     iterations =
       case args do
@@ -35,29 +28,7 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
       end
 
     source = :"bench_observability_#{:erlang.unique_integer([:positive])}"
-
-    :ok =
-      Registry.register_source(%{
-        name: source,
-        kinds: [:metric],
-        flavour: :declarative,
-        cardinality_budget: 1_000_000
-      })
-
-    # Per task 14.1, the bench measures hot-path emit against
-    # zero interested sinks — unregister the default ring-buffer
-    # and pubsub sinks so the dispatcher exits early.
-    Registry.unregister_sink(:ring_buffer)
-    Registry.unregister_sink(:pubsub)
-
-    signal =
-      Signal.new(%{
-        kind: :metric,
-        source: source,
-        name: :bench,
-        measurements: %{count: 1},
-        metadata: %{constant_shape: true}
-      })
+    signal = bench_signal(source)
 
     # Warm-up — JIT, cache the signal shape with the cardinality
     # tracker, prime the bus.
@@ -69,6 +40,47 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
         :ok
       end)
 
+    report(iterations, wall_us)
+
+    Registry.unregister_source(source)
+    :ok
+  end
+
+  # Boot just the observability foundation — the rest of the Controller
+  # (transports, runner fleet, BootLoader) is not needed for an isolated bus
+  # microbenchmark and pulls in external dependencies (test runners, sockets).
+  defp boot do
+    Application.load(:flezha)
+    {:ok, _} = Application.ensure_all_started(:telemetry)
+    {:ok, _} = Application.ensure_all_started(:phoenix_pubsub)
+    {:ok, _} = Flezha.Observability.Supervisor.start_link([])
+  end
+
+  # The bench measures hot-path emit against zero interested sinks, so the
+  # default ring-buffer and pubsub sinks are unregistered and the dispatcher
+  # exits early.
+  defp bench_signal(source) do
+    :ok =
+      Registry.register_source(%{
+        name: source,
+        kinds: [:metric],
+        flavour: :declarative,
+        cardinality_budget: 1_000_000
+      })
+
+    Registry.unregister_sink(:ring_buffer)
+    Registry.unregister_sink(:pubsub)
+
+    Signal.new(%{
+      kind: :metric,
+      source: source,
+      name: :bench,
+      measurements: %{count: 1},
+      metadata: %{constant_shape: true}
+    })
+  end
+
+  defp report(iterations, wall_us) do
     ns_per_emit = div(wall_us * 1_000, iterations)
 
     Mix.shell().info(
@@ -82,9 +94,6 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
           "(#{ns_per_emit}ns > #{@ns_per_emit_threshold}ns)"
       )
     end
-
-    Registry.unregister_source(source)
-    :ok
   end
 
   defp loop(_signal, 0), do: :ok

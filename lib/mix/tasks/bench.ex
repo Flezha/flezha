@@ -2,7 +2,6 @@ defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
 
@@ -26,9 +25,9 @@ defmodule Mix.Tasks.Bench do
       names the build command for a missing artifact.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
       regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
-      `entity` (the `operative-bench-harness` entity-stress shape, factory
-      `entity_stress`, dimensions hard-coded at `8 × 20_000` per
-      `operative-bench-harness/design.md` Decision 6, swept across the comma-list in
+      `entity` (the entity-stress shape, factory `entity_stress`, dimensions
+      fixed at `8 × 20_000` so the numbers stay comparable across runs, swept
+      across the comma-list in
       `--pool-sizes`), or `dynamic` (the dynamic entity-mode shape, factory
       `dynamic_entity`, lazy per-key Entities with 8 keys/operative,
       dimensions from `-n` / `-m`).
@@ -69,26 +68,26 @@ defmodule Mix.Tasks.Bench do
   @default_namespace "default"
   @bench_namespace "bench"
 
-  def run(args) do
-    {opts, _, _} =
-      OptionParser.parse(args,
-        switches: [
-          num_operatives: :integer,
-          messages_per_operative: :integer,
-          runtime: :string,
-          shape: :string,
-          pool_sizes: :string,
-          warmup: :integer
-        ],
-        aliases: [
-          n: :num_operatives,
-          m: :messages_per_operative,
-          r: :runtime,
-          w: :warmup
-        ]
-      )
+  @switches [
+    num_operatives: :integer,
+    messages_per_operative: :integer,
+    runtime: :string,
+    shape: :string,
+    pool_sizes: :string,
+    warmup: :integer
+  ]
 
-    runtime = parse_runtime(opts[:runtime])
+  @aliases [
+    n: :num_operatives,
+    m: :messages_per_operative,
+    r: :runtime,
+    w: :warmup
+  ]
+
+  def run(args) do
+    {opts, _, _} = OptionParser.parse(args, switches: @switches, aliases: @aliases)
+
+    runtime = Fleet.parse_runtime(opts[:runtime])
     shape = parse_shape(opts[:shape])
     pool_sizes = parse_pool_sizes(opts[:pool_sizes])
     warmup = max(opts[:warmup] || 10, 0)
@@ -97,22 +96,7 @@ defmodule Mix.Tasks.Bench do
 
     Process.put(:bench_runtime, runtime)
 
-    Report.open(
-      "mix bench",
-      [
-        {"runtime", "#{runtime} (#{Report.dispatch_note(runtime)})"},
-        {"runner", runner_mode()},
-        {"toolchain", Report.toolchain(runtime)},
-        {"transport", to_string(Application.get_env(:flezha, :transport, :uds))},
-        {"shape", to_string(shape)},
-        {"durability", durability_backend()},
-        {"operatives", to_string(num_operatives)},
-        {"messages/operative", to_string(messages_per_operative)},
-        {"warmup/operative", to_string(warmup)}
-      ] ++
-        if(shape == :entity, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
-        [{"mix env", to_string(Mix.env())}]
-    )
+    open_report(runtime, shape, pool_sizes, warmup, {num_operatives, messages_per_operative})
 
     # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
     # block, so its operatives stay in the hub's declared set and their state
@@ -136,6 +120,25 @@ defmodule Mix.Tasks.Bench do
       :entity ->
         run_entity_shape(num_operatives, messages_per_operative, pool_sizes, warmup)
     end
+  end
+
+  defp open_report(runtime, shape, pool_sizes, warmup, {num_operatives, messages_per_operative}) do
+    Report.open(
+      "mix bench",
+      [
+        {"runtime", "#{runtime} (#{Report.dispatch_note(runtime)})"},
+        {"runner", runner_mode()},
+        {"toolchain", Report.toolchain(runtime)},
+        {"transport", to_string(Application.get_env(:flezha, :transport, :uds))},
+        {"shape", to_string(shape)},
+        {"durability", durability_backend()},
+        {"operatives", to_string(num_operatives)},
+        {"messages/operative", to_string(messages_per_operative)},
+        {"warmup/operative", to_string(warmup)}
+      ] ++
+        if(shape == :entity, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
+        [{"mix env", to_string(Mix.env())}]
+    )
   end
 
   # ----- Single-namespace shapes: regression (default) and dynamic -----
@@ -254,21 +257,6 @@ defmodule Mix.Tasks.Bench do
   # `bench-<runtime>-<shape>`; `Report.finish/2` stamps the run id and places it.
   defp report_name(shape), do: "bench-#{Fleet.runtime()}-#{shape}"
 
-  # Every SDK with a test-app manifest can serve this bench: the three shapes
-  # drive `do_nothing`, `entity_stress` and `dynamic_entity`, which the
-  # conformance gate already requires every runtime to carry or defer by name.
-  # Read from the manifests rather than a clause per runtime, so a new SDK is
-  # benchable the moment its app exists.
-  defp parse_runtime(nil), do: :rust
-
-  defp parse_runtime(name) do
-    runtimes = PortPilot.runtimes()
-
-    Enum.find(runtimes, &(Atom.to_string(&1) == name)) ||
-      raise "Unknown --runtime value: #{inspect(name)}. Expected one of: " <>
-              Enum.map_join(runtimes, ", ", &inspect/1)
-  end
-
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression
   defp parse_shape("entity"), do: :entity
@@ -309,8 +297,8 @@ defmodule Mix.Tasks.Bench do
   defp dimensions_for_shape(:entity, opts) do
     if opts[:num_operatives] || opts[:messages_per_operative] do
       IO.warn(
-        "--shape entity ignores -n/-m; dimensions are hard-coded at 8 × 20_000 " <>
-          "per operative-bench-harness/design.md Decision 6. Use --shape regression for " <>
+        "--shape entity ignores -n/-m; dimensions are fixed at 8 × 20_000 so the " <>
+          "numbers stay comparable across runs. Use --shape regression for " <>
           "custom dimensions."
       )
     end
@@ -322,7 +310,47 @@ defmodule Mix.Tasks.Bench do
     factory = factory_for_shape(shape)
     IO.puts("Starting #{num_operatives} operatives (factory=#{factory})...")
 
-    {operative_creation_time, operative_infos} =
+    {creation_us, operative_infos} = start_operatives(namespace, factory, num_operatives)
+    plugin_setup_us = enable_forwarders(namespace, operative_infos)
+    warmup_us = warmup_pass(operative_infos, shape, warmup)
+
+    total_messages = length(operative_infos) * test_messages_per_operative
+
+    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_operative} per operative)...")
+
+    {send_us, _} =
+      :timer.tc(fn -> send_inputs(operative_infos, shape, test_messages_per_operative) end)
+
+    expected_responses = expected_responses(shape, total_messages)
+
+    {receive_us, _} =
+      :timer.tc(fn -> await_responses(expected_responses, "message") end)
+
+    metrics =
+      metrics(%{
+        operatives: length(operative_infos),
+        total_messages: total_messages,
+        expected_responses: expected_responses,
+        creation_us: creation_us,
+        plugin_setup_us: plugin_setup_us,
+        warmup_us: warmup_us,
+        send_us: send_us,
+        receive_us: receive_us
+      })
+
+    print_results(metrics, warmup)
+
+    OperativeManager.stop_all_operatives(namespace)
+
+    if total_messages == 0 do
+      exit("No messages were processed")
+    end
+
+    metrics
+  end
+
+  defp start_operatives(namespace, factory, num_operatives) do
+    {elapsed, infos} =
       :timer.tc(fn ->
         Flezha.Parallel.map(1..num_operatives, fn i ->
           operative_id = "flow_test_#{i}"
@@ -347,7 +375,7 @@ defmodule Mix.Tasks.Bench do
     # Every start failed. Proceeding sends no inputs and then waits for
     # replies that nothing can produce, so the run dies in a warmup receive
     # and reports a timeout instead of the refusal that actually stopped it.
-    if operative_infos == [] do
+    if infos == [] do
       Mix.raise(
         "no operatives started — every start was refused. The refusal is logged above; " <>
           "a placement refusal naming an sdk_lang means this namespace's factory state " <>
@@ -355,9 +383,13 @@ defmodule Mix.Tasks.Bench do
       )
     end
 
+    {elapsed, infos}
+  end
+
+  defp enable_forwarders(namespace, operative_infos) do
     recv_pid = self()
 
-    {plugin_setup_time, _} =
+    {elapsed, _} =
       :timer.tc(fn ->
         Flezha.Parallel.map(operative_infos, fn {operative_id, _info} ->
           PluginManager.enable_plugin(
@@ -386,64 +418,43 @@ defmodule Mix.Tasks.Bench do
         end)
       end)
 
-    warmup_time =
-      if warmup > 0 do
-        warmup_total = length(operative_infos) * warmup
+    elapsed
+  end
 
-        {elapsed, _} =
-          :timer.tc(fn ->
-            send_inputs(operative_infos, shape, warmup)
-            await_responses(expected_responses(shape, warmup_total), "warmup")
-          end)
+  defp warmup_pass(_operative_infos, _shape, warmup) when warmup <= 0, do: nil
 
-        elapsed
-      end
+  defp warmup_pass(operative_infos, shape, warmup) do
+    warmup_total = length(operative_infos) * warmup
 
-    total_messages = length(operative_infos) * test_messages_per_operative
+    {elapsed, _} =
+      :timer.tc(fn ->
+        send_inputs(operative_infos, shape, warmup)
+        await_responses(expected_responses(shape, warmup_total), "warmup")
+      end)
 
-    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_operative} per operative)...")
+    elapsed
+  end
 
-    {message_send_time, _} =
-      :timer.tc(fn -> send_inputs(operative_infos, shape, test_messages_per_operative) end)
+  # The send and receive `:timer.tc` blocks run back to back, so their sum is
+  # the wall time from the first input to the last response. That is the
+  # honest window — responses stream in while the send loop is still casting,
+  # so the receive window alone credits work the send window paid for.
+  defp metrics(w) do
+    end_to_end_us = w.send_us + w.receive_us
 
-    expected_responses = expected_responses(shape, total_messages)
-
-    {message_receive_time, _} =
-      :timer.tc(fn -> await_responses(expected_responses, "message") end)
-
-    # The send and receive `:timer.tc` blocks run back to back, so their sum is
-    # the wall time from the first input to the last response. That is the
-    # honest window — responses stream in while the send loop is still casting,
-    # so the receive window alone credits work the send window paid for.
-    end_to_end_time = message_send_time + message_receive_time
-
-    metrics = %{
-      operatives: length(operative_infos),
-      inputs_dispatched: total_messages,
-      responses_received: expected_responses,
-      operative_creation_ms: rounded_ms(operative_creation_time),
-      plugin_setup_ms: rounded_ms(plugin_setup_time),
-      warmup_ms: warmup_time && rounded_ms(warmup_time),
-      send_ms: rounded_ms(message_send_time),
-      receive_ms: rounded_ms(message_receive_time),
-      end_to_end_ms: rounded_ms(end_to_end_time),
-      throughput_msg_per_sec: round(total_messages * 1_000_000 / end_to_end_time),
-      receive_window_msg_per_sec: round(total_messages * 1_000_000 / message_receive_time)
+    %{
+      operatives: w.operatives,
+      inputs_dispatched: w.total_messages,
+      responses_received: w.expected_responses,
+      operative_creation_ms: rounded_ms(w.creation_us),
+      plugin_setup_ms: rounded_ms(w.plugin_setup_us),
+      warmup_ms: w.warmup_us && rounded_ms(w.warmup_us),
+      send_ms: rounded_ms(w.send_us),
+      receive_ms: rounded_ms(w.receive_us),
+      end_to_end_ms: rounded_ms(end_to_end_us),
+      throughput_msg_per_sec: round(w.total_messages * 1_000_000 / end_to_end_us),
+      receive_window_msg_per_sec: round(w.total_messages * 1_000_000 / w.receive_us)
     }
-
-    print_results(metrics, warmup)
-
-    OperativeManager.stop_all_operatives(namespace)
-
-    if length(operative_infos) == 0 do
-      exit("No operatives were created successfully")
-    end
-
-    if total_messages == 0 do
-      exit("No messages were processed")
-    end
-
-    metrics
   end
 
   defp rounded_ms(microseconds), do: Float.round(microseconds / 1000, 1)
@@ -463,6 +474,30 @@ defmodule Mix.Tasks.Bench do
       ])
     )
 
+    phases_section(m, warmup)
+
+    Report.section(
+      "throughput",
+      Report.table(
+        ["window", "elapsed", "msg/s"],
+        [
+          [
+            "end-to-end (first input → last response)",
+            "#{m.end_to_end_ms} ms",
+            Report.rate(m.throughput_msg_per_sec)
+          ],
+          [
+            "receive only (send loop returned → last response)",
+            "#{m.receive_ms} ms",
+            Report.rate(m.receive_window_msg_per_sec)
+          ]
+        ],
+        [:left, :right, :right]
+      )
+    )
+  end
+
+  defp phases_section(m, warmup) do
     phases =
       [
         {"operative creation", m.operative_creation_ms, ""},
@@ -483,26 +518,6 @@ defmodule Mix.Tasks.Bench do
         ["phase", "elapsed", "note"],
         Enum.map(phases, fn {name, ms, note} -> [name, "#{ms} ms", note] end),
         [:left, :right, :left]
-      )
-    )
-
-    Report.section(
-      "throughput",
-      Report.table(
-        ["window", "elapsed", "msg/s"],
-        [
-          [
-            "end-to-end (first input → last response)",
-            "#{m.end_to_end_ms} ms",
-            Report.rate(m.throughput_msg_per_sec)
-          ],
-          [
-            "receive only (send loop returned → last response)",
-            "#{m.receive_ms} ms",
-            Report.rate(m.receive_window_msg_per_sec)
-          ]
-        ],
-        [:left, :right, :right]
       )
     )
   end

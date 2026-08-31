@@ -1,14 +1,14 @@
 defmodule Flezha.Runner.StreamSup do
-  alias Flezha.Service.ConfigManager
+  alias Flezha.Config
+  alias Flezha.Identificator
   alias Flezha.Runner.StreamChannel
-  alias Flezha.Service.Identificator
 
   require Logger
 
   use Supervisor
 
   def stream_specs(runner_id, type) do
-    for x <- 1..ConfigManager.concurrent_channel_count() do
+    for x <- 1..Config.concurrent_channel_count() do
       id =
         case type do
           :primary -> Identificator.stream_channel_primary(runner_id, x)

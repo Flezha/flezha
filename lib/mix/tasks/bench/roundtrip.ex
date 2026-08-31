@@ -1,13 +1,10 @@
 defmodule Mix.Tasks.Bench.Roundtrip do
   use Mix.Task
 
-  alias Flezha.Service.OperativeManager
-  alias Flezha.Service.PluginManager
-  alias Flezha.Service.PortPilot
-  alias Flezha.Transport.LivenessCounters
-  alias Flezha.Transport.Native
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
+  alias Mix.Tasks.Bench.Roundtrip.Engines
+  alias Mix.Tasks.Bench.Roundtrip.Load
   alias Mix.Tasks.Bench.Tally
 
   @shortdoc "Kafka round-trip benchmark: Flezha vs Apache Flink"
@@ -98,7 +95,28 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     Process.flag(:trap_exit, true)
 
     cfg = build_config(opts)
+    open_report(cfg)
+    boot(cfg)
 
+    client = Load.start_kafka_client!(cfg)
+    Load.create_topics!(client, cfg)
+
+    Process.put(:bench_engine, nil)
+
+    try do
+      measure(client, cfg)
+    after
+      case Process.get(:bench_engine) do
+        %{stop: stop} -> stop.()
+        _ -> :ok
+      end
+
+      unless cfg.keep_topics, do: Load.delete_topics(client, cfg)
+      GenServer.stop(client, :normal, 5_000)
+    end
+  end
+
+  defp open_report(cfg) do
     Report.open("bench.roundtrip", [
       {"engine", to_string(cfg.engine)},
       {"runtime",
@@ -116,7 +134,9 @@ defmodule Mix.Tasks.Bench.Roundtrip do
       {"broker", "#{cfg.broker_host}:#{cfg.broker_port}"},
       {"mix env", to_string(Mix.env())}
     ])
+  end
 
+  defp boot(cfg) do
     # A run killed mid-flight (a timeout, a crash) never reaches teardown, so its
     # operatives stay in the hub's declared set and their state dirs stay on
     # disk. The convergence loop then spends every subsequent run trying to
@@ -142,82 +162,78 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     {:ok, _} = Application.ensure_all_started(:inets)
 
     Process.put(:bench_runtime, cfg.runtime)
-
-    client = start_kafka_client!(cfg)
-    create_topics!(client, cfg)
-
-    Process.put(:bench_engine, nil)
-
-    try do
-      # Everything that is already standing when a Flink job is submitted — the
-      # cluster processes, the uploaded jar — must also be standing for Flezha,
-      # or the startup number compares a process spawn against a scheduling
-      # decision. `prepare` is that pre-existing world; only `start_engine` is
-      # inside the timed window.
-      prepared = prepare_engine(cfg)
-      Report.emit(%{durability: cfg.durability})
-
-      # Records wait in the input topic before the engine exists, so time to
-      # first record out measures bring-up, not generator warmup. Both engines
-      # start from the earliest offset.
-      prime(client, cfg)
-      collector = start_collector(cfg)
-
-      profiler = if cfg.profile, do: start_profiler(), else: nil
-      if cfg.profile or cfg.status_every, do: attach_wal_telemetry()
-
-      t0 = System.monotonic_time(:nanosecond)
-      engine = start_engine(cfg, prepared)
-      Process.put(:bench_engine, engine)
-
-      first_out_ns = await_first_record(collector, cfg) - t0
-
-      IO.puts("Time to first record out: #{fmt_ms(first_out_ns)} ms")
-      IO.puts("  (engine bring-up detail: #{inspect(engine.startup)})")
-
-      tprof = if cfg.tprof, do: start_tprof(), else: nil
-
-      # The collector drains WHILE the generator runs: otherwise every batch of
-      # the run waits in this process's mailbox until generation ends, which a
-      # soak cannot afford and which would hide the status line until the end.
-      gen_started = System.monotonic_time(:nanosecond)
-
-      generator =
-        Task.async(fn ->
-          generate(client, cfg)
-          System.monotonic_time(:nanosecond)
-        end)
-
-      {results, skipped, done_at} = await_completion(collector, cfg)
-      gen_ended = Task.await(generator, :infinity)
-      gen_ns = gen_ended - gen_started
-      drain_ns = max(done_at - gen_ended, 0)
-      if profiler, do: report_profile(profiler)
-      if cfg.profile or cfg.status_every, do: report_wal_telemetry()
-      if tprof, do: report_tprof(tprof)
-
-      report(cfg, %{
-        first_out_ns: first_out_ns,
-        engine_startup: engine.startup,
-        generate_ns: gen_ns,
-        drain_ns: drain_ns,
-        skipped: skipped,
-        results: results
-      })
-
-      :ok
-    after
-      case Process.get(:bench_engine) do
-        %{stop: stop} -> stop.()
-        _ -> :ok
-      end
-
-      unless cfg.keep_topics, do: delete_topics(client, cfg)
-      GenServer.stop(client, :normal, 5_000)
-    end
   end
 
-  # ---------------------------------------------------------------- config --
+  # Everything that is already standing when a Flink job is submitted — the
+  # cluster processes, the uploaded jar — must also be standing for Flezha, or
+  # the startup number compares a process spawn against a scheduling decision.
+  # This is that pre-existing world; only `start_engine` is inside the timed
+  # window. Records also wait in the input topic before the engine exists, so
+  # time to first record out measures bring-up, not generator warmup.
+  defp arm(client, cfg) do
+    prepared = Engines.prepare_engine(cfg)
+    Report.emit(%{durability: cfg.durability})
+
+    Load.prime(client, cfg)
+    collector = Load.start_collector(cfg)
+
+    profiler = if cfg.profile, do: start_profiler(), else: nil
+    if cfg.profile or cfg.status_every, do: Load.attach_wal_telemetry()
+
+    {prepared, collector, profiler}
+  end
+
+  defp measure(client, cfg) do
+    {prepared, collector, profiler} = arm(client, cfg)
+
+    t0 = System.monotonic_time(:nanosecond)
+    engine = Engines.start_engine(cfg, prepared)
+    Process.put(:bench_engine, engine)
+
+    first_out_ns = Load.await_first_record(collector, cfg) - t0
+
+    IO.puts("Time to first record out: #{fmt_ms(first_out_ns)} ms")
+    IO.puts("  (engine bring-up detail: #{inspect(engine.startup)})")
+
+    tprof = if cfg.tprof, do: start_tprof(), else: nil
+
+    # The collector drains WHILE the generator runs: otherwise every batch of
+    # the run waits in this process's mailbox until generation ends, which a
+    # soak cannot afford and which would hide the status line until the end.
+    gen_started = System.monotonic_time(:nanosecond)
+
+    generator =
+      Task.async(fn ->
+        Load.generate(client, cfg)
+        System.monotonic_time(:nanosecond)
+      end)
+
+    {results, skipped, done_at} = Load.await_completion(collector, cfg)
+    gen_ended = Task.await(generator, :infinity)
+    gen_ns = gen_ended - gen_started
+    drain_ns = max(done_at - gen_ended, 0)
+
+    close_run(cfg, profiler, tprof, %{
+      first_out_ns: first_out_ns,
+      engine_startup: engine.startup,
+      generate_ns: gen_ns,
+      drain_ns: drain_ns,
+      skipped: skipped,
+      results: results
+    })
+  end
+
+  defp close_run(cfg, profiler, tprof, metrics) do
+    if profiler, do: report_profile(profiler)
+    if cfg.profile or cfg.status_every, do: Load.report_wal_telemetry()
+    if tprof, do: report_tprof(tprof)
+
+    report(cfg, metrics)
+
+    :ok
+  end
+
+  # --------------------------------------------------------------- config --
 
   defp build_config(opts) do
     engine = parse_enum(opts[:engine] || "passthrough", ~w(flezha flink passthrough), "--engine")
@@ -231,8 +247,6 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     pipelines = opts[:pipelines] || 4
     per_pipeline = opts[:messages_per_pipeline] || 5_000
     {broker_host, broker_port} = parse_broker(opts[:broker] || "localhost:39092")
-
-    run_id = Integer.to_string(System.system_time(:second), 36)
 
     %{
       engine: engine,
@@ -248,12 +262,48 @@ defmodule Mix.Tasks.Bench.Roundtrip do
       rate: opts[:rate] || 0,
       batch: opts[:batch] || 200,
       runners: opts[:runners] || 2,
-      runtime: parse_runtime(opts[:runtime], durability),
+      runtime:
+        Fleet.parse_runtime(
+          opts[:runtime],
+          durability_capability(durability),
+          "--durability #{durability}"
+        ),
       flink_jobs: opts[:flink_jobs] || 1,
       broker_host: broker_host,
       broker_port: broker_port,
       flink_rest: opts[:flink_rest] || "http://localhost:8083",
       jar: opts[:jar] || "bench/flink/job/target/flink-bench.jar",
+      keys: max(opts[:keys] || 1, 1),
+      fsync_interval_ms: opts[:fsync_interval_ms],
+      # The scratch namespace this task owns. It travels on the config because
+      # the collector's status line and the flezha engine both name it, and
+      # a module attribute cannot cross a module boundary.
+      namespace: @namespace
+    }
+    |> Map.merge(run_identity(pipelines))
+    |> Map.merge(durability_posture(opts, durability))
+    |> Map.merge(observation_config(opts))
+  end
+
+  # Every run mints its own topic pair, so a leftover consumer group or an
+  # unread backlog cannot reach the next one.
+  defp run_identity(pipelines) do
+    run_id = Integer.to_string(System.system_time(:second), 36)
+
+    %{
+      run_id: run_id,
+      in_topic: "#{@in_prefix}.#{run_id}",
+      out_topic: "#{@out_prefix}.#{run_id}",
+      # The priming batch is excluded from every reported measurement; it only
+      # exists so the engine has something to chew on the instant it starts.
+      prime_count: pipelines
+    }
+  end
+
+  # How the durable tier is driven, and how the sink is posted. Unset, the
+  # sink axes follow `--durability`.
+  defp durability_posture(opts, durability) do
+    %{
       checkpoint_interval_ms: opts[:checkpoint_interval_ms] || 1_000,
       # `--durability checkpoint` only: how the interval closes, and whether it
       # holds its outputs until it does.
@@ -268,8 +318,6 @@ defmodule Mix.Tasks.Bench.Roundtrip do
       linger_ms: opts[:linger_ms] || 10,
       # Confirming ingests the bridge keeps in flight per pipeline.
       window: opts[:window] || 64,
-      # Sink posture overrides, to measure the sink apart from the tier it
-      # normally rides with. Unset, they follow `--durability`.
       acks: opts[:acks] || if(durability in [:on, :checkpoint], do: -1, else: 1),
       idempotent:
         if(is_nil(opts[:idempotent]),
@@ -278,9 +326,13 @@ defmodule Mix.Tasks.Bench.Roundtrip do
         ),
       # Produce requests outstanding per partition. Unset, the plugin's own
       # default applies (5 under idempotence, 1 without).
-      max_in_flight: opts[:max_in_flight],
-      keys: max(opts[:keys] || 1, 1),
-      fsync_interval_ms: opts[:fsync_interval_ms],
+      max_in_flight: opts[:max_in_flight]
+    }
+  end
+
+  # What the run watches itself with, and what it leaves behind.
+  defp observation_config(opts) do
+    %{
       profile: opts[:profile] || false,
       # Two-second per-function CPU profile of every process, taken while the
       # generator is still producing. Distorts the run's own numbers — use it
@@ -288,21 +340,12 @@ defmodule Mix.Tasks.Bench.Roundtrip do
       tprof: opts[:tprof] || false,
       stall_timeout: opts[:stall_timeout] || 30_000,
       status_every: opts[:status_every],
-      keep_topics: opts[:keep_topics] || false,
-      run_id: run_id,
-      in_topic: "#{@in_prefix}.#{run_id}",
-      out_topic: "#{@out_prefix}.#{run_id}",
-      # The priming batch is excluded from every reported measurement; it only
-      # exists so the engine has something to chew on the instant it starts.
-      prime_count: pipelines
+      keep_topics: opts[:keep_topics] || false
     }
   end
 
   # An unset axis leaves the option out entirely, so the plugin's own default
   # decides rather than the bench.
-  defp put_unless_nil(map, _key, nil), do: map
-  defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
-
   defp parse_enum(value, allowed, flag) do
     if value in allowed do
       String.to_atom(value)
@@ -318,394 +361,8 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     end
   end
 
-  # ----------------------------------------------------------------- kafka --
+  # -------------------------------------------------------------- profile --
 
-  defp start_kafka_client!(cfg) do
-    # Unnamed, and never routed through the plugin's WorkerRegistry: that
-    # registry hands out refcounted shared clients, and stopping one from here
-    # would take the producer plugins down with it.
-    {:ok, pid} =
-      KafkaEx.start_link_worker(:no_name, uris: [{cfg.broker_host, cfg.broker_port}])
-
-    pid
-  end
-
-  defp create_topics!(client, cfg) do
-    # Explicit creation, not `auto_create_topic`: the plugin's auto-create is
-    # error-driven (the first produce must fail with :unknown_topic_or_partition
-    # before creation is attempted), which would land inside the
-    # time-to-first-record-out window. replication_factor 1 — single broker.
-    specs =
-      for topic <- [cfg.in_topic, cfg.out_topic] do
-        [topic: topic, num_partitions: cfg.pipelines, replication_factor: 1]
-      end
-
-    case KafkaEx.API.create_topics(client, specs, 15_000) do
-      {:ok, _} -> :ok
-      {:error, reason} -> raise "topic creation failed: #{inspect(reason)}"
-    end
-
-    # Creation is asynchronous on the broker; wait until every partition has a
-    # queryable offset before anyone produces.
-    Enum.each([cfg.in_topic, cfg.out_topic], fn topic ->
-      Enum.each(0..(cfg.pipelines - 1), &wait_for_partition!(client, topic, &1))
-    end)
-
-    IO.puts("Topics ready: #{cfg.in_topic}, #{cfg.out_topic} (#{cfg.pipelines} partitions each)")
-  end
-
-  defp wait_for_partition!(client, topic, partition, tries \\ 600) do
-    case KafkaEx.API.latest_offset(client, topic, partition) do
-      {:ok, _} ->
-        :ok
-
-      {:error, _reason} when tries > 0 ->
-        Process.sleep(25)
-        wait_for_partition!(client, topic, partition, tries - 1)
-
-      {:error, reason} ->
-        raise "#{topic}/#{partition} never became available: #{inspect(reason)}"
-    end
-  end
-
-  defp delete_topics(client, cfg) do
-    KafkaEx.API.delete_topics(client, [cfg.in_topic, cfg.out_topic], 15_000)
-  rescue
-    _ -> :ok
-  end
-
-  # ------------------------------------------------------------- generator --
-
-  defp prime(client, cfg) do
-    # seq 0..pipelines-1, one per partition, so every partition has a record
-    # waiting the moment the engine starts.
-    Enum.each(0..(cfg.pipelines - 1), fn p ->
-      produce_batch(client, cfg, p, [p])
-    end)
-  end
-
-  defp generate(_client, cfg) do
-    first = cfg.prime_count
-
-    0..(cfg.pipelines - 1)
-    |> Enum.map(fn p ->
-      Task.async(fn ->
-        # One client per partition: a kafka_ex client answers one request at a
-        # time, so a shared one would cap the generator at one broker RTT per
-        # batch across all partitions and the engine would idle behind it.
-        client = start_kafka_client!(cfg)
-        lo = first + p * cfg.messages_per_pipeline
-
-        # Chunked lazily: a soak's seqs never exist as one list.
-        lo..(lo + cfg.messages_per_pipeline - 1)
-        |> Stream.chunk_every(cfg.batch)
-        |> Enum.each(fn chunk ->
-          produce_batch(client, cfg, p, chunk)
-          pace(cfg, length(chunk))
-        end)
-      end)
-    end)
-    |> Task.await_many(:infinity)
-  end
-
-  # A broker that stalls for a few seconds (its own heartbeat timed out in the
-  # 30-min soak) must not end a soak: retry like a real source would, for up
-  # to ~30 s, and count the retries so the summary shows them.
-  @produce_retries 30
-
-  defp produce_batch(client, cfg, partition, seqs, attempt \\ 1) do
-    messages =
-      Enum.map(seqs, fn seq ->
-        %{value: payload(cfg, partition, seq, System.monotonic_time(:nanosecond))}
-      end)
-
-    case KafkaEx.API.produce(client, cfg.in_topic, partition, messages, required_acks: 1) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason} when attempt < @produce_retries ->
-        :counters.add(produce_retry_counter(), 1, 1)
-
-        IO.puts(
-          "\n  produce to #{cfg.in_topic}/#{partition} failed (#{inspect(reason)}), retry #{attempt}"
-        )
-
-        Process.sleep(1_000)
-        produce_batch(client, cfg, partition, seqs, attempt + 1)
-
-      {:error, reason} ->
-        raise "produce to #{cfg.in_topic}/#{partition} failed after #{attempt} attempts: #{inspect(reason)}"
-    end
-  end
-
-  defp produce_retry_counter do
-    case :persistent_term.get({__MODULE__, :produce_retries}, nil) do
-      nil ->
-        ref = :counters.new(1, [])
-        :persistent_term.put({__MODULE__, :produce_retries}, ref)
-        ref
-
-      ref ->
-        ref
-    end
-  end
-
-  # `<seq>,<send_ts_ns>,<pad>`, keyed workload prefixed with `k<partition>:`.
-  # Padding is alphanumeric so it can never contain the `:` / `=` / `,`
-  # separators the parser keys off.
-  defp payload(cfg, partition, seq, ts) do
-    head =
-      case cfg.workload do
-        w when w == :keyed ->
-          "k#{partition}_#{rem(seq, cfg.keys)}:#{seq},#{ts},"
-
-        :identity ->
-          "#{seq},#{ts},"
-      end
-
-    pad = max(cfg.payload_bytes - byte_size(head), 1)
-    head <> binary_part(cfg.pad_pool, 0, pad)
-  end
-
-  defp pace(%{rate: 0}, _n), do: :ok
-
-  defp pace(cfg, n) do
-    Process.sleep(max(div(n * 1_000, cfg.rate), 1))
-  end
-
-  # ------------------------------------------------------------- collector --
-
-  defp start_collector(cfg) do
-    parent = self()
-
-    pids =
-      Enum.map(0..(cfg.pipelines - 1), fn p ->
-        spawn_link(fn -> collect_partition(parent, cfg, p) end)
-      end)
-
-    %{pids: pids}
-  end
-
-  defp collect_partition(parent, cfg, partition) do
-    {:ok, client} =
-      KafkaEx.start_link_worker(:no_name, uris: [{cfg.broker_host, cfg.broker_port}])
-
-    fetch_loop(parent, client, cfg, partition, 0)
-  end
-
-  @committed_fetch_opts [
-    max_wait_time: 50,
-    min_bytes: 1,
-    max_bytes: 5_000_000,
-    api_version: 4,
-    isolation_level: 1
-  ]
-
-  defp fetch_loop(parent, client, cfg, partition, offset) do
-    opts = @committed_fetch_opts
-
-    case KafkaEx.API.fetch(client, cfg.out_topic, partition, offset, opts) do
-      {:ok, %{records: []}} ->
-        fetch_loop(parent, client, cfg, partition, offset)
-
-      {:ok, %{records: records}} ->
-        now = System.monotonic_time(:nanosecond)
-        decoded = Enum.map(records, &decode(&1.value, now))
-        kept = for {:ok, entry} <- decoded, do: entry
-        send(parent, {:records, kept, length(decoded) - length(kept)})
-        fetch_loop(parent, client, cfg, partition, List.last(records).offset + 1)
-
-      {:error, _reason} ->
-        Process.sleep(50)
-        fetch_loop(parent, client, cfg, partition, offset)
-    end
-  end
-
-  # Tolerates the keyed workload's `<key>=` output prefix and the `<key>:`
-  # input prefix; both sit ahead of the seq in the first comma-field.
-  # Returns `:skip` for anything that is not a bench payload. Under Flink's
-  # exactly-once sink the topic also carries transaction control markers, and
-  # kafka_ex surfaces those as ordinary records — the control flag lives in the
-  # record *batch* attributes, which it does not propagate. Skips are counted
-  # and reported so a genuinely malformed payload cannot hide in here.
-  defp decode(value, now) do
-    with [head, ts | _] <- :binary.split(value, ",", [:global]),
-         stripped = head |> :binary.split(["=", ":"], [:global]) |> List.last(),
-         {seq, ""} <- Integer.parse(stripped),
-         {sent, ""} <- Integer.parse(ts) do
-      {:ok, {seq, now - sent}}
-    else
-      _ -> :skip
-    end
-  end
-
-  defp await_first_record(_collector, cfg) do
-    receive do
-      {:records, [{_seq, _lat} | _] = batch, skipped} ->
-        send(self(), {:records, batch, skipped})
-        System.monotonic_time(:nanosecond)
-
-      {:EXIT, pid, reason} when reason not in [:normal, :killed] ->
-        raise "bench worker #{inspect(pid)} crashed during bring-up: #{inspect(reason)}"
-    after
-      cfg.stall_timeout * 4 ->
-        raise "no record reached #{cfg.out_topic} within #{cfg.stall_timeout * 4}ms — engine never came up?"
-    end
-  end
-
-  # Answers the instant the last expected record was collected (or the stall
-  # gave up), so the caller can split the window into generation and drain.
-  defp await_completion(collector, cfg) do
-    tally = drain(new_tally(cfg), cfg, System.monotonic_time(:millisecond))
-    Enum.each(collector.pids, &Process.exit(&1, :kill))
-    {tally, tally.skipped, System.monotonic_time(:nanosecond)}
-  end
-
-  defp new_tally(cfg) do
-    Map.merge(Tally.new(cfg.total + cfg.prime_count, cfg.prime_count), %{
-      skipped: 0,
-      status_at: System.monotonic_time(:millisecond),
-      status_seen: 0
-    })
-  end
-
-  defp drain(tally, cfg, last_progress) do
-    if tally.seen >= tally.expected do
-      tally
-    else
-      receive do
-        {:records, batch, batch_skipped} ->
-          tally = Enum.reduce(batch, tally, &Tally.record/2)
-          tally = %{tally | skipped: tally.skipped + batch_skipped}
-          progress(tally)
-          drain(maybe_status(tally, cfg), cfg, System.monotonic_time(:millisecond))
-
-        {:EXIT, pid, reason} when reason not in [:normal, :killed] ->
-          raise "bench worker #{inspect(pid)} crashed mid-run: #{inspect(reason)}"
-      after
-        1_000 ->
-          if System.monotonic_time(:millisecond) - last_progress > cfg.stall_timeout do
-            IO.puts(
-              "\nSTALLED: #{tally.seen}/#{tally.expected} records after #{cfg.stall_timeout}ms with no progress"
-            )
-
-            tally
-          else
-            drain(maybe_status(tally, cfg), cfg, last_progress)
-          end
-      end
-    end
-  end
-
-  defp progress(%{seen: n, expected: expected}) do
-    if rem(n, 5_000) == 0, do: IO.write("\r  collected #{n}/#{expected}")
-  end
-
-  # `--status-every S`: a line every S seconds with what a long run needs
-  # watched — rate, the loss-relevant counters, the state dir on disk, memory.
-  defp maybe_status(%{status_at: at} = tally, %{status_every: every} = cfg)
-       when is_integer(every) and every > 0 do
-    now = System.monotonic_time(:millisecond)
-
-    if now - at >= every * 1_000 do
-      rate = (tally.seen - tally.status_seen) * 1_000 / max(now - at, 1)
-
-      IO.puts(
-        "\n  [status] #{tally.seen}/#{tally.expected} collected, #{round(rate)} rec/s, " <>
-          "dup=#{tally.duplicates}#{explained_dups(cfg)} skipped=#{tally.skipped} | state #{Tally.state_dir_summary(@namespace)} | " <>
-          "fsync p99 #{Tally.fsync_p99_ms()}ms | beam #{div(:erlang.memory(:total), 1_048_576)} MiB | " <>
-          wal_signal_summary()
-      )
-
-      %{tally | status_at: now, status_seen: tally.seen}
-    else
-      tally
-    end
-  end
-
-  defp maybe_status(tally, _cfg), do: tally
-
-  # A retried batch the broker had in fact written lands in the input topic
-  # twice, and the engine rightly emits both: up to `retries × batch` of the
-  # duplicates are the generator's, anything beyond them is the engine's.
-  defp explained_dups(cfg) do
-    case :counters.get(produce_retry_counter(), 1) do
-      0 -> ""
-      n -> " (≤#{n * cfg.batch} from #{n} generator retries)"
-    end
-  end
-
-  defp wal_signal_summary do
-    case :persistent_term.get({__MODULE__, :wal_counters}, nil) do
-      nil ->
-        ""
-
-      c ->
-        "seq_gap=#{:counters.get(c, 1)} credit_anomaly=#{:counters.get(c, 2)} " <>
-          "stream_drop=#{:counters.get(c, 3)}"
-    end
-  end
-
-  # --------------------------------------------------------------- profile --
-
-  # Samples the busiest processes while the run is in flight. Mailbox depth
-  # names the serialization point; reductions name where the CPU goes.
-  # Counts the WAL writer's loss/anomaly signals for the run. A shed is the
-  # writer dropping a Change past its hard in-memory bound; a credit anomaly is
-  # a shed that happened even though the sender was credit-speaking, which the
-  # writer treats as a protocol violation rather than back-pressure.
-  defp attach_wal_telemetry do
-    counters = :counters.new(3, [])
-    :persistent_term.put({__MODULE__, :wal_counters}, counters)
-
-    :telemetry.attach_many(
-      "bench-wal",
-      [
-        [:flezha, :state, :seq_gap],
-        [:flezha, :state, :credit_anomaly],
-        [:flezha, :stream, :drop]
-      ],
-      fn
-        [:flezha, :state, :seq_gap], _m, _md, _ -> :counters.add(counters, 1, 1)
-        [:flezha, :state, :credit_anomaly], _m, _md, _ -> :counters.add(counters, 2, 1)
-        [:flezha, :stream, :drop], _m, _md, _ -> :counters.add(counters, 3, 1)
-      end,
-      nil
-    )
-  end
-
-  defp report_wal_telemetry do
-    case :persistent_term.get({__MODULE__, :wal_counters}, nil) do
-      nil ->
-        :ok
-
-      c ->
-        IO.puts(
-          "WAL signals: seq_gap=#{:counters.get(c, 1)} " <>
-            "credit_anomaly=#{:counters.get(c, 2)} stream_drop=#{:counters.get(c, 3)}"
-        )
-    end
-
-    # The data-stream drivers' own loss counter: a frame the peer did not
-    # drain in time is dropped past the per-stream write-buffer cap, with no
-    # seq gap and no telemetry to show for it.
-    {dropped, written} =
-      LivenessCounters.driver_refs()
-      |> Enum.flat_map(fn {_key, ref} ->
-        case Native.driver_stats(ref) do
-          %{streams: streams} -> streams
-          _ -> []
-        end
-      end)
-      |> Enum.reduce({0, 0}, fn s, {d, w} ->
-        {d + s.write_buffer_dropped, w + s.frames_written}
-      end)
-
-    IO.puts("Driver: frames_written=#{written} write_buffer_dropped=#{dropped}")
-  end
-
-  # tprof traces every process for the window, which also slows them: the
-  # ranking is sound, the absolute times are not.
   defp start_tprof do
     {:ok, _} = :tprof.start(%{type: :call_time})
     :tprof.set_pattern(:_, :_, :_)
@@ -841,7 +498,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     )
   end
 
-  # ---------------------------------------------------------------- report --
+  # --------------------------------------------------------------- report --
 
   defp report(cfg, m) do
     # The priming records are excluded from the tally: they were produced
@@ -857,11 +514,25 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     window_ns = m.generate_ns + m.drain_ns
     throughput = if window_ns > 0, do: received * 1_000_000_000 / window_ns, else: 0.0
 
-    retries = :counters.get(produce_retry_counter(), 1)
+    retries = :counters.get(Load.produce_retry_counter(), 1)
     pct = Tally.percentiles(tally, [0.50, 0.95, 0.99, 0.999])
 
     IO.puts("")
 
+    records_section(cfg, tally, m, received, lost, retries)
+
+    if tally.duplicates > retries * cfg.batch do
+      IO.puts(
+        "  ** #{tally.duplicates - retries * cfg.batch} DUPLICATES the generator cannot explain **\n"
+      )
+    end
+
+    phase_sections(cfg, tally, m, pct, received, window_ns, throughput)
+
+    write_report(cfg, m, tally, pct, received, lost, throughput)
+  end
+
+  defp records_section(cfg, tally, m, received, lost, retries) do
     Report.section(
       "records",
       Report.kv(
@@ -879,7 +550,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
             else: []
           ) ++
           if(tally.duplicates > 0,
-            do: [{"duplicates", "#{tally.duplicates}#{explained_dups(cfg)}"}],
+            do: [{"duplicates", "#{tally.duplicates}#{Load.explained_dups(cfg)}"}],
             else: []
           ) ++
           if(tally.foreign > 0,
@@ -888,13 +559,9 @@ defmodule Mix.Tasks.Bench.Roundtrip do
           )
       )
     )
+  end
 
-    if tally.duplicates > retries * cfg.batch do
-      IO.puts(
-        "  ** #{tally.duplicates - retries * cfg.batch} DUPLICATES the generator cannot explain **\n"
-      )
-    end
-
+  defp phase_sections(cfg, tally, m, pct, received, window_ns, throughput) do
     Report.section(
       "phases",
       Report.table(
@@ -939,8 +606,6 @@ defmodule Mix.Tasks.Bench.Roundtrip do
         )
       )
     end
-
-    write_report(cfg, m, tally, pct, received, lost, throughput)
   end
 
   defp write_report(cfg, m, tally, pct, received, lost, throughput) do
@@ -969,7 +634,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
           received: received,
           lost: lost,
           duplicates: tally.duplicates,
-          generator_retries: :counters.get(produce_retry_counter(), 1),
+          generator_retries: :counters.get(Load.produce_retry_counter(), 1),
           first_out_ms: fmt_ms(m.first_out_ns),
           engine_startup: inspect(m.engine_startup),
           generate_ms: fmt_ms(m.generate_ns),
@@ -994,334 +659,10 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
   defp fmt_ms(ns), do: Float.round(ns / 1_000_000, 3)
 
-  # ---------------------------------------------------------------- engines --
+  # ----------------------------------------------------------- durability --
 
-  defp prepare_engine(%{engine: :passthrough}), do: nil
-
-  defp prepare_engine(%{engine: :flezha} = cfg) do
-    Fleet.setup(@namespace, cfg.runners, checkpoint_env(cfg))
-    Fleet.preload_code()
-    nil
-  end
-
-  defp prepare_engine(%{engine: :flink} = cfg), do: upload_jar!(cfg)
-
-  # The checkpoint fixture DECLARES its interval, so the knobs have to reach the
-  # runner before `channels()` runs — env, not a control frame.
-  defp checkpoint_env(%{durability: :checkpoint} = cfg) do
-    [
-      {"FLEZHA_BENCH_CHECKPOINT_EVERY", to_string(cfg.checkpoint_every)},
-      {"FLEZHA_BENCH_CHECKPOINT_OUTPUTS", to_string(cfg.checkpoint_outputs)},
-      {"FLEZHA_BENCH_CHECKPOINT_DELAY_MS", to_string(cfg.checkpoint_delay_ms)}
-    ]
-  end
-
-  defp checkpoint_env(_cfg), do: []
-
-  defp start_engine(%{engine: :passthrough} = cfg, _prepared), do: start_passthrough(cfg)
-  defp start_engine(%{engine: :flezha} = cfg, _prepared), do: start_flezha(cfg)
-  defp start_engine(%{engine: :flink} = cfg, jar_id), do: start_flink(cfg, jar_id)
-
-  @doc false
-  def start_passthrough(cfg) do
-    {startup_us, pids} =
-      :timer.tc(fn ->
-        Enum.map(0..(cfg.pipelines - 1), fn p ->
-          spawn_link(fn -> passthrough_loop(cfg, p) end)
-        end)
-      end)
-
-    %{startup: %{spawn_us: startup_us}, stop: fn -> Enum.each(pids, &Process.exit(&1, :kill)) end}
-  end
-
-  defp passthrough_loop(cfg, partition) do
-    {:ok, client} =
-      KafkaEx.start_link_worker(:no_name, uris: [{cfg.broker_host, cfg.broker_port}])
-
-    passthrough_step(client, cfg, partition, 0)
-  end
-
-  defp passthrough_step(client, cfg, partition, offset) do
-    opts = [max_wait_time: 50, min_bytes: 1, max_bytes: 5_000_000]
-
-    case KafkaEx.API.fetch(client, cfg.in_topic, partition, offset, opts) do
-      {:ok, %{records: []}} ->
-        passthrough_step(client, cfg, partition, offset)
-
-      {:ok, %{records: records}} ->
-        messages = Enum.map(records, &%{value: &1.value})
-        KafkaEx.API.produce(client, cfg.out_topic, partition, messages, required_acks: 1)
-        passthrough_step(client, cfg, partition, List.last(records).offset + 1)
-
-      {:error, _} ->
-        Process.sleep(50)
-        passthrough_step(client, cfg, partition, offset)
-    end
-  end
-
-  @doc false
-  def start_flezha(cfg) do
-    factory = flezha_factory(cfg)
-
-    # Both phases bring every pipeline up at once, the way a partition group's
-    # members start; each number is that phase's wall time.
-    {create_us, ids} =
-      :timer.tc(fn ->
-        Flezha.Parallel.map(0..(cfg.pipelines - 1), fn p ->
-          id = "rt_#{cfg.run_id}_#{p}"
-
-          {:ok, _} =
-            OperativeManager.start_operative(@namespace, %Flezha.Operative.Builder{
-              id: id,
-              factory_id: factory
-            })
-
-          id
-        end)
-      end)
-
-    {plugin_us, _} =
-      :timer.tc(fn ->
-        ids
-        |> Enum.with_index()
-        |> Flezha.Parallel.map(fn {id, p} -> enable_kafka_sink!(cfg, id, p) end)
-      end)
-
-    bridges =
-      ids
-      |> Enum.with_index()
-      |> Enum.map(fn {id, p} -> spawn_link(fn -> bridge_loop(cfg, id, p) end) end)
-
-    %{
-      startup: %{operative_create_us: create_us, plugin_enable_us: plugin_us},
-      stop: fn ->
-        Enum.each(bridges, &Process.exit(&1, :kill))
-        Fleet.cleanup(@namespace)
-      end
-    }
-  end
-
-  # `do_nothing` echoes the payload verbatim. `bench_keyed` / `tier_store` are
-  # the same keyed per-key upsert; only the latter declares effectively-once,
-  # which is a compile-time channel property rather than a runtime flag.
-  # Tiers are matched to what the other engine is actually doing:
-  #   off   — heap-only state, nothing leaves the runner (Flink: no checkpointing)
-  #   state — every Change ships to the controller (Flink: checkpointing on)
-  #   on    — effectively-once end to end (Flink: checkpointing + EXACTLY_ONCE)
-  # `bench_keyed` at `off` would still ship every Change, which is why the
-  # no-persist twin is the correct partner for an un-checkpointed Flink job.
-  # An impossible axis is refused before a runner starts, by name: every SDK
-  # that carries a tier has the fixture for it, and one that defers the tier has
-  # nothing to measure. Read from the SDK's own manifest rather than a clause
-  # per runtime, so a new SDK's refusals arrive with its manifest.
-  defp parse_runtime(nil, _durability), do: :rust
-
-  defp parse_runtime(name, durability) do
-    runtimes = Enum.map(PortPilot.runtimes(), &Atom.to_string/1)
-    runtime = parse_enum(name, runtimes, "--runtime")
-    needed = durability_capability(durability)
-    deferred = PortPilot.manifest(runtime)["deferred"] || []
-
-    if needed && Atom.to_string(needed) in deferred do
-      Mix.raise(
-        "--runtime #{runtime} carries no --durability #{durability}: its SDK defers " <>
-          "#{needed} (#{PortPilot.manifest_path(runtime)}), so there is no " <>
-          "fixture to measure"
-      )
-    end
-
-    runtime
-  end
-
-  # The capability a durability posture needs a fixture for.
   defp durability_capability(:off), do: nil
   defp durability_capability(:state), do: :state_persistence
   defp durability_capability(:on), do: :effectively_once
   defp durability_capability(:checkpoint), do: :effectively_once
-
-  defp flezha_factory(%{workload: :identity}), do: "bench_echo"
-  defp flezha_factory(%{workload: :keyed, durability: :off}), do: "bench_keyed_nopersist"
-  defp flezha_factory(%{workload: :keyed, durability: :state}), do: "bench_keyed"
-  defp flezha_factory(%{workload: :keyed, durability: :on}), do: "tier_store"
-  # Exactly-once acknowledged per checkpoint instead of per record — the
-  # amortised posture Flink's barrier is; Flink's side of this cell is `on`.
-  defp flezha_factory(%{workload: :keyed, durability: :checkpoint}), do: "bench_checkpoint"
-
-  defp enable_kafka_sink!(cfg, operative_id, partition) do
-    plugin_id = "#{operative_id}_kafka"
-
-    {:ok, _} =
-      PluginManager.enable_plugin(plugin_id, %Flezha.Plugin{
-        id: plugin_id,
-        namespace: @namespace,
-        operative_id: operative_id,
-        provider: Flezha.Plugin.Provider.Kafka.Producer,
-        opts:
-          %{
-            hosts: [{cfg.broker_host, cfg.broker_port}],
-            topic: cfg.out_topic,
-            # One plugin instance is one (topic, partition), so partitions ==
-            # pipelines.
-            partition: partition,
-            linger_ms: cfg.linger_ms,
-            queue_max: 100_000,
-            # Blocking propagates back-pressure to the bridge, which is what we
-            # want to measure; stated so the bench never depends on the default.
-            queue_overflow: :block,
-            queue_block_timeout_ms: 60_000,
-            # Single-broker bench cluster; the plugin default of 2 fails.
-            auto_create_replication_factor: 1,
-            required_acks: cfg.acks,
-            idempotent: cfg.idempotent
-          }
-          |> put_unless_nil(:max_in_flight, cfg.max_in_flight),
-        subscriptions: [{:on_output, []}]
-      })
-  end
-
-  defp bridge_loop(cfg, operative_id, partition) do
-    {:ok, client} =
-      KafkaEx.start_link_worker(:no_name, uris: [{cfg.broker_host, cfg.broker_port}])
-
-    bridge_step(client, cfg, operative_id, partition, 0)
-  end
-
-  defp bridge_step(client, cfg, operative_id, partition, offset) do
-    opts = [max_wait_time: 50, min_bytes: 1, max_bytes: 5_000_000]
-
-    case KafkaEx.API.fetch(client, cfg.in_topic, partition, offset, opts) do
-      {:ok, %{records: []}} ->
-        bridge_step(client, cfg, operative_id, partition, offset)
-
-      {:ok, %{records: records}} ->
-        ingest!(cfg, operative_id, records)
-        bridge_step(client, cfg, operative_id, partition, List.last(records).offset + 1)
-
-      {:error, _} ->
-        Process.sleep(50)
-        bridge_step(client, cfg, operative_id, partition, offset)
-    end
-  end
-
-  # One fetch, one pipelined window of confirming ingests — each record is its
-  # own ingest, in order; only the round trips overlap. `:ok`, `{:ok, :absorbed}`
-  # and `{:ok, :suspended}` are all terminal success — the operative owns the
-  # payload. Same contract the HTTP-poll source uses.
-  defp ingest!(cfg, operative_id, records) do
-    payloads = Enum.map(records, &{&1.value, %{}})
-
-    OperativeManager.send_io_confirming_many(
-      operative_id,
-      @namespace,
-      payloads,
-      30_000,
-      cfg.window
-    )
-    |> Enum.each(fn
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, reason} -> raise "ingest to #{operative_id} refused: #{inspect(reason)}"
-    end)
-  end
-
-  @doc false
-  def start_flink(cfg, jar_id) do
-    args = [
-      "--brokers",
-      "kafka:9092",
-      "--in-topic",
-      cfg.in_topic,
-      "--out-topic",
-      cfg.out_topic,
-      "--workload",
-      to_string(cfg.workload),
-      "--durability",
-      if(cfg.durability == :checkpoint, do: "on", else: to_string(cfg.durability)),
-      "--checkpoint-interval-ms",
-      to_string(cfg.checkpoint_interval_ms)
-    ]
-
-    {submit_us, job_ids} =
-      :timer.tc(fn ->
-        for _ <- 1..cfg.flink_jobs do
-          id = flink_run!(cfg, jar_id, args)
-          await_running!(cfg, id)
-          id
-        end
-      end)
-
-    %{
-      startup: %{submit_to_running_us: submit_us, jobs: length(job_ids)},
-      stop: fn -> Enum.each(job_ids, &flink_cancel(cfg, &1)) end
-    }
-  end
-
-  # Multipart upload via curl. Runs in `prepare_engine/1`, before t0, so startup
-  # measures scheduling rather than jar transfer.
-  defp upload_jar!(cfg) do
-    unless File.exists?(cfg.jar) do
-      raise "Flink job jar not found at #{cfg.jar}. Build it with: mvn -f bench/flink/job/pom.xml package"
-    end
-
-    {out, 0} =
-      System.cmd("curl", [
-        "-sS",
-        "-X",
-        "POST",
-        "-H",
-        "Expect:",
-        "-F",
-        "jarfile=@#{cfg.jar}",
-        "#{cfg.flink_rest}/jars/upload"
-      ])
-
-    %{"filename" => filename} = Jason.decode!(out)
-    Path.basename(filename)
-  end
-
-  defp flink_run!(cfg, jar_id, args) do
-    body = Jason.encode!(%{programArgsList: args, parallelism: cfg.pipelines})
-
-    case http(:post, "#{cfg.flink_rest}/jars/#{jar_id}/run", body) do
-      {:ok, %{"jobid" => id}} -> id
-      other -> raise "flink run failed: #{inspect(other)}"
-    end
-  end
-
-  defp await_running!(cfg, job_id, tries \\ 300) do
-    case http(:get, "#{cfg.flink_rest}/jobs/#{job_id}", nil) do
-      {:ok, %{"state" => "RUNNING"}} ->
-        :ok
-
-      {:ok, %{"state" => state}} when state in ~w(FAILED CANCELED FINISHED) ->
-        raise "flink job #{job_id} reached terminal state #{state} before RUNNING"
-
-      _ when tries > 0 ->
-        Process.sleep(100)
-        await_running!(cfg, job_id, tries - 1)
-
-      _ ->
-        raise "flink job #{job_id} never reached RUNNING"
-    end
-  end
-
-  defp flink_cancel(cfg, job_id) do
-    http(:patch, "#{cfg.flink_rest}/jobs/#{job_id}?mode=cancel", nil)
-  end
-
-  defp http(:get, url, _body), do: do_http(:get, {String.to_charlist(url), []})
-
-  defp http(method, url, body) do
-    do_http(method, {String.to_charlist(url), [], ~c"application/json", body || ""})
-  end
-
-  defp do_http(method, request) do
-    case :httpc.request(method, request, [{:timeout, 30_000}], body_format: :binary) do
-      {:ok, {{_, status, _}, _headers, resp}} when status in 200..299 ->
-        if resp == "", do: {:ok, %{}}, else: {:ok, Jason.decode!(resp)}
-
-      other ->
-        {:error, other}
-    end
-  end
 end

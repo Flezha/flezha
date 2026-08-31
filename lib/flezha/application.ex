@@ -56,7 +56,7 @@ defmodule Flezha.Application do
         Flezha.Shutdown.SignalHandler,
         Flezha.Service.EventManager,
         Flezha.BootLoader,
-        Flezha.Service.Identificator,
+        Flezha.Identificator,
         # Owns the recovery-state cache + the published convergence
         # snapshot; must be up before any hub fires recovery telemetry.
         Flezha.Convergence.Snapshot,

@@ -1,7 +1,7 @@
 defmodule Flezha.Runner.ControlUnit do
-  alias Flezha.Service.Identificator
+  alias Flezha.Config
+  alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
-  alias Flezha.Service.ConfigManager
 
   use GenServer
 
@@ -250,7 +250,7 @@ defmodule Flezha.Runner.ControlUnit do
 
   @impl true
   def handle_call(:command_sockets_connect, from, state) do
-    sockets_count = ConfigManager.concurrent_channel_count()
+    sockets_count = Config.concurrent_channel_count()
 
     case ControlChannel.send_control(
            state.runner_id,

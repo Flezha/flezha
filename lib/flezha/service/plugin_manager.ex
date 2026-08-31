@@ -1,33 +1,28 @@
 defmodule Flezha.Service.PluginManager do
   @moduledoc """
   Per-node registry of enabled `%Flezha.Plugin{}` entries. Routes
-  `enable_plugin/2` into the owning operative's Overwatch via the unified
-  `{:plugin_subscribe, ...}` / `{:plugin_unsubscribe, ...}` messages and
-  persists the subscription into the operative's ProcessHub child-spec
-  (now backed by ProcessHub's durable registry) so it survives any
-  subsequent Overwatch (re)start, controller restart, or full cluster
-  cold boot.
+  `enable_plugin/2` into the owning operative's Overwatch and persists the
+  subscription into that operative's ProcessHub child-spec, so it survives an
+  Overwatch restart, a controller restart and a cluster cold boot.
 
-  Ordering: canonicalise-first, then cspec write, then runtime mutation. An
+  Ordering is canonicalise, then cspec write, then runtime mutation: an
   ill-typed or unknown subscription is refused before any durable record
-  exists, so the convergence loop is never handed intent that can never be
-  satisfied. A successful subscribe is always preceded by a durable record
-  holding canonical, typed values. Failure to write
-  the cspec returns `{:error, :registry_unavailable}` without touching
-  the runtime — the caller can retry. Failure of the subsequent runtime
-  call returns the error directly; the durable record is still in
-  place, and the next `Overwatch.init/1` will reconcile.
+  exists, so the convergence loop is never handed intent that cannot be
+  satisfied. A failed cspec write returns `{:error, :registry_unavailable}`
+  and touches no runtime, so the caller may retry; a failed runtime call
+  returns its own error with the durable record in place, and the next
+  `Overwatch.init/1` reconciles it.
   """
 
   use GenServer
 
-  alias Flezha.Plugin
-  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.PartitionGroup
-  alias Flezha.Service.RegistryUpdate
-  alias Flezha.Service.Identificator
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.RegistryUpdate
   alias ProcessHub.Service.ProcessRegistry
 
   @no_response_retry_attempts 8

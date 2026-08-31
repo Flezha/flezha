@@ -16,10 +16,10 @@ defmodule Flezha.Convergence.HealRebindContractTest do
 
   alias Flezha.Cluster.Directory
   alias Flezha.Convergence.Heal
+  alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Identificator
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.ProcessRegistry

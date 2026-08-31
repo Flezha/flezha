@@ -447,18 +447,29 @@ def run(cmd):
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
 
 
+# `mix xref` suffixes a member whose edge into the cycle is compile- or
+# export-time. No source path ends that way, so the label is safe to drop and
+# the member is then the bare path every other metric is keyed by.
+XREF_LABEL = re.compile(r"\s+\([a-z]+\)$")
+
+
+def parse_cycles(stdout):
+    """Member file lists from `mix xref graph --format cycles` output."""
+    cycles = []
+    for line in stdout.split("\n"):
+        if line.startswith("Cycle of length"):
+            cycles.append([])
+        elif cycles and line.strip().startswith(("lib/", "test/")):
+            cycles[-1].append(XREF_LABEL.sub("", line.strip()))
+    return cycles
+
+
 def xref_cycles():
     """Member file lists of every cycle `mix xref` reports, or None without mix."""
     out = run(["mix", "xref", "graph", "--format", "cycles"]) if shutil.which("mix") else None
     if out is None or out.returncode != 0:
         return None
-    cycles = []
-    for line in out.stdout.split("\n"):
-        if line.startswith("Cycle of length"):
-            cycles.append([])
-        elif cycles and line.strip().startswith(("lib/", "test/")):
-            cycles[-1].append(line.strip())
-    return cycles
+    return parse_cycles(out.stdout)
 
 
 def credo_warnings():
@@ -833,6 +844,20 @@ def self_test_cycle_depth():
     assert [m for _, m, *_ in compare({"areas": {"a": whole}}, now)] == ["max_cycle_files"]
     blind = {"areas": {"a": {**frags, "max_cycle_files": None}}}
     assert unmeasured(blind, now) == {"max_cycle_files": 1}
+
+    # `mix xref` marks a member whose edge into the cycle is compile- or
+    # export-time. The label is not part of the path, and a member carrying one
+    # counts for the area exactly like any other.
+    labelled = parse_cycles(
+        "2 cycles found. Showing them in decreasing size:\n\n"
+        "Cycle of length 3 (1 compile, 1 export):\n\n"
+        "    lib/a.ex (compile)\n    lib/b.ex (export)\n    lib/x.ex\n\n"
+        "Cycle of length 2:\n\n"
+        "    lib/c.ex\n    lib/z.ex\n"
+    )
+    marked = area_of(["lib/a.ex", "lib/b.ex", "lib/c.ex"], labelled)
+    assert (marked["cycles"], marked["max_cycle_files"]) == (2, 2), marked
+    assert labelled == [["lib/a.ex", "lib/b.ex", "lib/x.ex"], ["lib/c.ex", "lib/z.ex"]], labelled
 
 
 def self_test_baseline():

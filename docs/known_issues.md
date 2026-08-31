@@ -1975,8 +1975,13 @@ every new production freeze to `incident_log.md` at the repository root.
 - **Severity**: P3 · a dev instrument, no production impact — but it is a
   *benchmark*, and a benchmark that cannot run is a regression detector nobody
   knows they have lost.
-- **Where**: `lib/mix/tasks/bench/extension.ex:120` and `:137` pass `entity: 0` in
-  the producer opts; `ProducerWorker.configured/1` does
+- **Where**: `lib/mix/tasks/bench/extension.ex` — **THREE sites, not the two this
+  entry first named, and its description of one was wrong** (corrected 2026-08-31 by
+  area 5d): `:118`'s `entity_responses:`, `:120`'s `entity: 0` **inside the Kayrock
+  response shape rather than the producer opts**, and `:137`'s in the opts. Fixing only
+  the two named leaves `Wire.extract_partition/3` matching `%{partition_responses:
+  parts}` against a map with no such key — a `CaseClauseError` in place of the
+  `KeyError`. The opts pass `entity: 0` where `ProducerWorker.configured/1` does
   `Keyword.fetch!(opts, :partition)` (`producer_worker.ex:58`, `:166`).
 - **Evidence** (reproduced by the supervisor at `041dd838`):
 
@@ -2012,6 +2017,94 @@ every new production freeze to `incident_log.md` at the repository root.
 - **A fix must** correct both sites, run the task to completion, and record the
   first floor this instrument has ever had — under [[KI-92]]'s rule that the first
   run of a series on this box is not a result.
+- **RESOLVED 2026-08-31, `47003c22`.** All three sites corrected, red first, and the
+  task now completes. **The first floor this instrument has ever had**, five runs with
+  run 1 discarded: **≤ 4.0 %** on the four rows above 100 ns, **16.7 %** on the 60 ns
+  row, which can therefore resolve nothing.
+- **It also corrects [[KI-92]]'s scope**: the cold-start transient **does not appear on
+  this driver** — run 1 sits within **3.6 %** of the plateau, against **303 %** on
+  `bench.workflow`. KI-92 is a property of *that* driver, not of the box, and the
+  settling rule is applied per instrument rather than assumed everywhere.
+
+### KI-101 · `bench.workflow` prints a millisecond figure in scientific notation
+
+- **Severity**: P4 · operator-visible output, and the exact thing an existing test
+  was written to prevent. Found by area 5d while *refusing* a fold.
+- **Where**: `lib/mix/tasks/bench/workflow/run.ex`'s `fmt_ms/1`.
+- **Evidence** (reproduced by the supervisor):
+
+  ```
+  $ elixir -e 'IO.puts("in #{Float.round(1000.0, 1)} ms")'
+  in 1.0e3 ms
+  ```
+
+  So `mix bench.workflow` prints `in 1.0e3 ms` whenever a window lands on a round
+  millisecond.
+- **Mechanism**: `Float.round(1000.0, 1)` is still a float, and Elixir's `to_string/1`
+  renders a float of that magnitude in scientific notation. `Report.ms_from_ns/1`
+  formats to a string and gives `"1000.0"`. The two agree on **2 011 of 2 016** vector
+  inputs and disagree on **five** — all of them round values.
+- **How it was found, which is worth recording**: area 5d was told to fold the four
+  duration renderers into one shared helper. It measured the candidates against the
+  shared implementation first, found the five disagreements, and **refused the fold on
+  its own task's rule** — *"a disagreement is a behaviour change and stops the fold"*.
+  The defect is a by-product of taking that rule literally rather than eyeballing two
+  functions that look alike.
+- **`bench_report_test.exs` already asserts a duration is never rendered "as a raw
+  float"** — the test exists, and `Run.fmt_ms/1` is simply not the path it covers.
+- **A fix must** render through the same formatter the report contract uses, and extend
+  the existing assertion to the workflow task's own path so the two cannot drift again.
+  **Not folded blindly**: three of the four renderers feed JSON and `BENCH_RESULT`
+  contracts that read **numbers**, where the shared helper returns a string.
+
+## Resolved
+
+### KI-99 · `Source.handle_signal/2` is a ninth dead callback
+
+- **Severity**: P4 · exactly the shape of the `Sink` callback deleted in `5b90ff2e`,
+  but on a **different behaviour**, so it fell outside that ruling's words.
+- **Where**: `lib/flezha/observability/source.ex:70`, `@optional_callbacks` at `:75`.
+- **Evidence**: **no implementation and no invoker anywhere** in `lib/` or `test/`.
+  `docs/operations/observability.md:257` already records that the foundation drives no
+  `handle_poll/2` either.
+- **Verdict (supervisor, 2026-08-31)**: **real — delete it, on the same reasoning that
+  settled the `Sink` one.** An optional callback nothing implements and nothing calls
+  is not an extension point; it is a claim about the system that is false. Area 5d
+  takes it next segment.
+- **A fix must** check `handle_poll/2` in the same pass rather than fixing only the one
+  that was found — the doc already suggests it is in the same state.
+- **RESOLVED 2026-08-31, `374a4031`, and it was larger than filed.** `handle_poll/2`
+  was in the identical state and went with it, leaving `@optional_callbacks` empty and
+  deleted too — which is why the verdict said to check it in the same pass.
+- **Checking the pair turned up the fact that matters** and is now [[KI-100]]:
+  `Flezha.Observability.Source` has **zero implementers in the tree.**
+
+### KI-100 · The `Source` behaviour has no implementers, and two moduledocs said it did
+
+- **Severity**: P3 · a published extension point that is a false statement about the
+  system. Found by area 5d while closing KI-99.
+- **Where**: `lib/flezha/observability/source.ex`.
+- **Evidence** (reproduced by the supervisor at `374a4031`):
+  `grep -rn "@behaviour Flezha.Observability.Source" lib/ test/` → **no output**. The
+  single hit before the fix was **inside `source.ex`'s own moduledoc heredoc**.
+- **Mechanism**: the five real sources `use Flezha.Observability.OtpBackend.Source` — a
+  *different* module, a macro that never declares the behaviour — and **none defines
+  `config_schema/0`**. `do_register_source/1` inserts a plain ETS row from a map: it
+  never names a module and never calls `function_exported?`, so nothing enforces the
+  contract either. `init/1` survives only because GenServer calls it under that name,
+  and `config_schema/0` is read for **sinks** only.
+- **Already corrected in `374a4031`**: `source_supervisor.ex`'s moduledoc claimed its
+  children *"implement the `Flezha.Observability.Source` behaviour"* (false), and the
+  moduledoc example taught `handle_poll/2`. Both now describe the GenServer that
+  actually drives itself.
+- **Verdict (supervisor, 2026-08-31)**: **the remaining question is the user's**, and
+  it is under *Awaiting the user's decision*. Two honest options — delete the behaviour
+  (removes a third-party extension point nobody uses), or make the claim true (have
+  `OtpBackend.Source`'s macro declare `@behaviour` and enforce `config_schema/0`, which
+  costs five small implementations and makes registration start checking). **Not taken
+  in 5d**: it is a product-surface decision, not a refactor, and the false moduledocs —
+  the part that actively misleads — are already fixed.
+
 
 ### KI-98 · The cycle metrics silently drop every annotated cycle member
 
@@ -2051,8 +2144,29 @@ every new production freeze to `incident_log.md` at the repository root.
   four moved rows in `baseline.json`; and **add no third metric** — §11f rules that
   out explicitly, and this is a correction to an existing ruler rather than a new
   one.
+- **RESOLVED 2026-08-31, `3e9a1d28`.** `parse_cycles/1` strips
+  `XREF_LABEL = \s+\([a-z]+\)$` at the append — **generic rather than a three-label
+  allow-list on purpose**: no source path ends in ` (word)`, and a label Elixir adds
+  later would otherwise reopen the same silence.
+- **Red first on the mandated assertion.** The parser was extracted from
+  `xref_cycles()` byte-unchanged, the fixture added, and the unfixed parser reported
+  `(cycles 1, max_cycle_files 1)` against a true `(2, 2)` — the annotated cycle
+  vanishing from the area **entirely**, not merely under-counted.
+- **THREE area rows moved, not the four the supervisor briefed** — a correction the
+  worker made and marked false in place. `lib/flezha` **is** an area, but it is the
+  **ten root files** of `lib/flezha/` at `cycles` 0 / `max_cycle_files` 0, none of
+  them in any cycle; `46 → 56` was the repo cycle's visible-member count, not an area
+  row. Moved: `convergence` 1 → 5, `operative` 4 → 9, `service` 5 → 6. `cycles` moved
+  for no area and no non-cycle row moved anywhere. Re-recorded **surgically** — three
+  insertions, three deletions — rather than by `--write-baseline`, which would have
+  rewritten every row against a tree holding a peer's uncommitted work.
+- **Vindicated immediately, on the change it was fixed for.** Cutting the 56-cycle's
+  only compile edge (`65e5d055`) did **not** remove that file from the annotated set —
+  it **downgraded** it to `(export)`, so the cycle reads `(10 export)` where it read
+  `(1 compile, 9 export)`. `lib/flezha/service` `max_cycle_files` is **6 before and 6
+  after**; on the unfixed ruler the same cut would have reported **5 → 6, a regression
+  for making the best change in the area.**
 
-## Resolved
 
 ### KI-95 · The operator-facing parameter order varies with what the VM has loaded
 

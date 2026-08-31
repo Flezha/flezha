@@ -12,9 +12,9 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
-  alias Flezha.Service.Identificator
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-unit-workflow-stop-test"

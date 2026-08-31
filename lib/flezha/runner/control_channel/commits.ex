@@ -25,8 +25,8 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   require Logger
 
+  alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
-  alias Flezha.Service.Identificator
   alias Flezha.State.Commands
   alias Flezha.State.{DurabilityTier, ProcInbox, ProcJournal}
   alias Flezha.State.Paths
