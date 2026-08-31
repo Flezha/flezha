@@ -9,7 +9,8 @@ defmodule Flezha.SDK.DispatchTest do
   use ExUnit.Case, async: false
 
   alias Flezha.SDK.Ctx
-  alias Flezha.SDK.{Topology, Counters, Operative, Entity, Channels, KeyGroup}
+  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup, Operative, Topology}
+  alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
   alias Flezha.Transport.Local
   alias FlezhaTest.Helper.NodeTestHelper
@@ -196,7 +197,7 @@ defmodule Flezha.SDK.DispatchTest do
 
   test "full dispatch routes input → run → emit → sink output on a secondary" do
     %{op: op} = start_operative(EchoOp)
-    Operative.input(op, "in", "hello", %{})
+    Inbox.input(op, "in", "hello", %{})
     assert_receive {:flz_data, _id, "op-1", "hello", %{"channel" => "out"}}, 1_000
   end
 
@@ -208,7 +209,7 @@ defmodule Flezha.SDK.DispatchTest do
     end)
 
     %{op: op} = start_operative(OrderedOp)
-    for n <- 1..5, do: Operative.input(op, "in", "v#{n}", %{})
+    for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
 
     for n <- 1..5 do
       expected = "v#{n}"
@@ -221,7 +222,7 @@ defmodule Flezha.SDK.DispatchTest do
     on_exit(fn -> :persistent_term.erase(:flaky_counter) end)
 
     %{op: op, counters: counters} = start_operative(FlakyOp)
-    Operative.input(op, "in", "x", %{})
+    Inbox.input(op, "in", "x", %{})
 
     # third attempt succeeds → one completed dispatch, output emitted
     assert_receive {:flz_data, _id, "op-1", "x", %{"channel" => "out"}}, 2_000
@@ -230,7 +231,7 @@ defmodule Flezha.SDK.DispatchTest do
 
   test "a non-retryable failure parks immediately and the ack releases the Entity" do
     %{op: op} = start_operative(PoisonOp, runner: self())
-    Operative.input(op, "in", "poison", %{})
+    Inbox.input(op, "in", "poison", %{})
 
     # Operative forwards the park to its runner (this test process).
     assert_receive {:"$gen_cast", {:park, entity_pid, identity, body}}, 1_000
@@ -242,7 +243,7 @@ defmodule Flezha.SDK.DispatchTest do
 
     # releasing lets the Entity resume (a fresh input dispatches)
     Entity.release_park(entity_pid, body.park_id)
-    Operative.input(op, "in", "poison2", %{})
+    Inbox.input(op, "in", "poison2", %{})
     assert_receive {:"$gen_cast", {:park, ^entity_pid, _identity2, _body2}}, 1_000
   end
 
@@ -282,7 +283,7 @@ defmodule Flezha.SDK.DispatchTest do
     probe!()
     %{op: op, counters: counters} = start_operative(DropOp)
     # Fire many quickly; capacity 1 + drop_newest → only a subset get through.
-    for n <- 1..10, do: Operative.input(op, "in", "v#{n}", %{})
+    for n <- 1..10, do: Inbox.input(op, "in", "v#{n}", %{})
 
     # Every input either ran (released here as it reports in) or was shed:
     # the two accounts add up to the burst once it is through.
@@ -335,7 +336,7 @@ defmodule Flezha.SDK.DispatchTest do
     %{op: op} = start_operative(DefaultOp)
     # The same burst `drop_newest` sheds: capacity 1 against 10 inputs, each
     # held at the gate. Under the default the router waits instead of dropping.
-    for n <- 1..10, do: Operative.input(op, "in", "v#{n}", %{})
+    for n <- 1..10, do: Inbox.input(op, "in", "v#{n}", %{})
 
     # Released as each reports in — the router is parked on the full mailbox
     # between runs, and an output is delivered only once it moves again.
@@ -347,7 +348,7 @@ defmodule Flezha.SDK.DispatchTest do
     range = KeyGroup.decode(0, 2, 0, 127)
     %{op: op} = start_operative(IdentityKeyOp, range: range, runner: self())
     # "BTC-USD" hashes to key group 129 — outside this partition's 0..127 range.
-    Operative.input(op, "in", "BTC-USD", %{})
+    Inbox.input(op, "in", "BTC-USD", %{})
     assert_receive {:"$gen_cast", {:park, _entity, _identity, body}}, 1_000
     assert body.error =~ "does not own"
   end
@@ -369,7 +370,7 @@ defmodule Flezha.SDK.DispatchTest do
       %{op: op, counters: counters} = start_operative(GatedOp)
       assert Counters.handout_liveness(counters) == {0, 0}
 
-      Operative.input(op, "in", "slow", %{})
+      Inbox.input(op, "in", "slow", %{})
       assert_receive {:running, "slow", entity}, 1_000
 
       # The handout ages on the clock while the Entity holds it.
@@ -391,7 +392,7 @@ defmodule Flezha.SDK.DispatchTest do
     test "an Entity killed mid-dispatch releases its slot, and its key is routable again" do
       %{op: op, counters: counters} = start_operative(GatedOp)
 
-      Operative.input(op, "in", "kill", %{})
+      Inbox.input(op, "in", "kill", %{})
       assert_receive {:running, "kill", entity}, 1_000
       assert {1, _} = Counters.handout_liveness(counters)
 
@@ -406,7 +407,7 @@ defmodule Flezha.SDK.DispatchTest do
       assert Process.alive?(op), "a crashed Entity must not take its Operative down"
 
       # The key is routable again: a fresh Entity is started on the next input.
-      Operative.input(op, "in", "after", %{})
+      Inbox.input(op, "in", "after", %{})
       assert_receive {:running, "after", fresh}, 1_000
       send(fresh, :release)
       assert_receive {:flz_data, _id, "op-1", "after", _}, 2_000
@@ -425,14 +426,14 @@ defmodule Flezha.SDK.DispatchTest do
     end)
 
     %{op: op} = start_operative(GatedOp)
-    Operative.input(op, "in", "first", %{})
+    Inbox.input(op, "in", "first", %{})
     assert_receive {:running, "first", entity}, 1_000
     send(entity, :release)
     assert_receive {:flz_data, _id, "op-1", "first", _}, 2_000
 
     # Force the losing order: the input is queued before the exit signal.
     :sys.suspend(op)
-    Operative.input(op, "in", "second", %{})
+    Inbox.input(op, "in", "second", %{})
     Process.exit(entity, :kill)
     :sys.resume(op)
 

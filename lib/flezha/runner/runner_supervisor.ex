@@ -1,8 +1,20 @@
 defmodule Flezha.Runner.RunnerSupervisor do
-  alias Flezha.Runner.ControlUnit
-  alias Flezha.Runner.ControlChannel
-  alias Flezha.Runner.StreamAcceptor
+  @moduledoc """
+  One runner's supervision tree: its control unit, its control channel and
+  commit barrier, and the two pre-spawned data-stream pools.
+
+  The transport decides only whether per-stream UDS acceptors are started —
+  `:quic` and `:native` bind data streams through `Transport.Server` instead.
+
+  Invariant: an unknown transport atom raises here rather than silently
+  starting acceptors, because a runner brought up with no listener looks
+  healthy and serves nothing.
+  """
+
   alias Flezha.Identificator
+  alias Flezha.Runner.ControlChannel
+  alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.StreamAcceptor
 
   use Supervisor
 
@@ -14,8 +26,13 @@ defmodule Flezha.Runner.RunnerSupervisor do
 
   @impl true
   def init({namespace, runner_id, stream_ref, transport}) do
-    # Core children for all transport modes.
-    children = [
+    core_children(namespace, runner_id, stream_ref)
+    |> Kernel.++(acceptor_children(runner_id, transport))
+    |> Supervisor.init(strategy: :one_for_one)
+  end
+
+  defp core_children(namespace, runner_id, stream_ref) do
+    [
       %{
         id: ControlUnit,
         start: {ControlUnit, :start_link, [{namespace, runner_id}]}
@@ -37,36 +54,31 @@ defmodule Flezha.Runner.RunnerSupervisor do
         start: {Flezha.Runner.StreamSup, :start_link, [{runner_id, :secondary}]}
       }
     ]
+  end
 
-    # UDS starts per-stream NIF UDS servers (StreamAcceptors). QUIC and native
-    # route/bind data streams through Transport.Server, so they need none. An
-    # unknown atom is a boot bug — fail loudly rather than silently start
-    # acceptors (the former `_uds` catch-all would).
-    children =
-      case transport do
-        :uds ->
-          children ++
-            [
-              %{
-                id: :primary_acceptor,
-                start: {StreamAcceptor, :start_link, [{runner_id, :primary}]}
-              },
-              %{
-                id: :secondary_acceptor,
-                start: {StreamAcceptor, :start_link, [{runner_id, :secondary}]}
-              }
-            ]
+  # UDS starts per-stream NIF UDS servers (StreamAcceptors). QUIC and native
+  # route/bind data streams through Transport.Server, so they need none. An
+  # unknown atom is a boot bug — fail loudly rather than silently start
+  # acceptors.
+  defp acceptor_children(runner_id, :uds) do
+    [
+      %{
+        id: :primary_acceptor,
+        start: {StreamAcceptor, :start_link, [{runner_id, :primary}]}
+      },
+      %{
+        id: :secondary_acceptor,
+        start: {StreamAcceptor, :start_link, [{runner_id, :secondary}]}
+      }
+    ]
+  end
 
-        t when t in [:quic, :native] ->
-          children
+  defp acceptor_children(_runner_id, transport) when transport in [:quic, :native], do: []
 
-        other ->
-          raise ArgumentError,
-                "RunnerSupervisor: unknown transport #{inspect(other)} " <>
-                  "(expected :uds, :quic or :native)"
-      end
-
-    Supervisor.init(children, strategy: :one_for_one)
+  defp acceptor_children(_runner_id, other) do
+    raise ArgumentError,
+          "RunnerSupervisor: unknown transport #{inspect(other)} " <>
+            "(expected :uds, :quic or :native)"
   end
 
   @doc """

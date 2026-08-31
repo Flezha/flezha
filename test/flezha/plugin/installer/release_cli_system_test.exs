@@ -139,13 +139,13 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
       else: flunk("daemon did not become ready within #{deadline_ms}ms")
   end
 
-  # The daemon answers `pid`, and its BootLoader reports ready over rpc.
+  # The daemon answers `pid`, and its Boot.Loader reports ready over rpc.
   defp ready?(env) do
     with {_, 0} <- System.cmd(@flzvm, ["pid"], env: env, stderr_to_stdout: true),
          {out, 0} <-
            System.cmd(
              @flzvm,
-             ["rpc", "GenServer.call(Flezha.BootLoader, :boot_ready?, 5000) |> IO.puts()"],
+             ["rpc", "GenServer.call(Flezha.Boot.Loader, :boot_ready?, 5000) |> IO.puts()"],
              env: env,
              stderr_to_stdout: true
            ) do

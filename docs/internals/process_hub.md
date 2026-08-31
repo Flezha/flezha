@@ -121,7 +121,7 @@ why every deliberate stop must go through the hub stop. A hub without auto-recov
 durable starts (`:durable_requires_auto_recovery`).
 
 The first round is what moves a hub to `:normal`, so the grace **is the boot gate**:
-`Convergence.RecoveryGate` and `BootLoader.await_namespace_hubs/0` block on it, and it is set
+`Convergence.RecoveryGate` and `Boot.Loader.await_namespace_hubs/0` block on it, and it is set
 above the runner handshake window because an orphan start needs a runner to place against.
 Two loops start operatives — the reconcile and `Convergence.Loop` (5 s tick, rebind/replace
 heals); `reconcile_duplicate` telemetry is the tripwire if they contend.

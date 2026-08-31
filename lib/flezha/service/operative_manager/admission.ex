@@ -8,6 +8,7 @@ defmodule Flezha.Service.OperativeManager.Admission do
   alias Flezha.AuthZ.Quotas
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.Validator
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
 
   def cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id) do
@@ -107,6 +108,17 @@ defmodule Flezha.Service.OperativeManager.Admission do
 
   def check_not_shutting_down() do
     if ShutdownCoordinator.shutting_down?(), do: {:error, :shutting_down}, else: :ok
+  end
+
+  def validate_operative(namespace, operative) do
+    with :ok <- Validator.valid_kind(operative.kind),
+         :ok <- Validator.byte_limit_exceed(operative.id),
+         :ok <- Validator.valid_namespace(namespace),
+         :ok <- Validator.operative_unique(namespace, operative.id) do
+      :ok
+    else
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   def validate_factory(namespace, factory_id) when is_binary(factory_id) do

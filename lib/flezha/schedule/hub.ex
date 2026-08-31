@@ -21,7 +21,7 @@ defmodule Flezha.Schedule.Hub do
   require Logger
 
   alias Flezha.Cluster.Orchestrator
-  alias Flezha.Convergence.SafeCall
+  alias Flezha.SafeCall
   alias Flezha.Schedule.{Job, Store}
   alias Flezha.Service.HubManager
 

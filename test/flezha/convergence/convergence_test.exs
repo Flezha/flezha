@@ -12,8 +12,10 @@ defmodule Flezha.ConvergenceTest do
   use ExUnit.Case, async: false
   use Mimic
 
-  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, SafeCall, Snapshot}
+  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Snapshot}
+  alias Flezha.Convergence.Loop.{Progress, Summary}
   alias Flezha.Plugin
+  alias Flezha.SafeCall
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -1055,7 +1057,7 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
-  describe "Loop.operative_health_map/3 (operator health surface)" do
+  describe "Summary.operative_health_map/3 (operator health surface)" do
     alias Flezha.Convergence.{Intent, Loop}
 
     defp intent_operative(ns, rid),
@@ -1071,7 +1073,7 @@ defmodule Flezha.ConvergenceTest do
       reality =
         reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      health = Loop.operative_health_map(intent.operatives, reality, %Loop{})
+      health = Summary.operative_health_map(intent.operatives, reality, %Loop.State{})
       assert health == %{{ns, "r"} => :healthy}
     end
 
@@ -1080,7 +1082,7 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_runner: nil}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
                {ns, "r"} => :unbound
              }
     end
@@ -1090,7 +1092,7 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_runner: "gone"}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
                {ns, "r"} => :failed
              }
     end
@@ -1102,9 +1104,9 @@ defmodule Flezha.ConvergenceTest do
       reality =
         reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      state = %Loop{stalled_operatives: %{"r" => System.monotonic_time(:millisecond)}}
+      state = %Loop.State{stalled_operatives: %{"r" => System.monotonic_time(:millisecond)}}
 
-      assert Loop.operative_health_map(intent.operatives, reality, state) == %{
+      assert Summary.operative_health_map(intent.operatives, reality, state) == %{
                {ns, "r"} => :degraded
              }
     end
@@ -1116,7 +1118,9 @@ defmodule Flezha.ConvergenceTest do
       reality =
         reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{plugin_degraded: ["r"]}) ==
+      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{
+               plugin_degraded: ["r"]
+             }) ==
                %{{ns, "r"} => :degraded}
     end
 
@@ -1125,7 +1129,7 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_runner: :unknown}}, MapSet.new(["e1"]))
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
                {ns, "r"} => :unknown
              }
     end
@@ -1135,7 +1139,7 @@ defmodule Flezha.ConvergenceTest do
       intent = %Intent{operatives: [intent_operative(ns, "r")]}
       reality = reality(ns, %{{ns, "r"} => %{bound_runner: "e1"}}, :unknown)
 
-      assert Loop.operative_health_map(intent.operatives, reality, %Loop{}) == %{
+      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
                {ns, "r"} => :unknown
              }
     end
@@ -1176,7 +1180,7 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
-  describe "Loop.intent_mismatch/2 — durable evidence vs live intent" do
+  describe "Intent.intent_mismatch/2 — durable evidence vs live intent" do
     alias Flezha.Convergence.{Intent, Loop}
     alias Flezha.Service.HubManager
 
@@ -1222,17 +1226,17 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "fresh install with no durable evidence → empty mismatch" do
-      assert {[], _cache} = Loop.intent_mismatch(intent_for([]), nil)
+      assert {[], _cache} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
     test "wiped registry with on-disk evidence → mismatch names the operatives", %{root: root} do
       seed_entity(root, "btc_kraken", "op", "k1")
       seed_entity(root, "eth_kraken", "op", "k1")
 
-      assert {["btc_kraken", "eth_kraken"], cache} = Loop.intent_mismatch(intent_for([]), nil)
+      assert {["btc_kraken", "eth_kraken"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
       # Live intent covering one operative clears exactly that entry.
-      assert {["eth_kraken"], _} = Loop.intent_mismatch(intent_for(["btc_kraken"]), cache)
+      assert {["eth_kraken"], _} = Intent.intent_mismatch(intent_for(["btc_kraken"]), cache)
     end
 
     test "a finished workflow retained for inspection is not evidence", %{root: root} do
@@ -1248,27 +1252,27 @@ defmodule Flezha.ConvergenceTest do
           finished_at: 0
         })
 
-      assert {["btc_kraken"], _} = Loop.intent_mismatch(intent_for([]), nil)
+      assert {["btc_kraken"], _} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
     test "durable-registry rows without live intent also count as evidence" do
       stub(HubManager, :durable_operative_ids, fn -> MapSet.new(["ghost_operative"]) end)
 
-      assert {["ghost_operative"], _} = Loop.intent_mismatch(intent_for([]), nil)
+      assert {["ghost_operative"], _} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
     test "flz state delete clears the entry", %{root: root} do
       seed_entity(root, "btc_kraken", "op", "k1")
-      assert {["btc_kraken"], cache} = Loop.intent_mismatch(intent_for([]), nil)
+      assert {["btc_kraken"], cache} = Intent.intent_mismatch(intent_for([]), nil)
 
       # The CLI `flz state delete btc_kraken/op/k1` path.
       {:ok, _} = Flezha.State.Supervisor.delete_entity({"btc_kraken", "op", "k1"})
 
-      assert {[], _} = Loop.intent_mismatch(intent_for([]), cache)
+      assert {[], _} = Intent.intent_mismatch(intent_for([]), cache)
     end
   end
 
-  describe "Loop.progress_markers/0 — the tier cursors reach the classifier" do
+  describe "Progress.progress_markers/0 — the tier cursors reach the classifier" do
     alias Flezha.Convergence.{Loop, StallClassifier}
     alias Flezha.Operative.ClassRegistry
     alias Flezha.State.{FsyncBatcher, InputLog, Supervisor, TestHelpers, WalWriter, Wire}
@@ -1316,7 +1320,7 @@ defmodule Flezha.ConvergenceTest do
       :ok = WalWriter.append(pid, 0, effect_hdr(), effect([], 0))
       :ok = WalWriter.fsync(pid)
 
-      marker = Enum.find(Loop.progress_markers(), &(&1.operative_id == rc))
+      marker = Enum.find(Progress.progress_markers(), &(&1.operative_id == rc))
 
       assert marker.entity == {"op", "k1"}
       assert marker.input_log_tail == 1
@@ -1340,7 +1344,7 @@ defmodule Flezha.ConvergenceTest do
       :ok = WalWriter.append(pid, 0, <<1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0>>, "change")
       :ok = WalWriter.fsync(pid)
 
-      marker = Enum.find(Loop.progress_markers(), &(&1.operative_id == rc))
+      marker = Enum.find(Progress.progress_markers(), &(&1.operative_id == rc))
 
       refute Map.has_key?(marker, :input_log_tail)
       refute Map.has_key?(marker, :consumed_offset)
@@ -1361,14 +1365,14 @@ defmodule Flezha.ConvergenceTest do
       :ok = WalWriter.append(pid, 0, effect_hdr(), effect([], 0))
       :ok = WalWriter.fsync(pid)
 
-      baseline = Enum.filter(Loop.progress_markers(), &(&1.operative_id == rc))
+      baseline = Enum.filter(Progress.progress_markers(), &(&1.operative_id == rc))
 
       # The source keeps feeding, but this Entity never consumes another offset —
       # a poison payload mid-retry, or a procedure wedged on it.
       {:ok, 1} = InputLog.append(rc, "i1", %{})
       {:ok, 2} = InputLog.append(rc, "i2", %{})
 
-      current = Enum.filter(Loop.progress_markers(), &(&1.operative_id == rc))
+      current = Enum.filter(Progress.progress_markers(), &(&1.operative_id == rc))
 
       assert %{^rc => {:stuck, :watermark_frozen, %{entity: {"op", "poisoned"}}}} =
                StallClassifier.classify_producing(current, baseline, %{
@@ -1380,21 +1384,21 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
-  describe "Loop.rotate_progress_history/4 — grace-window cursor baselines" do
+  describe "Progress.rotate_progress_history/4 — grace-window cursor baselines" do
     alias Flezha.Convergence.Loop
 
     test "baseline is nil until a snapshot has aged one grace window, then rotates" do
-      {baseline, h} = Loop.rotate_progress_history([], [:a], 0, 100)
+      {baseline, h} = Progress.rotate_progress_history([], [:a], 0, 100)
       assert baseline == nil
 
-      {baseline, h} = Loop.rotate_progress_history(h, [:b], 50, 100)
+      {baseline, h} = Progress.rotate_progress_history(h, [:b], 50, 100)
       assert baseline == nil
 
-      {baseline, h} = Loop.rotate_progress_history(h, [:c], 100, 100)
+      {baseline, h} = Progress.rotate_progress_history(h, [:c], 100, 100)
       assert baseline == [:a]
 
       # Older-than-baseline entries are pruned; the newest aged one wins.
-      {baseline, h} = Loop.rotate_progress_history(h, [:d], 160, 100)
+      {baseline, h} = Progress.rotate_progress_history(h, [:d], 160, 100)
       assert baseline == [:b]
       refute Enum.any?(h, fn {_at, snap} -> snap == [:a] end)
     end
@@ -1427,24 +1431,24 @@ defmodule Flezha.ConvergenceTest do
     test "freshly-stuck operatives emit operative_stuck once, not on steady state", %{ref: ref} do
       stuck = %{"btc" => %{detail: :wal_frozen, entity: "op/k1"}}
 
-      Loop.note_stuck_transitions(%{}, stuck)
+      Progress.note_stuck_transitions(%{}, stuck)
 
       assert_receive {^ref, [:flezha, :convergence, :operative_stuck], %{count: 1},
                       %{operative_id: "btc", detail: :wal_frozen, entity: "op/k1"}}
 
-      Loop.note_stuck_transitions(stuck, stuck)
+      Progress.note_stuck_transitions(stuck, stuck)
       refute_received {^ref, [:flezha, :convergence, :operative_stuck], _, _}
     end
 
     test "intent-mismatch transitions emit with the named operatives", %{ref: ref} do
-      Loop.note_intent_mismatch_transition([], ["btc", "eth"])
+      Intent.note_intent_mismatch_transition([], ["btc", "eth"])
 
       assert_receive {^ref, [:flezha, :convergence, :intent_mismatch], %{count: 2},
                       %{operatives: ["btc", "eth"]}}
 
       # Unchanged and cleared transitions do not re-emit.
-      Loop.note_intent_mismatch_transition(["btc", "eth"], ["btc", "eth"])
-      Loop.note_intent_mismatch_transition(["btc", "eth"], [])
+      Intent.note_intent_mismatch_transition(["btc", "eth"], ["btc", "eth"])
+      Intent.note_intent_mismatch_transition(["btc", "eth"], [])
       refute_received {^ref, [:flezha, :convergence, :intent_mismatch], _, _}
     end
   end

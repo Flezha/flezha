@@ -1,0 +1,684 @@
+defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
+  @moduledoc """
+  `workflow-durable-suspension` lifecycle on the Overwatch: park (evict from the
+  runner, keep the registry entry), rehydrate on a new input or the durable
+  timer, exactly one rehydration when both wake sources race, and rediscovery of
+  a suspended instance from durable state alone after a controller redeploy.
+
+  Plus `workflow-loop-rewind`, which rides the same evict → rehydrate path: the
+  refusals (uncommitted target, uncompensable output) and the durable effect of
+  the ones that go through.
+
+  The callbacks are driven directly on a struct (no live GenServer), the way
+  `overwatch_restore_async_test` does — the state machine is the unit here.
+  """
+  # async: false: writes Application env; Mimic global mode; Mimic stubs.
+  use ExUnit.Case, async: false
+  use Mimic
+  import FlezhaTest.Helper.MimicGlobal
+
+  alias Flezha.Identificator
+  alias Flezha.Operative.{Builder, ClassRegistry, Overwatch}
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.State.{ProcInbox, ProcJournal, TestHelpers}
+
+  setup :set_mimic_global_until_exit
+
+  setup do
+    root = TestHelpers.tmp_app_data_dir()
+
+    # The rehydrate drives the real (un-park) bind task, which has no runner to
+    # reach in a unit test: bound its wait + retry budget so the assertions about
+    # the state machine do not pay the production backoff.
+    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 50))
+    on_exit(TestHelpers.override_env(:overwatch_retry_backoff_ms, [1]))
+
+    on_exit(fn ->
+      Application.delete_env(:flezha, :state_root)
+      File.rm_rf(root)
+    end)
+
+    :ok
+  end
+
+  defp instance_id(), do: "susp_#{System.unique_integer([:positive])}"
+
+  defp state(inst, overrides \\ []) do
+    base = %Overwatch{
+      id: inst,
+      namespace: "default",
+      runner_id: "ex_1",
+      factory_id: "chat",
+      # The test process stands in for the operative's StreamChannel: a
+      # forwarded input arrives as an `{:io_in, ...}` cast.
+      channel: self(),
+      builder: %Builder{id: inst, factory_id: "chat", kind: :workflow, opts: []},
+      extensions: Table.new(Overwatch.__extensions_catalog__()),
+      durable_workflow: true
+    }
+
+    struct!(base, overrides)
+  end
+
+  # fails when: an un-parked instance rebinds onto a runner but publishes neither
+  # the registry tag nor the runner's route to its pid, so every frame it produces
+  # hits `stream_channel.ex`'s `[] -> :ok` drop while it still reads as healthy.
+  test "un-parking publishes the registry tag and the runner route" do
+    inst = instance_id()
+    test_pid = self()
+
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn ns, ^inst, runner ->
+      send(test_pid, {:tag_published, ns, runner})
+      :ok
+    end)
+
+    stub(Flezha.Service.HubManager, :hook_insert_local_pid, fn runner, ^inst, pid ->
+      send(test_pid, {:route_published, runner, pid})
+      :ok
+    end)
+
+    parked = state(inst, migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark})
+    recovered = %{parked | runner_id: "ex_woken", suspended: false}
+
+    {:noreply, unparked} =
+      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+
+    assert unparked.migrate_task == nil
+    assert_receive {:tag_published, "default", "ex_woken"}
+    assert_receive {:route_published, "ex_woken", ^test_pid}
+  end
+
+  test "park evicts the instance from its runner and keeps it registered" do
+    inst = instance_id()
+    test_pid = self()
+
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn "ex_1", ^inst ->
+      send(test_pid, :evicted)
+      :ok
+    end)
+
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _ns, ^inst, runner ->
+      send(test_pid, {:registry_runner, runner})
+      :ok
+    end)
+
+    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+
+    # Zero live runner resources; the registry entry (and this process) stay.
+    assert_receive :evicted
+    assert_receive {:registry_runner, nil}
+
+    assert suspended.suspended
+    assert suspended.runner_id == nil
+    assert suspended.channel == nil
+    assert suspended.wake_timer == nil, "no wake_after declared ⇒ wait for input alone"
+  end
+
+  test "a turn that landed while the loop was parking is never stranded" do
+    inst = instance_id()
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> "ex_2" end)
+
+    # Iteration 0 consumed offset 1; offset 2 arrived while the driver was on its
+    # way out and was never drained — durable, but undelivered.
+    {:ok, 1} = ProcInbox.append(inst, "consumed", %{})
+    {:ok, 2} = ProcInbox.append(inst, "in-flight", %{})
+    :ok = ProcJournal.append_iter_committed(inst, 0, 1, [])
+
+    {:noreply, after_park, :hibernate} = Overwatch.handle_cast({:suspend, 0, nil}, state(inst))
+
+    assert after_park.migrate_task != nil,
+           "an instance with undelivered input must rehydrate, not sit suspended " <>
+             "waiting for a message that already arrived"
+
+    :ok = await_migrate_task(after_park)
+
+    # With nothing pending, the same park suspends and stays there.
+    :ok = ProcJournal.append_iter_committed(inst, 1, 2, [])
+    {:noreply, idle, :hibernate} = Overwatch.handle_cast({:suspend, 1, nil}, state(inst))
+    assert idle.suspended
+    assert idle.migrate_task == nil
+  end
+
+  test "a park with a wake deadline arms the durable timer" do
+    inst = instance_id()
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+
+    deadline = System.system_time(:millisecond) + 50_000
+
+    {:noreply, suspended, :hibernate} =
+      Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
+
+    assert is_reference(suspended.wake_timer)
+    assert Process.read_timer(suspended.wake_timer) > 40_000
+  end
+
+  test "input for a suspended instance is journaled and rehydrates it" do
+    inst = instance_id()
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _ns, "chat", ^inst -> "ex_2" end)
+
+    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+
+    {:noreply, journaling} =
+      Overwatch.handle_cast({:io_in, "hello", %{"channel" => "chat"}}, suspended)
+
+    assert journaling.migrate_task == nil, "nothing wakes before the input is durable"
+    rehydrating = settle_journal(journaling)
+
+    # Durable first: the input is in the inbox before anything else happens, so a
+    # crash mid-rehydrate cannot lose it.
+    assert [%{offset: 1, message: "hello"}] = ProcInbox.undelivered(inst)
+
+    assert rehydrating.migrate_task != nil,
+           "the rehydrate runs through the normal (un-park) bind task"
+
+    # Racing wake sources resolve to exactly one rehydration: a second input
+    # while the first is still in flight journals, and reuses the same bind.
+    {:noreply, journaling} = Overwatch.handle_cast({:io_in, "second", %{}}, rehydrating)
+    still_one = settle_journal(journaling)
+
+    assert still_one.migrate_task == rehydrating.migrate_task,
+           "a second wake source does not start a second rehydration"
+
+    assert Enum.map(ProcInbox.undelivered(inst), & &1.message) == ["hello", "second"]
+
+    :ok = await_migrate_task(rehydrating)
+  end
+
+  test "the wake deadline rehydrates with a timer tick and no input" do
+    inst = instance_id()
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> "ex_2" end)
+
+    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    {:noreply, rehydrating} = Overwatch.handle_info(:wake_deadline, suspended)
+
+    assert rehydrating.migrate_task != nil
+    assert rehydrating.wake_timer == nil
+
+    assert [%{offset: 1, message: "", metadata: %{"flz.wake" => "timer"}}] =
+             ProcInbox.undelivered(inst),
+           "the timer wake rides the inbox — one wake path, so racing sources collapse"
+
+    :ok = await_migrate_task(rehydrating)
+  end
+
+  test "with no runner to rehydrate onto, the instance stays suspended" do
+    inst = instance_id()
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
+
+    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    {:noreply, journaling} = Overwatch.handle_cast({:io_in, "hi", %{}}, suspended)
+    still = settle_journal(journaling)
+
+    assert still.suspended
+    assert still.migrate_task == nil
+    assert [%{message: "hi"}] = ProcInbox.undelivered(inst), "the input is not lost"
+  end
+
+  # The inbox writer's answer to the append a cast issued — the host acts on it
+  # when it reaches its mailbox, which this test process stands in for.
+  defp settle_journal(state) do
+    assert_receive {[:alias | _], _} = reply, 2_000
+    {:noreply, state} = Overwatch.handle_info(reply, state)
+    state
+  end
+
+  # The rehydrate/rebind runs the real bind task, which has no runner to reach
+  # here and so always comes back parked. Awaiting that result is both the
+  # stronger assertion — the task the test started actually resolves, and on the
+  # missing runner rather than on anything else — and what keeps it from
+  # outliving its test: an abandoned task re-enters the retry ladder once
+  # `on_exit` restores the production backoff, and lands on the next test's
+  # instance-pinned stub carrying this test's id.
+  defp await_migrate_task(%Overwatch{migrate_task: %{pid: pid}}) do
+    assert_receive {:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}, 2_000
+    :ok
+  end
+
+  test "a suspended instance is rediscovered from durable state after a redeploy" do
+    inst = instance_id()
+    builder = %Builder{id: inst, factory_id: "chat", kind: :workflow, opts: []}
+
+    # Durable state of a suspended instance: iteration 0 committed, then parked.
+    :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [])
+    :ok = ProcJournal.append_iter_committed(inst, 0, 0, [])
+    :ok = ProcJournal.append_parked(inst, 0, System.system_time(:millisecond) + 60_000)
+
+    fresh = %Overwatch{
+      id: inst,
+      namespace: "default",
+      factory_id: "chat",
+      builder: builder
+    }
+
+    {:noreply, booted, :hibernate} =
+      Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh)
+
+    assert booted.suspended, "the boot never binds a suspended instance to a runner"
+    assert booted.runner_id == nil
+    assert is_reference(booted.wake_timer), "the journaled wake deadline is re-armed"
+
+    # Undelivered input outranks the park: an instance with work waiting binds
+    # instead of coming back suspended.
+    {:ok, 1} = ProcInbox.append(inst, "arrived-while-down", %{})
+
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
+
+    assert {:stop, :runner_not_ready, _} =
+             Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh),
+           "it takes the normal bind path (which fails here only for lack of a runner)"
+  end
+
+  # ---------- workflow-loop-rewind ----------
+
+  # The rewind rides the same evict → rehydrate path a park does, so the same
+  # stubs stand in for the runner side.
+  defp stub_rebind() do
+    stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> "ex_2" end)
+  end
+
+  defp commit_turns(inst, count, outbox) do
+    for iter <- 0..(count - 1) do
+      :ok = ProcJournal.append_proc_committed(inst, 0, iter, [], [], outbox)
+      :ok = ProcJournal.append_iter_committed(inst, iter, iter + 1, [])
+    end
+  end
+
+  defp emitting_outbox(),
+    do: [%{entity_id: "seg", seq_in_proc: 0, channel: "replies", payload: "hi"}]
+
+  test "rewind journals the marker, evicts, and rehydrates" do
+    inst = instance_id()
+    stub_rebind()
+    commit_turns(inst, 3, [])
+
+    {:reply, :ok, state} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+
+    # The marker is durable, the epoch bumped, and the loop folded back to
+    # iteration 2 with iteration 2's proc outstanding as undo.
+    assert ProcJournal.current_epoch(inst) == 1
+    assert ProcJournal.committed_iterations(inst) == [0, 1]
+    assert [%{proc_idx: 0, iter: 2}] = ProcJournal.restore_state(inst).rewind_undo
+
+    # A rewind is a rebind, not a park: the instance comes straight back up and
+    # nothing was journaled as `parked`.
+    assert state.migrate_task != nil
+    {:ok, entries} = ProcJournal.read(inst)
+    refute Enum.any?(entries, &(&1.type == :parked))
+
+    :ok = await_migrate_task(state)
+  end
+
+  test "rewind to an uncommitted iteration is refused, changing nothing" do
+    inst = instance_id()
+    commit_turns(inst, 3, [])
+
+    assert {:reply, {:error, {:uncommitted_iteration, [0, 1, 2]}}, _} =
+             Overwatch.handle_call({:rewind, 7}, self(), state(inst))
+
+    assert ProcJournal.current_epoch(inst) == 0
+    {:ok, entries} = ProcJournal.read(inst)
+    refute Enum.any?(entries, &(&1.type == :rewound))
+  end
+
+  test "rewind is refused when an unwound procedure emitted and cannot compensate" do
+    inst = instance_id()
+    commit_turns(inst, 3, emitting_outbox())
+
+    # No `compensate` hook declared on proc 0 — its output cannot be undone.
+    :ok = ClassRegistry.put_compensable_ops(inst, [])
+
+    assert {:reply, {:error, {:uncovered, ["replies"]}}, _} =
+             Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+
+    assert ProcJournal.current_epoch(inst) == 0, "refused before anything durable changed"
+  end
+
+  test "an emitting procedure that declares compensate rewinds" do
+    inst = instance_id()
+    stub_rebind()
+    commit_turns(inst, 3, emitting_outbox())
+    :ok = ClassRegistry.put_compensable_ops(inst, [0])
+
+    assert {:reply, :ok, rewound} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+    assert ProcJournal.current_epoch(inst) == 1
+
+    :ok = await_migrate_task(rewound)
+  end
+
+  test "iterations that emitted nothing need no coverage" do
+    inst = instance_id()
+    stub_rebind()
+    commit_turns(inst, 3, [])
+    :ok = ClassRegistry.put_compensable_ops(inst, [])
+
+    assert {:reply, :ok, rewound} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
+    :ok = await_migrate_task(rewound)
+  end
+
+  describe "migration_consent/1 (processhub-deferred-migration)" do
+    test "a pending correction defers" do
+      inst = instance_id()
+
+      st =
+        state(inst,
+          durable_workflow: false,
+          corrections: %{{inst, "proc", "k"} => 100}
+        )
+
+      assert Overwatch.migration_consent(st) == :defer
+    end
+
+    test "an unsuspended durable workflow defers; a suspended one consents" do
+      inst = instance_id()
+      assert Overwatch.migration_consent(state(inst)) == :defer
+      assert Overwatch.migration_consent(state(inst, suspended: true)) == :ready
+    end
+
+    test "an effectively-once instance with pending outbox defers, drained consents" do
+      inst = instance_id()
+      st = state(inst, durable_workflow: false, effectively_once: true)
+
+      stub(Flezha.State.WriterRegistry, :live_writers, fn _class -> [self()] end)
+
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout ->
+        %{pending: 3, awaiting: 0}
+      end)
+
+      assert Overwatch.migration_consent(st) == :defer
+
+      # Dispatched but unconfirmed still owes output that would strand here.
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout ->
+        %{pending: 0, awaiting: 2}
+      end)
+
+      assert Overwatch.migration_consent(st) == :defer
+
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout ->
+        %{pending: 0, awaiting: 0}
+      end)
+
+      assert Overwatch.migration_consent(st) == :ready
+    end
+
+    test "an outbox-query failure fails open to :ready" do
+      inst = instance_id()
+      st = state(inst, durable_workflow: false, effectively_once: true)
+
+      stub(Flezha.State.WriterRegistry, :live_writers, fn _class -> [self()] end)
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> exit(:timeout) end)
+
+      assert Overwatch.migration_consent(st) == :ready
+    end
+
+    test "an idle stream instance consents immediately" do
+      inst = instance_id()
+      assert Overwatch.migration_consent(state(inst, durable_workflow: false)) == :ready
+    end
+  end
+
+  describe "migration_ready barriers (processhub-deferred-migration)" do
+    test "suspension signals migration_ready; :not_deferred leaves the park intact" do
+      inst = instance_id()
+      test_pid = self()
+      stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+      stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+
+      stub(ProcessHub.Service.Migration, :migration_ready, fn hub_id, child_id ->
+        send(test_pid, {:migration_ready, hub_id, child_id})
+        {:error, :not_deferred}
+      end)
+
+      {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+
+      assert_receive {:migration_ready, hub_id, ^inst}
+      assert hub_id == Identificator.hub("default")
+      assert suspended.suspended
+    end
+
+    test "the last correction draining signals migration_ready; a remaining one does not" do
+      inst = instance_id()
+      test_pid = self()
+
+      stub(ProcessHub.Service.Migration, :migration_ready, fn _hub_id, child_id ->
+        send(test_pid, {:migration_ready, child_id})
+        {:error, :not_deferred}
+      end)
+
+      # A stale debounce timer for an entity no longer pending: the pop leaves
+      # `corrections` empty, which is the completion condition.
+      st = state(inst, durable_workflow: false, corrections: %{})
+      {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "proc", "k"}}, st)
+      assert_receive {:migration_ready, ^inst}
+
+      # Another entity still pending: not complete, no signal.
+      busy =
+        state(inst,
+          durable_workflow: false,
+          corrections: %{{inst, "proc", "other"} => 5}
+        )
+
+      {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "proc", "gone"}}, busy)
+      refute_received {:migration_ready, ^inst}
+    end
+  end
+end
+
+defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
+  @moduledoc """
+  Phase-3 (convergence-self-healing §3.3-3.5) async
+  `:runner_migrate` task contract. Exercises the
+  `stop_operative-during-in-flight-migrate` invariant: the bounded retry
+  loop now runs in a `Task.Supervisor.async_nolink/3` task, so the
+  Overwatch's `:stop_operative` call returns within its normal handle_call
+  window even mid-retry.
+  """
+
+  # async: false: writes Application env; the live controller and its fleet; the primary Logger.
+
+  use ExUnit.Case, async: false
+
+  alias Flezha.Operative.Builder
+  alias Flezha.Operative.Overwatch
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @namespace "default"
+  @factory "store_input"
+
+  setup do
+    test_pid = self()
+    ets = :ets.new(:overwatch_async_migrate_test, [:public, :set])
+
+    on_exit(fn ->
+      OperativeManager.stop_all_operatives(@namespace)
+      Application.delete_env(:flezha, :overwatch_ping_fn)
+      Application.delete_env(:flezha, :overwatch_reset_channel_fn)
+    end)
+
+    {:ok, test_pid: test_pid, ets: ets}
+  end
+
+  # `await_active_runner` pings once to confirm the runner is reachable
+  # before the start-retry path runs. To reach the PARKED state these tests
+  # need, the readiness gate (first ping) must pass while the START pings
+  # fail — otherwise the operative stops with `:runner_not_ready`.
+  defp park_after_gate(ets) do
+    fn _runner_id ->
+      case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do
+        1 -> {:ok, :pong}
+        _ -> {:error, :timeout}
+      end
+    end
+  end
+
+  test "stop_operative returns :ok within 1s while a parked-unpark migrate task is in flight",
+       %{test_pid: test_pid, ets: ets} do
+    # The async migrate path lives on the parked-unpark branch — that's
+    # where the bounded retry loop with the 19 s aggregate budget runs.
+    # Boot a parked operative (start ping fails after the readiness gate) and
+    # then trigger un-park with a ping that blocks for several seconds,
+    # simulating the spec's "~10 s into the backoff schedule" scenario.
+    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
+    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
+
+    operative = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
+
+    {:ok, overwatch_pid} =
+      Overwatch.start_link({@namespace, "stale_ce", operative})
+
+    on_exit(fn ->
+      if Process.alive?(overwatch_pid) do
+        try do
+          GenServer.stop(overwatch_pid, :normal, 1_000)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+
+    # Wait for the operative to park.
+    assert eventually(fn ->
+             GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+           end)
+
+    # Replace ping with one that blocks until released, so the un-park retry
+    # task is in flight for as long as the test needs.
+    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
+
+    # Fire the un-park migrate. The Overwatch must return `:ok`
+    # immediately (the retry task is spawned out-of-band).
+    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "fake_new_runner"}, 1_000)
+
+    assert_receive {:ping_started, _}, 500
+
+    # Now tear the operative down the way the hub stop path does (a
+    # supervisor :shutdown exit). terminate/2 MUST return within 1 s even
+    # though the migrate task is blocked inside the ping — it kills the
+    # task instead of waiting on it. Trap: the Overwatch is linked to this
+    # test, and a :shutdown stop propagates over the link.
+    Process.flag(:trap_exit, true)
+    started = System.monotonic_time(:millisecond)
+    assert :ok = GenServer.stop(overwatch_pid, :shutdown, 1_500)
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    assert elapsed < 1_000,
+           "teardown returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
+  end
+
+  test "starting a second parked-unpark migrate while one is in flight returns :busy",
+       %{test_pid: test_pid, ets: ets} do
+    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
+    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
+
+    operative = %Builder{id: "busy_migrate_test", factory_id: @factory, opts: []}
+
+    {:ok, overwatch_pid} =
+      Overwatch.start_link({@namespace, "stale_ce", operative})
+
+    on_exit(fn ->
+      if Process.alive?(overwatch_pid) do
+        try do
+          GenServer.stop(overwatch_pid, :normal, 1_000)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+
+    assert eventually(fn ->
+             GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+           end)
+
+    # First un-park migrate: a ping that blocks until released.
+    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
+
+    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "first"}, 1_000)
+    assert_receive {:ping_started, pinger}, 500
+
+    # Second migrate must be rejected as :busy.
+    assert {:error, :busy} =
+             GenServer.call(overwatch_pid, {:runner_migrate, "second"}, 1_000)
+
+    send(pinger, :unpark)
+  end
+
+  # fails when: the running-migrate branch commits the binding before the runner
+  # answers. A cross-node heal target is unreachable by construction (the runner
+  # registry is node-local), so the failed attempt would leave the operative
+  # naming a LIVE runner it cannot reach — `Convergence.Diff` then reads it as
+  # bound-and-healthy, drops it from `misbound_operatives`, and the wedge becomes
+  # permanently invisible.
+  test "a failed running-migrate leaves the binding untouched" do
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
+
+    state = running_state()
+
+    assert {:reply, {:error, {:ping_failed, :no_control_unit}}, unchanged} =
+             Overwatch.handle_call({:runner_migrate, "runner_b"}, {self(), make_ref()}, state)
+
+    assert unchanged.runner_id == "runner_a"
+    assert unchanged.channel == :chan_a
+  end
+
+  # The success half — the binding IS committed once the runner answers — is
+  # covered end-to-end against a real runner by `flezha_test.exs` "runner
+  # disconnect migrate proc".
+
+  # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
+  # handover that carried nothing. The flag suppresses the per-Entity WAL
+  # restore at bind time AND the explicit `kick_restore` repair, so a migration
+  # away from a DEAD runner — where the state source is gone and the handover is
+  # empty by construction — starts fresh and can never be replayed back.
+  test "an empty handover does not suppress the WAL restore" do
+    handover = %{
+      id: "handover_guard",
+      namespace: @namespace,
+      factory_id: @factory,
+      init_values: %{},
+      plugins: []
+    }
+
+    state = running_state()
+
+    # The struct has no reachable control unit, so the deserialization dispatch
+    # logs an error it is designed to tolerate; the flag is the assertion.
+    ExUnit.CaptureLog.capture_log(fn ->
+      refute Overwatch.alter_handover_state(state, {handover, nil}).arrived_via_hotswap?
+      refute Overwatch.alter_handover_state(state, {handover, <<>>}).arrived_via_hotswap?
+      assert Overwatch.alter_handover_state(state, {handover, "sdk-state"}).arrived_via_hotswap?
+    end)
+  end
+
+  defp running_state() do
+    id = "migrate_bind_guard"
+
+    %Overwatch{
+      id: id,
+      namespace: @namespace,
+      runner_id: "runner_a",
+      factory_id: @factory,
+      channel: :chan_a,
+      builder: %Builder{id: id, factory_id: @factory, opts: []},
+      extensions: Table.new(Overwatch.__extensions_catalog__())
+    }
+  end
+
+  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 2_000, 25)
+
+  # A ping that blocks inside the migrate task until the test releases it (or
+  # the task is killed) — the "several seconds into the backoff schedule"
+  # scenario, without the seconds.
+  defp blocking_ping(test_pid) do
+    fn _runner_id ->
+      send(test_pid, {:ping_started, self()})
+      NodeTestHelper.park()
+      {:ok, :pong}
+    end
+  end
+end

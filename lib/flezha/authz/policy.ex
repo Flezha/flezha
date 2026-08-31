@@ -11,8 +11,6 @@ defmodule Flezha.AuthZ.Policy do
   `_system`; the role table alone does not express that constraint.
   """
 
-  alias Flezha.AuthZ.Action
-
   # Read-only actions usable by viewers on the bound namespace.
   @viewer_actions [
     :"operative.list",
@@ -97,27 +95,6 @@ defmodule Flezha.AuthZ.Policy do
       :error -> false
     end
   end
-
-  @doc """
-  Returns the full action set granted to `role` as a list.
-
-  Useful for tests, documentation, and the `flz role list --verbose`
-  output.
-  """
-  @spec actions_for(atom()) :: [atom()]
-  def actions_for(role) when is_atom(role) do
-    case Map.fetch(@grants, role) do
-      {:ok, set} -> MapSet.to_list(set)
-      :error -> []
-    end
-  end
-
-  @doc """
-  Returns the complete action enumeration shared with
-  `Flezha.AuthZ.Action`.
-  """
-  @spec known_actions() :: [atom()]
-  def known_actions, do: Action.all()
 
   @doc """
   Actions that imply auth-state mutation; these are additionally

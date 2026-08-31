@@ -1,5 +1,13 @@
 defmodule Flezha.Runner.FleetSupervisor do
-  alias Flezha.Runner.RunnerSupervisor
+  @moduledoc """
+  The node's per-runner supervision root.
+
+  One child per connected runner, each a `Flezha.Runner.RunnerSupervisor`
+  keyed by runner id, started and stopped by `Flezha.Runner.FleetManager`.
+
+  Invariant: `:one_for_one` — a runner's tree failing takes down that runner
+  and no other.
+  """
 
   use Supervisor
 
@@ -10,32 +18,5 @@ defmodule Flezha.Runner.FleetSupervisor do
   @impl true
   def init(_) do
     Supervisor.init([], strategy: :one_for_one)
-  end
-
-  def stop_fleet() do
-    Supervisor.stop(__MODULE__)
-  end
-
-  def start_runner_sup(namespace, runner_id, sock, transport) do
-    Supervisor.start_child(__MODULE__, %{
-      id: runner_id,
-      start: {RunnerSupervisor, :start_link, [{namespace, runner_id, sock, transport}]}
-    })
-  end
-
-  def stop_runner_sup(runner_id) do
-    Supervisor.terminate_child(__MODULE__, runner_id)
-    Supervisor.delete_child(__MODULE__, runner_id)
-  end
-
-  def default_runner() do
-    child =
-      DynamicSupervisor.which_children(__MODULE__)
-      |> Enum.at(0)
-
-    case child do
-      {runner_id, _, _, _} -> runner_id
-      _ -> raise "No runner available"
-    end
   end
 end

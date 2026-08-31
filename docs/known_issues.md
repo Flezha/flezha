@@ -882,10 +882,21 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   repeats the fourth exactly: same assertion, same `left: 0`, in the `mix test`
   that followed a `mvn -P coverage,native-verify clean verify`, a native
   rebuild, an `install`, a `package` and a full `--include sdk_smoke` suite —
-  60.6 s, 1871 *of* 1872, 121 excluded, uncaptured-log gate **0**. **A maven
-  build immediately before the suite is now the recorded exposure**: four of the
-  five sightings across this module's two sites follow one, which is a stronger
-  statement than "under load" and is what a future reproducer should force.
+  60.6 s, 1871 *of* 1872, 121 excluded, uncaptured-log gate **0**. A maven build
+  immediately before the suite was the recorded exposure — four of the five
+  sightings then followed one.
+- **THE EXPOSURE IS WIDER THAN MAVEN (corrected 2026-08-31, sightings 6 and 7).**
+  Area 5e-b hit it twice **having run no maven at all**; both of its sightings
+  overlapped a *second lane's concurrent ExUnit suite* on the same box. So the
+  common factor is **a box under a second heavy workload**, not maven specifically —
+  and that is the §11c parallel-lane condition, which did not exist when this entry
+  was written. A future reproducer should force **concurrent load**, of which a
+  maven build is one instance.
+- **And 5e-b refuted the obvious suspect rather than assuming**: its new test file
+  mutates `:flezha` application env, so it ran an A/B — the slice **without** the file
+  passed 208, **with** it passed 214 three times out of three, the test alone passed,
+  its own file passed 14, and the full suite on a quiet box passed **1922**. The file
+  is not the cause.
 - **`test/flezha_test.exs:419`** — *"a deferring operative is force-migrated at
   the drain deadline without wedging"*, the third site in this module.
   `assert_receive :deferred, 1_000` times out; the mailbox holds the competing
@@ -2056,6 +2067,67 @@ every new production freeze to `incident_log.md` at the repository root.
   the existing assertion to the workflow task's own path so the two cannot drift again.
   **Not folded blindly**: three of the four renderers feed JSON and `BENCH_RESULT`
   contracts that read **numbers**, where the shared helper returns a string.
+
+### KI-102 · Four small defects in `runner`/`operative`, three of them dead code
+
+Filed as one entry because they share a shape and a remedy: found by area 5e-a's
+survey, all four **deletion-funded or a one-line move**, none reachable from a live
+path, so none needs a red-first test.
+
+1. **`Operative.Builder.from_json/1` is dead AND cannot work.**
+   `lib/flezha/operative/builder.ex:38`. It does
+   `case Jason.decode!(json_str) do {:ok, m} -> …; {:error, _} -> … end`, but
+   `Jason.decode!/1` returns **the decoded term**, so every valid JSON object raises
+   `CaseClauseError`. Verified by the supervisor: the source reads exactly that, and
+   `grep -rn "Builder.from_json\|Builder.from_map" lib/ test/ cli/` returns **0**.
+   **Delete `from_json/1`, `from_map/1` and `get_from_map/2`** — repairing a function
+   nothing calls is the wrong remedy.
+2. **`FleetSupervisor.default_runner/0` mixes supervisor APIs, in dead code.**
+   `lib/flezha/runner/fleet_supervisor.ex:31` calls `DynamicSupervisor.which_children/1`
+   on a module started as a plain `Supervisor`. Zero callers for it or `stop_fleet`.
+   Delete both.
+3. **A `@doc` is attached to the wrong function.** `fleet_manager.ex:46`–`:53`. The text
+   describes `connect_handler/4` — "`stream_ref` is a NIF StreamHandle resource",
+   "`init_payload` is the decoded JSON" — and the next `def` is
+   **`list_factories(namespace)`** at `:54`; `connect_handler/4` at `:58` has none.
+   Verified by reading `:45`–`:59`. So `list_factories/1`'s published documentation
+   describes a different function. Elixir attaches `@doc` to the following `def` and
+   nothing checks that the text names it.
+4. **A `TODO` in production code.** `control_unit.ex:292` — *"Not sure if we should
+   convert to map from the beginning."* Credo `[D]`, and §5 deletes a comment that
+   states no invariant.
+
+- **Verdict (supervisor, 2026-08-31)**: **all four real, all four taken inside area
+  5e-a** as ordinary deletion-funded work rather than as a fix-first commit — nothing
+  here is reachable, so there is no behaviour to protect and no red to drive.
+
+### KI-103 · `FleetManager.rebind_data_streams/1` is dead, and a dev note says it is live
+
+- **Severity**: P3 · dead code is cheap; **a dev note asserting a capability the code
+  does not have is not**.
+- **Where**: `lib/flezha/runner/fleet_manager.ex:120`–`:128`, public and `@spec`'d.
+- **Evidence**: `grep -rn 'rebind_data_streams' --include='*.ex' --include='*.exs' lib/
+  test/ cli/` returns **only its own `@spec` and `def`.**
+- **The half that matters**: `docs/dev_notes/fix-first-input-drop-on-bind.md:33`
+  describes it as the remedy the convergence Loop uses for *"a stream that drops and
+  rebinds mid-life without the operative rebinding"* — and
+  **`lib/flezha/convergence/` has no such heal op.** The Diff mints
+  `rebind_operative`, `replace_operative` and `resync_runner`, and nothing else. So
+  either the capability was never wired to the Loop, or its caller was removed and the
+  note went stale with it.
+- **Mechanism**: the body issues `GenServer.call(control_unit,
+  :command_sockets_connect)`; that command has exactly one live caller,
+  `Session.runner_connect/3:401`, on every connect — i.e. the *connect* path rebinds
+  streams, and the *mid-life* path the note describes does not exist.
+- **Verdict (supervisor, 2026-08-31)**: **real, and NOT taken in 5e-a.** The worker was
+  right to refuse it: deleting the function would rule the missing caller away, and
+  wiring a data-stream rebind op into the Loop is a behaviour change. **The question is
+  which of the two the platform wants**, and that is a product decision — a heal the
+  convergence Loop cannot perform is either a gap or a stale note, and only one of those
+  is free to fix.
+- **A fix must** decide that first, then either wire the op into `Convergence.Diff`/
+  `Heal` with a drill that proves it fires, or delete the function **and correct the dev
+  note in the same commit** — the note is the reason this looked like a capability.
 
 ## Resolved
 

@@ -1,0 +1,121 @@
+defmodule Flezha.Transport.ServerTest do
+  @moduledoc """
+  `Transport.Server`'s control-channel behaviour: stream correlation and
+  close-on-reject.
+
+  The NIF delivers `{:flz_connection, handle}` with an opaque handle but
+  `{:flz_data, stream_id, ...}` / `{:flz_closed, stream_id, ...}` with the
+  driver's integer stream id, so pending streams are keyed by that integer id —
+  a `connect_control_channel` frame must bind the ControlChannel to the exact
+  stream it arrived on, and closed streams (e.g. `nc -zU` liveness probes) must
+  be cleaned up instead of accumulating.
+
+  When `FleetManager.connect_handler/4` refuses a connect (`:shutting_down`
+  during drain) the transport closes the stream and emits a counted
+  `[:flezha, :transport, :connect_rejected]` signal, so the runner detects the
+  dead controller and reconnects to a live one instead of dangling. `Native` is
+  a NIF and cannot be mocked, so the close is observed through the signal and
+  through the handler's robustness to a bogus stream ref.
+  """
+
+  # async: false: Mimic stubs; the live controller and its fleet; the primary Logger.
+  use ExUnit.Case, async: false
+  use Mimic
+
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Transport.Server
+  alias FlezhaTest.Helper.MessageTestHelper
+
+  defp connect_frame(stream_id \\ 0) do
+    message = Jason.encode!(%{"namespace" => "default", "factories" => []})
+    {:flz_data, stream_id, "connect_control_channel", message, %{}}
+  end
+
+  defp attach_rejected_handler() do
+    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+  end
+
+  describe "stream correlation" do
+    test "connect_control_channel binds the handle matching the frame's stream_id" do
+      test_pid = self()
+      want = make_ref()
+      other = make_ref()
+
+      stub(FleetManager, :connect_handler, fn ref, _ns, _payload, _transport ->
+        send(test_pid, {:connected, ref})
+        {:ok, "ce_ok"}
+      end)
+
+      # Two streams pending; the frame arrives on id 7. Only id 7's handle must be
+      # used, and only id 7 must be removed from the pending map.
+      state = %{
+        transport: :uds,
+        pending_streams: %{7 => want, 9 => other}
+      }
+
+      assert {:noreply, new_state} = Server.handle_info(connect_frame(7), state)
+      assert_receive {:connected, ^want}, 500
+      assert new_state.pending_streams == %{9 => other}
+    end
+
+    test "connect_control_channel for an unknown stream_id does not crash or bind" do
+      stub(FleetManager, :connect_handler, fn _ref, _ns, _payload, _transport ->
+        flunk("connect_handler must not be called for an unknown stream_id")
+      end)
+
+      state = %{transport: :uds, pending_streams: %{1 => make_ref()}}
+
+      assert {:noreply, new_state} = Server.handle_info(connect_frame(42), state)
+      assert new_state.pending_streams == state.pending_streams
+    end
+
+    test "flz_closed removes the matching pending stream (probe-churn cleanup)" do
+      keep = make_ref()
+      state = %{transport: :uds, pending_streams: %{3 => make_ref(), 4 => keep}}
+
+      assert {:noreply, s1} = Server.handle_info({:flz_closed, 3, "connection_closed"}, state)
+      assert s1.pending_streams == %{4 => keep}
+
+      # Unknown / already-handed-off id is a harmless no-op.
+      assert {:noreply, s2} = Server.handle_info({:flz_closed, 99, "connection_closed"}, s1)
+      assert s2.pending_streams == %{4 => keep}
+    end
+  end
+
+  describe "close on reject" do
+    # Per test, not per module: the reject path logs at error by design, and a
+    # module-wide capture would also silence the correlation tests above.
+    @tag :capture_log
+    test "rejected connect closes the stream, emits connect_rejected, and does not crash" do
+      attach_rejected_handler()
+      stream_ref = make_ref()
+
+      stub(FleetManager, :connect_handler, fn ^stream_ref, _ns, _payload, _transport ->
+        {:error, :shutting_down}
+      end)
+
+      state = %{transport: :uds, pending_streams: %{0 => stream_ref}}
+
+      # safe_close tolerates the bogus (non-NIF) ref, so the server does not crash.
+      assert {:noreply, new_state} = Server.handle_info(connect_frame(), state)
+      assert new_state.pending_streams == %{}
+
+      assert_receive {:rejected, %{count: 1}, %{reason: :shutting_down, transport: :uds}}, 500
+    end
+
+    @tag :capture_log
+    test "successful connect does not emit connect_rejected" do
+      attach_rejected_handler()
+      stream_ref = make_ref()
+
+      stub(FleetManager, :connect_handler, fn _ref, _ns, _payload, _transport ->
+        {:ok, "ce_ok"}
+      end)
+
+      state = %{transport: :uds, pending_streams: %{0 => stream_ref}}
+
+      assert {:noreply, _} = Server.handle_info(connect_frame(), state)
+      refute_received {:rejected, _, _}
+    end
+  end
+end

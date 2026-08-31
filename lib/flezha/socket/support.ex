@@ -60,11 +60,6 @@ defmodule Flezha.Socket.Support do
     :inet.setopts(socket, [{:active, true}])
   end
 
-  @spec pass_ownership(port() | {:"$inet", atom(), any()}, pid()) :: :ok | {:error, atom()}
-  def pass_ownership(socket, pid) do
-    :gen_tcp.controlling_process(socket, pid)
-  end
-
   def control_socket_path() do
     socket_dir() <> "/runner_control_channel.sock"
   end

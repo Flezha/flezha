@@ -79,7 +79,9 @@ Committing the binding first records `bound_runner ∈ active_runners` for a run
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
-Every cross-process call inside the Loop MUST be wrapped in `Convergence.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick.
+Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick.
+
+The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits at the root. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
 
 #### Scenario: a flapping target is backed off
 - **GIVEN** operative `r1` was just rebound by the Loop
@@ -156,6 +158,8 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. `producing_operatives` MUST be derived from the producing-liveness classification (durable progress markers with the fed precondition) — an IDLE operative counts as producing, a STUCK operative does not. It returns `200 healthy`, `200 degraded` (bound ≠ producing, plugin-degraded, non-empty intent mismatch, or `sensor_stale`), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (`driver_loop_frozen` or `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
+The fabric arm of that guarantee is **transport-scoped, and the scope MUST be stated wherever the guarantee is**: the driver self-report the fabric verdicts are computed from exists for the UDS driver only. The QUIC server is started with no `DriverStats`, so `driver_stats/1` answers `:undefined`, no driver measurements are emitted, and `driver_loop_frozen` and `nif_queue_backing_up` can never be minted on a QUIC controller. A `200` from `/healthz` on a QUIC controller is therefore evidence about the convergence loop, the operative population and the plugin set, and is **not** evidence about the data plane. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so an operator does not read a green probe as a data-plane guarantee it cannot give.
+
 #### Scenario: healthz reflects reality even when bound and producing diverge
 
 - **GIVEN** 10 operatives are bound and 3 classify STUCK (fed but progress markers flat past `output_stall_grace_ms`)
@@ -200,6 +204,13 @@ The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operativ
 - **GIVEN** the classifier reports a persistent `runner_not_consuming` verdict
 - **WHEN** `/healthz` is queried
 - **THEN** the status is `200 degraded` (the convergence pipeline owns the remedy) and never `503`
+
+#### Scenario: the fabric arm is uninstrumented on QUIC and says so
+
+- **GIVEN** a controller whose transport is QUIC, so the driver produces no `DriverStats` and `driver_stats/1` answers `:undefined`
+- **WHEN** the data-plane classifier runs and `/healthz` is queried
+- **THEN** no driver measurement is emitted, no `driver_loop_frozen` or `nif_queue_backing_up` verdict is minted, and the endpoint answers `200` on the strength of the loop, operative and plugin evidence alone
+- **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state that limitation, so the `200` is not read as a data-plane guarantee
 
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 
@@ -296,6 +307,7 @@ extension table, so that fail-open is observable rather than silent.
 - **WHEN** the Loop ticks
 - **THEN** the plugin is treated as healthy and no heal op is issued.
 - **AND** telemetry SHALL record that the verdict was a fail-open, naming the plugin and the reason.
+
 ### Requirement: Plugin-degraded operatives surface on /healthz and telemetry
 
 A operative with at least one declared plugin that is missing or self-reported unhealthy SHALL be published to the convergence snapshot as plugin-degraded. While any operative is plugin-degraded, `/healthz` SHALL report `degraded` with HTTP 200 and a `plugin_unhealthy` reason — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (degraded set becomes non-empty, changes membership, or clears), not steady-state. A suspended workflow instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
@@ -326,7 +338,6 @@ When an SDK runner process restarts and presents `previous_runner_id`, the contr
 - **AND** no entry in the active runner set references a dead `default_X`.
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
-
 
 The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `evict_runner` (planner ordering already rebinds an evicted runner's operatives); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `entity_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
 

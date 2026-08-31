@@ -7,20 +7,11 @@ defmodule Flezha.AuthZ.SourceRegistration do
   and the audit log allow-list.
   """
 
-  use GenServer
+  use GenServer, restart: :transient
 
   alias Flezha.Observability.Registry
 
   @source :platform_authz
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :transient
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)

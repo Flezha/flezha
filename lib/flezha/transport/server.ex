@@ -29,13 +29,13 @@ defmodule Flezha.Transport.Server do
 
   alias Flezha.Identificator
   alias Flezha.Payloader
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.StreamPool
+  alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Transport.CertGenerator
+  alias Flezha.Transport.Local
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream
-  alias Flezha.Transport.Local
-  alias Flezha.Runner.FleetManager
-  alias Flezha.Runner.StreamSup
-  alias Flezha.Socket.Support, as: SocketSupport
 
   require Logger
 
@@ -96,9 +96,9 @@ defmodule Flezha.Transport.Server do
         {:error, :unknown_stream_type}
 
       type ->
-        stream_ids = StreamSup.stream_ids(runner_id, type)
+        stream_ids = StreamPool.stream_ids(runner_id, type)
 
-        case StreamSup.bind_stream_to_first_nil(stream_ids, handle) do
+        case StreamPool.bind_stream_to_first_nil(stream_ids, handle) do
           {:bound, stream_pid, stream_name} ->
             TStream.controlling_process(handle, stream_pid)
             TStream.set_active(handle)
@@ -133,7 +133,7 @@ defmodule Flezha.Transport.Server do
           {:error, {:already_started, pid}} ->
             {:ok, pid}
 
-          # A previously terminated spec is still present — restart it in place.
+          # A terminated spec is still present — restart it in place.
           {:error, :already_present} ->
             case Supervisor.restart_child(Flezha.Supervisor, {__MODULE__, :native}) do
               {:ok, pid} -> {:ok, pid}
@@ -428,7 +428,7 @@ defmodule Flezha.Transport.Server do
   def handle_info({:flz_closed, stream_id, reason}, state) do
     # Drop the pending entry so streams that close before completing the
     # handshake (e.g. liveness-probe connects) don't accumulate. Streams already
-    # handed off to a ControlChannel/StreamChannel are no longer owned here, so
+    # handed off to a ControlChannel/StreamChannel are not owned here, so
     # their close events never reach this clause — only still-pending ones do.
     pending = Map.delete(state.pending_streams, stream_id)
     Logger.debug("[Transport.Server] Connection closed: stream_id=#{stream_id}, reason=#{reason}")

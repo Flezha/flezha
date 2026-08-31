@@ -18,7 +18,8 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, DetsStore}
+  alias Flezha.AuthZ.Config
+  alias Flezha.DetsStore
 
   @table :flz_authz_quota_counters
   @cache :flz_authz_quota_counters_cache

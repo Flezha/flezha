@@ -163,9 +163,8 @@ defmodule Flezha.AuthZ do
          :ok <- Scope.validate(scope),
          :ok <- check_principal_bound(caller_context, action, scope),
          {:ok, role, bound_namespace} <- resolve_role(caller_context, action, scope),
-         :ok <- check_role_grants(role, action, caller_context, scope),
-         :ok <- check_namespace_scope(role, bound_namespace, action, caller_context, scope) do
-      :ok
+         :ok <- check_role_grants(role, action, caller_context, scope) do
+      check_namespace_scope(role, bound_namespace, action, caller_context, scope)
     end
   end
 

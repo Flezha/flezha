@@ -1,4 +1,11 @@
 defmodule Flezha.Identificator do
+  @moduledoc """
+  The controller's name registry and the naming scheme it hands out: `via`
+  tuples for every per-runner process, the hub name for a namespace, and the
+  unique-id mint. Wraps `Registry` rather than being a GenServer, so it is
+  started with the registry's own `child_spec/1`.
+  """
+
   def child_spec(opts) do
     %{
       id: __MODULE__,
@@ -69,13 +76,6 @@ defmodule Flezha.Identificator do
   def hub_id?(id) when is_atom(id), do: String.ends_with?(Atom.to_string(id), "_hub")
   def hub_id?(_), do: false
 
-  def stream_listener(runner_id, type) do
-    case type do
-      :primary -> gen_via(runner_id, "psl")
-      :secondary -> gen_via(runner_id, "ssl")
-    end
-  end
-
   def stream_sup_primary(runner_id) do
     gen_via(runner_id, "scsp")
   end
@@ -97,16 +97,14 @@ defmodule Flezha.Identificator do
   end
 
   def string_to_pid(pname) when is_binary(pname) do
-    try do
-      pname = String.to_existing_atom(pname)
+    pname = String.to_existing_atom(pname)
 
-      case Process.whereis(pname) do
-        nil -> {:error, "Process #{pname} not found"}
-        pid -> {:ok, pid}
-      end
-    catch
-      _ -> {:error, "Invalid PID format"}
+    case Process.whereis(pname) do
+      nil -> {:error, "Process #{pname} not found"}
+      pid -> {:ok, pid}
     end
+  catch
+    _ -> {:error, "Invalid PID format"}
   end
 
   defp gen_via(prefix, suffix) do

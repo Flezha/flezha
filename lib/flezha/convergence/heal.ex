@@ -42,10 +42,11 @@ defmodule Flezha.Convergence.Heal do
   """
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Convergence.{Planner, SafeCall}
+  alias Flezha.Convergence.Planner
   alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.{ControlUnit, FleetManager}
+  alias Flezha.SafeCall
   alias Flezha.Service.{HubManager, OperativeManager}
   alias Flezha.State.Recovery
   alias ProcessHub.Service.Migration
@@ -143,7 +144,7 @@ defmodule Flezha.Convergence.Heal do
     plugin_call(ns, rid, {:plugin_subscribe, args.plugin_id, args.plugin})
   end
 
-  # Unsubscribe a plugin that is running but no longer declared in the cspec.
+  # Unsubscribe a plugin that is running but not declared in the cspec.
   defp apply_primitive(:stop_plugin, %{namespace: ns, target: rid, args: args}) do
     plugin_call(ns, rid, {:plugin_unsubscribe, args.plugin_id})
   end

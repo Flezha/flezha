@@ -66,10 +66,6 @@ defmodule Flezha.AuthZ.Namespace do
 
   def validate_name(_), do: {:error, :invalid_namespace_name}
 
-  @doc "Default quota map used when a namespace is created without overrides."
-  @spec default_quotas() :: quotas()
-  def default_quotas, do: @default_quotas
-
   @doc """
   Merge user-supplied quota overrides over the defaults, validating
   that every value is a non-negative integer.

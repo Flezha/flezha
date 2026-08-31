@@ -11,7 +11,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   the run it replaces at a guarded sink.
   """
 
-  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.{InputLog, Metrics, Paths, RecordFrame, Wire}
   alias Flezha.State.WalWriter.{Admission, Settlement, State}
 
@@ -21,7 +21,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   # work.
   def stale_writer?(state, runner_id) do
     is_binary(runner_id) and runner_id != state.owning_runner and
-      FleetManager.superseded_session?(runner_id)
+      Marks.superseded_session?(runner_id)
   end
 
   # One `stale_writer_refused` event per superseded session per writer

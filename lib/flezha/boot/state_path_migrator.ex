@@ -237,57 +237,64 @@ defmodule Flezha.Boot.StatePathMigrator do
   end
 
   defp resolve_collision(from, to, runner_id, acc) do
-    {keep, _drop} =
-      case {mtime(from), mtime(to)} do
-        {{:ok, t_from}, {:ok, t_to}} when t_from > t_to -> {from, to}
-        {{:ok, t_from}, {:ok, t_to}} when t_from < t_to -> {to, from}
-        _ -> {to, from}
-      end
-
     # The preserved sibling always lands BESIDE the winner (the flat/`to`
     # location) so it travels with its class dir through the namespace pass
     # instead of stranding the legacy runner dir.
     preserved = preserved_path(to, runner_id)
 
-    cond do
-      keep == to ->
-        case File.rename(from, preserved) do
-          :ok ->
-            Logger.info("[state_path_migrator] collision: preserved #{from} as #{preserved}")
+    if newer(from, to) == to,
+      do: preserve_loser(from, preserved, acc),
+      else: swap_in_winner(from, to, preserved, acc)
+  end
 
-            %{
-              acc
-              | collisions: acc.collisions + 1,
-                preserved_files: [preserved | acc.preserved_files]
-            }
+  # `to` wins a tie and wins when either mtime is unreadable: the flat location
+  # is the one the rest of the pass expects to find.
+  defp newer(from, to) do
+    case {mtime(from), mtime(to)} do
+      {{:ok, t_from}, {:ok, t_to}} when t_from > t_to -> from
+      {{:ok, t_from}, {:ok, t_to}} when t_from < t_to -> to
+      _ -> to
+    end
+  end
 
-          {:error, reason} ->
-            Logger.warning(
-              "[state_path_migrator] preserve #{from} as #{preserved} failed: #{inspect(reason)}"
-            )
+  defp preserve_loser(from, preserved, acc) do
+    case File.rename(from, preserved) do
+      :ok ->
+        Logger.info("[state_path_migrator] collision: preserved #{from} as #{preserved}")
 
-            acc
-        end
+        %{
+          acc
+          | collisions: acc.collisions + 1,
+            preserved_files: [preserved | acc.preserved_files]
+        }
 
-      true ->
-        with :ok <- File.rename(to, preserved),
-             :ok <- File.rename(from, to) do
-          Logger.info("[state_path_migrator] collision: preserved #{to} as #{preserved}")
+      {:error, reason} ->
+        Logger.warning(
+          "[state_path_migrator] preserve #{from} as #{preserved} failed: #{inspect(reason)}"
+        )
 
-          %{
-            acc
-            | renamed: acc.renamed + 1,
-              collisions: acc.collisions + 1,
-              preserved_files: [preserved | acc.preserved_files]
-          }
-        else
-          {:error, reason} ->
-            Logger.warning(
-              "[state_path_migrator] collision swap of #{to} <-> #{from} failed: #{inspect(reason)}"
-            )
+        acc
+    end
+  end
 
-            acc
-        end
+  defp swap_in_winner(from, to, preserved, acc) do
+    with :ok <- File.rename(to, preserved),
+         :ok <- File.rename(from, to) do
+      Logger.info("[state_path_migrator] collision: preserved #{to} as #{preserved}")
+
+      %{
+        acc
+        | renamed: acc.renamed + 1,
+          collisions: acc.collisions + 1,
+          preserved_files: [preserved | acc.preserved_files]
+      }
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "[state_path_migrator] collision swap of #{to} <-> #{from} failed: #{inspect(reason)}"
+        )
+
+        acc
     end
   end
 

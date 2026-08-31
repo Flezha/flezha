@@ -56,19 +56,19 @@ defmodule Flezha.Transport.CertGenerator do
     File.mkdir_p!(cert_dir)
 
     # Generate CA key pair
-    ca_key = :public_key.generate_key({:rsa, 2048, 65537})
+    ca_key = :public_key.generate_key({:rsa, 2048, 65_537})
 
     ca_cert =
       create_self_signed_cert(ca_key, "Flezha CA", is_ca: true)
 
     # Generate server key pair
-    server_key = :public_key.generate_key({:rsa, 2048, 65537})
+    server_key = :public_key.generate_key({:rsa, 2048, 65_537})
 
     server_cert =
       create_signed_cert(server_key, ca_key, ca_cert, "localhost", :server)
 
     # Client identity presented by local runners for mutual TLS.
-    client_key = :public_key.generate_key({:rsa, 2048, 65537})
+    client_key = :public_key.generate_key({:rsa, 2048, 65_537})
     client_cert = create_signed_cert(client_key, ca_key, ca_cert, "flezha-runner", :client)
 
     # Write files

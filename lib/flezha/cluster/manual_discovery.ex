@@ -1,4 +1,9 @@
 defmodule Flezha.Cluster.ManualDiscovery do
+  @moduledoc """
+  Discovery from a statically configured node list, plus whatever is already
+  connected. The fallback strategy when no cluster API is available.
+  """
+
   alias Flezha.Cluster.DiscoveryProtocol
 
   @type t() :: %__MODULE__{
@@ -10,7 +15,7 @@ defmodule Flezha.Cluster.ManualDiscovery do
     @impl true
     def get_nodes(struct) do
       nodes =
-        if length(struct.initial_nodes) > 0 do
+        if struct.initial_nodes != [] do
           (struct.initial_nodes ++ Node.list()) |> Enum.uniq()
         else
           Node.list()
@@ -23,13 +28,10 @@ defmodule Flezha.Cluster.ManualDiscovery do
     def validate_settings(_struct) do
       static_nodes = Application.fetch_env!(:flezha, :static_nodes)
 
-      cond do
-        is_list(static_nodes) ->
-          {:ok, __MODULE__}
-
-        true ->
-          {:error,
-           "Invalid static nodes configuration. Expected a empty list or a list of nodes."}
+      if is_list(static_nodes) do
+        {:ok, __MODULE__}
+      else
+        {:error, "Invalid static nodes configuration. Expected a empty list or a list of nodes."}
       end
     end
   end

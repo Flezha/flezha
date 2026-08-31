@@ -1,4 +1,17 @@
 defmodule Flezha.Runner.ControlUnit do
+  @moduledoc """
+  The controller's request side of one runner's control channel.
+
+  Every controller-initiated command — assign runner id, connect sockets, add
+  or remove an operative, ping, partition, compaction, workflow stop — is built
+  here, handed to `ControlChannel` to write, and its response matched back by
+  reference id.
+
+  Invariant: a command is in flight at most once per reference id, and a
+  response that arrives for an id nothing is waiting on is dropped rather than
+  guessed at.
+  """
+
   alias Flezha.Config
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
@@ -74,7 +87,7 @@ defmodule Flezha.Runner.ControlUnit do
     }
 
     case send_control_await(runner_id, {:operative_message, command}) do
-      {:ok, raw_data} -> decode_operative_message_response(raw_data)
+      {:ok, raw_data} -> decode_message_response(raw_data)
       {:error, _} = err -> err
     end
   end
@@ -147,7 +160,7 @@ defmodule Flezha.Runner.ControlUnit do
     )
   end
 
-  defp decode_operative_message_response(raw_data) do
+  defp decode_message_response(raw_data) do
     case RunnerCommands.OperativeMessageResponse.decode(raw_data) do
       {:ok, %RunnerCommands.OperativeMessageResponse{error: "", payload: payload}} ->
         {:ok, payload}
@@ -289,7 +302,6 @@ defmodule Flezha.Runner.ControlUnit do
 
   @impl true
   def handle_call({:start_operative, operative}, from, state) do
-    # TODO: Not sure if we should convert to map from the beginning.
     init_values =
       case operative.init_values !== %{} do
         true ->

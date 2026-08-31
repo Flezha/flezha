@@ -548,6 +548,26 @@ scan. On record five deep: `test duplicate_pairs` read **118 → 109 → 115 →
 in one afternoon with 5a's own test files unchanged across the last four. Two workers
 reading different numbers were both reading correctly, from different trees.
 
+**NEVER `git add` a directory while a peer is live — it sweeps their in-flight edits into
+your commit** (2026-08-31, and it produced a commit that does not compile). Staging
+`lib/flezha/runner/` and `lib/flezha/service/operative_manager.ex` to commit area 5e-a
+swept area 5e-b's uncommitted `alias Flezha.SafeCall` lines out of two files. The module
+`lib/flezha/safe_call.ex` was still untracked in the peer's tree, so **`85f722cd` aliases
+a module it does not define, with four live call sites** — an undefined-remote-call
+warning, fatal under this repo's `--warnings-as-errors`, and an `UndefinedFunctionError`
+on the fence-write and overwatch-state paths. It self-healed at the peer's next commit
+(`a26b203b`), so only the intermediate is broken — but it is a **bisect point**, and a
+bisect that lands there gets a build failure that has nothing to do with the bug being
+hunted.
+
+The rule was already written ("stage paths one by one, never a directory"; "run
+`git diff <file>` and confirm every hunk is yours **before** `git add`") and the
+supervisor broke it under time pressure, on the twelfth commit of an evening. **The
+peer found it, from the object store, without checking the commit out** — because
+checking out is destructive to a shared tree and a worktree costs the full §11c setup.
+`git ls-tree` and `git grep <rev>` answer this question without touching anything, and
+that is the technique to reach for.
+
 **A rename owns its callers, wherever they live** (2026-08-31, first parallel segment).
 Area 5a's `workflow_completed_retention_hours` → `completed_retention_hours` has a caller
 in `lib/flezha/service/cli_manager.ex` — area **5c**'s file. That one-line edit is not a
@@ -599,6 +619,50 @@ before that step is not evidence.
 Two of the three are now loud: `--write-baseline` refuses without `--lint`, and
 `--check` names the metrics it could not compare. The third is filed.
 
+## 11i. A module move re-keys anything spelled `__MODULE__`
+
+Added 2026-08-31 by area 5e-a, after two mechanisms fired that its Mimic census did not
+cover. Both were caught by a **red test**, not by review, and neither is visible in a
+call graph:
+
+- **`Logger.put_module_level/2`** scopes a level to one module *by name*. Two tests
+  raised the level of a module whose function then moved to a sibling, so three
+  assertions read `left: ""`. The overrides now name both modules.
+- **`:persistent_term` under `{__MODULE__, key}`** re-keys when the writer moves while
+  the reader stays. Moving one writer turned **eleven** tests red, every one reporting
+  "the stream is unbound". The writer went back to the parent, which owns that key and
+  had no caller in the sibling.
+
+**The rule: a module move re-keys anything spelled `__MODULE__` and anything a test
+scopes by module name.** Before a public function moves, grep the pair of trees for
+`__MODULE__` in a key position — `:persistent_term`, `:ets` table names, registry keys,
+`Logger.put_module_level`, `:telemetry` event prefixes — and for the module's own name
+inside test setup. §11d's stub census covers `Mimic.copy`; this covers the rest, and
+between them they are what makes a move safe.
+
+## 11h. A struct is an edge — and a call-graph tool will not see it
+
+Added 2026-08-31 by area 5e-b, on the **ninth** designed split this programme refuted by
+measurement. Every acyclicity tool written today resolved **local function calls between
+groups**. None of them saw that a sibling pattern-matching `%Parent{}` — in a head, a
+`@spec`, or a `%{state | …}` update — **is a dependency edge in `mix xref`**, whether or
+not it calls anything.
+
+The proof is one line, and it is the technique to copy: add
+`def probe_struct_edge(%Parent{}), do: :ok` to a candidate sibling and re-measure.
+5e-b's SCC went **63 → 66 and `loop.ex` entered the cycle it had been outside**;
+reverted, back to 63. A bare type reference is enough — `diff.ex → intent.ex` exists in
+the graph although `diff.ex` names `Intent` only in a `@spec` and a comment.
+
+**The remedy is already a house precedent, twice**: put the `defstruct` in its own
+module (`wal_writer/state.ex`, now `loop/state.ex`) so siblings thread the same struct
+**without naming the module that owns it**. Where a struct cannot move, pass plain
+values across the seam instead and let the owner keep the `%{s | …}` write.
+
+**So a split's acyclicity check must resolve struct references, not only calls** — and a
+tool that reports a clean partition without having looked at `%Mod{}` patterns and
+`@spec` types has not checked the thing that fails.
+
 ## 11f. The ruler can also punish — a metric that moves against the work
 
 Added 2026-08-31, from area 5a's survey. §11e is about the instrument reporting
@@ -622,17 +686,36 @@ tangled in any one of them.
 
 **A second instance, found the same day by area 5b's survey — it is a pattern, not an
 incident.** `async_false_share` is `1 − (async:true files) / (test files)`, an unweighted
-**file** count, and `test` is BLOCKING at 0.813 (43 of 230). Charter §9 mandates folding
-incident files into behaviour files. Folding nine websocket test files into three costs
+**file** count, and `test` is BLOCKING at it. Charter §9 mandates folding
+incident files into behaviour files. Folding nine websocket test files into three cost
 3 `async: true` and 6 total: `1 − 40/224 = 0.821` — **a blocking regression produced by
 obeying §9**.
 
 The exact condition, which is more useful than "folding regresses": removing `k` files
-of which `j` are `async: true` regresses iff **`j/k > 0.187`**, the current share of
-true files. So a fold is free when it consolidates predominantly `async: false` files,
+of which `j` are `async: true` regresses iff **`j/k` exceeds `1 − async_false_share`, the
+current share of true files**. **Read that share from the instrument, never from this
+page** — it was `0.187` (43 of 230) when this section was written and `0.203` (46 of 227)
+a few hours later, because two areas folded test files in between. A worker using the
+stale figure refuses folds the ratchet would have allowed. (Corrected 2026-08-31 by area
+5e-b, which measured it rather than quoting it.) **Compute the floor from the BASELINE share, never the current one** (added 2026-08-31,
+after this number was misread three times in one day — by the supervisor at `0.187`, by
+a worker at a stale `0.206`, and by the supervisor again using the *current* share,
+which is circular: the ratchet compares now against baseline, so the requirement is set
+by baseline). The arithmetic, once:
+
+> `required_true = ceil((1 − baseline_async_false_share) × test_files_now)`
+> `headroom = async_true_now − required_true`
+
+At `e28de881`'s baseline of `0.797` with 205 files today: required 42, held 43,
+**headroom +1**. And read `async_true_now` from the instrument — a `grep -rl 'async:
+true' test/` sweeps directories `test_files` does not count and reads **47** where the
+metric reads 43.
+
+So a fold is free when it consolidates predominantly `async: false` files,
 and must be funded when it does not. **Ruled: the programme accepts this arithmetic and
 funds it** rather than reweighting — after folding to `N` files an area holds
-`async: true ≥ ⌈0.187 × N⌉`, each conversion naming the global state the test does not
+`async: true ≥ ⌈(1 − async_false_share) × N⌉` **read from the instrument**, each
+conversion naming the global state the test does not
 need. Reweighting by test LOC would move an already-armed baseline under all 36 areas
 at once, which is a re-baseline, not a fix.
 

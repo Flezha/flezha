@@ -18,20 +18,11 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
   supervisor logs it and the Controller exits cleanly.
   """
 
-  use GenServer
+  use GenServer, restart: :transient
 
   require Logger
 
   alias Flezha.AuthZ.{Bootstrap, Config, RoleStore}
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :transient
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -51,7 +42,7 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
       # Break-glass first: a REBOOTSTRAP marker invalidates the claimed
       # state, so the admin_system_exists? check below sees the recovered
       # (unclaimed) truth and a fresh bootstrap token is written.
-      consume_marker_then_admin_exists?() ->
+      admin_exists_after_marker?() ->
         :ignore
 
       true ->
@@ -77,7 +68,7 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
   # Consumes the break-glass marker (side-effecting exactly once per boot),
   # then answers whether a claimed admin still exists. After a recovery the
   # bindings are gone, so the caller's `true ->` branch writes a fresh token.
-  defp consume_marker_then_admin_exists?() do
+  defp admin_exists_after_marker?() do
     _ = Bootstrap.consume_recovery_marker()
     RoleStore.admin_system_exists?()
   end

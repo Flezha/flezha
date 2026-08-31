@@ -5,11 +5,11 @@ defmodule Flezha.Service.OperativeManager do
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Cluster.Directory
-  alias Flezha.Convergence.SafeCall
   alias Flezha.Operative.Builder, as: OperativeBuilder
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager.Admission
   alias Flezha.Service.OperativeManager.Init
@@ -173,7 +173,7 @@ defmodule Flezha.Service.OperativeManager do
 
   defp do_start_operative(namespace, operative) do
     with :ok <- Admission.check_not_shutting_down(),
-         :ok <- OperativeBuilder.validate_operative(namespace, operative),
+         :ok <- Admission.validate_operative(namespace, operative),
          :ok <- Admission.refuse_group_base_claim(namespace, operative),
          :ok <- Admission.validate_factory(namespace, operative.factory_id),
          :ok <- Admission.check_operative_quota(namespace),

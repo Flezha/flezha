@@ -12,7 +12,8 @@ defmodule Flezha.AuthZ.NamespaceStore do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, DetsStore, Namespace}
+  alias Flezha.AuthZ.{Config, Namespace}
+  alias Flezha.DetsStore
 
   @table :flz_authz_namespaces
   @cache :flz_authz_namespaces_cache

@@ -52,7 +52,7 @@ defmodule Flezha.State.WalWriter do
   it; a Change from a *different* runner than the one that wrote the current
   epoch realigns the WAL to the new runner's seq base (runner-restart
   recovery — see `handle_call/3`) — unless a takeover superseded that session
-  (`Flezha.Runner.FleetManager.superseded_session?/1`), in which case the
+  (`Flezha.Runner.FleetManager.Marks.superseded_session?/1`), in which case the
   frame is refused with `{:error, :stale_writer}` instead of realigning. Pass
   `nil` (the default) to disable epoch tracking — the single-runner / test
   path keeps the prior dedup/gap/append semantics.

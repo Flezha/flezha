@@ -3,7 +3,7 @@ defmodule Flezha.Schedule.Store do
   Durable cron-schedule registry backed by `<schedule_dir>/schedules.dets`.
 
   Each row stores one schedule entry keyed by its unique name. An ETS read
-  cache fronts the DETS table (the `Flezha.AuthZ.DetsStore` cached skeleton).
+  cache fronts the DETS table (the `Flezha.DetsStore` cached skeleton).
   Like every sibling control-plane registry the store is node-local: it is the
   definition of record, and `Flezha.Schedule.Hub` asserts what it holds into
   the cluster-wide `:flz_schedules` hub, which decides who runs it.
@@ -12,7 +12,7 @@ defmodule Flezha.Schedule.Store do
   use GenServer
   use Flezha.Constant
 
-  alias Flezha.AuthZ.DetsStore
+  alias Flezha.DetsStore
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
 

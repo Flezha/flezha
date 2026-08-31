@@ -60,13 +60,11 @@ defmodule Flezha.AuthN.Cert do
   # ----- decoding -----
 
   defp decode_cert(der) do
-    try do
-      {:ok, :public_key.pkix_decode_cert(der, :otp)}
-    rescue
-      _ -> {:error, :invalid_cert}
-    catch
-      _, _ -> {:error, :invalid_cert}
-    end
+    {:ok, :public_key.pkix_decode_cert(der, :otp)}
+  rescue
+    _ -> {:error, :invalid_cert}
+  catch
+    _, _ -> {:error, :invalid_cert}
   end
 
   defp spiffe_san(cert) do
@@ -101,28 +99,24 @@ defmodule Flezha.AuthN.Cert do
   defp find_spiffe_uri(_), do: nil
 
   defp extensions(cert) do
-    try do
-      {:OTPCertificate, tbs, _, _} = cert
-      {:OTPTBSCertificate, _, _, _, _, _, _, _, _, _, exts} = tbs
-      List.wrap(exts)
-    rescue
-      _ -> []
-    catch
-      _, _ -> []
-    end
+    {:OTPCertificate, tbs, _, _} = cert
+    {:OTPTBSCertificate, _, _, _, _, _, _, _, _, _, exts} = tbs
+    List.wrap(exts)
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
   end
 
   defp subject_dn_string(cert) do
-    try do
-      {:OTPCertificate, tbs, _, _} = cert
-      {:OTPTBSCertificate, _, _, _, _, _, subject, _, _, _, _} = tbs
-      {:rdnSequence, rdns} = subject
-      {:ok, rdn_sequence_to_rfc4514(rdns)}
-    rescue
-      _ -> {:error, :subject_decode_failed}
-    catch
-      _, _ -> {:error, :subject_decode_failed}
-    end
+    {:OTPCertificate, tbs, _, _} = cert
+    {:OTPTBSCertificate, _, _, _, _, _, subject, _, _, _, _} = tbs
+    {:rdnSequence, rdns} = subject
+    {:ok, rdn_sequence_to_rfc4514(rdns)}
+  rescue
+    _ -> {:error, :subject_decode_failed}
+  catch
+    _, _ -> {:error, :subject_decode_failed}
   end
 
   # ----- RFC 4514 normalisation -----
@@ -133,14 +127,12 @@ defmodule Flezha.AuthN.Cert do
   defp rdn_sequence_to_rfc4514(rdns) do
     rdns
     |> Enum.reverse()
-    |> Enum.map(&rdn_set_to_string/1)
-    |> Enum.join(",")
+    |> Enum.map_join(",", &rdn_set_to_string/1)
   end
 
   defp rdn_set_to_string(rdn_set) do
     rdn_set
-    |> Enum.map(&attr_type_and_value/1)
-    |> Enum.join("+")
+    |> Enum.map_join("+", &attr_type_and_value/1)
   end
 
   defp attr_type_and_value({:AttributeTypeAndValue, oid, value}) do

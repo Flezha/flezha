@@ -35,6 +35,12 @@ defmodule Flezha.Healthz.Server do
         `:convergence_fabric_503_polls` classifier polls). A verdict the
         convergence pipeline can heal stays `degraded`.
 
+        The fabric clause is **UDS-only**: the QUIC server is started with no
+        `DriverStats`, so no driver measurement exists and
+        `data_plane_fabric_wedged` can never be minted on a QUIC controller.
+        A `200` there is evidence about the loop, the operatives and the
+        plugins — not about the data plane (KI-72).
+
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.
 
@@ -54,15 +60,6 @@ defmodule Flezha.Healthz.Server do
   alias Flezha.State.DurabilityTier
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent
-    }
-  end
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -146,153 +143,181 @@ defmodule Flezha.Healthz.Server do
 
   # Reads the single published convergence snapshot and the per-hub
   # recovery cache. No local state, no telemetry.
+  # The decision table. Every arm's `why` lives on the body it returns, so the
+  # ranking is readable as one list: fabric and tick-stale outrank every
+  # degraded case, and nothing below them can reach 503.
   defp compute_health() do
+    f = facts()
+
+    cond do
+      any_recovering?(f.recovery_states) -> recovering_body(f)
+      loop_hard_wedged?(f.last_tick_at) -> tick_stale_body(f)
+      match?({:fabric, _layer, _polls}, f.data_plane) -> fabric_body(f)
+      loop_tick_gapped?(f.last_tick_at) -> tick_resuming_body(f)
+      f.bound < f.intended -> unbound_body(f)
+      f.pending_restore -> restoring_body(f)
+      f.rpo_breaches != [] -> rpo_body(f)
+      f.producing < f.bound or f.degraded != [] -> degraded_body(f)
+      true -> healthy_body(f)
+    end
+  end
+
+  # Everything the arms below read, sampled once so no two arms can disagree
+  # about the same tick.
+  defp facts() do
     current = Snapshot.current()
-    recovery_states = collect_recovery_states()
     bound = Map.get(current, :bound_operatives, 0)
-    intended = Map.get(current, :intended_operatives, bound)
-    producing = Map.get(current, :producing_operatives, 0)
     stalled = Map.get(current, :stalled_operatives, [])
     stuck = Map.get(current, :stuck_operatives, %{})
     plugin_degraded = Map.get(current, :plugin_degraded_operatives, [])
     mismatch = Map.get(current, :intent_mismatch, [])
-    pending_restore = Map.get(current, :pending_restore, false)
-    unmet_intent_ms = Map.get(current, :unmet_intent_ms)
-    last_tick_at = Map.get(current, :last_tick_at)
-    rpo_breaches = DurabilityTier.breaches()
     stale_sensors = stale_sensors()
     data_plane = data_plane_verdict(current)
 
-    degraded =
-      degraded_reasons(stalled, plugin_degraded, stuck, mismatch, stale_sensors, data_plane)
+    %{
+      recovery_states: collect_recovery_states(),
+      bound: bound,
+      intended: Map.get(current, :intended_operatives, bound),
+      producing: Map.get(current, :producing_operatives, 0),
+      stalled: stalled,
+      stuck: stuck,
+      plugin_degraded: plugin_degraded,
+      mismatch: mismatch,
+      pending_restore: Map.get(current, :pending_restore, false),
+      unmet_intent_ms: Map.get(current, :unmet_intent_ms),
+      last_tick_at: Map.get(current, :last_tick_at),
+      rpo_breaches: DurabilityTier.breaches(),
+      stale_sensors: stale_sensors,
+      data_plane: data_plane,
+      degraded:
+        degraded_reasons(stalled, plugin_degraded, stuck, mismatch, stale_sensors, data_plane)
+    }
+  end
 
-    cond do
-      any_recovering?(recovery_states) ->
-        {:recovering,
-         %{
-           status: "recovering",
-           recovery_state: pick_recovery_state(recovery_states)
-         }}
+  # Four of the ten bodies deliberately carry no operative counts. Merging them
+  # into `respond_healthz/1` would add the keys to those four, which changes the
+  # JSON an operator and a kubelet read.
+  defp recovering_body(f),
+    do:
+      {:recovering,
+       %{status: "recovering", recovery_state: pick_recovery_state(f.recovery_states)}}
 
-      loop_hard_wedged?(last_tick_at) ->
-        {:unhealthy,
-         %{
-           status: "unhealthy",
-           reason: "tick_stale",
-           tick_age_ms: tick_age(last_tick_at)
-         }}
+  defp tick_stale_body(f),
+    do:
+      {:unhealthy,
+       %{status: "unhealthy", reason: "tick_stale", tick_age_ms: tick_age(f.last_tick_at)}}
 
-      # The controller's own driver thread is wedged and has stayed wedged.
-      # Ranked with `tick_stale`, above every degraded case: a heal issued from
-      # this controller would travel through the very thread that is not
-      # moving, so only the orchestrator's restart can clear it.
-      match?({:fabric, _layer, _polls}, data_plane) ->
-        {:fabric, layer, polls} = data_plane
+  # The controller's own driver thread is wedged and has stayed wedged. Ranked
+  # with `tick_stale`, above every degraded case: a heal issued from this
+  # controller would travel through the very thread that is not moving, so only
+  # the orchestrator's restart can clear it.
+  defp fabric_body(f) do
+    {:fabric, layer, polls} = f.data_plane
 
-        {:unhealthy,
-         %{
-           status: "unhealthy",
-           reason: "data_plane_fabric_wedged",
-           layer: to_string(layer),
-           polls: polls
-         }}
+    {:unhealthy,
+     %{
+       status: "unhealthy",
+       reason: "data_plane_fabric_wedged",
+       layer: to_string(layer),
+       polls: polls
+     }}
+  end
 
-      loop_tick_gapped?(last_tick_at) ->
-        # One large tick gap means the whole BEAM was suspended (host
-        # sleep/hibernate, `docker pause`, long GC) — the Loop is resuming, not
-        # wedged. Report recovering so kubelet does not restart during a planned
-        # wake; this escalates to 503 only once the gap exceeds the hard bound.
-        {:recovering,
-         %{
-           status: "recovering",
-           reason: "tick_resuming",
-           tick_age_ms: tick_age(last_tick_at)
-         }}
+  # One large tick gap means the whole BEAM was suspended (host sleep/hibernate,
+  # `docker pause`, long GC) — the Loop is resuming, not wedged. Report
+  # recovering so kubelet does not restart during a planned wake; this
+  # escalates to 503 only once the gap exceeds the hard bound.
+  defp tick_resuming_body(f),
+    do:
+      {:recovering,
+       %{status: "recovering", reason: "tick_resuming", tick_age_ms: tick_age(f.last_tick_at)}}
 
-      bound < intended ->
-        # Declared but not all bound: recovering within the grace, degraded
-        # past it. Always 200 — a restart can't re-bind a runner-orphaned operative.
-        if is_integer(unmet_intent_ms) and unmet_intent_ms > unmet_intent_grace_ms() do
-          {:degraded,
-           %{
-             status: "degraded",
-             reason: "operatives_unbound",
-             intended_operatives: intended,
-             bound_operatives: bound,
-             producing_operatives: producing,
-             unmet_intent_ms: unmet_intent_ms
-           }}
-        else
-          {:recovering,
-           %{
-             status: "recovering",
-             reason: "operatives_rebinding",
-             intended_operatives: intended,
-             bound_operatives: bound,
-             producing_operatives: producing
-           }}
-        end
-
-      pending_restore ->
-        # Intent is empty (intended == 0) only because hubs start lazily on
-        # runner reconnect and the durable registry has not been read back
-        # since this controller (re)started — operatives.dets exists on disk for a
-        # hub that is not running yet. `bound < intended` cannot catch this
-        # (0 < 0 is false), so without this the system reports vacuously
-        # `healthy`. Recovering, never healthy, until the registry is loaded.
-        {:recovering,
-         %{
-           status: "recovering",
-           reason: "restoring_registry",
-           intended_operatives: intended,
-           bound_operatives: bound,
-           producing_operatives: producing
-         }}
-
-      # A remote-durability RPO breach is degraded, never 503: local durability
-      # is intact and a kubelet restart cannot reach the backend that is not
-      # answering. The alarm belongs on the probe all the same — a widening RPO
-      # that is only visible in the backend is the failure this tier exists to
-      # prevent.
-      rpo_breaches != [] ->
-        {:degraded,
-         %{
-           status: "degraded",
-           reason: "durability_rpo_exceeded",
-           rpo_breached_refs: length(rpo_breaches),
-           bound_operatives: bound,
-           producing_operatives: producing
-         }}
-
-      # Never 503 on intent mismatch or a dead sensor: the data plane may be
-      # legitimately stopped, and a kubelet restart repairs neither missing
-      # intent nor a supervisor-restartable sensor.
-      producing < bound or degraded != [] ->
-        {:degraded,
-         %{
-           status: "degraded",
-           reason: degraded_reason(degraded),
-           tick_age_ms: tick_age(last_tick_at),
-           bound_operatives: bound,
-           producing_operatives: producing,
-           stalled_operatives: stalled,
-           stuck_operatives: stuck,
-           plugin_degraded_operatives: plugin_degraded,
-           intent_mismatch: mismatch,
-           stale_sensors: stale_sensors,
-           data_plane_layer: pipeline_layer(data_plane)
-         }}
-
-      true ->
-        {:healthy,
-         %{
-           status: "healthy",
-           tick_age_ms: tick_age(last_tick_at),
-           bound_operatives: bound,
-           producing_operatives: producing
-         }}
+  # Declared but not all bound: recovering within the grace, degraded past it.
+  # Always 200 — a restart can't re-bind a runner-orphaned operative.
+  defp unbound_body(f) do
+    if is_integer(f.unmet_intent_ms) and f.unmet_intent_ms > unmet_intent_grace_ms() do
+      {:degraded,
+       %{
+         status: "degraded",
+         reason: "operatives_unbound",
+         intended_operatives: f.intended,
+         bound_operatives: f.bound,
+         producing_operatives: f.producing,
+         unmet_intent_ms: f.unmet_intent_ms
+       }}
+    else
+      {:recovering,
+       %{
+         status: "recovering",
+         reason: "operatives_rebinding",
+         intended_operatives: f.intended,
+         bound_operatives: f.bound,
+         producing_operatives: f.producing
+       }}
     end
   end
+
+  # Intent is empty (intended == 0) only because hubs start lazily on runner
+  # reconnect and the durable registry has not been read back since this
+  # controller (re)started — operatives.dets exists on disk for a hub that is not
+  # running yet. `bound < intended` cannot catch this (0 < 0 is false), so
+  # without this the system reports vacuously `healthy`. Recovering, never
+  # healthy, until the registry is loaded.
+  defp restoring_body(f),
+    do:
+      {:recovering,
+       %{
+         status: "recovering",
+         reason: "restoring_registry",
+         intended_operatives: f.intended,
+         bound_operatives: f.bound,
+         producing_operatives: f.producing
+       }}
+
+  # A remote-durability RPO breach is degraded, never 503: local durability is
+  # intact and a kubelet restart cannot reach the backend that is not answering.
+  # The alarm belongs on the probe all the same — a widening RPO that is only
+  # visible in the backend is the failure this tier exists to prevent.
+  defp rpo_body(f),
+    do:
+      {:degraded,
+       %{
+         status: "degraded",
+         reason: "durability_rpo_exceeded",
+         rpo_breached_refs: length(f.rpo_breaches),
+         bound_operatives: f.bound,
+         producing_operatives: f.producing
+       }}
+
+  # Never 503 on intent mismatch or a dead sensor: the data plane may be
+  # legitimately stopped, and a kubelet restart repairs neither missing intent
+  # nor a supervisor-restartable sensor.
+  defp degraded_body(f),
+    do:
+      {:degraded,
+       %{
+         status: "degraded",
+         reason: degraded_reason(f.degraded),
+         tick_age_ms: tick_age(f.last_tick_at),
+         bound_operatives: f.bound,
+         producing_operatives: f.producing,
+         stalled_operatives: f.stalled,
+         stuck_operatives: f.stuck,
+         plugin_degraded_operatives: f.plugin_degraded,
+         intent_mismatch: f.mismatch,
+         stale_sensors: f.stale_sensors,
+         data_plane_layer: pipeline_layer(f.data_plane)
+       }}
+
+  defp healthy_body(f),
+    do:
+      {:healthy,
+       %{
+         status: "healthy",
+         tick_age_ms: tick_age(f.last_tick_at),
+         bound_operatives: f.bound,
+         producing_operatives: f.producing
+       }}
 
   # Every reason this tick is degraded. The list IS the branch condition, so
   # the condition and the reported reason cannot drift apart.

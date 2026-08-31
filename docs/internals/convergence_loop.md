@@ -42,8 +42,8 @@ facts and invoke no remedy of their own; the Loop is the only module that heals.
 | `Convergence.Heal` | Seven idempotent primitives: `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
 | `Convergence.Backoff` | Per-`{primitive, target}` cooldown: 5 s → 30 s → 60 s → 300 s, held at 300 s; `:ok` resets |
 | `Convergence.Snapshot` | Public ETS table read by `/healthz`, the CLI and telemetry: `:current` (per-tick summary), `{:recovery, hub_id}`, `{:sensor, name}` |
-| `Convergence.RecoveryGate` | Hub recovery queries: `ready_namespaces/1`; `await_recovery_complete/2` behind `HubManager.await_recovery_complete/1` (the `BootLoader` and `FleetManager` boot gates) |
-| `Convergence.SafeCall` | `GenServer.call` wrapper returning `{:error, reason}` on timeout / `:noproc` / any exit; probes a timed-out local target's mailbox and `current_function` |
+| `Convergence.RecoveryGate` | Hub recovery queries: `ready_namespaces/1`; `await_recovery_complete/2` behind `HubManager.await_recovery_complete/1` (the `Boot.Loader` and `FleetManager` boot gates) |
+| `Flezha.SafeCall` | Not a convergence module — the control plane's bounded-call wrapper, at the root and named by five trees. Returns `{:error, reason}` on timeout / `:noproc` / any exit; probes a timed-out local target's mailbox and `current_function` |
 | `Convergence.StallClassifier` | Pure data-plane localizer (`classify/3`) and producing-liveness classifier (`classify_producing/3`) — [`transport_liveness.md`](transport_liveness.md) |
 
 ## Tick pipeline

@@ -102,7 +102,8 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 5b | Controller `plugin` | `refactor-5b-plugin` | **none (5a dep refuted)** | **done** | `826c227c` (+9) | **cycles 4→0, mcf 3→0, fn>50 9→0, markers 8→0, credo 51→0**, files>800 3→1 by ruling, prod_loc −66; KI-93+KI-95 red-first; 15th blocking |
 | 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | **done** | `a92b79a1` (+7) | **files>800 3→0, fn>50 4→0, markers 4→0, dup 8→0, credo 53→42; 23 edges cut**; cli_manager 4294→15 modules; 16th blocking |
 | 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | **none (5c dep refuted)** | **done** | `a92b79a1` (+5) | **fn>50 2→0 and 13→0, files>800 2→0, cycles 1→0, markers→0**; obs prod_loc −215; 17th+18th blocking |
-| 5e | Controller `operative`, `runner`, `convergence`, rest | `refactor-5e-runtime` | 5d | pending | | |
+| 5e-a | `runner` + `operative` | `refactor-5e-a-runtime` | — | **done** | `2b1355f4` | **every ceiling 0/0, credo 25+2→0, 11 edges cut**, area −33 |
+| 5e-b | `convergence`, `sdk`, `authz`, root, rest | `refactor-5e-b-platform` | — | **done** | `2b1355f4` | **every ceiling row 0 across 15 areas, credo 80→39, 9 edges cut, repo cycles 2→1** |
 | 6 | `cli` | `refactor-6-cli` | 1 | pending | | |
 | 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | pending | | |
 | 8 | Docs reconcile (`CLAUDE.md` index, dev_notes names) | `refactor-8-docs` | 7 | pending | | |
@@ -112,36 +113,193 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**Two surveys running on the LAST controller block.** Areas 5c and 5d are COMPLETE,
-archived and committed.
+**NONE. Session closed cleanly 2026-08-31 ~21:40. No subagent alive, tree clean, every
+area committed and archived.**
 
-| worker | area | subject | lane |
+## START HERE IF YOU ARE A FRESH SESSION
+
+**All 35 production areas are blocking. 100 % of `lib/` production lines are ratcheted.**
+The controller is finished. **163 commits today**; six areas closed this session
+(4 `sdk/java`, 6 `cli`, 5a `state`, 5b `plugin`, 5c `service`, 5d `observability`+`mix`)
+plus **5e-a** (`runner`+`operative`) and **5e-b** (fifteen trees) closing tonight.
+
+**What remains — two areas, neither surveyed:**
+
+| area | subject | size | note |
 |---|---|---|---|
-| `ab214d…` | **5e-a** | `runner` + `operative` — 5 099 lines, 3 files >800, both at `max_cycle_files` **9** | `openspec/changes/refactor-5e-a-runtime/` |
-| `a28626…` | **5e-b** | `convergence`, `sdk`, `authz`, root, `transport`, and eight small trees — ~9 750 lines | `openspec/changes/refactor-5e-b-platform/` |
+| **7** | tests, helpers, test apps | **38 737 test_loc**, 202 files | `test` is ALREADY blocking, so it ratchets while you work |
+| **8** | docs reconcile | — | depends on 7 |
 
-**5e is split in two because it is 14 846 lines, not the ~10 000 the board estimated.**
-The split is by shape as much as size: 5e-a is a *splitting* job (three files over 800,
-four functions over 50, both trees nine files deep in the cycle), while 5e-b has **one
-file over 800 in 9 750 lines** — its value is cycles, dead code and layering, and its
-brief says so rather than sending a worker hunting splits that are not there.
+**Resume with `/loop /refactor`.** The skill reads this file, `git status` and the open
+change's `tasks.md`, then continues. It will pick area 7 because it is the first
+`pending` row whose dependencies are all `done`.
 
-**Those `max_cycle_files` of 9 are true numbers for the first time**: before KI-98 was
-fixed this afternoon, `runner` and `operative` under-reported at 4 and 1 because every
-compile- or export-annotated member was invisible.
+### The five things area 7 must know before it starts
 
-**5e-b's brief carries the dead-code sweep explicitly**, because three areas today found
-genuinely dead code by grep — `Service.Warden` (a never-started GenServer with a typo'd
-ETS table), `Service.PluginHelper`, and `Payloader.construct_operative!/2`, whose removal
-let a file **leave the 63-member cycle outright**. That shape is worth looking for
-deliberately rather than stumbling on.
+1. **The fold arithmetic, pinned today after being misread three times** (charter §11f):
+   `required_true = ceil((1 − baseline_async_false_share) × test_files_now)`. At the
+   recorded baseline of `0.797` with 202 files: required **41**, held 43. **Read
+   `async_true` from the instrument** — a `grep -rl 'async: true' test/` sweeps
+   directories `test_files` does not count and over-reads by four.
+2. **Owed to area 7 by name**: area 5b's three test files over 800 need a shared case
+   module under `test/support/`, which only area 7 owns. `test files_over_800` is 6.
+3. **A fold is a concatenation, not a semantic merge** — the sources carry different
+   module-level `setup` blocks, and a `setup` that silently stops running is a test that
+   passes while checking nothing (5e-a, 44 → 20 files, 286 tests before and after).
+4. **A `@moduletag` does not survive a fold.** 5e-b found one `:capture_log` moduletag
+   that would have silenced another module's correlation tests; it became two per-test
+   tags so the uncaptured-log gate still sees them.
+5. **`test/flezha_test.exs:419` is a filed flake with seven sightings** and its exposure
+   was corrected today: **concurrent load, not maven**. Two workers hit it while a peer
+   lane ran its own suite. Do not chase it; do check a failure against
+   `docs/known_issues.md:889` before blaming your own change.
 
- Four areas closed today
-(4, 6, 5a, 5b) plus these two — six in one session.
+### Open, and needing the user rather than a worker
 
-**Next: area 5e** (`runner`, `operative`, `convergence`, `sdk`, `authz`, and the rest,
-~10 000 lines), then 7 (tests, helpers, test apps) and 8 (docs). 5e is the last
-controller area and inherits the 62-file cycle.
+`docs/refactor/STATE.md` → *Awaiting the user's decision* has four items: **KI-52**
+(five native triples vs one), **KI-80** (`--json` vs `--output json`), **KI-81**
+(`docker/prod` calls two CLI verbs that do not exist), **KI-100** (the `Source`
+behaviour with zero implementers — delete it, or make the claim true), and the Kafka
+plugin queue still spelling `:block` where the SDK says `drop_nothing`.
+
+### Filed and unfixed, worth a worker's time
+
+**KI-101** (`bench.workflow` prints `in 1.0e3 ms` on a round millisecond — a test exists
+that this path does not cover), **KI-102** (four small defects in `runner`/`operative`,
+three dead code), **KI-103** (a dead function a dev note calls the convergence Loop's
+remedy, where the Loop mints no such op — decide which claim is true and fix the note in
+the same commit), **KI-94** (`check-kind-naming` red on 23 prose hits, none in code),
+**KI-90** (`narrative_markers` cannot see `task 2.7` or `§5`).
+
+### One discrepancy left unresolved
+
+5e-b reported `scripts/format-check.sh` red at HEAD on `lib/flezha/service/cli_manager.ex`.
+**I measured `mix format --check-formatted` on that file twice and it exits 0 both
+times.** Either the script's per-file loop differs from the direct invocation, or the
+condition was transient. Worth one minute before anyone trusts either reading.
+
+### Area 5e-a survey — VERIFIED and APPROVED 2026-08-31
+
+Proposal at `openspec/changes/refactor-5e-a-runtime/`, `--strict` valid, tree clean.
+**Both 5e lanes are approved and implement in parallel.**
+
+**It rebuilt the dependency graph and reproduced the known cycle sizes — 62 and 4 —
+before using it for anything.** Every split was then checked, and **all three were
+cyclic as first drawn**: `fleet_manager` on two parent back-edges, `lifecycle` on
+`complete_init → cancel_wake_timer` at its second attempt, and `stream_channel`'s
+apparent back edge was **a local variable named `init`, not a call** — read at the
+source and dismissed. That is now **eight designed splits refuted by measurement today**.
+
+**RULING — E7 is approved, with a condition.** E1 is the §11f case in the open: it cuts
+**three real edges and moves no metric at all.** Without E7 the area ends at `runner`
+`max_cycle_files` 10 and `operative` 9 — **both regressions for work that improves the
+code**; with it, `runner` is flat at 9 and `operative` 9 → 8. E7 edits `lib/flezha/state`,
+which is blocking, so the condition is arithmetic rather than permission: **`state`'s
+`prod_loc` row may rise by exactly the lines moved, and only if `operative` falls by at
+least as much** — net non-positive across the pair, accounted by cause in the commit.
+That is the same accounting already accepted today for 5c's root relocation (+130) and
+its credo +2, and refusing it would let a ratchet forbid a correct cross-area move.
+
+**Three of the four handed-over items were REFUSED or re-priced, and the reasoning is
+better than the hand-over.** `ClassRegistry`: by §3's own order `state` sits *above*
+`operative`, so those nine edges are **legal today** — the move turns 3 breaches internal
+and creates 3 new ones, **net upward breaches zero**, while pushing 359 lines into a
+blocking area. E7 moves the ~60 lines that are the actual cause instead.
+`OperativeForward`: moving it *down* makes its `→ service` breach span one more layer,
+and moving one of nine sibling providers is §2's parallel-structure smell — priced at
++500 lines, 3 files, one breach worse, **zero edges cut**. `live_writers/1` confirmed,
+**with two catches the hand-over missed**: a local caller, and two tests that
+Mimic-stub the very delegation being deleted.
+
+**And it named the risk that has bitten twice today**: a moved public function silently
+changes which calls a Mimic stub intercepts. Task 0.4 enumerates every stub before
+anything moves.
+
+**KI-102 filed** — four small defects, three dead code. `Builder.from_json/1` cases over
+`Jason.decode!/1`'s **decoded term**, so it raises on every valid JSON, and has zero
+callers; and a `@doc` describing `connect_handler/4` sits above `list_factories/1`, so
+that function's published documentation describes a different one. I verified both at
+the source. All four are ordinary deletion-funded work — nothing is reachable, so there
+is no red to drive.
+
+**It corrected itself before shipping**: an apparently empty `@doc ` was an
+artefact of its own `sed` window, and it fixed the design rather than dropping the claim.
+
+**A gap in my lane model, found by it and now closed** (charter §11d): two surveys are
+two subagents of one session, so `$SCRATCH` is the **same directory** for both, and the
+peer's script overwrote its mid-analysis — silent, and it looks like a bug in your own
+code. Every worker now writes under `$SCRATCH/<lane-id>/`.
+
+**`targets.md` stale again — the fifth and sixth areas in a row.** `stream_channel.ex`
+listed at 806, actually **983**.
+
+### Area 5e-b survey — VERIFIED and APPROVED 2026-08-31
+
+Proposal at `openspec/changes/refactor-5e-b-platform/`, `--strict` valid, tree clean.
+
+**It corrected the charter, and the correction was mine.** §11f carried `0.187` (43 of
+230) as the fold threshold because I wrote it there this morning; the instrument reads
+**0.203** (46 of 227) tonight, because two areas folded test files in between. A worker
+obeying the page would **refuse folds the ratchet allows**. §11f now names the instrument
+as the source and says explicitly not to read the number off the page (`6b7d3bc3`,
+`be2eb9bf`). It also caught that its own brief undercounted its functions over 50 — seven,
+not five — and that the largest is in the root row, not `convergence`.
+
+**Nine edges cut by name**, and the shape of the analysis is what earns it: A1 is a
+**two-into-one fold** where both sites are the identical `GenServer.cast` and all three
+files already name the target, so **no edge is added**. It then simulated the result
+rather than assuming it — A1 alone leaves a 2-file SCC, and **every acyclic cut of the
+quartet must cut one of two edges that are both on the per-record path.** That is why A2
+is put to me as a ruling instead of taken.
+
+**RULING — A2 is approved**, with the fallback recorded. Moving which module owns a
+one-line `GenServer.cast` wrapper adds no call, removes none, and changes neither the
+message, the target process nor the ordering; the risk is locality, not behaviour. It is
+what takes `sdk cycles` 1 → 0 and **repo cycles 2 → 1**. Its four falsifiable structural
+checks are the proof, and if any fails the area **stops at A1 and records `sdk cycles`
+1** rather than forcing it.
+
+**RULING — C1 is REFUSED whole**, which is its own fallback. The largest duplicate
+cluster is `healthz ↔ observability/export` (3 pairs, 379 tokens), and `observability`
+closed today and is **blocking**. The worker *measured* that moving only its half
+**re-anchors the clones rather than removing them** — so half the fix is worse than
+none. Recorded as owed to a cross-area change that can take both halves.
+
+**The dead-code sweep paid, and it caught something about 5c.** `Flezha.Transport.Protocol`
+is a whole dead module — I verified the only reference in the tree is its own
+`defmodule`, and its two stream-type constants are a **third** copy of values that live
+in `flz_transport/src/transport/protocol.rs` and are re-declared in `transport/server.ex`.
+Eleven public functions have zero callers anywhere, and **two of them arrived at the root
+three commits ago in 5c's relocation** — `Flezha.Config.get_provider_info/0` and
+`Flezha.Identificator.stream_listener/2`, each with exactly one hit in the repo, its own
+`def`. Not a defect in 5c's work (they were dead before the move) but a good argument for
+sweeping *after* a relocation. ~112 lines, all deletion-funded.
+
+**Fragmentation: both refused, with prices.** `authz` 18 files / 1 386 lines and `sdk`
+17 / 1 749 are **earned** — each small module owns a noun with its own validation, the
+surviving jscpd pairs are `@doc`/`@spec` header runs, and folding three of them saves
+~20 lines while building the `util` bucket §2 forbids.
+
+**And it answered the bucket question better than I asked it.** The root *is* becoming a
+bucket, and it is **the least-bad one**, because `areas()` derives the metric table from
+`lib/flezha`'s directories — so a new `lib/flezha/util/` forces a re-baseline of all 36
+areas. Its proposed rule is worth keeping: *root iff a subtree facade, the OTP entry, or
+a zero-out-edge leaf named by ≥ 3 trees.* `boot_loader.ex` fails all three.
+
+**A/B: none proposed, with the argued case.** A1/A2 move four one-line cast wrappers —
+no call added or removed, same message, process and order — so the effect is exactly
+zero and §8's `direction` class applies. It explicitly refused to substitute a made-up
+floor, citing KI-92: a floor for `bench.roundtrip --runtime elixir` would have to be
+measured **on that driver** first.
+
+**Its one spec delta is KI-72's shape**: *"/healthz never lies"* promises a 503 on two
+verdicts that `flz_nif/src/server.rs:111`'s `stats: None` makes **unmintable on QUIC**.
+The delta states the transport scope and carries all seven existing scenarios across
+verbatim. It does **not** close KI-72 — the Rust arm is out of lane, and it says so.
+
+**`targets.md` is stale on its rows — the fifth area in a row.** `baseline.json` was
+exact on 12 of 13 comparable rows across all fifteen areas, the 13th being the documented
+scan-set effect.
 
 ### Areas 5c and 5d — DONE — `a92b79a1`, both archived
 

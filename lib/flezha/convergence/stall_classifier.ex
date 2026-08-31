@@ -244,7 +244,7 @@ defmodule Flezha.Convergence.StallClassifier do
   # ---------- runner self-report checks ----------
 
   # The runner's heartbeat thread outlives a wedged dispatch pool, so a runner
-  # can look perfectly alive while processing nothing (the 2026-06-10 freeze).
+  # can look perfectly alive while processing nothing.
   # Heartbeat metadata carries a dispatch-progress counter; flag the runner when
   # that counter is frozen.
   #
@@ -286,7 +286,7 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  # A producer that cannot deliver no longer holds a thread — it holds its own
+  # A producer that cannot deliver holds no thread — it holds its own
   # round and is handed no further work — so it is invisible to every check
   # above: it owns no handout for `entity_dispatch_stalled` to age, and the
   # runner's dispatch counter keeps climbing on every other Entity.

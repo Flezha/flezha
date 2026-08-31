@@ -44,74 +44,7 @@ defmodule Flezha.Application do
 
     _ = StatePathMigrator.migrate()
 
-    # `[]` unless a remote durability backend is configured. Ahead of
-    # HubManager because the boot-time cspec hydration among these children
-    # must land before ProcessHub opens `registry.dets` at hub start.
-    children =
-      [
-        # SignalHandler is started FIRST so OS signal handlers are
-        # installed before any other service can observe a delivered
-        # SIGTERM. The Coordinator is inserted right after HubManager
-        # because drain queries the hub.
-        Flezha.Shutdown.SignalHandler,
-        Flezha.Service.EventManager,
-        Flezha.BootLoader,
-        Flezha.Identificator,
-        # Owns the recovery-state cache + the published convergence
-        # snapshot; must be up before any hub fires recovery telemetry.
-        Flezha.Convergence.Snapshot,
-        # The cluster directory scope must be up before its writers:
-        # HubManager joins hub pids, FleetManager joins capability groups.
-        Flezha.Cluster.Directory
-      ] ++
-        DurabilityTier.children() ++
-        [
-          Flezha.Service.HubManager,
-          Flezha.Observability.Supervisor,
-          Flezha.Shutdown.Coordinator,
-          Flezha.Runner.FleetSupervisor,
-          FleetManager,
-          # Cluster formation must start BEFORE the transport accepts runner
-          # connects, so a hub is never created on a not-yet-clustered node.
-          # The transport must not accept connects before the cluster is
-          # formed, so a hub is never created on a not-yet-clustered node.
-          # `Flezha.Convergence.Loop` (started after the State trio below)
-          # owns all bind/rebind/plugin-restart healing.
-          Flezha.Cluster.Orchestrator
-        ] ++
-        authz_children() ++
-        installer_children() ++
-        transport_children() ++
-        [
-          Flezha.Service.PluginManager,
-          Flezha.Plugin.Provider.Kafka.WorkerRegistry,
-          Flezha.Plugin.Provider.Kafka.ProducerSup,
-          Flezha.Plugin.Provider.Postgres.SinkSup,
-          Flezha.Plugin.Provider.OperativeForward.ForwardSup,
-          Flezha.Service.PortPilot,
-          {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
-        ] ++
-        Flezha.State.Supervisor.application_children() ++
-        [
-          Flezha.State.FsyncBatcher,
-          Flezha.State.Retention,
-          Flezha.State.Watchdog,
-          Flezha.Dlq.Store
-        ] ++
-        convergence_loop_children() ++
-        schedule_children() ++
-        healthz_children() ++
-        memory_reporter_children()
-
-    # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?
-    # gates the child spec so prod boots without the module.
-    children =
-      if Application.get_env(:flezha, :testnet_enabled) and
-           Code.ensure_loaded?(Flezha.Testnet) do
-        [{Flezha.Testnet, []} | children]
-      else
-        children
-      end
+    children = controller_children()
 
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
 
@@ -146,24 +79,110 @@ defmodule Flezha.Application do
     # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
     # drain phase and waits for peers to claim our Operatives before
     # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
-    try do
-      _ = Coordinator.shutdown(:prep_stop)
-    catch
-      :exit, reason ->
-        require Logger
-        Logger.warning("[shutdown] coordinator unavailable in prep_stop: #{inspect(reason)}")
-        # Coordinator isn't running (e.g. early-boot crash) — fall
-        # back to the legacy direct call so the BEAM still tears
-        # the hub down before halting.
-        safe_legacy_stop()
-    end
+    _ = Coordinator.shutdown(:prep_stop)
+  catch
+    :exit, reason ->
+      require Logger
+      Logger.warning("[shutdown] coordinator unavailable in prep_stop: #{inspect(reason)}")
+      # Coordinator isn't running (e.g. early-boot crash) — fall
+      # back to the legacy direct call so the BEAM still tears
+      # the hub down before halting.
+      safe_legacy_stop()
   end
 
   defp safe_legacy_stop() do
-    try do
-      HubManager.stop_hub_manager()
-    catch
-      :exit, _ -> :ok
+    HubManager.stop_hub_manager()
+  catch
+    :exit, _ -> :ok
+  end
+
+  # The controller tree, in start order. Every entry's position is load-bearing;
+  # the ordered id list is pinned by `Flezha.Boot.ApplicationChildrenTest`.
+  @doc false
+  def controller_children() do
+    children =
+      core_children() ++
+        DurabilityTier.children() ++
+        service_children() ++
+        authz_children() ++
+        installer_children() ++
+        transport_children() ++
+        plugin_children() ++
+        Flezha.State.Supervisor.application_children() ++
+        state_children() ++
+        convergence_loop_children() ++
+        schedule_children() ++
+        healthz_children() ++
+        memory_reporter_children()
+
+    prepend_testnet(children)
+  end
+
+  # SignalHandler is started FIRST so OS signal handlers are installed before any
+  # other service can observe a delivered SIGTERM.
+  defp core_children do
+    [
+      Flezha.Shutdown.SignalHandler,
+      Flezha.Service.EventManager,
+      Flezha.Boot.Loader,
+      Flezha.Identificator,
+      # Owns the recovery-state cache + the published convergence
+      # snapshot; must be up before any hub fires recovery telemetry.
+      Flezha.Convergence.Snapshot,
+      # The cluster directory scope must be up before its writers:
+      # HubManager joins hub pids, FleetManager joins capability groups.
+      Flezha.Cluster.Directory
+    ]
+  end
+
+  # After `DurabilityTier.children()`, whose boot-time cspec hydration must land
+  # before ProcessHub opens `registry.dets` at hub start.
+  defp service_children do
+    [
+      Flezha.Service.HubManager,
+      Flezha.Observability.Supervisor,
+      # Right after HubManager, because the drain queries the hub.
+      Flezha.Shutdown.Coordinator,
+      Flezha.Runner.FleetSupervisor,
+      FleetManager,
+      # Cluster formation must start BEFORE the transport accepts runner
+      # connects, so a hub is never created on a not-yet-clustered node.
+      # `Flezha.Convergence.Loop` (started after the State trio below)
+      # owns all bind/rebind/plugin-restart healing.
+      Flezha.Cluster.Orchestrator
+    ]
+  end
+
+  defp plugin_children do
+    [
+      Flezha.Service.PluginManager,
+      Flezha.Plugin.Provider.Kafka.WorkerRegistry,
+      Flezha.Plugin.Provider.Kafka.ProducerSup,
+      Flezha.Plugin.Provider.Postgres.SinkSup,
+      Flezha.Plugin.Provider.OperativeForward.ForwardSup,
+      Flezha.Service.PortPilot,
+      {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
+    ]
+  end
+
+  defp state_children do
+    [
+      Flezha.State.FsyncBatcher,
+      Flezha.State.Retention,
+      Flezha.State.Watchdog,
+      Flezha.Dlq.Store
+    ]
+  end
+
+  # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?
+  # gates the child spec so prod boots without the module. Prepended, never
+  # appended: the harness must be listening before anything connects.
+  defp prepend_testnet(children) do
+    if Application.get_env(:flezha, :testnet_enabled) and
+         Code.ensure_loaded?(Flezha.Testnet) do
+      [{Flezha.Testnet, []} | children]
+    else
+      children
     end
   end
 
@@ -244,7 +263,7 @@ defmodule Flezha.Application do
   end
 
   defp validate_boot_ready() do
-    case GenServer.call(Flezha.BootLoader, :boot_ready?, 30_000) do
+    case GenServer.call(Flezha.Boot.Loader, :boot_ready?, 30_000) do
       true -> :ok
       false -> raise "Boot not ready"
     end

@@ -14,6 +14,7 @@ defmodule Flezha.State.Restore do
   cold start), `terminal_seq_hint = 0` and both bodies are empty.
   """
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Paths, RecordFrame, Snapshot}
 
   @header_size RecordFrame.header_size()
@@ -160,5 +161,28 @@ defmodule Flezha.State.Restore do
 
   defp gather_records(_remaining, _snapshot_seq, acc, term_seq) do
     {Enum.reverse(acc), term_seq}
+  end
+
+  @doc """
+  Establish the language of `factory_id` in `namespace` from the bytes
+  `operative_class` actually wrote, correcting a value some runner established
+  by advertising first.
+
+  The header is the authority wherever durable state exists. A class with
+  nothing on disk records nothing. Called from the bind, the one seam holding
+  both the factory id and the operative's on-disk class.
+  """
+  @spec establish_sdk_lang_from_state(binary(), binary(), binary()) :: :ok
+  def establish_sdk_lang_from_state(namespace, factory_id, operative_class)
+      when is_binary(namespace) and is_binary(factory_id) and is_binary(operative_class) do
+    case class_sdk_lang(operative_class) do
+      nil ->
+        :ok
+
+      lang ->
+        if ClassRegistry.sdk_lang(namespace, factory_id) == lang,
+          do: :ok,
+          else: ClassRegistry.put_sdk_lang(namespace, factory_id, lang)
+    end
   end
 end

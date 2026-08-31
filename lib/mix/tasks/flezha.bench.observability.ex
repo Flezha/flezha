@@ -47,7 +47,7 @@ defmodule Mix.Tasks.Flezha.Bench.Observability do
   end
 
   # Boot just the observability foundation — the rest of the Controller
-  # (transports, runner fleet, BootLoader) is not needed for an isolated bus
+  # (transports, runner fleet, Boot.Loader) is not needed for an isolated bus
   # microbenchmark and pulls in external dependencies (test runners, sockets).
   defp boot do
     Application.load(:flezha)

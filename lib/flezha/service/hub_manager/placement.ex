@@ -4,8 +4,8 @@ defmodule Flezha.Service.HubManager.Placement do
   the refusals an unplaceable runner earns, and the runner-assignment wait.
   """
 
-  alias Flezha.Convergence.SafeCall
   alias Flezha.Identificator
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate

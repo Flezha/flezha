@@ -1,20 +1,18 @@
 defmodule Flezha.Operative.Lifecycle do
   @moduledoc """
-  The operative lifecycle state machine: unbound → binding → bound → suspended →
-  rehydrating → bound, and back out through teardown.
+  The operative bind state machine: unbound → binding → bound, and the retry
+  ladder that gets there.
 
-  Bind, suspension and the un-park task are one module because they are one
-  cycle, not three concerns: a bind cancels the wake timer and delivers the
-  inbox tail a suspension left behind, a suspension rehydrates through the
-  migrate task, and the migrate task re-enters `complete_init/4`. Cutting
-  between them produces a circular dependency whichever way it is cut, so the
-  cut is drawn around them instead. `Flezha.Operative.Handover` is a genuine
-  leaf of this and does live apart.
+  Bind and the SDK start are one module because they are one cycle: a bind
+  cancels the wake timer a suspension left behind and delivers its inbox tail,
+  and the un-park task re-enters `complete_init/4`.
 
-  Every function here runs in the `Flezha.Operative.Overwatch` process and takes
-  its state, returning the next state (or a GenServer reply tuple for the phases
-  a callback delegates wholesale). The Overwatch owns the struct, its accessor
-  and its callbacks; this owns what happens between them.
+  Everything that takes an operative OFF its runner — suspend, rehydrate,
+  rewind, terminate, migrate — is `Flezha.Operative.Migration`, a sibling above
+  this module in the call graph.
+
+  Invariant: every function runs in the `Overwatch` process and takes its state,
+  returning the next state or a GenServer reply tuple.
   """
 
   alias Flezha.Config
@@ -23,20 +21,17 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
-  alias Flezha.Payloader
-  alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
-  alias Flezha.Runner.StreamChannel
-  alias Flezha.Runner.StreamSup
+  alias Flezha.Runner.StreamChannel.Gate
+  alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
-  alias Flezha.State.ProcJournal
-  alias ProcessHub.Service.Migration
+  alias Flezha.State.Restore
 
   require Logger
 
@@ -47,41 +42,6 @@ defmodule Flezha.Operative.Lifecycle do
 
   # ---------------------------------------------------------------
   # Process API — the lifecycle messages the Overwatch answers to
-  # ---------------------------------------------------------------
-
-  @doc """
-  Suspend a workflow instance parked at the committed boundary of iteration
-  `iter`: evict it from its runner (`RemOperative`), release the registry's
-  runner binding, and arm the journaled wake deadline. The registry entry —
-  and the Overwatch process — stay, so a new input still has somewhere to land;
-  it is the **runner** that holds zero resources for a suspended operative.
-
-  Called by `ControlChannel` after the `parked` journal entry is durable.
-  """
-  @spec suspend(pid(), non_neg_integer(), non_neg_integer() | nil) :: :ok
-  def suspend(overwatch_pid, iter, wake_deadline_ms) when is_pid(overwatch_pid),
-    do: GenServer.cast(overwatch_pid, {:suspend, iter, wake_deadline_ms})
-
-  @doc """
-  Rewind a workflow loop to the committed boundary of iteration `to_iter`: journal
-  the rewind — which bumps the epoch and un-commits every iteration above it —
-  then evict the instance from its runner and rehydrate it.
-
-  The rehydrating bind ships the folded journal back, so the driver undoes the
-  unwound procedures through the ordinary compensation planner and resumes the
-  loop at `to_iter + 1`, with the inbox items those iterations consumed
-  undelivered again. The marker is durable before the eviction, so a crash
-  mid-rewind resumes as a rewind rather than as a partially unwound loop.
-
-  The caller (`CliManager`) has already refused an uncommitted target and an
-  iteration whose plugin output cannot be compensated.
-  """
-  @spec rewind(pid(), non_neg_integer()) :: :ok | {:error, term()}
-  def rewind(overwatch_pid, to_iter) when is_pid(overwatch_pid),
-    do: GenServer.call(overwatch_pid, {:rewind, to_iter}, 30_000)
-
-  # ---------------------------------------------------------------
-  # Bind
   # ---------------------------------------------------------------
 
   @doc """
@@ -149,7 +109,7 @@ defmodule Flezha.Operative.Lifecycle do
   # halves read the bound state, so neither can name a runner this process is not
   # on.
   @spec publish_binding(Overwatch.t()) :: Overwatch.t()
-  defp publish_binding(%Overwatch{id: operative_id, runner_id: runner_id} = state) do
+  def publish_binding(%Overwatch{id: operative_id, runner_id: runner_id} = state) do
     case HubManager.operative_set_runner(state.namespace, operative_id, runner_id) do
       :ok ->
         :ok
@@ -179,7 +139,7 @@ defmodule Flezha.Operative.Lifecycle do
   # exits moments later, silently dropping the output.
   @spec complete_init(Overwatch.t(), binary(), map(), pid() | nil) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
-  defp complete_init(%Overwatch{} = state, runner_id, operative, owner \\ nil) do
+  def complete_init(%Overwatch{} = state, runner_id, operative, owner \\ nil) do
     owner = owner || self()
     state = bind_to_runner(state, operative.id, runner_id)
     # Before the SDK starts: a fast chain's first output can reach the stream
@@ -212,7 +172,7 @@ defmodule Flezha.Operative.Lifecycle do
          # correction running after it would never run at all — the factory
          # would park every attempt at its wrong language forever.
          _ =
-           ClassRegistry.establish_sdk_lang_from_state(
+           Restore.establish_sdk_lang_from_state(
              state.namespace,
              operative.factory_id,
              Overwatch.operative_class(state)
@@ -221,48 +181,54 @@ defmodule Flezha.Operative.Lifecycle do
          # journaled input tail BEFORE sources activate, so replayed offsets
          # reach the runner ahead of fresh ones (fold order at the SDK).
          {:ok, state} <- tier_restore(state, effectively_once) do
-      state = Plugins.activate(state)
-
-      # Record this class's kind so the State subsystem can gate stream-only
-      # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-      # workflow operative — plus every SDK declaration (the Overwatch pid the
-      # fsync-gated outbox flush dispatches `:on_output` through was recorded
-      # before the SDK started).
-      operative_class = Overwatch.operative_class(state)
-      _ = ClassRegistry.put(operative_class, state.builder.kind)
-      _ = ClassRegistry.put_declarations(operative_class, declarations)
-      # Partitionability is a class-code fact, so it is recorded against the
-      # factory: a later `--partitions N` start of a known-keyless class is
-      # then refused before a runner is touched.
-      _ = ClassRegistry.put_keyless(operative.factory_id, declarations.keyless)
-      _ = ClassRegistry.put_state_keys(operative.id, operative_class)
-
-      # The declaration is durable now, so the retention floors it needs resolve
-      # from it. Announce any it had to raise — a one-line declaration must not
-      # commit the controller to disk silently.
-      if correction_window_ms do
-        ClassRegistry.announce_derived_retention(operative_class, correction_window_ms)
-      end
-
-      # This node runs the operative now, which is what entitles it to take over
-      # the reference's remote lineage. It has to be said here rather than
-      # inferred from shipping: a migration leaves the source node holding a
-      # full copy of the state, so "has the files" would let the node that just
-      # lost the operative claim it straight back.
-      _ = DurabilityTier.adopt_operative(operative_class)
-
-      _ = Replay.restore_on_bind(state, operative)
-
-      # A bind is also a rehydrate: whatever the durable inbox still owes is
-      # re-forwarded from the recorded consumed offset, so input that arrived
-      # while the instance was suspended, crashed, or migrating is delivered
-      # exactly here — one path for every way an instance comes back.
-      state = Replay.deliver_inbox_tail(cancel_wake_timer(%{state | suspended: false}))
-      {:ok, state}
+      record_and_replay(state, operative, declarations, correction_window_ms)
     else
       {:error, reason, %Overwatch{} = parked} -> {:error, reason, parked}
       {:error, reason} -> {:error, reason, state}
     end
+  end
+
+  # Everything a started operative owes once its state is restored: the class
+  # facts the State subsystem reads, the retention floors the declaration
+  # raised, and the replay of whatever the durable inbox still owes.
+  defp record_and_replay(state, operative, declarations, correction_window_ms) do
+    state = Plugins.activate(state)
+
+    # Record this class's kind so the State subsystem can gate stream-only
+    # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
+    # workflow operative — plus every SDK declaration (the Overwatch pid the
+    # fsync-gated outbox flush dispatches `:on_output` through was recorded
+    # before the SDK started).
+    operative_class = Overwatch.operative_class(state)
+    _ = ClassRegistry.put(operative_class, state.builder.kind)
+    _ = ClassRegistry.put_declarations(operative_class, declarations)
+    # Partitionability is a class-code fact, so it is recorded against the
+    # factory: a later `--partitions N` start of a known-keyless class is
+    # then refused before a runner is touched.
+    _ = ClassRegistry.put_keyless(operative.factory_id, declarations.keyless)
+    _ = ClassRegistry.put_state_keys(operative.id, operative_class)
+
+    # The declaration is durable now, so the retention floors it needs resolve
+    # from it. Announce any it had to raise — a one-line declaration must not
+    # commit the controller to disk silently.
+    if correction_window_ms do
+      PersistenceResolver.announce_derived_retention(operative_class, correction_window_ms)
+    end
+
+    # This node runs the operative now, which is what entitles it to take over
+    # the reference's remote lineage. It has to be said here rather than
+    # inferred from shipping: a migration leaves the source node holding a
+    # full copy of the state, so "has the files" would let the node that just
+    # lost the operative claim it straight back.
+    _ = DurabilityTier.adopt_operative(operative_class)
+
+    _ = Replay.restore_on_bind(state, operative)
+
+    # A bind is also a rehydrate: whatever the durable inbox still owes is
+    # re-forwarded from the recorded consumed offset, so input that arrived
+    # while the instance was suspended, crashed, or migrating is delivered
+    # exactly here — one path for every way an instance comes back.
+    {:ok, Replay.deliver_inbox_tail(cancel_wake_timer(%{state | suspended: false}))}
   end
 
   # A refused restore is not a cold start: the durable state never reached the
@@ -290,7 +256,7 @@ defmodule Flezha.Operative.Lifecycle do
   # unbound stream needs and the reason no second one is built. A runner with no
   # channel pool at all has nothing to wait for and passes straight through.
   defp await_stream_bound(%Overwatch{} = state) do
-    case StreamChannel.await_bind(state.channel, stream_bind_wait_ms()) do
+    case Gate.await_bind(state.channel, stream_bind_wait_ms()) do
       :ok -> :ok
       {:error, :stream_unbound} -> {:error, {:stream_unbound, state.channel}}
     end
@@ -472,31 +438,6 @@ defmodule Flezha.Operative.Lifecycle do
     Map.put(state, :init_error, reason)
   end
 
-  @doc """
-  The minimal SDK operative for a running-operative migrate: the factory + the
-  current (snapshot-derived) init_values, no plugins (the controller-side
-  plugin table is untouched on a running migrate).
-
-  Partition identity is the one thing that must survive: it arms the SDK's
-  mis-route guard, and a member that migrates without it starts accepting keys
-  it does not own.
-  """
-  @spec migrate_operative(Overwatch.t()) :: Flezha.Operative.Builder.t()
-  def migrate_operative(%Overwatch{} = state) do
-    init_values =
-      if state.snapshot != nil,
-        do: Payloader.json_to_map(state.snapshot),
-        else: state.init_values
-
-    %Flezha.Operative.Builder{
-      id: state.id,
-      factory_id: state.factory_id,
-      kind: state.builder.kind,
-      init_values: init_values,
-      opts: Keyword.take(state.builder.opts, Flezha.Partition.opt_keys())
-    }
-  end
-
   defp runner_wait_ms,
     do: Application.get_env(:flezha, :overwatch_runner_wait_ms, 30_000)
 
@@ -522,79 +463,11 @@ defmodule Flezha.Operative.Lifecycle do
   # Suspension (`workflow-durable-suspension`)
   # ---------------------------------------------------------------
 
-  # Refuse a rewind before it changes anything: an uncommitted target, or an
-  # unwound procedure whose plugin output cannot be undone.
-  @spec rewind_guard(Overwatch.t(), non_neg_integer()) :: :ok | {:error, term()}
-  defp rewind_guard(%Overwatch{} = state, to_iter) do
-    committed = ProcJournal.committed_iterations(state.id)
-
-    cond do
-      to_iter not in committed ->
-        {:error, {:uncommitted_iteration, committed}}
-
-      (uncovered = uncovered_channels(state, to_iter)) != [] ->
-        {:error, {:uncovered, uncovered}}
-
-      true ->
-        :ok
-    end
-  end
-
-  # A workflow operative's staged plugin output carries no natural key, so a
-  # re-run's output cannot be relied on to overwrite the original at every sink.
-  # The only undo the engine can guarantee is the procedure's own `compensate`
-  # hook — so an unwound procedure that emitted and declares none blocks the
-  # rewind, naming the channels it wrote. A procedure that emitted nothing needs
-  # no coverage.
-  defp uncovered_channels(%Overwatch{} = state, to_iter) do
-    compensable = ClassRegistry.compensable_procs(Overwatch.operative_class(state)) || []
-
-    for {proc_idx, channel} <- ProcJournal.staged_channels_above(state.id, to_iter),
-        proc_idx not in compensable,
-        uniq: true,
-        do: channel
-  end
-
-  @doc """
-  Bind state for a suspended instance: no runner, no stream channel, the
-  wake timer armed from the journaled deadline.
-  """
-  @spec enter_suspended(Overwatch.t(), map() | nil) :: Overwatch.t()
-  def enter_suspended(%Overwatch{} = state, journal) do
-    :telemetry.execute(
-      [:flezha, :workflow, :suspended],
-      %{count: 1},
-      %{
-        namespace: state.namespace,
-        operative_id: state.id,
-        iter: (journal && journal.iter) || 0
-      }
-    )
-
-    # A committed iteration boundary is the migration-safe barrier.
-    signal_migration_ready(state)
-    evict_runner(state, journal && journal.wake_deadline_ms)
-  end
-
-  # Release every runner-side resource but keep the process and the registry
-  # entry, so a new input still has somewhere to land. Shared by suspension (a
-  # park, with its wake timer) and rewind (a rebind, with none).
-  @spec evict_runner(Overwatch.t(), non_neg_integer() | nil) :: Overwatch.t()
-  defp evict_runner(%Overwatch{} = state, deadline) do
-    %Overwatch{
-      cancel_wake_timer(state)
-      | suspended: true,
-        runner_id: nil,
-        channel: nil,
-        wake_timer: arm_wake_timer(deadline)
-    }
-  end
-
   # The durable timer: a `parked` record's wake deadline, re-armed from the
   # journal on every boot, so it survives a controller redeploy.
-  defp arm_wake_timer(nil), do: nil
+  def arm_wake_timer(nil), do: nil
 
-  defp arm_wake_timer(deadline_ms) do
+  def arm_wake_timer(deadline_ms) do
     Process.send_after(
       self(),
       :wake_deadline,
@@ -602,276 +475,14 @@ defmodule Flezha.Operative.Lifecycle do
     )
   end
 
-  # Drop the operative from its runner and release the registry's runner tag —
-  # the half a suspension and a rewind both perform before they diverge.
-  defp release_runner(%Overwatch{} = state) do
-    if state.runner_id do
-      ControlUnit.stop_operative_async(state.runner_id, state.id)
-    end
-
-    _ = HubManager.operative_set_runner(state.namespace, state.id, nil)
-    :ok
-  end
-
   # Cancel the journaled wake timer, if one is armed.
   @spec cancel_wake_timer(Overwatch.t()) :: Overwatch.t()
-  defp cancel_wake_timer(%Overwatch{wake_timer: nil} = state), do: state
+  def cancel_wake_timer(%Overwatch{wake_timer: nil} = state), do: state
 
-  defp cancel_wake_timer(%Overwatch{wake_timer: ref} = state) do
+  def cancel_wake_timer(%Overwatch{wake_timer: ref} = state) do
     _ = Process.cancel_timer(ref)
     %Overwatch{state | wake_timer: nil}
   end
-
-  # The invariant that keeps a turn from being stranded: an instance with
-  # undelivered input is never left suspended. Applied wherever suspension is
-  # entered — at the park, and at boot from durable state.
-  @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
-  @doc "Rehydrate a suspended instance that still owes an undelivered inbox tail."
-  @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
-  def rehydrate_if_pending(%Overwatch{suspended: false} = state), do: state
-
-  def rehydrate_if_pending(%Overwatch{} = state) do
-    if ProcInbox.undelivered(state.id) == [], do: state, else: rehydrate(state)
-  end
-
-  @doc """
-  Rehydrate a suspended instance through the normal bind path (the same
-  `complete_init/4` an un-park drives), which restores journal + snapshots and
-  re-delivers the undelivered inbox tail.
-
-  Idempotent: an instance already running, or with a rehydrate already in
-  flight, no-ops — so two wake sources racing (an inbox append and the wake
-  deadline) rehydrate exactly once.
-  """
-  @spec rehydrate(Overwatch.t()) :: Overwatch.t()
-  def rehydrate(%Overwatch{suspended: false} = state), do: state
-  def rehydrate(%Overwatch{migrate_task: task} = state) when task != nil, do: state
-
-  def rehydrate(%Overwatch{} = state) do
-    case OperativeManager.assign_runner(state.namespace, state.factory_id, state.id) do
-      nil ->
-        # No runner to rehydrate onto: stay suspended. The next input (or the
-        # convergence tick that brings a runner up) tries again.
-        Logger.warning(
-          "[Overwatch] no active runner to rehydrate suspended operative #{state.id}"
-        )
-
-        state
-
-      runner_id ->
-        :telemetry.execute(
-          [:flezha, :workflow, :rehydrating],
-          %{count: 1},
-          %{namespace: state.namespace, operative_id: state.id, runner_id: runner_id}
-        )
-
-        {ref, pid} = spawn_migrate_task({:unpark, state, runner_id})
-        %Overwatch{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}
-    end
-  end
-
-  @doc """
-  A durable workflow class: the kind that owns a proc-journal and an inbox. An
-  opted-out class keeps the memory-only inbox and re-runs from the top.
-  """
-  @spec durable_workflow?(Overwatch.t(), map()) :: boolean()
-  def durable_workflow?(%Overwatch{} = state, operative) do
-    state.builder.kind == :workflow and
-      PersistenceResolver.persistent_state?(
-        :workflow,
-        Keyword.get(operative.opts, :operative_class, operative.id)
-      )
-  end
-
-  @doc """
-  Suspended per durable state alone: the journal's last entry is a `parked`
-  record AND no input has arrived since. Undelivered input outranks the park —
-  the instance has work waiting, so it binds instead.
-  """
-  @spec suspended_on_disk?(binary()) :: boolean()
-  def suspended_on_disk?(instance_id) do
-    case ProcJournal.restore_state(instance_id) do
-      %{parked: true} -> ProcInbox.undelivered(instance_id) == []
-      _ -> false
-    end
-  end
-
-  @doc """
-  Tell a deferred migration it may retry now. It re-queries consent on its own
-  tick; this only makes the move prompt. Any failure — hub down mid-shutdown,
-  nothing deferred — is a no-op.
-  """
-  @spec signal_migration_ready(Overwatch.t()) :: :ok
-  def signal_migration_ready(%Overwatch{} = state) do
-    _ =
-      Migration.migration_ready(
-        Identificator.hub(state.namespace),
-        state.id
-      )
-
-    :ok
-  rescue
-    _ -> :ok
-  catch
-    :exit, _ -> :ok
-  end
-
-  @doc """
-  Process teardown — the one teardown seam, deliberate stops included: the hub
-  stop path terminates the Overwatch through its supervisor, so everything a
-  stop owes runs here. Evicts the in-memory class entry; the durable sidecar
-  stays for the process-less retention sweep over any retained finished-job
-  state.
-  """
-  @spec terminate(Overwatch.t(), term()) :: :ok
-  def terminate(%Overwatch{} = state, reason) do
-    # Kill any in-flight un-park task FIRST: left running, it would bind a
-    # runner for an operative that is being torn down.
-    state = terminate_migrate_task(state)
-
-    _ = ClassRegistry.delete(Overwatch.operative_class(state))
-
-    unless is_nil(state.runner_id) do
-      ControlUnit.stop_operative_async(state.runner_id, state.id)
-      Plugins.fire_on_terminate(state, reason)
-      _ = Plugins.unregister(Table.teardown_all(state.extensions))
-    end
-
-    Logger.info(
-      "Terminating operative #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
-    )
-
-    :ok
-  end
-
-  @doc """
-  The SDK parked at a committed iteration boundary and the `parked` journal
-  entry is durable: evict the instance from its runner and keep it suspended.
-  Not a terminal outcome — no completion record, no state deletion.
-  """
-  @spec suspend_at(Overwatch.t(), non_neg_integer(), non_neg_integer() | nil) :: Overwatch.t()
-  def suspend_at(%Overwatch{} = state, iter, wake_deadline_ms) do
-    release_runner(state)
-
-    Logger.info(
-      "[Overwatch] operative #{state.id} suspended at iteration #{iter}" <>
-        if(wake_deadline_ms, do: " (wakes at #{wake_deadline_ms})", else: "")
-    )
-
-    # An input that landed while the loop was parking — durable, but never
-    # drained by the exiting driver — is undelivered work: rehydrate straight
-    # away rather than leaving the instance suspended until the NEXT message
-    # arrives. The park/rehydrate cycle costs a bind; stranding the turn would
-    # cost correctness. `RemOperative` is already enqueued on the control
-    # stream, so the rehydrating `AddOperative` cannot overtake it.
-    # Parked while an un-park was still binding: the task's result must not
-    # resurrect a binding the runner has just torn down.
-    state = %Overwatch{state | parked_in_flight: state.migrate_task != nil}
-
-    state
-    |> enter_suspended(%{iter: iter, wake_deadline_ms: wake_deadline_ms, parked: true})
-    |> rehydrate_if_pending()
-  end
-
-  @doc """
-  Journal the rewind marker, evict, and rehydrate. A rewind is a rebind, not a
-  park: no `parked` entry, no wake timer, and the rehydrate is unconditional —
-  the loop must come back up to undo the iterations the marker unwound even with
-  no input waiting on it.
-  """
-  @spec rewind_to(Overwatch.t(), non_neg_integer()) :: {:ok, Overwatch.t()} | {:error, term()}
-  def rewind_to(%Overwatch{} = state, to_iter) do
-    with :ok <- rewind_guard(state, to_iter),
-         :ok <- ProcJournal.append_rewound(state.id, to_iter) do
-      release_runner(state)
-
-      :telemetry.execute(
-        [:flezha, :workflow, :rewind],
-        %{count: 1, epoch: ProcJournal.current_epoch(state.id)},
-        %{namespace: state.namespace, operative_id: state.id, to_iter: to_iter}
-      )
-
-      Logger.info("[Overwatch] operative #{state.id} rewound to iteration #{to_iter}")
-
-      {:ok, rehydrate(evict_runner(state, nil))}
-    end
-  end
-
-  # ---------------------------------------------------------------
-  # Teardown
-  # ---------------------------------------------------------------
-
-  # ---------------------------------------------------------------
-  # Async migrate task plumbing. Kept together so the task-spawn /
-  # terminate / result-application surface is reviewable as a single unit.
-  # ---------------------------------------------------------------
-
-  # Terminate any in-flight un-park task so teardown is never blocked by
-  # the bounded-retry ladder running inside it.
-  @spec terminate_migrate_task(Overwatch.t()) :: Overwatch.t()
-  defp terminate_migrate_task(%Overwatch{migrate_task: nil} = state), do: state
-
-  defp terminate_migrate_task(%Overwatch{migrate_task: %{ref: ref, pid: pid}} = state) do
-    _ = Process.demonitor(ref, [:flush])
-    _ = Task.Supervisor.terminate_child(Flezha.Operative.MessageHandlerTaskSup, pid)
-    %{state | migrate_task: nil}
-  end
-
-  @doc """
-  Run `complete_init/4` in a task so the heavy bounded-retry path never blocks
-  the Overwatch. Returns the task's `{ref, pid}`.
-  """
-  @spec spawn_migrate_task({:unpark, Overwatch.t(), binary()}) :: {reference(), pid()}
-  def spawn_migrate_task({:unpark, state, new_runner_id}) do
-    operative = state.builder
-    parent = self()
-
-    task =
-      Task.Supervisor.async_nolink(Flezha.Operative.MessageHandlerTaskSup, fn ->
-        case complete_init(state, new_runner_id, operative, parent) do
-          {:ok, recovered} ->
-            send(parent, {:migrate_task_result, self(), {:unparked, recovered}})
-            :ok
-
-          {:error, err, parked} ->
-            send(parent, {:migrate_task_result, self(), {:park, parked, err}})
-            :ok
-        end
-      end)
-
-    {task.ref, task.pid}
-  end
-
-  @doc """
-  Fold an un-park task's result back into the state.
-
-  `complete_init/4` ran inside the task, whose `self()` is not the Overwatch
-  process, so the binding is published here — the one point every un-park caller
-  funnels through, `rehydrate/1` included.
-  """
-  @spec apply_migrate_result(Overwatch.t(), tuple()) :: Overwatch.t()
-  def apply_migrate_result(%Overwatch{parked_in_flight: true} = state, {:unparked, _recovered}) do
-    # The driver found its inbox empty and parked before this bind reported,
-    # so the bound state is stale; the suspension stands and the tail that
-    # was journaled meanwhile wakes it again.
-    rehydrate_if_pending(%Overwatch{state | migrate_task: nil, parked_in_flight: false})
-  end
-
-  def apply_migrate_result(state, {:unparked, recovered}) do
-    Logger.info("[Overwatch] operative #{state.id} un-parked onto runner #{recovered.runner_id}")
-
-    publish_binding(recovered)
-
-    %{recovered | migrate_task: nil}
-  end
-
-  def apply_migrate_result(_state, {:park, parked, err}) do
-    %{park(parked, err) | migrate_task: nil, parked_in_flight: false}
-  end
-
-  # ---------------------------------------------------------------
-  # SDK round-trips
-  # ---------------------------------------------------------------
 
   defp start_operative_sdk(runner_id, operative) do
     Overwatch.with_proc_span(:start_operative, operative.id, fn ->
@@ -892,6 +503,6 @@ defmodule Flezha.Operative.Lifecycle do
     count = Config.concurrent_channel_count()
     channel_index = rem(operative_int, count)
 
-    StreamSup.stream_ids(runner_id, :primary) |> Enum.at(channel_index)
+    StreamPool.stream_ids(runner_id, :primary) |> Enum.at(channel_index)
   end
 end

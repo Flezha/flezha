@@ -1,44 +1,22 @@
 defmodule Flezha.Operative.ClassRegistry do
   @moduledoc """
-  Resolves an `operative_class` to its `kind` — and its effectively-once
-  delivery tier — for the State subsystem.
+  Resolves an `operative_class` to its `kind`, its declarations and its
+  effectively-once tier, for paths that carry only the class string.
 
-  `Flezha.State.Retention`, `Flezha.State.Watchdog`,
-  `Flezha.Runner.StreamChannel`, and `Flezha.State.TimeTravel` are keyed
-  purely by `operative_class` strings and never carry a `kind`. This registry
-  is the seam that lets those paths gate the stream-only capabilities
-  (`time_travel?`, `dynamic_entities?`, `output_stall_watch?`) through
-  `Flezha.Operative.Kind.capable?/2`.
+  `Retention`, `Watchdog`, `StreamChannel` and `TimeTravel` are keyed purely by
+  `operative_class` and never carry a kind; this registry is the seam that lets
+  them gate the stream-only capabilities through `Kind.capable?/2`.
 
-  `get/1` resolves in three steps:
+  `get/1` resolves in three steps: the in-memory ETS table (written at bind,
+  evicted at teardown), a durable per-class sidecar under `Paths.class_dir/1`
+  so a process-less sweep still resolves the kind, then the default `:stream`.
 
-    1. the in-memory ETS table — populated at `Flezha.Operative.Overwatch`
-       bind, evicted at teardown;
-    2. a durable per-class `kind` sidecar under `Paths.class_dir/1`
-       (`<state_root>/<namespace>/<operative_class>/`) — so a process-less
-       `Retention` sweep (which walks class dirs on disk with no live
-       Overwatch) still resolves the kind after teardown, while finished-job
-       state is retained;
-    3. the default `:stream` — every class was stream before workflow
-       operatives gained durable state, so an unknown class keeps the full
-       stream behaviour and gating is only ever *subtractive*.
-
-  The sidecar is written only for non-`:stream` kinds, so a stream
-  operative's on-disk layout is unchanged. Like `Flezha.State.Completion`, the
-  `kind` file is inert to every `Flezha.State.Paths` scanner.
-
-  This module also owns the whole declaration round-trip, not just its storage:
-  `decode_declarations/1` reads the `AddOperative` response the SDK answers a
-  bind with, `put_declarations/2` persists it, and `announce_derived_retention/2`
-  reports the retention floors a declared correction window raised. Adding a new
-  SDK-declared capability means touching those and nothing else.
+  Invariant: the sidecar is written only for non-`:stream` kinds, so a stream
+  operative's on-disk layout is unchanged and every `Paths` scanner ignores it.
   """
 
   alias Flezha.Operative.Kind
-  alias Flezha.State.InputLog
   alias Flezha.State.Paths
-  alias Flezha.State.PersistenceResolver
-  alias Flezha.State.Restore
 
   require Logger
 
@@ -259,29 +237,6 @@ defmodule Flezha.Operative.ClassRegistry do
   def sdk_lang(_namespace, _factory_id), do: nil
 
   @doc """
-  Establish the language of `factory_id` in `namespace` from the bytes
-  `operative_class` actually wrote, correcting a value some runner established
-  by advertising first.
-
-  The header is the authority wherever durable state exists. A class with
-  nothing on disk records nothing. Called from the bind, the one seam holding
-  both the factory id and the operative's on-disk class.
-  """
-  @spec establish_sdk_lang_from_state(binary(), binary(), binary()) :: :ok
-  def establish_sdk_lang_from_state(namespace, factory_id, operative_class)
-      when is_binary(namespace) and is_binary(factory_id) and is_binary(operative_class) do
-    case Restore.class_sdk_lang(operative_class) do
-      nil ->
-        :ok
-
-      lang ->
-        if sdk_lang(namespace, factory_id) == lang,
-          do: :ok,
-          else: put_sdk_lang(namespace, factory_id, lang)
-    end
-  end
-
-  @doc """
   Forget the established language of `factory_id` in `namespace`, so the next
   advertisement establishes it afresh.
 
@@ -357,59 +312,6 @@ defmodule Flezha.Operative.ClassRegistry do
   def sync_durability?(operative_class) when is_binary(operative_class) do
     declaration(operative_class, :sync_durability, @sync_durability_sidecar, &(&1 == "true")) ==
       true
-  end
-
-  @doc """
-  Announce the retention a declared correction window derived for itself.
-
-  Retention is not a prerequisite an operator negotiates — a correction over a
-  60 s window MEANS holding 60 s of input log and 60 s of WAL history, so the
-  declaration derives both floors (`InputLog.hold_window_ms/1`,
-  `PersistenceResolver.compact_after_age_ms/1`). But an SDK author's one line can
-  commit the controller to real disk, so a floor RAISED above its configured value
-  is logged and emitted once, at bind. Nothing is announced when nothing was
-  raised.
-  """
-  @spec announce_derived_retention(binary(), pos_integer()) :: :ok
-  def announce_derived_retention(operative_class, window_ms) do
-    configured_hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
-    derived_hold = InputLog.hold_window_ms(operative_class)
-
-    if derived_hold > configured_hold do
-      emit_retention_derived(operative_class, :input_log_hold_window_ms, configured_hold,
-        derived: derived_hold,
-        window_ms: window_ms
-      )
-    end
-
-    # `0` means "no age-triggered compaction", which already retains everything the
-    # window needs — the resolver satisfies it rather than raising it.
-    configured_age = PersistenceResolver.configured_compact_after_age_ms(operative_class)
-    derived_age = PersistenceResolver.compact_after_age_ms(operative_class)
-
-    if derived_age > configured_age do
-      emit_retention_derived(operative_class, :compact_after_age_ms, configured_age,
-        derived: derived_age,
-        window_ms: window_ms
-      )
-    end
-
-    :ok
-  end
-
-  defp emit_retention_derived(operative_class, floor, configured, opts) do
-    derived = Keyword.fetch!(opts, :derived)
-
-    Logger.info(
-      "[Overwatch] #{operative_class} declares a #{Keyword.fetch!(opts, :window_ms)}ms " <>
-        "correction window: #{floor} raised #{configured} -> #{derived}"
-    )
-
-    :telemetry.execute(
-      [:flezha, :correction, :retention_derived],
-      %{count: 1, configured: configured, derived: derived},
-      %{operative: operative_class, floor: floor}
-    )
   end
 
   @doc """

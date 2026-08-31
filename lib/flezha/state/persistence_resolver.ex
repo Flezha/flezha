@@ -17,7 +17,10 @@ defmodule Flezha.State.PersistenceResolver do
 
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.InputLog
   alias Flezha.State.Paths
+
+  require Logger
 
   @default_persistence_enabled true
   @default_retention_hours 6
@@ -315,5 +318,58 @@ defmodule Flezha.State.PersistenceResolver do
       _ ->
         :error
     end
+  end
+
+  @doc """
+  Announce the retention a declared correction window derived for itself.
+
+  Retention is not a prerequisite an operator negotiates — a correction over a
+  60 s window MEANS holding 60 s of input log and 60 s of WAL history, so the
+  declaration derives both floors (`InputLog.hold_window_ms/1`,
+  `PersistenceResolver.compact_after_age_ms/1`). But an SDK author's one line can
+  commit the controller to real disk, so a floor RAISED above its configured value
+  is logged and emitted once, at bind. Nothing is announced when nothing was
+  raised.
+  """
+  @spec announce_derived_retention(binary(), pos_integer()) :: :ok
+  def announce_derived_retention(operative_class, window_ms) do
+    configured_hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    derived_hold = InputLog.hold_window_ms(operative_class)
+
+    if derived_hold > configured_hold do
+      emit_retention_derived(operative_class, :input_log_hold_window_ms, configured_hold,
+        derived: derived_hold,
+        window_ms: window_ms
+      )
+    end
+
+    # `0` means "no age-triggered compaction", which already retains everything the
+    # window needs — the resolver satisfies it rather than raising it.
+    configured_age = configured_compact_after_age_ms(operative_class)
+    derived_age = compact_after_age_ms(operative_class)
+
+    if derived_age > configured_age do
+      emit_retention_derived(operative_class, :compact_after_age_ms, configured_age,
+        derived: derived_age,
+        window_ms: window_ms
+      )
+    end
+
+    :ok
+  end
+
+  defp emit_retention_derived(operative_class, floor, configured, opts) do
+    derived = Keyword.fetch!(opts, :derived)
+
+    Logger.info(
+      "[Overwatch] #{operative_class} declares a #{Keyword.fetch!(opts, :window_ms)}ms " <>
+        "correction window: #{floor} raised #{configured} -> #{derived}"
+    )
+
+    :telemetry.execute(
+      [:flezha, :correction, :retention_derived],
+      %{count: 1, configured: configured, derived: derived},
+      %{operative: operative_class, floor: floor}
+    )
   end
 end

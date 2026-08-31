@@ -1,10 +1,26 @@
 defmodule Flezha.Runner.ControlChannel do
-  alias Flezha.Operative.Lifecycle
-  alias Flezha.Service.HubManager
-  alias Flezha.Service.OperativeManager
+  @moduledoc """
+  The controller side of one runner's control stream: a GenServer that owns
+  the socket, decodes every inbound `CommandRequest` and writes every outbound
+  one.
+
+  Requests the SDK initiates are answered here; requests the controller
+  initiates are issued by `ControlUnit` and their responses are matched back to
+  it by reference id. Durable barriers are forwarded to
+  `Flezha.Runner.ControlChannel.Commits` rather than journaled inline.
+
+  Invariant: this process is the only writer of control frames on the stream,
+  which is what makes a reference id enough to pair a response with its
+  request.
+  """
+
   alias Flezha.Identificator
+  alias Flezha.Operative.Migration
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.ProcJournal
   alias Flezha.Transport.Stream, as: TStream
@@ -158,7 +174,7 @@ defmodule Flezha.Runner.ControlChannel do
 
   @impl true
   def handle_call({:handle_frame, _frame}, _from, state) do
-    # No longer needed — framing is done in Rust NIF
+    # Framing is the NIF's; the frame never reaches this clause.
     {:reply, :ok, state}
   end
 
@@ -209,7 +225,7 @@ defmodule Flezha.Runner.ControlChannel do
 
     case decode_sdk_initiated(message) do
       {:runner_shutdown_notification, %{} = notif, reference_id} ->
-        handle_runner_shutdown_notification(state, notif, reference_id)
+        handle_runner_shutdown(state, notif, reference_id)
         {:noreply, state}
 
       {:workflow_completed, %{} = completed, _reference_id} ->
@@ -299,7 +315,7 @@ defmodule Flezha.Runner.ControlChannel do
     # Severity only. The eviction below runs identically either way — see
     # `runner-controller-connection-healing`: a real socket close drops the
     # runner immediately and unconditionally.
-    if FleetManager.runner_retiring?(state.runner_id) do
+    if Marks.runner_retiring?(state.runner_id) do
       Logger.info(
         "Control socket closed for retiring runner #{state.runner_id} on #{state.namespace}"
       )
@@ -384,13 +400,13 @@ defmodule Flezha.Runner.ControlChannel do
   # The cast-not-call ordering is deliberate: the snapshot is enqueued on
   # Overwatch's mailbox before the ack flows back, so even if the controller
   # crashes between the cast and the write, the snapshot is durable in
-  # the GenServer's state. See ship-fresh-state-on-sdk-shutdown design §D2.
+  # the GenServer's state.
   #
   # The ack is emitted unconditionally — including the
   # `:overwatch_missing` branch (Overwatch already migrated to a peer
   # controller) — so the SDK never blocks its container's shutdown grace
   # period waiting for an ack that will never arrive.
-  defp handle_runner_shutdown_notification(state, notif, reference_id) do
+  defp handle_runner_shutdown(state, notif, reference_id) do
     %RunnerCommands.RunnerShutdownNotification{
       operative_id: operative_id,
       serialized_state: serialized_state
@@ -434,18 +450,7 @@ defmodule Flezha.Runner.ControlChannel do
       }
     )
 
-    if status == "error" do
-      Logger.warning(
-        "[control_channel] workflow operative #{inspect(operative_id)} failed in namespace " <>
-          "#{inspect(state.namespace)}: #{inspect(error)}"
-      )
-
-      :telemetry.execute(
-        [:flezha, :workflow, :failed],
-        %{count: 1},
-        %{namespace: state.namespace, operative_id: operative_id, error: error}
-      )
-    end
+    if status == "error", do: report_workflow_failure(state, operative_id, error)
 
     namespace = state.namespace
 
@@ -462,9 +467,26 @@ defmodule Flezha.Runner.ControlChannel do
         finished_at: System.system_time(:second)
       })
 
-    # Tear down off the control-channel process: `stop_operative` drives a
-    # RemOperative round-trip whose CommandResponse returns on THIS control
-    # stream, so calling it inline would deadlock the reader.
+    deregister_on_completion(namespace, operative_id, direct_outputs)
+  end
+
+  defp report_workflow_failure(state, operative_id, error) do
+    Logger.warning(
+      "[control_channel] workflow operative #{inspect(operative_id)} failed in namespace " <>
+        "#{inspect(state.namespace)}: #{inspect(error)}"
+    )
+
+    :telemetry.execute(
+      [:flezha, :workflow, :failed],
+      %{count: 1},
+      %{namespace: state.namespace, operative_id: operative_id, error: error}
+    )
+  end
+
+  # Tear down off the control-channel process: `stop_operative` drives a
+  # RemOperative round-trip whose CommandResponse returns on THIS control
+  # stream, so calling it inline would deadlock the reader.
+  defp deregister_on_completion(namespace, operative_id, direct_outputs) do
     Task.start(fn ->
       drain_owed_outputs(namespace, operative_id, direct_outputs)
 
@@ -478,6 +500,16 @@ defmodule Flezha.Runner.ControlChannel do
           )
       end
     end)
+  end
+
+  # No Overwatch to suspend (already migrated / torn down) is not a failure: the
+  # park record is durable, so the instance is rediscovered as suspended
+  # whenever it is next started.
+  defp suspend_parked(namespace, operative_id, iter, deadline) do
+    case HubManager.get_pid(namespace, operative_id) do
+      {:ok, pid} when is_pid(pid) -> Migration.suspend(pid, iter, deadline)
+      _ -> :ok
+    end
   end
 
   # A completion must not tear the Overwatch down under output still on its
@@ -572,16 +604,7 @@ defmodule Flezha.Runner.ControlChannel do
     Task.start(fn ->
       case ProcJournal.append_parked(operative_id, iter, deadline) do
         :ok ->
-          case HubManager.get_pid(namespace, operative_id) do
-            {:ok, pid} when is_pid(pid) ->
-              Lifecycle.suspend(pid, iter, deadline)
-
-            _ ->
-              # No Overwatch to suspend (already migrated / torn down). The park
-              # record is durable, so the instance is rediscovered as suspended
-              # whenever it is next started.
-              :ok
-          end
+          suspend_parked(namespace, operative_id, iter, deadline)
 
         {:error, reason} ->
           # The park is not durable, so the instance must NOT be evicted: leave

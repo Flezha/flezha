@@ -14,7 +14,8 @@ defmodule Flezha.AuthZ.TokenStore do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, DetsStore, Namespace, Role}
+  alias Flezha.AuthZ.{Config, Namespace, Role}
+  alias Flezha.DetsStore
   alias Flezha.Observability.{Bus, Signal}
 
   @table :flz_authz_tokens
@@ -105,28 +106,26 @@ defmodule Flezha.AuthZ.TokenStore do
            }}
           | {:error, :malformed | :unknown | :token_revoked | :token_expired}
   def verify(token) when is_binary(token) do
-    cond do
-      not String.starts_with?(token, @prefix) ->
-        {:error, :malformed}
+    if String.starts_with?(token, @prefix) do
+      case lookup_by_hash(hash_token(token)) do
+        {:ok, %{revoked_at: revoked}} when is_integer(revoked) ->
+          {:error, :token_revoked}
 
-      true ->
-        case lookup_by_hash(hash_token(token)) do
-          {:ok, %{revoked_at: revoked}} when is_integer(revoked) ->
-            {:error, :token_revoked}
+        {:ok, %{expires_at: :never} = e} ->
+          {:ok, project(e)}
 
-          {:ok, %{expires_at: :never} = e} ->
+        {:ok, %{expires_at: exp} = e} ->
+          if exp <= System.system_time(:second) do
+            {:error, :token_expired}
+          else
             {:ok, project(e)}
+          end
 
-          {:ok, %{expires_at: exp} = e} ->
-            if exp <= System.system_time(:second) do
-              {:error, :token_expired}
-            else
-              {:ok, project(e)}
-            end
-
-          :error ->
-            {:error, :unknown}
-        end
+        :error ->
+          {:error, :unknown}
+      end
+    else
+      {:error, :malformed}
     end
   end
 
@@ -168,19 +167,6 @@ defmodule Flezha.AuthZ.TokenStore do
   @doc "Absolute path of the backing DETS file."
   @spec path() :: String.t()
   def path(), do: Path.join(Config.auth_dir(), @filename)
-
-  @doc "SHA-256 hex digest of the bare token value (32 lowercase chars)."
-  @spec hash_token(binary()) :: binary()
-  def hash_token(token) when is_binary(token) do
-    :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
-  end
-
-  @doc """
-  Token wire-form prefix; exposed for the CLI handshake so it can
-  cheap-reject non-token frames before any hashing happens.
-  """
-  @spec wire_prefix() :: binary()
-  def wire_prefix(), do: @prefix
 
   ## ----- GenServer -----
 
@@ -236,6 +222,11 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   ## ----- private -----
+
+  @spec hash_token(binary()) :: binary()
+  defp hash_token(token) when is_binary(token) do
+    :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+  end
 
   # Mark the row revoked, sync, and emit the audit event.
   defp revoke_entry(hash, entry, revoked_by) do

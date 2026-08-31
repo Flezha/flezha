@@ -87,7 +87,7 @@ defmodule Flezha.Operative.Plugins do
     # by `Flezha.Service.PluginManager` through `ProcessRegistry.update/3`
     # after a successful `flz plugin enable`). Both normalise into the
     # tuple form `Table.bulk_subscribe/2` expects.
-    if state.extensions.plugins != %{} and Enum.count(state.extensions.plugins) > 0 do
+    if state.extensions.plugins != %{} do
       {:ok, state}
     else
       entries =
@@ -168,8 +168,8 @@ defmodule Flezha.Operative.Plugins do
   # no upstream resources; reporting `{:ok, _}` for it makes the convergence
   # loop's `start_plugin` / `restart_plugin` heal advance the per-target
   # backoff as though the divergence were repaired — and, for a restart, turns
-  # a plugin the loop HAD detected as unhealthy into a `:prepared` one it can
-  # no longer see. The remedy must never be able to hide the fault.
+  # a plugin the loop detected as unhealthy into a `:prepared` one it cannot
+  # see. The remedy must never be able to hide the fault.
   defp activated(%Overwatch{} = state, table, plugin_id) do
     {table, failed} = Table.bulk_activate(table, env(state))
     state = %{state | extensions: table}

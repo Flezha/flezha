@@ -1,31 +1,21 @@
 defmodule Flezha.Operative.Ingest do
   @moduledoc """
-  The operative's input path: type a payload, run it through the `:on_input`
-  plugin chain, count it, make it durable, and forward it to the bound stream
-  channel.
+  The operative's input path: type a payload, run the `:on_input` chain, count
+  it, make it durable, and forward it to the bound stream channel.
 
   Every way in — the `:io_in` cast, the blocking `:io_in` call, the confirming
-  `:ingest` call, a suspended instance's deferred append, and a
-  procedure-requested spawn's seed — runs exactly `ingest/4`. That single path is
-  what makes the append-before-forward contract hold and what lets the
-  correction transaction assume no input can be journaled while it runs.
+  `:ingest` call, a suspended instance's deferred append and a spawn's seed —
+  runs exactly `ingest/4`.
 
-  A durable append — the effectively-once input log, the durable workflow's
-  inbox — is asynchronous: the payload is handed to the log, the entry point's
-  reply stays owed, and the log's answer (`journal_reply/2`), which arrives
-  once the record is synced, forwards the input and settles the reply. So a
-  zero-credit park lands on the source's call — the Overwatch keeps running the
-  output chains whose confirmations mint the credit — and the batch sync every
-  record waits on is never waited on here.
+  A durable append is asynchronous: the payload is handed to the log, the entry
+  point's reply stays owed, and the log's answer (`journal_reply/2`) forwards
+  the input and settles it once the record is synced.
 
-  Runs in the `Flezha.Operative.Overwatch` process. The only state it moves is
-  the in-flight request collection and the suspension a delivery wakes, which
-  it does by calling back into `Flezha.Operative.Lifecycle`. The `:on_input`
-  chain itself is run by `Flezha.Operative.Plugins`, which owns the extension
-  table.
+  Invariant: nothing else journals input, which is what lets the correction
+  transaction assume none can arrive while it runs.
   """
 
-  alias Flezha.Operative.Lifecycle
+  alias Flezha.Operative.Migration
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
@@ -83,7 +73,7 @@ defmodule Flezha.Operative.Ingest do
   def confirming_ingest(%Overwatch{suspended: true} = state, message, metadata, reply_to) do
     case ingest(state, message, metadata, reply_to) do
       {:pending, state} -> {:pending, state}
-      {_filtered, state} -> {told(reply_to, {:ok, :suspended}), Lifecycle.rehydrate(state)}
+      {_filtered, state} -> {told(reply_to, {:ok, :suspended}), Migration.rehydrate(state)}
     end
   end
 
@@ -205,7 +195,7 @@ defmodule Flezha.Operative.Ingest do
   defp settle(%Overwatch{suspended: true} = state, reply_to, payload)
        when payload != :refused do
     reply(reply_to, told(reply_to, {:ok, :suspended}))
-    Lifecycle.rehydrate(state)
+    Migration.rehydrate(state)
   end
 
   defp settle(%Overwatch{} = state, reply_to, payload) do

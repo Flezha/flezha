@@ -142,8 +142,8 @@ defmodule Flezha.Transport.LivenessCounters do
   @doc """
   Register a per-runner data-stream NIF server so the stall classifier can
   poll its driver self-report. Without this the classifier only sees the
-  control-channel driver — the data-plane drivers were its blind spot during
-  the 2026-06-10 freeze. Pass `self()` (the owning `StreamAcceptor`).
+  control-channel driver, and the data-plane drivers are the blind spot that
+  leaves. Pass `self()` (the owning `StreamAcceptor`).
   """
   @spec register_driver(term(), atom(), reference()) :: :ok
   def register_driver(runner_id, type, server_ref) do

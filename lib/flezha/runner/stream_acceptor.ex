@@ -5,11 +5,11 @@ defmodule Flezha.Runner.StreamAcceptor do
   StreamChannel processes in round-robin order.
   """
 
+  alias Flezha.Runner.StreamPool
+  alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream
-  alias Flezha.Socket.Support, as: SocketSupport
-  alias Flezha.Runner.StreamSup
 
   require Logger
 
@@ -28,7 +28,7 @@ defmodule Flezha.Runner.StreamAcceptor do
         Logger.info("[StreamAcceptor] Listening on #{path} for #{type} streams (#{runner_id})")
 
         LivenessCounters.register_driver(runner_id, type, server_ref)
-        stream_ids = StreamSup.stream_ids(runner_id, type)
+        stream_ids = StreamPool.stream_ids(runner_id, type)
 
         {:ok,
          %{
@@ -49,7 +49,7 @@ defmodule Flezha.Runner.StreamAcceptor do
   # would silently drop traffic on its existing stream.
   @impl true
   def handle_info({:flz_connection, stream_ref}, state) do
-    case StreamSup.bind_stream_to_first_nil(state.stream_ids, stream_ref) do
+    case StreamPool.bind_stream_to_first_nil(state.stream_ids, stream_ref) do
       {:bound, stream_pid, stream_name} ->
         TStream.controlling_process(stream_ref, stream_pid)
         TStream.set_active(stream_ref)

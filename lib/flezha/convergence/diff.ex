@@ -65,54 +65,7 @@ defmodule Flezha.Convergence.Diff do
     placement = Map.get(reality, :placement, %{})
     verdict = Map.get(signals, :verdict, :ok)
 
-    {unbound, misbound, replace} =
-      Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid},
-                                             {unb, mis, repl} ->
-        ref = {ns, rid}
-        observed_operative = Map.get(observed, ref)
-        live = Map.get(active, ns, MapSet.new())
-        bound = observed_operative && Map.get(observed_operative, :bound_runner)
-
-        cond do
-          # Declared but not observed running at all: starting it is the hub
-          # reconcile's job through the idempotent start authority — a heal op
-          # can only act on a live Overwatch.
-          observed_operative == nil ->
-            {unb, mis, repl}
-
-          # `:unknown` = an observation failed this tick — either the operative's
-          # own state read (`bound`) or the namespace's live-runner read
-          # (`live`, Probe could not reach FleetManager). With no authoritative
-          # signal we must NOT classify it: acting on an empty/failed read
-          # mass-migrates healthy operatives on a transient read race.
-          bound == :unknown ->
-            {unb, mis, repl}
-
-          # Suspended at a committed iteration boundary: unbound BY DESIGN
-          # (`workflow-durable-suspension`). Rebinding it would undo the very
-          # eviction it asked for; its own wake sources bring it back.
-          Map.get(observed_operative, :suspended?, false) ->
-            {unb, mis, repl}
-
-          is_nil(bound) ->
-            case classify_bindable(ref, nil, observed_operative, placement) do
-              {:replace, entry} -> {unb, mis, [entry | repl]}
-              {:unbound, ref} -> {[ref | unb], mis, repl}
-            end
-
-          live == :unknown ->
-            {unb, mis, repl}
-
-          not MapSet.member?(live, bound) ->
-            case classify_bindable(ref, bound, observed_operative, placement) do
-              {:replace, entry} -> {unb, mis, [entry | repl]}
-              {:misbound, entry} -> {unb, [entry | mis], repl}
-            end
-
-          true ->
-            {unb, mis, repl}
-        end
-      end)
+    {unbound, misbound, replace} = binding_divergence(declared, observed, active, placement)
 
     {missing, extra, unhealthy} = plugin_divergence(declared, observed)
 
@@ -127,6 +80,58 @@ defmodule Flezha.Convergence.Diff do
       data_plane_wedge: resolve_wedge(verdict, active, observed),
       data_plane_layer: StallClassifier.layer(verdict)
     }
+  end
+
+  # The per-operative binding classification, the sibling of `plugin_divergence/2`:
+  # one pass over the declared set answering `{unbound, misbound, replace}`.
+  defp binding_divergence(declared, observed, active, placement) do
+    Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid},
+                                           {unb, mis, repl} ->
+      ref = {ns, rid}
+      observed_operative = Map.get(observed, ref)
+      live = Map.get(active, ns, MapSet.new())
+      bound = observed_operative && Map.get(observed_operative, :bound_runner)
+
+      cond do
+        # Declared but not observed running at all: starting it is the hub
+        # reconcile's job through the idempotent start authority — a heal op
+        # can only act on a live Overwatch.
+        observed_operative == nil ->
+          {unb, mis, repl}
+
+        # `:unknown` = an observation failed this tick — either the operative's
+        # own state read (`bound`) or the namespace's live-runner read
+        # (`live`, Probe could not reach FleetManager). With no authoritative
+        # signal we must NOT classify it: acting on an empty/failed read
+        # mass-migrates healthy operatives on a transient read race.
+        bound == :unknown ->
+          {unb, mis, repl}
+
+        # Suspended at a committed iteration boundary: unbound BY DESIGN
+        # (`workflow-durable-suspension`). Rebinding it would undo the very
+        # eviction it asked for; its own wake sources bring it back.
+        Map.get(observed_operative, :suspended?, false) ->
+          {unb, mis, repl}
+
+        is_nil(bound) ->
+          case classify_bindable(ref, nil, observed_operative, placement) do
+            {:replace, entry} -> {unb, mis, [entry | repl]}
+            {:unbound, ref} -> {[ref | unb], mis, repl}
+          end
+
+        live == :unknown ->
+          {unb, mis, repl}
+
+        not MapSet.member?(live, bound) ->
+          case classify_bindable(ref, bound, observed_operative, placement) do
+            {:replace, entry} -> {unb, mis, [entry | repl]}
+            {:misbound, entry} -> {unb, [entry | mis], repl}
+          end
+
+        true ->
+          {unb, mis, repl}
+      end
+    end)
   end
 
   # An operative needing a binding whose factory no LOCAL runner advertises
@@ -146,8 +151,8 @@ defmodule Flezha.Convergence.Diff do
 
   # I3: declared to produce, observed not producing. The Watchdog names the
   # instance; resolving it against `declared` is what supplies the namespace and
-  # what drops a flag for an operative this tick is not healing (an id no longer
-  # declared, or one in a namespace still mid-recovery — the caller passes only
+  # what drops a flag for an operative this tick is not healing (an id absent
+  # from the declared set, or one in a namespace still mid-recovery — the caller passes only
   # recovery-ready operatives).
   defp stalled_refs(_declared, []), do: []
 
@@ -265,55 +270,61 @@ defmodule Flezha.Convergence.Diff do
     Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid, plugins: plugins},
                                            {missing_acc, extra_acc, unhealthy_acc} ->
       ref = {ns, rid}
-      observed_operative = Map.get(observed, ref, %{})
-      pid = Map.get(observed_operative, :pid)
-
-      if plugins_diffable?(observed_operative) do
-        # Two sets, deliberately. `running` is the `:running`-phase set — a
-        # declared plugin outside it is missing, whether it was never
-        # subscribed or subscribed and failed to activate. `subscribed` is
-        # every plugin on the table whatever its phase, so an UNDECLARED one
-        # is still torn down while it is `:prepared`. Reading one set for both
-        # checks is what let a failed activation read as running.
-        running = MapSet.new(Map.get(observed_operative, :running_plugins, []))
-
-        subscribed = MapSet.new(Map.get(observed_operative, :subscribed_plugins, []))
-
-        health = Map.get(observed_operative, :plugin_health, %{})
-        declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
-
-        missing =
-          for {id, plugin} <- plugins, not MapSet.member?(running, id), do: {ref, id, plugin}
-
-        # Disjoint from `missing`: a subscribed declared plugin whose provider
-        # self-reports unhealthy (the authoritative production signal; an
-        # absent or uncertain probe is healthy by contract).
-        unhealthy =
-          for {id, plugin} <- plugins,
-              MapSet.member?(running, id),
-              match?({:unhealthy, _}, Map.get(health, id)),
-              do: {ref, id, plugin, elem(Map.get(health, id), 1)}
-
-        # An empty declared set is ambiguous: a genuinely pluginless operative
-        # vs a cspec read that returned nothing (Intent.declared/0 falls back
-        # to [] on any read failure, and the durable cspec can lag a running
-        # operative's actual plugin set). Tearing down EVERY running plugin on
-        # that basis caused a per-tick stop/re-subscribe storm. Reconcile
-        # "extra" plugins only against a non-empty declaration.
-        extra =
-          if MapSet.size(declared_ids) == 0 do
-            []
-          else
-            for id <- MapSet.to_list(subscribed),
-                not MapSet.member?(declared_ids, id),
-                do: {ref, id, pid}
-          end
-
-        {missing_acc ++ missing, extra_acc ++ extra, unhealthy_acc ++ unhealthy}
-      else
-        {missing_acc, extra_acc, unhealthy_acc}
-      end
+      {missing, extra, unhealthy} = operative_plugins(ref, plugins, Map.get(observed, ref, %{}))
+      {missing_acc ++ missing, extra_acc ++ extra, unhealthy_acc ++ unhealthy}
     end)
+  end
+
+  # One operative's plugin divergence: `{missing, extra, unhealthy}`, or three
+  # empty lists when its plugin sets are not diffable this tick.
+  defp operative_plugins(ref, plugins, observed_operative) do
+    pid = Map.get(observed_operative, :pid)
+
+    if plugins_diffable?(observed_operative) do
+      # Two sets, deliberately. `running` is the `:running`-phase set — a
+      # declared plugin outside it is missing, whether it was never
+      # subscribed or subscribed and failed to activate. `subscribed` is
+      # every plugin on the table whatever its phase, so an UNDECLARED one
+      # is still torn down while it is `:prepared`. Reading one set for both
+      # checks is what let a failed activation read as running.
+      running = MapSet.new(Map.get(observed_operative, :running_plugins, []))
+
+      subscribed = MapSet.new(Map.get(observed_operative, :subscribed_plugins, []))
+
+      health = Map.get(observed_operative, :plugin_health, %{})
+      declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
+
+      missing =
+        for {id, plugin} <- plugins, not MapSet.member?(running, id), do: {ref, id, plugin}
+
+      # Disjoint from `missing`: a subscribed declared plugin whose provider
+      # self-reports unhealthy (the authoritative production signal; an
+      # absent or uncertain probe is healthy by contract).
+      unhealthy =
+        for {id, plugin} <- plugins,
+            MapSet.member?(running, id),
+            match?({:unhealthy, _}, Map.get(health, id)),
+            do: {ref, id, plugin, elem(Map.get(health, id), 1)}
+
+      # An empty declared set is ambiguous: a genuinely pluginless operative
+      # vs a cspec read that returned nothing (Intent.declared/0 falls back
+      # to [] on any read failure, and the durable cspec can lag a running
+      # operative's actual plugin set). Tearing down EVERY running plugin on
+      # that basis caused a per-tick stop/re-subscribe storm. Reconcile
+      # "extra" plugins only against a non-empty declaration.
+      extra =
+        if MapSet.size(declared_ids) == 0 do
+          []
+        else
+          for id <- MapSet.to_list(subscribed),
+              not MapSet.member?(declared_ids, id),
+              do: {ref, id, pid}
+        end
+
+      {missing, extra, unhealthy}
+    else
+      {[], [], []}
+    end
   end
 
   @doc "True when the delta has no divergence to heal."

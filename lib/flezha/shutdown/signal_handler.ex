@@ -38,13 +38,14 @@ defmodule Flezha.Shutdown.SignalHandler do
   kernel's handler in place.
 
   If the install or the registration fails, the failure is caught and
-  `:degraded` is latched — meaning the platform refused, since the one
-  call that could never succeed is no longer made. `Coordinator.status/0`
+  `:degraded` is latched. Every signal this server installs is one ERTS
+  permits, so the latch always means the platform refused rather than that
+  an impossible call was attempted. `Coordinator.status/0`
   reads that state from here on demand; it is not pushed, because this
   server starts before the Coordinator exists.
   """
 
-  use GenServer
+  use GenServer, shutdown: 5_000
   require Logger
 
   alias Flezha.Shutdown.Coordinator
@@ -101,15 +102,6 @@ defmodule Flezha.Shutdown.SignalHandler do
 
       :ok
     end
-  end
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      shutdown: 5_000,
-      type: :worker
-    }
   end
 
   def start_link(opts \\ []) do

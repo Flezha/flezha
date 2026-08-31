@@ -16,7 +16,8 @@ defmodule Flezha.AuthZ.AuthState do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, DetsStore}
+  alias Flezha.AuthZ.Config
+  alias Flezha.DetsStore
 
   @table :flz_authz_state
   @filename "state.dets"

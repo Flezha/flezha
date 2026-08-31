@@ -12,8 +12,8 @@ defmodule Flezha.Cluster.Orchestrator do
   """
 
   alias Flezha.Cluster.DiscoveryProtocol
-  alias Flezha.Cluster.ManualDiscovery
   alias Flezha.Cluster.K8sPodDiscovery
+  alias Flezha.Cluster.ManualDiscovery
 
   require Logger
 
@@ -45,7 +45,7 @@ defmodule Flezha.Cluster.Orchestrator do
   @doc """
   Block until `cluster_ready?/0` is true or `timeout_ms` elapses (default the
   configured formation timeout). Returns `:ok` when ready, `:timeout` otherwise.
-  Used to gate on-demand hub creation during the boot window.
+  Gates on-demand hub creation during the boot window.
   """
   @spec await_cluster_ready(non_neg_integer()) :: :ok | :timeout
   def await_cluster_ready(timeout_ms \\ formation_timeout_ms()) do
@@ -125,27 +125,25 @@ defmodule Flezha.Cluster.Orchestrator do
   def handle_info({:scheduled_reconnect, node, retries}, state) do
     max_reconnects = Application.fetch_env!(:flezha, :max_reconnects)
 
-    cond do
-      retries >= max_reconnects ->
-        # Stop active reconnect attempts and unmonitor. The periodic
-        # `:update_cluster` sweep remains the durable path that re-adds the peer
-        # once it is reachable again.
-        Logger.warning(
-          "[cluster] giving up active reconnect to #{inspect(node)} after #{retries} tries; sweep will retry"
-        )
+    if retries >= max_reconnects do
+      # Stop active reconnect attempts and unmonitor. The periodic
+      # `:update_cluster` sweep remains the durable path that re-adds the peer
+      # once it is reachable again.
+      Logger.warning(
+        "[cluster] giving up active reconnect to #{inspect(node)} after #{retries} tries; sweep will retry"
+      )
 
-        Node.monitor(node, false)
+      Node.monitor(node, false)
+    else
+      case Node.connect(node) do
+        true ->
+          Logger.info("[cluster] reconnected to peer #{inspect(node)} (try #{retries})")
+          Node.monitor(node, true)
 
-      true ->
-        case Node.connect(node) do
-          true ->
-            Logger.info("[cluster] reconnected to peer #{inspect(node)} (try #{retries})")
-            Node.monitor(node, true)
-
-          false ->
-            # Retry with jittered, exponentially-growing backoff.
-            schedule_reconnect(node, retries + 1)
-        end
+        false ->
+          # Retry with jittered, exponentially-growing backoff.
+          schedule_reconnect(node, retries + 1)
+      end
     end
 
     {:noreply, state}

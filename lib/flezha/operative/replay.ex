@@ -1,26 +1,22 @@
 defmodule Flezha.Operative.Replay do
   @moduledoc """
-  Restore-and-replay for one operative: the engine behind crash resume, late-input
-  correction, and the operator's `flz operative replay`.
+  Restore-and-replay for one operative: crash resume, late-input correction and
+  the operator's `flz operative replay`.
 
-  Restore and correction are ONE thing, which is why they are one module. A
+  Restore and correction are one thing, which is why they are one module. A
   correction leaves the on-disk state at a rewound baseline with the input-log
-  watermark lowered to match, and from there the ordinary resume replay *is* the
-  correction — the two differ only in how the baseline was chosen. Splitting them
-  would fork the path that has to stay single.
+  watermark lowered to match, and from there the ordinary resume replay IS the
+  correction — they differ only in how the baseline was chosen.
 
-  Everything here runs in the `Flezha.Operative.Overwatch` process and reads its
-  state without changing it: the one mutation a correction makes is the debounce
-  bookkeeping, which stays in the Overwatch beside the cast that drives it.
-
-  One exception, and `arm_bind_reforward/1` is built around it: the un-park path
-  drives `Lifecycle.complete_init/4` — and so the bind restore and this module's
-  journal re-forward — inside a task, where `self()` is not the Overwatch.
+  Everything here runs in the `Overwatch` process and reads its state without
+  changing it. Invariant: the one exception is `arm_bind_reforward/1`, because
+  the un-park path drives `Lifecycle.complete_init/4` inside a task where
+  `self()` is not the Overwatch.
   """
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
-  alias Flezha.Runner.StreamChannel
+  alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
@@ -366,7 +362,7 @@ defmodule Flezha.Operative.Replay do
   def arm_bind_reforward(%Overwatch{channel: channel} = state) do
     owner = owner_pid(state)
 
-    case StreamChannel.notify_on_bind(channel, owner) do
+    case Gate.notify_on_bind(channel, owner) do
       :unbound ->
         :armed
 

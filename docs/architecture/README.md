@@ -330,7 +330,7 @@ flowchart TB
     subgraph APP["Flezha.Supervisor — :one_for_one"]
         direction TB
         A1["Shutdown.SignalHandler<br/><i>first: SIGTERM handlers before anything else</i>"]:::ctrl
-        A2["Service.EventManager · BootLoader · Service.Identificator"]:::ctrl
+        A2["Service.EventManager · Boot.Loader · Service.Identificator"]:::ctrl
         A3["Convergence.Snapshot<br/><i>the published health ETS table</i>"]:::ctrl
         A3a["Cluster.Directory<br/><i>the :pg cluster directory, before its writers</i>"]:::ctrl
         A3b["State.DurabilityTier — cspec hydration · Shipper<br/><i>empty unless a remote backend is configured;<br/>before HubManager: the hub must not open registry.dets<br/>before the remote cspec is hydrated</i>"]:::store

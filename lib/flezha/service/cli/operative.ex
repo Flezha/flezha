@@ -4,7 +4,7 @@ defmodule Flezha.Service.Cli.Operative do
   `flz operative entity-state`.
   """
 
-  alias Flezha.Operative.Lifecycle
+  alias Flezha.Operative.Migration
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Payloader
   alias Flezha.Plugin
@@ -284,7 +284,7 @@ defmodule Flezha.Service.Cli.Operative do
   def operative_rewind(namespace, operative_id, to_iter) do
     case OperativeManager.get_operative_pid(Context.normalize_namespace(namespace), operative_id) do
       {:ok, pid} ->
-        print_rewind(operative_id, to_iter, Lifecycle.rewind(pid, to_iter))
+        print_rewind(operative_id, to_iter, Migration.rewind(pid, to_iter))
 
       _ ->
         Context.cli_error!("Error: operative '#{operative_id}' not found")

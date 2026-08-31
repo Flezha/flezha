@@ -20,6 +20,7 @@ defmodule Flezha.Operative.Handover do
   alias Flezha.Runner.ControlUnit
   alias Flezha.State.WalTransfer
   alias Flezha.State.WalWriter
+  alias Flezha.State.WriterRegistry
 
   require Logger
 
@@ -156,7 +157,7 @@ defmodule Flezha.Operative.Handover do
   # is pre-consent behaviour, never a wedged migration.
   defp outbox_pending?(%Overwatch{} = state) do
     Overwatch.operative_class(state)
-    |> Flezha.State.Supervisor.live_writers()
+    |> WriterRegistry.live_writers()
     |> Enum.any?(fn pid ->
       match?(
         %{pending: p, awaiting: a} when p + a > 0,

@@ -3,34 +3,22 @@ defmodule Flezha.Operative.Overwatch do
   The controller-side process that owns one operative instance.
 
   It holds the operative's state, its plugin extension table and its route to a
-  runner. Everything it does is routing: a callback here decides *which* phase a
-  message belongs to and hands the state to the module that owns that phase. The
-  phases live beside it, so this file stays the map rather than the territory:
+  runner. Everything it does is routing: a callback decides which phase a
+  message belongs to and hands the state to the module that owns that phase —
+  `Lifecycle`, `Migration`, `Ingest`, `Replay`, `Handover`, `Plugins`,
+  `ClassRegistry`, `State.Commands`.
 
-    * `Flezha.Operative.Lifecycle` — bind, park, suspend, rehydrate, teardown.
-      One module because they are one state machine.
-    * `Flezha.Operative.Ingest` — the input path, from `:on_input` to the
-      durable append to the forward.
-    * `Flezha.Operative.Replay` — restore, re-forward, late-input correction.
-    * `Flezha.Operative.Handover` — moving the operative between nodes.
-    * `Flezha.Operative.Plugins` — the extension table's bring-up and runtime ops.
-    * `Flezha.Operative.ClassRegistry` — the SDK declarations a bind resolves.
-    * `Flezha.State.Commands` — durable-state control commands, which the State
-      subsystem issues with no Overwatch involved at all.
-
-  The one invariant worth stating here: this process is the single owner of its
-  operative's input. Every `:io_in` — cast, call, confirming, replayed or seeded
-  — runs `Ingest.ingest/4` and nothing else does. That is what makes the
-  append-before-forward contract hold, and what lets the correction transaction
-  assume no input can be journaled while it runs. It never waits on that
-  journal: an effectively-once append is answered by the input log as a message
-  (`Ingest.journal_reply/2`), so a zero-credit park holds the source's call
-  open while this process keeps running the output chains that mint the credit.
+  Invariant: this process is the single owner of its operative's input. Every
+  `:io_in` — cast, call, confirming, replayed or seeded — runs `Ingest.ingest/4`
+  and nothing else does. That is what makes the append-before-forward contract
+  hold and what lets the correction transaction assume no input can be
+  journaled while it runs.
   """
 
   alias Flezha.Operative.Handover
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Lifecycle
+  alias Flezha.Operative.Migration
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
   alias Flezha.Plugin
@@ -238,14 +226,14 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   defp continue_bind(stale_runner_id, operative, %__MODULE__{} = state) do
-    state = %__MODULE__{state | durable_workflow: Lifecycle.durable_workflow?(state, operative)}
+    state = %__MODULE__{state | durable_workflow: Migration.durable_workflow?(state, operative)}
 
     # Suspended instances are rediscovered from durable state alone (journal +
     # inbox), so a controller redeploy neither binds them to a runner nor
     # loses their suspension (`workflow-durable-suspension`). An instance with
     # undelivered input is not suspended any more — it binds and consumes it.
-    if state.durable_workflow and Lifecycle.suspended_on_disk?(operative.id) do
-      {:noreply, Lifecycle.enter_suspended(state, ProcJournal.restore_state(operative.id)),
+    if state.durable_workflow and Migration.suspended_on_disk?(operative.id) do
+      {:noreply, Migration.enter_suspended(state, ProcJournal.restore_state(operative.id)),
        :hibernate}
     else
       Lifecycle.bind(state, stale_runner_id, operative)
@@ -278,7 +266,7 @@ defmodule Flezha.Operative.Overwatch do
   defp fresh_inbox?(%__MODULE__{}), do: true
 
   @impl true
-  def terminate(reason, state), do: Lifecycle.terminate(state, reason)
+  def terminate(reason, state), do: Migration.terminate(state, reason)
 
   # ---------------------------------------------------------------
   # ProcessHub migration callbacks
@@ -370,7 +358,7 @@ defmodule Flezha.Operative.Overwatch do
         %__MODULE__{init_error: reason, suspended: suspended} = state
       )
       when reason != nil or suspended do
-    {ref, pid} = Lifecycle.spawn_migrate_task({:unpark, state, new_runner_id})
+    {ref, pid} = Migration.spawn_migrate_task({:unpark, state, new_runner_id})
     {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
   end
 
@@ -379,7 +367,7 @@ defmodule Flezha.Operative.Overwatch do
   # the operative then reads as bound to a LIVE runner, so `Convergence.Diff`
   # stops classifying it misbound and the divergence hides itself permanently.
   def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state) do
-    case Lifecycle.attempt_ping_and_start(Lifecycle.migrate_operative(state), new_runner_id) do
+    case Lifecycle.attempt_ping_and_start(Migration.migrate_operative(state), new_runner_id) do
       {:ok, _} -> {:reply, :ok, Lifecycle.bind_to_runner(state, state.id, new_runner_id)}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -452,7 +440,7 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state) do
-    case Lifecycle.rewind_to(state, to_iter) do
+    case Migration.rewind_to(state, to_iter) do
       {:ok, state} -> {:reply, :ok, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -514,7 +502,7 @@ defmodule Flezha.Operative.Overwatch do
   # megabytes of garbage on a heap that otherwise sits uncollected until the
   # next wake (2.5 MiB → 5 KiB per sleeper measured).
   def handle_cast({:suspend, iter, wake_deadline_ms}, %__MODULE__{} = state) do
-    {:noreply, Lifecycle.suspend_at(state, iter, wake_deadline_ms), :hibernate}
+    {:noreply, Migration.suspend_at(state, iter, wake_deadline_ms), :hibernate}
   end
 
   # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
@@ -583,7 +571,7 @@ defmodule Flezha.Operative.Overwatch do
     # transaction runs to completion inside this handler, so a request arriving
     # during it simply waits in the mailbox and debounces into the next one.
     state = if target, do: Replay.run_correction(state, entity_id, target), else: state
-    if state.corrections == %{}, do: Lifecycle.signal_migration_ready(state)
+    if state.corrections == %{}, do: Migration.signal_migration_ready(state)
     {:noreply, state}
   end
 
@@ -602,7 +590,7 @@ defmodule Flezha.Operative.Overwatch do
   @impl true
   def handle_info(:wake_deadline, %__MODULE__{} = state) do
     _ = ProcInbox.append(state.id, "", %{"flz.wake" => "timer"})
-    {:noreply, Lifecycle.rehydrate(%__MODULE__{state | wake_timer: nil})}
+    {:noreply, Migration.rehydrate(%__MODULE__{state | wake_timer: nil})}
   end
 
   # The in-flight `:runner_migrate` task posts its result via a plain `send/2`
@@ -614,7 +602,7 @@ defmodule Flezha.Operative.Overwatch do
         {:migrate_task_result, _task_pid, result},
         %__MODULE__{migrate_task: %{}} = state
       ) do
-    {:noreply, Lifecycle.apply_migrate_result(state, result)}
+    {:noreply, Migration.apply_migrate_result(state, result)}
   end
 
   # Late delivery: the task was terminated by a teardown, or a second
@@ -628,7 +616,7 @@ defmodule Flezha.Operative.Overwatch do
         {:DOWN, ref, :process, _pid, _reason},
         %__MODULE__{migrate_task: %{ref: ref}} = state
       ) do
-    {:noreply, Lifecycle.rehydrate_if_pending(%{state | migrate_task: nil})}
+    {:noreply, Migration.rehydrate_if_pending(%{state | migrate_task: nil})}
   end
 
   # Task.Supervisor.async_nolink also sends `{ref, return_value}` from the task
@@ -748,17 +736,21 @@ defmodule Flezha.Operative.Overwatch do
           entity_key: Map.get(selector, :entity_key) || ""
         }
 
-        spawn(fn ->
-          result =
-            with_proc_span(:entity_state, operative_id, fn ->
-              ControlUnit.send_control_await(runner_id, {:entity_state, command}, metadata: true)
-            end)
-
-          GenServer.reply(from, with_change_seq(result))
-        end)
+        spawn(fn -> reply_entity_state(from, runner_id, operative_id, command) end)
 
         {:noreply, state}
     end
+  end
+
+  # Off-process: the read is a runner round-trip and the Overwatch must keep
+  # serving its own input while it is in flight.
+  defp reply_entity_state(from, runner_id, operative_id, command) do
+    result =
+      with_proc_span(:entity_state, operative_id, fn ->
+        ControlUnit.send_control_await(runner_id, {:entity_state, command}, metadata: true)
+      end)
+
+    GenServer.reply(from, with_change_seq(result))
   end
 
   # `{:ok, json, metadata}` (a metadata-carrying reply) becomes

@@ -24,10 +24,6 @@ defmodule Flezha.AuthZ.Config do
     end
   end
 
-  @doc "True when `FLEZHA_AUTHZ_ENABLED` was explicitly set in the environment."
-  @spec env_override?() :: boolean()
-  def env_override?, do: env("FLEZHA_AUTHZ_ENABLED") != nil
-
   @doc "Returns `true` when the explicit env override is set to a false-y value."
   @spec env_force_disabled?() :: boolean()
   def env_force_disabled?() do

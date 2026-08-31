@@ -1,4 +1,10 @@
 defmodule Flezha.Constant do
+  @moduledoc """
+  Compile-time constants every layer shares, injected by `use Flezha.Constant`.
+  A macro rather than a function so the values fold at compile time and can be
+  used in guards and module attributes.
+  """
+
   defmacro __using__(_) do
     quote do
       @default_namespace "default"

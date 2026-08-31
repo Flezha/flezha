@@ -28,7 +28,7 @@ defmodule Flezha.Shutdown.Coordinator do
   observability; structured logs accompany each phase boundary.
   """
 
-  use GenServer
+  use GenServer, shutdown: 30_000
   require Logger
 
   alias Flezha.Identificator
@@ -59,15 +59,6 @@ defmodule Flezha.Shutdown.Coordinator do
             timeout_timer: nil
 
   # ---------- Public API ----------
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      shutdown: 30_000,
-      type: :worker
-    }
-  end
 
   def start_link(_opts \\ []) do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
@@ -159,17 +150,15 @@ defmodule Flezha.Shutdown.Coordinator do
 
     state = arm_timeout(state)
 
-    cond do
-      Keyword.get(opts, :force, false) ->
-        Logger.info("[shutdown] forced (skipping drain); phase=finalise")
-        {:noreply, enter_finalise(state, now)}
-
-      true ->
-        Logger.info("[shutdown] phase=quiesce reason=#{inspect(reason)}")
-        state = transition(state, :quiescing, now)
-        emit_telemetry(:phase_started, %{}, %{phase: :quiesce})
-        send(self(), :do_quiesce)
-        {:noreply, state}
+    if Keyword.get(opts, :force, false) do
+      Logger.info("[shutdown] forced (skipping drain); phase=finalise")
+      {:noreply, enter_finalise(state, now)}
+    else
+      Logger.info("[shutdown] phase=quiesce reason=#{inspect(reason)}")
+      state = transition(state, :quiescing, now)
+      emit_telemetry(:phase_started, %{}, %{phase: :quiesce})
+      send(self(), :do_quiesce)
+      {:noreply, state}
     end
   end
 
@@ -478,13 +467,11 @@ defmodule Flezha.Shutdown.Coordinator do
   end
 
   defp safe_finalise_step(label, fun) do
-    try do
-      fun.()
-    catch
-      kind, reason ->
-        Logger.warning("[shutdown] #{label} #{kind}: #{inspect(reason)}")
-        :ok
-    end
+    fun.()
+  catch
+    kind, reason ->
+      Logger.warning("[shutdown] #{label} #{kind}: #{inspect(reason)}")
+      :ok
   end
 
   # The one home of the shutdown-budget default — `HubManager.consent_settings/0`

@@ -233,7 +233,7 @@ lives at `app_data/state/<namespace>/...`; a pre-namespace tree is moved under
 
 ## Recovery
 
-**Corrupt store.** Every store opens through `Flezha.AuthZ.DetsStore.open/2`; a file
+**Corrupt store.** Every store opens through `Flezha.DetsStore.open/2`; a file
 DETS cannot open is renamed `<name>.corrupt-<unix_ts>` with one `error` log line
 and a fresh table is created. The cost depends on the file:
 

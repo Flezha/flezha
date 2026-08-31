@@ -366,7 +366,7 @@ defmodule Flezha.Operative.PartitionGroup do
 
   # A forward resolves its target's member set once, at `init_provider/1`, so a
   # group that just changed shape leaves every upstream routing by yesterday's
-  # ranges: payloads for a member that no longer exists queue behind a worker
+  # ranges: payloads for a member absent from the group queue behind a worker
   # that will never deliver, until the queue saturates and back-pressures the
   # SOURCE operative. Nudging each dependent to re-prepare is what closes that,
   # and the provider hands the orphaned queue to its new owner as it does.
@@ -658,7 +658,7 @@ defmodule Flezha.Operative.PartitionGroup do
 
   # An old member past the new count keeps only a fully-consumed input log once
   # its Entities have moved out. Removing it is what stops a stale class tree
-  # from reading as durable evidence of an operative that no longer exists; its
+  # from reading as durable evidence of an operative the fleet does not hold; its
   # stop already removed it from the hub's declared set and deleted its
   # registry row, so a returning node can never resurrect it.
   defp cleanup_vacated(old_members, new_member_ids) do

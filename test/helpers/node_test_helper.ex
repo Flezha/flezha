@@ -29,7 +29,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   # A peer's `Application.start/2` blocks in `validate_boot_ready/0`, which
-  # itself waits up to 30 s for `BootLoader`. The budget has to clear that
+  # itself waits up to 30 s for `Boot.Loader`. The budget has to clear that
   # inner ceiling so a busy machine reports the peer's real start result
   # rather than a spurious `{:erpc, :timeout}`, and stay under ExUnit's 60 s
   # per-test timeout so a genuinely wedged boot still names the peer instead

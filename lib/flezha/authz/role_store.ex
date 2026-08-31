@@ -16,7 +16,8 @@ defmodule Flezha.AuthZ.RoleStore do
   use GenServer
 
   alias Flezha.AuthZ.Config
-  alias Flezha.AuthZ.{DetsStore, Namespace, Role}
+  alias Flezha.AuthZ.{Namespace, Role}
+  alias Flezha.DetsStore
 
   @table :flz_authz_roles
   @cache :flz_authz_roles_cache
@@ -68,21 +69,6 @@ defmodule Flezha.AuthZ.RoleStore do
   @doc "List every binding currently in the store."
   @spec list() :: [binding()]
   def list(), do: DetsStore.cache_values(@cache)
-
-  @doc "Bindings belonging to `principal` (zero or one)."
-  @spec list_for_principal(binary()) :: [binding()]
-  def list_for_principal(principal) when is_binary(principal) do
-    case lookup(principal) do
-      {:ok, b} -> [b]
-      :error -> []
-    end
-  end
-
-  @doc "Every binding scoped to `namespace`."
-  @spec list_for_namespace(binary()) :: [binding()]
-  def list_for_namespace(namespace) when is_binary(namespace) do
-    list() |> Enum.filter(&(&1.namespace == namespace))
-  end
 
   @doc "True when at least one `admin@_system` binding exists."
   @spec admin_system_exists?() :: boolean()

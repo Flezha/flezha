@@ -1,0 +1,110 @@
+defmodule Flezha.Boot.ApplicationChildrenTest do
+  @moduledoc """
+  The controller's start order, pinned.
+
+  `Flezha.Application.controller_children/0` decides the whole boot sequence and
+  four comments in that file explain why one child must precede another — none
+  of which the compiler can see. A silent reorder surfaces as an intermittent
+  boot failure, never as a test failure, so the ordered id list is asserted here
+  literally.
+  """
+
+  # Pins `:flezha` application env for the duration of a test.
+  use ExUnit.Case, async: false
+
+  @pinned [
+    transports: [:uds],
+    plugin_installer_enabled: false,
+    authn_authz: [application_managed: true],
+    convergence_health_enabled: true,
+    schedules: [application_managed: true],
+    healthz_enabled: true,
+    testnet_enabled: false
+  ]
+
+  @order [
+    Flezha.Shutdown.SignalHandler,
+    Flezha.Service.EventManager,
+    Flezha.Boot.Loader,
+    Flezha.Identificator,
+    Flezha.Convergence.Snapshot,
+    :flz_directory,
+    Flezha.Service.HubManager,
+    Flezha.Observability.Supervisor,
+    Flezha.Shutdown.Coordinator,
+    Flezha.Runner.FleetSupervisor,
+    Flezha.Runner.FleetManager,
+    Flezha.Cluster.Orchestrator,
+    Flezha.AuthZ.Supervisor,
+    {Flezha.Transport.Server, :uds},
+    Flezha.Service.PluginManager,
+    Flezha.Plugin.Provider.Kafka.WorkerRegistry,
+    Flezha.Plugin.Provider.Kafka.ProducerSup,
+    Flezha.Plugin.Provider.Postgres.SinkSup,
+    Flezha.Plugin.Provider.OperativeForward.ForwardSup,
+    Flezha.Service.PortPilot,
+    Flezha.Operative.MessageHandlerTaskSup,
+    Flezha.State.WriterRegistry,
+    Flezha.State.Supervisor,
+    Flezha.State.FsyncBatcher,
+    Flezha.State.Retention,
+    Flezha.State.Watchdog,
+    Flezha.Dlq.Store,
+    Flezha.Convergence.Loop,
+    Flezha.Schedule.Store,
+    Flezha.Schedule.Hub,
+    Flezha.Healthz.Server
+  ]
+
+  setup do
+    previous = Enum.map(@pinned, fn {k, _} -> {k, Application.fetch_env(:flezha, k)} end)
+
+    Enum.each(@pinned, fn {k, v} -> Application.put_env(:flezha, k, v) end)
+
+    on_exit(fn ->
+      Enum.each(previous, fn
+        {k, {:ok, v}} -> Application.put_env(:flezha, k, v)
+        {k, :error} -> Application.delete_env(:flezha, k)
+      end)
+    end)
+
+    :ok
+  end
+
+  defp ids,
+    do: Enum.map(Flezha.Application.controller_children(), &Supervisor.child_spec(&1, []).id)
+
+  test "the controller starts its children in exactly this order" do
+    assert ids() == @order
+  end
+
+  test "SignalHandler is first, so a SIGTERM is never delivered to an unhandled node" do
+    assert hd(ids()) == Flezha.Shutdown.SignalHandler
+  end
+
+  test "the Coordinator follows HubManager, because the drain queries the hub" do
+    order = ids()
+
+    assert Enum.find_index(order, &(&1 == Flezha.Service.HubManager)) <
+             Enum.find_index(order, &(&1 == Flezha.Shutdown.Coordinator))
+  end
+
+  test "cluster formation precedes the transport, so no hub is created unclustered" do
+    order = ids()
+
+    assert Enum.find_index(order, &(&1 == Flezha.Cluster.Orchestrator)) <
+             Enum.find_index(order, &(&1 == {Flezha.Transport.Server, :uds}))
+  end
+
+  test "the Snapshot precedes every hub, so no hub fires recovery telemetry into nothing" do
+    order = ids()
+
+    assert Enum.find_index(order, &(&1 == Flezha.Convergence.Snapshot)) <
+             Enum.find_index(order, &(&1 == Flezha.Service.HubManager))
+  end
+
+  test "the testnet child is prepended, never appended" do
+    Application.put_env(:flezha, :testnet_enabled, true)
+    assert hd(ids()) == Flezha.Testnet
+  end
+end

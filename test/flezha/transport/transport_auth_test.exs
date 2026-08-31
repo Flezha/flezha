@@ -8,6 +8,7 @@ defmodule Flezha.Transport.TransportAuthTest do
   # async: false: writes Application env; the primary Logger; OS environment variables.
   use ExUnit.Case, async: false
 
+  alias Flezha.Boot.Loader
   alias Flezha.Socket.Support
   alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Native
@@ -104,7 +105,7 @@ defmodule Flezha.Transport.TransportAuthTest do
         resolved = Support.socket_dir()
 
         assert Path.type(resolved) == :absolute
-        assert Flezha.BootLoader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
+        assert Loader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
       end)
     end
 
@@ -114,11 +115,11 @@ defmodule Flezha.Transport.TransportAuthTest do
       try do
         Application.put_env(:flezha, :transports, [:uds, :quic])
 
-        assert Flezha.BootLoader.attach_line() =~
+        assert Loader.attach_line() =~
                  "QUIC listening on #{Application.get_env(:flezha, :quic_listen_address)}"
 
         Application.put_env(:flezha, :transports, [])
-        refute Flezha.BootLoader.attach_line()
+        refute Loader.attach_line()
       after
         Application.put_env(:flezha, :transports, previous)
       end

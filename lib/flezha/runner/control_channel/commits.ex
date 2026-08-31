@@ -1,24 +1,18 @@
 defmodule Flezha.Runner.ControlChannel.Commits do
   @moduledoc """
   The durable-barrier half of a runner's control channel: one process per
-  runner, a sibling of `Flezha.Runner.ControlChannel`, that journals every
-  `ProcCommit` / `IterCommit` the channel's reader decodes and acks it once the
-  batch holding the record has synced.
+  runner that journals every `ProcCommit` / `IterCommit` the channel's reader
+  decodes and acks it once the batch holding the record has synced.
 
   The reader forwards and returns, so a commit storm never queues a ping, a
-  stop, a park or a compaction behind disk I/O. The appends are issued without
-  waiting (`ProcJournal.append_async/4`): the in-flight request collection IS
-  the set of acks owed, the barriers of every instance on the runner share the
-  `FsyncBatcher` tick, and one instance's barriers ack in arrival order — its
-  journal writer answers in append order and this process handles answers in
-  arrival order.
+  stop, a park or a compaction behind disk I/O. Appends are issued without
+  waiting: the in-flight request collection IS the set of acks owed.
 
-  Journal-then-ack is unchanged: the ack carries the append's outcome in its
+  Invariant: journal-then-ack. The ack carries the append's outcome in its
   `error` field (empty = durable) and gates the post-ack work — the outbox
   flush, and for an iteration commit the boundary snapshot, the inbox release
-  and the journal cut. A class that declared synchronous remote durability has
-  its barrier shipped before the ack, off this process. The ack itself is
-  written by the channel, the one process that writes control frames.
+  and the journal cut. The ack itself is written by the channel, the one
+  process that writes control frames.
   """
 
   use GenServer
@@ -274,20 +268,20 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp snapshot_iteration_boundary(runner_id, operative_id) do
     entities = Paths.entities_of(operative_id)
 
-    Task.start(fn ->
-      Enum.each(entities, fn entity_id ->
-        case Commands.dispatch_compact_entity(runner_id, entity_id) do
-          {:ok, _ref} ->
-            :ok
+    Task.start(fn -> Enum.each(entities, &compact_entity(runner_id, &1)) end)
+  end
 
-          {:error, reason} ->
-            Logger.debug(
-              "[control_channel] boundary snapshot skipped for #{inspect(entity_id)}: " <>
-                "#{inspect(reason)} — rehydrate falls back to WAL replay"
-            )
-        end
-      end)
-    end)
+  defp compact_entity(runner_id, entity_id) do
+    case Commands.dispatch_compact_entity(runner_id, entity_id) do
+      {:ok, _ref} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.debug(
+          "[control_channel] boundary snapshot skipped for #{inspect(entity_id)}: " <>
+            "#{inspect(reason)} — rehydrate falls back to WAL replay"
+        )
+    end
   end
 
   # Journal-driven flush: everything this instance owes, in journal order, with

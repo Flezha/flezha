@@ -28,7 +28,8 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Runner.{FleetManager, StreamChannel}
+  alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamChannel
   alias Flezha.State.{Metrics, Snapshot, Supervisor, TestHelpers, WalWriter, Wire}
   alias Flezha.Transport.LivenessCounters
 
@@ -242,7 +243,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   # Mark + register cleanup — the table is owned by the app's FleetManager and
   # outlives this test otherwise.
   defp supersede(session_id) do
-    FleetManager.mark_session_superseded(session_id)
+    Marks.mark_session_superseded(session_id)
 
     on_exit(fn ->
       if :ets.whereis(:flezha_superseded_sessions) != :undefined do

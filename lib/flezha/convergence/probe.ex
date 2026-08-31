@@ -8,9 +8,10 @@ defmodule Flezha.Convergence.Probe do
   """
 
   alias Flezha.Cluster.Directory
-  alias Flezha.Convergence.{SafeCall, Snapshot}
-  alias Flezha.Runner.FleetManager
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Runner.FleetManager
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager
 
   @operative_call_timeout_ms 1_000
