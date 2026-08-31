@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   @namespace "dynamic_entity_e2e"
   @factory "dynamic_entity"
@@ -157,7 +157,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     # writes a WAL file — at the identity the trait hook used to produce.
     OperativeManager.send_io(operative_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
 
-    assert wait_until(fn -> File.exists?(Registry.wal_path(entity_id)) end, 15_000),
+    assert wait_until(fn -> File.exists?(Paths.wal_path(entity_id)) end, 15_000),
            "controller never wrote a WAL file for the lazily-created Entity"
 
     # A filtered input reaches no Entity at all — there is no keyless-drop path
@@ -167,9 +167,9 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     # No further input for the live key: after the 200 ms idle TTL the reaper
     # evicts the Entity and ships delete_entity_state; the controller removes
     # the file. Generous budget for sweep cadence + wire + teardown.
-    assert wait_until(fn -> not File.exists?(Registry.wal_path(entity_id)) end, 15_000),
+    assert wait_until(fn -> not File.exists?(Paths.wal_path(entity_id)) end, 15_000),
            "reaper/delete-RPC never removed the evicted Entity's WAL file"
 
-    assert Registry.snapshot_paths(entity_id) == []
+    assert Paths.snapshot_paths(entity_id) == []
   end
 end

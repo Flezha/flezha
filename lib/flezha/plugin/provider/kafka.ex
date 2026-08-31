@@ -414,4 +414,71 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defp parse_hosts(hosts), do: hosts
   end
+
+  # `:telemetry.execute/3` runs handlers synchronously in the caller's process,
+  # so a handler attached to these events must itself be cheap.
+  @prefix [:flezha, :plugin, :kafka]
+
+  @spec produce_ok(non_neg_integer(), non_neg_integer(), map()) :: :ok
+  def produce_ok(batch_size, latency_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :ok],
+      %{batch_size: batch_size, latency_ms: latency_ms},
+      metadata
+    )
+  end
+
+  @spec retry(pos_integer(), non_neg_integer(), map()) :: :ok
+  def retry(attempt, backoff_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :retry],
+      %{attempt: attempt, backoff_ms: backoff_ms},
+      metadata
+    )
+  end
+
+  @spec dropped(pos_integer(), map()) :: :ok
+  def dropped(count, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :dropped],
+      %{count: count},
+      metadata
+    )
+  end
+
+  @spec failed(pos_integer(), non_neg_integer(), map()) :: :ok
+  def failed(attempts, total_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :failed],
+      %{attempts: attempts, total_ms: total_ms},
+      metadata
+    )
+  end
+
+  @spec metadata_refresh(non_neg_integer(), map()) :: :ok
+  def metadata_refresh(latency_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:metadata, :refresh],
+      %{latency_ms: latency_ms},
+      metadata
+    )
+  end
+
+  @spec topic_created(integer(), integer(), keyword() | map()) :: :ok
+  def topic_created(partitions, replication_factor, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:topic, :created],
+      %{partitions: partitions, replication_factor: replication_factor},
+      Map.new(metadata)
+    )
+  end
+
+  @spec worker_swapped(map(), map()) :: :ok
+  def worker_swapped(measurements, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:worker, :swapped],
+      measurements,
+      metadata
+    )
+  end
 end

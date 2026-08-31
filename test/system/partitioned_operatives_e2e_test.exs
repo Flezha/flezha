@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
   @relay_procedure "partition_relay_procedure"
@@ -109,14 +109,14 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
       OperativeManager.send_io(member, namespace, "#{key}:one", %{"input_type" => "2"})
 
       assert wait_until(fn ->
-               File.exists?(Registry.wal_path({member, @relay_procedure, key}))
+               File.exists?(Paths.wal_path({member, @relay_procedure, key}))
              end),
              "#{key} never produced durable state under its owner #{member}"
     end
 
     # No member holds another member's Entity — the whole point of the split.
     for key <- @keys, member <- Enum.map(members, & &1.id), member != owner(group, 3, key) do
-      refute File.exists?(Registry.wal_path({member, @relay_procedure, key})),
+      refute File.exists?(Paths.wal_path({member, @relay_procedure, key})),
              "#{member} must not hold #{key}, which it does not own"
     end
 
@@ -173,7 +173,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
       new_owner = owner(group, 2, key)
 
       assert wait_until(fn ->
-               File.exists?(Registry.wal_path({new_owner, @relay_procedure, key}))
+               File.exists?(Paths.wal_path({new_owner, @relay_procedure, key}))
              end),
              "#{key} lost its durable state across the rescale (expected under #{new_owner})"
     end
@@ -182,7 +182,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     info_after = capture_io(fn -> CliManager.operative_info(namespace) end)
     assert info_after =~ "Partition group: #{group} (2/2)"
     assert info_after =~ "all 256 key groups owned exactly once"
-    refute File.exists?(Registry.class_dir(Partition.member_id(group, 2)))
+    refute File.exists?(Paths.class_dir(Partition.member_id(group, 2)))
 
     # The move is only half the promise: the new owner must RESTORE what it
     # inherited, so the key continues from its pre-rescale state.
@@ -253,7 +253,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
       target = owner(downstream, 2, key)
 
       assert wait_until(fn ->
-               File.exists?(Registry.wal_path({target, @dynamic_procedure, key}))
+               File.exists?(Paths.wal_path({target, @dynamic_procedure, key}))
              end),
              "#{key} was not forwarded to #{target}, the downstream member owning its key group"
     end
@@ -263,7 +263,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
       member = Partition.member_id(downstream, index)
 
       if member != owner(downstream, 2, key) do
-        refute File.exists?(Registry.wal_path({member, @dynamic_procedure, key})),
+        refute File.exists?(Paths.wal_path({member, @dynamic_procedure, key})),
                "#{member} received #{key}, which belongs to another partition"
       end
     end
@@ -286,7 +286,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     })
 
     assert wait_until(fn ->
-             File.exists?(Registry.wal_path({new_target, @dynamic_procedure, moved_key}))
+             File.exists?(Paths.wal_path({new_target, @dynamic_procedure, moved_key}))
            end),
            "#{moved_key} never reached #{new_target}, its owner after the rescale — " <>
              "the upstream forward is still routing by the old member set"

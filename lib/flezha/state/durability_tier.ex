@@ -31,8 +31,8 @@ defmodule Flezha.State.DurabilityTier do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.DurabilityTier.{Artifact, Backend, Hydrator, Shipper}
+  alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.Registry
 
   @default_ship_interval_ms 30_000
   @default_rpo_target_ms 120_000
@@ -300,7 +300,7 @@ defmodule Flezha.State.DurabilityTier do
     # Classes with Entity state UNION classes with parked failures: a stopped
     # operative keeps its parks and no longer has state, and its parks are still
     # this node's to ship.
-    (Registry.operative_classes() ++ Artifact.dlq_classes())
+    (Paths.operative_classes() ++ Artifact.dlq_classes())
     |> Enum.uniq()
     |> Enum.flat_map(&refs_of_state_key/1)
     |> Enum.concat(Artifact.cspec_refs(writer))

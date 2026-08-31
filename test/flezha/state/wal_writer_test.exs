@@ -4,7 +4,7 @@ defmodule Flezha.State.WalWriterTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.State.{Metrics, Registry, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Metrics, Paths, Supervisor, TestHelpers, WalWriter}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -192,7 +192,7 @@ defmodule Flezha.State.WalWriterTest do
 
       TestHelpers.close_and_await(srv, pid)
       # Drop the dedup file so the writer must rebuild from the WAL.
-      File.rm(Registry.outbox_dedup_path(pid))
+      File.rm(Paths.outbox_dedup_path(pid))
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
@@ -208,14 +208,14 @@ defmodule Flezha.State.WalWriterTest do
       TestHelpers.close_and_await(srv, pid)
 
       # Append 5 garbage bytes that look like a partial record.
-      File.write!(Registry.wal_path(pid), <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>, [:append])
+      File.write!(Paths.wal_path(pid), <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>, [:append])
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
       assert WalWriter.last_persisted_seq(srv2) == 1
 
       # File should be truncated back to the end of the last valid record.
-      {:ok, info} = :file.read_file_info(Registry.wal_path(pid))
+      {:ok, info} = :file.read_file_info(Paths.wal_path(pid))
       r1 = WalWriter.encode_record(0, header, "a")
       r2 = WalWriter.encode_record(1, header, "bb")
       assert elem(info, 1) == byte_size(r1) + byte_size(r2)
@@ -233,7 +233,7 @@ defmodule Flezha.State.WalWriterTest do
       :ok = WalWriter.truncate_up_to(srv, 3)
 
       # File now contains records 4 and 5 only.
-      {:ok, dev} = :file.open(Registry.wal_path(pid), [:raw, :read, :binary])
+      {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
       assert {:ok, 4, _, "x4", c1} = WalWriter.decode_record(dev, 0)
       assert {:ok, 5, _, "x5", _} = WalWriter.decode_record(dev, c1)
       :file.close(dev)
@@ -253,7 +253,7 @@ defmodule Flezha.State.WalWriterTest do
       header = TestHelpers.stub_header()
 
       # Pre-seed a WAL up to seq 2 so the deferred scan has records to recover.
-      wal_path = Registry.wal_path(pid)
+      wal_path = Paths.wal_path(pid)
       File.mkdir_p!(Path.dirname(wal_path))
 
       File.write!(
@@ -273,7 +273,7 @@ defmodule Flezha.State.WalWriterTest do
 
       # And it is durable: a fresh writer recovers seq 3 from the WAL on disk.
       TestHelpers.close_and_await(srv, pid)
-      File.rm(Registry.outbox_dedup_path(pid))
+      File.rm(Paths.outbox_dedup_path(pid))
       {:ok, srv2} = Supervisor.find_or_start(pid)
       assert WalWriter.last_persisted_seq(srv2) == 3
     end
@@ -497,7 +497,7 @@ defmodule Flezha.State.WalWriterTest do
       # dead process on its own `:DOWN` — so it leaves the list after it dies,
       # not with it.
       assert wait_until(fn -> Supervisor.live_writers(class) == [] end, 2_000)
-      assert File.exists?(Registry.wal_path(entity_id))
+      assert File.exists?(Paths.wal_path(entity_id))
     end
   end
 end

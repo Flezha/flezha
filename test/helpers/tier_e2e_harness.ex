@@ -145,7 +145,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   def destroy_local_state(operative_id) do
     reserved =
       Enum.map(
-        Flezha.State.Registry.reserved_entity_keys(),
+        Flezha.State.Paths.reserved_entity_keys(),
         &{operative_id, operative_id, &1}
       )
 
@@ -154,7 +154,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     # be graceful — a killed writer is transient-restarted, and the replacement
     # would hold an open handle to the unlinked file while hydration writes a
     # new one underneath it.
-    for entity_id <- Flezha.State.Registry.entities_of(operative_id) ++ reserved do
+    for entity_id <- Flezha.State.Paths.entities_of(operative_id) ++ reserved do
       Flezha.State.Supervisor.delete_entity(entity_id)
     end
 
@@ -163,7 +163,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       :error -> :ok
     end
 
-    File.rm_rf!(Flezha.State.Registry.class_dir(operative_id))
+    File.rm_rf!(Flezha.State.Paths.class_dir(operative_id))
     Flezha.Operative.ClassRegistry.delete(operative_id)
     :ok
   catch
@@ -206,7 +206,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     # The namespace is this test's alone, so its whole tree goes. The path is
     # the registry's: a leftover tree captures `namespace_of_class/1` for the
     # next run whose `unique/1` id collides with this one.
-    File.rm_rf(Flezha.State.Registry.namespace_dir(namespace))
+    File.rm_rf(Flezha.State.Paths.namespace_dir(namespace))
   end
 
   @doc """
@@ -218,7 +218,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   def await_outbox_drained(operative_id, timeout_ms \\ 30_000) do
     NodeTestHelper.wait_until(
       fn ->
-        case Flezha.State.Registry.entities_of(operative_id) do
+        case Flezha.State.Paths.entities_of(operative_id) do
           [] -> false
           entities -> Enum.all?(entities, &outbox_drained?/1)
         end

@@ -30,7 +30,7 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Validator
   alias Flezha.State.InputLog
-  alias Flezha.State.Registry, as: StateRegistry
+  alias Flezha.State.Paths
   alias Flezha.State.WalTransfer
 
   @doc """
@@ -553,7 +553,7 @@ defmodule Flezha.Operative.PartitionGroup do
   # disk, which is what makes a re-run after a crash complete the remainder
   # rather than move anything twice.
   defp plan_moves(members, new_ranges, group_id) do
-    reserved = StateRegistry.reserved_entity_keys()
+    reserved = Paths.reserved_entity_keys()
 
     for member <- members,
         {_class, procedure, key} = entity <- entities_of_member(member),
@@ -571,10 +571,10 @@ defmodule Flezha.Operative.PartitionGroup do
   defp entities_of_member(%{id: member_id} = member) do
     case member_node(member) do
       nil ->
-        StateRegistry.entities_of(member_id)
+        Paths.entities_of(member_id)
 
       source when source == node() ->
-        StateRegistry.entities_of(member_id)
+        Paths.entities_of(member_id)
 
       source ->
         peer_entities(source, member_id)
@@ -667,12 +667,12 @@ defmodule Flezha.Operative.PartitionGroup do
     |> Enum.reject(&(&1 in new_member_ids))
     |> Enum.filter(&vacated?/1)
     |> Enum.map(fn class ->
-      _ = File.rm_rf(StateRegistry.class_dir(class))
+      _ = File.rm_rf(Paths.class_dir(class))
       class
     end)
   end
 
   defp vacated?(class) do
-    StateRegistry.entities_of(class) == [] and consumed?(class)
+    Paths.entities_of(class) == [] and consumed?(class)
   end
 end

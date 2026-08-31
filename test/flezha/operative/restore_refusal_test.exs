@@ -22,7 +22,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias Flezha.State.Restore
   alias Flezha.State.TestHelpers
 
@@ -123,7 +123,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
     test "an Entity with no state binds: it is never restored in the first place" do
       id = entity("empty")
-      path = Registry.wal_path(id)
+      path = Paths.wal_path(id)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, "")
 
@@ -147,7 +147,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
     test "is nil for a truncated WAL rather than a guess" do
       id = entity("truncated")
-      path = Registry.wal_path(id)
+      path = Paths.wal_path(id)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, <<0::64, 4::32>>)
 

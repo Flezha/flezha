@@ -24,7 +24,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
-  alias Flezha.State.{Completion, Registry, TestHelpers}
+  alias Flezha.State.{Completion, Paths, TestHelpers}
 
   @namespace "op-mgr-request-stop-test"
 
@@ -170,7 +170,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
         finished_at: System.system_time(:second)
       })
 
-    wal = Registry.wal_path({proc_id, "op0", "seg"})
+    wal = Paths.wal_path({proc_id, "op0", "seg"})
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, "x")
 
@@ -191,14 +191,14 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
     stub_hub_stop(self(), proc_id)
 
-    wal = Registry.wal_path({proc_id, "op0", "seg"})
+    wal = Paths.wal_path({proc_id, "op0", "seg"})
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, "x")
 
     assert :ok = OperativeManager.stop_operative(@namespace, proc_id)
 
     # No completion record → the class dir is deleted as before.
-    refute File.dir?(Registry.class_dir(proc_id))
+    refute File.dir?(Paths.class_dir(proc_id))
   end
 end
 

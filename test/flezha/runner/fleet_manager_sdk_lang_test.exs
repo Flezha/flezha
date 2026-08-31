@@ -15,7 +15,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias Flezha.State.Restore
   alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.State.TestHelpers, as: StateTestHelpers
@@ -188,7 +188,7 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
       entity = {operative, "p0", "k"}
       StateTestHelpers.write_wal_of_lang(entity, @java)
 
-      assert entity in Registry.entities_of(operative), "fixture: #{base}"
+      assert entity in Paths.entities_of(operative), "fixture: #{base}"
       assert Restore.class_sdk_lang(operative) == @java
       assert Restore.class_sdk_lang("never_written") == nil
 

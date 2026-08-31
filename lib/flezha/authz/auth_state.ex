@@ -16,7 +16,7 @@ defmodule Flezha.AuthZ.AuthState do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, Store}
+  alias Flezha.AuthZ.{Config, DetsStore}
 
   @table :flz_authz_state
   @filename "state.dets"
@@ -31,7 +31,7 @@ defmodule Flezha.AuthZ.AuthState do
   @doc "True when the durable flag is set."
   @spec enabled?() :: boolean()
   def enabled?() do
-    case Store.cache_lookup(@table, @key) do
+    case DetsStore.cache_lookup(@table, @key) do
       {:ok, value} when is_boolean(value) -> value
       _ -> false
     end
@@ -66,17 +66,17 @@ defmodule Flezha.AuthZ.AuthState do
   @impl true
   def init(_opts) do
     # The ETS cache shares the DETS table's name (separate namespaces).
-    Store.init_cached(@table, @table, path())
+    DetsStore.init_cached(@table, @table, path())
   end
 
   @impl true
   def handle_call(:set_enabled, _from, state) do
-    :ok = Store.put(@table, @table, @key, true)
+    :ok = DetsStore.put(@table, @table, @key, true)
     {:reply, :ok, state}
   end
 
   def handle_call(:reset, _from, state) do
-    :ok = Store.put(@table, @table, @key, false)
+    :ok = DetsStore.put(@table, @table, @key, false)
     {:reply, :ok, state}
   end
 

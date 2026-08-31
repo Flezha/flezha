@@ -45,7 +45,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
-  alias Flezha.State.{InputLog, ProcJournal, Registry}
+  alias Flezha.State.{InputLog, Paths, ProcJournal}
 
   @moduletag :postgres_integration
   @moduletag timeout: 300_000
@@ -92,7 +92,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     # finished decoding the class declaration that turns the gate on. The gate
     # itself is pinned deterministically in
     # `test/flezha/runner/control_channel_proc_commit_test.exs`.
-    journal_ref = {:entity, {operative_id, operative_id, Registry.journal_entity_key()}}
+    journal_ref = {:entity, {operative_id, operative_id, Paths.journal_entity_key()}}
 
     assert wait_until(
              fn -> match?({:ok, _}, fetch(backend_opts, Manifest.key(journal_ref))) end,
@@ -107,7 +107,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 60_000)
 
     destroy_local_state(operative_id)
-    refute File.exists?(Registry.class_dir(operative_id))
+    refute File.exists?(Paths.class_dir(operative_id))
     assert ProcJournal.restore_state(operative_id) == nil, "local journal survived the drill"
 
     # A replacement runner with the release flag: the resumed chain can finish.
@@ -175,8 +175,8 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> InputLog.watermark(operative_id) == 2 end, 60_000),
            "the checkpoint never advanced the durable consumed-offset"
 
-    assert wait_until(fn -> Registry.entities_of(operative_id) != [] end, 60_000)
-    [entity_id | _] = Registry.entities_of(operative_id)
+    assert wait_until(fn -> Paths.entities_of(operative_id) != [] end, 60_000)
+    [entity_id | _] = Paths.entities_of(operative_id)
     entity_ref = {:entity, entity_id}
 
     assert wait_until(
@@ -202,7 +202,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 60_000)
 
     destroy_local_state(operative_id)
-    refute File.exists?(Registry.class_dir(operative_id))
+    refute File.exists?(Paths.class_dir(operative_id))
 
     {port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
@@ -301,8 +301,8 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
       assert {:ok, _collected} = GenServer.call(peer, :gc, 60_000)
     end
 
-    assert wait_until(fn -> Registry.entities_of(operative_id) != [] end, 60_000)
-    [entity_id | _] = Registry.entities_of(operative_id)
+    assert wait_until(fn -> Paths.entities_of(operative_id) != [] end, 60_000)
+    [entity_id | _] = Paths.entities_of(operative_id)
     entity_ref = {:entity, entity_id}
 
     assert wait_until(

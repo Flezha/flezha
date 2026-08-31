@@ -26,16 +26,16 @@ defmodule Flezha.State.WalWriter do
     InputLog,
     Metrics,
     Outbox,
+    Paths,
     PersistenceResolver,
     Recovery,
-    Registry,
     SeqIndex,
     Wire
   }
 
   @header_size 16
   @reservoir_capacity 1024
-  @reserved_entity_keys Registry.reserved_entity_keys()
+  @reserved_entity_keys Paths.reserved_entity_keys()
 
   defstruct [
     :entity_id,
@@ -99,7 +99,7 @@ defmodule Flezha.State.WalWriter do
   ]
 
   @type t :: %__MODULE__{
-          entity_id: Registry.entity_id(),
+          entity_id: Paths.entity_id(),
           file_handle: :file.io_device(),
           wal_path: binary(),
           last_persisted_seq: integer(),
@@ -421,7 +421,7 @@ defmodule Flezha.State.WalWriter do
     state = %__MODULE__{
       entity_id: entity_id,
       file_handle: nil,
-      wal_path: Registry.wal_path(entity_id),
+      wal_path: Paths.wal_path(entity_id),
       last_persisted_seq: -1,
       last_advance_at: now,
       last_change_seen_at: now,
@@ -588,7 +588,7 @@ defmodule Flezha.State.WalWriter do
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
     # realign does, would be a wipe, not a rewind.
-    Enum.each(Registry.snapshot_paths(state.entity_id), fn {snap_seq, path} ->
+    Enum.each(Paths.snapshot_paths(state.entity_id), fn {snap_seq, path} ->
       if snap_seq > seq, do: File.rm(path)
     end)
 
@@ -1322,7 +1322,7 @@ defmodule Flezha.State.WalWriter do
   # with one atomic tmp+rename — at most once per fsync batch. The reserved
   # per-instance identities (proc-journal, durable inbox) skip it: neither carries
   # effect records, and the dedup side-file would register a phantom Entity
-  # with `Registry.scan_dir/1`.
+  # with `Paths.scan_dir/1`.
   defp persist_dedup(%{entity_id: {_, _, key}} = state) when key in @reserved_entity_keys,
     do: state
 
@@ -1388,7 +1388,7 @@ defmodule Flezha.State.WalWriter do
     {:ok, _} = :file.position(state.file_handle, 0)
     :ok = :file.truncate(state.file_handle)
 
-    Enum.each(Registry.snapshot_paths(state.entity_id), fn {_seq, path} -> File.rm(path) end)
+    Enum.each(Paths.snapshot_paths(state.entity_id), fn {_seq, path} -> File.rm(path) end)
 
     emit_realign(state.entity_id, state.last_persisted_seq, seq, runner_id)
 
@@ -1549,7 +1549,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   defp highest_snapshot_seq(entity_id) do
-    case Registry.snapshot_paths(entity_id) do
+    case Paths.snapshot_paths(entity_id) do
       [] -> 0
       paths -> paths |> List.last() |> elem(0)
     end
@@ -1732,7 +1732,7 @@ defmodule Flezha.State.WalWriter do
   # Copy the bytes `[from, to)` of `path` into `<path>.rewriting`, fsync it,
   # rename it into place and reopen `device` on it at its end. The two-step is
   # what makes a crash mid-rewrite leave the original intact
-  # (`Registry.scan_dir/1` skips `.rewriting` residue); the rename happens
+  # (`Paths.scan_dir/1` skips `.rewriting` residue); the rename happens
   # before the old handle closes, so a failure before it leaves that handle
   # valid. Records are self-delimiting and CRC-framed, so a record-aligned
   # byte range is the same log the records would re-encode to.

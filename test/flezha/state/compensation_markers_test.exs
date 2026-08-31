@@ -12,7 +12,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   import Mimic
 
   alias Flezha.Runner.{ControlChannel, StreamChannel}
-  alias Flezha.State.{Commands, Registry, TestHelpers, Wire}
+  alias Flezha.State.{Commands, Paths, TestHelpers, Wire}
 
   setup :verify_on_exit!
 
@@ -39,19 +39,19 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
   test "compensation_markers/1 reflects the persisted marker files" do
     seg = {"rc", "proc", "seg"}
-    assert Registry.compensation_markers(seg) == %{intent: false, done: false}
+    assert Paths.compensation_markers(seg) == %{intent: false, done: false}
 
-    File.mkdir_p!(Path.dirname(Registry.compensation_marker_path(seg, :intent)))
-    File.write!(Registry.compensation_marker_path(seg, :intent), "")
-    assert Registry.compensation_markers(seg) == %{intent: true, done: false}
+    File.mkdir_p!(Path.dirname(Paths.compensation_marker_path(seg, :intent)))
+    File.write!(Paths.compensation_marker_path(seg, :intent), "")
+    assert Paths.compensation_markers(seg) == %{intent: true, done: false}
 
-    File.write!(Registry.compensation_marker_path(seg, :done), "")
-    assert Registry.compensation_markers(seg) == %{intent: true, done: true}
+    File.write!(Paths.compensation_marker_path(seg, :done), "")
+    assert Paths.compensation_markers(seg) == %{intent: true, done: true}
 
     # delete_files/1 (the "remove every file for an Entity" contract) reclaims the
     # markers too, so a recreated Entity never sees a stale one.
-    Registry.delete_files(seg)
-    assert Registry.compensation_markers(seg) == %{intent: false, done: false}
+    Paths.delete_files(seg)
+    assert Paths.compensation_markers(seg) == %{intent: false, done: false}
   end
 
   test "the stream channel persists a marker for each compensation frame" do
@@ -62,11 +62,11 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     frame = comp_frame(seg)
 
     send(pid, {:flz_data, 0, "compensation_intent", frame, %{}})
-    intent_path = Registry.compensation_marker_path(seg, :intent)
+    intent_path = Paths.compensation_marker_path(seg, :intent)
     assert eventually(fn -> File.exists?(intent_path) end), "intent marker persisted"
 
     send(pid, {:flz_data, 0, "compensation_done", frame, %{}})
-    done_path = Registry.compensation_marker_path(seg, :done)
+    done_path = Paths.compensation_marker_path(seg, :done)
     assert eventually(fn -> File.exists?(done_path) end), "done marker persisted"
   end
 
@@ -74,10 +74,10 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     seg = {"ship_rc", "ship_op", "ship_seg"}
     # A durable Entity that completed forward and needs undo: WAL on disk plus an
     # intent marker (no done marker — its compensation had not run before the crash).
-    wal = Registry.wal_path(seg)
+    wal = Paths.wal_path(seg)
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, TestHelpers.build_wal_record(1, <<>>))
-    File.write!(Registry.compensation_marker_path(seg, :intent), "")
+    File.write!(Paths.compensation_marker_path(seg, :intent), "")
 
     test_pid = self()
 

@@ -572,7 +572,7 @@ defmodule Flezha.Convergence.Loop do
   # trusted — POSIX mtime has 1 s granularity, so a same-second add+remove
   # would otherwise pin a stale listing forever.
   defp state_root_dirs(cache) do
-    root = Flezha.State.Registry.state_root()
+    root = Flezha.State.Paths.state_root()
 
     case File.stat(root, time: :posix) do
       {:ok, %File.Stat{mtime: root_mtime}} ->
@@ -584,7 +584,7 @@ defmodule Flezha.Convergence.Loop do
             {dirs, cache}
 
           _ ->
-            dirs = Flezha.State.Registry.operative_classes()
+            dirs = Flezha.State.Paths.operative_classes()
             {dirs, {mtime, dirs}}
         end
 
@@ -594,9 +594,9 @@ defmodule Flezha.Convergence.Loop do
   end
 
   defp namespace_dir_mtimes() do
-    for namespace <- Flezha.State.Registry.namespaces(),
+    for namespace <- Flezha.State.Paths.namespaces(),
         {:ok, %File.Stat{mtime: mtime}} <-
-          [File.stat(Flezha.State.Registry.namespace_dir(namespace), time: :posix)],
+          [File.stat(Flezha.State.Paths.namespace_dir(namespace), time: :posix)],
         do: mtime
   end
 

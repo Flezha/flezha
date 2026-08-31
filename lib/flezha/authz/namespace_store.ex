@@ -12,7 +12,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, Namespace, Store}
+  alias Flezha.AuthZ.{Config, DetsStore, Namespace}
 
   @table :flz_authz_namespaces
   @cache :flz_authz_namespaces_cache
@@ -50,10 +50,10 @@ defmodule Flezha.AuthZ.NamespaceStore do
   end
 
   @spec get(binary()) :: {:ok, entry()} | :error
-  def get(name) when is_binary(name), do: Store.cache_lookup(@cache, name)
+  def get(name) when is_binary(name), do: DetsStore.cache_lookup(@cache, name)
 
   @spec list() :: [entry()]
-  def list(), do: Store.cache_values(@cache)
+  def list(), do: DetsStore.cache_values(@cache)
 
   @spec set_quotas(binary(), map()) :: {:ok, entry()} | {:error, term()}
   def set_quotas(name, overrides) when is_binary(name) and is_map(overrides) do
@@ -70,7 +70,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
 
   @impl true
   def init(_opts) do
-    with {:ok, state} <- Store.init_cached(@table, @cache, path()) do
+    with {:ok, state} <- DetsStore.init_cached(@table, @cache, path()) do
       :ok = seed_system_namespace_if_absent()
       {:ok, state}
     end
@@ -85,19 +85,19 @@ defmodule Flezha.AuthZ.NamespaceStore do
       created_by_principal: by
     }
 
-    case Store.put_new(@table, @cache, name, entry) do
+    case DetsStore.put_new(@table, @cache, name, entry) do
       :ok -> {:reply, {:ok, entry}, state}
       {:error, :already_exists} = err -> {:reply, err, state}
     end
   end
 
   def handle_call({:delete, name}, _from, state) do
-    :ok = Store.delete(@table, @cache, name)
+    :ok = DetsStore.delete(@table, @cache, name)
     {:reply, :ok, state}
   end
 
   def handle_call({:set_quotas, name, quotas}, _from, state) do
-    case Store.update(@table, @cache, name, &%{&1 | quotas: quotas}) do
+    case DetsStore.update(@table, @cache, name, &%{&1 | quotas: quotas}) do
       {:ok, updated} -> {:reply, {:ok, updated}, state}
       {:error, :not_found} = err -> {:reply, err, state}
     end
@@ -125,7 +125,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
           created_by_principal: nil
         }
 
-        :ok = Store.put(@table, @cache, system, entry)
+        :ok = DetsStore.put(@table, @cache, system, entry)
 
       _ ->
         :ok

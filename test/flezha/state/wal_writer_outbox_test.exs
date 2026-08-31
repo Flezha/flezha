@@ -35,7 +35,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     FsyncBatcher,
     InputLog,
     Outbox,
-    Registry,
+    Paths,
     Supervisor,
     TestHelpers,
     WalWriter,
@@ -204,7 +204,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
       :ok = WalWriter.append(pid, seq, plain_header(), "change-#{seq}")
     end
 
-    refute File.exists?(Registry.outbox_dedup_path(entity_id)),
+    refute File.exists?(Paths.outbox_dedup_path(entity_id)),
            "append path must not write the dedup file per record"
 
     :ok = WalWriter.fsync(pid)
@@ -476,7 +476,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     body = effect_body([], 9, %{channel: "in", error: "e", attempts: 1, payload: "p"})
     effect = WalWriter.encode_record(0, effect_header(), body)
-    wal_path = Registry.wal_path(entity_id)
+    wal_path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(wal_path))
 
     # Torn mid-record: the record is discarded entirely — the consumed
@@ -488,7 +488,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert InputLog.watermark(rc) == nil
     :ok = WalWriter.close(pid)
     File.rm!(wal_path)
-    File.rm(Registry.outbox_dedup_path(entity_id))
+    File.rm(Paths.outbox_dedup_path(entity_id))
 
     # Complete record: park AND offset recover together.
     File.write!(wal_path, effect)
@@ -513,7 +513,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     body = effect_body([output("k", "torn?")], 9)
     effect = WalWriter.encode_record(1, effect_header(), body)
 
-    wal_path = Registry.wal_path(entity_id)
+    wal_path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(wal_path))
 
     # Kill the controller at every byte boundary inside the effect append.
@@ -529,7 +529,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
       :ok = WalWriter.close(pid)
       # The writer truncated the torn tail; reset the fixture for the next cut.
       File.rm!(wal_path)
-      File.rm(Registry.outbox_dedup_path(entity_id))
+      File.rm(Paths.outbox_dedup_path(entity_id))
     end
 
     # The complete append recovers change + outputs + offset together.
@@ -585,7 +585,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     plain = WalWriter.encode_record(0, effect_header(), effect_body([output("k", "a")], 1))
     second = WalWriter.encode_record(1, effect_header(), effect_body([output("k", "b")], 2))
 
-    wal_path = Registry.wal_path(entity_id)
+    wal_path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(wal_path))
     File.write!(wal_path, plain <> second)
 

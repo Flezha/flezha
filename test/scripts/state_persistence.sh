@@ -447,7 +447,7 @@ await_flz_output "'flz state list ${OPERATIVE_ID}' reports entities" '"entity_ke
 
 # The namespaced layout itself, not merely "some file exists": a WAL under
 # `<state_root>/<namespace>/<operative_class>/<procedure_id>/<key>.wal` is
-# what `Flezha.State.Registry.class_dir/1` promises, and asserting the shape
+# what `Flezha.State.Paths.class_dir/1` promises, and asserting the shape
 # is what catches the layout moving out from under the contract.
 CLASS_DIR="${STATE_DIR}/${DEMO_NAMESPACE}/${OPERATIVE_ID}"
 note "verifying the namespaced WAL layout under ${CLASS_DIR}"

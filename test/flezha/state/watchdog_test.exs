@@ -414,7 +414,7 @@ defmodule Flezha.State.WatchdogTest do
     {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
 
     entity_id = {"rpo_#{uniq()}", "proc", "k1"}
-    path = Flezha.State.Registry.wal_path(entity_id)
+    path = Flezha.State.Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, TestHelpers.build_wal_record(0, "change"))
 

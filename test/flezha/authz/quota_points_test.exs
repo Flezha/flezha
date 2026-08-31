@@ -128,15 +128,15 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   describe "per-namespace mailbox watermark (§6.3)" do
     test "the credit window is capped by max_mailbox_bytes_total" do
       {:ok, _} = NamespaceStore.create("team-mail", quotas: %{max_mailbox_bytes_total: 4_096})
-      :ok = Flezha.State.Registry.ensure_claims_table()
-      :ok = Flezha.State.Registry.claim_namespace("mail-op", "team-mail")
+      :ok = Flezha.State.Paths.ensure_claims_table()
+      :ok = Flezha.State.Paths.claim_namespace("mail-op", "team-mail")
 
       assert Flezha.State.PersistenceResolver.credit_window_bytes("mail-op") == 4_096
 
       # A class in a namespace with the default (large) quota keeps the
       # configured window.
       {:ok, _} = NamespaceStore.create("team-wide", quotas: %{})
-      :ok = Flezha.State.Registry.claim_namespace("wide-op", "team-wide")
+      :ok = Flezha.State.Paths.claim_namespace("wide-op", "team-wide")
 
       assert Flezha.State.PersistenceResolver.credit_window_bytes("wide-op") ==
                Flezha.State.PersistenceResolver.wal_high_watermark_bytes()

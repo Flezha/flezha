@@ -3,7 +3,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.StatePathMigrator
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   setup do
     base =
@@ -128,14 +128,14 @@ defmodule Flezha.Boot.StatePathMigratorTest do
              "wal"
   end
 
-  test "Registry.scan_dir reads the migrated layout", %{base: base} do
+  test "Paths.scan_dir reads the migrated layout", %{base: base} do
     legacy = Path.join([base, "ce-aaaa1111", "MyOperative", "procedure-0"])
     File.mkdir_p!(legacy)
     File.write!(Path.join(legacy, "p1.wal"), "wal-bytes")
 
     StatePathMigrator.migrate()
 
-    %{wal_files: wals} = Registry.scan_dir({"MyOperative", "procedure-0", ""})
+    %{wal_files: wals} = Paths.scan_dir({"MyOperative", "procedure-0", ""})
     assert [{"p1", _path}] = wals
   end
 end

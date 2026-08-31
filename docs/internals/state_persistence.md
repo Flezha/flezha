@@ -33,7 +33,7 @@ plugins are subscribed.
 ```
 
 The triple `(operative_class, procedure_id, entity_key)` identifies an Entity's state and is all
-the wire carries. The namespace level is resolved at ONE seam, `Flezha.State.Registry.class_dir/1`:
+the wire carries. The namespace level is resolved at ONE seam, `Flezha.State.Paths.class_dir/1`:
 a claims ETS table (`:flezha_state_namespaces`, keyed `{state_root, class}`) → the on-disk layout
 → `_system`. An Operative records the claim when it binds; a class owned by another namespace
 refuses with `{:namespace_conflict, class, owner}`, which makes cross-namespace state hijack
@@ -54,7 +54,7 @@ unknown suffixes, so nothing surfaces as a phantom Entity.
 
 | Module | Role |
 |---|---|
-| `Flezha.State.Registry` | Path resolution, namespace claims, enumeration; no GenServer, I/O limited to `File.ls/1` and `atomic_install/2`. |
+| `Flezha.State.Paths` | Path resolution, namespace claims, enumeration; no GenServer, I/O limited to `File.ls/1` and `atomic_install/2`. |
 | `Flezha.State.Wire` | Codec for the `entity_state_change` / `entity_effect_record` / `entity_state_snapshot` / `delete_entity_state` / `park_payload` / compensation payload-ids, the postcard `EffectRecordBody`, the `flz.entity` / `flz.seq` / `flz.key` output stamps. |
 | `Flezha.State.Metrics` | Per-Entity `:counters` (`persisted_changes_total`, `wal_size_bytes`, `snapshot_seq`, `wal_shed_total`, `stale_writer_refused_total`, `fsync_total`, ...) in an ETS table. |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Entity `WalWriter`s plus the `WriterRegistry` process registry: `find_or_start/1`, `delete_entity/1`, `registered_ids/0`. Creates the claims, watermark and `ClassRegistry` tables so they outlive any one process. |

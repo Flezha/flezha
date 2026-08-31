@@ -7,7 +7,7 @@ defmodule Flezha.State.ProcInbox do
   `<state_root>/<namespace>/<instance_id>/<instance_id>/inbox.wal`, written
   through the same `WalWriter` framing + `FsyncBatcher` path as the sibling
   `proc.journal` under the reserved identity
-  `Registry.inbox_id/1` — no parallel persistence machinery. Every post-start
+  `Paths.inbox_id/1` — no parallel persistence machinery. Every post-start
   input is appended here **before** it is forwarded to the runner, so an
   input that arrives while the instance is suspended, crashed, or migrating is
   delivered on rehydrate instead of being dropped.
@@ -49,10 +49,10 @@ defmodule Flezha.State.ProcInbox do
   """
 
   alias Flezha.State.{
+    Paths,
     PersistenceResolver,
     ProcJournal,
     RecordLog,
-    Registry,
     Supervisor,
     WalWriter
   }
@@ -80,7 +80,7 @@ defmodule Flezha.State.ProcInbox do
       when is_binary(instance_id) and is_binary(message) and is_map(metadata) do
     {header, body} = encode(message, metadata)
 
-    case RecordLog.append(Registry.inbox_id(instance_id), header, body, @append_opts) do
+    case RecordLog.append(Paths.inbox_id(instance_id), header, body, @append_opts) do
       {:ok, seq} -> {:ok, offset(seq)}
       {:duplicate, seq} -> {:duplicate, offset(seq)}
       {:error, _} = err -> err
@@ -101,7 +101,7 @@ defmodule Flezha.State.ProcInbox do
     {header, body} = encode(message, metadata)
 
     RecordLog.append_async(
-      Registry.inbox_id(instance_id),
+      Paths.inbox_id(instance_id),
       header,
       body,
       @append_opts,
@@ -139,7 +139,7 @@ defmodule Flezha.State.ProcInbox do
   """
   @spec read(binary()) :: [entry()]
   def read(instance_id) when is_binary(instance_id) do
-    RecordLog.read(Registry.inbox_path(instance_id), fn seq, _header, body ->
+    RecordLog.read(Paths.inbox_path(instance_id), fn seq, _header, body ->
       decode_entry(offset(seq), body)
     end)
   end
@@ -163,8 +163,8 @@ defmodule Flezha.State.ProcInbox do
   """
   @spec truncate(binary(), non_neg_integer()) :: :ok
   def truncate(instance_id, offset) when is_binary(instance_id) and offset >= 0 do
-    if File.exists?(Registry.inbox_path(instance_id)) do
-      with {:ok, pid} <- Supervisor.find_or_start(Registry.inbox_id(instance_id)) do
+    if File.exists?(Paths.inbox_path(instance_id)) do
+      with {:ok, pid} <- Supervisor.find_or_start(Paths.inbox_id(instance_id)) do
         min_bytes = PersistenceResolver.record_log_cut_after_bytes()
         WalWriter.truncate_up_to_async(pid, seq(offset), min_bytes: min_bytes)
       end

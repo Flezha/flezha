@@ -18,7 +18,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, Store}
+  alias Flezha.AuthZ.{Config, DetsStore}
 
   @table :flz_authz_quota_counters
   @cache :flz_authz_quota_counters_cache
@@ -35,7 +35,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   @doc "Get the current counter for `(namespace, kind)`. Returns 0 when absent."
   @spec get(binary(), atom()) :: non_neg_integer()
   def get(namespace, kind) when is_binary(namespace) and is_atom(kind) do
-    case Store.cache_lookup(@cache, {namespace, kind}) do
+    case DetsStore.cache_lookup(@cache, {namespace, kind}) do
       {:ok, value} when is_integer(value) -> value
       _ -> 0
     end
@@ -80,7 +80,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   @impl true
   def init(_opts) do
-    Store.init_cached(@table, @cache, path())
+    DetsStore.init_cached(@table, @cache, path())
   end
 
   @impl true
@@ -90,7 +90,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   @impl true
   def handle_call({:set, namespace, kind, value}, _from, state) do
-    :ok = Store.put(@table, @cache, {namespace, kind}, value)
+    :ok = DetsStore.put(@table, @cache, {namespace, kind}, value)
     {:reply, :ok, state}
   end
 
@@ -124,7 +124,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
     new = max(current + delta, 0)
 
-    :ok = Store.put(@table, @cache, key, new)
+    :ok = DetsStore.put(@table, @cache, key, new)
 
     state
   end

@@ -8,7 +8,7 @@ defmodule Flezha.State.DeleteEntityTest do
   # async: false: writes Application env; a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{Registry, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Paths, Supervisor, TestHelpers, WalWriter}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -42,19 +42,19 @@ defmodule Flezha.State.DeleteEntityTest do
 
     # Snapshot + outbox files so all three families are present.
     {:ok, _} = Flezha.State.Snapshot.write_snapshot(pid, 1, header, "snap")
-    File.write!(Registry.outbox_dedup_path(pid), "dedup")
+    File.write!(Paths.outbox_dedup_path(pid), "dedup")
 
-    assert File.exists?(Registry.wal_path(pid))
-    assert Registry.snapshot_paths(pid) != []
-    assert File.exists?(Registry.outbox_dedup_path(pid))
+    assert File.exists?(Paths.wal_path(pid))
+    assert Paths.snapshot_paths(pid) != []
+    assert File.exists?(Paths.outbox_dedup_path(pid))
 
     assert {:ok, %{entity_id: ^pid, status: :ok}} = Supervisor.delete_entity(pid)
 
     # Writer stopped, every file gone.
     assert Supervisor.lookup(pid) == :error
-    refute File.exists?(Registry.wal_path(pid))
-    assert Registry.snapshot_paths(pid) == []
-    refute File.exists?(Registry.outbox_dedup_path(pid))
+    refute File.exists?(Paths.wal_path(pid))
+    assert Paths.snapshot_paths(pid) == []
+    refute File.exists?(Paths.outbox_dedup_path(pid))
   end
 
   test "deleting a never-seen entity is idempotent (returns :ok)", %{entity_id: pid} do
@@ -62,7 +62,7 @@ defmodule Flezha.State.DeleteEntityTest do
     assert {:ok, %{entity_id: ^pid, status: :ok}} = Supervisor.delete_entity(pid)
     # Still no writer, still no files — and no crash.
     assert Supervisor.lookup(pid) == :error
-    refute File.exists?(Registry.wal_path(pid))
+    refute File.exists?(Paths.wal_path(pid))
   end
 
   defp uniq, do: Integer.to_string(System.unique_integer([:positive]))

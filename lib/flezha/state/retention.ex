@@ -2,7 +2,7 @@ defmodule Flezha.State.Retention do
   @moduledoc """
   Sweeper enforcing `time_travel_retention_hours` per Operative class.
 
-  On each pass, walks every Entity under `Registry.state_root/0` and
+  On each pass, walks every Entity under `Paths.state_root/0` and
   prunes:
 
     * Snapshots strictly older than `now - retention_hours`, keeping at
@@ -32,8 +32,8 @@ defmodule Flezha.State.Retention do
   alias Flezha.State.{
     Completion,
     Metrics,
+    Paths,
     PersistenceResolver,
-    Registry,
     SeqIndex,
     Supervisor,
     WalWriter
@@ -90,7 +90,7 @@ defmodule Flezha.State.Retention do
   # ---------- Sweep ----------
 
   defp sweep_all() do
-    Enum.each(Registry.all_entities(), fn {operative_class, _, _} = pid ->
+    Enum.each(Paths.all_entities(), fn {operative_class, _, _} = pid ->
       hours =
         if ClassRegistry.capable?(operative_class, :time_travel?) do
           PersistenceResolver.retention_hours(operative_class)
@@ -111,12 +111,12 @@ defmodule Flezha.State.Retention do
   defp sweep_completed() do
     now = System.system_time(:second)
 
-    Enum.each(Registry.operative_classes(), fn operative_class ->
+    Enum.each(Paths.operative_classes(), fn operative_class ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
              Completion.read(operative_class),
            window = PersistenceResolver.workflow_completed_retention_hours(operative_class),
            true <- finished_at + window * 3600 < now do
-        _ = File.rm_rf(Registry.class_dir(operative_class))
+        _ = File.rm_rf(Paths.class_dir(operative_class))
       else
         _ -> :ok
       end
@@ -132,10 +132,10 @@ defmodule Flezha.State.Retention do
   @doc """
   Sweep a single Entity. Public for `flz state` debugging.
   """
-  @spec sweep_entity(Registry.entity_id(), non_neg_integer()) :: :ok
+  @spec sweep_entity(Paths.entity_id(), non_neg_integer()) :: :ok
   def sweep_entity(entity_id, retention_hours)
       when is_integer(retention_hours) and retention_hours >= 0 do
-    snaps = Registry.snapshot_paths(entity_id)
+    snaps = Paths.snapshot_paths(entity_id)
 
     case snaps do
       [] ->
@@ -185,7 +185,7 @@ defmodule Flezha.State.Retention do
   Rewrite the WAL keeping only records with `seq > keep_above_seq`.
   Atomic via `entity.wal.rewriting → rename`.
   """
-  @spec rewrite_wal_excluding_pre_seq(Registry.entity_id(), non_neg_integer()) :: :ok
+  @spec rewrite_wal_excluding_pre_seq(Paths.entity_id(), non_neg_integer()) :: :ok
   def rewrite_wal_excluding_pre_seq(entity_id, keep_above_seq) do
     case Supervisor.lookup(entity_id) do
       {:ok, pid} ->
@@ -201,7 +201,7 @@ defmodule Flezha.State.Retention do
   # No live writer, so the rewrite happens in-process — but through the same
   # primitive the writer uses, not a second copy of it.
   defp rewrite_offline(entity_id, keep_above_seq) do
-    wal_path = Registry.wal_path(entity_id)
+    wal_path = Paths.wal_path(entity_id)
 
     case :file.open(wal_path, [:raw, :read, :write, :binary]) do
       {:ok, device} ->

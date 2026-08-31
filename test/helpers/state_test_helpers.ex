@@ -9,7 +9,7 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.State.{FsyncBatcher, Outbox, Registry, Supervisor, WalWriter}
+  alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
 
   # The outputs of a received dispatch batch not yet asserted on.
   @dispatched {__MODULE__, :dispatched}
@@ -77,7 +77,7 @@ defmodule Flezha.State.TestHelpers do
   Used by the sink-plugin suites, which exercise the confirmation seam without a
   real persistence subsystem behind it.
   """
-  @spec stub_outbox_owner(Registry.entity_id()) :: :ok
+  @spec stub_outbox_owner(Paths.entity_id()) :: :ok
   def stub_outbox_owner(entity_id) do
     case Elixir.Registry.start_link(keys: :unique, name: Supervisor.registry_name()) do
       {:ok, _} -> :ok
@@ -93,7 +93,7 @@ defmodule Flezha.State.TestHelpers do
   entry `seq` — identity plus the confirmation token the owning writer waits
   on. `extra` merges over it for the fields a given sink reads.
   """
-  @spec guaranteed_metadata(Registry.entity_id(), non_neg_integer(), map()) :: map()
+  @spec guaranteed_metadata(Paths.entity_id(), non_neg_integer(), map()) :: map()
   def guaranteed_metadata({rc, sh, pk} = entity_id, seq, extra \\ %{}) do
     Map.merge(
       %{
@@ -294,11 +294,11 @@ defmodule Flezha.State.TestHelpers do
   placement guard resolves a factory's established language from byte 0 of a
   record header, so a test needs a real on-disk WAL rather than a stub.
   """
-  @spec write_wal_of_lang(Registry.entity_id(), byte()) :: :ok
+  @spec write_wal_of_lang(Paths.entity_id(), byte()) :: :ok
   def write_wal_of_lang(entity_id, sdk_lang) do
     body = "state-bytes"
     header = <<sdk_lang, 0::32, 1::32, 1, 0::16, :erlang.crc32(body)::32>>
-    path = Registry.wal_path(entity_id)
+    path = Paths.wal_path(entity_id)
 
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, build_wal_record(0, header, body))
@@ -318,14 +318,14 @@ defmodule Flezha.State.TestHelpers do
   collision case needs.
   """
   def write_wal(entity_id, seqs, tag \\ "change") do
-    path = Flezha.State.Registry.wal_path(entity_id)
+    path = Flezha.State.Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, wal_records(seqs, tag))
   end
 
   @doc "Append `seqs` to an Entity's existing WAL."
   def append_wal(entity_id, seqs, tag \\ "change") do
-    File.write!(Flezha.State.Registry.wal_path(entity_id), wal_records(seqs, tag), [:append])
+    File.write!(Flezha.State.Paths.wal_path(entity_id), wal_records(seqs, tag), [:append])
   end
 
   @doc "The framed bytes of `seqs`, as they land on disk."
@@ -335,13 +335,13 @@ defmodule Flezha.State.TestHelpers do
 
   @doc "Remove every durable file one Entity owns."
   def wipe_entity(entity_id) do
-    Enum.each(Flezha.State.Registry.entity_files(entity_id), &File.rm/1)
+    Enum.each(Flezha.State.Paths.entity_files(entity_id), &File.rm/1)
   end
 
   @doc """
   Construct a deterministic `entity_id` tuple usable as a fixture.
   """
-  @spec sample_entity_id(binary()) :: Registry.entity_id()
+  @spec sample_entity_id(binary()) :: Paths.entity_id()
   def sample_entity_id(suffix \\ "p1") do
     {"TestOperative", "TestProcedure", suffix}
   end
@@ -354,7 +354,7 @@ defmodule Flezha.State.TestHelpers do
   monitor's `:DOWN`, which happens after. A re-open in that window gets the
   dead pid back from `Supervisor.lookup/1` and the next call exits `:noproc`.
   """
-  @spec close_and_await(pid(), Registry.entity_id(), timeout()) :: :ok
+  @spec close_and_await(pid(), Paths.entity_id(), timeout()) :: :ok
   def close_and_await(server, entity_id, timeout_ms \\ 2_000) do
     WalWriter.close(server)
 

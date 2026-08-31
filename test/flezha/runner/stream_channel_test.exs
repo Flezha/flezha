@@ -305,7 +305,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
 
       seg = {class, "proc", "seg"}
-      wal = Flezha.State.Registry.wal_path(seg)
+      wal = Flezha.State.Paths.wal_path(seg)
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "dummy")
 

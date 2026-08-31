@@ -14,7 +14,7 @@ defmodule Flezha.State.WalRewindTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{FsyncBatcher, InputLog, Registry, Supervisor, TestHelpers, WalWriter, Wire}
+  alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers, WalWriter, Wire}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -70,7 +70,7 @@ defmodule Flezha.State.WalRewindTest do
   end
 
   defp wal_seqs(entity_id) do
-    path = Registry.wal_path(entity_id)
+    path = Paths.wal_path(entity_id)
     {:ok, device} = :file.open(path, [:raw, :read, :binary])
 
     try do
@@ -118,7 +118,7 @@ defmodule Flezha.State.WalRewindTest do
       # The snapshot at 2 is precisely what a restore to seq 3 needs. Deleting it
       # (as a realign would) would leave the Entity with no baseline to rebuild
       # from — a wipe wearing a rewind's name.
-      assert [{2, _}] = Registry.snapshot_paths(ctx.entity_id)
+      assert [{2, _}] = Paths.snapshot_paths(ctx.entity_id)
     end
 
     test "bumps to the epoch it is given, so a re-run cannot double-bump", ctx do

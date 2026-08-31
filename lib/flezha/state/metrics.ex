@@ -20,7 +20,7 @@ defmodule Flezha.State.Metrics do
   module-level `:ets` table keyed by `entity_id`.
   """
 
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   @table __MODULE__
 
@@ -43,7 +43,7 @@ defmodule Flezha.State.Metrics do
   @spec counters() :: [atom()]
   def counters(), do: @counters
 
-  @spec for_entity(Registry.entity_id()) :: :counters.counters_ref()
+  @spec for_entity(Paths.entity_id()) :: :counters.counters_ref()
   def for_entity(entity_id) do
     ensure_table()
 
@@ -81,7 +81,7 @@ defmodule Flezha.State.Metrics do
     Map.new(@counters, fn name -> {name, :counters.get(ref, index!(name))} end)
   end
 
-  @spec drop_entity(Registry.entity_id()) :: :ok
+  @spec drop_entity(Paths.entity_id()) :: :ok
   def drop_entity(entity_id) do
     ensure_table()
     :ets.delete(@table, entity_id)
@@ -93,13 +93,31 @@ defmodule Flezha.State.Metrics do
   `[{entity_id, %{counter_name => value}}]`. Used by the metrics
   exporter and by `flz state list`.
   """
-  @spec snapshot_all() :: [{Registry.entity_id(), %{atom() => integer()}}]
+  @spec snapshot_all() :: [{Paths.entity_id(), %{atom() => integer()}}]
   def snapshot_all() do
     ensure_table()
 
     :ets.tab2list(@table)
     |> Enum.map(fn {entity_id, ref} -> {entity_id, to_map(ref)} end)
   end
+
+  @doc """
+  Build the flat metrics map.
+  """
+  @spec gather() :: %{binary() => integer()}
+  def gather() do
+    snapshot_all()
+    |> Enum.flat_map(&flatten/1)
+    |> Map.new()
+  end
+
+  @doc """
+  Build the per-Entity metrics list — keyed structurally rather than
+  flattened to a metric name. Useful for the CLI (`flz state list`) and
+  the `flz operative info` extension.
+  """
+  @spec by_entity() :: [{Paths.entity_id(), %{atom() => integer()}}]
+  def by_entity(), do: snapshot_all()
 
   defp index!(name) do
     Map.fetch!(@counter_indices, name)
@@ -117,5 +135,15 @@ defmodule Flezha.State.Metrics do
       _ ->
         :ok
     end
+  end
+
+  defp flatten({{_ce, operative_class, procedure_id, entity_key}, counters}) do
+    prefix =
+      "flezha.entity." <>
+        operative_class <> "." <> procedure_id <> "." <> Paths.encode_entity_key(entity_key)
+
+    Enum.map(counters, fn {name, value} ->
+      {prefix <> "." <> Atom.to_string(name), value}
+    end)
   end
 end

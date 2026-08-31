@@ -24,10 +24,10 @@ defmodule Flezha.Operative.Replay do
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
+  alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
-  alias Flezha.State.Registry
   alias Flezha.State.Restore
 
   require Logger
@@ -196,7 +196,7 @@ defmodule Flezha.Operative.Replay do
   and folding new inputs onto empty state would lose it silently. An Entity
   with no snapshot and a zero-length WAL is a SUCCESS and binds normally.
   """
-  @spec await_restore(binary(), Registry.entity_id()) :: :ok | {:error, term()}
+  @spec await_restore(binary(), Paths.entity_id()) :: :ok | {:error, term()}
   def await_restore(runner_id, entity_id) do
     case Commands.await_restore_init_state(runner_id, entity_id) do
       {:ok, _raw} ->
@@ -249,7 +249,7 @@ defmodule Flezha.Operative.Replay do
       DurabilityTier.hydrate_operative(operative_class)
 
       operative_class
-      |> Registry.entities_of()
+      |> Paths.entities_of()
       |> Enum.filter(&Restore.has_persisted_state?/1)
     else
       []
@@ -321,7 +321,7 @@ defmodule Flezha.Operative.Replay do
   def replay_journaled_inputs(%Overwatch{} = state) do
     operative_class = Overwatch.operative_class(state)
 
-    if File.exists?(Registry.input_log_path(operative_class)) do
+    if File.exists?(Paths.input_log_path(operative_class)) do
       floor = InputLog.watermark(operative_class) || -1
       last = InputLog.last_offset(operative_class)
 

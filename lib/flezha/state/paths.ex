@@ -1,4 +1,4 @@
-defmodule Flezha.State.Registry do
+defmodule Flezha.State.Paths do
   @moduledoc """
   Path resolution for per-Entity WAL, snapshot, and outbox-dedup files.
 

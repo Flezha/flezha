@@ -22,7 +22,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.Registry, as: StateRegistry
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.FakeStartRegistry
 
   @namespace "partition-start-test"
@@ -256,10 +256,10 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       _ = started_members()
       :ets.delete(registry, "ohlc#p2")
 
-      wal = StateRegistry.wal_path({"ohlc#p2", "proc", "key"})
+      wal = Paths.wal_path({"ohlc#p2", "proc", "key"})
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "durable-bytes")
-      on_exit(fn -> File.rm_rf(StateRegistry.class_dir("ohlc#p2")) end)
+      on_exit(fn -> File.rm_rf(Paths.class_dir("ohlc#p2")) end)
 
       assert {:ok, %{members: ["ohlc#p2"]}} = PartitionGroup.start(@namespace, builder(), 3)
 

@@ -13,7 +13,7 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
     # Private stub bites only the in-process (regression) path; the spawned
     # worker calls through to the real (fast) scan. A regression therefore
     # hangs here rather than returning late.
-    stub(Flezha.State.Registry, :all_entities, fn ->
+    stub(Flezha.State.Paths, :all_entities, fn ->
       FlezhaTest.Helper.NodeTestHelper.park()
       []
     end)

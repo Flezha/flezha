@@ -13,7 +13,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.StatePathMigrator
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias Flezha.State.TestHelpers
 
   setup do
@@ -32,16 +32,16 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
 
     # Written through the resolver — which places it under the `_system`
     # namespace level for an unclaimed class.
-    wal = Registry.wal_path(pid)
+    wal = Paths.wal_path(pid)
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, TestHelpers.build_wal_record(1, "change"))
 
     # Simulate the boot-time migration that runs before the State supervisor.
     _ = StatePathMigrator.migrate()
 
-    assert Registry.state_root() == root
+    assert Paths.state_root() == root
     assert File.exists?(wal), "migrate/0 orphaned the resolver-written WAL"
-    assert pid in Registry.all_entities()
+    assert pid in Paths.all_entities()
   end
 
   test "FLEZHA_STATE_DIR is the single source for both resolver and migrator" do
@@ -58,10 +58,10 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
     on_exit(fn -> File.rm_rf!(dir) end)
     System.put_env("FLEZHA_STATE_DIR", dir)
 
-    assert Registry.state_root() == dir
+    assert Paths.state_root() == dir
 
     pid = TestHelpers.sample_entity_id("envdir")
-    wal = Registry.wal_path(pid)
+    wal = Paths.wal_path(pid)
     assert String.starts_with?(wal, dir)
 
     File.mkdir_p!(Path.dirname(wal))
@@ -70,6 +70,6 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
     # The migrator resolves the same root, so the WAL is found after "restart".
     _ = StatePathMigrator.migrate()
     assert File.exists?(wal)
-    assert pid in Registry.all_entities()
+    assert pid in Paths.all_entities()
   end
 end

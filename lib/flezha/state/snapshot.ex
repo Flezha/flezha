@@ -11,7 +11,7 @@ defmodule Flezha.State.Snapshot do
   The write sequence is `open .tmp → write → fsync → close → rename →
   truncate WAL`. There are three failure windows:
 
-    1. **Crash before rename** — leaves an orphan `.tmp`. `Registry.scan_dir/1`
+    1. **Crash before rename** — leaves an orphan `.tmp`. `Paths.scan_dir/1`
        ignores `.tmp` files; the orphan is overwritten on the next compaction.
     2. **Crash between rename and WAL-truncate** — the snapshot is durable
        but the WAL still contains records covered by the snapshot. Restore
@@ -24,7 +24,7 @@ defmodule Flezha.State.Snapshot do
   No reconciliation step is required at boot.
   """
 
-  alias Flezha.State.{Metrics, Registry, Supervisor, WalWriter}
+  alias Flezha.State.{Metrics, Paths, Supervisor, WalWriter}
 
   @header_size 16
 
@@ -33,17 +33,17 @@ defmodule Flezha.State.Snapshot do
   on success, after the rename is durable. Returns the absolute path
   the snapshot was written to.
   """
-  @spec write_snapshot(Registry.entity_id(), non_neg_integer(), binary(), binary()) ::
+  @spec write_snapshot(Paths.entity_id(), non_neg_integer(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
   def write_snapshot(entity_id, seq, header, snapshot_bytes)
       when is_integer(seq) and seq >= 0 and is_binary(header) and is_binary(snapshot_bytes) do
     if byte_size(header) != @header_size do
       {:error, {:bad_header_size, byte_size(header)}}
     else
-      dir = Registry.state_dir(entity_id)
+      dir = Paths.state_dir(entity_id)
       File.mkdir_p!(dir)
 
-      final_path = Registry.snapshot_path(entity_id, seq)
+      final_path = Paths.snapshot_path(entity_id, seq)
       tmp_path = final_path <> ".tmp"
 
       crc = :erlang.crc32(<<header::binary, snapshot_bytes::binary>>)
@@ -97,9 +97,9 @@ defmodule Flezha.State.Snapshot do
   @doc """
   Highest-seq snapshot for the Entity, or `nil` if none exist.
   """
-  @spec latest_snapshot(Registry.entity_id()) :: {non_neg_integer(), binary()} | nil
+  @spec latest_snapshot(Paths.entity_id()) :: {non_neg_integer(), binary()} | nil
   def latest_snapshot(entity_id) do
-    case Registry.snapshot_paths(entity_id) do
+    case Paths.snapshot_paths(entity_id) do
       [] -> nil
       paths -> List.last(paths)
     end
@@ -108,9 +108,9 @@ defmodule Flezha.State.Snapshot do
   @doc """
   Remove a single snapshot file by seq. No-op if absent.
   """
-  @spec delete_snapshot(Registry.entity_id(), non_neg_integer()) :: :ok
+  @spec delete_snapshot(Paths.entity_id(), non_neg_integer()) :: :ok
   def delete_snapshot(entity_id, seq) do
-    _ = File.rm(Registry.snapshot_path(entity_id, seq))
+    _ = File.rm(Paths.snapshot_path(entity_id, seq))
     :ok
   end
 end

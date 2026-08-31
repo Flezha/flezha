@@ -14,7 +14,7 @@ defmodule FlezhaTest.Helper.CompactionAssertions do
 
   @doc "Total bytes across the Entity's `*.wal` files."
   def wal_bytes(entity_id) do
-    Flezha.State.Registry.state_dir(entity_id)
+    Flezha.State.Paths.state_dir(entity_id)
     |> Path.join("*.wal")
     |> Path.wildcard()
     |> Enum.map(fn path ->
@@ -27,7 +27,7 @@ defmodule FlezhaTest.Helper.CompactionAssertions do
   end
 
   @doc "The Entity's snapshot files as `{seq, path}` (empty when none written)."
-  def snapshot_files(entity_id), do: Flezha.State.Registry.snapshot_paths(entity_id)
+  def snapshot_files(entity_id), do: Flezha.State.Paths.snapshot_paths(entity_id)
 
   @doc "Wait until the Entity's WAL holds bytes, returning them; `0` on timeout."
   def wait_for_wal_bytes(entity_id, timeout_ms) do

@@ -26,7 +26,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   WAL file verbatim.
   """
 
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   @magic "FLZM"
   @version 1
@@ -40,7 +40,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @cut_keys [:epoch, :snapshots, :ranges, :file, :source_offsets, :markers, :owner, :claim]
 
   @type ref ::
-          {:entity, Registry.entity_id()}
+          {:entity, Paths.entity_id()}
           | {:input_log, binary()}
           | {:cspec, {binary(), binary()}}
           | {:dlq, {binary(), binary()}}
@@ -279,7 +279,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @spec ref_of_blob_key(binary()) :: {:ok, ref()} | :error
   def ref_of_blob_key("blob/" <> path) do
     # The blob name is the last segment and no segment can contain "/" —
-    # `Registry.encode_entity_key/1` emits url-base64, which has none.
+    # `Paths.encode_entity_key/1` emits url-base64, which has none.
     [tag | rest] = String.split(path, "/")
 
     with {:ok, {kind, segments}} <- Map.fetch(@classes, tag),
@@ -345,7 +345,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   # Reuses the Entity-key filesystem encoding: the same "safe chars or
   # url-base64" rule that keeps a key legal as a filename keeps it legal as a
   # storage key segment, so one identity maps to one name on both sides.
-  defp segment(part), do: Registry.encode_entity_key(part)
+  defp segment(part), do: Paths.encode_entity_key(part)
 
-  defp unsegment(part), do: Registry.decode_entity_key(part)
+  defp unsegment(part), do: Paths.decode_entity_key(part)
 end

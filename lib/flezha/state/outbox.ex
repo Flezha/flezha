@@ -48,7 +48,7 @@ defmodule Flezha.State.Outbox do
 
   require Logger
 
-  alias Flezha.State.{Registry, Wire}
+  alias Flezha.State.{Paths, Wire}
 
   @type t :: %{
           last_persisted_seq: non_neg_integer(),
@@ -56,9 +56,9 @@ defmodule Flezha.State.Outbox do
           epoch: non_neg_integer()
         }
 
-  @spec read(Registry.entity_id()) :: t()
+  @spec read(Paths.entity_id()) :: t()
   def read(entity_id) do
-    path = Registry.outbox_dedup_path(entity_id)
+    path = Paths.outbox_dedup_path(entity_id)
 
     case File.read(path) do
       {:ok, <<seq::64-big, flushed::64-big-signed, epoch::64-big>>} ->
@@ -72,7 +72,7 @@ defmodule Flezha.State.Outbox do
     end
   end
 
-  @spec write(Registry.entity_id(), t()) :: :ok | {:error, term()}
+  @spec write(Paths.entity_id(), t()) :: :ok | {:error, term()}
   def write(entity_id, %{
         last_persisted_seq: seq,
         outbox_flushed_seq: flushed,
@@ -80,7 +80,7 @@ defmodule Flezha.State.Outbox do
       })
       when is_integer(seq) and seq >= 0 and is_integer(flushed) and flushed >= -1 and
              is_integer(epoch) and epoch >= 0 do
-    path = Registry.outbox_dedup_path(entity_id)
+    path = Paths.outbox_dedup_path(entity_id)
     tmp_path = path <> ".tmp"
 
     # No mkdir: the WAL open owns dir creation, so a cache write can never
@@ -108,14 +108,14 @@ defmodule Flezha.State.Outbox do
           | {:marker, byte(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
 
   @typedoc "Decoded `flz.ack` token: who owns the cursor, whose output it is, what it completes."
-  @type ack :: %{owner: Registry.entity_id(), target: Registry.entity_id(), key: key()}
+  @type ack :: %{owner: Paths.entity_id(), target: Paths.entity_id(), key: key()}
 
   @typedoc """
   One stamped output on its way to the chain: the payload, the metadata it
   carries, and the entry the dispatcher settles it under — the decoded ack, so
   neither the dispatcher nor the chain pays a token decode.
   """
-  @type output :: {binary(), map(), %{owner: Registry.entity_id(), key: key()}}
+  @type output :: {binary(), map(), %{owner: Paths.entity_id(), key: key()}}
 
   @doc "Metadata key carrying the confirmation token on a durable output."
   @spec ack_key() :: binary()
@@ -182,10 +182,10 @@ defmodule Flezha.State.Outbox do
   output; a workflow instance's journal writer owns output belonging to other
   Entities.
   """
-  @spec token(Registry.entity_id(), key()) :: binary()
+  @spec token(Paths.entity_id(), key()) :: binary()
   def token(owner, key), do: token(owner, owner, key)
 
-  @spec token(Registry.entity_id(), Registry.entity_id() | binary(), key()) :: binary()
+  @spec token(Paths.entity_id(), Paths.entity_id() | binary(), key()) :: binary()
   def token(owner, target, key) do
     owner = entity_bytes(owner)
     target = entity_bytes(target)
@@ -315,7 +315,7 @@ defmodule Flezha.State.Outbox do
   Run a completed entry's journal-marker completion. Called by the owning
   writer, which must not append to its own log from inside its own callback.
   """
-  @spec complete(Registry.entity_id(), key()) :: :ok
+  @spec complete(Paths.entity_id(), key()) :: :ok
   def complete({instance_id, _, _}, {:marker, for_type, proc_idx, iter, epoch}) do
     Flezha.State.ProcJournal.mark_flushed(instance_id, for_type, proc_idx, iter, epoch)
   end

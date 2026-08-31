@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 01:00 — HANDOVER. Phase 1 rows 1, 2 and 3 are DONE; row 3.5 has a survey worker that may or may not have finished (see *Current worker*). Area 4 is UNBLOCKED.
+**Last updated**: 2026-08-31 — session 3. Phase 1 rows 1, 2 and 3 DONE. Row 3.5 (`fix-opaque-module-names`) is **APPROVED** — the survey survived supervisor review and four of its load-bearing claims were re-verified against the repo. Implementing in four segments. Area 4 is UNBLOCKED and next after it.
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -106,27 +106,100 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**A survey worker for row 3.5 (`fix-opaque-module-names`) was spawned at 00:44
-and this session ended around it.** If
-`openspec/changes/fix-opaque-module-names/` exists on this machine, that is its
-output and it was never reviewed by a supervisor — read it, but verify every
-claim before acting, and note the durable-name question it was asked to settle
-GATES every rename in it. If the directory does not exist, the survey never
-finished and must be re-run. `openspec/changes/` is gitignored, so nothing about
-it is in the history either way.
+### Segment B — verified 2026-08-31, commit `055054f2`
 
-**Handover notes for a fresh session**
-- Run `/loop /refactor`. The skill's §0.5 sends you to the Phase 1 queue below
-  before any area; §6b and charter §1b govern what you do when a worker finds a
-  defect; §1's last bullet is why you must not stage a file a live worker is
-  editing (this session did that once and absorbed a worker's edits into an
-  unrelated commit).
-- Two other local Claude sessions were live in this tree during this one. Check
-  `ListAgents` before assuming an uncommitted change is yours.
-- The `## Resolved` section of `docs/known_issues.md` now has TWO formats — an
-  older table and two newer `### … — RESOLVED` entries added by this session.
-  Cosmetic, but pick one before it becomes three.
+Batches 4-6: the four folds, full verification with a live restore drive, and the
+naming gate. 25 boxes ticked, each verified against the repo.
 
+**The folds landed exactly as designed.** Four files deleted; parents at
+**131 / 149 / 484 / 387** against the predicted ~130 / ~156 / ~490 / ~390, none
+near the 800 ceiling. The moved regions are byte-identical — checked by diffing
+each against `git show HEAD:<old file>`, not by reading the report — and both
+`@prefix` literals plus all 11 `:telemetry.execute` tuples are unchanged, so no
+event name moved. **`lib/` net −37 lines**, deletion-funded as required.
+
+**The bare-token sweep that segment A's `wal_transfer.ex:191` bought found nothing
+this time**, which is the right outcome and still worth running: `Parser` zero
+hits, `Telemetry` five and all prose, `Metrics` six and all aliases of the
+surviving `Flezha.State.Metrics`.
+
+**The gate is proved, twice.** The worker's red-first proof, and then the
+supervisor's own: a retired name appended to a tracked file turns it red and the
+output **names the file and line**; removing it turns it green; the file restores
+byte-identical by `sha256sum -c`. Its seven patterns are `re.escape(path) + r"\b"`
+— the boundary is what keeps `Flezha.AuthZ.StoresTest` out **by construction**,
+which segment A hit as a false positive. Wired into `naming.yml`.
+
+**The `record_tag` correction was load-bearing and moved again while it was being
+made.** `tasks.md` 6.4 scoped historical citations to `docs/dev_notes/`; the true
+set is six across three places — the three dev-notes citations plus
+`docs/known_issues.md` and this board. A `dev_notes`-only exemption would have
+been red on day one. The count went 8 → 6 between segment A's grep and segment
+B's because this board was rewritten in between: **a gate's exemption list is a
+measurement of a moving tree, not a constant.**
+
+**Supervisor's own verification**: `mix test test/plugin/ test/flezha/service/
+test/flezha/state/metrics_test.exs` **588 passed**; `mix compile
+--warnings-as-errors` and `mix format --check-formatted` clean; no retired name
+live anywhere in `lib test config openspec/specs`; diff confined to `lib`, `test`,
+`docs`, `scripts`, the one CI workflow and the one mechanical spec rename.
+
+**5.4 was driven, not reasoned about** — a real Rust runner and controller, three
+legs each asserted on a *delivered payload* rather than the phase word (which
+`extension/table.ex:177-182` will report as `:running` for a dead plugin). Leg 1
+ran the folded `Identificator.string_to_pid/1` live; leg 2 stopped
+`preserve_state: true` and restarted, with seq continuing 0.0 → 1.0 so the state
+genuinely survived; leg 3 killed the Overwatch so process_hub restarted it **from
+the declared cspec** — the term carrying the provider module atom — and the sink
+delivered at seq 2.0. That is the durable-name question of batch 2, answered live.
+
+**The drive is NOT kept as a test, deliberately.** Its value was the one-time live
+observation, and the paths it exercises already have system-tier coverage
+(`effectively_once_e2e`, `schema_evolution_e2e`, `remote_durability_e2e`,
+`TierE2EHarness`) which ran **1938 green on this exact tree**. A bespoke drive
+script beside `TierE2EHarness` is the parallel mechanism this programme exists to
+remove — charter §2. It is at `/tmp/segb_drive_test_kept.exs` until the box is
+rebooted; nothing depends on it.
+
+**KI-62 filed and ruled NOT A BUG** — `convert_value/2` does not run on the struct
+plugin path. Both contracts are written down and they differ on purpose:
+`provider_behaviour.ex:78` says the function exists because *"CLI plugin opts
+arrive as"* strings, which is why its only caller takes a `string_map`, and
+`beam_msg_forward.ex`'s moduledoc says **"Required opts: `:recv_pid` (pid)"**. A
+binary there is a caller breaking a documented contract. Recorded in *Resolved*
+with the residual — the contract is enforced by a raise deep in the sink chain
+instead of a refusal at enable, so the mistake surfaces far from its cause.
+
+**Three reds confirmed pre-existing and left standing**: `check-kind-naming.sh`
+(five `bounded` prose hits; `git diff HEAD | grep '^+' | grep -ci bounded` = 0),
+`php-cs-fixer` (a parse error inside `sdk/php/vendor/symfony/`, and the diff has
+zero PHP files), and `reuse lint` (it listed the four deleted files while their
+deletions were unstaged — self-clearing at commit, and it did).
+
+`refactor_metrics.py --check` stays exit 1 on drift from `c5bdc26b`. The one line
+the diff appears in is `lib/flezha/state prod_loc` via `state/metrics.ex (+16)` —
+charter §11's named case, lines arriving *from* `lib/flezha/plugin`, which does not
+appear in the regression list at all because the deletion on that side is larger.
+
+### Segmentation of row 3.5
+
+| segment | batches | content | state |
+|---|---|---|---|
+| A | 1, 2, 3 | re-derive survey + durable set; commit 1a — three renames | **done**, `0cb58166` |
+| B | 4, 5, 6 | commit 1b folds; commit 1c full verification + live restore drive; commit 1d the gate, proved red first | next |
+| C | 7, 8 | the alias pass, `lib/` then `test/` — **689 sites now, not 653** | next |
+| D | 9, 10 | `.credo.exs`, the measured ratchet, final verification | |
+
+**Two supervisor rulings every remaining segment carries:**
+
+1. **The net-LOC excess has no charter justification and must not be given one.**
+   `tasks.md` 10.5 says to "name the charter rule that forced it per §1". There is
+   none: the alias lines are added because the user ruled on KI-10, and charter §1
+   admits only §2's reuse order or a §7 ceiling. An honest "no charter rule; the
+   user ruled" is the right answer.
+2. **The `openspec/specs` edits are mechanical name updates carrying no requirement
+   change**, so they need no `## MODIFIED Requirements` delta — the change's only
+   delta stays `code-quality-baseline` (ADDED).
 
 **Phase 1 row 3, `close-prometheus-label-coercion`, is DONE** — `55f32234` +
 the close-out commit; archived, `observability-export` amended. Slice 124
@@ -788,7 +861,7 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | 1 | ~~`fix-java-workflow-resume-duplication`~~ → `java-diamond-resume` | KI-33 (P1) | **DONE** — `4de341b5` + `f2c7868d`, archived. Its filed diagnosis was refuted in both halves: nothing was re-run (one `proc_committed` per proc at `iter=0`) and it is not a resume defect at all (the same 9 payloads arrive with no crash). The mechanism was `collectEdgeOutputs` emitting one `Edge` output per CONSUMER — right for a stream, wrong for a workflow stage. Java e2e 17/21 → 21/21. **Area 4 is unblocked.** |
 | 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48, KI-49, KI-50 | **DONE** — `21185253` + the close-out commit. Absorbed all three: they were believed to be the only sources keeping the uncaptured-log gate from reporting. They were not — see rows 7 and 8. |
 | 3 | `close-prometheus-label-coercion` | KI-45 (P1), KI-59 | **DONE** — `55f32234` + close-out. KI-46 deferred by name (`close-otlp-typed-attributes`): typing the values would have destroyed this change's only control. |
-| 3.5 | `fix-opaque-module-names` | KI-10 | **SURVEYED, proposal written and `--strict` valid, NOT reviewed.** 3 renames, 4 folds, 260 keeps; one change in three ordered commits. The survey refuted this board's sequencing claim by an order of magnitude — see the detail block below. |
+| 3.5 | `fix-opaque-module-names` | KI-10 | **APPROVED 2026-08-31, implementing (segment A).** 3 renames, 4 folds, 260 keeps; one change in three ordered commits. The survey refuted this board's sequencing claim by an order of magnitude — see the detail block below. |
 | 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | Tests that lie or leak. KI-49 and KI-50 went to row 2's change; KI-54 arrives here — a `ForwardWorker` retry outliving its test, the same shape as the KI-49 row 2 closed, so row 2's await pattern is the candidate fix. |
 | 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
 | 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
@@ -825,10 +898,12 @@ so they are recorded before the plan.**
   is that credo's `AliasUsage` ships `excluded_lastnames` already covering
   `Registry`, `Stream`, `Supervisor`, `IO`, `Task`, `Application` — **credo
   enforces rule 2 for us and never asks for those renames.**
+<!-- module-naming-record:begin -->
 - **"The tree uses Elixir's own `Registry` by bare name in 7 places, so
   `Flezha.State.Registry` cannot be aliased there" was wrong.** 7 occurrences in
   5 files, and **none of them references `Flezha.State.Registry`**. Zero actual
   conflict.
+<!-- module-naming-record:end -->
 - **The collision list was incomplete**: 19 segments over 47 modules, not 13
   over 35 — `State`×3 and `Postgres`/`Extension`/`Counters`/`Codec`/`Backoff`×2
   were missed.

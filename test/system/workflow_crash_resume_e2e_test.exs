@@ -60,7 +60,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   alias Flezha.State.Completion
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :workflow_crash_resume
@@ -313,9 +313,9 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         )
 
       assert {:ok, []} = Flezha.State.ProcJournal.read(operative_id)
-      refute File.exists?(Flezha.State.Registry.journal_path(operative_id))
+      refute File.exists?(Flezha.State.Paths.journal_path(operative_id))
 
-      assert [Registry.class_dir(operative_id), "**", "*.wal"]
+      assert [Paths.class_dir(operative_id), "**", "*.wal"]
              |> Path.join()
              |> Path.wildcard() == [],
              "an opted-out class must write no WAL"
@@ -471,10 +471,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # record boundary is precisely what a crash produces. The live journal writer
   # is closed first so it does not append past the truncation point.
   defp drop_flush_markers(operative_id) do
-    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Registry.journal_id(operative_id))
+    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(operative_id))
     Flezha.State.WalWriter.close(pid)
 
-    path = Registry.journal_path(operative_id)
+    path = Paths.journal_path(operative_id)
     bytes = File.read!(path)
     kept = truncate_at_flush_marker(bytes, 0)
 
@@ -630,7 +630,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # stream one), so a snapshot lands beside the turn WAL.
       assert wait_until(fn -> snapshot_count(operative_id, "chat_turn") > 0 end, 20_000),
              "no boundary snapshot for chat_turn after two committed iterations; dir holds " <>
-               inspect(File.ls(Path.join(Registry.class_dir(operative_id), "chat_turn")))
+               inspect(File.ls(Path.join(Paths.class_dir(operative_id), "chat_turn")))
 
       assert wait_until(fn -> ProcJournal.restore_state(operative_id).parked end, 20_000),
              "the idle loop never parked at its committed boundary"
@@ -1235,7 +1235,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # Number of per-Entity compensation-done markers the controller has written
   # for this operative (one per compensated Entity).
   defp comp_done_count(operative_id) do
-    [Registry.class_dir(operative_id), "**", "*.comp_done"]
+    [Paths.class_dir(operative_id), "**", "*.comp_done"]
     |> Path.join()
     |> Path.wildcard()
     |> length()
@@ -1244,18 +1244,18 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # Count change-log records in a procedure's retained WAL file(s). The WAL is
   # a stream of `<seq::64><len::32><body::len><crc::32>` records.
   defp snapshot_count(operative_id, procedure),
-    do: length(Registry.snapshot_paths({operative_id, procedure, ""}))
+    do: length(Paths.snapshot_paths({operative_id, procedure, ""}))
 
   # Distinct Changes applied to the keyless Entity: the seqs still in its WAL
   # plus everything its latest snapshot folded (seq 0..snapshot_seq).
   defp change_count(operative_id, procedure) do
     folded =
-      case Registry.snapshot_paths({operative_id, procedure, ""}) do
+      case Paths.snapshot_paths({operative_id, procedure, ""}) do
         [] -> MapSet.new()
         snaps -> snaps |> List.last() |> elem(0) |> then(&MapSet.new(0..&1//1))
       end
 
-    [Registry.class_dir(operative_id), procedure, "*.wal"]
+    [Paths.class_dir(operative_id), procedure, "*.wal"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.flat_map(fn path -> wal_seqs(File.read!(path), []) end)
@@ -1273,7 +1273,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp wal_seqs(_, acc), do: acc
 
   defp wal_record_count(operative_id, procedure) do
-    [Registry.class_dir(operative_id), procedure, "*.wal"]
+    [Paths.class_dir(operative_id), procedure, "*.wal"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.map(fn path -> count_wal_records(File.read!(path), 0) end)

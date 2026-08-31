@@ -14,7 +14,7 @@ defmodule Flezha.AuthZ.TokenStore do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Config, Namespace, Role, Store}
+  alias Flezha.AuthZ.{Config, DetsStore, Namespace, Role}
   alias Flezha.Observability.{Bus, Signal}
 
   @table :flz_authz_tokens
@@ -186,7 +186,7 @@ defmodule Flezha.AuthZ.TokenStore do
 
   @impl true
   def init(_opts) do
-    Store.init_table(@table, path())
+    DetsStore.init_table(@table, path())
   end
 
   @impl true

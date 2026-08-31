@@ -211,7 +211,7 @@ defmodule Flezha.Service.OperativeManager do
          :ok <- check_operative_quota(namespace),
          :ok <- check_entity_quota(namespace, operative),
          :ok <- check_disk_quota(namespace),
-         :ok <- Flezha.State.Registry.claim_namespace(operative.id, namespace) do
+         :ok <- Flezha.State.Paths.claim_namespace(operative.id, namespace) do
       case init_operative(namespace, operative) do
         {:ok, _} = ok ->
           _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_operatives, 1)
@@ -525,7 +525,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp do_delete_operative_state_dir(operative_id) do
-    class_dir = Flezha.State.Registry.class_dir(operative_id)
+    class_dir = Flezha.State.Paths.class_dir(operative_id)
 
     case File.ls(class_dir) do
       {:ok, procedure_names} ->

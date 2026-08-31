@@ -96,6 +96,19 @@ defmodule Flezha.Service.Identificator do
     gen_via(runner_id, "scs_" <> Integer.to_string(count_nr))
   end
 
+  def string_to_pid(pname) when is_binary(pname) do
+    try do
+      pname = String.to_existing_atom(pname)
+
+      case Process.whereis(pname) do
+        nil -> {:error, "Process #{pname} not found"}
+        pid -> {:ok, pid}
+      end
+    catch
+      _ -> {:error, "Invalid PID format"}
+    end
+  end
+
   defp gen_via(prefix, suffix) do
     {:via, Registry, {__MODULE__, gen_id(prefix, suffix)}}
   end

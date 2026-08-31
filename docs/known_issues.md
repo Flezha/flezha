@@ -1067,6 +1067,58 @@ since carries its own date.
 
 ## P3 — warts, wording, and measurement notes
 
+### KI-61 · `RecordLog`'s two `@spec`s name `Elixir.Registry.entity_id/0`, a type that does not exist
+
+- **Severity**: P3 · specs and one moduledoc line, no runtime effect.
+- **Where**: `lib/flezha/state/record_log.ex:36` and `:57` —
+  `@spec append(Registry.entity_id(), …)` and the `Registry.entity_id()`
+  argument of the read spec — plus `:17`, whose moduledoc says
+  `Registry.scan_dir/1`. The file's only alias is
+  `alias Flezha.State.{Supervisor, WalWriter}` (`:21`), so the bare `Registry`
+  expands to `Elixir.Registry`, the stdlib process registry.
+- **Reproduction**:
+
+  ```
+  $ grep -n '^\s*alias' lib/flezha/state/record_log.ex
+  21:  alias Flezha.State.{Supervisor, WalWriter}
+  $ MIX_ENV=test mix run --no-start -e '…Code.Typespec.fetch_types/1…'
+  Elixir.Registry types: dispatch_opts/0, listener_message/0, start_option/0,
+    spec/0, body/0, guards/0, guard/0, match_pattern/0, meta_value/0,
+    meta_key/0, value/0, key/0, keys/0, registry/0
+  Flezha.State.Paths has entity_id/0? true
+  Elixir.Registry has entity_id/0? false
+  Flezha.State.Paths exports scan_dir/1? true
+  ```
+
+- **Mechanism**: Elixir resolves a remote type's module through the file's alias
+  table at expansion time and never checks that the type exists — only Dialyzer
+  does. `Flezha.State.RecordLog` never aliased the path module, so both specs
+  have always declared an argument type `Elixir.Registry` does not export, and
+  the compiler is silent about it. Pre-existing and unchanged by
+  `fix-opaque-module-names`: the same three lines resolved to the same stdlib
+  module before the path module was renamed to `Flezha.State.Paths`.
+  The rename only makes the prose misleading as well — a reader chasing
+  `Registry.scan_dir/1` now finds no such module in the tree.
+- **A fix must**: add the path module to `record_log.ex`'s alias group and spell
+  the two specs and the moduledoc line against it, so the declared type is the
+  one the callers actually pass (`Flezha.State.Paths.entity_id/0`). It is a
+  behaviour-free correction, but it changes what a spec *means*, so it is not a
+  rename and does not belong in a rename commit.
+- **Supervisor verdict 2026-08-31 — real, deferred to `refactor-5a-state`.**
+  Reproduced independently at the checkpoint: `Code.Typespec.fetch_types(Registry)`
+  returns 14 types and `entity_id` is not among them. Then swept for a family and
+  there is none — every `.ex` under `lib/` that names a `Registry.<type>()` without
+  aliasing a Registry module was checked, and `record_log.ex` is the only hit
+  (`state/supervisor.ex:39` is `ClassRegistry.ensure_table()`, a call). So it is one
+  isolated instance, not a class. **Cost of fixing it now**: two spec lines and a
+  moduledoc line — but charter §1b's red-first proof needs Dialyzer, and this repo
+  gates no Dialyzer run, so proving two lines costs a PLT build. **What it buys**: a
+  spec that names the type its callers actually pass. Area 5a reads every spec in
+  `lib/flezha/state/` and is where the proof is affordable, the same treatment
+  [[KI-41]] already has.
+
+---
+
 ### KI-51 · `mix bench.roundtrip`'s `--runtime` help names three runtimes, not seven
 
 - **Severity**: P3 · one line.
@@ -1457,6 +1509,34 @@ every new production freeze to `incident_log.md` at the repository root.
 
 ## Resolved
 
+### KI-62 · `convert_value/2` does not run on the struct plugin path — NOT A BUG
+
+- **Raised**: 2026-08-31 by the `fix-opaque-module-names` segment-B live drive,
+  which hit it before the drive was written correctly.
+- **Where**: `lib/flezha/plugin/provider_behaviour.ex:334` and `:538` — `build/1`
+  takes a `string_map` and is the only caller of `convert_value/2`
+  (`:356`). A plugin handed to `builder.opts[:plugins]` as a `%Flezha.Plugin{}`
+  never crosses `build/1`, so its `opts` map reaches the provider as written.
+- **Observed**: `%Plugin{opts: %{"recv_pid" => "flz_segb_probe"}}` delivered the
+  binary straight to `Process.send/3`, which raised
+  `[Extension.Table] transform subscriber segb_sink raised :error: :badarg` —
+  inside the sink chain, not as a refusal at enable.
+- **Why it is not a defect**: the two paths have two contracts and both are
+  written down. `provider_behaviour.ex:78` says `convert_value/2` exists because
+  *"CLI plugin opts arrive as"* strings — it is the CLI adapter's coercion step,
+  which is why its only caller takes a `string_map`. The struct path's contract
+  is typed opts, and the provider states it: `beam_msg_forward.ex`'s moduledoc
+  reads **"Required opts: `:recv_pid` (pid)"**. Passing a binary there is a
+  caller violating a documented contract, not a layer failing to convert.
+- **The residual, recorded and not filed as work**: the contract is enforced by
+  a raise deep in the sink chain rather than a refusal when the plugin is
+  enabled, so a caller's mistake surfaces far from its cause. That is a
+  diagnosability wart on a first-party test provider, worth knowing before
+  someone reads the same `:badarg` and starts hunting a routing bug. It is not
+  worth a refusal layer on a path whose callers are all in-tree.
+- **Not caused by, and not related to, the module renames or folds.**
+
+
 ### KI-45 · `PrometheusRegistry` re-encodes a metric label the same way the OTLP codec did — RESOLVED
 
 Closed by `close-prometheus-label-coercion` (2026-08-31). What the entry got
@@ -1521,7 +1601,7 @@ output. That is the same argument `AuditLog.Codec.stringify_value/1` carries.
 | KI-9 · `.formatter.exs` `inputs` missed four tracked `.exs`, two of which were unformatted | `format-gate-tells-the-truth` — `inputs` gains `{bench,scripts}/**/*.exs`, `examples/plugins/**/*.exs` and `.credo.exs`, and the two files were reformatted in the same commit (widening alone turns the Elixir check red). `examples/**` is deliberately narrowed to `plugins`: `examples/coding-fleet/` is gitignored, has its own repo, and is unformatted, so the wide glob would fail the check on a file CI cannot see. The reflow is proved semantics-neutral twice — metadata-stripped ASTs are IDENTICAL for both files, and `summarize.exs` driven against the repo's own `results.quick.tsv`/`cells.quick.tsv` produces **byte-identical** stdout, `summary.quick.md` and saved baseline against HEAD's copy on both the report and the `--save-baseline` arm |
 | KI-11 · every second Java build in a checkout failed at shade — `duplicate entry: META-INF/THIRD_PARTY_NOTICES.md`, and the conformance manifest's own build command carries no `clean` | `java-build-runs-twice` (`be1110c9`) — `<forceCreation>true</forceCreation>` on `maven-jar-plugin` in the two modules that shade (`sdk/java/flezha-sdk`, `test/apps/java_runner`), at a **pinned 3.4.1**. The pin is load-bearing, not hygiene: nothing pinned that plugin, so this box's Maven 3.8.7 resolved **2.4** and the release image's Maven 3.9.9 resolves **3.4.1**, and the `jar.forceCreation` user property — the form that avoids declaring the plugin, and so avoids Maven's missing-version warning — exists only up to 2.x. Under a 3.4.1 pin it is silently inert and the duplicate-entry failure reproduces unchanged, which is a fix that would have looked green here and shipped broken. **The filed cause was wrong twice over.** `build-dist.sh` is not involved: `clean verify` → 0 then a bare `verify` → 1 reproduces it with no dist build anywhere, so the condition is a non-empty `target/`, which is every checkout after its first build. And it is not the aggregator's missing sources either — that only makes it total. **Shade replaces the jar plugin's output file in place**, so on the next build the jar plugin's up-to-date check finds the *shaded* jar at its own destination and skips: with no sources it always skips, and with sources it skips whenever nothing is newer than the fat jar. Either way shade re-shades its own 15 MB output; `flezha-sdk` fails loudly only because `IncludeResourceTransformer` then attaches a notices file the jar already carries. **`test/apps/java_runner` had the identical defect and failed silently** — its filter excludes `META-INF/THIRD_PARTY_NOTICES.md` from every artifact including its own, so it re-shaded to a fixpoint and exited 0; measured by `original-java_runner.jar` coming out 16,082,694 bytes (the fat jar) instead of 209,955. Both of the entry's suggested one-line fixes are refuted: `<shadedArtifactAttached>` installs the *empty* jar as `com.flezha:flezha-sdk`, which is what `java_runner` compiles against; moving the notices to `src/main/resources` removes the duplicate-entry symptom and leaves the re-shading, which is the half that can carry a deleted native forward. Proof: the conformance `build.test` command (byte-identical to `build.bench`) three times in one checkout with no `clean`, all exit 0; `unzip -l` on the fat jar → one `META-INF/THIRD_PARTY_NOTICES.md`, exactly the five `native/<os>-<arch>/libflz_core_ffi.*` and no other native library, 1833 entries as before; `mvn -P coverage,native-verify clean verify` green (117 + 17 + 5 tests); `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` 1859 passed |
 | KI-38 · `process_hub` pinned to a GitHub `dev` branch, so no version number described what a build contained | `adopt-process-hub-hex-release` (`4735c359`) — `mix.exs` declares `{:process_hub, "~> 0.7.0"}`; `mix.lock` carries the hex entry. **0.7.0 is the pinned code, published**: 78 `.ex` files each side, exactly one differs (`hub.ex`), and that difference is a pure relocation of `for_workers/1` — sorted, the two files are an identical multiset of lines. What the `.ex` comparison could **not** see is the package's own `mix.exs`, which raises `elector` from `~> 0.3.3` to `~> 0.3.4`; resolution fails until `elector` is unlocked, so the lock diff is two lines, not one. elector 0.3.4 is a real behaviour change on a live path (`erpc:multicall` replaces per-node `send_request`/`wait_response`, so the fan-out timeout is per batch rather than per node, and an election survives a candidate vanishing) — `declared_children` and `centralized_load_balancer` are its callers. `mix compile --force --warnings-as-errors` 272 files clean (negative control: a bogus `ProcessHub` call does fail it); `mix test` 1836 passed and `--include system` 1915 passed / 5 skipped, both unchanged from the HEAD baselines recorded before the swap, and `--include multi_node` 1845 passed — added because of the elector finding, since that tag is not covered by `--include system` and is where leader election actually runs |
-| KI-42 · six sites named `<state_root>/<class>`, a path the system never writes — five `refute File.exists?` that could not fail, and a `File.rm_rf` that reclaimed nothing | `assertions-that-cannot-fail` (`9708e2e5`) — all six now derive from `Flezha.State.Registry.class_dir/1`, and **every one was proved twice**: with the subject genuinely present at the real path the *old* assertion still passed (the two unit sites **34 passed**; `partitioned_operatives_e2e` **2 passed**; `remote_durability_e2e` under `POSTGRES_INTEGRATION=1` **3 passed**), and the *corrected* one goes red on the same subject and green once it is removed. **No deletion is broken** — all five are green against real behaviour, so `ClassRegistry`, `PartitionGroup.rescale/3`, `TierE2EHarness.destroy_local_state/1` and the rescale's tree removal all keep the promises their test names make; there was nothing to escalate. The `rm_rf` is proved by count, not by an assertion: one scenario (`workflow_crash_resume_e2e_test.exs:692`) left `app_data/state/workflow_loop_boot_2082/chat_loop_workflow_2114` with three class sidecars in it after its own `cleanup/3` ran, and leaves nothing after — the module's private `cleanup/3` is gone entirely, it imports `TierE2EHarness.cleanup/3`, which is the one teardown. **The sweep confirms the triage's number**: 46 `refute File.exists?` / `refute File.dir?` in `test/`, **exactly five vacuous** — the five filed — and 41 sound, each read against the layout it asserts on. **The seed is larger than filed**: not two moduledoc blocks but **seven**, across five modules (`state/registry.ex` twice, `operative/class_registry.ex`, `state/completion.ex`, `state/input_log.ex`, `state/proc_inbox.ex`, `state/proc_journal.ex`) plus four in `docs/`, every one dropping the `<namespace>` segment its own code writes. `Registry.namespace_dir/1` now owns that level and `class_dir/1` composes on it, so the two production sites that rebuilt it (`AuthZ.Quotas.compute_disk_bytes/1`, `Convergence.Loop.namespace_dir_mtimes/0`) and the two test sites (`TierE2EHarness.cleanup/3`, `quic_test.exs`) derive it too. Baselines unchanged: `mix test` **1836 passed**, `--include system` **1915 passed / 5 skipped** |
+| KI-42 · six sites named `<state_root>/<class>`, a path the system never writes — five `refute File.exists?` that could not fail, and a `File.rm_rf` that reclaimed nothing | `assertions-that-cannot-fail` (`9708e2e5`) — all six now derive from <!-- module-naming-record:begin -->`Flezha.State.Registry.class_dir/1`<!-- module-naming-record:end -->, and **every one was proved twice**: with the subject genuinely present at the real path the *old* assertion still passed (the two unit sites **34 passed**; `partitioned_operatives_e2e` **2 passed**; `remote_durability_e2e` under `POSTGRES_INTEGRATION=1` **3 passed**), and the *corrected* one goes red on the same subject and green once it is removed. **No deletion is broken** — all five are green against real behaviour, so `ClassRegistry`, `PartitionGroup.rescale/3`, `TierE2EHarness.destroy_local_state/1` and the rescale's tree removal all keep the promises their test names make; there was nothing to escalate. The `rm_rf` is proved by count, not by an assertion: one scenario (`workflow_crash_resume_e2e_test.exs:692`) left `app_data/state/workflow_loop_boot_2082/chat_loop_workflow_2114` with three class sidecars in it after its own `cleanup/3` ran, and leaves nothing after — the module's private `cleanup/3` is gone entirely, it imports `TierE2EHarness.cleanup/3`, which is the one teardown. **The sweep confirms the triage's number**: 46 `refute File.exists?` / `refute File.dir?` in `test/`, **exactly five vacuous** — the five filed — and 41 sound, each read against the layout it asserts on. **The seed is larger than filed**: not two moduledoc blocks but **seven**, across five modules (`state/registry.ex` twice, `operative/class_registry.ex`, `state/completion.ex`, `state/input_log.ex`, `state/proc_inbox.ex`, `state/proc_journal.ex`) plus four in `docs/`, every one dropping the `<namespace>` segment its own code writes. `Registry.namespace_dir/1` now owns that level and `class_dir/1` composes on it, so the two production sites that rebuilt it (`AuthZ.Quotas.compute_disk_bytes/1`, `Convergence.Loop.namespace_dir_mtimes/0`) and the two test sites (`TierE2EHarness.cleanup/3`, `quic_test.exs`) derive it too. Baselines unchanged: `mix test` **1836 passed**, `--include system` **1915 passed / 5 skipped** |
 | KI-47 · `check-overflow-naming.sh` red on its own evidence — a triage entry has to quote the retired name to prove it is gone | the gate now separates a QUOTED mention from a bare use, scoped to `docs/known_issues.md`; drilled both ways (bare use still exits 1) |
 | KI-44 · the OTLP codec crashed on any attribute value that is not a string, and silently re-encoded a list | `close-otlp-export-crash` (`ba0d3632`) — one private `attribute_string/1` renders every attribute **key and value**: a binary passes through untouched, an atom, integer or float takes its `String.Chars` rendering, everything else — lists included — goes through `inspect/1` with `limit: :infinity, printable_limit: :infinity`. Both halves were driven red first: a real `LoggerHandler.log/2` event through the real codec raised `Protocol.UndefinedError` on `logger:` (a Map) and on `mfa:` (a Tuple), while `%{l: [1, 2, 3]}` encoded to the bytes `<<1, 2, 3>>` **with no exception at all**. Three corrections to the filed entry, each measured: `:222` is the metric `NumberDataPoint` site, not the resource (`default_resource/0` never sees signal metadata); an attribute **key** can be a non-string too and crashed identically, since `Signal.new/1` validates that metadata is a map and never constrains its keys; and the escalation is no longer inferred — with the coercion reverted, `OtlpSink` dies inside `flush/1` with that exception, which the flush test now pins. `mix test test/flezha/observability/export_test.exs` with `attribute_string/1` reverted to `to_string/1`: **12 of 18**, six red including the list case, which fails without raising; restored: **18 of 18**, full suite **1836 passed, 0 failed**. The sibling site on the Prometheus exporter is KI-45; typed `AnyValue`s are KI-46 |
 | KI-43 · 28 test modules set Mimic's global mode without releasing it | `close-mimic-global-leak` (`828a9f50`) — 26 modules moved to `FlezhaTest.Helper.MimicGlobal.set_mimic_global_until_exit/1`, two dropped global mode entirely (they register no stub anywhere reachable), and `scripts/check-mimic-global.sh` refuses the raw call in `test/` with `test/helpers/mimic_global.ex` exempt by path. Measured, not asserted: `mix test test/flezha/service/cli_manager_state_get_test.exs test/flezha/service/cli_manager_schedule_test.exs --seed 0` was **11/20 passed, 9 failed**, every failure `Only the global owner is allowed`, against **10 passed** for the schedule module alone; after, **20 passed** on the same seed. Read directly (a temporary `ExUnit.after_suite` probe on `:ets.lookup(Mimic.Server, :mode)`): at seed 0 exactly one of the 28 left the mode `:global`; after the change all 36 global-mode modules left it `:private`. The entry's own reading was too broad — see `docs/dev_notes/close-mimic-global-leak.md` for which of the 28 could actually leak and why |

@@ -10,7 +10,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
 
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Service.Parser
+  alias Flezha.Service.Identificator
   alias Flezha.Service.PluginManager
 
   use GenServer
@@ -23,7 +23,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   def plugin_type(), do: :io_binding
 
   defp convert_value(:recv_pid, value) when is_binary(value) do
-    Parser.string_to_pid(value)
+    Identificator.string_to_pid(value)
   end
 
   defp convert_value(:heartbeat_interval, value) when is_binary(value) do

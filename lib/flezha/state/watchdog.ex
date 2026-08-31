@@ -54,9 +54,9 @@ defmodule Flezha.State.Watchdog do
   alias Flezha.State.{
     Commands,
     DurabilityTier,
+    Paths,
     PersistenceResolver,
     Recovery,
-    Registry,
     Supervisor,
     WalWriter
   }
@@ -95,8 +95,8 @@ defmodule Flezha.State.Watchdog do
   a live writer. Stateless read used by the sweeps here and by the
   convergence Loop's producing-liveness classification at tick cadence.
   """
-  @spec entity_statuses() :: [{Registry.entity_id(), WalWriter.stall_status()}]
-  def entity_statuses(), do: collect_statuses(Registry.all_entities())
+  @spec entity_statuses() :: [{Paths.entity_id(), WalWriter.stall_status()}]
+  def entity_statuses(), do: collect_statuses(Paths.all_entities())
 
   @doc """
   Record that a `CompactEntity` was shipped for `entity_id` so the
@@ -229,7 +229,7 @@ defmodule Flezha.State.Watchdog do
   defp sweep_disk_quotas(state) do
     if Flezha.AuthZ.enabled?() do
       breached =
-        Enum.reduce(Registry.namespaces(), MapSet.new(), fn namespace, acc ->
+        Enum.reduce(Paths.namespaces(), MapSet.new(), fn namespace, acc ->
           bytes = Flezha.AuthZ.Quotas.refresh_disk_bytes(namespace)
 
           case namespace_disk_limit(namespace) do
@@ -270,7 +270,7 @@ defmodule Flezha.State.Watchdog do
 
   defp rebuild_disk_counters() do
     if Flezha.AuthZ.enabled?() do
-      Enum.each(Registry.namespaces(), &Flezha.AuthZ.Quotas.rebuild_disk_bytes/1)
+      Enum.each(Paths.namespaces(), &Flezha.AuthZ.Quotas.rebuild_disk_bytes/1)
     end
 
     :ok
@@ -429,7 +429,7 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp sweep_output_staleness(state, now) do
-    Enum.each(Registry.all_entities(), fn {rc, _sh, _pk} = pid ->
+    Enum.each(Paths.all_entities(), fn {rc, _sh, _pk} = pid ->
       timeout = PersistenceResolver.output_stall_timeout_ms(rc)
 
       with true <- ClassRegistry.capable?(rc, :output_stall_watch?),

@@ -15,7 +15,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   use GenServer
 
-  alias Flezha.AuthZ.{Namespace, Role, Store}
+  alias Flezha.AuthZ.{DetsStore, Namespace, Role}
 
   @table :flz_authz_roles
   @cache :flz_authz_roles_cache
@@ -42,7 +42,7 @@ defmodule Flezha.AuthZ.RoleStore do
   @spec lookup(binary() | nil) :: {:ok, binding()} | :error
   def lookup(nil), do: :error
 
-  def lookup(principal) when is_binary(principal), do: Store.cache_lookup(@cache, principal)
+  def lookup(principal) when is_binary(principal), do: DetsStore.cache_lookup(@cache, principal)
 
   @doc """
   Bind `principal` to `(namespace, role)`. Overwrites any existing
@@ -66,7 +66,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   @doc "List every binding currently in the store."
   @spec list() :: [binding()]
-  def list(), do: Store.cache_values(@cache)
+  def list(), do: DetsStore.cache_values(@cache)
 
   @doc "Bindings belonging to `principal` (zero or one)."
   @spec list_for_principal(binary()) :: [binding()]
@@ -99,7 +99,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   @impl true
   def init(_opts) do
-    Store.init_cached(@table, @cache, path())
+    DetsStore.init_cached(@table, @cache, path())
   end
 
   @impl true
@@ -112,12 +112,12 @@ defmodule Flezha.AuthZ.RoleStore do
       bound_by: bound_by
     }
 
-    :ok = Store.put(@table, @cache, principal, binding)
+    :ok = DetsStore.put(@table, @cache, principal, binding)
     {:reply, :ok, state}
   end
 
   def handle_call({:unbind, principal}, _from, state) do
-    :ok = Store.delete(@table, @cache, principal)
+    :ok = DetsStore.delete(@table, @cache, principal)
     {:reply, :ok, state}
   end
 

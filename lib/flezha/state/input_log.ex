@@ -34,8 +34,8 @@ defmodule Flezha.State.InputLog do
   alias Flezha.State.{
     CreditLedger,
     FsyncBatcher,
+    Paths,
     PersistenceResolver,
-    Registry,
     SeqIndex,
     Supervisor,
     WalWriter
@@ -337,7 +337,7 @@ defmodule Flezha.State.InputLog do
   """
   @spec sweep(binary()) :: :ok
   def sweep(operative_class) do
-    path = Registry.input_log_path(operative_class)
+    path = Paths.input_log_path(operative_class)
 
     if File.exists?(path) do
       do_sweep(operative_class, path)
@@ -349,7 +349,7 @@ defmodule Flezha.State.InputLog do
   @doc "Every operative_class with an input-log on disk (for the retention sweep)."
   @spec all_classes() :: [binary()]
   def all_classes() do
-    Enum.filter(Registry.operative_classes(), &File.regular?(Registry.input_log_path(&1)))
+    Enum.filter(Paths.operative_classes(), &File.regular?(Paths.input_log_path(&1)))
   end
 
   # ---------- GenServer ----------
@@ -364,7 +364,7 @@ defmodule Flezha.State.InputLog do
 
     state = %__MODULE__{
       operative_class: operative_class,
-      path: Registry.input_log_path(operative_class),
+      path: Paths.input_log_path(operative_class),
       file_handle: nil,
       next_offset: 0,
       ledger: CreditLedger.new("source:" <> operative_class, window, max(div(window, 2), 1)),

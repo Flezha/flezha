@@ -17,7 +17,7 @@ ingest entry points. What the convergence loop does *to* an Overwatch is in
    and a call into `FleetManager` / `OperativeManager` from here deadlocks
    (they are waiting on the hub, which is waiting on this supervisor).
 2. **`handle_continue({:bind_runner, …})`** first claims the class's
-   durable-state namespace (`Flezha.State.Registry.claim_namespace/2`); a class
+   durable-state namespace (`Flezha.State.Paths.claim_namespace/2`); a class
    whose state belongs to another namespace stops the Overwatch with
    `{:shutdown, {:namespace_conflict, id, owner}}` rather than read or write
    it. It then waits up to `:overwatch_runner_wait_ms` (30 s) for an active

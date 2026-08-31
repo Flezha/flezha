@@ -59,7 +59,7 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   defp expect_scan(reply_to) do
     scanned = {:scanned, make_ref()}
 
-    stub(Flezha.State.Registry, :entities_of, fn _operative_class ->
+    stub(Flezha.State.Paths, :entities_of, fn _operative_class ->
       send(reply_to, scanned)
       []
     end)

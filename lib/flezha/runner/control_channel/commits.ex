@@ -270,7 +270,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # besides: a failed or dropped compaction only means the restore falls back to
   # WAL replay, which the Watchdog's own size/age triggers will re-attempt.
   defp snapshot_iteration_boundary(runner_id, operative_id) do
-    entities = Flezha.State.Registry.entities_of(operative_id)
+    entities = Flezha.State.Paths.entities_of(operative_id)
 
     Task.start(fn ->
       Enum.each(entities, fn entity_id ->

@@ -33,8 +33,8 @@ defmodule Flezha.State.Supervisor do
     # and every one of these is read by the data plane, so no process that can
     # crash and restart (a sweeper, a writer) may own them. Path resolution
     # degrades to the on-disk layout when the claims table is absent (unit
-    # tests that use `Flezha.State.Registry` without this supervisor).
-    Flezha.State.Registry.ensure_claims_table()
+    # tests that use `Flezha.State.Paths` without this supervisor).
+    Flezha.State.Paths.ensure_claims_table()
     Flezha.State.InputLog.ensure_watermark_table()
     Flezha.Operative.ClassRegistry.ensure_table()
     # Every per-Entity writer and input log on the node hangs here, and they
@@ -92,7 +92,7 @@ defmodule Flezha.State.Supervisor do
     end
 
     Flezha.State.FsyncBatcher.forget(entity_id)
-    Flezha.State.Registry.delete_files(entity_id)
+    Flezha.State.Paths.delete_files(entity_id)
 
     # A deleted Entity must stop holding the operative's input-log watermark.
     {operative_class, _, _} = entity_id
@@ -146,8 +146,7 @@ defmodule Flezha.State.Supervisor do
 
   @doc """
   Child specs to add to `Flezha.Application` — the underlying `Registry`
-  (a process registry, distinct from `Flezha.State.Registry` which is a
-  pure path-resolution module) plus this `DynamicSupervisor`.
+  plus this `DynamicSupervisor`.
   """
   def application_children() do
     [

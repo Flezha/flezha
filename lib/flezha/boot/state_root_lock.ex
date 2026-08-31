@@ -14,7 +14,7 @@ defmodule Flezha.Boot.StateRootLock do
   nothing to clear, and the refusal names the process still holding it.
   """
 
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias Flezha.Transport.Native
 
   @var "FLEZHA_STATE_DIR"
@@ -29,7 +29,7 @@ defmodule Flezha.Boot.StateRootLock do
   `held/0` would each be talking about something else.
   """
   @spec claim!(binary()) :: String.t()
-  def claim!(root \\ Registry.state_root()) do
+  def claim!(root \\ Paths.state_root()) do
     root = Path.expand(root)
 
     case Native.lock_state_root(root) do

@@ -9,7 +9,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   # async: false: writes Application env; a shared on-disk root; a peer BEAM.
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{FsyncBatcher, Registry, Supervisor, TestHelpers, WalWriter, WalTransfer}
+  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalWriter, WalTransfer}
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -36,7 +36,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   test "manifest lists only files that exist" do
     entity_id = seed_entity("man")
 
-    assert Path.basename(Registry.wal_path(entity_id)) in WalTransfer.manifest(entity_id)
+    assert Path.basename(Paths.wal_path(entity_id)) in WalTransfer.manifest(entity_id)
 
     # An Entity with nothing on disk offers nothing — the destination cold-starts.
     assert WalTransfer.manifest(TestHelpers.sample_entity_id("empty")) == []
@@ -63,7 +63,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
   test "read_chunk walks a real file to :eof" do
     entity_id = seed_entity("chunk")
-    name = Path.basename(Registry.wal_path(entity_id))
+    name = Path.basename(Paths.wal_path(entity_id))
 
     assert {:ok, first} = WalTransfer.read_chunk(entity_id, name, 0)
     assert byte_size(first) > 0
@@ -83,24 +83,24 @@ defmodule FlezhaTest.State.WalTransferTest do
     # procedure and key but changes OWNER, so it lands under a different
     # Operative class — and the peer's copy may only go once ours is safe.
     {class, procedure, key} = source = seed_entity("moveacross")
-    source_bytes = File.read!(Registry.wal_path(source))
+    source_bytes = File.read!(Paths.wal_path(source))
     destination = {class <> "_moved", procedure, key}
 
     {peer_pid, peer_node} =
-      NodeTestHelper.start_peer_node(:waltransfer2, state_root: Registry.state_root())
+      NodeTestHelper.start_peer_node(:waltransfer2, state_root: Paths.state_root())
 
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
     # The peer took the root this node was on, so the files live there and
     # nowhere here once this node moves off it.
-    refute File.exists?(Registry.wal_path(source))
+    refute File.exists?(Paths.wal_path(source))
 
     assert {:ok, files} = WalTransfer.move_entity(peer_node, source, destination)
     assert files > 0
 
-    assert File.read!(Registry.wal_path(destination)) == source_bytes
-    refute File.exists?(Registry.wal_path(destination) <> ".transferring")
+    assert File.read!(Paths.wal_path(destination)) == source_bytes
+    refute File.exists?(Paths.wal_path(destination) <> ".transferring")
 
     # The peer no longer holds it — the delete runs only after the rename.
     assert :erpc.call(peer_node, WalTransfer, :manifest, [source]) == []
@@ -108,7 +108,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     # Re-running is a no-op: the source is gone, so nothing is owed and the
     # destination is untouched. That is what makes a crashed rescale re-runnable.
     assert {:ok, 0} = WalTransfer.move_entity(peer_node, source, destination)
-    assert File.read!(Registry.wal_path(destination)) == source_bytes
+    assert File.read!(Paths.wal_path(destination)) == source_bytes
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -118,7 +118,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     source = seed_entity("movefail")
 
     {peer_pid, peer_node} =
-      NodeTestHelper.start_peer_node(:waltransfer3, state_root: Registry.state_root())
+      NodeTestHelper.start_peer_node(:waltransfer3, state_root: Paths.state_root())
 
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
@@ -131,7 +131,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     assert {:error, _reason} = WalTransfer.move_entity(peer_node, source, unresolvable)
 
     # Nothing was deleted: a half-moved Entity is the one outcome that loses data.
-    assert Path.basename(Registry.wal_path(source)) in :erpc.call(
+    assert Path.basename(Paths.wal_path(source)) in :erpc.call(
              peer_node,
              WalTransfer,
              :manifest,
@@ -144,24 +144,24 @@ defmodule FlezhaTest.State.WalTransferTest do
   @tag :multi_node
   test "an entity's files are pulled from a peer controller into this node's tree" do
     entity_id = {class, _, _} = seed_entity("xnode")
-    source_bytes = File.read!(Registry.wal_path(entity_id))
+    source_bytes = File.read!(Paths.wal_path(entity_id))
 
     # The peer is handed the CURRENT state_root, so it is the node holding the
     # files. Moving this node's root afterwards makes the pull a genuine
     # cross-tree copy rather than a file onto itself.
     {peer_pid, peer_node} =
-      NodeTestHelper.start_peer_node(:waltransfer1, state_root: Registry.state_root())
+      NodeTestHelper.start_peer_node(:waltransfer1, state_root: Paths.state_root())
 
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
-    refute File.exists?(Registry.wal_path(entity_id))
+    refute File.exists?(Paths.wal_path(entity_id))
 
     assert 1 = WalTransfer.pull_operative(peer_node, class)
 
-    assert File.read!(Registry.wal_path(entity_id)) == source_bytes
+    assert File.read!(Paths.wal_path(entity_id)) == source_bytes
     # The staging artefact never survives a successful pull.
-    refute File.exists?(Registry.wal_path(entity_id) <> ".transferring")
+    refute File.exists?(Paths.wal_path(entity_id) <> ".transferring")
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end

@@ -218,7 +218,7 @@ defmodule Flezha.Operative.Overwatch do
     # (journal probe, restore, WAL open) resolves: writes must land under
     # this operative's namespace, and a class owned by another namespace
     # must never be silently read or overwritten.
-    case Flezha.State.Registry.claim_namespace(state.id, state.namespace) do
+    case Flezha.State.Paths.claim_namespace(state.id, state.namespace) do
       :ok ->
         continue_bind(stale_runner_id, operative, state)
 

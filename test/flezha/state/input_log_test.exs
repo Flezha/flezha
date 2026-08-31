@@ -16,7 +16,7 @@ defmodule Flezha.State.InputLogTest do
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.State.{InputLog, Registry, Supervisor, TestHelpers}
+  alias Flezha.State.{InputLog, Paths, Supervisor, TestHelpers}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -65,7 +65,7 @@ defmodule Flezha.State.InputLogTest do
     stop_log(class)
 
     # Simulate a crash mid-append: garbage where the next record would start.
-    File.write!(Registry.input_log_path(class), <<9, 9, 9, 9, 9>>, [:append])
+    File.write!(Paths.input_log_path(class), <<9, 9, 9, 9, 9>>, [:append])
 
     assert InputLog.read_range(class, 0, 99) |> Enum.map(&elem(&1, 0)) == [0, 1, 2]
     {:ok, offset} = InputLog.append(class, "m3", %{})
@@ -196,7 +196,7 @@ defmodule Flezha.State.InputLogTest do
 
     payload = {"message", %{"input_type" => "2"}}
     assert Ingest.ingest(state, "message", %{"input_type" => "2"}, :cast) == {payload, state}
-    refute File.exists?(Registry.input_log_path(class))
+    refute File.exists?(Paths.input_log_path(class))
     refute class in InputLog.all_classes()
   end
 
@@ -303,7 +303,7 @@ defmodule Flezha.State.InputLogTest do
       state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
       :ok = Replay.replay_journaled_inputs(state)
       refute_received {:forwarded, _, _}
-      refute File.exists?(Registry.input_log_path(class))
+      refute File.exists?(Paths.input_log_path(class))
     end
   end
 
@@ -412,7 +412,7 @@ defmodule Flezha.State.InputLogTest do
       # Lookup-only: polling this from the convergence tick must never conjure a
       # file, a process, or a watermark for an operative that never asked for one.
       assert Supervisor.lookup({class, :input_log}) == :error
-      refute File.exists?(Registry.input_log_path(class))
+      refute File.exists?(Paths.input_log_path(class))
     end
 
     test "a live log yields its tail and each Entity's own consumed offset" do

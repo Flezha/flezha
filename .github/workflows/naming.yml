@@ -4,8 +4,11 @@ name: Naming
 # `workflow`; check-kind-naming fails a PR that reintroduces `bounded`/`unbounded`
 # as a kind name. The three overflow policies are `DropNothing`/`DropNewest`/
 # `DropOldest`; check-overflow-naming fails a PR that reintroduces `Block` as a
-# policy name. check-sdk-boundary keeps lib/flezha/sdk/ touching the controller
-# only through the named packaging seams (prepares `package-elixir-sdk`).
+# policy name. check-module-naming fails a PR that reintroduces one of the seven
+# module paths retired for naming the wrong thing (the script lists them with
+# their replacements). check-sdk-boundary keeps lib/flezha/sdk/ touching the
+# controller only through the named packaging seams (prepares
+# `package-elixir-sdk`).
 # Deliberately unfiltered by path — the invariants cover docs and specs as much
 # as code — and toolchain-free, so it costs nothing next to the Format gate.
 # Local equivalents: the `scripts/check-*.sh` invoked below.
@@ -46,6 +49,8 @@ jobs:
         run: scripts/check-kind-naming.sh
       - name: check-overflow-naming
         run: scripts/check-overflow-naming.sh
+      - name: check-module-naming
+        run: scripts/check-module-naming.sh
       - name: check-sdk-boundary
         run: scripts/check-sdk-boundary.sh
       - name: check-mimic-global

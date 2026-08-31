@@ -135,7 +135,7 @@ The pull SHALL be:
 
 1. **Destination-driven.** The source only answers reads (`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
 2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Entity cold — never half-restored.
-3. **Scoped by the Entity's own file set.** A requested name is resolved against `Flezha.State.Registry.entity_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
+3. **Scoped by the Entity's own file set.** A requested name is resolved against `Flezha.State.Paths.entity_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
 4. **Off the Overwatch loop**, since the copy is bounded by file size.
 5. **Non-fatal.** An Entity that cannot be pulled is skipped; the operative keeps the Entities that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 

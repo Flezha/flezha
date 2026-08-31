@@ -823,7 +823,7 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   # Persist one saga compensation marker for the frame's Entity (presence is the
-  # signal; `Flezha.State.Registry.compensation_markers/1` reads it back onto
+  # signal; `Flezha.State.Paths.compensation_markers/1` reads it back onto
   # `RestoreInitState`). Write off this channel's loop so a slow disk never stalls
   # the output-carrying channel.
   defp handle_compensation_record(payload_id, frame) do
@@ -833,7 +833,7 @@ defmodule Flezha.Runner.StreamChannel do
 
         spawn(fn ->
           with {:error, reason} <-
-                 Flezha.State.Registry.write_compensation_marker(entity_id, kind) do
+                 Flezha.State.Paths.write_compensation_marker(entity_id, kind) do
             Logger.error(
               "[stream] compensation marker write failed " <>
                 "entity=#{inspect(entity_id)} kind=#{kind}: #{inspect(reason)}"

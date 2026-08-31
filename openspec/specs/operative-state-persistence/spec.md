@@ -386,7 +386,7 @@ User-supplied metadata via `ctx.emit_with_meta(value, meta)` SHALL have its `fle
 
 ### Requirement: Per-Entity persistence metrics
 
-Each Entity's metric set SHALL expose six counters via `:counters` references, accessible from `Flezha.State.Metrics.to_map(entity_id)` and exported through the existing `Flezha.Plugin.Provider.Metrics` path:
+Each Entity's metric set SHALL expose six counters via `:counters` references, accessible from `Flezha.State.Metrics.to_map(entity_id)` and exported through the existing `Flezha.State.Metrics` path:
 
 - `persisted_changes_total` — monotonic; incremented per Change appended to the WAL (post-coalesce, post-dedup).
 - `persisted_bytes_total` — monotonic; incremented by the byte length of each appended record.
@@ -395,7 +395,7 @@ Each Entity's metric set SHALL expose six counters via `:counters` references, a
 - `flush_latency_ms_p99` — gauge; rolling 99th-percentile of `now - record_received_ts` measured per fsync, computed via a 1024-bucket reservoir sampler.
 - `fsync_durability_lag_ms` — gauge; `now - oldest_pending_record_ts` at each `FsyncBatcher` tick.
 
-The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not expose ordering modes; this is satisfied by the underlying implementation). External metric systems (Prometheus, StatsD) integration is out of scope for this requirement; the existing `Flezha.Plugin.Provider.Metrics` path is the export surface.
+The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not expose ordering modes; this is satisfied by the underlying implementation). External metric systems (Prometheus, StatsD) integration is out of scope for this requirement; the existing `Flezha.State.Metrics` path is the export surface.
 
 #### Scenario: Counters initialized at Entity construction
 
@@ -781,7 +781,7 @@ support are prohibited because they orphan state.
 
 #### Scenario: Migrator and reader agree on layout
 - **WHEN** the boot migrator runs
-- **THEN** the directory layout it produces SHALL be exactly the layout `Flezha.State.Registry` reads
+- **THEN** the directory layout it produces SHALL be exactly the layout `Flezha.State.Paths` reads
 - **AND** any layout the reader does not support SHALL NOT be produced by the migrator
 
 ### Requirement: Per-Entity WAL SHALL realign to a restarted runner's seq base

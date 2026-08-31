@@ -27,7 +27,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.InputLog
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
   alias Flezha.State.TestHelpers
   alias Flezha.State.WalTransfer
   alias FlezhaTest.Helper.FakeStartRegistry
@@ -79,8 +79,8 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
 
   defp write_entity(class, procedure, key, bytes) do
     entity = {class, procedure, key}
-    File.mkdir_p!(Registry.state_dir(entity))
-    File.write!(Registry.wal_path(entity), bytes)
+    File.mkdir_p!(Paths.state_dir(entity))
+    File.write!(Paths.wal_path(entity), bytes)
     entity
   end
 
@@ -164,12 +164,12 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
       assert result.vacated == ["ohlc#p2"]
 
       # The Entity is now p1's, byte-for-byte, and the source is gone.
-      assert File.read!(Registry.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
-      refute File.exists?(Registry.wal_path(moved))
-      refute File.exists?(Registry.class_dir("ohlc#p2"))
+      assert File.read!(Paths.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
+      refute File.exists?(Paths.wal_path(moved))
+      refute File.exists?(Paths.class_dir("ohlc#p2"))
 
       # The Entity that did not change owner was left exactly where it was.
-      assert File.read!(Registry.wal_path({"ohlc#p0", "candle", "SOL-USD"})) == "sol"
+      assert File.read!(Paths.wal_path({"ohlc#p0", "candle", "SOL-USD"})) == "sol"
     end
 
     test "new members carry the recomputed ranges and the node the state was assembled on" do
@@ -223,11 +223,11 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
       write_entity("ohlc#p2", "candle", "ETH-USD", "eth")
 
       assert {:ok, %{entities_moved: 1}} = PartitionGroup.rescale(@namespace, @group, 2)
-      assert File.read!(Registry.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
+      assert File.read!(Paths.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
 
       # A re-run sees the source gone: nothing is owed, nothing is clobbered.
       assert {:ok, %{entities_moved: 0}} = PartitionGroup.rescale(@namespace, @group, 2)
-      assert File.read!(Registry.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
+      assert File.read!(Paths.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
     end
   end
 
@@ -338,24 +338,24 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   describe "WalTransfer.move_entity/3" do
     test "moves an Entity's whole file set and is idempotent" do
       source = write_entity("class_a", "proc", "k1", "wal-bytes")
-      File.write!(Registry.outbox_dedup_path(source), "dedup")
+      File.write!(Paths.outbox_dedup_path(source), "dedup")
       destination = {"class_b", "proc", "k1"}
 
       assert {:ok, 2} = WalTransfer.move_entity(node(), source, destination)
 
-      assert File.read!(Registry.wal_path(destination)) == "wal-bytes"
-      assert File.read!(Registry.outbox_dedup_path(destination)) == "dedup"
-      refute File.exists?(Registry.wal_path(source))
+      assert File.read!(Paths.wal_path(destination)) == "wal-bytes"
+      assert File.read!(Paths.outbox_dedup_path(destination)) == "dedup"
+      refute File.exists?(Paths.wal_path(source))
 
       # Nothing left to move — and the destination is untouched.
       assert {:ok, 0} = WalTransfer.move_entity(node(), source, destination)
-      assert File.read!(Registry.wal_path(destination)) == "wal-bytes"
+      assert File.read!(Paths.wal_path(destination)) == "wal-bytes"
     end
 
     test "a move onto itself is a no-op" do
       source = write_entity("class_a", "proc", "k1", "wal-bytes")
       assert {:ok, 0} = WalTransfer.move_entity(node(), source, source)
-      assert File.read!(Registry.wal_path(source)) == "wal-bytes"
+      assert File.read!(Paths.wal_path(source)) == "wal-bytes"
     end
   end
 end

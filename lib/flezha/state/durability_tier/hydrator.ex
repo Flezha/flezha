@@ -22,7 +22,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Backend, Manifest}
-  alias Flezha.State.{InputLog, Outbox, Registry}
+  alias Flezha.State.{InputLog, Outbox, Paths}
 
   @doc """
   Hydrate every shipped reference of `operative_class` whose local files are
@@ -335,7 +335,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   defp seed_markers(entity_id, %Manifest{markers: markers}) do
     for {kind, true} <- Map.to_list(markers || %{}) do
-      Registry.write_compensation_marker(entity_id, kind)
+      Paths.write_compensation_marker(entity_id, kind)
     end
 
     :ok

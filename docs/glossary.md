@@ -287,7 +287,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Transport-bound principal** — identity minted from the authenticated connection, never from a
   caller-supplied value: the verified token for CLI callers, `runner@<namespace>` (role `runner`)
   for runner connections. `source: :internal` is reachable only from inside the controller BEAM.
-- **Namespace claim** — the `Flezha.State.Registry` record that one operative class's durable
+- **Namespace claim** — the `Flezha.State.Paths` record that one operative class's durable
   state belongs to one namespace (`<state_root>/<namespace>/<class>/`): recorded at bind,
   derivable from disk, refused on conflict; a class under `_system` is adopted by the first claimant.
 - **Break-glass (emergency rebootstrap)** — with the controller stopped, `flz auth rebootstrap`

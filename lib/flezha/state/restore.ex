@@ -14,7 +14,7 @@ defmodule Flezha.State.Restore do
   cold start), `terminal_seq_hint = 0` and both bodies are empty.
   """
 
-  alias Flezha.State.{Registry, Snapshot}
+  alias Flezha.State.{Paths, Snapshot}
 
   @header_size 16
 
@@ -25,7 +25,7 @@ defmodule Flezha.State.Restore do
           terminal_seq_hint: non_neg_integer()
         }
 
-  @spec assemble_payload(Registry.entity_id()) :: {:ok, payload()}
+  @spec assemble_payload(Paths.entity_id()) :: {:ok, payload()}
   def assemble_payload(entity_id) do
     # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
     # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
@@ -65,12 +65,12 @@ defmodule Flezha.State.Restore do
   assembled payload from it would be empty and rebuild a live Entity to
   `init_state`.
   """
-  @spec has_persisted_state?(Registry.entity_id()) :: boolean()
+  @spec has_persisted_state?(Paths.entity_id()) :: boolean()
   def has_persisted_state?(entity_id) do
     Snapshot.latest_snapshot(entity_id) != nil or
       match?(
         {:ok, %{size: size}} when size > 0,
-        File.stat(Registry.wal_path(entity_id))
+        File.stat(Paths.wal_path(entity_id))
       )
   end
 
@@ -84,7 +84,7 @@ defmodule Flezha.State.Restore do
   validation: the body is never touched and an unknown value is reported as
   found.
   """
-  @spec sdk_lang(Registry.entity_id()) :: byte() | nil
+  @spec sdk_lang(Paths.entity_id()) :: byte() | nil
   def sdk_lang(entity_id) do
     case Snapshot.latest_snapshot(entity_id) do
       {_seq, path} ->
@@ -108,14 +108,14 @@ defmodule Flezha.State.Restore do
   @spec class_sdk_lang(binary()) :: byte() | nil
   def class_sdk_lang(operative_class) when is_binary(operative_class) do
     operative_class
-    |> Registry.entities_of()
+    |> Paths.entities_of()
     |> Enum.find_value(&sdk_lang/1)
   end
 
   # The WAL's first record carries the same header shape the snapshot does, at
   # a fixed offset in the `[seq: 8][len: 4][header: 16]...` record framing.
   defp first_wal_lang(entity_id) do
-    case :file.read_file(Registry.wal_path(entity_id)) do
+    case :file.read_file(Paths.wal_path(entity_id)) do
       {:ok, <<_seq::64-big, len::32-big, lang, _::binary>>} when len >= @header_size -> lang
       _ -> nil
     end
@@ -124,7 +124,7 @@ defmodule Flezha.State.Restore do
   # Read the WAL once and parse records in memory; a per-record `:file.pread`
   # churns small transient refc binaries that fragment the binary allocator.
   defp read_tail_wal(entity_id, snapshot_seq) do
-    case :file.read_file(Registry.wal_path(entity_id)) do
+    case :file.read_file(Paths.wal_path(entity_id)) do
       {:ok, data} ->
         {iodata, terminal_seq} = gather_records(data, snapshot_seq, [], snapshot_seq)
         {IO.iodata_to_binary(iodata), terminal_seq}

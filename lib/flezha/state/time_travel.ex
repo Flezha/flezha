@@ -18,7 +18,7 @@ defmodule Flezha.State.TimeTravel do
   """
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Registry, Snapshot, WalWriter, Wire}
+  alias Flezha.State.{Paths, Snapshot, WalWriter, Wire}
 
   defmodule TimeTravelError do
     @moduledoc "Reasons a `TimeTravel.query/2` cannot be served."
@@ -52,7 +52,7 @@ defmodule Flezha.State.TimeTravel do
           terminal_seq: non_neg_integer()
         }
 
-  @spec query(Registry.entity_id(), target()) ::
+  @spec query(Paths.entity_id(), target()) ::
           {:ok, result()} | {:error, TimeTravelError.t()}
   def query({operative_class, _, _} = entity_id, target) do
     if ClassRegistry.capable?(operative_class, :time_travel?) do
@@ -67,7 +67,7 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp do_query(entity_id, target) do
-    snaps = Registry.snapshot_paths(entity_id)
+    snaps = Paths.snapshot_paths(entity_id)
     target_seq = resolve_target_seq(entity_id, target)
 
     case earliest_available_seq(snaps, entity_id) do
@@ -122,7 +122,7 @@ defmodule Flezha.State.TimeTravel do
   # Falls back to the newest snapshot seq only when nothing is datable — a WAL of
   # pre-tier plain change records, which carry no time at all.
   defp resolve_target_seq(entity_id, {:timestamp, ts}) when is_integer(ts) do
-    case scan_seq_at_or_before_path(Registry.wal_path(entity_id), ts) do
+    case scan_seq_at_or_before_path(Paths.wal_path(entity_id), ts) do
       nil -> 0
       seq -> seq
     end
@@ -138,7 +138,7 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp earliest_available_seq([], entity_id) do
-    if File.exists?(Registry.wal_path(entity_id)), do: 0, else: :no_data
+    if File.exists?(Paths.wal_path(entity_id)), do: 0, else: :no_data
   end
 
   defp earliest_available_seq([{seq, _} | _], _), do: seq
@@ -154,7 +154,7 @@ defmodule Flezha.State.TimeTravel do
   defp read_wal_in_range(entity_id, snapshot_seq, target_seq) do
     {acc, terminal} =
       WalWriter.fold_path(
-        Registry.wal_path(entity_id),
+        Paths.wal_path(entity_id),
         {[], snapshot_seq},
         &gather(&1, &2, snapshot_seq, target_seq)
       )

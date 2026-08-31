@@ -157,7 +157,7 @@ defmodule Flezha.AuthZ.Quotas do
   defp counter_for(other), do: other
 
   defp compute_disk_bytes(namespace) do
-    base = Flezha.State.Registry.namespace_dir(namespace)
+    base = Flezha.State.Paths.namespace_dir(namespace)
 
     if File.exists?(base) do
       walk_size(base)

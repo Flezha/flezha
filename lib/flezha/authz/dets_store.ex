@@ -1,4 +1,4 @@
-defmodule Flezha.AuthZ.Store do
+defmodule Flezha.AuthZ.DetsStore do
   @moduledoc """
   Shared helpers for the control-plane DETS stores (the auth-state
   files `tokens.dets`, `roles.dets`, `namespaces.dets`, `state.dets`,

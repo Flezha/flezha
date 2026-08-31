@@ -25,7 +25,7 @@ defmodule Flezha.Boot.StatePathMigrator do
   operator can inspect it.
   """
 
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   require Logger
 
@@ -40,7 +40,7 @@ defmodule Flezha.Boot.StatePathMigrator do
 
   @spec migrate() :: result()
   def migrate() do
-    root = Registry.state_root()
+    root = Paths.state_root()
 
     cond do
       not File.dir?(root) ->

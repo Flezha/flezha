@@ -19,8 +19,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   require Logger
 
+  alias Flezha.Plugin.Provider.Kafka
   alias Flezha.Plugin.Provider.Kafka.ProducerSup
-  alias Flezha.Plugin.Provider.Kafka.Telemetry
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
   alias Flezha.State.Outbox
   alias KafkaEx.Client, as: KafkaClient
@@ -356,7 +356,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   def handle_info({:metadata_refresh_done, batch_id, latency_ms, error}, state) do
-    Telemetry.metadata_refresh(
+    Kafka.metadata_refresh(
       latency_ms,
       Map.merge(partition_meta(state), %{trigger: :error_recovery, error: error})
     )
@@ -493,7 +493,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       )
     end
 
-    Telemetry.dropped(
+    Kafka.dropped(
       1,
       Map.merge(partition_meta(state), %{
         queue_depth: state.queue_size,
@@ -829,7 +829,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp deliver_batch(state, batch, base_offset) do
-    Telemetry.produce_ok(
+    Kafka.produce_ok(
       length(batch.records),
       elapsed_ms(state, batch),
       Map.merge(partition_meta(state), %{base_offset: base_offset, attempt: batch.attempt + 1})
@@ -911,7 +911,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp emit_retry(state, batch, reason) do
-    Telemetry.retry(
+    Kafka.retry(
       batch.attempt + 1,
       retry_backoff_ms(state, batch.attempt + 1),
       Map.put(partition_meta(state), :reason, reason)
@@ -927,7 +927,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp handle_topic_create_result(state, batch, result) do
     case result do
       :ok ->
-        Telemetry.topic_created(
+        Kafka.topic_created(
           state.auto_create_partitions,
           state.auto_create_replication_factor,
           %{
@@ -1123,7 +1123,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     total_ms = elapsed_ms(state, batch)
 
     Enum.each(batch.records, fn r ->
-      Telemetry.failed(
+      Kafka.failed(
         batch.attempt + 1,
         total_ms,
         Map.merge(partition_meta(state), %{last_reason: reason, caller: caller_tag(r)})
@@ -1473,7 +1473,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     Enum.each(queued, fn record ->
       reply_to_record(record, {:error, {:delivery_failed, :worker_swap_exhausted}})
 
-      Telemetry.failed(
+      Kafka.failed(
         state.swap_attempt + 1,
         state.delivery_timeout_ms,
         Map.merge(partition_meta(state), %{
@@ -1501,7 +1501,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp emit_pending_swap_telemetry(%{pending_swap_telemetry: payload} = state) do
     metadata = Map.put(payload.metadata, :producer_id_after, state.producer_id)
-    Telemetry.worker_swapped(payload.measurements, metadata)
+    Kafka.worker_swapped(payload.measurements, metadata)
     %{state | pending_swap_telemetry: nil}
   end
 

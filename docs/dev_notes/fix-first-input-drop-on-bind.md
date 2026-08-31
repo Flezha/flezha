@@ -150,7 +150,7 @@ input log.
 
 `TierE2EHarness.cleanup/3` removed `Path.join(state_root(), operative_id)`.
 Durable state lives at `<state_root>/<namespace>/<class>`
-(`Flezha.State.Registry.class_dir/1`), so that path **has never existed**: every
+(<!-- module-naming-record:begin -->`Flezha.State.Registry.class_dir/1`<!-- module-naming-record:end -->), so that path **has never existed**: every
 run leaked its state tree, and `unique/1`'s `System.unique_integer([:positive])`
 restarts per BEAM, so repeated single-file runs collide on both ids soon enough.
 64 leaked `cp_ack_*` trees had accumulated in `app_data/state`.

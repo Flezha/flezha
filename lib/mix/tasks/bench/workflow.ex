@@ -1197,7 +1197,7 @@ defmodule Mix.Tasks.Bench.Workflow do
   # ----------------------------------------------------------------- utils --
 
   defp writer_heap_kib do
-    case Flezha.State.Supervisor.lookup(Flezha.State.Registry.journal_id("wf_0")) do
+    case Flezha.State.Supervisor.lookup(Flezha.State.Paths.journal_id("wf_0")) do
       {:ok, pid} -> pid |> Process.info(:memory) |> elem(1) |> div(1024)
       _ -> "?"
     end

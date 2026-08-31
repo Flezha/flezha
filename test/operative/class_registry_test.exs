@@ -11,7 +11,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Registry, TestHelpers}
+  alias Flezha.State.{Paths, TestHelpers}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -61,7 +61,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   end
 
   test "a garbage sidecar resolves to the default", %{class: class} do
-    File.mkdir_p!(Registry.class_dir(class))
+    File.mkdir_p!(Paths.class_dir(class))
     File.write!(sidecar(class), "definitely_not_a_kind")
 
     assert ClassRegistry.get(class) == :stream
@@ -96,7 +96,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
   test "a tier-on put leaves a tier-off class's on-disk layout untouched", %{class: class} do
     :ok = ClassRegistry.put_effectively_once(class, false)
-    refute File.exists?(Registry.class_dir(class))
+    refute File.exists?(Paths.class_dir(class))
   end
 
   test "checkpoint_ack? defaults to false — per-input is the tier's granularity",
@@ -260,15 +260,15 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     end
   end
 
-  defp sidecar(class), do: Path.join(Registry.class_dir(class), "kind")
-  defp tier_sidecar(class), do: Path.join(Registry.class_dir(class), "effectively_once")
+  defp sidecar(class), do: Path.join(Paths.class_dir(class), "kind")
+  defp tier_sidecar(class), do: Path.join(Paths.class_dir(class), "effectively_once")
 
   defp checkpoint_sidecar(class),
-    do: Path.join(Registry.class_dir(class), "checkpoint_ack")
+    do: Path.join(Paths.class_dir(class), "checkpoint_ack")
 
   defp sync_durability_sidecar(class),
-    do: Path.join(Registry.class_dir(class), "sync_durability")
+    do: Path.join(Paths.class_dir(class), "sync_durability")
 
   defp correction_sidecar(class),
-    do: Path.join(Registry.class_dir(class), "correction_window_ms")
+    do: Path.join(Paths.class_dir(class), "correction_window_ms")
 end

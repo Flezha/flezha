@@ -9,7 +9,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.State.{ProcInbox, ProcJournal, Registry, TestHelpers, WalWriter}
+  alias Flezha.State.{Paths, ProcInbox, ProcJournal, TestHelpers, WalWriter}
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
@@ -30,7 +30,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
   # next append resolves the writer through the registry — so without waiting
   # for it to be gone the append reaches a dying pid and exits with `:noproc`.
   defp close_inbox_writer(inst) do
-    id = Registry.inbox_id(inst)
+    id = Paths.inbox_id(inst)
     {:ok, pid} = Flezha.State.Supervisor.find_or_start(id)
     ref = Process.monitor(pid)
     WalWriter.close(pid)
@@ -51,10 +51,10 @@ defmodule FlezhaTest.State.ProcInboxTest do
   test "inbox path lives with the instance's state files" do
     inst = instance_id()
 
-    assert Registry.inbox_path(inst) ==
-             Path.join([Registry.state_root(), "_system", inst, inst, "inbox.wal"])
+    assert Paths.inbox_path(inst) ==
+             Path.join([Paths.state_root(), "_system", inst, inst, "inbox.wal"])
 
-    assert Registry.wal_path(Registry.inbox_id(inst)) == Registry.inbox_path(inst)
+    assert Paths.wal_path(Paths.inbox_id(inst)) == Paths.inbox_path(inst)
   end
 
   test "appends carry monotonic offsets and round-trip message + metadata" do
@@ -181,7 +181,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
     {:ok, 1} = ProcInbox.append(inst, "kept", %{})
 
     close_inbox_writer(inst)
-    File.write!(Registry.inbox_path(inst), <<7::64-big, 99::32-big, 1, 2, 3>>, [:append])
+    File.write!(Paths.inbox_path(inst), <<7::64-big, 99::32-big, 1, 2, 3>>, [:append])
 
     assert [%{offset: 1, message: "kept"}] = ProcInbox.read(inst)
 
@@ -194,11 +194,11 @@ defmodule FlezhaTest.State.ProcInboxTest do
     inst = instance_id()
     {:ok, 1} = ProcInbox.append(inst, "x", %{})
 
-    assert Registry.scan_dir({inst, inst, ""}).wal_files == [],
+    assert Paths.scan_dir({inst, inst, ""}).wal_files == [],
            "inbox.wal rides the Entity substrate but is not an Entity"
 
-    assert Registry.scan_dir({inst, inst, ""}).outbox_files == []
-    refute Enum.any?(Registry.all_entities(), fn {rc, _, _} -> rc == inst end)
+    assert Paths.scan_dir({inst, inst, ""}).outbox_files == []
+    refute Enum.any?(Paths.all_entities(), fn {rc, _, _} -> rc == inst end)
   end
 
   test "the inbox is reclaimed with the instance's state" do
@@ -210,12 +210,12 @@ defmodule FlezhaTest.State.ProcInboxTest do
     # so every reclaimer of that tree (instance teardown, retention sweep,
     # `flz reset`) reclaims the inbox with it, and the reserved identity is
     # deletable through the same path an Entity is.
-    assert Path.dirname(Registry.inbox_path(inst)) == Registry.state_dir(Registry.inbox_id(inst))
-    assert Path.dirname(Registry.inbox_path(inst)) == Path.dirname(Registry.journal_path(inst))
+    assert Path.dirname(Paths.inbox_path(inst)) == Paths.state_dir(Paths.inbox_id(inst))
+    assert Path.dirname(Paths.inbox_path(inst)) == Path.dirname(Paths.journal_path(inst))
 
-    {:ok, %{status: :ok}} = Flezha.State.Supervisor.delete_entity(Registry.inbox_id(inst))
+    {:ok, %{status: :ok}} = Flezha.State.Supervisor.delete_entity(Paths.inbox_id(inst))
 
-    refute File.exists?(Registry.inbox_path(inst))
+    refute File.exists?(Paths.inbox_path(inst))
     assert ProcInbox.read(inst) == []
   end
 end

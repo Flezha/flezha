@@ -51,7 +51,7 @@
   "cache N seconds, default cached_at=0" pattern on monotonic time has this
   bug.
 - **Namespace-prefixed state lives at ONE seam.** The wire's entity_id stays
-  the 3-tuple; `Flezha.State.Registry.class_dir/1` resolves
+  the 3-tuple; <!-- module-naming-record:begin -->`Flezha.State.Registry.class_dir/1`<!-- module-naming-record:end --> resolves
   `<root>/<namespace>/<class>` via a claims ETS (`:flezha_state_namespaces`,
   keyed `{state_root, class}` — root-scoped so tests swapping `:state_root`
   cannot poison each other) → disk layout → `_system`. Claims are recorded at

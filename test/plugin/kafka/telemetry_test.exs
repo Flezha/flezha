@@ -1,5 +1,5 @@
 defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
-  alias Flezha.Plugin.Provider.Kafka.Telemetry
+  alias Flezha.Plugin.Provider.Kafka
 
   use ExUnit.Case, async: true
 
@@ -20,7 +20,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
 
   test "produce_ok emits with batch_size + latency_ms" do
     listen([[:flezha, :plugin, :kafka, :produce, :ok]])
-    Telemetry.produce_ok(7, 12, %{topic: "t", partition: 0, plugin_id: "p"})
+    Kafka.produce_ok(7, 12, %{topic: "t", partition: 0, plugin_id: "p"})
 
     assert_receive {:tel, [:flezha, :plugin, :kafka, :produce, :ok],
                     %{batch_size: 7, latency_ms: 12}, %{topic: "t", partition: 0}}
@@ -29,7 +29,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
   test "retry emits attempt + backoff_ms with reason metadata" do
     listen([[:flezha, :plugin, :kafka, :produce, :retry]])
 
-    Telemetry.retry(3, 200, %{
+    Kafka.retry(3, 200, %{
       topic: "t",
       partition: 0,
       plugin_id: "p",
@@ -42,7 +42,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
   test "dropped emits count + queue/strategy metadata" do
     listen([[:flezha, :plugin, :kafka, :produce, :dropped]])
 
-    Telemetry.dropped(1, %{
+    Kafka.dropped(1, %{
       topic: "t",
       partition: 0,
       plugin_id: "p",
@@ -56,7 +56,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
   test "failed emits attempts + total_ms + last_reason" do
     listen([[:flezha, :plugin, :kafka, :produce, :failed]])
 
-    Telemetry.failed(5, 30_000, %{
+    Kafka.failed(5, 30_000, %{
       topic: "t",
       partition: 0,
       plugin_id: "p",
@@ -69,7 +69,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
   test "metadata_refresh emits latency + trigger metadata" do
     listen([[:flezha, :plugin, :kafka, :metadata, :refresh]])
 
-    Telemetry.metadata_refresh(42, %{
+    Kafka.metadata_refresh(42, %{
       trigger: :error_recovery,
       error: :not_leader_for_partition,
       plugin_id: "p",
@@ -84,7 +84,7 @@ defmodule FlezhaTest.Plugin.Kafka.TelemetryTest do
   test "topic_created accepts keyword metadata and converts to map" do
     listen([[:flezha, :plugin, :kafka, :topic, :created]])
 
-    Telemetry.topic_created(2, 3, plugin_id: "p", topic: "t")
+    Kafka.topic_created(2, 3, plugin_id: "p", topic: "t")
 
     assert_receive {:tel, _, %{partitions: 2, replication_factor: 3},
                     %{plugin_id: "p", topic: "t"}}

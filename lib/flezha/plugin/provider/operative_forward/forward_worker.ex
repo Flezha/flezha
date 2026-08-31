@@ -19,7 +19,8 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   backpressure into the source Overwatch.
   """
 
-  alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, Telemetry}
+  alias Flezha.Plugin.Provider.OperativeForward
+  alias Flezha.Plugin.Provider.OperativeForward.ForwardSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
   alias Flezha.Service.OperativeManager
@@ -127,11 +128,11 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         buffer_len: state.buffer_len + 1
     }
 
-    Telemetry.queue_depth(state.buffer_len, state.labels)
+    OperativeForward.queue_depth(state.buffer_len, state.labels)
     state = deliver_next(state)
 
     if ProviderBehaviour.saturated?(state) do
-      Telemetry.saturated(state.buffer_len, state.labels)
+      OperativeForward.saturated(state.buffer_len, state.labels)
     end
 
     ProviderBehaviour.park_or_reply(state, from)
@@ -144,7 +145,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         buffer_len: state.buffer_len + 1
     }
 
-    Telemetry.queue_depth(state.buffer_len, state.labels)
+    OperativeForward.queue_depth(state.buffer_len, state.labels)
     {:reply, :ok, deliver_next(state)}
   end
 
@@ -232,7 +233,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         attempts: 0
     }
 
-    Telemetry.delivered(verdict_tag(verdict), state.labels)
+    OperativeForward.delivered(verdict_tag(verdict), state.labels)
 
     state
     |> ProviderBehaviour.release_waiters()
@@ -249,7 +250,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         attempts
       )
 
-    Telemetry.retry(attempts, backoff, reason, state.labels)
+    OperativeForward.retry(attempts, backoff, reason, state.labels)
 
     if attempts == 1 do
       Logger.warning(

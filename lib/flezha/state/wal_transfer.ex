@@ -14,7 +14,7 @@ defmodule Flezha.State.WalTransfer do
   a half-written file:
 
     * `manifest/1` — runs on the source, lists the Entity's existing files
-      with sizes (`Flezha.State.Registry.entity_files/1` is the one definition
+      with sizes (`Flezha.State.Paths.entity_files/1` is the one definition
       of that set).
     * `read_chunk/3` — runs on the source, returns one workflow slice.
     * `pull_entity/3` — runs on the destination, loops the two above per file,
@@ -26,7 +26,7 @@ defmodule Flezha.State.WalTransfer do
   controller that dies with its disk takes its state with it.
   """
 
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   @chunk_bytes 64 * 1024
   @call_timeout_ms 30_000
@@ -40,27 +40,27 @@ defmodule Flezha.State.WalTransfer do
   destination cannot enumerate them locally — it has nothing on disk yet.
   """
   @spec entities(binary()) :: [entity_id()]
-  def entities(operative_class), do: Registry.entities_of(operative_class)
+  def entities(operative_class), do: Paths.entities_of(operative_class)
 
   @doc "Basenames of the files `entity_id` actually has on this node."
   @spec manifest(entity_id()) :: [binary()]
   def manifest({_, _, _} = entity_id) do
     entity_id
-    |> Registry.entity_files()
+    |> Paths.entity_files()
     |> Enum.filter(&File.regular?/1)
     |> Enum.map(&Path.basename/1)
   end
 
   @doc """
   One slice of `name` under `entity_id`. `name` arrives over the wire, so it is
-  resolved through `Registry.entity_file_path/2` — never joined onto the state
+  resolved through `Paths.entity_file_path/2` — never joined onto the state
   directory, which would let a peer read arbitrary paths off this node.
   """
   @spec read_chunk(entity_id(), binary(), non_neg_integer()) ::
           {:ok, binary()} | :eof | {:error, term()}
   def read_chunk({_, _, _} = entity_id, name, offset)
       when is_binary(name) and is_integer(offset) and offset >= 0 do
-    case Registry.entity_file_path(entity_id, name) do
+    case Paths.entity_file_path(entity_id, name) do
       nil -> {:error, :not_in_manifest}
       path -> pread(path, offset)
     end
@@ -160,16 +160,16 @@ defmodule Flezha.State.WalTransfer do
 
   def move_entity(source_node, source, destination)
       when source_node in [nil] or source_node == node() do
-    files = Enum.filter(Registry.entity_files(source), &File.exists?/1)
+    files = Enum.filter(Paths.entity_files(source), &File.exists?/1)
 
     if files == [] do
       {:ok, 0}
     else
-      File.mkdir_p!(Registry.state_dir(destination))
+      File.mkdir_p!(Paths.state_dir(destination))
 
       moved =
         Enum.count(files, fn path ->
-          case Registry.entity_file_path(destination, Path.basename(path)) do
+          case Paths.entity_file_path(destination, Path.basename(path)) do
             nil -> false
             dest -> File.rename(path, dest) == :ok
           end
@@ -188,7 +188,7 @@ defmodule Flezha.State.WalTransfer do
       {:ok, files} ->
         # Only now: the destination copy is on disk and fsynced, so dropping
         # the source can no longer lose the Entity.
-        _ = :erpc.call(source_node, Registry, :delete_files, [source], @call_timeout_ms)
+        _ = :erpc.call(source_node, Paths, :delete_files, [source], @call_timeout_ms)
         emit(:wal_moved, %{entity_id: source, destination: destination, files: files})
         {:ok, files}
 
@@ -220,17 +220,17 @@ defmodule Flezha.State.WalTransfer do
     end
   end
 
-  # `Registry.atomic_install/2` owns the `.transferring` → fsync → rename dance;
+  # `Paths.atomic_install/2` owns the `.transferring` → fsync → rename dance;
   # this only fills the handle it is given.
   defp pull_file(source_node, {_, _, _} = entity_id, name, timeout, destination) do
-    case Registry.entity_file_path(destination, name) do
+    case Paths.entity_file_path(destination, name) do
       nil ->
         {:error, {:unknown_file, name}}
 
       dest ->
-        File.mkdir_p!(Registry.state_dir(destination))
+        File.mkdir_p!(Paths.state_dir(destination))
 
-        Registry.atomic_install(
+        Paths.atomic_install(
           dest,
           &copy_chunks(source_node, entity_id, name, &1, 0, timeout)
         )

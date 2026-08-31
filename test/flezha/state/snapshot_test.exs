@@ -2,7 +2,7 @@ defmodule Flezha.State.SnapshotTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{Registry, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Paths, Snapshot, Supervisor, TestHelpers, WalWriter}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -34,7 +34,7 @@ defmodule Flezha.State.SnapshotTest do
     {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
 
     # WAL retains records 4, 5.
-    {:ok, dev} = :file.open(Registry.wal_path(pid), [:raw, :read, :binary])
+    {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
     assert {:ok, 4, _, "x4", c1} = WalWriter.decode_record(dev, 0)
     assert {:ok, 5, _, "x5", c2} = WalWriter.decode_record(dev, c1)
     assert {:error, _} = WalWriter.decode_record(dev, c1 + c2)
@@ -56,14 +56,14 @@ defmodule Flezha.State.SnapshotTest do
     {:ok, _} = Snapshot.write_snapshot(pid, 7, header, "good")
 
     # Hand-craft a leftover .tmp like a crash mid-write would leave.
-    dir = Registry.state_dir(pid)
+    dir = Paths.state_dir(pid)
     {_, _, key} = pid
-    tmp = Path.join(dir, Registry.encode_entity_key(key) <> ".snap.99.tmp")
+    tmp = Path.join(dir, Paths.encode_entity_key(key) <> ".snap.99.tmp")
     File.write!(tmp, "garbage-not-a-snapshot")
 
     # Latest seq is still 7; the .tmp is filtered out.
     assert {7, _} = Snapshot.latest_snapshot(pid)
-    assert %{snapshot_files: snaps} = Registry.scan_dir(pid)
+    assert %{snapshot_files: snaps} = Paths.scan_dir(pid)
     assert Enum.all?(snaps, fn {_, seq, _} -> seq == 7 end)
   end
 
@@ -73,7 +73,7 @@ defmodule Flezha.State.SnapshotTest do
     {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "b")
 
     :ok = Snapshot.delete_snapshot(pid, 1)
-    assert [{2, _}] = Registry.snapshot_paths(pid)
+    assert [{2, _}] = Paths.snapshot_paths(pid)
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

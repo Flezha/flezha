@@ -4,7 +4,7 @@ defmodule Flezha.State.RetentionTest do
 
   alias Flezha.State.{
     Completion,
-    Registry,
+    Paths,
     Retention,
     Snapshot,
     Supervisor,
@@ -46,7 +46,7 @@ defmodule Flezha.State.RetentionTest do
       # Add an older snapshot to demonstrate it gets reaped under 0 retention.
       {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
       :ok = Retention.sweep_entity(pid, 0)
-      assert [{5, _}] = Registry.snapshot_paths(pid)
+      assert [{5, _}] = Paths.snapshot_paths(pid)
     end
 
     test "non-zero retention keeps only the latest when all snaps are within window", %{
@@ -64,7 +64,7 @@ defmodule Flezha.State.RetentionTest do
       # Decision 5: when no snap is older than cutoff, kept_seq = latest_seq
       # and earlier snaps are deleted as redundant.
       :ok = Retention.sweep_entity(pid, 1)
-      assert [{3, _}] = Registry.snapshot_paths(pid)
+      assert [{3, _}] = Paths.snapshot_paths(pid)
     end
 
     test "rewriting preserves crc-validity of kept records", %{entity_id: pid} do
@@ -75,7 +75,7 @@ defmodule Flezha.State.RetentionTest do
       for n <- 0..4, do: :ok = WalWriter.append(srv, n, header, "y" <> Integer.to_string(n))
       :ok = Retention.rewrite_wal_excluding_pre_seq(pid, 2)
 
-      {:ok, dev} = :file.open(Registry.wal_path(pid), [:raw, :read, :binary])
+      {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
       assert {:ok, 3, _, "y3", c1} = WalWriter.decode_record(dev, 0)
       assert {:ok, 4, _, "y4", _} = WalWriter.decode_record(dev, c1)
       :file.close(dev)
@@ -112,7 +112,7 @@ defmodule Flezha.State.RetentionTest do
 
       assert Completion.exists?("bnd_live")
       refute Completion.exists?("bnd_old")
-      refute File.dir?(Registry.class_dir("bnd_old"))
+      refute File.dir?(Paths.class_dir("bnd_old"))
     end
   end
 
@@ -132,12 +132,12 @@ defmodule Flezha.State.RetentionTest do
 
       # snap@2 predates the window; a workflow class has no time-travel, so the
       # sweep forces retention_hours=0 → only the latest snapshot survives.
-      File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
+      File.touch!(Paths.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
       Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
 
       :ok = Retention.sweep_now()
 
-      assert [{5, _}] = Registry.snapshot_paths(pid)
+      assert [{5, _}] = Paths.snapshot_paths(pid)
     end
 
     test "a stream class keeps the older snapshot under the same window" do
@@ -153,12 +153,12 @@ defmodule Flezha.State.RetentionTest do
 
       # Same setup, but a (default) stream class keeps snap@2 as the
       # retention floor because it is older than the 48h window.
-      File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
+      File.touch!(Paths.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
       Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
 
       :ok = Retention.sweep_now()
 
-      assert [{2, _}, {5, _}] = Registry.snapshot_paths(pid)
+      assert [{2, _}, {5, _}] = Paths.snapshot_paths(pid)
     end
   end
 
@@ -174,11 +174,11 @@ defmodule Flezha.State.RetentionTest do
       {:ok, _} = Snapshot.write_snapshot(pid, 4, header, "snap@4")
       # Compaction already cut the WAL to [5, 6]; a retention tick that keeps
       # the latest snapshot has nothing below seq 4 left to remove.
-      {:ok, %{inode: inode}} = File.stat(Registry.wal_path(pid))
+      {:ok, %{inode: inode}} = File.stat(Paths.wal_path(pid))
 
       :ok = Retention.sweep_entity(pid, 6)
 
-      assert {:ok, %{inode: ^inode}} = File.stat(Registry.wal_path(pid)),
+      assert {:ok, %{inode: ^inode}} = File.stat(Paths.wal_path(pid)),
              "a no-op cut must not rewrite (and re-inode) the file"
 
       assert WalWriter.last_persisted_seq(srv) == 6
@@ -192,7 +192,7 @@ defmodule Flezha.State.RetentionTest do
       header = TestHelpers.stub_header()
 
       seqs = fn ->
-        WalWriter.fold_path(Registry.wal_path(pid), [], fn {s, _, _}, acc ->
+        WalWriter.fold_path(Paths.wal_path(pid), [], fn {s, _, _}, acc ->
           {:cont, [s | acc]}
         end)
         |> Enum.reverse()

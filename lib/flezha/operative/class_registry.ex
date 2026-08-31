@@ -14,7 +14,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
     1. the in-memory ETS table — populated at `Flezha.Operative.Overwatch`
        bind, evicted at teardown;
-    2. a durable per-class `kind` sidecar under `Registry.class_dir/1`
+    2. a durable per-class `kind` sidecar under `Paths.class_dir/1`
        (`<state_root>/<namespace>/<operative_class>/`) — so a process-less
        `Retention` sweep (which walks class dirs on disk with no live
        Overwatch) still resolves the kind after teardown, while finished-job
@@ -25,7 +25,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   The sidecar is written only for non-`:stream` kinds, so a stream
   operative's on-disk layout is unchanged. Like `Flezha.State.Completion`, the
-  `kind` file is inert to every `Flezha.State.Registry` scanner.
+  `kind` file is inert to every `Flezha.State.Paths` scanner.
 
   This module also owns the whole declaration round-trip, not just its storage:
   `decode_declarations/1` reads the `AddOperative` response the SDK answers a
@@ -36,8 +36,8 @@ defmodule Flezha.Operative.ClassRegistry do
 
   alias Flezha.Operative.Kind
   alias Flezha.State.InputLog
+  alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.Registry
   alias Flezha.State.Restore
 
   require Logger
@@ -302,7 +302,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   These are two different key spaces, not two names for one thing. A workflow
   instance's proc-journal and durable inbox live under its INSTANCE id
-  (`Registry.journal_id/1`), while its Entities and input log live under the
+  (`Paths.journal_id/1`), while its Entities and input log live under the
   resolved CLASS (`:operative_class`, defaulting to the instance id). They
   coincide unless an operator sets that option — and where they diverge, asking
   for one and getting the other returns half an operative's artifacts with no
@@ -665,7 +665,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   defp sidecar_path(operative_class, filename \\ @sidecar),
-    do: Path.join(Registry.class_dir(operative_class), filename)
+    do: Path.join(Paths.class_dir(operative_class), filename)
 
   defp write_sidecar(operative_class, kind),
     do: write_sidecar_file(operative_class, @sidecar, Atom.to_string(kind))

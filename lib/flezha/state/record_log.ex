@@ -6,7 +6,7 @@ defmodule Flezha.State.RecordLog do
   `proc.journal` (`Flezha.State.ProcJournal`) and its `inbox.wal`
   (`Flezha.State.ProcInbox`). Both are WAL-framed record streams written through
   the existing `WalWriter` + `FsyncBatcher` path under a reserved
-  `Flezha.State.Registry` identity, and both need exactly two procedures from
+  `Flezha.State.Paths` identity, and both need exactly two procedures from
   that substrate: a **durable append** (assign the next seq, write, answer once
   the record is synced — by the caller's own fsync or by the batch that holds
   it) and a **torn-tail-tolerant read**. Those live here, so neither log owns a

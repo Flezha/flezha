@@ -1054,7 +1054,7 @@ defmodule Flezha.Service.CliManager do
   defp finished_operatives(namespace, live_ids) do
     now = System.system_time(:second)
 
-    Flezha.State.Registry.operative_classes()
+    Flezha.State.Paths.operative_classes()
     |> Enum.reject(&(&1 in live_ids))
     |> Enum.flat_map(fn operative_id ->
       case Flezha.State.Completion.read(operative_id) do
@@ -1824,7 +1824,7 @@ defmodule Flezha.Service.CliManager do
       for {{rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
           rc == operative_class do
         wal_bytes =
-          case :file.read_file_info(Flezha.State.Registry.wal_path(pid)) do
+          case :file.read_file_info(Flezha.State.Paths.wal_path(pid)) do
             {:ok, info} -> elem(info, 1)
             _ -> 0
           end
@@ -1944,12 +1944,12 @@ defmodule Flezha.Service.CliManager do
   end
 
   # The namespace a state verb is authorized against: the registry's answer
-  # for a live Operative, else the on-disk claim (`Flezha.State.Registry`),
+  # for a live Operative, else the on-disk claim (`Flezha.State.Paths`),
   # so a stopped Operative's durable state is still owned by its namespace.
   defp state_target_namespace(operative_class) do
     case OperativeManager.namespace_of(operative_class) do
       {:ok, namespace} -> namespace
-      :error -> Flezha.State.Registry.namespace_of_class(operative_class)
+      :error -> Flezha.State.Paths.namespace_of_class(operative_class)
     end
   end
 
@@ -2332,7 +2332,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp has_persisted_state?(rc, sh, pk) do
-    Enum.any?(Flezha.State.Registry.all_entities(), fn {r, s, p} ->
+    Enum.any?(Flezha.State.Paths.all_entities(), fn {r, s, p} ->
       r == rc and s == sh and p == pk
     end)
   end

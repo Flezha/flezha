@@ -95,7 +95,7 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
     )
 
     entity_id = {"s3cls_#{System.unique_integer([:positive])}", "proc", "k1"}
-    path = Flezha.State.Registry.wal_path(entity_id)
+    path = Flezha.State.Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(path))
 
     records =

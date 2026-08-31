@@ -12,7 +12,7 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.Replay
-  alias Flezha.State.{Registry, TestHelpers}
+  alias Flezha.State.{Paths, TestHelpers}
 
   setup do
     # A fresh tmp state_root isolates each case: `all_entities/0` +
@@ -32,7 +32,7 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   # it and `has_persisted_state?/1` returns true (as after a real durable run).
   defp seed_entity(operative_class, procedure_id, entity_key) do
     entity_id = {operative_class, procedure_id, entity_key}
-    path = Registry.wal_path(entity_id)
+    path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, TestHelpers.build_wal_record(1, <<>>))
     entity_id

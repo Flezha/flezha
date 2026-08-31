@@ -11,7 +11,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Commands, Outbox, ProcJournal, Registry, TestHelpers, WalWriter, Wire}
+  alias Flezha.State.{Commands, Outbox, Paths, ProcJournal, TestHelpers, WalWriter, Wire}
 
   import Flezha.State.TestHelpers,
     only: [next_output: 0, refute_dispatched: 0, refute_dispatched: 1]
@@ -32,17 +32,17 @@ defmodule FlezhaTest.State.ProcJournalTest do
   defp seg_identity(rc, sh, pk), do: Wire.encode_entity_id(rc, sh, pk)
 
   defp close_journal_writer(inst) do
-    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Registry.journal_id(inst))
+    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(inst))
     WalWriter.close(pid)
   end
 
   test "journal path lives with the instance's state files" do
     inst = instance_id()
 
-    assert Registry.journal_path(inst) ==
-             Path.join([Registry.state_root(), "_system", inst, inst, "proc.journal"])
+    assert Paths.journal_path(inst) ==
+             Path.join([Paths.state_root(), "_system", inst, inst, "proc.journal"])
 
-    assert Registry.wal_path(Registry.journal_id(inst)) == Registry.journal_path(inst)
+    assert Paths.wal_path(Paths.journal_id(inst)) == Paths.journal_path(inst)
   end
 
   test "append/read round-trip with entities and handoff" do
@@ -62,7 +62,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     assert %{seq: 1, type: :proc_committed, proc_idx: 1} = second
     assert second.payload.handoff == [{3, "next"}]
 
-    assert File.exists?(Registry.journal_path(inst))
+    assert File.exists?(Paths.journal_path(inst))
   end
 
   test "restore_state folds committed indexes and every in-flight proc's own handoff" do
@@ -115,7 +115,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     # fresh open (mirrors a crash mid-append).
     close_journal_writer(inst)
 
-    path = Registry.journal_path(inst)
+    path = Paths.journal_path(inst)
     File.write!(path, <<7::64-big, 99::32-big, 1, 2, 3>>, [:append])
 
     assert {:ok, [entry]} = ProcJournal.read(inst)
@@ -138,7 +138,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
              ProcJournal.append_proc_committed(inst, 0, 0, [], [{1, fat}])
 
     assert size > max
-    refute File.exists?(Registry.journal_path(inst))
+    refute File.exists?(Paths.journal_path(inst))
   end
 
   test "an entry shape this build cannot decode is skipped, not fatal" do
@@ -151,7 +151,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     # shape this build does not understand: both tolerated, neither fatal.
     unknown = ProcJournal.encode_entry(77, 0, 0, "future")
     malformed = ProcJournal.encode_entry(4, 0, 5, "not-a-deadline")
-    path = Registry.journal_path(inst)
+    path = Paths.journal_path(inst)
     File.write!(path, TestHelpers.build_wal_record(1, <<0::128>>, unknown), [:append])
     File.write!(path, TestHelpers.build_wal_record(2, <<0::128>>, malformed), [:append])
 
@@ -237,17 +237,17 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # Scoped to this instance: the shared app's live runners may write
     # unrelated Entity state into the test root concurrently.
-    refute Enum.any?(Registry.all_entities(), fn {rc, _, _} -> rc == inst end)
-    assert Registry.scan_dir({inst, inst, ""}).wal_files == []
+    refute Enum.any?(Paths.all_entities(), fn {rc, _, _} -> rc == inst end)
+    assert Paths.scan_dir({inst, inst, ""}).wal_files == []
   end
 
   test "delete_entity removes the journal file" do
     inst = instance_id()
     :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [])
-    assert File.exists?(Registry.journal_path(inst))
+    assert File.exists?(Paths.journal_path(inst))
 
-    {:ok, %{status: :ok}} = Flezha.State.Supervisor.delete_entity(Registry.journal_id(inst))
-    refute File.exists?(Registry.journal_path(inst))
+    {:ok, %{status: :ok}} = Flezha.State.Supervisor.delete_entity(Paths.journal_id(inst))
+    refute File.exists?(Paths.journal_path(inst))
     assert ProcJournal.restore_state(inst) == nil
   end
 
@@ -345,7 +345,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     # The durable state a crash-before-flush leaves: the commit landed, the
     # flush marker did not. Capture the file at exactly that point.
     close_journal_writer(inst)
-    path = Registry.journal_path(inst)
+    path = Paths.journal_path(inst)
     committed_only = File.read!(path)
 
     assert :ok = ProcJournal.flush_pending(inst, self())
@@ -434,7 +434,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
              ])
 
     assert size > max
-    refute File.exists?(Registry.journal_path(inst))
+    refute File.exists?(Paths.journal_path(inst))
   end
 
   # No Entity WAL is seeded: the journal is instance-scoped and rides the bind,

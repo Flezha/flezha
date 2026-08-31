@@ -10,14 +10,14 @@ defmodule Flezha.State.Completion do
   The record lives at
   `<state_root>/<namespace>/<operative_class>/completion.record` — a file
   sibling to the procedure directories, inert to every
-  `Flezha.State.Registry` scanner (which only recognise `.wal` /
+  `Flezha.State.Paths` scanner (which only recognise `.wal` /
   `.snap.<seq>` / `.outbox.dedup`). Its
   presence is also the retain-vs-delete signal for `stop_operative`.
   """
 
   require Logger
 
-  alias Flezha.State.Registry
+  alias Flezha.State.Paths
 
   @filename "completion.record"
 
@@ -31,7 +31,7 @@ defmodule Flezha.State.Completion do
 
   @spec path(binary()) :: binary()
   def path(operative_class),
-    do: Path.join(Registry.class_dir(operative_class), @filename)
+    do: Path.join(Paths.class_dir(operative_class), @filename)
 
   @spec exists?(binary()) :: boolean()
   def exists?(operative_class), do: File.exists?(path(operative_class))
@@ -43,7 +43,7 @@ defmodule Flezha.State.Completion do
   """
   @spec write(binary(), t()) :: :ok
   def write(operative_class, %{} = record) when is_binary(operative_class) do
-    dir = Registry.class_dir(operative_class)
+    dir = Paths.class_dir(operative_class)
     final = Path.join(dir, @filename)
     tmp = final <> ".tmp"
 

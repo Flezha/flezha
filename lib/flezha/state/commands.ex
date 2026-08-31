@@ -20,8 +20,8 @@ defmodule Flezha.State.Commands do
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.State.Paths
   alias Flezha.State.ProcJournal
-  alias Flezha.State.Registry
   alias Flezha.State.Restore
   alias Flezha.State.Wire
 
@@ -108,7 +108,7 @@ defmodule Flezha.State.Commands do
     case Restore.assemble_payload({rc, sh, pk}) do
       {:ok, payload} ->
         entity_id_bytes = Wire.encode_entity_id(rc, sh, pk)
-        markers = Registry.compensation_markers({rc, sh, pk})
+        markers = Paths.compensation_markers({rc, sh, pk})
 
         {:ok,
          {:restore_init_state,

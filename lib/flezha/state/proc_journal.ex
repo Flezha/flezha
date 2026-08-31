@@ -8,7 +8,7 @@ defmodule Flezha.State.ProcJournal do
   `<state_root>/<namespace>/<instance_id>/<instance_id>/proc.journal`, written
   through the existing `WalWriter` framing + `FsyncBatcher` path under the
   reserved
-  identity `Registry.journal_id/1` — no parallel persistence machinery. Each
+  identity `Paths.journal_id/1` — no parallel persistence machinery. Each
   WAL record's change-bytes carry one typed journal entry, and its 16-byte
   record header carries the instance epoch and the entry's identity:
 
@@ -111,9 +111,9 @@ defmodule Flezha.State.ProcJournal do
 
   alias Flezha.State.{
     Outbox,
+    Paths,
     PersistenceResolver,
     RecordLog,
-    Registry,
     Supervisor,
     WalWriter
   }
@@ -254,7 +254,7 @@ defmodule Flezha.State.ProcJournal do
     {type, proc_idx, iter, payload} = barrier_record(barrier)
 
     with {:ok, header, body} <- encode(instance_id, type, proc_idx, iter, payload, nil) do
-      log_id = Registry.journal_id(instance_id)
+      log_id = Paths.journal_id(instance_id)
       {:ok, RecordLog.append_async(log_id, header, body, append_opts(type), reqids, label)}
     end
   end
@@ -280,7 +280,7 @@ defmodule Flezha.State.ProcJournal do
     with [] <- ClassRegistry.compensable_procs(instance_id),
          {:ok, raw} <- read(instance_id),
          floor when is_integer(floor) and floor > 0 <- cut_floor(raw),
-         {:ok, writer} <- Supervisor.find_or_start(Registry.journal_id(instance_id)) do
+         {:ok, writer} <- Supervisor.find_or_start(Paths.journal_id(instance_id)) do
       min_bytes = PersistenceResolver.record_log_cut_after_bytes()
       WalWriter.truncate_up_to_async(writer, floor - 1, min_bytes: min_bytes)
     end
@@ -368,7 +368,7 @@ defmodule Flezha.State.ProcJournal do
   @spec read(binary()) :: {:ok, [entry()]}
   def read(instance_id) when is_binary(instance_id) do
     entries =
-      RecordLog.read(Registry.journal_path(instance_id), fn seq, <<epoch::32-big, _::96>>, body ->
+      RecordLog.read(Paths.journal_path(instance_id), fn seq, <<epoch::32-big, _::96>>, body ->
         decode_entry(seq, body, epoch)
       end)
 
@@ -682,7 +682,7 @@ defmodule Flezha.State.ProcJournal do
   defp append(instance_id, type, proc_idx, iter, payload, epoch \\ nil) do
     with {:ok, header, body} <- encode(instance_id, type, proc_idx, iter, payload, epoch),
          {:ok, _seq} <-
-           RecordLog.append(Registry.journal_id(instance_id), header, body, append_opts(type)) do
+           RecordLog.append(Paths.journal_id(instance_id), header, body, append_opts(type)) do
       :ok
     else
       {:duplicate, _seq} -> :ok
@@ -726,7 +726,7 @@ defmodule Flezha.State.ProcJournal do
     comp? = entry.type == :compensated
     for_type = entry_type_code(entry.type)
     key = {:marker, for_type, entry.proc_idx, entry.iter, entry.epoch}
-    owner = Registry.journal_id(instance_id)
+    owner = Paths.journal_id(instance_id)
 
     outputs =
       Enum.map(entry.payload.outbox, fn item ->

@@ -22,7 +22,7 @@ defmodule Flezha.State.DurabilityTierTest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{Outbox, Registry, TestHelpers}
+  alias Flezha.State.{Outbox, Paths, TestHelpers}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
@@ -122,13 +122,13 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "the shipped manifest reproduces the local WAL byte for byte", ctx do
-      before = File.read!(Registry.wal_path(ctx.entity_id))
+      before = File.read!(Paths.wal_path(ctx.entity_id))
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
 
       TestHelpers.wipe_entity(ctx.entity_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert File.read!(Registry.wal_path(ctx.entity_id)) == before
+      assert File.read!(Paths.wal_path(ctx.entity_id)) == before
     end
 
     test "a second ship uploads only the records above the shipped cut", ctx do
@@ -155,10 +155,10 @@ defmodule Flezha.State.DurabilityTierTest do
     test "hydration never overwrites local state", ctx do
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
 
-      File.write!(Registry.wal_path(ctx.entity_id), local_only_record())
+      File.write!(Paths.wal_path(ctx.entity_id), local_only_record())
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert File.read!(Registry.wal_path(ctx.entity_id)) == local_only_record()
+      assert File.read!(Paths.wal_path(ctx.entity_id)) == local_only_record()
     end
 
     test "the class-level input log ships and hydrates with its Entities", ctx do
@@ -166,7 +166,7 @@ defmodule Flezha.State.DurabilityTierTest do
       # for it by name. Missing it is silent and fatal: the Entity comes back
       # with its consumed floor intact and no log to replay from, so the next
       # input lands at offset 0, below the floor, and is skipped as consumed.
-      log_path = Registry.input_log_path(ctx.class)
+      log_path = Paths.input_log_path(ctx.class)
       File.mkdir_p!(Path.dirname(log_path))
       File.write!(log_path, TestHelpers.wal_records(0..2))
 
@@ -190,8 +190,8 @@ defmodule Flezha.State.DurabilityTierTest do
 
       assert :ok = DurabilityTier.hydrate_entities(ctx.class, "proc", ["k1"])
 
-      assert File.exists?(Registry.wal_path(ctx.entity_id))
-      refute File.exists?(Registry.wal_path(other))
+      assert File.exists?(Paths.wal_path(ctx.entity_id))
+      refute File.exists?(Paths.wal_path(other))
     end
   end
 
@@ -209,7 +209,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
 
       # What compaction leaves behind: a snapshot at 3 and a WAL holding 4..5.
-      File.write!(Registry.snapshot_path(ctx.entity_id, 3), "snapshot-at-3")
+      File.write!(Paths.snapshot_path(ctx.entity_id, 3), "snapshot-at-3")
       TestHelpers.write_wal(ctx.entity_id, 4..5)
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
 
@@ -219,7 +219,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
       TestHelpers.wipe_entity(ctx.entity_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
-      assert File.read!(Registry.snapshot_path(ctx.entity_id, 3)) == "snapshot-at-3"
+      assert File.read!(Paths.snapshot_path(ctx.entity_id, 3)) == "snapshot-at-3"
       assert seqs_in_wal(ctx.entity_id) == [4, 5]
     end
 
@@ -287,24 +287,24 @@ defmodule Flezha.State.DurabilityTierTest do
     test "the saga compensation markers survive a recovery", ctx do
       # Without these the resumed driver never takes its compensation branch and
       # resumes FORWARD, silently skipping a rollback it owes.
-      :ok = Registry.write_compensation_marker(ctx.entity_id, :intent)
-      :ok = Registry.write_compensation_marker(ctx.entity_id, :done)
+      :ok = Paths.write_compensation_marker(ctx.entity_id, :intent)
+      :ok = Paths.write_compensation_marker(ctx.entity_id, :done)
 
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
       TestHelpers.wipe_entity(ctx.entity_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert %{intent: true, done: true} = Registry.compensation_markers(ctx.entity_id)
+      assert %{intent: true, done: true} = Paths.compensation_markers(ctx.entity_id)
     end
 
     test "an unset marker is not resurrected by a recovery", ctx do
-      :ok = Registry.write_compensation_marker(ctx.entity_id, :intent)
+      :ok = Paths.write_compensation_marker(ctx.entity_id, :intent)
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
 
       TestHelpers.wipe_entity(ctx.entity_id)
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
-      assert %{intent: true, done: false} = Registry.compensation_markers(ctx.entity_id)
+      assert %{intent: true, done: false} = Paths.compensation_markers(ctx.entity_id)
     end
 
     test "a marker appearing rewrites an otherwise unchanged manifest", ctx do
@@ -313,7 +313,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
       # No new records — only the marker. A cut comparison that ignored it would
       # skip the write and the marker would never ship.
-      :ok = Registry.write_compensation_marker(ctx.entity_id, :done)
+      :ok = Paths.write_compensation_marker(ctx.entity_id, :done)
       assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
 
       assert Stub.stored_manifest({:entity, ctx.entity_id}).markers.done
@@ -654,7 +654,7 @@ defmodule Flezha.State.DurabilityTierTest do
       entity = {ctx.class, "proc", "k1"}
       TestHelpers.write_wal(entity, 0..3)
       # ...while the proc-journal lives under the INSTANCE id.
-      journal = Registry.journal_id(ctx.instance)
+      journal = Paths.journal_id(ctx.instance)
       TestHelpers.write_wal(journal, 0..1)
 
       assert :ok = DurabilityTier.commit_sync(ctx.instance)

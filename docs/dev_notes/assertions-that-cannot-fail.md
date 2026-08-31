@@ -2,7 +2,7 @@
 
 ## The defect is not the path; it is that nobody ever saw the assertion fail
 
-`Flezha.State.Registry.class_dir/1` is three segments —
+<!-- module-naming-record:begin -->`Flezha.State.Registry.class_dir/1`<!-- module-naming-record:end --> is three segments —
 `<state_root>/<namespace>/<operative_class>`. Six sites built two:
 
 ```elixir

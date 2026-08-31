@@ -209,7 +209,7 @@ defmodule Flezha.State.PersistenceResolver do
   # `max_mailbox_bytes_total` (finish-platform-authn-authz §6.3).
   defp cap_to_namespace_mailbox_quota(window, operative_class) do
     if Flezha.AuthZ.enabled?() do
-      namespace = Flezha.State.Registry.namespace_of_class(operative_class)
+      namespace = Flezha.State.Paths.namespace_of_class(operative_class)
 
       case Flezha.AuthZ.NamespaceStore.get(namespace) do
         {:ok, %{quotas: %{max_mailbox_bytes_total: limit}}}

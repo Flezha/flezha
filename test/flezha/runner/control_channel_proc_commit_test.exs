@@ -20,7 +20,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{Outbox, ProcInbox, ProcJournal, Registry, TestHelpers, Wire}
+  alias Flezha.State.{Outbox, Paths, ProcInbox, ProcJournal, TestHelpers, Wire}
 
   import Flezha.State.TestHelpers, only: [next_output: 1, refute_dispatched: 1]
 
@@ -244,7 +244,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
 
       # The ack means remote-durable: the journal's manifest is in the store.
       assert {:ok, _blob} =
-               Stub.get(Manifest.key({:entity, {inst, inst, Registry.journal_entity_key()}}), [])
+               Stub.get(Manifest.key({:entity, {inst, inst, Paths.journal_entity_key()}}), [])
     end
 
     test "a failed remote ship withholds the ack's success and re-runs the proc on resume" do

@@ -9,7 +9,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
     * `{:entity, entity_id}` — an Entity's WAL plus its snapshots. A workflow
       instance's proc-journal and durable inbox are *also* this shape: they ride
-      the Entity persistence substrate under `Flezha.State.Registry`'s reserved
+      the Entity persistence substrate under `Flezha.State.Paths`'s reserved
       entity keys, so they need no separate machinery here.
     * `{:input_log, operative_class}` — the effectively-once tier's durable
       input log, which shares the WAL record framing and so shares the
@@ -36,7 +36,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{Outbox, Registry, Restore, WalWriter, Wire}
+  alias Flezha.State.{Outbox, Paths, Restore, WalWriter, Wire}
 
   @type ref :: Manifest.ref()
 
@@ -59,14 +59,14 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc """
   Every Entity reference of `operative_class` that has local durable files —
   Entities, and (for a workflow instance) its reserved proc-journal and inbox
-  identities, which `Registry.all_entities/0` does not surface.
+  identities, which `Paths.all_entities/0` does not surface.
   """
   @spec entity_refs(binary()) :: [ref()]
   def entity_refs(operative_class) do
     reserved =
-      Enum.map(Registry.reserved_entity_keys(), &{operative_class, operative_class, &1})
+      Enum.map(Paths.reserved_entity_keys(), &{operative_class, operative_class, &1})
 
-    (Registry.entities_of(operative_class) ++ reserved)
+    (Paths.entities_of(operative_class) ++ reserved)
     |> Enum.uniq()
     |> Enum.filter(&has_local_state?({:entity, &1}))
     |> Enum.map(&{:entity, &1})
@@ -74,8 +74,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @doc "Local WAL path of `ref`, or `nil` for a whole-file reference."
   @spec wal_path(ref()) :: binary() | nil
-  def wal_path({:entity, entity_id}), do: Registry.wal_path(entity_id)
-  def wal_path({:input_log, operative_class}), do: Registry.input_log_path(operative_class)
+  def wal_path({:entity, entity_id}), do: Paths.wal_path(entity_id)
+  def wal_path({:input_log, operative_class}), do: Paths.input_log_path(operative_class)
   def wal_path(_ref), do: nil
 
   @doc """
@@ -189,7 +189,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @doc "Local snapshot files of `ref`, oldest first. Only Entities have them."
   @spec snapshots(ref()) :: [{non_neg_integer(), binary()}]
-  def snapshots({:entity, entity_id}), do: Registry.snapshot_files(entity_id)
+  def snapshots({:entity, entity_id}), do: Paths.snapshot_files(entity_id)
   def snapshots(_ref), do: []
 
   @doc """
@@ -216,7 +216,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   rather than as blobs.
   """
   @spec markers(ref()) :: Manifest.markers()
-  def markers({:entity, entity_id}), do: Registry.compensation_markers(entity_id)
+  def markers({:entity, entity_id}), do: Paths.compensation_markers(entity_id)
   def markers(_ref), do: %{intent: false, done: false}
 
   @doc """
@@ -313,7 +313,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   Write fetched WAL bytes as `ref`'s local WAL, and fetched snapshot bytes as
   its snapshot files.
 
-  Written through `Registry.atomic_install/2` — the same `.transferring` →
+  Written through `Paths.atomic_install/2` — the same `.transferring` →
   fsync → rename the cross-controller pull uses, so a failure leaves the
   destination cold rather than half-restored.
   """
@@ -329,7 +329,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   @spec write_snapshot(ref(), non_neg_integer(), binary()) :: :ok | {:error, term()}
   def write_snapshot({:entity, entity_id}, seq, bytes),
-    do: atomic_write(Registry.snapshot_path(entity_id, seq), bytes)
+    do: atomic_write(Paths.snapshot_path(entity_id, seq), bytes)
 
   def write_snapshot(_ref, _seq, _bytes), do: {:error, :not_snapshotted}
 
@@ -403,5 +403,5 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   defp atomic_write(path, bytes),
-    do: Registry.atomic_install(path, &:file.write(&1, bytes))
+    do: Paths.atomic_install(path, &:file.write(&1, bytes))
 end
