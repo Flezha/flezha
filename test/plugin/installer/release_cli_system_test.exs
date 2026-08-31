@@ -25,6 +25,8 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
   @moduletag :system
   @moduletag timeout: 180_000
 
+  alias FlezhaTest.Helper.NodeTestHelper
+
   @release_dir Path.expand("../../../_build/dev/rel/flezha", __DIR__)
   @flz Path.join(@release_dir, "bin/flz")
   @flzvm Path.join(@release_dir, "bin/flzvm")
@@ -132,7 +134,7 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
   ## Helpers
 
   defp wait_until_ready!(env, deadline_ms \\ 60_000) do
-    if FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> ready?(env) end, deadline_ms, 250),
+    if NodeTestHelper.wait_until(fn -> ready?(env) end, deadline_ms, 250),
       do: :ok,
       else: flunk("daemon did not become ready within #{deadline_ms}ms")
   end

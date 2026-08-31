@@ -23,16 +23,19 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   use ExUnit.Case, async: false
 
+  alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.DurabilityTier.DeclaredManifest
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
+  alias ProcessHub.Storage.RemoteManifest
 
   @namespace "recovery_test_ns"
   # Every boot in this file pays the grace before the first reconcile round
@@ -497,8 +500,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   defp remote_declared_ids(hub_id) do
     with {:ok, {_version, blob}} <-
-           Flezha.State.DurabilityTier.DeclaredManifest.fetch(hub_id, []),
-         {:ok, %{entries: entries}} <- ProcessHub.Storage.RemoteManifest.decode(blob) do
+           DeclaredManifest.fetch(hub_id, []),
+         {:ok, %{entries: entries}} <- RemoteManifest.decode(blob) do
       Map.keys(entries)
     else
       _ -> []
@@ -528,7 +531,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     do: HubRegistryTestHelper.seed_runner(@namespace, runner_id, factory_id)
 
   defp await_bound_node(hub_id, operative_id, timeout_ms) do
-    FlezhaTest.Helper.NodeTestHelper.wait_until(
+    NodeTestHelper.wait_until(
       fn ->
         case Map.get(ProcessRegistry.dump(hub_id), operative_id) do
           {_cspec, node_pids, _meta} -> HubManager.live_node(node_pids)
@@ -543,7 +546,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     fake_hub_id = :"fake_stuck_hub_#{System.unique_integer([:positive])}"
     # Simulate a hub observed as :recovering that never transitions.
     # The snapshot treats explicit observations as authoritative.
-    Flezha.Convergence.Snapshot.observe_recovery(fake_hub_id, :recovering)
+    ConvergenceSnapshot.observe_recovery(fake_hub_id, :recovering)
 
     assert {:error, {:recovery_timeout, [^fake_hub_id]}} =
              HubManager.await_recovery_complete([fake_hub_id], 100)

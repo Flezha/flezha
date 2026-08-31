@@ -14,21 +14,42 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Operative.Overwatch
   alias Flezha.Plugin.Extension.{Ctx, Table}
   alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
+  alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
+  alias Flezha.State.Outbox
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup :set_mimic_global_until_exit
 
   setup do
-    unless Process.whereis(ForwardSup), do: start_supervised!(ForwardSup)
+    # `ForwardSup` is application-owned, so nothing ExUnit tears down owns the
+    # workers a test starts — this module does. Arming the sweep before the
+    # detector keeps one leak from disarming every test behind it, and the
+    # sweep repeats because `WorkerSup.ensure_worker/4` drops a key before it
+    # re-registers the replacement.
+    on_exit(fn ->
+      wait_until(fn ->
+        Enum.each(forward_worker_keys(), &ForwardSup.stop_worker/1)
+        forward_worker_keys() == []
+      end)
+    end)
+
+    survivors = forward_worker_keys()
+    assert survivors == [], "a previous test left forward workers: #{inspect(survivors)}"
 
     # One namespace unless a test says otherwise: only the cross-namespace
     # refusal cares which namespaces are running.
     stub(HubManager, :get_running_namespaces, fn -> [:default] end)
     :ok
   end
+
+  defp forward_worker_keys,
+    do: Registry.select(ForwardSup.registry_name(), [{{:"$1", :_, :_}, [], [:"$1"]}])
 
   defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
@@ -89,7 +110,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   test "the provider is reachable by name, so the CLI can attach it" do
     # The only registry the CLI resolves a `--plugins` / `flz plugin enable`
     # provider id through; absent here, every non-Elixir caller is locked out.
-    assert Flezha.Service.ConfigManager.get_enabled_plugins()["operative_forward"] ==
+    assert ConfigManager.get_enabled_plugins()["operative_forward"] ==
              OperativeForward
   end
 
@@ -149,7 +170,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   ## ---------- delivery (tasks 5.1 – 5.6) ----------
 
   test "the callback enqueues and returns without waiting for a slow target" do
-    slow = spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)
+    slow = spawn_link(&NodeTestHelper.park/0)
     resolve_to(%{"slow" => slow})
 
     {:ok, opts, _pid} = prepare("src", "slow")
@@ -173,7 +194,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   test "the target's confirming ingest answers the outbox hold" do
     entity_id = {uniq("of"), "proc", "k1"}
-    :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+    :ok = TestHelpers.stub_outbox_owner(entity_id)
 
     # Refused once, then accepted: the hold survives the retry and is answered
     # exactly when the target confirms — never on the hand-off.
@@ -189,7 +210,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     {:ok, opts, _pid} = prepare("src", "sink", %{retry_backoff_ms: 300})
 
     metadata = %{
-      Flezha.State.Outbox.ack_key() => Flezha.State.Outbox.token(entity_id, {:cursor, 4})
+      Outbox.ack_key() => Outbox.token(entity_id, {:cursor, 4})
     }
 
     emit(opts, "payload", metadata)
@@ -258,7 +279,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   test "a saturated queue parks the enqueueing caller" do
     id = uniq("stuck")
-    resolve_to(%{id => spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)})
+    resolve_to(%{id => spawn_link(&NodeTestHelper.park/0)})
 
     {:ok, opts, worker} = prepare(uniq("src"), id, %{queue_max: 2, call_timeout_ms: 50})
 
@@ -273,7 +294,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   test "a re-prepared plugin reuses its live worker and keeps queued items" do
     id = uniq("reuse")
-    resolve_to(%{id => spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)})
+    resolve_to(%{id => spawn_link(&NodeTestHelper.park/0)})
 
     plugin_id = uniq("plug")
     source = uniq("src")
@@ -354,7 +375,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
         subscriptions: [{:on_output, []}]
       )
 
-    table = Table.new(Flezha.Operative.Overwatch.__extensions_catalog__())
+    table = Table.new(Overwatch.__extensions_catalog__())
     {:ok, table} = Table.subscribe(table, "fwd", plugin)
 
     worker = table.plugins["fwd"].opts.worker_pid
@@ -604,7 +625,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
           subscriptions: [{:on_output, []}]
         )
 
-      table = Table.new(Flezha.Operative.Overwatch.__extensions_catalog__())
+      table = Table.new(Overwatch.__extensions_catalog__())
       {:ok, table} = Table.subscribe(table, "fwd_grp", plugin)
 
       workers = Enum.map(table.plugins["fwd_grp"].opts.routes, & &1.pid)
@@ -764,7 +785,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   end
 
   defp wait_until(fun) do
-    if FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 1_000, 10),
+    if NodeTestHelper.wait_until(fun, 1_000, 10),
       do: :ok,
       else: flunk("condition never held")
   end

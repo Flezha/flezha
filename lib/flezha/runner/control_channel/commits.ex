@@ -27,7 +27,9 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.Identificator
+  alias Flezha.State.Commands
   alias Flezha.State.{DurabilityTier, ProcInbox, ProcJournal}
+  alias Flezha.State.Paths
 
   # Re-attempt cadence for a journaled outbox whose operative is not bound yet
   # (mirrors the stream outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
@@ -270,11 +272,11 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # besides: a failed or dropped compaction only means the restore falls back to
   # WAL replay, which the Watchdog's own size/age triggers will re-attempt.
   defp snapshot_iteration_boundary(runner_id, operative_id) do
-    entities = Flezha.State.Paths.entities_of(operative_id)
+    entities = Paths.entities_of(operative_id)
 
     Task.start(fn ->
       Enum.each(entities, fn entity_id ->
-        case Flezha.State.Commands.dispatch_compact_entity(runner_id, entity_id) do
+        case Commands.dispatch_compact_entity(runner_id, entity_id) do
           {:ok, _ref} ->
             :ok
 

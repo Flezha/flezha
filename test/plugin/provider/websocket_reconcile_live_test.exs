@@ -16,6 +16,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Websocket
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :capture_log
 
@@ -67,7 +68,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
     # ---- converged: the source is steady across a full poll cycle
     # (subscription_interval_ms is floored at 1_000 by the provider) — the
     # next reconcile finds nothing to send, and nothing more is sent
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn ->
                Websocket.inspect_state(%{subscription: opts.subscription, owned_pid: conn}).last_reconcile ==
                  %{added: 0, removed: 0, sent: false}

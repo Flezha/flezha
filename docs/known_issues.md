@@ -1065,7 +1065,292 @@ since carries its own date.
   prefixes sit at the edge, and one of them is already a manual truncation with
   no margin, which is the fragile part worth removing.
 
+### KI-66 · A `/tmp` state tree left by a previous BEAM turns `append(pid, 0, …)` into `:duplicate`
+
+- **Severity**: P2 · found by `green-the-test-hygiene-tail` segment A's own
+  batch-1 baseline, outside that segment's scope. **Recorded, verdict owed.**
+- **Where**: `test/helpers/state_test_helpers.ex:60`–`:70`
+  (`tmp_app_data_dir/0`) and `test/flezha/state/wal_writer_outbox_test.exs:53`
+  (`rc = "wo_" <> …`). Both mint their name from
+  `System.unique_integer([:positive])`, which **restarts low in every BEAM**, so
+  run *N+1* re-mints run *N*'s directory names. `File.mkdir_p!/1` on an existing
+  directory succeeds silently, and the fresh writer then reads a WAL the
+  previous run left there.
+- **What happens**: `WalWriter`'s append handler
+  (`lib/flezha/state/wal_writer.ex:547`) answers `:duplicate` for
+  `seq <= state.last_persisted_seq`, so a test that starts at seq 0 over a
+  re-minted tree fails on its own first append:
+
+  ```
+  1) test a held output holds the cursor until the sink confirms (Flezha.State.WalWriterOutboxTest)
+     test/flezha/state/wal_writer_outbox_test.exs:605
+     ** (MatchError) no match of right hand side value:
+
+         :duplicate
+
+     code: :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "held")], 1))
+     stacktrace:
+       test/flezha/state/wal_writer_outbox_test.exs:612: (test)
+  ```
+
+  Seen once — `mix test --seed 202202`, exit 2, `1856/1857 passed`, with **124
+  `/tmp/flezha_state_test_*` trees on the box**, eight of them holding a
+  `_system/wo_<n>/proc/k1.wal` at exactly the path this module mints
+  (`.../flezha_state_test_34051/_system/wo_34083/proc/k1.wal` — base and `rc`
+  32 apart, which is this box's `unique_integer` stride).
+- **Reproduction — by construction; the natural rate is unmeasured.** The same
+  seed with the same leftovers still in place came back `1857 passed`: *which*
+  base is minted depends on scheduling, not on the seed. The mechanism is
+  proved directly by planting one effect record at the path the setup mints:
+
+  ```
+  $ mix test <scratch>/ki_dup_probe_test.exs
+  ===== KI PROBE: append/4 answered =====
+  append(pid, 0, …): :duplicate
+       code:  assert :ok = answer
+       left:  :ok
+       right: :duplicate
+  ```
+
+  Control: the same suite with `/tmp/flezha_state_test_*` moved aside is
+  `1857 passed` and leaves **0** such directories behind — the suite at HEAD
+  leaks none, so the 124 are historical (25 stamped 08-31 02:02, this row's own
+  survey session).
+- **The failing test is the messenger, not the defect.** All 47 call sites of
+  `tmp_app_data_dir/0` are exposed the same way; the WAL path is only where a
+  stale byte is loudest.
+- **A fix must** make the minted name unique across BEAMs and not merely within
+  one — refuse a base that already exists, or mint from something monotonic
+  across runs — rather than sweeping `/tmp` by hand or hardening `append/4`,
+  which would hide a genuinely duplicated seq.
+- **Fixed** in `green-the-test-hygiene-tail` segment A. `tmp_app_data_dir/0`
+  now claims its directory with `File.mkdir/1` and re-mints on `:eexist`, so
+  the name it returns is one this call created — which also makes two
+  concurrent BEAMs unable to share a state root, where `mkdir_p` let them.
+  Regression test: `test/flezha/state/test_helpers_test.exs`, which **claims the
+  whole 512-wide band the next mint can land in** (this box's stride is 32) and
+  asserts the returned name is past every claimed one, so the collision is
+  forced rather than sampled. Negative control — restore `File.mkdir_p!/1` and
+  it is red on `refute base in planted`, `left: "/tmp/flezha_state_test_8323"`.
+- **The planted-record probe above is NOT the regression test**, and cannot be:
+  it plants at a path the helper has already returned, so it asserts
+  `WalWriter`'s dedup, which is correct behaviour. It answers `:duplicate`
+  against the fixed helper too.
+- **Four sibling sites are NOT fixed** — the same per-BEAM mint over a `/tmp`
+  directory lives at `test/helpers/schedule_test_helper.ex:20`,
+  `test/helpers/durability_backend_stub.ex:61`,
+  `test/helpers/tier_e2e_harness.ex:189` (`unique_id_path/0`, which
+  `green-the-test-hygiene-tail` batch 5 already widens for KI-23) and
+  `test/helpers/auth_test_helper.ex:40`. None is reproduced;
+  `node_test_helper.ex:147` is deliberately **not** in the set (a peer's
+  directory name is meant to be stable across runs). A §2 answer is one claimed
+  mint shared by the four; that is a scope call, recorded here rather than taken.
+  **Taken in segment B**: the claim is `NodeTestHelper.claim_tmp_dir/1` and all
+  five sites call it. `unique_id_path/0` claims a *directory* and returns a path
+  inside it, because there the file itself has to be absent — a runner that finds
+  an id at `FLEZHA_RUNNER_ID_PATH` adopts it.
+- **This changes a measurement `green-the-suite-log-gate` relied on**: the helper
+  no longer reclaims a stale name, so a run can no longer show a *net loss* of
+  `/tmp/flezha_*` directories. The timestamp-marker method that note prescribes
+  is unaffected and remains the right one.
+
+### KI-67 · [[KI-66]]'s regression test passes on the defective helper, 1 run in 4
+
+- **Severity**: P2 · found by `green-the-test-hygiene-tail` segment B, re-running
+  segment A's negative control before reusing the mechanism at four more call
+  sites. **Recorded, verdict owed.**
+- **Where**: `test/flezha/state/test_helpers_test.exs:11`–`:46`, the test *"a
+  state root a previous BEAM left behind is never handed out again"*, landed in
+  `656fd444`.
+- **What happens**: the test plants a 512-wide band of directories at
+  `flezha_state_test_<counter+1 … counter+512>` and asserts the mint is not one
+  of them. `System.unique_integer([:positive])` is node-global **and
+  per-scheduler striped**, so the value the test draws and the value the mint
+  draws afterwards are not adjacent: the whole node draws from the same stream
+  while the 512 directories are being written, and a scheduler migration moves
+  the draw to a different stripe. When the mint starts past the band — or below
+  it — nothing collides and the test passes without the claim ever engaging.
+- **Its vacuity guard cannot see that.** `assert minted > counter + band` holds
+  both when the claim walked the whole band and when the first candidate was
+  already past it, so it separates the two cases it exists to separate.
+- **Reproduction — the negative control, 20 runs.** Revert the claim to
+  `File.mkdir_p!/1` (the defect the test exists to catch) and run the module at
+  20 seeds:
+
+  ```
+  $ for i in $(seq 1 20); do mix test test/flezha/state/test_helpers_test.exs --seed $((i*104729)); done
+  15 red    refute base in planted / left: "/tmp/flezha_state_test_7170"
+   5 green  vacuous (seeds 1466206 and 1885122 among them)
+  ```
+
+  **5 of 20 — 25 % — pass on the defective helper.** With the claim in place the
+  module is 10/10 green, so the flakiness is one-sided: it never reports a false
+  red, it reports a false green.
+- **The drift, measured.** A probe printing the stream head before and after the
+  planting loop, five runs: `+6365`, `+829`, `+509`, `+29`, **`−260`**. Only the
+  `+29` run left the mint inside the planted band; the negative delta is the
+  stripe change, and it is why "plant ahead of the counter" is not a position at
+  all.
+- **A fix must** make the collision **observed rather than assumed**: read the
+  stream head immediately before the mint and require it to lie inside the
+  planted band, re-planting ahead of the head when it does not and failing
+  loudly after a fixed number of attempts. A band the stream has already
+  passed must not read as a pass. (The one construction that needs no guard is a
+  fresh BEAM — plant a low band, then run the claim in a child process whose
+  stream genuinely starts low, which is the real defect — at the cost of seconds
+  per run.)
+- **Not fixed in segment B.** The test is segment A's and the verdict is the
+  supervisor's. Segment B moves the mechanism unchanged to
+  `NodeTestHelper.claim_tmp_dir/1` and points four more helpers at it, so its own
+  proof is that the move is pure, not this test.
+
+- **Supervisor verdict 2026-08-31 — REAL, CONFIRMED, and worse than filed. Fix the
+  test in segment C.** Reproduced independently: the claim in
+  `NodeTestHelper.claim_tmp_dir/1` reverted to `File.mkdir_p!/1`, then
+  `test/flezha/state/test_helpers_test.exs` run at 12 seeds (1, 2, 3, 5, 8, 13, 21,
+  34, 55, 89, 144, 233) — **7 red, 5 green**. The worker measured 15/20; I measure
+  7/12. Either way the test **passes on the code it exists to catch**, roughly two
+  times in five.
+- **This invalidates a claim in commit `656fd444`'s message**, which states the
+  KI-66 fix was proved red-first. The *fix* is not in doubt — its correctness rests
+  on `File.mkdir/1` being atomic, which is true by construction and not by sampling
+  — but the *proof* is unreliable, and a test that green-lights defective code two
+  times in five is worse than no test, because it will be trusted.
+- **Mechanism**: `System.unique_integer([:positive])` is node-global **and
+  per-scheduler striped**, so a band planted at `counter+1 … counter+512` has no
+  fixed relation to where the next mint lands. The drift across runs was measured at
+  `+6365`, `+829`, `+509`, `+29` and **`−260`** — a negative drift puts the mint
+  *below* the band entirely. The vacuity guard `assert minted > counter + band` is
+  true in both the caught and the missed case, so it separates nothing. The failure
+  is one-sided: never a false red from this cause, only a false green.
+- **Also observed by the supervisor**: immediately after the 12 defective runs, the
+  test failed once *with the correct helper in place* and passed on re-run with the
+  residue gone. So it is sensitive to `/tmp` state in **both** directions.
+- **A fix must** make the plant cover where the mint actually lands — probe the
+  stride, then re-plant — or force the condition in a fresh BEAM where the counter
+  starts known. Whichever is chosen, the acceptance is **12 of 12 red** against the
+  reverted helper, not a majority.
+- **Supervisor process note, recorded because it is the real cause**: at segment A's
+  checkpoint I ran the full suite and read the fix, and I accepted the worker's
+  negative-control claim **without running it**. A regression test is proved by its
+  negative control and by nothing else. In row 3.5 segment B the gate was proved red
+  twice — once by the worker, once by me — and that is the standard this checkpoint
+  failed to meet.
+
+### KI-68 · An opted-out workflow's teardown burns the whole 60 s drain bound after a crash-resume
+
+- **Severity**: P2 · found by `green-the-test-hygiene-tail` segment B, running
+  the two system modules batch 5 touched. **Pre-existing, not this change** —
+  proved below. **Recorded, verdict owed.**
+- **Where**: `lib/flezha/runner/control_channel.ex:493` (`@drain_owed_ms 60_000`)
+  and its caller at `:467`, against
+  `test/system/workflow_crash_resume_e2e_test.exs:1173`, whose
+  `wait_until/1` budget is **15 s**.
+- **What happens**: `test "opted-out workflow writes no journal and re-runs from
+  the top"` (`:296`) fails with `completed operative was never deregistered`.
+
+  ```
+  $ mix test test/system/workflow_crash_resume_e2e_test.exs:296 --include system --seed 13
+  1) test opted-out class (reference/uds) opted-out workflow writes no journal and re-runs from the top
+     test/system/workflow_crash_resume_e2e_test.exs:296
+     completed operative was never deregistered
+     stacktrace: test/system/workflow_crash_resume_e2e_test.exs:1173
+  Result: 0/1 passed
+  ```
+
+  **Deterministic**: 1 of 1 in a whole-module run (43/44) and 3 of 3 alone, at
+  three seeds.
+- **The operative finished; only the teardown is late.** A probe at the moment
+  the assertion gives up:
+
+  ```
+  [PROBE] optout_commit_block_1574 still registered pid=#PID<0.480.0> alive=true
+          status={:ok, %{status: "ok", finished_at: 1788143389, …}}
+  ```
+
+  So `Completion.write/2` has already run and the terminal status is `ok`; the
+  `Overwatch` is simply still up.
+- **Mechanism, measured to the millisecond.** `ControlChannel` writes the
+  completion and then tears down in a `Task`: `drain_owed_outputs/3` first, then
+  `OperativeManager.stop_operative/2`. The drain waits for the Overwatch to have
+  run the `direct_outputs` the completion counted, capped by
+  `@drain_owed_ms 60_000`. On a crash-resume the resumed run's outputs are
+  best-effort — the test's own comment says so — so the count is never reached
+  and the bound is what ends the wait. Raising only the test's budget to 90 s:
+
+  ```
+  [PROBE] deregistered=true after 59994 ms
+  Result: 1 passed
+  ```
+
+  59 994 ms of a 60 000 ms bound. Nothing is wedged; the teardown is 4× the
+  budget the test allows it.
+- **Not this change.** The same test with `workflow_crash_resume_e2e_test.exs`
+  restored to its HEAD content (`git show HEAD:… > …`, then restored) fails
+  identically at `:295`, and the id this scenario mints is byte-identical before
+  and after batch 5 (`optout_commit_block` is 19 bytes, so neither the deleted
+  `String.slice(…, 0, 24)` nor the new bound touches it). The
+  `unique_id_path/1` shape was ruled out separately: reverting only it to the
+  old flat path leaves the test red.
+- **A fix must** decide which side is wrong, and the two answers differ in kind.
+  Either a completed workflow whose outputs were dropped on a rebind should not
+  hold its Overwatch for a full minute — in which case the drain needs a
+  cheaper terminal condition than "the counted outputs arrived" — or the
+  assertion is simply under-budgeted against a production bound it never names,
+  in which case it must wait past `@drain_owed_ms` and say why. Raising the test
+  budget without deciding that is the shape this file exists to refuse.
+
+---
+
 ## P3 — warts, wording, and measurement notes
+
+- **Supervisor verdict 2026-08-31 — REAL, and fixed inside row 4** rather than in a
+  change of its own: this row's subject is *tests that lie or leak*, and a helper
+  that re-mints a previous BEAM's directory name is the purest instance in the set.
+  Every link was verified before ruling — the mint at `state_test_helpers.ex:60`,
+  the silent `File.mkdir_p!/1`, and `wal_writer.ex:547`'s
+  `seq <= state.last_persisted_seq -> {:reply, :duplicate, state}`. A per-BEAM
+  counter, a silent mkdir and a seq-ordered dedup is a complete causal chain and
+  needs no sampling to be believed.
+- **Fixed by making the mint a CLAIM**: `File.mkdir/1` instead of `mkdir_p!/1`,
+  retrying on `:eexist`. No new naming scheme, no new helper, no call site changed —
+  the claim is an existing atomic primitive, and the fix does not depend on `/tmp`
+  being clean, which was the binding constraint (leftovers are the whole defect).
+- **A shared mechanism with [[KI-23]] was refused, and the refusal is right.** The
+  subjects differ: KI-23 bounds a **length** against a 32-byte id cap, KI-66
+  establishes **exclusive ownership of a filesystem name**. An operative id cannot
+  be claimed at mint time — nothing exists on disk when the generator returns, so
+  there is no `mkdir` to fail and no retry-until-free to perform. And the one scheme
+  that would serve both, a cross-BEAM-monotonic suffix like
+  `System.os_time(:microsecond)`, **spends KI-23's entire budget**: 16 digits plus a
+  separator leaves 15 bytes of 32. What the two share is the diagnosis, and that is
+  written once.
+- **Regression test**: `test/flezha/state/test_helpers_test.exs`, which FORCES the
+  collision by claiming the whole band the next mint can land in, and carries a
+  vacuity guard that the returned name is past every claimed one — so it cannot pass
+  by the band having missed. Proved red on the reverted helper and red again as a
+  negative control.
+- **Note for anyone re-reading `docs/dev_notes/green-the-suite-log-gate.md`**: that
+  note measured *around* this hazard with a timestamp marker, and observed that a
+  fixed module could show as a net LOSS of `/tmp` directories because a re-minted
+  name reclaimed a stale one. After this fix the helper no longer reclaims, so that
+  particular arithmetic no longer applies. The timestamp-marker method itself is
+  unaffected.
+
+- **Supervisor verdict 2026-08-31 — REAL and PRE-EXISTING; filed, not fixed here,
+  and queued as its own Phase 1 row.** `@drain_owed_ms 60_000`
+  (`lib/flezha/runner/control_channel.ex:492`) was introduced by `a9787a0f`, the
+  workflow perf campaign — confirmed with `git log -S`. It is not this row's doing.
+- **Why it does not pause row 4**: charter §1b pauses an area for a defect *in the
+  code that area is working on*. Row 4 changes **nothing** in `lib/` by design, and
+  this is a production drain cap. Folding a 60-second behaviour decision into a
+  test-hygiene row would be exactly the scope drift the programme exists to remove.
+- **Why it is worth its own change**: a completed workflow's teardown burning the
+  full 60 s waiting for direct outputs a resumed run will never deliver is a real
+  cost on every crash-resume, and the reproduction is **deterministic** (1/1 in
+  module, 3/3 alone) with the mechanism named to the millisecond — raising only the
+  test budget to 90 s yields `deregistered=true after 59994 ms`. That is a better
+  starting point than most entries in this file ever had.
 
 ### KI-61 · `RecordLog`'s two `@spec`s name `Elixir.Registry.entity_id/0`, a type that does not exist
 
@@ -1507,7 +1792,153 @@ every new production freeze to `incident_log.md` at the repository root.
 
 ---
 
+### KI-64 · `config/config.exs` and `mix.exs` are ratcheted by no area
+
+- **Severity**: P3 · a coverage gap in the ratchet, not a code defect.
+- **Where**: `docs/refactor/baseline.json` — 36 areas, and their `credo_warnings`
+  sum to **376** while the repo-level number measures **378**.
+- **Evidence**: surfaced by segment D of `fix-opaque-module-names` when
+  `--write-baseline` first filled `credo_warnings`. An independent
+  `MIX_ENV=test mix credo --strict` gives repo 378; the per-area sum is 376. The
+  two unaccounted findings are in `config/config.exs` and `mix.exs`, both of which
+  `.credo.exs` includes and no area in the 36-area scan table covers.
+- **Mechanism**: the scan table is a list of directory areas. Two files that
+  credo reads sit outside every one of them, so their findings are counted in the
+  repo total and ratcheted by nothing — a regression in either is invisible to
+  `--check`, which is the gate that blocks.
+- **A fix must**: either add the two files to an existing area's scan set (they
+  are configuration, so the smallest honest home is whichever area owns build and
+  config), or state in `baseline.json` that the repo number intentionally exceeds
+  the area sum, so the discrepancy stops looking like a bug in the arithmetic.
+  Prefer the first: an unratcheted file is the gate's blind spot, and naming it in
+  a comment does not close it.
+
+### KI-65 · `check-kind-naming.sh` gets redder every time the board discusses it
+
+- **Severity**: P3 · a gate that cannot be greened while it is being described.
+- **Where**: `scripts/check-kind-naming.sh`, and its 6 current hits — 3 in
+  `docs/known_issues.md` (`:62`, `:70`, `:79`) and 3 in `docs/refactor/STATE.md`
+  (`:302`, `:372`, `:423`).
+- **Evidence**: the count was **4** at the start of session 3 and is **6** at its
+  end. The two new hits are the board's own prose *about this gate being red* —
+  `STATE.md:302` reads "(five `bounded` prose hits; …)" and `:372` reads
+  "**`check-kind-naming.sh` is red and it is not this change** — four `bounded`".
+  Writing down that the gate is red is itself a gate violation.
+- **Mechanism**: `naming_gate.walk` scans every tracked human-readable file, and
+  the gate has only an allowlist — which an earlier finding on this board records
+  as erasing **destructively and in file order**, so a phrase-shaped entry can be
+  half-consumed by an earlier rule. It has no way to say "this occurrence is a
+  citation, not a use".
+- **A fix must** reuse what already exists rather than add a third mechanism:
+  `scripts/check-module-naming.sh` (landed 2026-08-31, `055054f2`) solved exactly
+  this with `naming_gate`'s `record_tag`, which exempts a block a document marks
+  as history. Giving `check-kind-naming.sh` the same `record_tag` closes the loop
+  and costs one argument — charter §2's reuse order, and the reason this is filed
+  rather than patched with six allowlist entries.
+
 ## Resolved
+
+### KI-63 · `.credo.exs`'s `test/apps/` exclusion is inert — FIXED
+
+- **Severity**: P3 · one anchored regex; it inflates every credo count by
+  whatever `test/apps/` carries and has never excluded anything.
+- **Where**: `.credo.exs:9` —
+  `excluded: [~r"/_build/", ~r"/deps/", ~r"/node_modules/", ~r"^test/apps/"]`.
+  The first three are unanchored and work; the fourth is anchored at `^` and
+  cannot match, because credo filters **absolute** paths.
+- **Reproduction** (the probe file is untracked and is deleted again):
+
+  ```
+  $ cat > test/apps/elixir_runner/lib/zz_credo_probe.ex <<'EX'
+  defmodule ZzCredoProbe do
+    def probe do
+      Flezha.State.Paths.state_root()
+    end
+  end
+  EX
+  $ MIX_ENV=test mix credo --strict --format oneline | grep zz_credo_probe
+  [R] → test/apps/elixir_runner/lib/zz_credo_probe.ex:1:11 Modules should have a @moduledoc tag.
+  [D] ↘ test/apps/elixir_runner/lib/zz_credo_probe.ex:3:5 Nested modules could be aliased at the top of the invoking module.
+  $ rm test/apps/elixir_runner/lib/zz_credo_probe.ex
+  ```
+
+  And the regex itself:
+
+  ```
+  $ elixir -e 'p = Path.expand("test/apps/elixir_runner/lib/factories.ex"); \
+      IO.inspect(String.match?(p, ~r"^test/apps/"))'
+  false
+  ```
+
+- **Mechanism**: `Credo.Sources.convert_globs_to_local_paths/2`
+  (`deps/credo/lib/credo/sources.ex:132`–`:139`) runs `Path.expand/2` on a
+  **string** pattern and passes a `%Regex{}` through **untouched**. The set it
+  then filters holds absolute paths, and the regex arm of `exclude/2` (`:184`)
+  is a bare `Enum.reject(&String.match?(&1, pattern))`. So a repo-relative
+  anchored regex is dead on arrival, while `~r"/deps/"` matches
+  `/home/moon/Code/flezha/deps/credo/lib/credo.ex` because it is unanchored.
+  Measured consequence at `1fe088ad`: the HEAD `AliasUsage` count of **689**
+  includes **14** findings under `test/apps/elixir_runner/`, which
+  `fix-opaque-module-names` batch 8 therefore had to fix to reach "0 anywhere".
+- **A fix must**: decide what the file *means* before changing it. Dropping the
+  `^` (or writing `~r"/test/apps/"`) makes the exclusion real and **lowers every
+  credo count**, which moves the KI-10 ratchet number that row 3.5's segment D
+  is about to record — so the two must land together or the baseline is recorded
+  against a file set that changes underneath it. The alternative is to delete the
+  entry and state that `test/apps/` is in scope, which is what the tree has
+  actually been doing since the line was written.
+- **Not fixed here**: `.credo.exs` is segment D's file and segment C was
+  instructed not to edit it.
+
+- **Supervisor verdict 2026-08-31 — real, confirmed from source, and fixed in
+  segment D alongside the ratchet.** Verified without a probe: `include/2` builds
+  the file set from `Path.expand`ed patterns, so it holds ABSOLUTE paths, while
+  `convert_globs_to_local_paths/2` (`deps/credo/lib/credo/sources.ex:132`) expands
+  only `is_binary` patterns and passes a `%Regex{}` through unchanged; `exclude/2`
+  (`:183`) is then a bare `Enum.reject(&String.match?(&1, pattern))`. A `^`-anchored
+  *relative* regex cannot match `/home/…/flezha/test/apps/…`. The three siblings
+  work only because `~r"/_build/"`, `~r"/deps/"` and `~r"/node_modules/"` are
+  **unanchored** — the config's one anchored entry is its one dead entry.
+- **Why segment D and not later**: the fix must land with the ratchet or the
+  baseline is recorded against a file set that shifts underneath it. It is also the
+  cheapest possible moment — a full `--strict` run right now reports **zero**
+  findings under `test/apps/`, so honouring the exclusion moves the number by 0
+  today. Deferring it turns a no-op into a silent ratchet shift the first time
+  anyone writes a flaggable construct in a test app.
+- **Fix the mechanism, not the policy.** The line's intent is unambiguous, so it is
+  honoured by making the regex unanchored. Whether `test/apps/` *should* be outside
+  credo's view is a different question and belongs to `refactor-7-tests`, which owns
+  the test apps. The 14 `AliasUsage` sites segment C already corrected under
+  `test/apps/` stay corrected either way — they are right regardless of who looks.
+- **Fixed** 2026-08-31 by `fix-opaque-module-names` segment D, in the same commit as
+  the ratchet, because the two cannot be separated: `~r"^test/apps/"` became
+  `~r"/test/apps/"`, the spelling its three working siblings already use, and the
+  `excluded:` list carries a comment saying every pattern there is matched against an
+  **absolute** path. The mechanism is fixed, not the policy — whether `test/apps/`
+  belongs outside credo's view stays `refactor-7-tests`'s question.
+- **Proved two-sided, because a one-sided check shows an exclusion is quiet, not that
+  it works.** One scratch module, byte-identical, dropped in two places at once and a
+  single `MIX_ENV=test mix credo --strict --format oneline` run over both:
+
+  ```
+  $ # test/apps/elixir_runner/lib/zz_credo_probe.ex  AND  test/zz_credo_probe_outside.ex
+  $ grep -c 'test/apps/' credo_probe.txt
+  0
+  $ grep -n 'zz_credo_probe' credo_probe.txt
+  379:[R] → test/zz_credo_probe_outside.ex:1:11 Modules should have a @moduledoc tag.
+  380:[D] ↘ test/zz_credo_probe_outside.ex:3:5 Nested modules could be aliased at the top of the invoking module.
+  ```
+
+  The construct outside `test/apps/` is reported by both checks; the identical
+  construct inside it is reported by neither, and no line of the whole run names
+  `test/apps/` at all. Both probes were then deleted and `git status` is clean of them.
+- **It moved the ratchet by 0, exactly as predicted.** The measured post-fix total is
+  **378** and `test/apps` records `credo_warnings: 0` in `docs/refactor/baseline.json`
+  — the tree carries no flaggable construct under `test/apps/` today. Deferring the
+  fix would have turned that 0 into a silent ratchet shift the first time anyone wrote
+  one.
+
+
 
 ### KI-62 · `convert_value/2` does not run on the struct plugin path — NOT A BUG
 

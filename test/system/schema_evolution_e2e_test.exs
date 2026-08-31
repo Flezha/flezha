@@ -28,7 +28,11 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.Payloader
+  alias Flezha.State.TestHelpers
+  alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @procedure "evolving_cart"
@@ -97,8 +101,8 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     entity_id = {operative_id, @procedure, ""}
     Application.put_env(:flezha, :compact_after_age_ms, 1)
     {:ok, writer} = Flezha.State.Supervisor.lookup(entity_id)
-    Flezha.State.TestHelpers.age_writer(writer, 50)
-    :ok = Flezha.State.Watchdog.sweep_now()
+    TestHelpers.age_writer(writer, 50)
+    :ok = Watchdog.sweep_now()
 
     assert CA.wait_for_snapshot_file(entity_id, 15_000),
            "precondition: v1 must leave a snapshot for the deploy to restore from"
@@ -153,7 +157,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
 
     # The bind-time restore's verdict is what the guard produces; wait for it.
-    FlezhaTest.Helper.MessageTestHelper.forward_telemetry(
+    MessageTestHelper.forward_telemetry(
       [:flezha, :state, :restore_refused],
       :refused
     )
@@ -232,7 +236,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   defp state_of(namespace, operative_id) do
     case OperativeManager.get_entity_state(namespace, operative_id) do
       {:ok, json} ->
-        case Flezha.Service.Payloader.json_to_map(json) do
+        case Payloader.json_to_map(json) do
           %{@procedure => entity} -> entity
           other -> other
         end

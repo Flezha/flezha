@@ -10,6 +10,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
 
@@ -33,7 +34,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   defmodule SlowProvider do
     def on_message(%Ctx.Msg{payload: p}, _opts) do
       Process.register(self(), :slow_handler_under_test)
-      FlezhaTest.Helper.NodeTestHelper.park()
+      NodeTestHelper.park()
       {:ok, "slow:" <> p}
     end
   end
@@ -94,7 +95,7 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
     send(pid, {:flezha_request, "slow", "x", self(), ref})
 
     handler =
-      FlezhaTest.Helper.NodeTestHelper.wait_until(
+      NodeTestHelper.wait_until(
         fn -> Process.whereis(:slow_handler_under_test) end,
         1_000
       )

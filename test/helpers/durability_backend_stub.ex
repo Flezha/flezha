@@ -13,6 +13,9 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
 
+  alias Flezha.State.DurabilityTier.Backend
+  alias FlezhaTest.Helper.NodeTestHelper
+
   @table :flezha_durability_stub
   @control :flezha_durability_stub_control
   @owner :flezha_durability_stub_owner
@@ -23,7 +26,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   # tmp root makes them absent rather than special-cased; a case that wants one
   # of them puts its own dir over this.
   @isolated_store_dirs [{:authn_authz, :auth_dir}, {:schedules, :dir}, {:dlq, :dir}]
-  @isolated_prefix "flezha_durability_stub_"
+  @isolated_prefix "flezha_durability_stub"
 
   # ---------- test control ----------
 
@@ -54,11 +57,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   end
 
   defp isolate_store_dirs() do
-    root =
-      Path.join(
-        System.tmp_dir!(),
-        @isolated_prefix <> Integer.to_string(System.unique_integer([:positive]))
-      )
+    root = NodeTestHelper.claim_tmp_dir(@isolated_prefix)
 
     # The stores mkdir this tree the first time one of them writes; reclaiming
     # it belongs here, beside the only place that names it — `uninstall/0` is
@@ -244,7 +243,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
       true ->
         case :ets.lookup(@table, key) do
           [{^key, _blob, stored, _written_at}] ->
-            if Flezha.State.DurabilityTier.Backend.guard_passes?(guard, stored) do
+            if Backend.guard_passes?(guard, stored) do
               write(key, blob, claim)
             else
               {:error, {:claim_held, stored}}

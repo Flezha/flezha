@@ -10,6 +10,10 @@ defmodule Flezha.State.Supervisor do
 
   use DynamicSupervisor
 
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.FsyncBatcher
+  alias Flezha.State.InputLog
+  alias Flezha.State.Paths
   alias Flezha.State.WalWriter
 
   @registry Flezha.State.WriterRegistry
@@ -34,9 +38,9 @@ defmodule Flezha.State.Supervisor do
     # crash and restart (a sweeper, a writer) may own them. Path resolution
     # degrades to the on-disk layout when the claims table is absent (unit
     # tests that use `Flezha.State.Paths` without this supervisor).
-    Flezha.State.Paths.ensure_claims_table()
-    Flezha.State.InputLog.ensure_watermark_table()
-    Flezha.Operative.ClassRegistry.ensure_table()
+    Paths.ensure_claims_table()
+    InputLog.ensure_watermark_table()
+    ClassRegistry.ensure_table()
     # Every per-Entity writer and input log on the node hangs here, and they
     # fail independently — a bad payload, a disk fault, a killed run. The
     # DynamicSupervisor default (3 restarts in 5 s) is a budget for ONE
@@ -91,12 +95,12 @@ defmodule Flezha.State.Supervisor do
       :error -> :ok
     end
 
-    Flezha.State.FsyncBatcher.forget(entity_id)
-    Flezha.State.Paths.delete_files(entity_id)
+    FsyncBatcher.forget(entity_id)
+    Paths.delete_files(entity_id)
 
     # A deleted Entity must stop holding the operative's input-log watermark.
     {operative_class, _, _} = entity_id
-    Flezha.State.InputLog.forget_entity(operative_class, entity_id)
+    InputLog.forget_entity(operative_class, entity_id)
 
     {:ok, %{entity_id: entity_id, status: :ok}}
   end

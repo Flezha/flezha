@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   """
 
   alias Flezha.Plugin.Provider.HttpFetch
+  alias Flezha.Plugin.ProviderBehaviour
 
   @default_interval_ms 30_000
   @min_interval_ms 1_000
@@ -146,7 +147,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   defp interval(nil), do: {:ok, @default_interval_ms}
 
   defp interval(value) do
-    case Flezha.Plugin.ProviderBehaviour.parse_int(value, :subscription_interval_ms) do
+    case ProviderBehaviour.parse_int(value, :subscription_interval_ms) do
       {:ok, ms} when ms >= @min_interval_ms ->
         {:ok, ms}
 

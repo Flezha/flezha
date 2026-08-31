@@ -6,6 +6,7 @@ defmodule Flezha.State.PersistenceResolverTest do
   # async: false: writes Application env.
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.PersistenceResolver
 
   setup do
@@ -78,18 +79,18 @@ defmodule Flezha.State.PersistenceResolverTest do
     # that path; these exercise it the way production does.
     test "the SDK-declared value (persisted in ClassRegistry) governs the Watchdog's one-arg call" do
       Application.put_env(:flezha, :default_compact_after_bytes, 8 * 1024 * 1024)
-      Flezha.Operative.ClassRegistry.put_compact_after_bytes("sdk_bytes_class", 4 * 1024 * 1024)
-      on_exit(fn -> Flezha.Operative.ClassRegistry.delete("sdk_bytes_class") end)
+      ClassRegistry.put_compact_after_bytes("sdk_bytes_class", 4 * 1024 * 1024)
+      on_exit(fn -> ClassRegistry.delete("sdk_bytes_class") end)
 
       assert PersistenceResolver.compact_after_bytes("sdk_bytes_class") == 4 * 1024 * 1024
     end
 
     test "an operator override wins over the SDK-declared value" do
-      Flezha.Operative.ClassRegistry.put_compact_after_bytes("ovr_bytes_class", 4 * 1024 * 1024)
+      ClassRegistry.put_compact_after_bytes("ovr_bytes_class", 4 * 1024 * 1024)
       Application.put_env(:flezha, :compact_after_bytes, %{"ovr_bytes_class" => 1024})
 
       on_exit(fn ->
-        Flezha.Operative.ClassRegistry.delete("ovr_bytes_class")
+        ClassRegistry.delete("ovr_bytes_class")
         Application.delete_env(:flezha, :compact_after_bytes)
       end)
 
@@ -108,25 +109,25 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
 
     test "the SDK declaration governs" do
-      Flezha.Operative.ClassRegistry.put_sync_durability("sdk_sync_class", true)
-      on_exit(fn -> Flezha.Operative.ClassRegistry.delete("sdk_sync_class") end)
+      ClassRegistry.put_sync_durability("sdk_sync_class", true)
+      on_exit(fn -> ClassRegistry.delete("sdk_sync_class") end)
 
       assert PersistenceResolver.sync_durability?("sdk_sync_class")
     end
 
     test "an operator override wins over the SDK declaration, in both directions" do
-      Flezha.Operative.ClassRegistry.put_sync_durability("ovr_sync_class", true)
+      ClassRegistry.put_sync_durability("ovr_sync_class", true)
       Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => false})
 
       on_exit(fn ->
-        Flezha.Operative.ClassRegistry.delete("ovr_sync_class")
+        ClassRegistry.delete("ovr_sync_class")
         Application.delete_env(:flezha, :sync_durability)
       end)
 
       refute PersistenceResolver.sync_durability?("ovr_sync_class")
 
       Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => true})
-      Flezha.Operative.ClassRegistry.put_sync_durability("ovr_sync_class", false)
+      ClassRegistry.put_sync_durability("ovr_sync_class", false)
       assert PersistenceResolver.sync_durability?("ovr_sync_class")
     end
 

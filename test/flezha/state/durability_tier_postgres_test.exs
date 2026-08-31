@@ -21,6 +21,7 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
   use ExUnit.Case, async: false
 
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: Backend
+  alias FlezhaTest.Helper.PostgresSink
 
   @moduletag :postgres_integration
 
@@ -32,7 +33,7 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
     end
 
     opts =
-      FlezhaTest.Helper.PostgresSink.conn_opts()
+      PostgresSink.conn_opts()
       |> Keyword.merge(table: @table, auto_create: true)
 
     start_supervised!(Backend.child_spec(opts))

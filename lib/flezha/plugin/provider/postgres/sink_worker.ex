@@ -17,6 +17,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   the controller's flush cursor advance (`Flezha.State.Outbox`).
   """
 
+  alias Flezha.Plugin.Provider.Postgres.SinkSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
 
@@ -98,7 +99,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     plugin_id = Keyword.fetch!(opts, :plugin_id)
 
     GenServer.start_link(__MODULE__, opts,
-      name: {:via, Registry, {Flezha.Plugin.Provider.Postgres.SinkSup.registry_name(), plugin_id}}
+      name: {:via, Registry, {SinkSup.registry_name(), plugin_id}}
     )
   end
 

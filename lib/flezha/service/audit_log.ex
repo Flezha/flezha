@@ -21,6 +21,7 @@ defmodule Flezha.Service.AuditLog do
 
   alias Flezha.AuthZ
   alias Flezha.Observability
+  alias Flezha.Observability.AuditLog.Rotation
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.{Reader, Sink, Writer}
 
@@ -136,7 +137,7 @@ defmodule Flezha.Service.AuditLog do
          :ok <- AuthZ.authorize(caller_context, :"audit.rotate", scope_for(caller_context)) do
       emit_audit(:rotate, caller_context, %{})
 
-      case Flezha.Observability.AuditLog.Rotation.rotate_now() do
+      case Rotation.rotate_now() do
         {:ok, info} -> {:ok, info}
         {:error, _} = err -> err
       end

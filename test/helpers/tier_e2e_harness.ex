@@ -12,10 +12,15 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.Validator
+  alias Flezha.State.DurabilityTier.Backend.Postgres, as: PostgresBackend
   alias Flezha.State.Outbox
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.PostgresSink
 
   def send_inputs(operative_id, namespace, inputs) do
     for input <- inputs do
@@ -114,7 +119,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     table = "flezha_durability_e2e_#{System.unique_integer([:positive])}"
 
     opts =
-      FlezhaTest.Helper.PostgresSink.conn_opts()
+      PostgresSink.conn_opts()
       |> Keyword.merge(table: table, auto_create: true)
 
     Application.put_env(:flezha, :durability_tier,
@@ -124,7 +129,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       gc_interval_ms: 3_600_000
     )
 
-    start_supervised!(Flezha.State.DurabilityTier.Backend.Postgres.child_spec(opts))
+    start_supervised!(PostgresBackend.child_spec(opts))
     start_supervised!(Flezha.State.DurabilityTier.Shipper)
 
     on_exit(fn -> Application.delete_env(:flezha, :durability_tier) end)
@@ -145,7 +150,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   def destroy_local_state(operative_id) do
     reserved =
       Enum.map(
-        Flezha.State.Paths.reserved_entity_keys(),
+        Paths.reserved_entity_keys(),
         &{operative_id, operative_id, &1}
       )
 
@@ -154,7 +159,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     # be graceful — a killed writer is transient-restarted, and the replacement
     # would hold an open handle to the unlinked file while hydration writes a
     # new one underneath it.
-    for entity_id <- Flezha.State.Paths.entities_of(operative_id) ++ reserved do
+    for entity_id <- Paths.entities_of(operative_id) ++ reserved do
       Flezha.State.Supervisor.delete_entity(entity_id)
     end
 
@@ -163,8 +168,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       :error -> :ok
     end
 
-    File.rm_rf!(Flezha.State.Paths.class_dir(operative_id))
-    Flezha.Operative.ClassRegistry.delete(operative_id)
+    File.rm_rf!(Paths.class_dir(operative_id))
+    ClassRegistry.delete(operative_id)
     :ok
   catch
     :exit, _ -> :ok
@@ -179,10 +184,32 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
   end
 
-  def unique(prefix), do: prefix <> "_" <> Integer.to_string(System.unique_integer([:positive]))
+  @doc """
+  A prefixed id under the operative-id cap. The prefix gives, never the counter:
+  three call sites compute their prefix, so no rule about call sites can hold
+  the bound, and a reserved digit count would only move the cliff. Truncation
+  engages only where the id would otherwise be refused, so an id that fits is
+  minted byte for byte as before.
+  """
+  @spec unique(binary()) :: binary()
+  def unique(prefix), do: unique(prefix, System.unique_integer([:positive]))
 
-  def unique_id_path() do
-    Path.join(System.tmp_dir!(), "eff_once_id_#{System.unique_integer([:positive])}")
+  @spec unique(binary(), integer()) :: binary()
+  def unique(prefix, counter) do
+    suffix = "_" <> Integer.to_string(counter)
+    binary_slice(prefix, 0, max(Validator.id_byte_limit() - byte_size(suffix), 0)) <> suffix
+  end
+
+  @doc """
+  A path for one runner's `FLEZHA_RUNNER_ID_PATH`, inside a directory this call
+  claimed. The file must be absent: a runner that finds an id there adopts it,
+  and a re-minted name would hand it the identity of a previous run's runner.
+  """
+  @spec unique_id_path(binary()) :: binary()
+  def unique_id_path(prefix \\ "flz_runner_id") do
+    dir = NodeTestHelper.claim_tmp_dir(prefix)
+    on_exit(fn -> File.rm_rf(dir) end)
+    Path.join(dir, "runner.id")
   end
 
   # `operative_id` is unused: the namespace is this scenario's alone, so its whole
@@ -206,7 +233,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     # The namespace is this test's alone, so its whole tree goes. The path is
     # the registry's: a leftover tree captures `namespace_of_class/1` for the
     # next run whose `unique/1` id collides with this one.
-    File.rm_rf(Flezha.State.Paths.namespace_dir(namespace))
+    File.rm_rf(Paths.namespace_dir(namespace))
   end
 
   @doc """
@@ -218,7 +245,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   def await_outbox_drained(operative_id, timeout_ms \\ 30_000) do
     NodeTestHelper.wait_until(
       fn ->
-        case Flezha.State.Paths.entities_of(operative_id) do
+        case Paths.entities_of(operative_id) do
           [] -> false
           entities -> Enum.all?(entities, &outbox_drained?/1)
         end

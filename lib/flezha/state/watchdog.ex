@@ -48,6 +48,8 @@ defmodule Flezha.State.Watchdog do
 
   require Logger
 
+  alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.AuthZ.Quotas
   alias Flezha.Convergence.{Backoff, Snapshot}
   alias Flezha.Operative.ClassRegistry
 
@@ -230,7 +232,7 @@ defmodule Flezha.State.Watchdog do
     if Flezha.AuthZ.enabled?() do
       breached =
         Enum.reduce(Paths.namespaces(), MapSet.new(), fn namespace, acc ->
-          bytes = Flezha.AuthZ.Quotas.refresh_disk_bytes(namespace)
+          bytes = Quotas.refresh_disk_bytes(namespace)
 
           case namespace_disk_limit(namespace) do
             limit when is_integer(limit) and bytes > limit ->
@@ -262,7 +264,7 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp namespace_disk_limit(namespace) do
-    case Flezha.AuthZ.NamespaceStore.get(namespace) do
+    case NamespaceStore.get(namespace) do
       {:ok, %{quotas: quotas}} -> Map.get(quotas, :max_state_bytes)
       :error -> nil
     end
@@ -270,7 +272,7 @@ defmodule Flezha.State.Watchdog do
 
   defp rebuild_disk_counters() do
     if Flezha.AuthZ.enabled?() do
-      Enum.each(Paths.namespaces(), &Flezha.AuthZ.Quotas.rebuild_disk_bytes/1)
+      Enum.each(Paths.namespaces(), &Quotas.rebuild_disk_bytes/1)
     end
 
     :ok

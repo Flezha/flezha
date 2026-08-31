@@ -16,6 +16,7 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Installer.Store
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     tmp =
@@ -192,7 +193,7 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
     try do
       case Process.whereis(mod) do
         nil -> :ok
-        pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       end
     catch
       :exit, _ -> :ok
@@ -202,7 +203,7 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
   defp on_exit_stop(pid) do
     on_exit(fn ->
       try do
-        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end

@@ -19,6 +19,7 @@ defmodule Flezha.Operative.Handover do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.State.WalTransfer
+  alias Flezha.State.WalWriter
 
   require Logger
 
@@ -159,7 +160,7 @@ defmodule Flezha.Operative.Handover do
     |> Enum.any?(fn pid ->
       match?(
         %{pending: p, awaiting: a} when p + a > 0,
-        Flezha.State.WalWriter.outbox_status(pid, 1_000)
+        WalWriter.outbox_status(pid, 1_000)
       )
     end)
   rescue

@@ -14,9 +14,12 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.Lifecycle
   alias Flezha.Partition
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Service.Identificator
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-unit-partition-test"
 
@@ -33,7 +36,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
     end)
 
     {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
     %{runner_id: runner_id}
   end
@@ -43,7 +46,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
 
     catch_exit(
       GenServer.call(
-        Flezha.Service.Identificator.control_unit(runner_id),
+        Identificator.control_unit(runner_id),
         {:start_operative, operative},
         50
       )
@@ -111,7 +114,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
       }
     }
 
-    migrated = Flezha.Operative.Lifecycle.migrate_operative(state)
+    migrated = Lifecycle.migrate_operative(state)
 
     # The kind travels with the migrate: a workflow instance re-added as a
     # stream class is refused by the runner and never heals.

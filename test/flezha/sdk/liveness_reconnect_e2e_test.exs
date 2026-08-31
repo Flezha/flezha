@@ -11,6 +11,8 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.Ctx
+  alias Flezha.SDK.RunnerServer
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Service.OperativeManager
   alias Flezha.Operative.Builder
@@ -23,7 +25,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
     def run(input, s, ctx),
       do:
         (
-          Flezha.SDK.Ctx.emit(ctx, input)
+          Ctx.emit(ctx, input)
           {:ok, s}
         )
   end
@@ -124,7 +126,7 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     # Kill a Local.Stream process (an SDK-side data or control stream) — the peer
     # monitor synthesizes {:flz_closed}, which drives the SDK's reconnect.
-    server = Flezha.SDK.RunnerServer.whereis()
+    server = RunnerServer.whereis()
     assert is_pid(server)
 
     # Inject a stream close the way a killed SDK-side Local.Stream owner would

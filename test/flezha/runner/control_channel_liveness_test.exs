@@ -19,6 +19,7 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
   @moduletag :capture_log
 
   alias Flezha.Runner.ControlChannel
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     test_pid = self()
@@ -78,11 +79,11 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
     # Drive a real channel so the actual handler clause runs, then read state.
     write_fun = fn _ref, _payload_id, _message, _metadata -> :ok end
     {:ok, pid} = ControlChannel.start_link({"ns_live", "exec_live", :fake_ref, write_fun})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
     before = :sys.get_state(pid).last_seen
     # `last_seen` is a millisecond stamp; the clock has to move for a bump to show.
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> System.monotonic_time(:millisecond) > before end,
              1_000,
              1

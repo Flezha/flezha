@@ -23,6 +23,8 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpPoll
+  alias Flezha.Plugin.Provider.HttpPoll.PollWorker
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @channel "config_in"
 
@@ -426,7 +428,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "a wedged worker is reported as uncertain, not as a verdict" do
-      wedged = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      wedged = spawn(&NodeTestHelper.park/0)
       on_exit(fn -> if Process.alive?(wedged), do: Process.exit(wedged, :kill) end)
 
       # A worker that is alive but not answering is neither healthy nor
@@ -665,7 +667,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     poller
   end
 
-  defp probe(poller), do: Flezha.Plugin.Provider.HttpPoll.PollWorker.probe(poller)
+  defp probe(poller), do: PollWorker.probe(poller)
 
   defp kill_on_exit(pid) do
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
@@ -771,7 +773,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       # A held origin keeps the request in flight until the test releases it.
       if is_pid(config.hold) do
         send(config.hold, {:origin_holding, self()})
-        FlezhaTest.Helper.NodeTestHelper.park()
+        NodeTestHelper.park()
       end
 
       :gen_tcp.send(socket, response(config))

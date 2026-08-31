@@ -19,10 +19,13 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   import ExUnit.CaptureLog
 
+  alias Flezha.AuthZ.Config
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @peer_writer "peer-controller"
 
@@ -238,7 +241,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     end
 
     test "two controllers' control-plane replicas never collide", ctx do
-      auth_dir = Flezha.AuthZ.Config.auth_dir()
+      auth_dir = Config.auth_dir()
       File.mkdir_p!(auth_dir)
       roles = Path.join(auth_dir, "roles.dets")
 
@@ -250,7 +253,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       # have to land in different milliseconds for "newest" to mean anything.
       shipped_at = System.system_time(:millisecond)
 
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> System.system_time(:millisecond) > shipped_at end,
                1_000,
                1
@@ -454,7 +457,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     _ = :sys.get_state(pid)
     System.delete_env("FLEZHA_DURABILITY_WRITER_ID")
     Application.put_env(:flezha, :state_root, own_root)
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 
@@ -464,7 +467,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   # Written directly: the case is about who may ship the directory, not about
   # how a park gets into it.
   defp write_park(class, payload) do
-    dir = Flezha.Dlq.Store.proc_dir(class, "proc")
+    dir = DlqStore.proc_dir(class, "proc")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "entries.jsonl"), ~s({"id":"#{payload}"}\n))
     File.write!(Path.join(dir, "#{payload}.bin"), payload)

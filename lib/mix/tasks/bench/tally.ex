@@ -8,6 +8,8 @@ defmodule Mix.Tasks.Bench.Tally do
   The first `prime_count` seqs are warm-up: counted as seen, never measured.
   """
 
+  alias Flezha.State.Metrics
+
   @hist_step_ns 10_000
   @hist_buckets 6_000_000
 
@@ -147,7 +149,7 @@ defmodule Mix.Tasks.Bench.Tally do
   """
   @spec fsync_p99_ms() :: number()
   def fsync_p99_ms do
-    Flezha.State.Metrics.snapshot_all()
+    Metrics.snapshot_all()
     |> Enum.map(fn {_entity, counters} -> Map.get(counters, :flush_latency_ms_p99, 0) end)
     |> Enum.max(fn -> 0 end)
   end

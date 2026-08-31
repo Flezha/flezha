@@ -18,6 +18,7 @@ defmodule Flezha.Runner.RetiringCloseDiagnosisTest do
 
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.FleetStateHelper
 
   setup do
     # The suite runs the primary logger at `:error`, which filters both
@@ -136,7 +137,7 @@ defmodule Flezha.Runner.RetiringCloseDiagnosisTest do
       namespace = "ns_rc_#{System.unique_integer([:positive])}"
       runners = ["exec_sn_a", "exec_sn_b"]
 
-      FlezhaTest.Helper.FleetStateHelper.seed(namespace, Map.new(runners, &{&1, ["do_nothing"]}))
+      FleetStateHelper.seed(namespace, Map.new(runners, &{&1, ["do_nothing"]}))
 
       for runner <- runners, do: refute(FleetManager.runner_retiring?(runner))
 

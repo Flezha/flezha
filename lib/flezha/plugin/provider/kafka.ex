@@ -43,6 +43,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
     alias Flezha.Plugin.ProviderBehaviour
     alias Flezha.State.Outbox
+    alias KafkaEx.Auth.Config, as: KafkaAuthConfig
 
     use ProviderBehaviour
 
@@ -159,7 +160,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
           map
           |> Map.new(fn {k, v} -> {auth_key_atom(k), v} end)
           |> Map.update(:mechanism, :plain, &auth_mechanism/1)
-          |> KafkaEx.Auth.Config.new()
+          |> KafkaAuthConfig.new()
           |> maybe_override_password(opts)
       end
     end
@@ -339,7 +340,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     @impl true
     @spec health(map()) :: Flezha.Plugin.ProviderBehaviour.health_verdict()
     def health(opts) do
-      Flezha.Plugin.ProviderBehaviour.worker_health(
+      ProviderBehaviour.worker_health(
         opts,
         [pid: [:producer_pid, :owned_pid], absent: :no_producer, dead: :worker_dead],
         &health_from_stats/1

@@ -36,6 +36,7 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
+  alias ProcessHub.Service.Migration
 
   require Logger
 
@@ -703,7 +704,7 @@ defmodule Flezha.Operative.Lifecycle do
   @spec signal_migration_ready(Overwatch.t()) :: :ok
   def signal_migration_ready(%Overwatch{} = state) do
     _ =
-      ProcessHub.Service.Migration.migration_ready(
+      Migration.migration_ready(
         Identificator.hub(state.namespace),
         state.id
       )

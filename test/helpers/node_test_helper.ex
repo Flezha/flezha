@@ -2,7 +2,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   use Flezha.Constant
   use ExUnit.Case
 
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.StreamChannel
+  alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
+  alias Flezha.Socket.Support
 
   # TODO: remove or refactor.
   # def test_operative(operative_id) do
@@ -133,12 +137,32 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # The socket directory stays beside this node's, so both stay under the one
   # short runtime base `config/test.exs` chose (a UDS path must fit `SUN_LEN`).
   defp own_resource(:socket_files_path, node_name),
-    do: Path.join(Path.dirname(Flezha.Socket.Support.socket_dir()), "#{node_name}")
+    do: Path.join(Path.dirname(Support.socket_dir()), "#{node_name}")
 
   defp own_resource(:state_root, node_name), do: peer_dir(node_name, "state")
   defp own_resource(:process_hub_registry_root, node_name), do: peer_dir(node_name, "hub")
 
+  @doc """
+  Claim a fresh `<prefix>_<n>` directory under `System.tmp_dir!/0`.
+
+  `System.unique_integer/1` restarts low in every BEAM, so run N+1 re-mints run
+  N's names, and `mkdir_p` would silently share the tree the previous run left.
+  `File.mkdir/1` is the claim: it fails on a name somebody already holds.
+  """
+  @spec claim_tmp_dir(binary()) :: binary()
+  def claim_tmp_dir(prefix) do
+    dir = Path.join(System.tmp_dir!(), "#{prefix}_#{System.unique_integer([:positive])}")
+
+    case File.mkdir(dir) do
+      :ok -> dir
+      {:error, :eexist} -> claim_tmp_dir(prefix)
+      {:error, reason} -> raise File.Error, reason: reason, action: "make directory", path: dir
+    end
+  end
+
   # A durable tree this peer alone owns, cleared with the test that spawned it.
+  # Not a `claim_tmp_dir/1` caller: the name is deliberately stable per peer and
+  # carries no per-BEAM counter to re-mint.
   defp peer_dir(node_name, purpose) do
     dir = Path.join(System.tmp_dir!(), "flezha_peer_#{purpose}_#{node_name}")
     on_exit(fn -> File.rm_rf(dir) end)
@@ -227,7 +251,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     command = PortPilot.launch_command(runtime, :test, namespace)
     connect_timeout = Keyword.get(opts, :connect_timeout, manifest(runtime)["connect_timeout_ms"])
 
-    Flezha.Service.EventManager.add_handler(:runner_connected_event)
+    EventManager.add_handler(:runner_connected_event)
 
     {port, _command} =
       PortPilot.open_port(command,
@@ -244,7 +268,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:runner_connected_event)
+    EventManager.rem_handler(:runner_connected_event)
 
     {port, runner_id}
   end
@@ -360,8 +384,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # UDS-only paths that should disconnect quickly.
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    Flezha.Service.EventManager.add_handler(:runner_disconnected_event)
-    Flezha.Runner.FleetManager.disconnect_runner(namespace, runner_id)
+    EventManager.add_handler(:runner_disconnected_event)
+    FleetManager.disconnect_runner(namespace, runner_id)
 
     receive do
       {:runner_disconnected_event, {^namespace, ^runner_id}} -> :ok
@@ -370,7 +394,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end
 
     # Remove the handler to duplicate events.
-    Flezha.Service.EventManager.rem_handler(:runner_disconnected_event)
+    EventManager.rem_handler(:runner_disconnected_event)
 
     :ok
   end
@@ -426,7 +450,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   """
   def unbound_stream_channel(runner_id \\ "test_runner") do
     name = :"unbound_chan_#{System.unique_integer([:positive])}"
-    {:ok, pid} = Flezha.Runner.StreamChannel.start_link({runner_id, name, :primary})
+    {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
     ExUnit.Callbacks.on_exit(fn -> ensure_stopped(pid) end)
     {name, pid}
   end

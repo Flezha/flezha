@@ -3,6 +3,10 @@ defmodule Flezha.BootLoader do
 
   use GenServer
 
+  alias Flezha.Service.HubManager
+  alias Flezha.Socket.Support
+  alias Flezha.Transport.CertGenerator
+
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   end
@@ -14,11 +18,11 @@ defmodule Flezha.BootLoader do
     transports = Application.get_env(:flezha, :transports, [:uds])
 
     if :uds in transports do
-      Flezha.Socket.Support.prepare_socket_dir()
+      Support.prepare_socket_dir()
     end
 
     if :quic in transports do
-      Flezha.Transport.CertGenerator.ensure_certs()
+      CertGenerator.ensure_certs()
     end
 
     {:ok, %{boot_ready: false}, {:continue, :boot}}
@@ -54,7 +58,7 @@ defmodule Flezha.BootLoader do
       Enum.concat([
         if(:uds in transports,
           do: [
-            "runners attach with FLEZHA_SOCKET_FILES_PATH=#{Flezha.Socket.Support.socket_dir()}"
+            "runners attach with FLEZHA_SOCKET_FILES_PATH=#{Support.socket_dir()}"
           ],
           else: []
         ),
@@ -76,7 +80,7 @@ defmodule Flezha.BootLoader do
     timeout_ms = Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
 
     try do
-      case Flezha.Service.HubManager.await_recovery_complete(timeout_ms) do
+      case HubManager.await_recovery_complete(timeout_ms) do
         :ok ->
           :ok
 

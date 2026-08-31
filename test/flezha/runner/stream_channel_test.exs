@@ -1,5 +1,11 @@
 defmodule FlezhaTest.Runner.StreamChannelTest do
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.StreamChannel
+  alias Flezha.State.Paths
+  alias Flezha.State.TestHelpers
+  alias Flezha.State.Wire
+  alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: writes Application env; a shared on-disk root; registered runner channels.
 
@@ -14,7 +20,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
 
     on_exit(fn ->
-      FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
+      NodeTestHelper.ensure_stopped(pid)
     end)
 
     %{pid: pid, name: name}
@@ -155,7 +161,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       # Heartbeats only arrive on secondary streams; the check is gated to them.
       sec_name = :"#{name}_secondary"
       {:ok, pid} = StreamChannel.start_link({"ce_test", sec_name, :secondary})
-      on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
+      on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
 
       %{pid: pid, name: sec_name}
     end
@@ -200,7 +206,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     test "primary (send-only) stream is never flagged even when bound and silent" do
       name = :"sc_primary_#{System.unique_integer([:positive])}"
       {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
-      on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
+      on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
 
       :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
@@ -221,7 +227,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       _ = GenServer.call(pid, :stream_ref_status)
 
       row =
-        Flezha.Transport.LivenessCounters.snapshot_all().channels
+        LivenessCounters.snapshot_all().channels
         |> Enum.find(fn c -> c.runner_id == "ce_test" and c.name == name end)
 
       assert row.hb_count == 2
@@ -254,15 +260,15 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
 
     defp channel_row(name) do
-      Flezha.Transport.LivenessCounters.snapshot_all().channels
+      LivenessCounters.snapshot_all().channels
       |> Enum.find(fn c -> c.runner_id == "ce_test" and c.name == name end)
     end
   end
 
   describe "output_stall / delete gating (kind-aware)" do
     setup do
-      base = Flezha.State.TestHelpers.tmp_app_data_dir()
-      Flezha.Operative.ClassRegistry.ensure_table()
+      base = TestHelpers.tmp_app_data_dir()
+      ClassRegistry.ensure_table()
 
       on_exit(fn ->
         Application.delete_env(:flezha, :state_root)
@@ -273,8 +279,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
 
     test "a workflow operative is not flagged for output_stall on stream close", %{pid: pid} do
-      Flezha.Operative.ClassRegistry.put("bnd_op", :workflow)
-      on_exit(fn -> Flezha.Operative.ClassRegistry.delete("bnd_op") end)
+      ClassRegistry.put("bnd_op", :workflow)
+      on_exit(fn -> ClassRegistry.delete("bnd_op") end)
 
       :ok = GenServer.call(pid, {:operative_pid_update, "bnd_op", [self()]})
       :ok = GenServer.call(pid, {:operative_pid_update, "cont_op", [self()]})
@@ -301,15 +307,15 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     test "delete_entity_state is ignored for a workflow (non-dynamic) class", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
-      Flezha.Operative.ClassRegistry.put(class, :workflow)
-      on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+      ClassRegistry.put(class, :workflow)
+      on_exit(fn -> ClassRegistry.delete(class) end)
 
       seg = {class, "proc", "seg"}
-      wal = Flezha.State.Paths.wal_path(seg)
+      wal = Paths.wal_path(seg)
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "dummy")
 
-      frame = Flezha.State.Wire.encode_entity_id(class, "proc", "seg")
+      frame = Wire.encode_entity_id(class, "proc", "seg")
       send(pid, {:flz_data, :ref_z, "delete_entity_state", frame, %{}})
       # Flush the frame through the channel: the gate is decided inside the
       # handler, so a delete it did not spawn there is never spawned.

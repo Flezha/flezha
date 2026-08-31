@@ -2,6 +2,8 @@ defmodule Flezha.Service.ObservabilityTest do
   # async: false: writes Application env; the observability registry.
   use ExUnit.Case, async: false
 
+  alias Flezha.Observability.Bus
+  alias Flezha.Observability.TestSinks
   alias Flezha.Service.{CliManager, Observability}
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
 
@@ -41,15 +43,15 @@ defmodule Flezha.Service.ObservabilityTest do
 
   describe "query/2" do
     test "returns ring-buffer contents for source", %{src: src} do
-      Flezha.Observability.Bus.emit(
-        Flezha.Observability.Signal.new(%{
+      Bus.emit(
+        Signal.new(%{
           kind: :event,
           source: src,
           name: :query_test
         })
       )
 
-      Flezha.Observability.TestSinks.settle(RingBufferSink)
+      TestSinks.settle(RingBufferSink)
 
       {:ok, results} =
         Observability.query(
@@ -74,7 +76,7 @@ defmodule Flezha.Service.ObservabilityTest do
       :ok =
         Observability.disable_source(src, %{source: :cli, request_id: "req-123"})
 
-      Flezha.Observability.TestSinks.settle(RingBufferSink)
+      TestSinks.settle(RingBufferSink)
       {:ok, %{status: :disabled}} = Registry.lookup_source(src)
 
       audits = RingBufferSink.query(:observability_service, before_ts)

@@ -21,6 +21,9 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, Paths, ProcInbox, ProcJournal, TestHelpers, Wire}
+  alias Flezha.State.WalWriter
+  alias FlezhaTest.Helper.ControlFrameTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   import Flezha.State.TestHelpers, only: [next_output: 1, refute_dispatched: 1]
 
@@ -393,7 +396,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     # rehydrate loads iteration-N state instead of replaying the WAL tail.
     seg_id = {inst, "ProcA", "s0"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(seg_id)
-    :ok = Flezha.State.WalWriter.append(writer, 0, <<0::128>>, "change")
+    :ok = WalWriter.append(writer, 0, <<0::128>>, "change")
 
     test_pid = self()
     set_mimic_global_until_exit()
@@ -468,7 +471,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   # Linked to the (now exiting) test process, so it may already be on its way
   # down — stopping it is best-effort cleanup, not an assertion.
   defp stop_quietly(pid) do
-    FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+    NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
   catch
     :exit, _ -> :ok
   end
@@ -543,6 +546,6 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   end
 
   defp decode_reply(framed_payload) do
-    FlezhaTest.Helper.ControlFrameTestHelper.decode_request(framed_payload)
+    ControlFrameTestHelper.decode_request(framed_payload)
   end
 end

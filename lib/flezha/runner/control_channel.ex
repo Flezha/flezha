@@ -1,9 +1,12 @@
 defmodule Flezha.Runner.ControlChannel do
+  alias Flezha.Operative.Lifecycle
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.Identificator
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
+  alias Flezha.State.Completion
+  alias Flezha.State.ProcJournal
   alias Flezha.Transport.Stream, as: TStream
 
   require Logger
@@ -451,7 +454,7 @@ defmodule Flezha.Runner.ControlChannel do
     # retains the state instead of deleting it. `finished_at` is stamped
     # controller-side (the wire carries no timestamp).
     _ =
-      Flezha.State.Completion.write(operative_id, %{
+      Completion.write(operative_id, %{
         namespace: namespace,
         status: status,
         error: error,
@@ -494,7 +497,7 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   defp drain_owed_outputs(namespace, operative_id, direct_outputs, deadline) do
-    pending = Flezha.State.ProcJournal.pending_entries(operative_id)
+    pending = ProcJournal.pending_entries(operative_id)
 
     owed_direct =
       case direct_outputs_seen(namespace, operative_id) do
@@ -513,7 +516,7 @@ defmodule Flezha.Runner.ControlChannel do
         )
 
       true ->
-        if pending != [], do: Flezha.State.ProcJournal.flush_pending(operative_id)
+        if pending != [], do: ProcJournal.flush_pending(operative_id)
         Process.sleep(50)
         drain_owed_outputs(namespace, operative_id, direct_outputs, deadline)
     end
@@ -567,11 +570,11 @@ defmodule Flezha.Runner.ControlChannel do
     namespace = state.namespace
 
     Task.start(fn ->
-      case Flezha.State.ProcJournal.append_parked(operative_id, iter, deadline) do
+      case ProcJournal.append_parked(operative_id, iter, deadline) do
         :ok ->
           case HubManager.get_pid(namespace, operative_id) do
             {:ok, pid} when is_pid(pid) ->
-              Flezha.Operative.Lifecycle.suspend(pid, iter, deadline)
+              Lifecycle.suspend(pid, iter, deadline)
 
             _ ->
               # No Overwatch to suspend (already migrated / torn down). The park

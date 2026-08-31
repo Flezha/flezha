@@ -11,6 +11,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup :set_mimic_global_until_exit
   setup :verify_on_exit!
@@ -103,7 +104,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       stub(HubManager, :get_running_namespaces, fn ->
         # The drain holds until the second caller has queued behind it.
         send(test_pid, {:hub_called, self()})
-        FlezhaTest.Helper.NodeTestHelper.park()
+        NodeTestHelper.park()
         []
       end)
 
@@ -128,7 +129,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       # Release the drain once the second call is queued behind it.
       coordinator = Process.whereis(Coordinator)
 
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> Process.info(coordinator, :message_queue_len) > {:message_queue_len, 0} end,
                1_000
              )
@@ -197,7 +198,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
 
     test "a drain precondition failure degrades instead of wedging" do
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
       stub_local_operatives()
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :locked} end)
@@ -211,7 +212,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
 
     test "forced migrations are counted and logged, outcome stays clean" do
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
       stub_local_operatives()
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
 
@@ -246,7 +247,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       # A drain that never returns inside the budget.
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
-        FlezhaTest.Helper.NodeTestHelper.park()
+        NodeTestHelper.park()
         {:ok, %{migrated: 1, forced: 0}}
       end)
 

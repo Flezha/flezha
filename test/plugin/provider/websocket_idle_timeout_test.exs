@@ -12,6 +12,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Websocket
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @telemetry_event [:flezha, :ws, :idle_reconnect]
 
@@ -96,7 +97,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
             )
 
           Websocket.handle_info(:idle_check, state)
-          FlezhaTest.Helper.NodeTestHelper.park()
+          NodeTestHelper.park()
         end)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_000

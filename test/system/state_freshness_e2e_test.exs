@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "state_freshness_e2e"
   @factory "store_input"
@@ -53,7 +54,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   @tag :state_freshness_e2e
   test "SIGTERM to the rust SDK populates Overwatch.state.snapshot via RunnerShutdownNotification" do
     {port, ce_id} = start_runner()
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_port_dead(port) end)
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
 
@@ -97,7 +98,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # Inputs travel via primary stream and the operative's `run` runs
     # async in the SDK's worker pool: the live state read shows them applied
     # before SIGTERM is sent.
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn ->
                case OperativeManager.get_entity_state(@namespace, operative_id) do
                  {:ok, json} -> Enum.all?(inputs_sent, &String.contains?(json, &1))
@@ -171,7 +172,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   end
 
   defp do_wait_for_snapshot(overwatch_pid, deadline) do
-    FlezhaTest.Helper.NodeTestHelper.wait_until(
+    NodeTestHelper.wait_until(
       fn -> Process.alive?(overwatch_pid) and :sys.get_state(overwatch_pid).snapshot end,
       max(deadline - System.monotonic_time(:millisecond), 0)
     ) || nil

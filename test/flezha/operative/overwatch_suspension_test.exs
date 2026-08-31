@@ -19,6 +19,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
   alias Flezha.Operative.{Builder, ClassRegistry, Overwatch}
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Service.Identificator
   alias Flezha.State.{ProcInbox, ProcJournal, TestHelpers}
 
   setup :set_mimic_global_until_exit
@@ -435,7 +436,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
 
       assert_receive {:migration_ready, hub_id, ^inst}
-      assert hub_id == Flezha.Service.Identificator.hub("default")
+      assert hub_id == Identificator.hub("default")
       assert suspended.suspended
     end
 

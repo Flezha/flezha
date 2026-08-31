@@ -20,6 +20,7 @@ defmodule Flezha.State.Recovery do
   require Logger
 
   alias Flezha.Operative.Replay
+  alias Flezha.Service.HubManager
   alias Flezha.State.Commands
   alias Flezha.State.Restore
 
@@ -59,7 +60,7 @@ defmodule Flezha.State.Recovery do
   """
   @spec resolve_runner(tuple()) :: {:ok, binary()} | {:error, term()}
   def resolve_runner({rc, _sh, _pk}) do
-    case Flezha.Service.HubManager.get_registry("default") do
+    case HubManager.get_registry("default") do
       {:ok, registry} ->
         match =
           Enum.find_value(registry, fn {_operative_id, entry} ->

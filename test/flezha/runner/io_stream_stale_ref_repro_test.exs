@@ -17,6 +17,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
   process restart (i.e. if a watchdog/reset is ever added, step 3 changes).
   """
   alias Flezha.Runner.{StreamChannel, StreamSup}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: registered runner channels.
 
@@ -29,7 +30,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
       |> String.to_atom()
 
     {:ok, pid} = StreamChannel.start_link({"ce_repro", name, :primary})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     %{pid: pid, name: name}
   end
 

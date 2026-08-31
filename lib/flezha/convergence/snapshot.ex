@@ -26,6 +26,8 @@ defmodule Flezha.Convergence.Snapshot do
 
   use GenServer
 
+  alias ProcessHub.Constant.Hook
+
   @table __MODULE__
 
   @default_current %{
@@ -151,7 +153,7 @@ defmodule Flezha.Convergence.Snapshot do
   @spec hook_handlers(atom()) :: map()
   def hook_handlers(hub_id) do
     %{
-      ProcessHub.Constant.Hook.recovery_state_changed() => [
+      Hook.recovery_state_changed() => [
         %ProcessHub.Service.HookManager{
           id: :flezha_snapshot_recovery,
           m: __MODULE__,

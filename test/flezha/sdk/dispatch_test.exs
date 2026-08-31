@@ -8,8 +8,11 @@ defmodule Flezha.SDK.DispatchTest do
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
+  alias Flezha.SDK.Ctx
   alias Flezha.SDK.{Topology, Counters, Operative, Entity, Channels, KeyGroup}
+  alias Flezha.State.Wire
   alias Flezha.Transport.Local
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # --- fixtures ---
 
@@ -21,7 +24,7 @@ defmodule Flezha.SDK.DispatchTest do
     def run(input, s, ctx),
       do:
         (
-          Flezha.SDK.Ctx.emit(ctx, input)
+          Ctx.emit(ctx, input)
           {:ok, s}
         )
   end
@@ -90,7 +93,7 @@ defmodule Flezha.SDK.DispatchTest do
       if n < 2 do
         raise("boom #{n}")
       else
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       end
     end
@@ -148,7 +151,7 @@ defmodule Flezha.SDK.DispatchTest do
         5_000 -> :ok
       end
 
-      Flezha.SDK.Ctx.emit(ctx, input)
+      Ctx.emit(ctx, input)
       {:ok, s}
     end
   end
@@ -235,7 +238,7 @@ defmodule Flezha.SDK.DispatchTest do
     assert body.payload == "poison"
 
     # The park is keyed by the Entity the controller must file it under.
-    assert {:ok, {"op-1", "poison", ""}} = Flezha.State.Wire.decode_entity_id(identity)
+    assert {:ok, {"op-1", "poison", ""}} = Wire.decode_entity_id(identity)
 
     # releasing lets the Entity resume (a fresh input dispatches)
     Entity.release_park(entity_pid, body.park_id)
@@ -254,7 +257,7 @@ defmodule Flezha.SDK.DispatchTest do
     def run(input, s, ctx) do
       send(:dispatch_probe, {:running, input, self()})
       receive(do: (:release -> :ok))
-      Flezha.SDK.Ctx.emit(ctx, input)
+      Ctx.emit(ctx, input)
       {:ok, s}
     end
 
@@ -306,7 +309,7 @@ defmodule Flezha.SDK.DispatchTest do
       def run(input, s, ctx) do
         send(:dispatch_probe, {:running, input, self()})
         receive(do: (:release -> :ok))
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       end
 
@@ -370,7 +373,7 @@ defmodule Flezha.SDK.DispatchTest do
       assert_receive {:running, "slow", entity}, 1_000
 
       # The handout ages on the clock while the Entity holds it.
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn ->
                  match?({1, oldest_ms} when oldest_ms >= 30, Counters.handout_liveness(counters))
                end,
@@ -441,7 +444,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   defp wait_until(done, timeout \\ 2_000),
-    do: FlezhaTest.Helper.NodeTestHelper.wait_until(done, timeout, 10)
+    do: NodeTestHelper.wait_until(done, timeout, 10)
 
   # This process is where a gated Procedure reports in.
   defp probe!() do
@@ -455,7 +458,7 @@ defmodule Flezha.SDK.DispatchTest do
   # Release every gated run as it reports in, until `done?.(runs)` holds;
   # answers how many ran.
   defp release_runs_until(done?, runs \\ 0) do
-    if FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> done?.(runs) end, 200, 5) do
+    if NodeTestHelper.wait_until(fn -> done?.(runs) end, 200, 5) do
       runs
     else
       assert_receive {:running, _input, entity}, 1_000

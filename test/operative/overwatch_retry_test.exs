@@ -15,10 +15,13 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   Application-env hooks the Overwatch consults during a startup attempt.
   """
 
+  alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Operative.Builder
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: writes Application env; the live controller and its fleet; node-global tables.
 
@@ -186,7 +189,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     # 5.6: phase transitions :prepared → :running exactly once.
     state = GenServer.call(pid, :get_overwatch_state)
 
-    assert Flezha.Plugin.Extension.Table.phase(state.extensions, "transient_plugin") ==
+    assert Table.phase(state.extensions, "transient_plugin") ==
              :running
 
     assert is_nil(state.init_error)
@@ -215,18 +218,18 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
     operative = %Builder{id: "unpark_operative", factory_id: @factory, opts: [plugins: [plugin]]}
 
-    {:ok, pid} = Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
+    {:ok, pid} = Overwatch.start_link({@namespace, "stale_ce", operative})
 
     on_exit(fn ->
       try do
-        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
+        NodeTestHelper.ensure_stopped(pid)
       catch
         :exit, _ -> :ok
       end
     end)
 
     # It parks (init_error set) and never activates the plugin while parked.
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> GenServer.call(pid, :get_overwatch_state).init_error != nil end,
              2_000,
              20
@@ -247,14 +250,14 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     # so we poll the state instead of asserting immediately.
     assert_receive :activated, 5_000
 
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> is_nil(GenServer.call(pid, :get_overwatch_state).init_error) end,
              2_000,
              20
            )
 
     state = GenServer.call(pid, :get_overwatch_state)
-    assert Flezha.Plugin.Extension.Table.phase(state.extensions, "unpark_plugin") == :running
+    assert Table.phase(state.extensions, "unpark_plugin") == :running
   end
 
   # `await_active_runner` pings once to confirm the runner is reachable

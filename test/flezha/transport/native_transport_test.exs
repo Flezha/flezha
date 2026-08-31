@@ -2,8 +2,10 @@ defmodule Flezha.Transport.NativeTransportTest do
   # async: false: a peer BEAM.
   use ExUnit.Case, async: false
 
+  alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Transport.Server
   alias Flezha.Transport.Local.Stream
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defp stop_native do
     _ = Supervisor.terminate_child(Flezha.Supervisor, {Server, :native})
@@ -53,7 +55,7 @@ defmodule Flezha.Transport.NativeTransportTest do
     bogus = String.to_atom("bogus")
 
     assert_raise ArgumentError, ~r/unknown transport :bogus/, fn ->
-      Flezha.Runner.RunnerSupervisor.init({"ns", "r1", make_ref(), bogus})
+      RunnerSupervisor.init({"ns", "r1", make_ref(), bogus})
     end
   end
 
@@ -63,8 +65,8 @@ defmodule Flezha.Transport.NativeTransportTest do
 
   @tag :multi_node
   test "connect/2 rejects a control handle owned by another BEAM node" do
-    {peer_pid, node} = FlezhaTest.Helper.NodeTestHelper.start_peer_node(:native_reject_peer)
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.stop_peer_node(peer_pid, node) end)
+    {peer_pid, node} = NodeTestHelper.start_peer_node(:native_reject_peer)
+    on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, node) end)
 
     # A live pid on the peer node — the native transport is same-node only.
     remote_pid = :erpc.call(node, :erlang, :whereis, [:code_server])

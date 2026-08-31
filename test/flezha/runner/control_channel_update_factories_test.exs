@@ -13,6 +13,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.{ControlChannel, FleetManager}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-update-factories-test"
 
@@ -37,7 +38,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
 
     on_exit(fn ->
       try do
-        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(control_channel, :normal, 1_000)
+        NodeTestHelper.ensure_stopped(control_channel, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end
@@ -79,5 +80,5 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
     assert FleetManager.runners_for_factory(@namespace, "alpha") == []
   end
 
-  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 500, 10)
+  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 500, 10)
 end

@@ -3,6 +3,7 @@ defmodule Flezha.Observability.OtpBackendTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, RingBufferSink, Signal}
+  alias Flezha.Observability.TestSinks
 
   alias Flezha.Observability.OtpBackend.{
     BeamVmSource,
@@ -242,6 +243,6 @@ defmodule Flezha.Observability.OtpBackendTest do
       _ = :sys.get_state(source)
     end
 
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
   end
 end

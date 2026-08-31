@@ -13,6 +13,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.Snapshot
+  alias FlezhaTest.Helper.NodeTestHelper
   import FlezhaTest.Helper.HubRegistryTestHelper
 
   alias Flezha.Runner.FleetManager
@@ -63,7 +64,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     end
 
     test "get_all_operatives/1 returns the live/local pid for a operative registered on two nodes" do
-      dead_node_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      dead_node_pid = spawn(&NodeTestHelper.park/0)
       local_pid = self()
 
       inject_operative(@namespace, "operative_mn", [
@@ -89,7 +90,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
     test "flz operative list (Flezha.list_operatives/1) lists a multi-node operative without crashing" do
       # Backs `flz operative list` via OperativeManager.get_operative_ids → get_all_operatives.
-      dead_node_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      dead_node_pid = spawn(&NodeTestHelper.park/0)
 
       inject_operative(@namespace, "operative_cli_mn", [
         {:dead@nohost, dead_node_pid},

@@ -21,15 +21,21 @@ defmodule FlezhaTest.SickProvider do
 end
 
 defmodule FlezhaTest do
+  alias Flezha.Convergence.Loop
+  alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
+  alias Flezha.Operative.Replay
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.Payloader
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OperativeTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
+  alias ProcessHub.Constant.Hook
 
   use ExUnit.Case
   use Flezha.Constant
@@ -63,7 +69,7 @@ defmodule FlezhaTest do
     # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
     # per-Entity state from an earlier test that reused the same operative_id
     # would leak in. Start each test from empty entities.
-    Flezha.State.TestHelpers.reset_all_entities()
+    TestHelpers.reset_all_entities()
 
     on_exit(fn ->
       OperativeManager.stop_all_operatives(@default_namespace)
@@ -74,7 +80,7 @@ defmodule FlezhaTest do
   end
 
   test "runner node connect" do
-    res = Flezha.Runner.FleetManager.active_runners(@default_namespace)
+    res = FleetManager.active_runners(@default_namespace)
     assert length(res) === 2
     Enum.each(res, &assert(is_binary(&1)))
   end
@@ -276,7 +282,7 @@ defmodule FlezhaTest do
     {:ok, json_state} =
       OperativeManager.get_entity_state(@default_namespace, operative_id)
 
-    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Payloader.json_to_map(json_state)
 
     assert entity_state === %{
              "store_input_procedure" => %{
@@ -328,7 +334,7 @@ defmodule FlezhaTest do
     {:ok, old_overwatch_state} =
       OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Payloader.json_to_map(json_state)
 
     assert entity_state === test_state
 
@@ -336,7 +342,7 @@ defmodule FlezhaTest do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(@default_namespace),
-      ProcessHub.Constant.Hook.post_children_start(),
+      Hook.post_children_start(),
       [
         %ProcessHub.Service.HookManager{
           id: "migration_wait",
@@ -359,7 +365,7 @@ defmodule FlezhaTest do
 
     ProcessHub.cancel_hook_handlers(
       Identificator.hub(@default_namespace),
-      ProcessHub.Constant.Hook.post_children_start(),
+      Hook.post_children_start(),
       ["migration_wait"]
     )
 
@@ -369,7 +375,7 @@ defmodule FlezhaTest do
     {:ok, new_overwatch_state} =
       OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Payloader.json_to_map(json_state)
 
     assert entity_state === test_state
 
@@ -403,7 +409,7 @@ defmodule FlezhaTest do
            "expected live HotSwap handover, not a WAL cold restore"
 
     {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
-    state = Flezha.Service.Payloader.json_to_map(json_state)
+    state = Payloader.json_to_map(json_state)
     assert "before_drain" in get_in(state, ["store_input_procedure", "text_inputs"])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
@@ -439,7 +445,7 @@ defmodule FlezhaTest do
 
     :erpc.call(peer_node, ProcessHub, :register_hook_handlers, [
       hub_id,
-      ProcessHub.Constant.Hook.migration_deferred(),
+      Hook.migration_deferred(),
       [
         %ProcessHub.Service.HookManager{
           id: "deferred_wait",
@@ -467,7 +473,7 @@ defmodule FlezhaTest do
 
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "after_force", %{})
     {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
-    state = Flezha.Service.Payloader.json_to_map(json_state)
+    state = Payloader.json_to_map(json_state)
     assert "seed" in get_in(state, ["store_input_procedure", "text_inputs"])
     assert "after_force" in get_in(state, ["store_input_procedure", "text_inputs"])
 
@@ -525,7 +531,7 @@ defmodule FlezhaTest do
 
     NodeTestHelper.stop_runner(namespace, runner_id)
 
-    assert Flezha.Runner.FleetManager.active_runners(namespace) === []
+    assert FleetManager.active_runners(namespace) === []
   end
 
   @tag :runner_disconnect_migrate_op
@@ -605,7 +611,7 @@ defmodule FlezhaTest do
     # cache accumulates across test files and is never cleared, so a hub left
     # mid-recovery by an earlier test would block this Loop's first tick
     # forever. Reset it so the gate only weighs this test's hubs.
-    Flezha.Convergence.Snapshot.reset_recovery_states()
+    ConvergenceSnapshot.reset_recovery_states()
 
     # Short periodic tick so the reseat reconciles within the assertion
     # budget even if the single `:runner_connected_event` is missed under
@@ -654,7 +660,7 @@ defmodule FlezhaTest do
     # for the reseat to land.
     assert NodeTestHelper.wait_until(
              fn ->
-               Flezha.Convergence.Loop.tick_now()
+               Loop.tick_now()
 
                OperativeManager.operative_registry(namespace)
                |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, %{tag: tag}}} ->
@@ -682,7 +688,7 @@ defmodule FlezhaTest do
                for {operative_id, _info} <- operative_infos do
                  case HubManager.get_pid(namespace, operative_id) do
                    {:ok, pid} when is_pid(pid) ->
-                     Flezha.Operative.Replay.kick_restore_for_bound_runner(
+                     Replay.kick_restore_for_bound_runner(
                        pid,
                        runner_id_3
                      )
@@ -737,7 +743,7 @@ defmodule FlezhaTest do
 
     ProcessHub.register_hook_handlers(
       hub_id,
-      ProcessHub.Constant.Hook.post_node_join(),
+      Hook.post_node_join(),
       [
         %ProcessHub.Service.HookManager{
           id: "hub_node_join_wait",
@@ -756,7 +762,7 @@ defmodule FlezhaTest do
       end
     end
 
-    ProcessHub.cancel_hook_handlers(hub_id, ProcessHub.Constant.Hook.post_node_join(), [
+    ProcessHub.cancel_hook_handlers(hub_id, Hook.post_node_join(), [
       "hub_node_join_wait"
     ])
 
@@ -765,7 +771,7 @@ defmodule FlezhaTest do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      ProcessHub.Constant.Hook.child_registered(),
+      Hook.child_registered(),
       [
         %ProcessHub.Service.HookManager{
           id: "hub_insert_hook_test",
@@ -778,7 +784,7 @@ defmodule FlezhaTest do
 
     ProcessHub.register_hook_handlers(
       Identificator.hub(namespace),
-      ProcessHub.Constant.Hook.post_children_start(),
+      Hook.post_children_start(),
       [
         %ProcessHub.Service.HookManager{
           id: "hub_pstartup_hook_test",
@@ -862,7 +868,7 @@ defmodule FlezhaTest do
 
   test "pluginless running operative re-attaches its declared plugins (2026-06-12 incident shape)" do
     namespace = @temp_namespace
-    Flezha.Convergence.Snapshot.reset_recovery_states()
+    ConvergenceSnapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
 
     runner_id = NodeTestHelper.start_runner(namespace)
@@ -885,7 +891,7 @@ defmodule FlezhaTest do
 
     assert NodeTestHelper.wait_until(
              fn ->
-               Flezha.Convergence.Loop.tick_now()
+               Loop.tick_now()
                subscribed_plugin?(ow, plugin_id)
              end,
              15_000
@@ -897,7 +903,7 @@ defmodule FlezhaTest do
 
   test "declared plugin self-reporting unhealthy is restarted by the loop" do
     namespace = @temp_namespace
-    Flezha.Convergence.Snapshot.reset_recovery_states()
+    ConvergenceSnapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 60_000})
 
     runner_id = NodeTestHelper.start_runner(namespace)
@@ -925,14 +931,14 @@ defmodule FlezhaTest do
     activations_before = FlezhaTest.SickProvider.activations()
 
     # Healthy plugin: a tick must not restart it.
-    Flezha.Convergence.Loop.tick_now()
+    Loop.tick_now()
     assert FlezhaTest.SickProvider.activations() == activations_before
 
     FlezhaTest.SickProvider.set_health({:unhealthy, :test_sick})
 
     assert NodeTestHelper.wait_until(
              fn ->
-               Flezha.Convergence.Loop.tick_now()
+               Loop.tick_now()
                FlezhaTest.SickProvider.activations() > activations_before
              end,
              15_000
@@ -943,9 +949,9 @@ defmodule FlezhaTest do
 
     # Verdict cleared: no further restarts once healthy again.
     FlezhaTest.SickProvider.set_health(:healthy)
-    Flezha.Convergence.Loop.tick_now()
+    Loop.tick_now()
     stable = FlezhaTest.SickProvider.activations()
-    Flezha.Convergence.Loop.tick_now()
+    Loop.tick_now()
     assert FlezhaTest.SickProvider.activations() == stable
 
     NodeTestHelper.stop_runner(namespace, runner_id)

@@ -367,3 +367,180 @@ observation open for the next emitter.
 - **WHEN** the practice is reviewed
 - **THEN** it SHALL NOT be treated as satisfying this requirement
 
+### Requirement: A module SHALL be named so that its last segment survives aliasing
+
+An Elixir module's last segment SHALL mean what the module is, without its parent
+namespace, because that segment is what every call site reads once the module is
+aliased. A module whose last segment names the wrong thing SHALL be renamed; one that
+does not earn its own file SHALL be folded into its parent and called there.
+
+A module SHALL NOT be folded into a parent that does not exist. Creating a namespace
+module in order to have somewhere to fold into is new code, and the reuse order forbids
+it where the module can simply be renamed instead.
+
+A module SHALL NOT be folded into a parent that the fold would carry over the file-size
+ceiling. For such a parent, renaming is the only available remedy and the proposal
+SHALL say so per module rather than discovering it during the edit.
+
+#### Scenario: A module's last segment names the wrong thing
+
+- **GIVEN** a module whose last segment describes something the module is not, such
+  that a neighbouring module documents the difference in prose to keep the two apart
+- **WHEN** the naming rule is applied
+- **THEN** the module SHALL be renamed so that the prose disambiguation is unnecessary,
+  and that prose SHALL be removed in the same change
+
+#### Scenario: A small module has no parent module to fold into
+
+- **GIVEN** a module that does not earn its own file
+- **AND** its namespace has no module of its own
+- **WHEN** the naming rule is applied
+- **THEN** the module SHALL be renamed rather than folded, and a namespace module
+  SHALL NOT be created for it
+
+#### Scenario: The parent has no room
+
+- **GIVEN** a fold candidate whose parent is at or over the file-size ceiling
+- **WHEN** the verdict is recorded
+- **THEN** it SHALL be rename, and the proposal SHALL name the parent's line count as
+  the reason
+
+### Requirement: A persisted module name SHALL be renamed only with a migration
+
+A module whose name is written into durable state SHALL NOT be renamed by a change that
+does not carry a migration: where the name is persisted, renaming it is a migration and
+not a rename. The set of such modules SHALL be enumerated from source before any rename
+is proposed, and no module in that set SHALL be renamed without one.
+
+The enumeration SHALL be derived from the write path and the read path, not from a
+sample of on-disk bytes: a store that happens to hold no rows on the box being surveyed
+proves nothing about what it holds in production.
+
+A rename of a persisted module SHALL NOT be treated as low risk on the grounds that
+restore does not crash. Where the restore path resolves a module and tolerates its
+absence, the failure is silent — the subsystem reports itself healthy and never starts.
+
+#### Scenario: The durable set is enumerated before a rename is proposed
+
+- **WHEN** a change proposes renaming any module
+- **THEN** it SHALL first record which modules have their names persisted, with the
+  file and line of the write path for each
+- **AND** it SHALL state, per proposed rename, that the module is not in that set
+
+#### Scenario: A persisted module must move anyway
+
+- **GIVEN** a change that must rename a module whose name is persisted
+- **WHEN** the change is written
+- **THEN** it SHALL carry the operator procedure that makes existing durable state
+  readable again, and SHALL name it in the proposal rather than in a dev note
+
+#### Scenario: A tolerated absence is not a safe absence
+
+- **GIVEN** a restore path that resolves a module name and continues when the module
+  cannot be loaded
+- **WHEN** the risk of a rename is assessed
+- **THEN** that path SHALL be treated as a silent-failure surface, and the rename
+  SHALL be verified by a live restore rather than by a green compile
+
+### Requirement: A nested module SHALL be reached by an alias, and the alias SHALL keep the name unambiguous
+
+A call site SHALL reach a nested module through an alias rather than by its fully
+qualified name. The alias SHALL bind the module's last segment when that segment is
+unique across the application's own modules, and SHALL bind a qualified spelling
+otherwise, so that the aliased name identifies exactly one module.
+
+One spelling rule SHALL serve the whole tree. The same module SHALL NOT be aliased
+bare in some files and under a qualified name in others: that is the same question
+answered two ways, and the reader cannot tell which answer is authoritative.
+
+An alias SHALL NOT bind a name that shadows a standard-library module the file uses,
+and SHALL NOT be inserted out of alphabetical order within its group.
+
+#### Scenario: A unique last segment is aliased bare
+
+- **GIVEN** a nested module whose last segment names no other module in the application
+- **WHEN** a call site reaches it
+- **THEN** the file SHALL alias it and call it by that segment
+
+#### Scenario: An ambiguous last segment is aliased under a qualified name
+
+- **GIVEN** two modules in different namespaces sharing a last segment
+- **WHEN** either is aliased
+- **THEN** the alias SHALL bind a qualified spelling that names exactly one of them
+
+#### Scenario: The tree does not carry two spellings for one module
+
+- **WHEN** the alias sites for any one module are read across the tree
+- **THEN** they SHALL all bind the same name
+
+### Requirement: A contested lint check SHALL be settled by decision, and the settled count SHALL be ratcheted
+
+A lint check the codebase does not follow SHALL be either adopted and the code fixed,
+or disabled in the linter's configuration. It SHALL NOT be left enabled and failing,
+because a count that has been red since it was written reports nothing: no one can
+distinguish a new violation from the standing ones.
+
+Once the contested checks are settled, the resulting warning count SHALL be recorded as
+a ratcheted baseline metric. A metric recorded as absent in every area compares nothing
+and is not a gate.
+
+The recorded count SHALL come from a measured run taken after the fixes land, never
+from arithmetic over the counts before them: fixing one check can raise another, and a
+baseline computed by subtraction records a number the tree does not have.
+
+A check SHALL NOT be adopted with its strictness reduced in order to lower the work.
+Where the check's own defaults already exclude a class of finding, those defaults SHALL
+be left as they are and SHALL be cited as the reason that class needs no code change.
+
+#### Scenario: A contested check is disabled rather than left failing
+
+- **GIVEN** a lint check whose findings the codebase deliberately does not follow
+- **WHEN** the decision is taken
+- **THEN** the check SHALL be listed as disabled in the linter configuration, and the
+  reason SHALL be recorded
+
+#### Scenario: The baseline is measured, not derived
+
+- **GIVEN** a settled lint configuration and the code fixes for the adopted check
+- **WHEN** the warning count is recorded as a baseline
+- **THEN** it SHALL be the output of a run taken after those fixes, and any excess over
+  the expected figure SHALL be accounted for before it is recorded
+
+#### Scenario: Adoption does not weaken the check
+
+- **WHEN** a check is adopted
+- **THEN** its parameters SHALL NOT be relaxed to reduce the number of sites to fix
+
+### Requirement: A rename SHALL be verified by a gate that reads more than code
+
+A change that retires an identifier SHALL add a gate that fails on any surviving
+occurrence of the retired name in any tracked human-readable file. Compilation and the
+test suite verify code references only; a retired name surviving in a specification,
+a document, a comment or a string compiles, tests and runs while being wrong.
+
+The gate SHALL extend the repository's shared naming-gate walk rather than introduce a
+second gate mechanism, and SHALL provide a recorded-history escape so that a note
+citing a retired name as history is not an offence.
+
+The gate SHALL be demonstrated to fail on a deliberate reintroduction and to pass on
+its removal, before the rename it guards is committed.
+
+#### Scenario: A retired name surviving in a specification is caught
+
+- **GIVEN** a renamed module still named in a specification or document
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero naming that file
+
+#### Scenario: The gate is proved before it is trusted
+
+- **WHEN** the gate is added
+- **THEN** it SHALL be shown to exit non-zero on a deliberate reintroduction of the
+  retired name, and zero once that reintroduction is removed
+
+#### Scenario: A historical citation is not an offence
+
+- **GIVEN** a development note citing a retired name as a record of what changed
+- **WHEN** the gate runs
+- **THEN** that occurrence SHALL be exempt by an explicit recorded-history marker, and
+  SHALL NOT be deleted to satisfy the gate
+

@@ -4,6 +4,7 @@ defmodule Flezha.Observability.IntegrationTest do
 
   alias Flezha.Observability
   alias Flezha.Observability.{Bus, PubSubSink, Registry, RingBufferSink, Signal}
+  alias Flezha.Observability.TestSinks
   alias Flezha.Service.Observability, as: ObsSvc
 
   @moduletag :observability_integration
@@ -35,7 +36,7 @@ defmodule Flezha.Observability.IntegrationTest do
       end
 
     # The ring buffer subscriber has picked up the new source once it answers.
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
 
     on_exit(fn ->
       Registry.unregister_source(src)
@@ -132,8 +133,8 @@ defmodule Flezha.Observability.IntegrationTest do
   # Both sinks have handled every emit so far: the ring buffer counts, the
   # PubSub sink has forwarded to this process.
   defp settle_sinks(pubsub) do
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
-    Flezha.Observability.TestSinks.settle(pubsub)
+    TestSinks.settle(RingBufferSink)
+    TestSinks.settle(pubsub)
   end
 
   defp pubsub_name({:registered, name}), do: name

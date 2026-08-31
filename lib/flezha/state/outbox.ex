@@ -48,7 +48,9 @@ defmodule Flezha.State.Outbox do
 
   require Logger
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.State.{Paths, Wire}
+  alias Flezha.State.ProcJournal
 
   @type t :: %{
           last_persisted_seq: non_neg_integer(),
@@ -285,7 +287,7 @@ defmodule Flezha.State.Outbox do
         payload: payload
       }
 
-      case Flezha.Dlq.Store.append(entry) do
+      case DlqStore.append(entry) do
         {:ok, ref} ->
           Logger.error(
             "[outbox] parked undeliverable output #{rc}/#{sh}/#{pk} " <>
@@ -317,7 +319,7 @@ defmodule Flezha.State.Outbox do
   """
   @spec complete(Paths.entity_id(), key()) :: :ok
   def complete({instance_id, _, _}, {:marker, for_type, proc_idx, iter, epoch}) do
-    Flezha.State.ProcJournal.mark_flushed(instance_id, for_type, proc_idx, iter, epoch)
+    ProcJournal.mark_flushed(instance_id, for_type, proc_idx, iter, epoch)
   end
 
   @doc """

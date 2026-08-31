@@ -46,6 +46,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.State.Completion
   alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
   alias Flezha.State.{InputLog, Paths, ProcJournal}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :postgres_integration
   @moduletag timeout: 300_000
@@ -293,7 +294,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     # and the grace is left carrying the property alone — the sharper of the two
     # statements, and the one that has to hold against a real store.
     {:ok, peer} = GenServer.start(Shipper, [])
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(peer) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(peer) end)
 
     for round <- 1..3 do
       send_inputs(operative_id, namespace, ["k#{round}:v#{round}", "commit:#{round}"])

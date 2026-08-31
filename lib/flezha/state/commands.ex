@@ -20,9 +20,11 @@ defmodule Flezha.State.Commands do
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Service.Identificator
   alias Flezha.State.Paths
   alias Flezha.State.ProcJournal
   alias Flezha.State.Restore
+  alias Flezha.State.Watchdog
   alias Flezha.State.Wire
 
   require Logger
@@ -215,14 +217,14 @@ defmodule Flezha.State.Commands do
     command =
       {:compact_entity, %RunnerCommands.CompactEntity{entity_id: entity_id_bytes}}
 
-    case GenServer.whereis(Flezha.Service.Identificator.control_unit(runner_id)) do
+    case GenServer.whereis(Identificator.control_unit(runner_id)) do
       nil ->
         # No request/reply layer available (isolated unit tests): fire the
         # command directly. Stub detection still rides the timeout → backoff →
         # give-up path, so the missing inspection is not a coverage gap.
         case ControlChannel.send_control(runner_id, command) do
           {:ok, _ref} = ok ->
-            Flezha.State.Watchdog.compaction_started(entity_id, runner_id)
+            Watchdog.compaction_started(entity_id, runner_id)
             ok
 
           other ->
@@ -232,7 +234,7 @@ defmodule Flezha.State.Commands do
       _ ->
         # Bound the handshake: a snapshot that never arrives is timed out by the
         # Watchdog rather than left to wedge persistence.
-        Flezha.State.Watchdog.compaction_started(entity_id, runner_id)
+        Watchdog.compaction_started(entity_id, runner_id)
 
         # Inspect the confirming CompactEntityResponse off the caller's process:
         # serializing a large State under the entity lock can be slow, and
@@ -267,7 +269,7 @@ defmodule Flezha.State.Commands do
         %{operative: rc, procedure: sh, key: pk, runner: runner_id, reason: :no_snapshot}
       )
 
-      Flezha.State.Watchdog.compaction_failed(entity_id)
+      Watchdog.compaction_failed(entity_id)
     else
       {:error, reason} ->
         Logger.warning(

@@ -80,7 +80,7 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
   # A runtime whose manifest lists no QUIC transport simply has no scenario
   # here, the way every other transport-axis suite is written.
-  if :quic in FlezhaTest.Helper.NodeTestHelper.transports() do
+  if :quic in NodeTestHelper.transports() do
     describe "the QUIC candidate list" do
       @describetag transport: :quic
 

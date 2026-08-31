@@ -25,6 +25,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.{Completion, Paths, TestHelpers}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "op-mgr-request-stop-test"
 
@@ -65,7 +66,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     test_pid = self()
     proc_id = unique_id()
     {:ok, stub} = start_stub(%{builder: %{kind: :workflow}, runner_id: "exec1"})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
 
@@ -85,7 +86,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     test_pid = self()
     proc_id = unique_id()
     {:ok, stub} = start_stub(%{builder: %{kind: :stream}, runner_id: "exec1"})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
@@ -107,7 +108,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     test_pid = self()
     proc_id = unique_id()
     {:ok, stub} = start_stub(%{builder: %{kind: :workflow, entities: ["a", "b"]}})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
@@ -130,7 +131,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     proc_id = unique_id()
     builder = %Builder{id: proc_id, factory_id: "f", kind: :workflow}
     {:ok, stub} = start_stub(%{builder: builder})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
@@ -152,7 +153,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   test "stop_operative retains state + record for a finished workflow operative" do
     proc_id = unique_id()
     {:ok, stub} = start_stub(%{builder: %{kind: :workflow}})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
@@ -184,7 +185,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   test "stop_operative deletes state when there is no completion record" do
     proc_id = unique_id()
     {:ok, stub} = start_stub(%{builder: %{kind: :stream}})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)

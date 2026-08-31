@@ -8,14 +8,16 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
   import ExUnit.Callbacks
   import ExUnit.Assertions
 
+  alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.HubManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @doc """
   Point `:schedules` at a tmp dir and start a supervised Store. `opts` are
   merged into the `:schedules` config (e.g. `misfire_grace_ms: 0`).
   """
   def isolated_store_setup(opts \\ []) do
-    tmp = Path.join(System.tmp_dir!(), "flz_sched_#{System.unique_integer([:positive])}")
+    tmp = NodeTestHelper.claim_tmp_dir("flz_sched")
     prev = Application.get_env(:flezha, :schedules, [])
 
     Application.put_env(
@@ -77,7 +79,7 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
 
   @doc "A stored schedule that will not fire during the test."
   def add_quiet(name) do
-    {:ok, entry} = Flezha.Schedule.Store.add(entry_fields(%{name: name, cron: @quiet_cron}))
+    {:ok, entry} = ScheduleStore.add(entry_fields(%{name: name, cron: @quiet_cron}))
     entry
   end
 
@@ -89,7 +91,7 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
   cross-node hub discovery are all asynchronous, so a bare assert races.
   """
   def await_until(timeout_ms, describe, fun) when is_function(fun, 0) do
-    case FlezhaTest.Helper.NodeTestHelper.wait_until(fn -> ok_value(fun.()) end, timeout_ms) do
+    case NodeTestHelper.wait_until(fn -> ok_value(fun.()) end, timeout_ms) do
       {:ok, value} -> value
       _ -> flunk("timed out waiting for #{describe.()}")
     end

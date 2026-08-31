@@ -15,6 +15,7 @@ defmodule Flezha.State.WalRewindTest do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers, WalWriter, Wire}
+  alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -105,7 +106,7 @@ defmodule Flezha.State.WalRewindTest do
       # Two baselines: one below the boundary, one above it.
       for seq <- [2, 5] do
         {:ok, _path} =
-          Flezha.State.Snapshot.write_snapshot(
+          StateSnapshot.write_snapshot(
             ctx.entity_id,
             seq,
             <<0::unit(8)-size(16)>>,

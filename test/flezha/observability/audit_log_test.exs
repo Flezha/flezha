@@ -7,6 +7,7 @@ defmodule Flezha.Observability.AuditLogTest do
   @moduletag :capture_log
 
   alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Observability.TestSinks
 
   alias Flezha.Observability.AuditLog.{
     Codec,
@@ -383,7 +384,7 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       AuditSvc.list_files(%{source: :cli})
-      Flezha.Observability.TestSinks.settle(Sink)
+      TestSinks.settle(Sink)
 
       # The list_files call itself emits a :list_files event on :audit_log
       # source — covered by the audit-of-audit test below. The
@@ -398,7 +399,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Flezha.Observability.TestSinks.settle(Sink)
+      TestSinks.settle(Sink)
 
       path = Path.join(dir, "audit-current.jsonl")
       content = File.read!(path)
@@ -443,7 +444,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Flezha.Observability.TestSinks.settle(Sink)
+      TestSinks.settle(Sink)
 
       path = Path.join(dir, "audit-current.jsonl")
 
@@ -481,7 +482,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Flezha.Observability.TestSinks.settle(Sink)
+      TestSinks.settle(Sink)
 
       content = File.read!(Path.join(dir, "audit-current.jsonl"))
       assert content =~ Atom.to_string(extra_source)
@@ -503,7 +504,7 @@ defmodule Flezha.Observability.AuditLogTest do
         })
       )
 
-      Flezha.Observability.TestSinks.settle(Sink)
+      TestSinks.settle(Sink)
       assert Sink.post_close_dropped() >= 1
     end
   end
@@ -571,7 +572,7 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, entries} = AuditSvc.list_files(%{source: :cli})
       assert length(entries) == 1
 
-      Flezha.Observability.TestSinks.settle(Sink)
+      TestSinks.settle(Sink)
       content = File.read!(Path.join(dir, "audit-current.jsonl"))
       assert content =~ ~s("source":"audit_log")
       assert content =~ ~s("name":"list_files")

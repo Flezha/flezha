@@ -4,10 +4,11 @@ defmodule Flezha.AuthZ.QuotasTest do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, Quotas}
+  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
     ctx =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(prefix: "flz_authz_quotas", claim: true)
+      AuthTestHelper.setup_auth_stores(prefix: "flz_authz_quotas", claim: true)
 
     assert AuthZ.enabled?()
     {:ok, Map.to_list(ctx)}

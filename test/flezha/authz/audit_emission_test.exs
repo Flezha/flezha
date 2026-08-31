@@ -16,12 +16,13 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.AuthTestHelper
 
   @source :platform_authz
 
   setup do
     ctx =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_authz_audit",
         stores: [AuthState, RoleStore, NamespaceStore, TokenStore],
         register_source: true
@@ -92,7 +93,7 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
   defp now_us(), do: System.monotonic_time(:microsecond)
 
   defp wait_for_events(name, since_us, expected_count) do
-    matches = FlezhaTest.Helper.AuthTestHelper.await_platform_authz_events(name, since_us)
+    matches = AuthTestHelper.await_platform_authz_events(name, since_us)
 
     assert length(matches) == expected_count,
            "expected exactly #{expected_count} #{inspect(name)} event(s), got #{length(matches)}"

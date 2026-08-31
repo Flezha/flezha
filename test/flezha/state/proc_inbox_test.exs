@@ -10,6 +10,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.State.{Paths, ProcInbox, ProcJournal, TestHelpers, WalWriter}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
@@ -41,7 +42,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
       5_000 -> flunk("the inbox writer never closed")
     end
 
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> Flezha.State.Supervisor.lookup(id) == :error end,
              5_000
            ),

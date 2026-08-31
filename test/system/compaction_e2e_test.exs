@@ -29,6 +29,8 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.TestHelpers
+  alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -110,8 +112,8 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     Application.put_env(:flezha, :compact_after_age_ms, 1)
     Application.put_env(:flezha, :compaction_timeout_ms, 30_000)
     {:ok, writer} = Flezha.State.Supervisor.lookup(entity_id)
-    Flezha.State.TestHelpers.age_writer(writer, 50)
-    :ok = Flezha.State.Watchdog.sweep_now()
+    TestHelpers.age_writer(writer, 50)
+    :ok = Watchdog.sweep_now()
 
     assert_receive {:compaction_completed, %{operative: ^operative_id, procedure: @procedure}},
                    10_000,

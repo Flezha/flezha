@@ -12,10 +12,14 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas}
   alias Flezha.Runner.FleetManager
+  alias Flezha.State.Paths
+  alias Flezha.State.PersistenceResolver
+  alias Flezha.State.Watchdog
+  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
     %{tmp: tmp} =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(prefix: "flz_quota_points", claim: true)
+      AuthTestHelper.setup_auth_stores(prefix: "flz_quota_points", claim: true)
 
     assert AuthZ.enabled?()
 
@@ -105,7 +109,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
         # contract rather than letting it reach the console unasserted.
         log =
           capture_log(fn ->
-            :ok = Flezha.State.Watchdog.sweep_now()
+            :ok = Watchdog.sweep_now()
 
             assert_receive {:breach, %{bytes: bytes, limit: 100}, %{namespace: "team-alarm"}},
                            2_000
@@ -117,7 +121,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
 
         # Latched: a second sweep with the breach still standing does not
         # re-alarm.
-        :ok = Flezha.State.Watchdog.sweep_now()
+        :ok = Watchdog.sweep_now()
         refute_received {:breach, _, %{namespace: "team-alarm"}}
       after
         :telemetry.detach(handler_id)
@@ -128,18 +132,18 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   describe "per-namespace mailbox watermark (§6.3)" do
     test "the credit window is capped by max_mailbox_bytes_total" do
       {:ok, _} = NamespaceStore.create("team-mail", quotas: %{max_mailbox_bytes_total: 4_096})
-      :ok = Flezha.State.Paths.ensure_claims_table()
-      :ok = Flezha.State.Paths.claim_namespace("mail-op", "team-mail")
+      :ok = Paths.ensure_claims_table()
+      :ok = Paths.claim_namespace("mail-op", "team-mail")
 
-      assert Flezha.State.PersistenceResolver.credit_window_bytes("mail-op") == 4_096
+      assert PersistenceResolver.credit_window_bytes("mail-op") == 4_096
 
       # A class in a namespace with the default (large) quota keeps the
       # configured window.
       {:ok, _} = NamespaceStore.create("team-wide", quotas: %{})
-      :ok = Flezha.State.Paths.claim_namespace("wide-op", "team-wide")
+      :ok = Paths.claim_namespace("wide-op", "team-wide")
 
-      assert Flezha.State.PersistenceResolver.credit_window_bytes("wide-op") ==
-               Flezha.State.PersistenceResolver.wal_high_watermark_bytes()
+      assert PersistenceResolver.credit_window_bytes("wide-op") ==
+               PersistenceResolver.wal_high_watermark_bytes()
     end
   end
 end

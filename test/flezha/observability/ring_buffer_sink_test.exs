@@ -3,6 +3,7 @@ defmodule Flezha.Observability.RingBufferSinkTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, RingBufferSink, Signal}
+  alias Flezha.Observability.TestSinks
 
   setup do
     src = :"obs_rbs_src_#{:erlang.unique_integer([:positive])}"
@@ -18,7 +19,7 @@ defmodule Flezha.Observability.RingBufferSinkTest do
     # The RingBufferSink subscribes to Registry events via PubSub and
     # creates a table for newly-registered sources; a call to it answers
     # after that broadcast has been handled.
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
 
     on_exit(fn -> Registry.unregister_source(src) end)
     {:ok, src: src}
@@ -29,7 +30,7 @@ defmodule Flezha.Observability.RingBufferSinkTest do
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :n, measurements: %{i: i}}))
     end)
 
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
     results = RingBufferSink.query(src, 0)
     assert length(results) == 10
   end
@@ -39,7 +40,7 @@ defmodule Flezha.Observability.RingBufferSinkTest do
     boundary = System.monotonic_time(:microsecond)
     Bus.emit(Signal.new(%{kind: :event, source: src, name: :second}))
 
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
     results = RingBufferSink.query(src, boundary)
     names = Enum.map(results, & &1.name)
     assert :second in names
@@ -53,13 +54,13 @@ defmodule Flezha.Observability.RingBufferSinkTest do
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :n}))
     end)
 
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
     assert RingBufferSink.count(src) == initial + 5
   end
 
   test "query from a non-owner process succeeds", %{src: src} do
     Bus.emit(Signal.new(%{kind: :event, source: src, name: :n}))
-    Flezha.Observability.TestSinks.settle(RingBufferSink)
+    TestSinks.settle(RingBufferSink)
 
     task =
       Task.async(fn ->

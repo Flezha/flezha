@@ -17,7 +17,10 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.Identificator
+  alias Flezha.State.Metrics
   alias Flezha.State.TestHelpers
+  alias Flezha.State.WalWriter
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup :set_mimic_global_until_exit
 
@@ -83,7 +86,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     name = :"sc_credit_#{uniq}"
 
     {:ok, channel} = StreamChannel.start_link({runner_id, name, :secondary})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(channel) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(channel) end)
 
     %{channel: channel, runner_id: runner_id, class: class, name: name}
   end
@@ -91,7 +94,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   defp start_stub_control_unit(runner_id, mode) do
     name = Identificator.control_unit(runner_id)
     {:ok, pid} = StubControlUnit.start_link({name, mode, self()})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 
@@ -139,13 +142,13 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       # The frame itself flowed to the WAL un-metered.
       writer = writer_pid({ctx.class, "op1", "k1"})
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 0 end)
+      await(fn -> WalWriter.last_persisted_seq(writer) == 0 end)
 
       # Follow-up frames do not re-offer and stay legacy.
       :ok = push_frame(ctx.channel, state_change_frame(ctx.class, "k1", 1, "two"))
       refute_receive {:init_offered, _}, 100
       assert counters_row(ctx.runner_id, ctx.name).credit_active == 0
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 1 end)
+      await(fn -> WalWriter.last_persisted_seq(writer) == 1 end)
     end
 
     test "a session-mismatched ack is treated as a nack", ctx do
@@ -155,7 +158,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       assert_receive {:init_offered, _init}, 2_000
 
       writer = writer_pid({ctx.class, "op1", "k1"})
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 0 end)
+      await(fn -> WalWriter.last_persisted_seq(writer) == 0 end)
       assert counters_row(ctx.runner_id, ctx.name).credit_active == 0
     end
 
@@ -166,7 +169,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       :ok = push_frame(ctx.channel, state_change_frame(ctx.class, "k1", 0, "one"))
 
       writer = writer_pid({ctx.class, "op1", "k1"})
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 0 end)
+      await(fn -> WalWriter.last_persisted_seq(writer) == 0 end)
       refute_receive {:init_offered, _}, 100
       assert counters_row(ctx.runner_id, ctx.name).credit_active == 0
     end
@@ -189,7 +192,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       :ok = push_frame(ctx.channel, f3)
 
       writer = writer_pid({ctx.class, "op1", "k1"})
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 3 end)
+      await(fn -> WalWriter.last_persisted_seq(writer) == 3 end)
 
       # Ledger debited by the wire size of every frame.
       row = counters_row(ctx.runner_id, ctx.name)
@@ -201,7 +204,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       # One explicit fsync covering all three records mints exactly ONE
       # batched grant for the full freed byte count — never per record.
-      :ok = Flezha.State.WalWriter.fsync(writer)
+      :ok = WalWriter.fsync(writer)
 
       assert_receive {:ctl_async, runner_id,
                       {:credit_grant, %RunnerCommands.CreditGrant{bytes: bytes}}},
@@ -236,17 +239,17 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
             )
         end
 
-        await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == batch * 5 + 5 end)
-        :ok = Flezha.State.WalWriter.fsync(writer)
+        await(fn -> WalWriter.last_persisted_seq(writer) == batch * 5 + 5 end)
+        :ok = WalWriter.fsync(writer)
         assert_receive {:ctl_async, _, {:credit_grant, _}}, 2_000
       end
 
       row = counters_row(ctx.runner_id, ctx.name)
       assert row.credit_overrun_total == 0
 
-      metrics = Flezha.State.Metrics.for_entity({ctx.class, "op1", "k1"})
-      assert Flezha.State.Metrics.get(metrics, :wal_shed_total) == 0
-      assert Flezha.State.WalWriter.last_persisted_seq(writer) == 20
+      metrics = Metrics.for_entity({ctx.class, "op1", "k1"})
+      assert Metrics.get(metrics, :wal_shed_total) == 0
+      assert WalWriter.last_persisted_seq(writer) == 20
     end
   end
 
@@ -276,18 +279,18 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       :ok = push_frame(ctx.channel, f2)
 
       writer = writer_pid({ctx.class, "op1", "k1"})
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(writer) == 1 end)
+      await(fn -> WalWriter.last_persisted_seq(writer) == 1 end)
       assert counters_row(ctx.runner_id, ctx.name).credit_overrun_total == 1
 
       # The shed left a gap; the next admitted frame drives the existing
       # resync repair. Mint credit first so f3 is admitted.
-      :ok = Flezha.State.WalWriter.fsync(writer)
+      :ok = WalWriter.fsync(writer)
       assert_receive {:ctl_async, _, {:credit_grant, _}}, 2_000
       :ok = push_frame(ctx.channel, f3)
 
       assert_receive {:resync_called, {_, _, "k1"}, opts}, 2_000
       assert opts[:reason] == :seq_gap
-      assert Flezha.State.WalWriter.last_persisted_seq(writer) == 1
+      assert WalWriter.last_persisted_seq(writer) == 1
     end
   end
 
@@ -335,8 +338,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       :ok = push_frame(ctx.channel, state_change_frame(ctx.class, "k2", 0, "k2-seed"))
       k1_writer = writer_pid({ctx.class, "op1", "k1"})
       k2_writer = writer_pid({ctx.class, "op1", "k2"})
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(k1_writer) == 0 end)
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(k2_writer) == 0 end)
+      await(fn -> WalWriter.last_persisted_seq(k1_writer) == 0 end)
+      await(fn -> WalWriter.last_persisted_seq(k2_writer) == 0 end)
 
       # k1's WAL drains slowly (suspended writer); its appends queue in its
       # own mailbox.
@@ -348,12 +351,12 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       end
 
       # k2 keeps appending while k1 is wedged.
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(k2_writer) == 5 end)
-      assert Flezha.State.WalWriter.last_persisted_seq(k2_writer) == 5
+      await(fn -> WalWriter.last_persisted_seq(k2_writer) == 5 end)
+      assert WalWriter.last_persisted_seq(k2_writer) == 5
 
       # k1 catches up from its queue once its WAL recovers.
       :ok = :sys.resume(k1_writer)
-      await(fn -> Flezha.State.WalWriter.last_persisted_seq(k1_writer) == 5 end)
+      await(fn -> WalWriter.last_persisted_seq(k1_writer) == 5 end)
     end
   end
 end

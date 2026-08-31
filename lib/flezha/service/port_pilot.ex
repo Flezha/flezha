@@ -1,6 +1,8 @@
 defmodule Flezha.Service.PortPilot do
   require Logger
 
+  alias Flezha.Socket.Support
+
   @port_down_counter 10
   @backoff_ms 5_000
 
@@ -19,7 +21,7 @@ defmodule Flezha.Service.PortPilot do
   port and re-deriving this environment).
   """
   def open_port(command, opts \\ []) do
-    socket_files_path = Flezha.Socket.Support.socket_dir()
+    socket_files_path = Support.socket_dir()
 
     transport =
       Keyword.get(opts, :transport, Application.get_env(:flezha, :transport, :uds))
@@ -162,7 +164,7 @@ defmodule Flezha.Service.PortPilot do
     repo = File.cwd!()
     app_dir = Path.join([repo, @apps_root, "#{runtime}_runner"])
 
-    socket_dir = absolute(Flezha.Socket.Support.socket_dir())
+    socket_dir = absolute(Support.socket_dir())
 
     {artifact, _resolution} = resolve_artifact(runtime, profile)
 

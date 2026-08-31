@@ -14,7 +14,10 @@ defmodule Flezha.State.GapRecoveryTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.StreamChannel
+  alias Flezha.State.Restore
+  alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Wire}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -187,7 +190,7 @@ defmodule Flezha.State.GapRecoveryTest do
     # plus the post-takeover delta, not just the deltas. `assemble_payload`
     # is exactly what the post-restart RestoreInitState would ship.
     :ok = WalWriter.close(writer)
-    {:ok, payload} = Flezha.State.Restore.assemble_payload(cold_id)
+    {:ok, payload} = Restore.assemble_payload(cold_id)
     assert payload.snapshot_bytes == "full"
     assert payload.terminal_seq_hint == 5006
     assert byte_size(payload.change_log_bytes) > 0
@@ -202,10 +205,10 @@ defmodule Flezha.State.GapRecoveryTest do
     )
 
     # The snapshot write runs in a spawned process; poll until it lands.
-    assert eventually(fn -> Flezha.State.Snapshot.latest_snapshot(ctx.entity_id) != nil end)
+    assert eventually(fn -> StateSnapshot.latest_snapshot(ctx.entity_id) != nil end)
   end
 
-  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 500, 10)
+  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 500, 10)
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

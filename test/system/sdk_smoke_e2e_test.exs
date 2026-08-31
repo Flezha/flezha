@@ -20,6 +20,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
+  import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1, unique_id_path: 1]
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
@@ -47,7 +48,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
     {:ok, namespace: namespace}
   end
 
-  for transport <- FlezhaTest.Helper.NodeTestHelper.transports() do
+  for transport <- NodeTestHelper.transports() do
     describe "transport=#{transport}" do
       @describetag transport: transport
 
@@ -127,7 +128,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
           for _ <- 1..2 do
             NodeTestHelper.start_runner(ctx.namespace,
               transport: ctx.transport,
-              env: [{"FLEZHA_RUNNER_ID_PATH", unique_id_path()}]
+              env: [{"FLEZHA_RUNNER_ID_PATH", unique_id_path("sdk_smoke_id")}]
             )
           end
 
@@ -285,7 +286,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
     assert {:ok, _} =
              OperativeManager.start_operative(namespace, %Builder{
-               id: unique("d_#{String.slice(factory, 0, 18)}"),
+               id: unique("d_#{factory}"),
                factory_id: factory,
                kind: kind,
                init_values: %{"seed" => "go"}
@@ -346,13 +347,5 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       opts: %{recv_pid: self(), include_metadata: Keyword.get(opts, :include_metadata, false)},
       subscriptions: [{:on_output, []}]
     }
-  end
-
-  defp unique(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
-
-  defp unique_id_path do
-    path = Path.join(System.tmp_dir!(), unique("sdk_smoke_id"))
-    on_exit(fn -> File.rm(path) end)
-    path
   end
 end

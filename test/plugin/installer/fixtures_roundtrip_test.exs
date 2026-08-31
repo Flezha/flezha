@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
   alias Flezha.Plugin.Installer.Package
   alias Flezha.Plugin.Installer.Store
   alias Flezha.TestHelpers.Plugins, as: TH
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     tmp = Path.join(System.tmp_dir!(), "flz_fixroundtrip_#{System.unique_integer([:positive])}")
@@ -213,7 +214,7 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
     try do
       case Process.whereis(mod) do
         nil -> :ok
-        pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       end
     catch
       :exit, _ -> :ok

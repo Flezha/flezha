@@ -3,6 +3,7 @@ defmodule Flezha.Observability.IsolationTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.{Bus, Registry, Signal}
+  alias Flezha.Observability.TestSinks
   alias Flezha.Observability.TestSinks.{Counting, Slow}
 
   @moduletag :observability_isolation
@@ -62,7 +63,7 @@ defmodule Flezha.Observability.IsolationTest do
 
     # The fast sink has counted everything once it answers a call queued
     # behind the emits.
-    Flezha.Observability.TestSinks.settle(fast_name)
+    TestSinks.settle(fast_name)
 
     fast_count = :counters.get(fast_ref, 1)
     assert fast_count == 1_000

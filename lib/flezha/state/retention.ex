@@ -28,6 +28,7 @@ defmodule Flezha.State.Retention do
   use GenServer
 
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.InputLog
 
   alias Flezha.State.{
     Completion,
@@ -126,7 +127,7 @@ defmodule Flezha.State.Retention do
   # Effectively-once tier: truncate each operative's input-log below its
   # min durable consumed-offset watermark (`durable-input-log`).
   defp sweep_input_logs() do
-    Enum.each(Flezha.State.InputLog.all_classes(), &Flezha.State.InputLog.sweep/1)
+    Enum.each(InputLog.all_classes(), &InputLog.sweep/1)
   end
 
   @doc """

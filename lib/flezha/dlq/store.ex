@@ -26,6 +26,8 @@ defmodule Flezha.Dlq.Store do
 
   require Logger
 
+  alias Flezha.State.DurabilityTier
+
   @entries_file "entries.jsonl"
 
   @default_retention_seconds 30 * 86_400
@@ -524,7 +526,7 @@ defmodule Flezha.Dlq.Store do
       %{operative_class: rc, procedure_id: sh}
     )
 
-    Flezha.State.DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})
+    DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})
   end
 
   defp fsync_file(path) do

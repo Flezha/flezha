@@ -11,11 +11,13 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{AuthState, RoleStore, Scope, TokenStore}
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
     ctx =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_enforcement",
         register_source: true
       )
@@ -42,7 +44,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       assert :ok =
                AuthZ.authorize(%{source: :internal}, :"operative.start", Scope.build("default"))
 
-      runner_ctx = Flezha.Runner.FleetManager.runner_caller_context("team-orders")
+      runner_ctx = FleetManager.runner_caller_context("team-orders")
       assert :ok = AuthZ.authorize(runner_ctx, :"runner.connect", Scope.build("team-orders"))
     end
 
@@ -99,7 +101,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
     test "the runner principal is bound to its connection's namespace" do
       claim!()
-      ctx = Flezha.Runner.FleetManager.runner_caller_context("team-orders")
+      ctx = FleetManager.runner_caller_context("team-orders")
 
       assert ctx.principal == "runner@team-orders"
       assert :ok = AuthZ.authorize(ctx, :"runner.connect", Scope.build("team-orders"))
@@ -179,7 +181,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       # The success audit event names the actor and the target.
       assert [signal | _] =
-               FlezhaTest.Helper.AuthTestHelper.await_platform_authz_events(
+               AuthTestHelper.await_platform_authz_events(
                  :"state.delete",
                  boundary
                )
@@ -196,7 +198,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
                AuthZ.authorize(%{source: :cli}, :"state.delete", Scope.build("_system"))
 
       assert [signal | _] =
-               FlezhaTest.Helper.AuthTestHelper.await_platform_authz_events(
+               AuthTestHelper.await_platform_authz_events(
                  :authorization_denied,
                  boundary
                )

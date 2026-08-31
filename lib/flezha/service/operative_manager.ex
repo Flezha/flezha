@@ -5,6 +5,7 @@ defmodule Flezha.Service.OperativeManager do
 
   require Logger
 
+  alias Flezha.AuthZ.Quotas
   alias Flezha.Cluster.Directory
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
@@ -13,8 +14,11 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.Convergence.SafeCall
   alias Flezha.Operative.Builder, as: OperativeBuilder
   alias Flezha.Operative.PartitionGroup
+  alias Flezha.Service.PluginManager
   alias Flezha.Service.Validator
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
+  alias Flezha.State.Completion
+  alias Flezha.State.Paths
 
   @id_in_use Validator.id_in_use()
 
@@ -211,15 +215,15 @@ defmodule Flezha.Service.OperativeManager do
          :ok <- check_operative_quota(namespace),
          :ok <- check_entity_quota(namespace, operative),
          :ok <- check_disk_quota(namespace),
-         :ok <- Flezha.State.Paths.claim_namespace(operative.id, namespace) do
+         :ok <- Paths.claim_namespace(operative.id, namespace) do
       case init_operative(namespace, operative) do
         {:ok, _} = ok ->
-          _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_operatives, 1)
+          _ = Quotas.record_allocation(namespace, :max_operatives, 1)
           seg_count = entity_count(operative)
 
           if seg_count > 0 do
             _ =
-              Flezha.AuthZ.Quotas.record_allocation(
+              Quotas.record_allocation(
                 namespace,
                 :max_entities_per_operative,
                 seg_count
@@ -300,7 +304,7 @@ defmodule Flezha.Service.OperativeManager do
   # (the Watchdog raises the alarm for those).
   defp check_disk_quota(namespace) do
     if Flezha.AuthZ.enabled?() do
-      _ = Flezha.AuthZ.Quotas.refresh_disk_bytes(namespace)
+      _ = Quotas.refresh_disk_bytes(namespace)
       check_quota(namespace, :max_state_bytes, 0)
     else
       :ok
@@ -318,7 +322,7 @@ defmodule Flezha.Service.OperativeManager do
   # refusing every legacy/implicit namespace here would brick starts the
   # moment enforcement flips on.
   defp check_quota(namespace, kind, requested) do
-    case Flezha.AuthZ.Quotas.check_allocation(namespace, kind, requested) do
+    case Quotas.check_allocation(namespace, kind, requested) do
       :ok -> :ok
       {:error, :namespace_unknown} -> :ok
       {:error, _} = err -> err
@@ -403,16 +407,16 @@ defmodule Flezha.Service.OperativeManager do
 
       case stop_via_hub(namespace, operative_id) do
         :ok ->
-          _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
+          _ = PluginManager.disable_operative_plugins(namespace, operative_id)
           # A stop that is a move — a rescale taking the group down to
           # redistribute its Entities — keeps the files: they are the state
           # about to be handed to another member, not garbage.
           unless preserve_state?, do: delete_operative_state_dir(operative_id)
-          _ = Flezha.AuthZ.Quotas.record_deallocation(namespace, :max_operatives, 1)
+          _ = Quotas.record_deallocation(namespace, :max_operatives, 1)
 
           if seg_count > 0 do
             _ =
-              Flezha.AuthZ.Quotas.record_deallocation(
+              Quotas.record_deallocation(
                 namespace,
                 :max_entities_per_operative,
                 seg_count
@@ -487,7 +491,7 @@ defmodule Flezha.Service.OperativeManager do
     operative_ids = Enum.map(operatives, fn {id, _pid} -> id end)
 
     Enum.each(operative_ids, fn operative_id ->
-      _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
+      _ = PluginManager.disable_operative_plugins(namespace, operative_id)
     end)
 
     if operative_ids != [] do
@@ -514,7 +518,7 @@ defmodule Flezha.Service.OperativeManager do
     # Retained or deleted, the writer processes go with the operative.
     Flezha.State.Supervisor.close_writers(operative_id)
 
-    if Flezha.State.Completion.exists?(operative_id) do
+    if Completion.exists?(operative_id) do
       # Finished workflow operative: retain its state + completion record for the
       # retention window so the outcome stays inspectable; `Flezha.State.Retention`
       # reclaims it once the window elapses.
@@ -525,7 +529,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp do_delete_operative_state_dir(operative_id) do
-    class_dir = Flezha.State.Paths.class_dir(operative_id)
+    class_dir = Paths.class_dir(operative_id)
 
     case File.ls(class_dir) do
       {:ok, procedure_names} ->

@@ -29,6 +29,7 @@ defmodule Flezha.AuthZ.Quotas do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters}
+  alias Flezha.State.Paths
 
   @type kind ::
           :max_operatives
@@ -157,7 +158,7 @@ defmodule Flezha.AuthZ.Quotas do
   defp counter_for(other), do: other
 
   defp compute_disk_bytes(namespace) do
-    base = Flezha.State.Paths.namespace_dir(namespace)
+    base = Paths.namespace_dir(namespace)
 
     if File.exists?(base) do
       walk_size(base)

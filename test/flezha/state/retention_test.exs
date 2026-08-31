@@ -2,6 +2,8 @@ defmodule Flezha.State.RetentionTest do
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.ClassRegistry
+
   alias Flezha.State.{
     Completion,
     Paths,
@@ -11,6 +13,8 @@ defmodule Flezha.State.RetentionTest do
     TestHelpers,
     WalWriter
   }
+
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -121,8 +125,8 @@ defmodule Flezha.State.RetentionTest do
       header = TestHelpers.stub_header()
       class = "bnd_ret_" <> uniq()
       pid = {class, "proc", "seg"}
-      Flezha.Operative.ClassRegistry.put(class, :workflow)
-      on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+      ClassRegistry.put(class, :workflow)
+      on_exit(fn -> ClassRegistry.delete(class) end)
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
@@ -223,7 +227,7 @@ defmodule Flezha.State.RetentionTest do
       old = Process.whereis(Retention)
       Process.exit(old, :kill)
 
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn ->
                  pid = Process.whereis(Retention)
                  is_pid(pid) and pid != old

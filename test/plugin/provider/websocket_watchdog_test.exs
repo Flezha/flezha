@@ -16,6 +16,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Websocket
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @post_connect %{"payload" => %{"type" => "text", "message" => "subscribe-frame"}}
 
@@ -96,7 +97,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
         spawn_monitor(fn ->
           s = state(idle_timeout_ms: 100, last_frame_at: stale, last_data_frame_at: stale)
           Websocket.handle_info(:idle_check, s)
-          FlezhaTest.Helper.NodeTestHelper.park()
+          NodeTestHelper.park()
         end)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_000
@@ -250,7 +251,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
           Websocket.handle_info(:idle_check, s)
           # Reached only when the check did not exit the process.
           send(parent, :checked)
-          FlezhaTest.Helper.NodeTestHelper.park()
+          NodeTestHelper.park()
         end)
 
       assert_receive :checked, 1_000

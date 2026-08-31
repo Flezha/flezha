@@ -12,6 +12,9 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, RoleStore, TokenStore}
+  alias Flezha.Observability.RingBufferSink
+  alias Flezha.Observability.TestSinks
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @all_stores [AuthState, RoleStore, NamespaceStore, TokenStore, QuotaCounters]
 
@@ -34,7 +37,7 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
     prefix = Keyword.get(opts, :prefix, "flz_auth")
     stores = resolve_stores(Keyword.get(opts, :stores, :all))
 
-    tmp = Path.join(System.tmp_dir!(), "#{prefix}_#{System.unique_integer([:positive])}")
+    tmp = NodeTestHelper.claim_tmp_dir(prefix)
     auth_dir = Path.join(tmp, "auth")
     File.mkdir_p!(auth_dir)
     File.chmod!(tmp, 0o700)
@@ -77,10 +80,10 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
   `attempts × 25 ms`.
   """
   def await_platform_authz_events(name, since_us, attempts \\ 20) do
-    FlezhaTest.Helper.NodeTestHelper.wait_until(
+    NodeTestHelper.wait_until(
       fn ->
         case Enum.filter(
-               Flezha.Observability.RingBufferSink.query(:platform_authz, since_us),
+               RingBufferSink.query(:platform_authz, since_us),
                &(&1.name == name)
              ) do
           [] -> nil
@@ -127,7 +130,7 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
 
     # The registration reaches the RingBufferSink as a message; a call to the
     # sink returns once that message has been handled.
-    Flezha.Observability.TestSinks.settle(Flezha.Observability.RingBufferSink)
+    TestSinks.settle(Flezha.Observability.RingBufferSink)
   end
 
   defp stop_if_running_one(mod) do

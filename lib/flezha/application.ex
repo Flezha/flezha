@@ -1,7 +1,13 @@
 defmodule Flezha.Application do
   @moduledoc false
 
+  alias Flezha.Boot.StatePathMigrator
+  alias Flezha.Boot.StateRootLock
+  alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
+  alias Flezha.Shutdown.Coordinator
+  alias Flezha.State.DurabilityTier
 
   use Application
 
@@ -34,9 +40,9 @@ defmodule Flezha.Application do
     # Before any state path is opened: a second controller over this state root
     # is two unsynchronised writers on one entity WAL tree, and the claim is
     # what makes that a refusal rather than corruption.
-    _ = Flezha.Boot.StateRootLock.claim!()
+    _ = StateRootLock.claim!()
 
-    _ = Flezha.Boot.StatePathMigrator.migrate()
+    _ = StatePathMigrator.migrate()
 
     # `[]` unless a remote durability backend is configured. Ahead of
     # HubManager because the boot-time cspec hydration among these children
@@ -58,7 +64,7 @@ defmodule Flezha.Application do
         # HubManager joins hub pids, FleetManager joins capability groups.
         Flezha.Cluster.Directory
       ] ++
-        Flezha.State.DurabilityTier.children() ++
+        DurabilityTier.children() ++
         [
           Flezha.Service.HubManager,
           Flezha.Observability.Supervisor,
@@ -141,7 +147,7 @@ defmodule Flezha.Application do
     # drain phase and waits for peers to claim our Operatives before
     # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
     try do
-      _ = Flezha.Shutdown.Coordinator.shutdown(:prep_stop)
+      _ = Coordinator.shutdown(:prep_stop)
     catch
       :exit, reason ->
         require Logger
@@ -155,7 +161,7 @@ defmodule Flezha.Application do
 
   defp safe_legacy_stop() do
     try do
-      Flezha.Service.HubManager.stop_hub_manager()
+      HubManager.stop_hub_manager()
     catch
       :exit, _ -> :ok
     end
@@ -185,7 +191,7 @@ defmodule Flezha.Application do
   end
 
   defp memory_reporter_children do
-    case Flezha.Diagnostics.MemoryReporter.configured_interval_ms() do
+    case MemoryReporter.configured_interval_ms() do
       {:ok, _ms} -> [Flezha.Diagnostics.MemoryReporter]
       :disabled -> []
     end

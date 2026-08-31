@@ -13,8 +13,13 @@ defmodule Flezha.State.WatchdogTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
+  alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.DurabilityTier
+  alias Flezha.State.DurabilityTier.Shipper
+  alias Flezha.State.Paths
   alias Flezha.State.{Supervisor, TestHelpers, Watchdog, WalWriter}
+  alias FlezhaTest.Helper.DurabilityBackendStub
 
   @stall_ms 20
   @compaction_ms 20
@@ -138,11 +143,11 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "every completed sweep stamps the sensor freshness mark" do
-    Flezha.Convergence.Snapshot.observe_sensor(:watchdog, -1, 0)
+    ConvergenceSnapshot.observe_sensor(:watchdog, -1, 0)
 
     :ok = Watchdog.sweep_now()
 
-    assert %{watchdog: {at, period}} = Flezha.Convergence.Snapshot.sensors()
+    assert %{watchdog: {at, period}} = ConvergenceSnapshot.sensors()
     assert period > 0
     assert :erlang.monotonic_time(:millisecond) - at < 1_000
   end
@@ -398,7 +403,7 @@ defmodule Flezha.State.WatchdogTest do
       nil
     )
 
-    FlezhaTest.Helper.DurabilityBackendStub.install()
+    DurabilityBackendStub.install()
 
     Application.put_env(
       :flezha,
@@ -408,21 +413,28 @@ defmodule Flezha.State.WatchdogTest do
 
     on_exit(fn ->
       :telemetry.detach(rpo_id)
-      FlezhaTest.Helper.DurabilityBackendStub.uninstall()
+      DurabilityBackendStub.uninstall()
     end)
 
     {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
 
-    entity_id = {"rpo_#{uniq()}", "proc", "k1"}
-    path = Flezha.State.Paths.wal_path(entity_id)
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, TestHelpers.build_wal_record(0, "change"))
+    ref = shippable_ref("rpo")
+    DurabilityBackendStub.set_down(true)
+    assert {:error, :backend_down} = Shipper.ship_now(ref)
 
-    ref = {:entity, entity_id}
-    FlezhaTest.Helper.DurabilityBackendStub.set_down(true)
-    assert {:error, :backend_down} = Flezha.State.DurabilityTier.Shipper.ship_now(ref)
+    # A second reference, breached through the same production path and never
+    # cleared. It stands in for the entry another module leaves in the ledger,
+    # which is what an unpinned read of it picks up.
+    foreign = shippable_ref("rpo_foreign")
+    assert {:error, :backend_down} = Shipper.ship_now(foreign)
+
+    # Pinned to THIS reference, for the reason the `assert_receive` below is:
+    # `breaches/0` folds node-global shipper state, so an unpinned read takes
+    # whatever another module left in the ledger -- which is what `foreign` is.
+    breached? = fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end
+
     # The breach is a millisecond past the failed ship.
-    assert wait_until(fn -> Flezha.State.DurabilityTier.breaches() != [] end, 1_000, 1)
+    assert wait_until(breached?, 1_000, 1)
 
     assert ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end) =~
              "RPO exceeded"
@@ -438,10 +450,23 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:rpo_exceeded, _, %{ref: ^reported}}
 
     # And it re-arms once the reference catches up and falls behind again.
-    FlezhaTest.Helper.DurabilityBackendStub.set_down(false)
-    assert :ok = Flezha.State.DurabilityTier.Shipper.ship_now(ref)
+    DurabilityBackendStub.set_down(false)
+    assert :ok = Shipper.ship_now(ref)
     :ok = Watchdog.sweep_now()
-    assert Flezha.State.DurabilityTier.breaches() == []
+    refute breached?.()
+
+    # ...while the ledger is not empty, which is what makes the pin above an
+    # assertion about this reference rather than about the node.
+    assert Enum.any?(DurabilityTier.breaches(), &(&1.ref == foreign))
+  end
+
+  # A reference with a WAL on disk, ready to be shipped.
+  defp shippable_ref(prefix) do
+    entity_id = {"#{prefix}_#{uniq()}", "proc", "k1"}
+    path = Paths.wal_path(entity_id)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, TestHelpers.build_wal_record(0, "change"))
+    {:entity, entity_id}
   end
 
   # A compaction handed out `ms` ago, on the shared Watchdog's own ledger.

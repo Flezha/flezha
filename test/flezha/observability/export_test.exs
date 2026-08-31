@@ -5,7 +5,9 @@ defmodule Flezha.Observability.ExportTest do
   import Bitwise
 
   alias Flezha.Observability.{Bus, LoggerHandler, Registry, Signal}
+  alias Flezha.Observability.Export.OtlpClient
   alias Flezha.Observability.TestSinks
+  alias FlezhaTest.Helper.NodeTestHelper
 
   alias Flezha.Observability.Export.{
     OtlpCodec,
@@ -54,7 +56,7 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
+      TestSinks.settle(PrometheusRegistry)
 
       {body, _series_count} = PrometheusRegistry.render()
       text = assert_valid_exposition(body)
@@ -92,7 +94,7 @@ defmodule Flezha.Observability.ExportTest do
         })
       )
 
-      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
+      TestSinks.settle(PrometheusRegistry)
 
       {body, _} = PrometheusRegistry.render()
       text = assert_valid_exposition(body)
@@ -121,7 +123,7 @@ defmodule Flezha.Observability.ExportTest do
         })
       )
 
-      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
+      TestSinks.settle(PrometheusRegistry)
       {body, _} = PrometheusRegistry.render()
       text = assert_valid_exposition(body)
       assert text =~ "# TYPE " <> Atom.to_string(source) <> "_flag gauge"
@@ -148,7 +150,7 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
+      TestSinks.settle(PrometheusRegistry)
 
       {body, _} = PrometheusRegistry.render()
       text = assert_valid_exposition(body)
@@ -182,7 +184,7 @@ defmodule Flezha.Observability.ExportTest do
         )
       end)
 
-      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
+      TestSinks.settle(PrometheusRegistry)
       {body, _} = PrometheusRegistry.render()
       text = assert_valid_exposition(body)
 
@@ -479,8 +481,8 @@ defmodule Flezha.Observability.ExportTest do
       end)
 
       # Bus → PrometheusSink → PrometheusRegistry: settle each hop in order.
-      Flezha.Observability.TestSinks.settle(Flezha.Observability.Export.PrometheusSink)
-      Flezha.Observability.TestSinks.settle(PrometheusRegistry)
+      TestSinks.settle(Flezha.Observability.Export.PrometheusSink)
+      TestSinks.settle(PrometheusRegistry)
 
       body = http_get(port, "/metrics")
       assert_valid_exposition(body)
@@ -677,9 +679,9 @@ defmodule Flezha.Observability.ExportTest do
         otlp_batch_max: 1_000
       )
 
-      {:ok, _client} = Flezha.Observability.Export.OtlpClient.start_link([])
+      {:ok, _client} = OtlpClient.start_link([])
       {:ok, sink} = OtlpSink.start_link([])
-      on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(sink) end)
+      on_exit(fn -> NodeTestHelper.ensure_stopped(sink) end)
       {:ok, sink: sink}
     end
 
@@ -705,7 +707,7 @@ defmodule Flezha.Observability.ExportTest do
 
       # The periodic flush tick hands the batch to the client and empties the
       # buffer whether or not the endpoint answers.
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> GenServer.call(sink, :stats).buffered == 0 end,
                5_000
              ),

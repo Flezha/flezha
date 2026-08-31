@@ -2,6 +2,7 @@ defmodule Flezha.State.TimeTravelTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Snapshot, Supervisor, TestHelpers, TimeTravel, WalWriter}
 
   setup do
@@ -50,8 +51,8 @@ defmodule Flezha.State.TimeTravelTest do
 
   test "rejects a query for a workflow (non-time-travel) class" do
     class = "tt_workflow_" <> uniq()
-    :ok = Flezha.Operative.ClassRegistry.put(class, :workflow)
-    on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
+    :ok = ClassRegistry.put(class, :workflow)
+    on_exit(fn -> ClassRegistry.delete(class) end)
 
     assert {:error, %{kind: :unsupported_for_kind}} =
              TimeTravel.query({class, "proc", "seg"}, {:seq, 0})

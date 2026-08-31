@@ -1,6 +1,10 @@
 defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
+  alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Plugin.Provider.Kafka.Producer
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
@@ -39,7 +43,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     {:ok, script_pid} = Agent.start_link(fn -> Keyword.get(opts, :script, []) end)
 
     base = [
-      worker_pid: spawn(&FlezhaTest.Helper.NodeTestHelper.park/0),
+      worker_pid: spawn(&NodeTestHelper.park/0),
       topic: @topic,
       partition: @partition,
       plugin_id: "test-#{System.unique_integer([:positive])}",
@@ -627,7 +631,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     assert stats.consecutive_failures >= 3
 
     assert {:unhealthy, :produce_stalled} =
-             Flezha.Plugin.Provider.Kafka.Producer.health(%{producer_pid: pid})
+             Producer.health(%{producer_pid: pid})
   end
 
   test "max_batch_bytes triggers immediate flush even within linger window" do
@@ -933,7 +937,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     test "resumes producing after K give-ups without the shared worker dying" do
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       identity = %{hosts: [{"k", 9092}]}
-      fresh = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      fresh = spawn(&NodeTestHelper.park/0)
 
       Mimic.stub(WorkerRegistry, :force_replace, fn ^identity -> {:ok, fresh} end)
 
@@ -982,7 +986,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       identity = %{hosts: [{"k", 9092}]}
       test_pid = self()
-      fresh = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      fresh = spawn(&NodeTestHelper.park/0)
 
       Mimic.stub(WorkerRegistry, :force_replace, fn ^identity ->
         send(test_pid, :refresh_called)
@@ -1043,7 +1047,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
 
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1080,7 +1084,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1119,7 +1123,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1162,7 +1166,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1184,7 +1188,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       # NOTE: send from a non-parent pid — gen_server.erl turns
       # `{:EXIT, parent_pid, :normal}` into a real terminate call.
-      other = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      other = spawn(&NodeTestHelper.park/0)
       send(pid, {:EXIT, other, :killed})
       _ = :sys.get_state(pid)
 
@@ -1225,7 +1229,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       counter = :counters.new(1, [])
 
@@ -1325,7 +1329,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       seed_registry_ref(pid, registry_ref)
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref -> {:error, :no_pending_swap} end)
 
@@ -1346,7 +1350,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     setup do
       rc = "kw_" <> Integer.to_string(System.unique_integer([:positive]))
       entity_id = {rc, "proc", "k1"}
-      :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
       %{rc: rc, entity_id: entity_id}
     end
 
@@ -1357,11 +1361,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         ProducerWorker.cast_enqueue(
           pid,
           "v",
-          Flezha.State.TestHelpers.guaranteed_metadata(entity_id, 7)
+          TestHelpers.guaranteed_metadata(entity_id, 7)
         )
 
       assert_receive {:send_called, _request, _ns}, 1_000
-      assert :ok = Flezha.State.TestHelpers.assert_confirmed([{:cursor, 7}], 1_000)
+      assert :ok = TestHelpers.assert_confirmed([{:cursor, 7}], 1_000)
     end
 
     test "a permanently failed batch parks the record instead of dropping it", %{
@@ -1388,17 +1392,17 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
             ProducerWorker.cast_enqueue(
               pid,
               "poison",
-              Flezha.State.TestHelpers.guaranteed_metadata(entity_id, 3)
+              TestHelpers.guaranteed_metadata(entity_id, 3)
             )
 
           # Parked, then the hold is answered so the cursor may pass the parked range.
-          assert :ok = Flezha.State.TestHelpers.assert_confirmed([{:cursor, 3}], 1_000)
+          assert :ok = TestHelpers.assert_confirmed([{:cursor, 3}], 1_000)
         end)
 
       assert log =~ "parked undeliverable output"
       assert log =~ "record_list_too_large"
 
-      assert [entry] = Flezha.Dlq.Store.list(rc)
+      assert [entry] = DlqStore.list(rc)
       assert entry["entity_key"] == "k1"
       assert entry["channel"] == "out"
       assert entry["error"] =~ "record_list_too_large"
@@ -1424,14 +1428,14 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           ProducerWorker.cast_enqueue(
             pid,
             "v#{seq}",
-            Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
+            TestHelpers.guaranteed_metadata(entity_id, seq)
           )
       end
 
       # Every record is delivered — under `:drop_oldest` the middle one would
       # have been evicted while its cursor claimed it delivered.
       assert :ok =
-               Flezha.State.TestHelpers.assert_confirmed(
+               TestHelpers.assert_confirmed(
                  Enum.map(0..2, &{:cursor, &1}),
                  2_000
                )
@@ -1461,7 +1465,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
               ProducerWorker.cast_enqueue(
                 pid,
                 "v#{seq}",
-                Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
+                TestHelpers.guaranteed_metadata(entity_id, seq)
               )
           end
 
@@ -1620,7 +1624,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
       :sys.replace_state(pid, fn state -> %{state | registry_ref: registry_ref} end)
-      new_worker_pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      new_worker_pid = spawn(&NodeTestHelper.park/0)
 
       Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
         {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
@@ -1641,7 +1645,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     test "a completed batch confirms each of its records exactly once" do
       rc = "kw_" <> Integer.to_string(System.unique_integer([:positive]))
       entity_id = {rc, "proc", "k1"}
-      :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+      :ok = TestHelpers.stub_outbox_owner(entity_id)
 
       pid = start_relay_worker([])
 
@@ -1650,12 +1654,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           ProducerWorker.cast_enqueue(
             pid,
             "v#{seq}",
-            Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
+            TestHelpers.guaranteed_metadata(entity_id, seq)
           )
 
         assert_receive {:dispatched, ref, _request}, 1_000
         Fakes.answer(pid, ref, Fakes.ok_response(@topic, @partition))
-        assert :ok = Flezha.State.TestHelpers.assert_confirmed([{:cursor, seq}], 1_000)
+        assert :ok = TestHelpers.assert_confirmed([{:cursor, seq}], 1_000)
       end
     end
 

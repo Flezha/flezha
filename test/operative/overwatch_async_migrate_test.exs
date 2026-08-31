@@ -16,6 +16,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "default"
   @factory "store_input"
@@ -59,7 +60,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     operative = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
 
     {:ok, overwatch_pid} =
-      Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
+      Overwatch.start_link({@namespace, "stale_ce", operative})
 
     on_exit(fn ->
       if Process.alive?(overwatch_pid) do
@@ -108,7 +109,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     operative = %Builder{id: "busy_migrate_test", factory_id: @factory, opts: []}
 
     {:ok, overwatch_pid} =
-      Flezha.Operative.Overwatch.start_link({@namespace, "stale_ce", operative})
+      Overwatch.start_link({@namespace, "stale_ce", operative})
 
     on_exit(fn ->
       if Process.alive?(overwatch_pid) do
@@ -198,7 +199,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     }
   end
 
-  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 2_000, 25)
+  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 2_000, 25)
 
   # A ping that blocks inside the migrate task until the test releases it (or
   # the task is killed) — the "several seconds into the backoff schedule"
@@ -206,7 +207,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   defp blocking_ping(test_pid) do
     fn _runner_id ->
       send(test_pid, {:ping_started, self()})
-      FlezhaTest.Helper.NodeTestHelper.park()
+      NodeTestHelper.park()
       {:ok, :pong}
     end
   end

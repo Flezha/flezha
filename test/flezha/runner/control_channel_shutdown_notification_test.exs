@@ -30,6 +30,8 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.HubManager
+  alias FlezhaTest.Helper.ControlFrameTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-shutdown-test"
 
@@ -120,7 +122,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
       ControlChannel.start_link({@namespace, runner_id, stream_ref, write_fun})
 
     on_exit(fn ->
-      FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+      NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
     end)
 
     {pid, stream_ref}
@@ -142,7 +144,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   end
 
   defp assert_ack_for(framed_payload, expected_operative_id, expected_reference_id) do
-    req = FlezhaTest.Helper.ControlFrameTestHelper.decode_request(framed_payload)
+    req = ControlFrameTestHelper.decode_request(framed_payload)
 
     assert req.reference_id == expected_reference_id
 

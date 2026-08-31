@@ -12,6 +12,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
 
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Installer.Store
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     tmp = Path.join(System.tmp_dir!(), "flz_loader_test_#{System.unique_integer([:positive])}")
@@ -226,7 +227,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     try do
       case Process.whereis(mod) do
         nil -> :ok
-        pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       end
     catch
       :exit, _ -> :ok
@@ -236,7 +237,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
   defp on_exit_stop(pid) do
     on_exit(fn ->
       try do
-        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end

@@ -61,10 +61,12 @@ defmodule Flezha.Load.MemoryDriftTest do
     @moduletag :skip
   end
 
+  alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Plugin
   alias Flezha.Service.CliManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @artifact_dir Path.expand("artifacts", __DIR__)
 
@@ -153,7 +155,7 @@ defmodule Flezha.Load.MemoryDriftTest do
 
   defp wait_for_ws_endpoint! do
     reachable? =
-      FlezhaTest.Helper.NodeTestHelper.wait_until(
+      NodeTestHelper.wait_until(
         fn ->
           case :gen_tcp.connect(~c"localhost", @testnet_port, [:binary, active: false], 500) do
             {:ok, sock} -> :gen_tcp.close(sock) == :ok
@@ -362,7 +364,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   end
 
   defp sample_on_tick(samples_ref) do
-    reading = Flezha.Diagnostics.MemoryReporter.capture()
+    reading = MemoryReporter.capture()
     :ets.insert(samples_ref, {System.system_time(:millisecond), reading})
     receive(do: (:sample -> sample_on_tick(samples_ref)))
   end

@@ -17,6 +17,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.ControlFrameTestHelper, as: ControlFrame
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-spawn-workflow-test"
 
@@ -36,7 +37,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
 
     on_exit(fn ->
       try do
-        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(channel, :normal, 1_000)
+        NodeTestHelper.ensure_stopped(channel, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end
@@ -123,7 +124,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
 
     expect(OperativeManager, :spawn_or_deliver, fn _ns, _id, _factory, _payload, _policy ->
       send(parent, {:resolving, self()})
-      FlezhaTest.Helper.NodeTestHelper.park()
+      NodeTestHelper.park()
       :spawned
     end)
 

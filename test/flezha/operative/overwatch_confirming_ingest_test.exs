@@ -15,6 +15,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Service.OperativeManager
   alias Flezha.State.{InputLog, ProcInbox, Supervisor, TestHelpers}
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -206,7 +207,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:error, "no pid found"} end)
 
     assert {:error, :not_found} =
-             Flezha.Service.OperativeManager.send_io_confirming(
+             OperativeManager.send_io_confirming(
                "ghost",
                "default",
                "hello",
@@ -226,7 +227,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       def handle_call({:ingest, message, _md}, _from, state) do
         # An overlapping caller has the next request queued here before this
         # one is answered; a caller that waits for each answer never does.
-        FlezhaTest.Helper.NodeTestHelper.wait_until(
+        NodeTestHelper.wait_until(
           fn -> Process.info(self(), :message_queue_len) > {:message_queue_len, 0} end,
           50,
           1
@@ -249,7 +250,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       inputs = for i <- 1..20, do: {"m#{i}", %{}}
 
       verdicts =
-        Flezha.Service.OperativeManager.send_io_confirming_many(
+        OperativeManager.send_io_confirming_many(
           "target",
           "default",
           inputs,
@@ -269,7 +270,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:ok, stub} end)
 
       assert [{:ok, :absorbed}, {:ok, :absorbed}] =
-               Flezha.Service.OperativeManager.send_io_confirming_many(
+               OperativeManager.send_io_confirming_many(
                  "target",
                  "default",
                  [{"a", %{}}, {"b", %{}}]
@@ -280,7 +281,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:error, "no pid found"} end)
 
       assert [{:error, :not_found}, {:error, :not_found}] =
-               Flezha.Service.OperativeManager.send_io_confirming_many(
+               OperativeManager.send_io_confirming_many(
                  "ghost",
                  "default",
                  [{"a", %{}}, {"b", %{}}]

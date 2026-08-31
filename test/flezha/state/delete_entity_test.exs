@@ -9,6 +9,7 @@ defmodule Flezha.State.DeleteEntityTest do
   use ExUnit.Case, async: false
 
   alias Flezha.State.{Paths, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -41,7 +42,7 @@ defmodule Flezha.State.DeleteEntityTest do
     WalWriter.fsync(writer)
 
     # Snapshot + outbox files so all three families are present.
-    {:ok, _} = Flezha.State.Snapshot.write_snapshot(pid, 1, header, "snap")
+    {:ok, _} = StateSnapshot.write_snapshot(pid, 1, header, "snap")
     File.write!(Paths.outbox_dedup_path(pid), "dedup")
 
     assert File.exists?(Paths.wal_path(pid))

@@ -3,6 +3,8 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.Payloader
+  alias Flezha.State.TestHelpers
 
   use ExUnit.Case
 
@@ -25,7 +27,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   setup do
     # Clean per-Entity state so a cold-start test sees no leftover WAL to
     # restore (restore now rehydrates on bind).
-    Flezha.State.TestHelpers.reset_all_entities()
+    TestHelpers.reset_all_entities()
     on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
     :ok
   end
@@ -60,7 +62,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     {:ok, json_state} =
       OperativeManager.get_entity_state(@namespace, operative_id)
 
-    assert Flezha.Service.Payloader.json_to_map(json_state) == %{
+    assert Payloader.json_to_map(json_state) == %{
              "store_input_procedure" => %{
                "binary_inputs" => [],
                "text_inputs" => ["seeded_by_plugin"]
@@ -100,7 +102,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     {:ok, json_state} =
       OperativeManager.get_entity_state(@namespace, operative_id)
 
-    assert Flezha.Service.Payloader.json_to_map(json_state) == %{
+    assert Payloader.json_to_map(json_state) == %{
              "store_input_procedure" => %{
                "binary_inputs" => [],
                "text_inputs" => ["FROM_INLINE"]

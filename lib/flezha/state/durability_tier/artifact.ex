@@ -34,6 +34,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   different records today. A seq range does not move.
   """
 
+  alias Flezha.AuthZ.Config
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, Paths, Restore, WalWriter, Wire}
@@ -110,7 +111,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   def payload_files(_ref), do: nil
 
-  defp control_root("authz"), do: Flezha.AuthZ.Config.auth_dir()
+  defp control_root("authz"), do: Config.auth_dir()
   defp control_root("schedules"), do: Flezha.Schedule.Store.dir()
 
   defp present(root, names) do

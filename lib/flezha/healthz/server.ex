@@ -51,6 +51,7 @@ defmodule Flezha.Healthz.Server do
 
   alias Flezha.Convergence.{Snapshot, StallClassifier}
   alias Flezha.Http.Listener
+  alias Flezha.State.DurabilityTier
 
   # ---------- Public API ----------
 
@@ -137,7 +138,7 @@ defmodule Flezha.Healthz.Server do
 
     body =
       body
-      |> Map.put(:durability, to_string(Flezha.State.DurabilityTier.posture()))
+      |> Map.put(:durability, to_string(DurabilityTier.posture()))
       |> Jason.encode!()
 
     Listener.send_response(socket, code, "application/json", body)
@@ -158,7 +159,7 @@ defmodule Flezha.Healthz.Server do
     pending_restore = Map.get(current, :pending_restore, false)
     unmet_intent_ms = Map.get(current, :unmet_intent_ms)
     last_tick_at = Map.get(current, :last_tick_at)
-    rpo_breaches = Flezha.State.DurabilityTier.breaches()
+    rpo_breaches = DurabilityTier.breaches()
     stale_sensors = stale_sensors()
     data_plane = data_plane_verdict(current)
 

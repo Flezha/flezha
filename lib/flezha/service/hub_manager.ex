@@ -1,6 +1,10 @@
 defmodule Flezha.Service.HubManager do
+  alias Flezha.Boot.RecoveryHooks
+  alias Flezha.Cluster.Directory
   alias Flezha.Plugin
   alias Flezha.Service.Identificator
+  alias Flezha.Shutdown.Coordinator
+  alias ProcessHub.Service.Migration
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
@@ -8,6 +12,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Service.RegistryUpdate
   alias Flezha.State.DurabilityTier
   alias ProcessHub.Service.DeclaredChildren
+  alias ProcessHub.Service.Recovery, as: HubRecovery
 
   require Logger
 
@@ -63,14 +68,14 @@ defmodule Flezha.Service.HubManager do
     wait_until_hub_alive(hub_id)
     # Advertise placement cluster-wide; membership dies with the hub pid,
     # so stop/crash/nodedown need no leave call.
-    Flezha.Cluster.Directory.join_hub(pid, namespace)
-    _ = Flezha.Boot.RecoveryHooks.register(hub_id)
+    Directory.join_hub(pid, namespace)
+    _ = RecoveryHooks.register(hub_id)
     # Seed the snapshot cache with the coordinator's current state. The
     # recovery telemetry fired during recovery overwrites this entry as
     # the lifecycle progresses; the seed only matters when a hub boots
     # straight into `:normal` (auto-recovery off) and no telemetry event
     # will follow.
-    _ = Snapshot.observe_recovery(hub_id, ProcessHub.Service.Recovery.recovery_state(hub_id))
+    _ = Snapshot.observe_recovery(hub_id, HubRecovery.recovery_state(hub_id))
   end
 
   @doc """
@@ -86,8 +91,8 @@ defmodule Flezha.Service.HubManager do
         {:error, :unknown_hub}
 
       true ->
-        case Flezha.Convergence.Snapshot.recovery_state(hub_id) do
-          :unknown -> {:ok, ProcessHub.Service.Recovery.recovery_state(hub_id)}
+        case Snapshot.recovery_state(hub_id) do
+          :unknown -> {:ok, HubRecovery.recovery_state(hub_id)}
           state -> {:ok, state}
         end
     end
@@ -229,7 +234,7 @@ defmodule Flezha.Service.HubManager do
     deadline = System.monotonic_time(:millisecond) + budget
 
     with_live_hub(namespace, {:error, :no_target_nodes}, fn hub_id ->
-      result = ProcessHub.Service.Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
+      result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
       with {:ok, _} <- result, do: await_local_children_gone(hub_id, deadline)
       result
     end)
@@ -864,7 +869,7 @@ defmodule Flezha.Service.HubManager do
           %{
             Hook.child_data_alter() => [
               %HookManager{
-                id: ProcessHub.Constant.Hook.child_data_alter(),
+                id: Hook.child_data_alter(),
                 m: __MODULE__,
                 f: :alter_child_data,
                 a: [hub_id, :_]
@@ -947,8 +952,7 @@ defmodule Flezha.Service.HubManager do
     %ProcessHub.Strategy.Migration.MigrationConsent{
       consent_timeout: Keyword.get(opts, :consent_timeout_ms, 5_000),
       retry_interval: Keyword.get(opts, :retry_interval_ms, 2_000),
-      max_defer_time:
-        Keyword.get(opts, :max_defer_ms) || Flezha.Shutdown.Coordinator.configured_timeout_ms()
+      max_defer_time: Keyword.get(opts, :max_defer_ms) || Coordinator.configured_timeout_ms()
     }
   end
 

@@ -1,8 +1,15 @@
 defmodule Mix.Tasks.Bench.Workflow do
   use Mix.Task
 
+  alias Flezha.Convergence.Loop
   alias Flezha.Operative.Builder
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Completion
+  alias Flezha.State.Paths
+  alias Flezha.State.ProcInbox
+  alias Flezha.State.ProcJournal
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
@@ -369,7 +376,7 @@ defmodule Mix.Tasks.Bench.Workflow do
       whole_window = max(max(st.last_done_at || t1, st.last_out_at || t1) - t0, 1)
       missing = total - st.out.seen
       Process.sleep(2_000)
-      {tick_us, _} = :timer.tc(fn -> Flezha.Convergence.Loop.tick_now() end)
+      {tick_us, _} = :timer.tc(fn -> Loop.tick_now() end)
 
       Report.section(
         "chain summary: #{cfg.factory}, n=#{cfg.n}, #{mode}",
@@ -601,7 +608,7 @@ defmodule Mix.Tasks.Bench.Workflow do
   defp sleep_report(cfg, mem0, n, c) do
     Process.sleep(3_000)
     mem1 = memory_snapshot()
-    ticks = for _ <- 1..3, do: :timer.tc(fn -> Flezha.Convergence.Loop.tick_now() end) |> elem(0)
+    ticks = for _ <- 1..3, do: :timer.tc(fn -> Loop.tick_now() end) |> elem(0)
     {bytes, wals, snaps} = Tally.state_dir_stats(@namespace)
     sample = process_sample()
     n = max(n, 1)
@@ -1117,9 +1124,9 @@ defmodule Mix.Tasks.Bench.Workflow do
 
       for seq <- Enum.uniq(no_output ++ no_done) |> Enum.take(5) do
         id = id_of.(seq)
-        {:ok, entries} = Flezha.State.ProcJournal.read(id)
+        {:ok, entries} = ProcJournal.read(id)
         journal = entries |> Enum.map(&{&1.type, &1.iter}) |> Enum.take(-4)
-        undelivered = id |> Flezha.State.ProcInbox.undelivered() |> Enum.map(& &1.offset)
+        undelivered = id |> ProcInbox.undelivered() |> Enum.map(& &1.offset)
 
         overwatch =
           case OperativeManager.get_operative_pid(@namespace, id) do
@@ -1134,7 +1141,7 @@ defmodule Mix.Tasks.Bench.Workflow do
 
         IO.puts(
           "  #{id}: journal=#{inspect(journal)} undelivered=#{inspect(undelivered)} " <>
-            "completion=#{inspect(Flezha.State.Completion.read(id))} overwatch=#{inspect(overwatch)}"
+            "completion=#{inspect(Completion.read(id))} overwatch=#{inspect(overwatch)}"
         )
       end
     end
@@ -1142,10 +1149,10 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   # The per-runner control processes' mailboxes: a wedged channel shows here.
   defp diagnose_channels do
-    for runner_id <- Flezha.Runner.FleetManager.active_runners(@namespace),
+    for runner_id <- FleetManager.active_runners(@namespace),
         {kind, name} <- [
-          {:control_channel, Flezha.Service.Identificator.control_channel(runner_id)},
-          {:control_unit, Flezha.Service.Identificator.control_unit(runner_id)}
+          {:control_channel, Identificator.control_channel(runner_id)},
+          {:control_unit, Identificator.control_unit(runner_id)}
         ] do
       info =
         case GenServer.whereis(name) do
@@ -1197,7 +1204,7 @@ defmodule Mix.Tasks.Bench.Workflow do
   # ----------------------------------------------------------------- utils --
 
   defp writer_heap_kib do
-    case Flezha.State.Supervisor.lookup(Flezha.State.Paths.journal_id("wf_0")) do
+    case Flezha.State.Supervisor.lookup(Paths.journal_id("wf_0")) do
       {:ok, pid} -> pid |> Process.info(:memory) |> elem(1) |> div(1024)
       _ -> "?"
     end

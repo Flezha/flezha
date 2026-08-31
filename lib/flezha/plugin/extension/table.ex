@@ -33,6 +33,7 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Service.PluginManager
 
   require Logger
 
@@ -452,7 +453,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
     Enum.each(table.plugins, fn {plugin_id, _plugin} ->
       try do
-        Flezha.Service.PluginManager.unregister_plugin(plugin_id)
+        PluginManager.unregister_plugin(plugin_id)
       catch
         _, _ -> :ok
       end
@@ -985,7 +986,7 @@ defmodule Flezha.Plugin.Extension.Table do
       end
 
     try do
-      Flezha.Service.PluginManager.unregister_plugin(plugin_id)
+      PluginManager.unregister_plugin(plugin_id)
     catch
       _, _ -> :ok
     end

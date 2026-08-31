@@ -1,5 +1,6 @@
 defmodule FlezhaTest.Helper.OperativeTestHelper do
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @default_timeout_ms 2_000
   @ingest_retry_ms 50
@@ -39,7 +40,7 @@ defmodule FlezhaTest.Helper.OperativeTestHelper do
 
   defp ingest_until_accepted(operative_id, namespace, msg, metadata, deadline) do
     accepted? =
-      FlezhaTest.Helper.NodeTestHelper.wait_until(
+      NodeTestHelper.wait_until(
         fn ->
           remaining = max(deadline - System.monotonic_time(:millisecond), 1)
 

@@ -64,9 +64,9 @@ defmodule FlezhaTest.SystemCase do
   that is not what the scenario is about. Each one says why in a comment.
   """
   def runtime_for(%{reference_runtime: true}),
-    do: FlezhaTest.Helper.NodeTestHelper.reference_runtime()
+    do: NodeTestHelper.reference_runtime()
 
-  def runtime_for(_context), do: FlezhaTest.Helper.NodeTestHelper.runtime()
+  def runtime_for(_context), do: NodeTestHelper.runtime()
 
   defmacro __using__(opts) do
     capability = Keyword.fetch!(opts, :capability)
@@ -80,9 +80,7 @@ defmodule FlezhaTest.SystemCase do
       @moduletag skip: FlezhaTest.SystemCase.deferral(unquote(capability))
 
       setup context do
-        FlezhaTest.Helper.NodeTestHelper.put_spawn_runtime(
-          FlezhaTest.SystemCase.runtime_for(context)
-        )
+        NodeTestHelper.put_spawn_runtime(FlezhaTest.SystemCase.runtime_for(context))
 
         :ok
       end

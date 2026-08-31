@@ -48,19 +48,23 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   use FlezhaTest.SystemCase, capability: :workflow
 
-  # The shared tier-e2e mechanics. `only:` because this module keeps its own
-  # `unique_id_path/0` under a crash-specific tmp prefix.
-  import FlezhaTest.Helper.TierE2EHarness, only: [cleanup: 3, os_pid: 1, sigkill: 1, unique: 1]
+  # The shared tier-e2e mechanics. `only:` because this module defines its own
+  # `boot_runner/4` and `wait_until/1`.
+  import FlezhaTest.Helper.TierE2EHarness,
+    only: [cleanup: 3, os_pid: 1, sigkill: 1, unique: 1, unique_id_path: 0]
 
+  alias Flezha.Operative.Replay
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Service.CliManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
   alias Flezha.State.Paths
+  alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :workflow_crash_resume
@@ -68,7 +72,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # connects can be slow, so give each cell a generous budget.
   @moduletag timeout: 180_000
 
-  for transport <- FlezhaTest.Helper.NodeTestHelper.transports() do
+  for transport <- NodeTestHelper.transports() do
     describe "transport=#{transport}" do
       @describetag transport: transport
       @describetag cell: :"crash_#{transport}"
@@ -82,8 +86,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         # entry durable before the SIGKILL.
         operative_id =
           drive_crash_resume(ctx, "commit_block_workflow", "ok", fn oid ->
-            Flezha.Operative.Replay.resume_entity_count(:workflow, oid) > 0 and
-              Flezha.State.ProcJournal.restore_state(oid) != nil
+            Replay.resume_entity_count(:workflow, oid) > 0 and
+              ProcJournal.restore_state(oid) != nil
           end)
 
         # workflow-proc-journal: proc A's completion was journaled at the proc barrier
@@ -93,7 +97,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         assert wal_record_count(operative_id, "commit_a") == 1,
                "journaled proc A was re-run on resume (redo-vs-skip broken)"
 
-        {:ok, entries} = Flezha.State.ProcJournal.read(operative_id)
+        {:ok, entries} = ProcJournal.read(operative_id)
         committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
 
         assert 0 in committed, "proc A's pre-crash commit is missing from the journal"
@@ -102,7 +106,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         # Operator surface: `flz state journal <instance>` renders the entries.
         rendered =
           ExUnit.CaptureIO.capture_io(fn ->
-            Flezha.Service.CliManager.state_journal(operative_id)
+            CliManager.state_journal(operative_id)
           end)
 
         assert rendered =~ "proc_committed"
@@ -242,7 +246,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           ctx,
           "tier_commit_block_workflow",
           "ok",
-          fn oid -> Flezha.Operative.Replay.resume_entity_count(:workflow, oid) > 0 end,
+          fn oid -> Replay.resume_entity_count(:workflow, oid) > 0 end,
           plugins: [sink]
         )
 
@@ -312,8 +316,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           plugins: [sink]
         )
 
-      assert {:ok, []} = Flezha.State.ProcJournal.read(operative_id)
-      refute File.exists?(Flezha.State.Paths.journal_path(operative_id))
+      assert {:ok, []} = ProcJournal.read(operative_id)
+      refute File.exists?(Paths.journal_path(operative_id))
 
       assert [Paths.class_dir(operative_id), "**", "*.wal"]
              |> Path.join()
@@ -374,7 +378,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # Operator surface: the journal renders the outbox and its flush marker.
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
-          Flezha.Service.CliManager.state_journal(operative_id)
+          CliManager.state_journal(operative_id)
         end)
 
       assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_proc=0 channel=mid"
@@ -472,7 +476,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # is closed first so it does not append past the truncation point.
   defp drop_flush_markers(operative_id) do
     {:ok, pid} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(operative_id))
-    Flezha.State.WalWriter.close(pid)
+    WalWriter.close(pid)
 
     path = Paths.journal_path(operative_id)
     bytes = File.read!(path)
@@ -668,7 +672,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # marked undelivered — this is what survives the SIGKILL below.
       pending_inbox =
         ExUnit.CaptureIO.capture_io(fn ->
-          Flezha.Service.CliManager.state_inbox(operative_id)
+          CliManager.state_inbox(operative_id)
         end)
 
       assert pending_inbox =~ "durable inbox for instance #{operative_id}"
@@ -709,7 +713,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # --- operator surface ---
       journal =
         ExUnit.CaptureIO.capture_io(fn ->
-          Flezha.Service.CliManager.state_journal(operative_id)
+          CliManager.state_journal(operative_id)
         end)
 
       assert journal =~ "iter_committed"
@@ -801,7 +805,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              "the idle stateless loop never parked"
 
       # Nothing on disk to restore — the journal is the only thing carried over.
-      assert Flezha.Operative.Replay.resume_entity_count(:workflow, operative_id) == 0
+      assert Replay.resume_entity_count(:workflow, operative_id) == 0
 
       send_turn(namespace, operative_id, "two")
 
@@ -856,7 +860,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # --- rewind to iteration 0 ---
       rewind_out =
         ExUnit.CaptureIO.capture_io(fn ->
-          Flezha.Service.CliManager.operative_rewind(namespace, operative_id, 0)
+          CliManager.operative_rewind(namespace, operative_id, 0)
         end)
 
       assert rewind_out =~ "rewound to iteration 0"
@@ -998,7 +1002,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
-          Flezha.Service.CliManager.state_journal(operative_id)
+          CliManager.state_journal(operative_id)
         end)
 
       assert rendered =~ "leaves: 2,3  complete: true"
@@ -1129,8 +1133,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp drive_crash_resume(ctx, factory_id, terminal_status, mid_run?, opts \\ []) do
     {before_rebind, builder_opts} = Keyword.pop(opts, :before_rebind)
     namespace = unique("workflow_crash")
-    # Operative ids are capped at 32 bytes and the unique suffix reaches 7 digits.
-    operative_id = unique(String.slice(factory_id, 0, 24))
+    operative_id = unique(factory_id)
     id_path = unique_id_path()
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
@@ -1288,9 +1291,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   defp count_wal_records(_, acc), do: acc
 
-  defp unique_id_path,
-    do: Path.join(System.tmp_dir!(), "flz-crash-id-#{System.unique_integer([:positive])}")
-
   defp wait_until(fun, timeout_ms \\ 15_000),
-    do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, timeout_ms)
+    do: NodeTestHelper.wait_until(fun, timeout_ms)
 end

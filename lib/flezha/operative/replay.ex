@@ -29,6 +29,8 @@ defmodule Flezha.Operative.Replay do
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
   alias Flezha.State.Restore
+  alias Flezha.State.WalTransfer
+  alias Flezha.State.WalWriter
 
   require Logger
 
@@ -136,7 +138,7 @@ defmodule Flezha.Operative.Replay do
       # it, so a member placed elsewhere pulls its class tree first. The
       # restore below is the same one every bind runs, and it is what covers
       # the case where the state is already local.
-      if source_node, do: Flezha.State.WalTransfer.pull_operative(source_node, operative_class)
+      if source_node, do: WalTransfer.pull_operative(source_node, operative_class)
       replay_persisted_entities(state.builder.kind, operative_class, runner_id, overwatch)
     end)
 
@@ -492,7 +494,7 @@ defmodule Flezha.Operative.Replay do
     result =
       with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id),
            {:ok, %{seq: baseline_seq, consumed_offset: consumed}} <-
-             Flezha.State.WalWriter.correction_baseline(writer, target) do
+             WalWriter.correction_baseline(writer, target) do
         rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
       end
 
@@ -509,7 +511,7 @@ defmodule Flezha.Operative.Replay do
   def run_replay(%Overwatch{} = state, entity_id, baseline_seq) do
     result =
       with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id) do
-        consumed = Flezha.State.WalWriter.consumed_offset_at(writer, baseline_seq)
+        consumed = WalWriter.consumed_offset_at(writer, baseline_seq)
         rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
       end
 
@@ -525,8 +527,8 @@ defmodule Flezha.Operative.Replay do
     # correction must re-assert the epoch it already committed to, never bump a
     # second time — a second bump would leave the first attempt's rows behind at
     # an epoch nothing overwrites.
-    epoch = Flezha.State.WalWriter.outbox_epoch(writer) + 1
-    :ok = Flezha.State.WalWriter.rewind_to(writer, baseline_seq, epoch)
+    epoch = WalWriter.outbox_epoch(writer) + 1
+    :ok = WalWriter.rewind_to(writer, baseline_seq, epoch)
 
     # Blocking: the restore rides the control channel while the replay rides the
     # data channel, and without this fence they race — the runner could fold

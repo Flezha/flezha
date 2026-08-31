@@ -16,6 +16,8 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   alias Flezha.Operative.Builder
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Service.Identificator
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-unit-add-operative-test"
 
@@ -32,7 +34,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
     end)
 
     {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
     %{runner_id: runner_id}
   end
@@ -42,7 +44,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
     # The reply only lands on the AddOperative response, which never arrives here.
     catch_exit(
       GenServer.call(
-        Flezha.Service.Identificator.control_unit(runner_id),
+        Identificator.control_unit(runner_id),
         {:start_operative, operative},
         50
       )

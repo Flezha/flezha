@@ -31,6 +31,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.State.TestHelpers
   alias Flezha.State.WalTransfer
   alias FlezhaTest.Helper.FakeStartRegistry
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "rescale-test"
   @group "ohlc"
@@ -234,7 +235,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   describe "dependents and concurrency" do
     test "a rescale nudges exactly the forwards that target this group" do
       parent = self()
-      overwatch = spawn_link(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      overwatch = spawn_link(&NodeTestHelper.park/0)
 
       stub(HubManager, :operative_plugins, fn _ns ->
         [
@@ -290,7 +291,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
         {:error, "operative not found"}
       end)
 
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->

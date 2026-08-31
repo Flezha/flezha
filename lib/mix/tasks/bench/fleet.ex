@@ -14,8 +14,10 @@ defmodule Mix.Tasks.Bench.Fleet do
   """
 
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.EventManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PortPilot
+  alias Mix.Tasks.Bench.ElixirFactories
   alias Mix.Tasks.Bench.Report
 
   @doc "True when `namespace` already has at least one connected runner."
@@ -107,7 +109,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   defp start_native_sdk(namespace) do
     handle =
       Enum.reduce(
-        Mix.Tasks.Bench.ElixirFactories.all(),
+        ElixirFactories.all(),
         Flezha.SDK.create_runner(namespace, transport: :native),
         fn m, acc ->
           Flezha.SDK.define_stream(acc, m)
@@ -201,7 +203,7 @@ defmodule Mix.Tasks.Bench.Fleet do
 
     connect_timeout = PortPilot.manifest(runtime)["connect_timeout_ms"]
 
-    Flezha.Service.EventManager.add_handler(:runner_connected_event)
+    EventManager.add_handler(:runner_connected_event)
 
     # Every runner is spawned before the first hand-shake is awaited: the
     # processes boot side by side, and the wait is one connect, not N.
@@ -225,7 +227,7 @@ defmodule Mix.Tasks.Bench.Fleet do
         end
       end
 
-    Flezha.Service.EventManager.rem_handler(:runner_connected_event)
+    EventManager.rem_handler(:runner_connected_event)
     runner_ids
   end
 end

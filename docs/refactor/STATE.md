@@ -1,6 +1,11 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 3. Phase 1 rows 1, 2 and 3 DONE. Row 3.5 (`fix-opaque-module-names`) is **APPROVED** — the survey survived supervisor review and four of its load-bearing claims were re-verified against the repo. Implementing in four segments. Area 4 is UNBLOCKED and next after it.
+**Last updated**: 2026-08-31 — session 3. **Phase 1 rows 1, 2, 3 and 3.5 are DONE.**
+Row 3.5 (`fix-opaque-module-names`) closed in four segments — credo 1463 → 378,
+`credo_warnings` now ratchets in all 36 areas, and `refactor_metrics.py --check` is
+exit 0 for the first time in 60+ commits. **Next: Phase 1 row 4,
+`green-the-test-hygiene-tail`** (KI-18, KI-21, KI-23, KI-54); rows 5, 6, 6.5, 7 and
+8 follow, then area 4 (`sdk/java`).
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -106,6 +111,338 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
+**Segment A of row 4 is verified and committed; segment B is next.** Row 3.5 is
+COMPLETE, archived and committed.
+
+**Segment B of row 4 is verified and committed; segment C is next.**
+
+### Row 4 segment B — verified 2026-08-31, commit `9820f75d`
+
+Batches 4-5 plus the four sibling mints. Supervisor-verified: `mix test` **1863
+passed, exit 0, zero CI gate hits**; `refactor_metrics.py --check` **exit 0**;
+format and `--warnings-as-errors` clean; no `lib/` change.
+
+**The watchdog pin** carries a deliberate foreign breach that stays in the test —
+it is what makes the pin load-bearing forever, and removing only the pin is the
+negative control, which was run and came back red. The pin is used **twice**: the
+closing assertion and the `wait_until` eight lines above, which acquires the same
+exposure the moment a foreign entry exists.
+
+**KI-23's inertness was proved rather than asserted** — all **40** literal
+`unique("…")` prefixes × widths 1-7 = **280 pairs, 280 byte-identical**. Exactly 5
+ids change, all from the two over-conservative hand truncations, all getting
+*longer* and all still inside 32 by construction. Its red-first is a **negative
+control, not a natural red**, and the report says so: the natural red needs ~167×
+a full suite. Four private `unique_id_path/0` copies were deleted, not the one the
+design named.
+
+**The shared claim is `NodeTestHelper.claim_tmp_dir/1`, five call sites, net 0
+lines** — `+20` in the helper, `−20` across the four callers. Fully
+deletion-funded.
+
+### KI-67 — the finding that matters, and it is against MY verification
+
+Segment B ran the negative control on **segment A's KI-66 regression test** before
+reusing its mechanism. **The test passes on the defective helper.** I reproduced it
+independently: claim reverted to `File.mkdir_p!/1`, the module run at 12 seeds —
+**7 red, 5 green**. The worker measured 15/20 red; I measure 7/12. Either way the
+test green-lights the code it exists to catch, roughly two times in five.
+
+**Mechanism**: `System.unique_integer([:positive])` is node-global **and
+per-scheduler striped**, so a band planted at `counter+1 … counter+512` bears no
+fixed relation to where the next mint lands — drift measured `+6365`, `+829`,
+`+509`, `+29` and **`−260`**, and a negative drift puts the mint below the band
+entirely. The vacuity guard is true in both the caught and the missed case, so it
+separates nothing. One-sided: only false greens.
+
+**This invalidates a claim in `656fd444`'s commit message**, which says the KI-66
+fix was proved red-first. The fix itself stands — `File.mkdir/1` is atomic by
+construction, not by sampling — but the proof does not, and a test that passes on
+broken code two times in five is worse than no test because it will be trusted.
+
+**The cause is mine, and it is recorded as such.** At segment A's checkpoint I ran
+the full suite and read the fix, then accepted the worker's negative-control claim
+**without running it**. A regression test is proved by its negative control and by
+nothing else. Row 3.5 segment B proved its gate red twice — worker and supervisor —
+and that is the standard this checkpoint failed to meet. **Ruled: fix the test in
+segment C**, acceptance **12 of 12 red** against the reverted helper, never a
+majority.
+
+**A second process gap, same checkpoint.** `refactor_metrics.py --check` read exit
+0 at segment A for the wrong reason: the new test file was **untracked**, and the
+gates walk `git ls-files`, so it was invisible. The skill's §4 opens with `git add
+-N` on every new file *precisely* for this, and I skipped it. With the file
+intent-added, `--check` is exit 0 honestly — verified this checkpoint.
+
+### KI-68 — real, pre-existing, and queued as its own row
+
+`workflow_crash_resume_e2e_test.exs:296` fails deterministically (1/1 in module,
+3/3 alone) because `ControlChannel.drain_owed_outputs/3`'s `@drain_owed_ms 60_000`
+(`control_channel.ex:492`) waits the full minute for direct outputs a resumed run
+never delivers — raising only the test budget to 90 s gives `deregistered=true
+after 59994 ms`. **Pre-existing**: `git log -S` puts that constant in `a9787a0f`,
+the workflow perf campaign.
+
+**Ruled: filed, not fixed in row 4, queued as a new Phase 1 row.** Charter §1b
+pauses an area for a defect in the code that area is working on; row 4 changes
+nothing in `lib/` by design, and a 60-second production drain cap is a behaviour
+decision. Folding it in would be the scope drift this programme removes.
+
+### Row 4 segment A — verified 2026-08-31, commit `656fd444`
+
+Batches 1-3 plus the KI-66 fix. **Independently verified by the supervisor**:
+`mix test` **1858 passed, exit 0, ZERO CI gate hits**; `refactor_metrics.py
+--check` exit 0; `mix format --check-formatted` clean; **no `lib/` change**; no
+scratch instrument residue in any of the three test files (`grep` for
+`SCRATCH|await_queue|blocker_entered|IO.puts` returns 0 in all three).
+
+**KI-54 — the acceptance is 34 → 0 surviving workers, and it never counts runs.**
+The defect shows through the log 1-in-6; it shows through the registry every time.
+Converting a sampled symptom into a deterministic one is the whole reason this fix
+can be believed. Detector red at **1 of 28** before, module green at 28 after.
+
+**Two deviations from design D1, both forced by measurement, both improvements:**
+
+1. **The design's snapshot sweep is racy** and left 8 of 28 passing.
+   `WorkerSup.ensure_worker/4` → `reap_and_start/4` drops a key, waits, then
+   re-registers a replacement, so a single `Registry.select` can miss a live
+   worker. The sweep now repeats until the registry stays empty, reusing the
+   module's own `wait_until/1` — the same bounded shape production already uses in
+   `await_unregistered/3`.
+2. **`on_exit` is armed BEFORE the assertion, not after.** In the design's order
+   the first leak raises in `setup` *before* `on_exit` is registered, disarming the
+   sweep for every test behind it — which is why one key appeared in **20
+   consecutive failures**. Reordering costs nothing.
+
+The dead `unless Process.whereis(ForwardSup), do: start_supervised!(ForwardSup)` is
+deleted: it is proved unreachable, and leaving it beside a detector reading the
+same registry would claim the module might own the supervisor.
+
+**Batch 3 landed on face A**, exactly as `design.md` D2 predicted, not the
+`entry.callers` face — the forced window was built well enough to say which. The
+barrier is a positive settle on `{:kafka_worker_dead, …}`, a signal the registry
+already publishes, so it proves the DOWN was **processed**; the `eventually/2` poll
+would only prove a side effect became visible, and needs a timeout to tune. The
+instrument is deleted and the module is 5-for-5 across five seeds.
+
+**KI-66 fixed by making the mint a CLAIM** — `File.mkdir/1` instead of `mkdir_p!/1`,
+retrying on `:eexist`. No new naming scheme, no new helper, no call site changed,
+and it does not depend on `/tmp` being clean, which was the binding constraint. Its
+regression test **forces** the collision by claiming the whole band the next mint
+can land in, and carries a vacuity guard that the returned name is past every
+claimed one — so it cannot pass by the band having missed.
+
+**The refusal to share a mechanism with KI-23 is correct and is the segment's best
+piece of reasoning.** An operative id **cannot be claimed at mint time** — nothing
+exists on disk when the generator returns, so there is no `mkdir` to fail. And the
+one scheme that would serve both, a monotonic `System.os_time(:microsecond)`
+suffix, **spends KI-23's entire budget**: 16 digits plus a separator leaves 15
+bytes of 32. Two problems that look identical, one primitive that fits one of them.
+
+**LOC +90, and it is NOT deletion-funded — stated plainly rather than dressed up.**
+The three fixes are additive by nature (a sweep, a barrier, a claim); the only
+deletions available were the dead `unless`, a `_ = refs`, and the `mkdir_p!`.
+
+### Ruled at this checkpoint — the four sibling mint sites go to segment B
+
+The worker found four helpers carrying KI-66's hazard exactly and **stopped rather
+than growing the segment**, which is what the brief asked for. Verified: 
+`schedule_test_helper.ex:20`, `durability_backend_stub.ex:61`,
+`tier_e2e_harness.ex:189` (`unique_id_path/0`) and `auth_test_helper.ex:40` all mint
+`System.tmp_dir!()` names from `unique_integer`. `node_test_helper.ex:147` is
+correctly **excluded** — its `flezha_peer_<purpose>_<node>` name carries no
+`unique_integer` and is meant to be stable.
+
+**Ruled: fix all four in segment B**, with one shared claim. Three reasons: charter
+§2 earns a shared mechanism at the third caller and this is the fifth;
+`unique_id_path/0` is **already opened by batch 5** for KI-23, so fixing it there
+costs nothing and stops two workers editing one function in sequence; and leaving
+them is a known leak left standing in a row whose subject is tests that leak.
+
+### Segmentation of row 4
+
+| segment | batches | content | state |
+|---|---|---|---|
+| A | 1, 2, 3 (+KI-66) | baseline; KI-54 ownership; the `worker_registry` barrier; the KI-66 claim | **done**, `656fd444` |
+| B | 4, 5 (+4 mints) | the watchdog pin; KI-23 generator bound; the four sibling mint sites | **done**, `9820f75d` |
+| C | 6, 7 (+KI-67) | fix the KI-66 regression test; make the entries true; verification | next |
+
+### Row 3.5 — `fix-opaque-module-names` is DONE
+
+Four segments, four commits plus four close-outs, archived as
+`2026-08-31-fix-opaque-module-names` with 5 requirements added to
+`code-quality-baseline`.
+
+| segment | commit | what |
+|---|---|---|
+| A | `0cb58166` | 3 renames — `State.Registry`→`Paths`, `AuthZ.Store`→`DetsStore`, `SDK.Backoff`→`Jitter` |
+| B | `055054f2` | 4 folds + `scripts/check-module-naming.sh`, proved red first |
+| C | `1848cb80` | the alias pass — 689 sites, 103 modules, 189 files |
+| D | `14c7cfc5` | `.credo.exs`, the KI-63 fix, the measured ratchet |
+
+**The headline, measured twice — once by the worker, once by the supervisor
+independently:**
+
+```
+credo total                 1463 -> 378
+AliasUsage                   689 -> 0     (adopted; the naming problem fixed)
+ParenthesesOnZeroArityDefs   431 -> 0     (rejected; disabled)
+AliasOrder                    66 -> 66    (unchanged across ~650 insertions)
+```
+
+**`credo_warnings` is now an integer in all 36 areas and at the repo level**,
+replacing `null` everywhere — the metric ratchets for the first time.
+`refactor_metrics.py --check` is exit 0, **0 regressions**, for the first time in
+60+ commits.
+
+**378 is a measured number.** The task list's 379 carried the same off-by-one this
+change corrected in four separate board figures — and that is the change's
+signature: *every* number it inherited was checked, and the survey's own prose was
+wrong twice (47 colliding modules for 49; `excluded_lastnames` 47 for 50) while its
+classifications held exactly.
+
+**What the four segments actually cost and bought**: net **+459** lines, 4 files
+deleted, 1 added. No charter rule is cited for the increase and none exists —
+charter §1 admits only §2's reuse order or a §7 ceiling, and this is neither. The
+lines exist because the user ruled on KI-10, and saying so is the honest accounting.
+
+**Three lessons worth more than the diff:**
+
+1. **A bare name in value position is a defect only when its BINDING changes.**
+   Segment A removed a binding and silently repointed `:erpc.call(source_node,
+   Registry, …)` at the stdlib — compiler-silent. Segment C added 374 bindings and
+   repointed nothing. Two sweeps by two different methods agreed, and the method
+   that looked alarming (7 global hits) was the one asking the wrong question.
+2. **A red system run is not evidence of a regression until its first crash line is
+   read.** Segment B's 471 failures came from one `"driver init failed"` 408 lines
+   above the first reported failure. See the KI-57 escalation below.
+3. **A gate must be proved red before it is trusted.** Both new gates were, and the
+   `record_tag` exemption list was wrong as designed in both directions — too
+   narrow (dev_notes only) and measured against a tree that moved while it was
+   being measured.
+
+**Filed this row and not fixed**: KI-61 (deferred to `refactor-5a-state`), KI-62
+(not a bug), KI-64 and KI-65 (both new, below in `known_issues.md`). KI-63 fixed
+and resolved.
+
+### Segment C — verified 2026-08-31, commit `1848cb80`
+
+Batches 7-8: the alias pass, **689 sites over 103 modules in 189 files**. 9 boxes
+ticked, each verified.
+
+**The central claim was re-measured by the supervisor, not read off the report.**
+An independent `mix credo --strict` run: **`AliasUsage` 0** (from 689),
+**`AliasOrder` 66 — unchanged from HEAD**, `ParenthesesOnZeroArityDefs` 431.
+`mix compile --warnings-as-errors`, `mix format --check-formatted` and
+`check-module-naming.sh` all clean; a supervisor slice over the three most-edited
+areas **632 passed**; the worker's full suite 1857 passed.
+
+**The value-position trap was cleared by two independent methods and they agreed.**
+Segment A's `wal_transfer.ex:191` lesson made this the segment's one real risk. The
+worker swept per-file over the 374 bindings it introduced: 0 hits. The supervisor
+swept differently — collect every introduced last segment, then grep the WHOLE tree
+for it in `:erpc.call` / `apply` / `{:via, ...}` / child-spec position — which
+surfaced 7 real hits the per-file method excludes by construction. **All 7 were
+already present at HEAD and segment C added an alias for none of them**
+(`added_by_segC=0, present_at_HEAD=1`, seven for seven). Nothing was repointed.
+
+The general rule, worth keeping: **a bare name in value position is a defect only
+when its binding CHANGES.** Segment A removed a binding and broke one; segment C
+only adds, and an added alias can only repoint a name that resolved elsewhere
+before — so the check is "did this file's binding for this name move", never "does
+this file use a bare name".
+
+**D4's list is larger than the pass needs, and two spellings were missing.** Only
+**7 of D4's 24** are reachable by an `AliasUsage` finding at all — the other 17 are
+reached solely through `@behaviour`, `use`, a struct literal or an existing alias,
+and credo ignores `@`-rooted and non-call references. Two spellings D4 does not
+name were required: **`ProcessHub.Service.Recovery` -> `HubRecovery`** (collides
+with `Flezha.State.Recovery`) and **`KafkaEx.Auth.Config` -> `KafkaAuthConfig`**
+(collides with `Flezha.AuthZ.Config`) — the two non-`lib` targets segment A
+flagged, caught exactly where they were expected.
+
+**Segments A and B paid for themselves here.** A fresh inventory shows `lib/` at
+**263** modules with **15** colliding last segments over 40 — `Metrics`, `Backoff`,
+`Registry`, `Parser` and `Telemetry` are all gone from that list, so `tasks.md`
+7.2/8.2's demand for an `as:` on `Flezha.State.Metrics` is now wrong and was
+corrected: it takes a bare alias.
+
+**Diff shape proved mechanically rather than by eye** — for each of the 189 files a
+shadow tree of "HEAD + only alias insertions and prefix removals" was compared as
+metadata-stripped ASTs against the real file: **0 of 54 differ in lib, 0 of 135 in
+test.** The diff adds 0 comment lines, 0 `Process.sleep`, and nets 0 `refute`.
+
+**Net +419 lines** (lib +164, test +255) = 374 alias lines + 53 blank separators, less
+8 from formatter joins. **No charter rule is cited and none exists** — §1 admits only
+§2's reuse order or a §7 ceiling, and this is neither. These lines exist because the
+owner ruled on KI-10.
+
+**KI-63 filed, reproduced by the supervisor from credo's source, and ruled.**
+`.credo.exs:9`'s `~r"^test/apps/"` is inert and always has been: `include/2` builds
+an ABSOLUTE-path file set, `convert_globs_to_local_paths/2`
+(`deps/credo/lib/credo/sources.ex:132`) expands only `is_binary` patterns and passes
+a `%Regex{}` through untouched, and `exclude/2` (`:183`) is a bare `String.match?`.
+A `^`-anchored relative regex cannot match an absolute path; the three siblings work
+only because they are **unanchored**. **Fixed in segment D, with the ratchet** — the
+two must land together or the baseline is recorded against a file set that shifts
+underneath it, and a full run right now reports **zero** findings under
+`test/apps/`, so honouring the exclusion costs 0 today and would be a silent ratchet
+shift if deferred. Fix the mechanism, not the policy: whether `test/apps/` belongs
+outside credo's view is `refactor-7-tests`'s question.
+
+### KI-57 escalated at segment B — a filed P2 took down a quarter of the tier
+
+Segment B's **first** `--include system` run reported **471 failures** (1466/1937).
+It is **not the change**: the full suite was 1857 passed / 0 failed on the same
+tree, and the re-run at the same seed came back 1938 passed, exit 0.
+
+**The origin is one line, 408 lines above the first reported failure:**
+
+```
+[flz_nif] UDS driver fatal error: path must be shorter than libc::sockaddr_un.sun_path
+[StreamAcceptor] Failed to start secondary listener: "driver init failed"
+Child :secondary_acceptor of Supervisor {Flezha.Service.Identificator,
+  "schema_evolution_e2e_17698_196642579963_wus"} failed to start
+```
+
+Every one of the 471 is downstream: the acceptor dies, `runner_connect` refuses,
+and thereafter each test's `on_exit` hits `:noproc` on
+`Flezha.Observability.Registry` or `Flezha.Runner.FleetManager` and reports
+*"possibly because its application isn't started"* — which reads like an
+application that never booted and is in fact one transport failure with 471
+casualties. `SUN_LEN` is 108 bytes; the longest socket path on this box measures
+**89** and the failing runner's renders at **91**.
+
+The visible cascade also crossed `Flezha.State.Watchdog`, whose `:sweep_tick` made
+an unguarded `GenServer.call(Flezha.AuthZ.QuotaCounters, ...)` (`watchdog.ex:233`
+-> `authz/quotas.ex:120`) 60 ms after an authz test tore that tree down; because
+`Watchdog` is a child of `Flezha.Supervisor`, that crash is what turned a transport
+failure into "the application isn't started" for every later `on_exit`.
+
+**Supervisor ruling — KI-57 is under-filed.** It is recorded as one test dying. It
+can take out **471 of 1937** and present as a dead application, a diagnosis nobody
+would reach from the summary line. Its entry owes a corrected severity and blast
+radius, and the `Watchdog` link above is the mechanism to record with it.
+
+**The rule this buys, and it belongs in every verification brief**: a green system
+run is evidence; **a red one is not evidence of a regression until its first crash
+line is read.** The summary tells you nothing about which of the two it was.
+
+### Board-hygiene incident — this supervisor deleted two of its own records
+
+Writing segment B's checkpoint, I replaced the span running from segment B's worker
+note down to the segmentation heading. Segment A's record and the KI-57 escalation
+block sat **inside that span**. Segment A's survived in `0ce625c5` and was restored
+from it; the KI-57 block had never been committed and was reconstructed from this
+session's own context, which a later session would not have had.
+
+**The rule**: a checkpoint rewrite replaces the block it is replacing, never a span
+delimited by whatever heading happens to come next — headings accumulate between
+edits. Anchor on both ends of the intended block, and after any board rewrite,
+grep the committed copy for a heading you did not mean to touch. Every earlier
+segment's record is content the next session depends on, and no diff will flag it
+as missing.
+
 ### Segment B — verified 2026-08-31, commit `055054f2`
 
 Batches 4-6: the four folds, full verification with a live restore drive, and the
@@ -181,14 +518,90 @@ the diff appears in is `lib/flezha/state prod_loc` via `state/metrics.ex (+16)` 
 charter §11's named case, lines arriving *from* `lib/flezha/plugin`, which does not
 appear in the regression list at all because the deletion on that side is larger.
 
+### Segment A — verified 2026-08-31, commit `0cb58166`
+
+Batches 1–3: the survey and the durable set re-derived, then the three renames.
+18 of 18 in-scope boxes ticked and each verified against the repo by the
+supervisor, not read off the report.
+
+**What the supervisor re-ran rather than trusted**: all five moved files are
+line-identical to their originals (601 / 237 / 14 / 46 / 111); the cross-tree
+grep for the three retired names returns nothing live; `mix test
+test/flezha/state/` **314 passed**; `mix compile --warnings-as-errors` and
+`mix format --check-formatted` both clean; four of five `check-*.sh` gates green.
+
+**The survey held.** Every number in batch 1 was exact except two prose sums,
+and neither moves a classification: the colliding-module count is **49, not 47**
+(`design.md`'s own D3 table has 49 rows carrying `seg ×>1`, so the 47 in
+`proposal.md` is an arithmetic slip in the prose, not a survey that moved), and
+credo's `excluded_lastnames` holds **50** names, not 47 — the quoted list is
+correct, only the count sentence is wrong. The durable chain verified link by
+link, the pinned set is 13, and none of the renamed modules is in it.
+
+**Four `tasks.md` counts were wrong and are corrected in place**: `openspec/specs`
+holds **2** references to `State.Registry`, not 14 — the 14 is
+`openspec/changes/archive/`, which is history and outside the grep's tree list;
+`as: StateRegistry` is in **2** files, not 1; `AuthZ.Store`'s "5 references" is
+FQN-only and misses five grouped `alias Flezha.AuthZ.{…, Store, …}` lines with 26
+call sites; and **`AliasOrder` at HEAD is 66, not D8's 50** — a fourth board
+number off, so D8's excess-accounting starts from 66.
+
+**The catch that justifies the segment.** `wal_transfer.ex:191` passes the module
+as a *value* — `:erpc.call(source_node, Registry, :delete_files, …)`, no `.`
+after it — so the first pass left it pointing at the stdlib `Elixir.Registry`
+once the alias moved. **Compiler-silent.** The worker found it with a bare-token
+sweep and fixed it; the supervisor re-verified the line reads `Paths`. This is
+the failure mode a rename has that a fold does not, and segments C and D must
+keep the sweep.
+
+**Two consequences segments C and D must budget:**
+
+1. **AliasUsage 653 → 689** (+36; lib 202→220, test 451→469). `Registry` is on
+   credo's `excluded_lastnames` and **`Paths` is not**, so every site that was
+   free now asks for an alias. None is blocked (`Paths` is unique), so D6's
+   verdict stands and D8's floor is untouched: 1499 − 431 − 689 = **379**.
+2. **Two non-`lib` alias targets share a last segment with a lib module** —
+   `ProcessHub.Service.Recovery` ×6 and `KafkaEx.Auth.Config` ×2. Outside D6's 51
+   by construction; the alias pass must not spell them bare unchecked.
+
+**`refactor_metrics.py --check` is exit 1 with 13 regressions and 12 are drift**,
+not this change: `baseline.json`'s head is `c5bdc26b` and HEAD is 58 commits past
+it. Verified mechanically rather than accepted — every BLOCKING regression names
+a file this change never touched (`flz_core/src/control_unit.rs`,
+`export_test.exs`, `control_channel_send_control_test.exs`,
+`ActivationDispatcher.java`), and the one it does name,
+`wal_writer_outbox_test.exs`, is `7 added / 7 deleted` so its 973 lines did not
+move. **The 13th is this change's own**: `duplicate_pairs` +1 in
+`lib/flezha/authz` and `lib/flezha/schedule`, both `measuring` not blocking —
+`authz/namespace_store.ex:50-56` ↔ `schedule/store.ex:78-84`, 70 identical
+tokens that were **hidden only by the two files spelling the same module
+differently**. That is D10.2's layering finding surfacing as a metric, and it is
+the rename doing its job.
+
+**`check-kind-naming.sh` is red and it is not this change** — four `bounded`
+prose hits in `docs/known_issues.md` and this board, and `git diff` adds no line
+containing the word. Pre-existing, as this board has recorded before.
+
+**LOC: −1 production line** (the `state/supervisor.ex` parenthetical, deleted
+because the rename made it noise). Every other edit is a 1:1 line replacement.
+No charter rule is cited because none is needed.
+
+**KI-61 filed and ruled** — see `docs/known_issues.md`. Real, **deferred to
+`refactor-5a-state`**: `RecordLog`'s two `@spec`s name `Elixir.Registry.entity_id/0`,
+a type the stdlib does not export, because the file never aliased the path module.
+Pre-existing and behaviour-free. The supervisor reproduced it and then swept `lib/`
+for a family — there is exactly one instance. Fixing it needs Dialyzer to satisfy
+§1b's red-first rule and this repo gates none, so it goes where the proof is
+affordable, the same treatment KI-41 has.
+
 ### Segmentation of row 3.5
 
 | segment | batches | content | state |
 |---|---|---|---|
 | A | 1, 2, 3 | re-derive survey + durable set; commit 1a — three renames | **done**, `0cb58166` |
-| B | 4, 5, 6 | commit 1b folds; commit 1c full verification + live restore drive; commit 1d the gate, proved red first | next |
-| C | 7, 8 | the alias pass, `lib/` then `test/` — **689 sites now, not 653** | next |
-| D | 9, 10 | `.credo.exs`, the measured ratchet, final verification | |
+| B | 4, 5, 6 | commit 1b folds; commit 1c full verification + live restore drive; commit 1d the gate, proved red first | **done**, `055054f2` |
+| C | 7, 8 | the alias pass — 689 sites, 103 modules, 189 files | **done**, `1848cb80` |
+| D | 9, 10 | `.credo.exs` + the KI-63 fix, the measured ratchet, final verification | **done**, `14c7cfc5` |
 
 **Two supervisor rulings every remaining segment carries:**
 
@@ -861,7 +1274,7 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | 1 | ~~`fix-java-workflow-resume-duplication`~~ → `java-diamond-resume` | KI-33 (P1) | **DONE** — `4de341b5` + `f2c7868d`, archived. Its filed diagnosis was refuted in both halves: nothing was re-run (one `proc_committed` per proc at `iter=0`) and it is not a resume defect at all (the same 9 payloads arrive with no crash). The mechanism was `collectEdgeOutputs` emitting one `Edge` output per CONSUMER — right for a stream, wrong for a workflow stage. Java e2e 17/21 → 21/21. **Area 4 is unblocked.** |
 | 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48, KI-49, KI-50 | **DONE** — `21185253` + the close-out commit. Absorbed all three: they were believed to be the only sources keeping the uncaptured-log gate from reporting. They were not — see rows 7 and 8. |
 | 3 | `close-prometheus-label-coercion` | KI-45 (P1), KI-59 | **DONE** — `55f32234` + close-out. KI-46 deferred by name (`close-otlp-typed-attributes`): typing the values would have destroyed this change's only control. |
-| 3.5 | `fix-opaque-module-names` | KI-10 | **APPROVED 2026-08-31, implementing (segment A).** 3 renames, 4 folds, 260 keeps; one change in three ordered commits. The survey refuted this board's sequencing claim by an order of magnitude — see the detail block below. |
+| 3.5 | `fix-opaque-module-names` | KI-10 | **DONE** — `0cb58166`, `055054f2`, `1848cb80`, `14c7cfc5`, archived. credo 1463 → 378; `credo_warnings` ratchets in all 36 areas for the first time; `--check` exit 0. Fixed KI-63 on the way; filed KI-61/62/64/65. 3 renames, 4 folds, 260 keeps; one change in three ordered commits. The survey refuted this board's sequencing claim by an order of magnitude — see the detail block below. |
 | 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | Tests that lie or leak. KI-49 and KI-50 went to row 2's change; KI-54 arrives here — a `ForwardWorker` retry outliving its test, the same shape as the KI-49 row 2 closed, so row 2's await pattern is the candidate fix. |
 | 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
 | 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |

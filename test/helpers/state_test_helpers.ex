@@ -10,6 +10,7 @@ defmodule Flezha.State.TestHelpers do
   """
 
   alias Flezha.State.{FsyncBatcher, Outbox, Paths, Supervisor, WalWriter}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # The outputs of a received dispatch batch not yet asserted on.
   @dispatched {__MODULE__, :dispatched}
@@ -44,7 +45,7 @@ defmodule Flezha.State.TestHelpers do
   """
   def close_input_log(class) do
     case Supervisor.lookup({class, :input_log}) do
-      {:ok, pid} -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
+      {:ok, pid} -> NodeTestHelper.ensure_stopped(pid)
       _ -> :ok
     end
   end
@@ -54,16 +55,14 @@ defmodule Flezha.State.TestHelpers do
   registers it as the controller's `:state_root`. Callers should
   `on_exit(fn -> Application.delete_env(:flezha, :state_root) end)` to
   reset the value between tests.
+
+  The directory is one this call created (`NodeTestHelper.claim_tmp_dir/1`):
+  sharing a re-minted one would hand a test a WAL a previous run wrote, and
+  `WalWriter.append/4` answers `:duplicate` for a seq it has already persisted.
   """
   @spec tmp_app_data_dir() :: binary()
   def tmp_app_data_dir() do
-    base =
-      Path.join([
-        System.tmp_dir!(),
-        "flezha_state_test_" <> Integer.to_string(System.unique_integer([:positive]))
-      ])
-
-    File.mkdir_p!(base)
+    base = NodeTestHelper.claim_tmp_dir("flezha_state_test")
     Application.put_env(:flezha, :state_root, base)
     base
   end
@@ -318,14 +317,14 @@ defmodule Flezha.State.TestHelpers do
   collision case needs.
   """
   def write_wal(entity_id, seqs, tag \\ "change") do
-    path = Flezha.State.Paths.wal_path(entity_id)
+    path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, wal_records(seqs, tag))
   end
 
   @doc "Append `seqs` to an Entity's existing WAL."
   def append_wal(entity_id, seqs, tag \\ "change") do
-    File.write!(Flezha.State.Paths.wal_path(entity_id), wal_records(seqs, tag), [:append])
+    File.write!(Paths.wal_path(entity_id), wal_records(seqs, tag), [:append])
   end
 
   @doc "The framed bytes of `seqs`, as they land on disk."
@@ -335,7 +334,7 @@ defmodule Flezha.State.TestHelpers do
 
   @doc "Remove every durable file one Entity owns."
   def wipe_entity(entity_id) do
-    Enum.each(Flezha.State.Paths.entity_files(entity_id), &File.rm/1)
+    Enum.each(Paths.entity_files(entity_id), &File.rm/1)
   end
 
   @doc """
@@ -359,7 +358,7 @@ defmodule Flezha.State.TestHelpers do
     WalWriter.close(server)
 
     deregistered? =
-      FlezhaTest.Helper.NodeTestHelper.wait_until(
+      NodeTestHelper.wait_until(
         fn -> Supervisor.lookup(entity_id) == :error end,
         timeout_ms,
         5

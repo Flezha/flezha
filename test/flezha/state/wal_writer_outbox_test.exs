@@ -29,7 +29,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
       run_batch: 2
     ]
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Service.CliManager
 
   alias Flezha.State.{
     FsyncBatcher,
@@ -332,7 +334,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     live =
       ExUnit.CaptureIO.capture_io(fn ->
-        Flezha.Service.CliManager.state_outbox("#{rc}/proc/k1")
+        CliManager.state_outbox("#{rc}/proc/k1")
       end)
 
     assert live =~ "outbox_flushed_seq 0"
@@ -343,7 +345,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     offline =
       ExUnit.CaptureIO.capture_io(fn ->
-        Flezha.Service.CliManager.state_outbox("#{rc}/proc/k1")
+        CliManager.state_outbox("#{rc}/proc/k1")
       end)
 
     assert offline =~ "unknown (writer not running)"
@@ -372,19 +374,19 @@ defmodule Flezha.State.WalWriterOutboxTest do
       )
 
     # Between append and fsync nothing is durable: no DLQ entry yet.
-    assert Flezha.Dlq.Store.list(rc) == []
+    assert DlqStore.list(rc) == []
 
     :ok = WalWriter.fsync(pid)
     assert {"good", _, _} = next_output()
 
-    assert [entry] = Flezha.Dlq.Store.list(rc)
+    assert [entry] = DlqStore.list(rc)
     assert entry["channel"] == "in"
     assert entry["error"] == "kaboom"
     assert entry["attempts"] == 3
     assert entry["origin_offset"] == 11
     assert entry["entity_key"] == "k1"
 
-    assert {:ok, _entry, "poison"} = Flezha.Dlq.Store.get("#{rc}/proc/#{entry["id"]}")
+    assert {:ok, _entry, "poison"} = DlqStore.get("#{rc}/proc/#{entry["id"]}")
 
     # Parking un-froze the min-watermark: the entity's consumed offset
     # advanced PAST the poison payload.
@@ -450,7 +452,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     :ok = WalWriter.fsync(pid)
     assert {"marker", _, _} = next_output()
-    assert [_entry] = Flezha.Dlq.Store.list(rc)
+    assert [_entry] = DlqStore.list(rc)
     close_writer(pid, entity_id)
 
     # Crash window: the park materialized but the outbox cursor write never
@@ -463,7 +465,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     _ = WalWriter.last_persisted_seq(pid)
 
     assert {"marker", _, _} = next_output(2_000)
-    assert [_exactly_one] = Flezha.Dlq.Store.list(rc)
+    assert [_exactly_one] = DlqStore.list(rc)
   end
 
   test "crash-tear: a torn park record loses neither offset nor park, together", %{
@@ -484,7 +486,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     File.write!(wal_path, binary_part(effect, 0, byte_size(effect) - 3))
     pid = start_writer(entity_id)
     _ = WalWriter.last_persisted_seq(pid)
-    assert Flezha.Dlq.Store.list(rc) == []
+    assert DlqStore.list(rc) == []
     assert InputLog.watermark(rc) == nil
     :ok = WalWriter.close(pid)
     File.rm!(wal_path)
@@ -495,7 +497,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     _ = WalWriter.last_persisted_seq(pid)
 
-    assert wait_until(fn -> Flezha.Dlq.Store.list(rc) != [] end, 2_000),
+    assert wait_until(fn -> DlqStore.list(rc) != [] end, 2_000),
            "park never materialized from the re-drive"
 
     assert InputLog.watermark(rc) == 9
@@ -690,12 +692,12 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
 
-    assert [entry] = Flezha.Dlq.Store.list(rc)
+    assert [entry] = DlqStore.list(rc)
     assert entry["entity_key"] == "k1"
     assert entry["channel"] == "out"
     assert entry["attempts"] == 6
     assert entry["error"] =~ "broker_gone"
-    assert {:ok, _entry, "doomed"} = Flezha.Dlq.Store.get("#{rc}/proc/#{entry["id"]}")
+    assert {:ok, _entry, "doomed"} = DlqStore.get("#{rc}/proc/#{entry["id"]}")
   end
 
   test "the in-flight window back-pressures the flush instead of dropping", %{

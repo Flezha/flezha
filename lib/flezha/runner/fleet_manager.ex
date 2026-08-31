@@ -1,12 +1,18 @@
 defmodule Flezha.Runner.FleetManager do
+  alias Flezha.AuthZ.QuotaCounters
+  alias Flezha.AuthZ.Quotas
+  alias Flezha.AuthZ.Scope
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Orchestrator
+  alias Flezha.Runner.ControlChannel
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.FleetSupervisor
   alias Flezha.Runner.StreamSup
   alias Flezha.Service.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
+  alias Flezha.Service.PluginManager
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
   alias Flezha.Convergence.Heal
   alias Flezha.Convergence.SafeCall
@@ -93,9 +99,9 @@ defmodule Flezha.Runner.FleetManager do
            Flezha.AuthZ.authorize(
              runner_ctx,
              :"runner.connect",
-             Flezha.AuthZ.Scope.build(namespace)
+             Scope.build(namespace)
            ),
-         :ok <- Flezha.AuthZ.Quotas.check_allocation(namespace, :max_runners) do
+         :ok <- Quotas.check_allocation(namespace, :max_runners) do
       :ok
     else
       {:error, {:quota_exceeded, _kind, %{current: current, limit: limit}} = reason} ->
@@ -298,7 +304,7 @@ defmodule Flezha.Runner.FleetManager do
   """
   @spec reset_control_channel(binary()) :: :ok | {:error, term()}
   def reset_control_channel(runner_id) when is_binary(runner_id) do
-    Flezha.Runner.ControlChannel.reset_stream_ref(runner_id)
+    ControlChannel.reset_stream_ref(runner_id)
   end
 
   @doc """
@@ -374,7 +380,7 @@ defmodule Flezha.Runner.FleetManager do
         # the time `{:flz_closed, …}` reaches the channels, or they diagnose
         # a teardown we asked for as one we did not.
         mark_runner_retiring(runner_id)
-        Flezha.Runner.ControlUnit.disconnect(runner_id)
+        ControlUnit.disconnect(runner_id)
 
         {:reply, :ok, state}
     end
@@ -446,7 +452,7 @@ defmodule Flezha.Runner.FleetManager do
           # processes are about to disappear with the namespace's hub —
           # the registry is the only thing that survives without explicit
           # cleanup.
-          _ = Flezha.Service.PluginManager.disable_namespace_plugins(namespace)
+          _ = PluginManager.disable_namespace_plugins(namespace)
 
           HubManager.stop_hub(namespace)
 
@@ -1030,7 +1036,7 @@ defmodule Flezha.Runner.FleetManager do
     if Flezha.AuthZ.enabled?() do
       Enum.each(state.runner_namespaces, fn {namespace, runners} ->
         active = Enum.count(runners, fn {_id, {status, _ts}} -> status == :active end)
-        Flezha.AuthZ.QuotaCounters.set(namespace, :runners, active)
+        QuotaCounters.set(namespace, :runners, active)
       end)
     end
 

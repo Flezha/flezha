@@ -20,6 +20,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.Service.Payloader
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
@@ -106,7 +107,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
                entity_key: key
              })
 
-    assert Flezha.Service.Payloader.json_to_map(json) == %{
+    assert Payloader.json_to_map(json) == %{
              @procedure => %{key => %{"seen" => ["#{key}:hello"]}}
            },
            "the read must return exactly the Entity asked for, holding what run() just applied"
@@ -130,7 +131,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   defp entity_keys(namespace, operative_id) do
     with {:ok, json} <- OperativeManager.get_entity_state(namespace, operative_id),
          %{@procedure => by_key} when is_map(by_key) <-
-           Flezha.Service.Payloader.json_to_map(json) do
+           Payloader.json_to_map(json) do
       by_key |> Map.keys() |> Enum.sort()
     else
       _ -> nil

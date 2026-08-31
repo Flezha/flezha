@@ -9,6 +9,7 @@ defmodule Flezha.Transport.DriverStatsTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Transport.Native
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     path =
@@ -33,7 +34,7 @@ defmodule Flezha.Transport.DriverStatsTest do
   test "loop heartbeat advances while the driver thread is alive", %{server: server} do
     first = Native.driver_stats(server)
 
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> Native.driver_stats(server).loop_iterations > first.loop_iterations end,
              5_000
            ),

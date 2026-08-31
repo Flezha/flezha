@@ -10,11 +10,12 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, Config, TokenStore}
+  alias FlezhaTest.Helper.AuthTestHelper
 
   alias Flezha.Service.CliManager
 
   setup do
-    _ = FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(prefix: "flz_authz_render")
+    _ = AuthTestHelper.setup_auth_stores(prefix: "flz_authz_render")
     :ok
   end
 

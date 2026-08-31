@@ -18,6 +18,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
   import ExUnit.CaptureIO
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.Builder
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
@@ -126,10 +127,10 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
     OperativeManager.send_io(victim, namespace, "BTC-USD:mis", %{"input_type" => "2"})
 
-    assert wait_until(fn -> Flezha.Dlq.Store.list(victim) != [] end),
+    assert wait_until(fn -> DlqStore.list(victim) != [] end),
            "a key #{victim} does not own must be parked, not folded into its state"
 
-    parked = Flezha.Dlq.Store.list(victim) |> hd()
+    parked = DlqStore.list(victim) |> hd()
     assert parked["error"] =~ "BTC-USD"
     assert parked["error"] =~ "key group 129"
     assert parked["error"] =~ "key_by"
@@ -159,9 +160,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     assert refusal =~ victim
 
     :ok =
-      Flezha.Dlq.Store.drop(
-        "#{parked["operative_class"]}/#{parked["procedure_id"]}/#{parked["id"]}"
-      )
+      DlqStore.drop("#{parked["operative_class"]}/#{parked["procedure_id"]}/#{parked["id"]}")
 
     # --- rescale: every key keeps its history under its new owner ---
     assert {:ok, rescaled} = PartitionGroup.rescale(namespace, group, 2)

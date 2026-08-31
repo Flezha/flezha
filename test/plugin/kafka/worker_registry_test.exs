@@ -1,5 +1,6 @@
 defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: registered singletons.
 
@@ -341,6 +342,13 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
             {:ok, _, ref} = WorkerRegistry.acquire(identity, reg)
             send(parent, {:acquired, ref})
 
+            # The registry announces every DOWN it has processed. Forwarding it
+            # is the barrier: until all three have arrived, a swap can still be
+            # answered off the entry the dead worker left behind.
+            receive do
+              {:kafka_worker_dead, ^ref, :killed} -> send(parent, {:dead, ref})
+            end
+
             receive do
               :swap ->
                 {:ok, _, new_ref} = WorkerRegistry.swap(ref, reg)
@@ -363,6 +371,10 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
 
       Process.exit(worker_pid, :kill)
 
+      for ref <- refs do
+        assert_receive {:dead, ^ref}, 500
+      end
+
       # The first swap triggers a new worker; the next two attach to that worker.
       Enum.each(caller_pids, fn pid -> send(pid, :swap) end)
 
@@ -377,7 +389,6 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
       assert entry.refs == 3
       assert entry.callers == 3
 
-      _ = refs
       Enum.each(caller_pids, fn pid -> send(pid, :stop) end)
     end
 
@@ -440,5 +451,5 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
   end
 
   defp eventually(check_fn, timeout),
-    do: FlezhaTest.Helper.NodeTestHelper.wait_until(check_fn, timeout, 5)
+    do: NodeTestHelper.wait_until(check_fn, timeout, 5)
 end

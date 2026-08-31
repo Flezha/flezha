@@ -24,7 +24,9 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.Payloader
 
   @moduletag :correction_e2e
   @moduletag timeout: 300_000
@@ -64,7 +66,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
 
     assert wait_until(
-             fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operative_id) end,
              30_000
            ),
            "the tier declaration never reached the controller"
@@ -130,7 +132,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
 
     assert wait_until(
-             fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operative_id) end,
              30_000
            )
 
@@ -148,7 +150,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   # assertion surface: the change is about ORDER, so the test looks at order.
   defp folded(namespace, operative_id) do
     with {:ok, json} <- OperativeManager.get_entity_state(namespace, operative_id),
-         %{@procedure => %{"folded" => folded}} <- Flezha.Service.Payloader.json_to_map(json) do
+         %{@procedure => %{"folded" => folded}} <- Payloader.json_to_map(json) do
       folded
     else
       _ -> nil

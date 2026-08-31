@@ -8,6 +8,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
 
   use ExUnit.Case, async: true
 
+  alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.Report
 
   describe "table/3" do
@@ -219,7 +220,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
     test "reads the model from the manifest, not from a clause here" do
       # Every SDK's topology comes from its own manifest; the gate keeps the
       # models inside a closed vocabulary.
-      for runtime <- Flezha.Service.PortPilot.runtimes() do
+      for runtime <- PortPilot.runtimes() do
         note = Report.dispatch_note(runtime)
         assert note =~ ~r/thread-pool|event-loop|process-per-entity/
       end

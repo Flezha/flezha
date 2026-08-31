@@ -14,6 +14,8 @@ defmodule Flezha.ConvergenceTest do
 
   alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, SafeCall, Snapshot}
   alias Flezha.Plugin
+  alias Flezha.State.Completion
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defp plugin(id) do
     Plugin.new(
@@ -736,14 +738,14 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "on timeout, probes the wedged target's mailbox depth and current function" do
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
 
       {:ok, pid} = GenServer.start_link(__MODULE__.WedgeServer, nil)
 
       # Wedge it: a blocking call leaves the server stuck inside handle_call.
       spawn(fn -> catch_exit(GenServer.call(pid, :block, :infinity)) end)
 
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn ->
                  Process.info(pid, :current_function) ==
                    {:current_function, {__MODULE__.WedgeServer, :handle_call, 3}}
@@ -779,7 +781,7 @@ defmodule Flezha.ConvergenceTest do
       # Regression: `Process.info/2` raises `ArgumentError` on a remote pid.
       # That raise is an :error, not an :exit, so the catch in workflow/3 never
       # covered it — it propagated out of Convergence.Loop and took the node down.
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
 
       args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
@@ -1238,7 +1240,7 @@ defmodule Flezha.ConvergenceTest do
       seed_entity(root, "done_workflow", "op", "k1")
 
       :ok =
-        Flezha.State.Completion.write("done_workflow", %{
+        Completion.write("done_workflow", %{
           namespace: "ns",
           status: "ok",
           error: "",

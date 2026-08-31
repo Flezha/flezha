@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.HubManager
   alias Flezha.Service.RegistryUpdate
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @sub_template ~s({"method":"subscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}})
   @unsub_template ~s({"method":"unsubscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}})
@@ -754,7 +755,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
           receive do
             msg ->
               {:ok, _} = Websocket.handle_info(msg, s)
-              FlezhaTest.Helper.NodeTestHelper.park()
+              NodeTestHelper.park()
           end
         end)
 

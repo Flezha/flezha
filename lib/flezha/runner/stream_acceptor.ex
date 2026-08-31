@@ -5,6 +5,7 @@ defmodule Flezha.Runner.StreamAcceptor do
   StreamChannel processes in round-robin order.
   """
 
+  alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream
   alias Flezha.Socket.Support, as: SocketSupport
@@ -26,7 +27,7 @@ defmodule Flezha.Runner.StreamAcceptor do
       {:ok, server_ref} ->
         Logger.info("[StreamAcceptor] Listening on #{path} for #{type} streams (#{runner_id})")
 
-        Flezha.Transport.LivenessCounters.register_driver(runner_id, type, server_ref)
+        LivenessCounters.register_driver(runner_id, type, server_ref)
         stream_ids = StreamSup.stream_ids(runner_id, type)
 
         {:ok,

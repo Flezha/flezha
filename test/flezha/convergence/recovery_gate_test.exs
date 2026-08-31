@@ -14,6 +14,7 @@ defmodule Flezha.Convergence.RecoveryGateTest do
 
   alias Flezha.Convergence.{Intent, RecoveryGate, Snapshot}
   alias Flezha.Service.Identificator
+  alias FlezhaTest.Helper.NodeTestHelper
 
   describe "ready_namespaces/1" do
     test ":normal hub is included in the ready set" do
@@ -52,7 +53,7 @@ defmodule Flezha.Convergence.RecoveryGateTest do
       ns = "rg_timeout_#{System.unique_integer([:positive])}"
       Snapshot.observe_recovery(Identificator.hub(ns), :timeout)
 
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->

@@ -6,6 +6,8 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   """
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
+  alias FlezhaTest.Helper.FleetStateHelper
+  alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
 
   # A redistribution really does start the injected child, so the default spec
@@ -77,7 +79,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   def inject_operative(ns, operative_id),
     do:
       inject_operative(ns, operative_id, [
-        {node(), spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)}
+        {node(), spawn(&NodeTestHelper.park/0)}
       ])
 
   @doc """
@@ -89,7 +91,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   def seed_runner(ns, runner_id, factory_id) do
     # One definition of "this namespace holds these runners advertising these
     # factories" — including the SDK language placement filters on.
-    FlezhaTest.Helper.FleetStateHelper.seed(ns, %{runner_id => [factory_id]})
+    FleetStateHelper.seed(ns, %{runner_id => [factory_id]})
     register_control_unit(runner_id)
   end
 
@@ -103,7 +105,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
       Task.start(fn ->
         {:ok, _} = Registry.register(Identificator, "#{runner_id}_cu", nil)
         send(owner, {:cu_registered, runner_id})
-        FlezhaTest.Helper.NodeTestHelper.park()
+        NodeTestHelper.park()
       end)
 
     receive do

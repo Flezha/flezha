@@ -1,4 +1,5 @@
 defmodule FlezhaTest.Fixtures.OperativeFixture do
+  alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
@@ -30,7 +31,7 @@ defmodule FlezhaTest.Fixtures.OperativeFixture do
       ]
     )
 
-    result = Flezha.Service.OperativeManager.start_operative(namespace, operative)
+    result = OperativeManager.start_operative(namespace, operative)
 
     receive do
       :hook_reg_insert_recv -> :ok
@@ -48,7 +49,7 @@ defmodule FlezhaTest.Fixtures.OperativeFixture do
   end
 
   def stop(operative_id, namespace \\ @default_namespace) do
-    Flezha.Service.OperativeManager.stop_operative(namespace, operative_id)
+    OperativeManager.stop_operative(namespace, operative_id)
   end
 
   def attach_output_msg(

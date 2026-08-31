@@ -3,16 +3,44 @@ defmodule Flezha.Service.CliManager do
   Provides recipes for the RPC calls.
   """
 
+  alias Flezha.AuthZ.QuotaCounters
+  alias Flezha.AuthZ.Scope
+  alias Flezha.AuthZ.TokenStore
+  alias Flezha.Observability.AuditLog.Writer
+  alias Flezha.Observability.Bus
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.Lifecycle
+  alias Flezha.Operative.Replay
   alias Flezha.Plugin
+  alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.SpecDecoder
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Schedule.Cron
+  alias Flezha.Schedule.Hub
+  alias Flezha.Schedule.Job
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Shutdown.Coordinator
+  alias Flezha.State.Commands
+  alias Flezha.State.Completion
+  alias Flezha.State.DurabilityTier
+  alias Flezha.State.InputLog
+  alias Flezha.State.Metrics
+  alias Flezha.State.Outbox
+  alias Flezha.State.Paths
+  alias Flezha.State.PersistenceResolver
+  alias Flezha.State.ProcInbox
+  alias Flezha.State.ProcJournal
+  alias Flezha.State.TimeTravel
+  alias Flezha.State.WalWriter
+  alias Flezha.State.Wire
 
   @doc "Starts a operative."
   def operative_start(
@@ -279,7 +307,7 @@ defmodule Flezha.Service.CliManager do
   def operative_rewind(namespace, operative_id, to_iter) do
     case OperativeManager.get_operative_pid(normalize_namespace(namespace), operative_id) do
       {:ok, pid} ->
-        print_rewind(operative_id, to_iter, Flezha.Operative.Lifecycle.rewind(pid, to_iter))
+        print_rewind(operative_id, to_iter, Lifecycle.rewind(pid, to_iter))
 
       _ ->
         cli_error!("Error: operative '#{operative_id}' not found")
@@ -775,7 +803,7 @@ defmodule Flezha.Service.CliManager do
   """
   @spec cluster_status_recovery(binary(), [node()]) :: map()
   def cluster_status_recovery(namespace, nodes) do
-    hub_id = Flezha.Service.Identificator.hub(namespace)
+    hub_id = Identificator.hub(namespace)
 
     Map.new(nodes, fn n ->
       state =
@@ -1054,14 +1082,14 @@ defmodule Flezha.Service.CliManager do
   defp finished_operatives(namespace, live_ids) do
     now = System.system_time(:second)
 
-    Flezha.State.Paths.operative_classes()
+    Paths.operative_classes()
     |> Enum.reject(&(&1 in live_ids))
     |> Enum.flat_map(fn operative_id ->
-      case Flezha.State.Completion.read(operative_id) do
+      case Completion.read(operative_id) do
         {:ok, %{namespace: ns, finished_at: fa} = rec}
         when ns == namespace and is_integer(fa) ->
           window =
-            Flezha.State.PersistenceResolver.workflow_completed_retention_hours(operative_id)
+            PersistenceResolver.workflow_completed_retention_hours(operative_id)
 
           if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
 
@@ -1250,7 +1278,7 @@ defmodule Flezha.Service.CliManager do
       "_system",
       %{path: path},
       fn ->
-        case Flezha.Plugin.Installer.install(path) do
+        case Installer.install(path) do
           {:ok, installed} ->
             IO.puts(
               "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
@@ -1271,7 +1299,7 @@ defmodule Flezha.Service.CliManager do
       "_system",
       %{plugin_id: plugin_id},
       fn ->
-        case Flezha.Plugin.Installer.upgrade(plugin_id, path) do
+        case Installer.upgrade(plugin_id, path) do
           {:ok, installed} ->
             IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
 
@@ -1290,7 +1318,7 @@ defmodule Flezha.Service.CliManager do
       "_system",
       %{plugin_id: plugin_id},
       fn ->
-        case Flezha.Plugin.Installer.uninstall(plugin_id) do
+        case Installer.uninstall(plugin_id) do
           :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
           {:error, reason} -> cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
         end
@@ -1306,7 +1334,7 @@ defmodule Flezha.Service.CliManager do
       "_system",
       %{plugin_id: plugin_id},
       fn ->
-        case Flezha.Plugin.Installer.enable(plugin_id) do
+        case Installer.enable(plugin_id) do
           :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
           {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
         end
@@ -1322,7 +1350,7 @@ defmodule Flezha.Service.CliManager do
       "_system",
       %{plugin_id: plugin_id},
       fn ->
-        case Flezha.Plugin.Installer.disable(plugin_id) do
+        case Installer.disable(plugin_id) do
           :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
           {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
         end
@@ -1334,7 +1362,7 @@ defmodule Flezha.Service.CliManager do
   List every installed plugin. `format` is `"text" | "json"`.
   """
   def list_installed_plugins(format \\ "text") do
-    plugins = Flezha.Plugin.Installer.list()
+    plugins = Installer.list()
 
     case format do
       "json" ->
@@ -1358,7 +1386,7 @@ defmodule Flezha.Service.CliManager do
 
   @doc "Return detailed information about an installed plugin."
   def installed_plugin_info(plugin_id) do
-    case Flezha.Plugin.Installer.info(plugin_id) do
+    case Installer.info(plugin_id) do
       {:ok, p} ->
         IO.puts("#{p.id}@#{p.version}")
         IO.puts("  Status: #{p.status}")
@@ -1381,7 +1409,7 @@ defmodule Flezha.Service.CliManager do
   so the CLI's `enable`/`disable` commands know which code path to use.
   """
   def installed_plugin?(plugin_id) do
-    case Flezha.Plugin.Installer.info(plugin_id) do
+    case Installer.info(plugin_id) do
       {:ok, _} -> true
       _ -> false
     end
@@ -1484,9 +1512,9 @@ defmodule Flezha.Service.CliManager do
   """
   def boot_status() do
     rows =
-      Flezha.Service.HubManager.get_running_namespaces()
+      HubManager.get_running_namespaces()
       |> Enum.map(fn namespace ->
-        hub_id = Flezha.Service.Identificator.hub(namespace)
+        hub_id = Identificator.hub(namespace)
         recovery_state = safe_recovery_state(hub_id)
         registry_count = safe_registry_count(hub_id)
 
@@ -1528,11 +1556,11 @@ defmodule Flezha.Service.CliManager do
   reports `:normal`, or the per-hub timeout elapses.
   """
   def boot_await(timeout_ms \\ 60_000) when is_integer(timeout_ms) do
-    namespaces = Flezha.Service.HubManager.get_running_namespaces()
+    namespaces = HubManager.get_running_namespaces()
 
     failures =
       Enum.flat_map(namespaces, fn namespace ->
-        hub_id = Flezha.Service.Identificator.hub(namespace)
+        hub_id = Identificator.hub(namespace)
 
         try do
           case ProcessHub.Service.Recovery.await_normal(hub_id, timeout_ms) do
@@ -1596,7 +1624,7 @@ defmodule Flezha.Service.CliManager do
     namespaces = Map.get(payload, :namespaces, [])
 
     Enum.find_value(namespaces, :ok, fn ns ->
-      hub_id = Flezha.Service.Identificator.hub(ns)
+      hub_id = Identificator.hub(ns)
 
       if safe_registry_count(hub_id) > 0 do
         {:error, {:hub_not_empty, ns}}
@@ -1612,7 +1640,7 @@ defmodule Flezha.Service.CliManager do
     Enum.each(operatives, fn entry ->
       namespace = Map.fetch!(entry, :namespace)
       cspec = Map.fetch!(entry, :cspec)
-      hub_id = Flezha.Service.Identificator.hub(namespace)
+      hub_id = Identificator.hub(namespace)
 
       # Declared like any operator start: an imported operative the declared
       # set never learns about would be invisible to the reconcile — imported
@@ -1648,7 +1676,7 @@ defmodule Flezha.Service.CliManager do
            Flezha.AuthZ.authorize(
              cli_context(opts),
              :"state.get",
-             Flezha.AuthZ.Scope.build(namespace)
+             Scope.build(namespace)
            ),
          {:ok, json, change_seq} <-
            read_entity_state(namespace, targets, procedure, entity_key),
@@ -1750,7 +1778,7 @@ defmodule Flezha.Service.CliManager do
   # Operative is the way to blow it, and naming the narrowing selector is the
   # way out.
   defp within_read_ceiling(json) do
-    limit = Flezha.State.PersistenceResolver.wal_high_watermark_bytes()
+    limit = PersistenceResolver.wal_high_watermark_bytes()
 
     case byte_size(json) do
       bytes when bytes > limit -> {:error, {:oversized_state, bytes}}
@@ -1821,10 +1849,10 @@ defmodule Flezha.Service.CliManager do
 
   defp do_state_list(operative_class, output_format) do
     rows =
-      for {{rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
+      for {{rc, sh, pk} = pid, counters} <- Metrics.snapshot_all(),
           rc == operative_class do
         wal_bytes =
-          case :file.read_file_info(Flezha.State.Paths.wal_path(pid)) do
+          case :file.read_file_info(Paths.wal_path(pid)) do
             {:ok, info} -> elem(info, 1)
             _ -> 0
           end
@@ -1874,7 +1902,7 @@ defmodule Flezha.Service.CliManager do
       {:ok, entity_id} ->
         target = parse_state_target(target_string)
 
-        case Flezha.State.TimeTravel.query(entity_id, target) do
+        case TimeTravel.query(entity_id, target) do
           {:ok, result} ->
             print_state_at(entity_id, target, result, output_format)
 
@@ -1924,7 +1952,7 @@ defmodule Flezha.Service.CliManager do
           fn ->
             case lookup_runner_for_entity(rc, sh, pk) do
               {:ok, runner_id} ->
-                case Flezha.State.Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
+                case Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
                   {:ok, _ref} ->
                     IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
 
@@ -1949,7 +1977,7 @@ defmodule Flezha.Service.CliManager do
   defp state_target_namespace(operative_class) do
     case OperativeManager.namespace_of(operative_class) do
       {:ok, namespace} -> namespace
-      :error -> Flezha.State.Paths.namespace_of_class(operative_class)
+      :error -> Paths.namespace_of_class(operative_class)
     end
   end
 
@@ -1997,10 +2025,10 @@ defmodule Flezha.Service.CliManager do
         status =
           case Flezha.State.Supervisor.lookup(entity_id) do
             {:ok, pid} ->
-              Flezha.State.WalWriter.outbox_status(pid)
+              WalWriter.outbox_status(pid)
 
             :error ->
-              dedup = Flezha.State.Outbox.read(entity_id)
+              dedup = Outbox.read(entity_id)
 
               %{
                 last_persisted_seq: dedup.last_persisted_seq,
@@ -2010,7 +2038,7 @@ defmodule Flezha.Service.CliManager do
               }
           end
 
-        watermark = Flezha.State.InputLog.watermark(rc)
+        watermark = InputLog.watermark(rc)
 
         IO.puts("entity            #{rc}/#{sh}/#{pk}")
         IO.puts("last_persisted_seq #{status.last_persisted_seq}")
@@ -2038,7 +2066,7 @@ defmodule Flezha.Service.CliManager do
     with {:ok, {operative_class, _, _} = entity_id} <- parse_state_path(path_string),
          {:ok, overwatch} <- resolve_replay_overwatch(namespace, operative_class),
          {:ok, target_seq} <- resolve_replay_seq(entity_id, from_string) do
-      Flezha.Operative.Replay.replay_from(overwatch, entity_id, target_seq)
+      Replay.replay_from(overwatch, entity_id, target_seq)
 
       IO.puts(
         "Replaying #{path_string} from seq #{target_seq}. Outputs republish under a " <>
@@ -2060,7 +2088,7 @@ defmodule Flezha.Service.CliManager do
   defp resolve_replay_overwatch(namespace, operative_class) do
     _ = normalize_namespace(namespace)
 
-    case Flezha.Operative.ClassRegistry.overwatch_pid(operative_class) do
+    case ClassRegistry.overwatch_pid(operative_class) do
       {:ok, pid} -> {:ok, pid}
       :error -> {:error, {:not_running, operative_class}}
     end
@@ -2069,7 +2097,7 @@ defmodule Flezha.Service.CliManager do
   # A `--from` is a WAL seq or a point in time; the same `TimeTravel` resolution
   # `flz state at` uses, which is now exact rather than an mtime approximation.
   defp resolve_replay_seq(entity_id, from_string) do
-    case Flezha.State.TimeTravel.query(entity_id, parse_state_target(from_string)) do
+    case TimeTravel.query(entity_id, parse_state_target(from_string)) do
       {:ok, %{terminal_seq: seq}} -> {:ok, seq}
       {:error, err} -> {:error, err}
     end
@@ -2081,11 +2109,11 @@ defmodule Flezha.Service.CliManager do
   proc index, iteration, the entities that ran, and the handoff batch size.
   """
   def state_journal(instance_id, output_format \\ "text", _opts \\ []) do
-    {:ok, entries} = Flezha.State.ProcJournal.read(instance_id)
+    {:ok, entries} = ProcJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
-    leaf_procs = Flezha.Operative.ClassRegistry.leaf_procs(instance_id)
-    complete = Flezha.State.ProcJournal.complete?(instance_id, leaf_procs)
+    leaf_procs = ClassRegistry.leaf_procs(instance_id)
+    complete = ProcJournal.complete?(instance_id, leaf_procs)
 
     case output_format do
       "json" ->
@@ -2123,7 +2151,7 @@ defmodule Flezha.Service.CliManager do
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
     |> Map.merge(%{
-      entities_ran: Enum.map(payload.entities_ran, &Flezha.State.Wire.entity_label/1),
+      entities_ran: Enum.map(payload.entities_ran, &Wire.entity_label/1),
       outbox: journal_outbox(payload.outbox)
     })
   end
@@ -2197,7 +2225,7 @@ defmodule Flezha.Service.CliManager do
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
-        entity: Flezha.State.Wire.entity_label(item.entity_id),
+        entity: Wire.entity_label(item.entity_id),
         seq_in_proc: item.seq_in_proc,
         channel: item.channel,
         bytes: byte_size(item.payload)
@@ -2255,8 +2283,8 @@ defmodule Flezha.Service.CliManager do
   iteration recorded).
   """
   def state_inbox(instance_id, output_format \\ "text", _opts \\ []) do
-    entries = Flezha.State.ProcInbox.read(instance_id)
-    consumed = Flezha.State.ProcJournal.consumed_offset(instance_id)
+    entries = ProcInbox.read(instance_id)
+    consumed = ProcJournal.consumed_offset(instance_id)
 
     rows =
       Enum.map(entries, fn entry ->
@@ -2332,13 +2360,13 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp has_persisted_state?(rc, sh, pk) do
-    Enum.any?(Flezha.State.Paths.all_entities(), fn {r, s, p} ->
+    Enum.any?(Paths.all_entities(), fn {r, s, p} ->
       r == rc and s == sh and p == pk
     end)
   end
 
   defp hydrated_state?(rc, sh, pk) do
-    Flezha.State.DurabilityTier.hydrate_entities(rc, sh, [pk])
+    DurabilityTier.hydrate_entities(rc, sh, [pk])
     has_persisted_state?(rc, sh, pk)
   end
 
@@ -2395,7 +2423,7 @@ defmodule Flezha.Service.CliManager do
       |> maybe_put(:force, force || nil)
 
     if no_wait do
-      _ = Task.start(fn -> Flezha.Shutdown.Coordinator.shutdown(:cli, shutdown_opts) end)
+      _ = Task.start(fn -> Coordinator.shutdown(:cli, shutdown_opts) end)
       IO.puts("[shutdown] dispatched (no-wait)")
       IO.puts("flz-controller-stop-result: clean")
       :ok
@@ -2418,7 +2446,7 @@ defmodule Flezha.Service.CliManager do
       start_ms = System.monotonic_time(:millisecond)
 
       try do
-        case Flezha.Shutdown.Coordinator.shutdown(:cli, shutdown_opts) do
+        case Coordinator.shutdown(:cli, shutdown_opts) do
           :ok ->
             duration = System.monotonic_time(:millisecond) - start_ms
             outcome = if force, do: :forced, else: :clean
@@ -2551,20 +2579,19 @@ defmodule Flezha.Service.CliManager do
   # operatives is how a placement problem shows up here.
   defp durability_status() do
     %{
-      durability_backend: Flezha.State.DurabilityTier.configured_backend(),
+      durability_backend: DurabilityTier.configured_backend(),
       # `local_only` is a supported posture, not a misconfiguration — but it is
       # one a fleet audit has to be able to find, so it is reported rather than
       # left to be inferred from the backend name.
-      durability_posture: Flezha.State.DurabilityTier.posture(),
-      durability_rpo_breaches: length(Flezha.State.DurabilityTier.breaches()),
-      durability_superseded:
-        Enum.count(Flezha.State.DurabilityTier.status(), &(&1.superseded_by != nil))
+      durability_posture: DurabilityTier.posture(),
+      durability_rpo_breaches: length(DurabilityTier.breaches()),
+      durability_superseded: Enum.count(DurabilityTier.status(), &(&1.superseded_by != nil))
     }
   end
 
   defp safe_shutdown_status() do
     try do
-      Flezha.Shutdown.Coordinator.status()
+      Coordinator.status()
     catch
       :exit, _ ->
         %{
@@ -3068,7 +3095,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp bind_token_identity(base, token) do
-    case Flezha.AuthZ.TokenStore.verify(token) do
+    case TokenStore.verify(token) do
       {:ok, %{principal: principal, namespace: namespace, role: role}} ->
         base
         |> Map.put(:principal, principal)
@@ -3091,7 +3118,7 @@ defmodule Flezha.Service.CliManager do
   defp authorize_cli!(opts, action, namespace) do
     ctx = cli_context(opts)
 
-    case Flezha.AuthZ.authorize(ctx, action, Flezha.AuthZ.Scope.build(namespace)) do
+    case Flezha.AuthZ.authorize(ctx, action, Scope.build(namespace)) do
       :ok ->
         ctx
 
@@ -3243,7 +3270,7 @@ defmodule Flezha.Service.CliManager do
          :ok <- AuthZ.authorize(cli_ctx, :"authz.namespace_delete", Scope.build(name)) do
       case NamespaceStore.delete(name) do
         :ok ->
-          _ = Flezha.AuthZ.QuotaCounters.drop_namespace(name)
+          _ = QuotaCounters.drop_namespace(name)
           emit_cli_audit(:namespace_deleted, Map.get(cli_ctx, :principal), %{namespace: name})
           :ok
 
@@ -3572,8 +3599,8 @@ defmodule Flezha.Service.CliManager do
   defp emit_cli_audit(name, principal, extra) do
     metadata = Map.merge(extra, %{principal: principal})
 
-    Flezha.Observability.Bus.emit(
-      Flezha.Observability.Signal.new(%{
+    Bus.emit(
+      Signal.new(%{
         kind: :event,
         source: @authz_source,
         name: name,
@@ -3766,7 +3793,7 @@ defmodule Flezha.Service.CliManager do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     if remaining <= 0 do
-      _ = Flezha.Observability.AuditLog.Writer.unsubscribe_tail(ref)
+      _ = Writer.unsubscribe_tail(ref)
       :ok
     else
       receive do
@@ -3783,7 +3810,7 @@ defmodule Flezha.Service.CliManager do
       after
         min(remaining, 1_000) ->
           if System.monotonic_time(:millisecond) >= deadline do
-            _ = Flezha.Observability.AuditLog.Writer.unsubscribe_tail(ref)
+            _ = Writer.unsubscribe_tail(ref)
             :ok
           else
             do_audit_tail_loop(ref, format, deadline)
@@ -3965,7 +3992,7 @@ defmodule Flezha.Service.CliManager do
   defp replayable(_payload), do: :ok
 
   defp resolve_overwatch(operative_class) do
-    case Flezha.Operative.ClassRegistry.overwatch_pid(operative_class) do
+    case ClassRegistry.overwatch_pid(operative_class) do
       {:ok, pid} -> {:ok, pid}
       :error -> resolve_overwatch_cluster(operative_class)
     end
@@ -4057,7 +4084,7 @@ defmodule Flezha.Service.CliManager do
              plugins: plugins_json
            }) do
       schedule_warn_absent_factory(ns, factory_id)
-      _ = Flezha.Schedule.Hub.assert(entry)
+      _ = Hub.assert(entry)
 
       IO.puts(
         "Schedule #{name} added (#{cron_expr} #{timezone}); next fire #{schedule_next_fire(entry)}"
@@ -4073,7 +4100,7 @@ defmodule Flezha.Service.CliManager do
         IO.puts("no schedules")
 
       entries ->
-        statuses = Flezha.Schedule.Hub.statuses()
+        statuses = Hub.statuses()
 
         IO.puts(
           schedule_row([
@@ -4131,7 +4158,7 @@ defmodule Flezha.Service.CliManager do
     # resurrect the job before the row is gone.
     case Flezha.Schedule.Store.remove(name) do
       :ok ->
-        _ = Flezha.Schedule.Hub.retract(name)
+        _ = Hub.retract(name)
         IO.puts("Schedule #{name} removed")
 
       {:error, :not_found} ->
@@ -4145,7 +4172,7 @@ defmodule Flezha.Service.CliManager do
     with {:ok, entry} <- schedule_entry(name),
          instance_id = "#{name}@manual-#{System.system_time(:second)}",
          {:ok, %{operative_id: id}} <-
-           Flezha.Schedule.Job.spawn_instance(entry, instance_id) do
+           Job.spawn_instance(entry, instance_id) do
       IO.puts("Spawned #{id}")
     else
       :duplicate -> IO.puts("instance already running; no-op")
@@ -4184,7 +4211,7 @@ defmodule Flezha.Service.CliManager do
 
   # Warn-only: the factory's runner may simply not have connected yet.
   defp schedule_warn_absent_factory(namespace, factory_id) do
-    case Flezha.Runner.FleetManager.runners_for_factory(namespace, factory_id) do
+    case FleetManager.runners_for_factory(namespace, factory_id) do
       [] ->
         IO.puts(
           "warning: factory #{factory_id} has no live runner in namespace #{namespace}; " <>
@@ -4199,8 +4226,8 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp schedule_next_fire(entry) do
-    with {:ok, cron} <- Flezha.Schedule.Cron.parse(entry.cron),
-         {:ok, next} <- Flezha.Schedule.Cron.next_fire(cron, entry.timezone, DateTime.utc_now()) do
+    with {:ok, cron} <- Cron.parse(entry.cron),
+         {:ok, next} <- Cron.next_fire(cron, entry.timezone, DateTime.utc_now()) do
       DateTime.to_iso8601(next)
     else
       _ -> "never"

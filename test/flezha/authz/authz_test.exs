@@ -13,10 +13,11 @@ defmodule Flezha.AuthZTest do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, Scope}
+  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
     ctx =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_authz",
         stores: [AuthState, RoleStore, NamespaceStore],
         claim: true

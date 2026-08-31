@@ -11,6 +11,9 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.Ctx
+  alias Flezha.Socket.Support
+  alias Flezha.Transport.Native
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Service.OperativeManager
   alias Flezha.Operative.Builder
@@ -28,7 +31,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
         pid -> send(pid, {:sdk_socket_ran, input})
       end
 
-      Flezha.SDK.Ctx.emit(ctx, input)
+      Ctx.emit(ctx, input)
       {:ok, s}
     end
   end
@@ -49,13 +52,13 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     # Node runner reaches through `flz_core`. That a Rust runner started in the
     # same environment lands on the same directory is proven end to end by
     # `test/system/connect_discovery_e2e_test.exs`, under every runtime.
-    configured = Flezha.Socket.Support.socket_dir()
+    configured = Support.socket_dir()
 
     assert {:ok, runner_dir, _quic} =
-             Flezha.Transport.Native.resolve_connect("runner", configured, nil)
+             Native.resolve_connect("runner", configured, nil)
 
     assert {:ok, controller_dir, _quic} =
-             Flezha.Transport.Native.resolve_connect("controller", configured, nil)
+             Native.resolve_connect("controller", configured, nil)
 
     assert runner_dir == controller_dir
     assert runner_dir == configured
@@ -67,7 +70,7 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     # controller's own listener path so the same-node dial finds it.
     prev = System.get_env("FLEZHA_SOCKET_FILES_PATH")
 
-    System.put_env("FLEZHA_SOCKET_FILES_PATH", Flezha.Socket.Support.socket_dir())
+    System.put_env("FLEZHA_SOCKET_FILES_PATH", Support.socket_dir())
 
     ns = "sdk_socket_#{System.unique_integer([:positive])}"
     Process.register(self(), @probe)

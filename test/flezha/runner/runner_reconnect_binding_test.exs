@@ -187,5 +187,5 @@ defmodule FlezhaTest.Runner.RunnerReconnectBindingTest do
   end
 
   defp eventually(fun, attempts \\ 40),
-    do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, attempts * 25, 25)
+    do: NodeTestHelper.wait_until(fun, attempts * 25, 25)
 end

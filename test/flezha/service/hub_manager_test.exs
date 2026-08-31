@@ -21,6 +21,8 @@ defmodule Flezha.Service.HubManagerTest do
   alias Flezha.Plugin
   alias Flezha.Operative.Builder
   alias Flezha.Service.HubManager
+  alias ProcessHub.Service.Recovery, as: HubRecovery
+  alias ProcessHub.Storage.RemoteManifest
 
   @namespace "default"
 
@@ -296,7 +298,7 @@ defmodule Flezha.Service.HubManagerTest do
       try do
         config = HubManager.auto_recovery_config()
 
-        assert {:ok, parsed} = ProcessHub.Service.Recovery.parse_config(config)
+        assert {:ok, parsed} = HubRecovery.parse_config(config)
         assert parsed.enabled?
         assert parsed.reconcile_grace_ms == Keyword.fetch!(config, :reconcile_grace_ms)
         assert parsed.reconcile_interval_ms == Keyword.fetch!(config, :reconcile_interval_ms)
@@ -329,14 +331,14 @@ defmodule Flezha.Service.HubManagerTest do
       try do
         config = HubManager.auto_recovery_config()
 
-        assert {:ok, parsed} = ProcessHub.Service.Recovery.parse_config(config)
+        assert {:ok, parsed} = HubRecovery.parse_config(config)
 
         assert parsed.remote_manifest ==
                  {Flezha.State.DurabilityTier.DeclaredManifest, []}
 
         # The adapter must also pass the hub's start-time validation, or the
         # tier being on would fail every namespace hub start.
-        assert :ok = ProcessHub.Storage.RemoteManifest.validate(parsed.remote_manifest)
+        assert :ok = RemoteManifest.validate(parsed.remote_manifest)
       after
         Application.put_env(:flezha, :auto_restore_enabled, previous_restore)
 

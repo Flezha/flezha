@@ -1,10 +1,16 @@
 defmodule Flezha.Runner.StreamChannel do
+  alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Operative.Replay
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.CreditLedger
+  alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
+  alias Flezha.State.Snapshot, as: StateSnapshot
+  alias Flezha.State.WalWriter
+  alias Flezha.State.Watchdog
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.LivenessCounters
 
@@ -516,7 +522,7 @@ defmodule Flezha.Runner.StreamChannel do
   defp route(state, operative_id) do
     case Map.get(state.operative_mapping, operative_id, []) do
       [] ->
-        case Flezha.Operative.ClassRegistry.overwatch_pid(operative_id) do
+        case ClassRegistry.overwatch_pid(operative_id) do
           {:ok, pid} ->
             {:ok, pid}
 
@@ -585,7 +591,7 @@ defmodule Flezha.Runner.StreamChannel do
                 state
 
               {credit_opts, state} ->
-                Flezha.State.WalWriter.append_async(
+                WalWriter.append_async(
                   pid,
                   seq,
                   header,
@@ -621,7 +627,7 @@ defmodule Flezha.Runner.StreamChannel do
            StateWire.decode_frame(frame),
          {:ok, target} <- StateWire.decode_correction_request(body),
          {:ok, overwatch} <- ClassRegistry.overwatch_pid(operative_class) do
-      Flezha.Operative.Replay.request_correction(overwatch, entity_id, target)
+      Replay.request_correction(overwatch, entity_id, target)
     else
       other ->
         Logger.warning("[stream] undecodable correction_request: #{inspect(other)}")
@@ -633,7 +639,7 @@ defmodule Flezha.Runner.StreamChannel do
          {:ok, park} <- StateWire.decode_park_body(body) do
       runner_id = state.runner_id
 
-      Flezha.Dlq.Store.append_async(
+      DlqStore.append_async(
         %{
           operative_class: rc,
           procedure_id: sh,
@@ -833,7 +839,7 @@ defmodule Flezha.Runner.StreamChannel do
 
         spawn(fn ->
           with {:error, reason} <-
-                 Flezha.State.Paths.write_compensation_marker(entity_id, kind) do
+                 Paths.write_compensation_marker(entity_id, kind) do
             Logger.error(
               "[stream] compensation marker write failed " <>
                 "entity=#{inspect(entity_id)} kind=#{kind}: #{inspect(reason)}"
@@ -868,9 +874,9 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   defp write_snapshot(entity_id, seq, header, body) do
-    Flezha.State.Watchdog.compaction_completed(entity_id)
+    Watchdog.compaction_completed(entity_id)
 
-    case Flezha.State.Snapshot.write_snapshot(entity_id, seq, header, body) do
+    case StateSnapshot.write_snapshot(entity_id, seq, header, body) do
       {:ok, _path} ->
         :ok
 

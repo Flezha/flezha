@@ -23,6 +23,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Metrics
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "credit_flow_e2e"
@@ -126,8 +127,8 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     await_seq(writer, @input_count, 60_000)
 
     # Zero sheds / zero overruns: the sender honoured its window end-to-end.
-    metrics = Flezha.State.Metrics.for_entity(entity_id)
-    assert Flezha.State.Metrics.get(metrics, :wal_shed_total) == 0
+    metrics = Metrics.for_entity(entity_id)
+    assert Metrics.get(metrics, :wal_shed_total) == 0
 
     row = active_credit_row(ce_id)
     assert row, "no credit-speaking secondary channel row for #{ce_id}"

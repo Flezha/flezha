@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
 
   alias Flezha.Dlq.Store
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
@@ -144,7 +145,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
     assert {:ok, _info} = OperativeManager.start_operative(namespace, builder)
 
     assert wait_until(
-             fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operative_id) end,
              30_000
            )
 

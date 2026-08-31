@@ -14,13 +14,16 @@
 defmodule Flezha.Bench.EchoProc do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "do_nothing_procedure"
   def init_state(_), do: nil
 
   def run(input, s, ctx),
     do:
       (
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       )
 end
@@ -39,13 +42,16 @@ end
 defmodule Flezha.Bench.StressA do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "stress_a"
   def init_state(_), do: nil
 
   def run(input, s, ctx),
     do:
       (
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       )
 
@@ -57,13 +63,16 @@ end
 defmodule Flezha.Bench.StressB do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "stress_b"
   def init_state(_), do: nil
 
   def run(input, s, ctx),
     do:
       (
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       )
 
@@ -74,13 +83,16 @@ end
 defmodule Flezha.Bench.StressC do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "stress_c"
   def init_state(_), do: nil
 
   def run(input, s, ctx),
     do:
       (
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       )
 
@@ -91,13 +103,16 @@ end
 defmodule Flezha.Bench.StressD do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "stress_d"
   def init_state(_), do: nil
 
   def run(input, s, ctx),
     do:
       (
-        Flezha.SDK.Ctx.emit(ctx, input)
+        Ctx.emit(ctx, input)
         {:ok, s}
       )
 
@@ -130,6 +145,9 @@ end
 defmodule Flezha.Bench.DynamicProc do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "dynamic_entity_procedure"
   def init_state(_), do: %{seen: []}
 
@@ -137,7 +155,7 @@ defmodule Flezha.Bench.DynamicProc do
   # neither, so the state is a plain term and the Entity lives for the
   # operative's lifetime.
   def run(input, s, ctx) do
-    Flezha.SDK.Ctx.emit(ctx, input)
+    Ctx.emit(ctx, input)
     {:ok, %{s | seen: [input | s.seen]}}
   end
 end
@@ -181,6 +199,9 @@ end
 defmodule Flezha.Bench.TierStoreProc do
   @moduledoc false
   @behaviour Flezha.SDK.Procedure
+
+  alias Flezha.SDK.Ctx
+
   def name, do: "tier_store_procedure"
   def init_state(_), do: %{}
 
@@ -195,7 +216,7 @@ defmodule Flezha.Bench.TierStoreProc do
     if value == "poison" do
       {:error, "poison value"}
     else
-      Flezha.SDK.Ctx.emit(ctx, "#{key}=#{value}")
+      Ctx.emit(ctx, "#{key}=#{value}")
       {:ok, Map.put(values, key, value)}
     end
   end

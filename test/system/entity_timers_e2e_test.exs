@@ -20,6 +20,7 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
 
   use FlezhaTest.SystemCase, capability: :entity_timers
 
+  alias Flezha.Service.Payloader
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
@@ -135,7 +136,7 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   defp state_of(namespace, operative_id) do
     case OperativeManager.get_entity_state(namespace, operative_id) do
       {:ok, json} ->
-        case Flezha.Service.Payloader.json_to_map(json) do
+        case Payloader.json_to_map(json) do
           %{@procedure => entity} -> entity
           other -> other
         end
@@ -161,5 +162,5 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   end
 
   defp wait_until(fun, timeout_ms),
-    do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, timeout_ms, 100)
+    do: NodeTestHelper.wait_until(fun, timeout_ms, 100)
 end

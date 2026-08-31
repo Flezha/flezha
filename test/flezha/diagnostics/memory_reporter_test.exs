@@ -5,6 +5,7 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Diagnostics.MemoryReporter
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @env_var "FLEZHA_MEMORY_REPORT_INTERVAL_MS"
 
@@ -123,7 +124,7 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
     test "emits the reading line at :info so it reaches Loki" do
       # Test config pins the primary level to :error; lower it so the :info
       # line is emitted, then restore.
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:info))
+      on_exit(NodeTestHelper.override_log_level(:info))
 
       {:ok, pid} = GenServer.start_link(MemoryReporter, %{interval_ms: 10_000})
 

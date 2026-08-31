@@ -10,6 +10,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.FleetManager
+  alias Flezha.SDK.Ctx
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Service.OperativeManager
   alias Flezha.Operative.Builder
@@ -27,7 +28,7 @@ defmodule Flezha.SDK.InNodeE2ETest do
         pid -> send(pid, {:sdk_probe_ran, input})
       end
 
-      Flezha.SDK.Ctx.emit(ctx, input)
+      Ctx.emit(ctx, input)
       {:ok, s}
     end
   end

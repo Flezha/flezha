@@ -16,9 +16,10 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
   @moduletag :capture_log
 
   alias Flezha.Runner.ControlUnit
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
-    on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+    on_exit(NodeTestHelper.override_log_level(:warning))
   end
 
   test "heartbeat unblocks the stuck caller when a control reply is unacked past the threshold" do

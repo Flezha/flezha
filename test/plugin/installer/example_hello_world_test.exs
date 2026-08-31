@@ -18,6 +18,7 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Installer.Store
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @example_dir Path.expand("../../../examples/plugins/hello_world", __DIR__)
 
@@ -120,7 +121,7 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
     try do
       case Process.whereis(mod) do
         nil -> :ok
-        pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       end
     catch
       :exit, _ -> :ok

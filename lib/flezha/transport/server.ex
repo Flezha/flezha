@@ -27,6 +27,9 @@ defmodule Flezha.Transport.Server do
     correct StreamChannel based on the most recently established compute engine.
   """
 
+  alias Flezha.Service.Identificator
+  alias Flezha.Service.Payloader
+  alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Native
   alias Flezha.Transport.Stream, as: TStream
   alias Flezha.Transport.Local
@@ -283,7 +286,7 @@ defmodule Flezha.Transport.Server do
 
   defp init_quic do
     # Ensure TLS certificates exist before starting QUIC server.
-    Flezha.Transport.CertGenerator.ensure_certs()
+    CertGenerator.ensure_certs()
 
     bind_address = Application.get_env(:flezha, :quic_listen_address, "0.0.0.0:4433")
     cert_path = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
@@ -462,7 +465,7 @@ defmodule Flezha.Transport.Server do
   end
 
   defp handle_new_runner(stream_ref, conn_id, init_message, state) do
-    init_payload = Flezha.Service.Payloader.json_to_map(init_message)
+    init_payload = Payloader.json_to_map(init_message)
     namespace = Map.get(init_payload, "namespace")
 
     # Dispatch to FleetManager — this creates the RunnerSupervisor.
@@ -524,7 +527,7 @@ defmodule Flezha.Transport.Server do
   defp track_quic_connection(state, conn_id, runner_id) do
     state = put_in(state, [:quic_conn_runners, conn_id], runner_id)
 
-    case GenServer.whereis(Flezha.Service.Identificator.control_channel(runner_id)) do
+    case GenServer.whereis(Identificator.control_channel(runner_id)) do
       pid when is_pid(pid) ->
         ref = Process.monitor(pid)
         put_in(state, [:quic_conn_monitors, ref], conn_id)

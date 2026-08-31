@@ -2,8 +2,10 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   # async: false: writes Application env; a shared on-disk root; the observability registry.
   use ExUnit.Case, async: false
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     sink_name = :"obs_tbridge_test_sink_#{:erlang.unique_integer([:positive])}"
@@ -204,7 +206,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     drain_mailbox()
 
     {:ok, _ref} =
-      Flezha.Dlq.Store.append(%{
+      DlqStore.append(%{
         operative_class: "ObsOperative",
         procedure_id: "proc",
         entity_key: "k",
@@ -231,15 +233,15 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     # retention_seconds = 0: the sweep drops the just-parked entry, loudly —
     # once the entry's own millisecond has passed (expiry is strictly older).
-    [%{"ts_ms" => ts_ms}] = Flezha.Dlq.Store.list("ObsOperative")
+    [%{"ts_ms" => ts_ms}] = DlqStore.list("ObsOperative")
 
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> System.system_time(:millisecond) > ts_ms end,
              1_000,
              1
            )
 
-    :ok = Flezha.Dlq.Store.sweep()
+    :ok = DlqStore.sweep()
 
     dropped =
       receive_until(

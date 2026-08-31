@@ -19,7 +19,11 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
 
   use ExUnit.Case, async: false
 
+  alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Backend.S3
+  alias Flezha.State.DurabilityTier.Shipper
+  alias Flezha.State.Paths
+  alias Flezha.State.TestHelpers
 
   @moduletag :s3_integration
 
@@ -85,7 +89,7 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
   end
 
   test "the whole tier ships and hydrates through this backend", %{opts: opts} do
-    base = Flezha.State.TestHelpers.tmp_app_data_dir()
+    base = TestHelpers.tmp_app_data_dir()
 
     Application.put_env(:flezha, :durability_tier,
       backend: {S3, opts},
@@ -95,11 +99,11 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
     )
 
     entity_id = {"s3cls_#{System.unique_integer([:positive])}", "proc", "k1"}
-    path = Flezha.State.Paths.wal_path(entity_id)
+    path = Paths.wal_path(entity_id)
     File.mkdir_p!(Path.dirname(path))
 
     records =
-      Enum.map_join(0..3, &Flezha.State.TestHelpers.build_wal_record(&1, "change-#{&1}"))
+      Enum.map_join(0..3, &TestHelpers.build_wal_record(&1, "change-#{&1}"))
 
     File.write!(path, records)
 
@@ -110,10 +114,10 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
     end)
 
     {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
-    assert :ok = Flezha.State.DurabilityTier.Shipper.ship_now({:entity, entity_id})
+    assert :ok = Shipper.ship_now({:entity, entity_id})
 
     File.rm!(path)
-    assert :ok = Flezha.State.DurabilityTier.hydrate_operative(elem(entity_id, 0))
+    assert :ok = DurabilityTier.hydrate_operative(elem(entity_id, 0))
     assert File.read!(path) == records
   end
 end

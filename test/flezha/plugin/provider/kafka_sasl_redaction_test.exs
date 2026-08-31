@@ -12,6 +12,7 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
 
   alias Flezha.Plugin.Provider.Kafka.Producer
   alias Flezha.Plugin.Provider.Kafka.ProducerSup
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup :set_mimic_global_until_exit
 
@@ -19,7 +20,7 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
 
   defp fake_client_stubs(test_pid) do
     stub(KafkaEx, :start_link_worker, fn :no_name, worker_opts ->
-      client = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+      client = spawn(&NodeTestHelper.park/0)
       send(test_pid, {:client_started, client, worker_opts})
       {:ok, client}
     end)

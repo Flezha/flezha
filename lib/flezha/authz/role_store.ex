@@ -15,6 +15,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   use GenServer
 
+  alias Flezha.AuthZ.Config
   alias Flezha.AuthZ.{DetsStore, Namespace, Role}
 
   @table :flz_authz_roles
@@ -93,7 +94,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   @doc "Absolute path of the backing DETS file."
   @spec path() :: String.t()
-  def path(), do: Path.join(Flezha.AuthZ.Config.auth_dir(), @filename)
+  def path(), do: Path.join(Config.auth_dir(), @filename)
 
   ## ----- GenServer -----
 

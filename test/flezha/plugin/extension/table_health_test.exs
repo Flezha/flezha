@@ -9,6 +9,7 @@ defmodule Flezha.Plugin.Extension.TableHealthTest do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defmodule HealthyProvider do
     def health(_opts), do: :healthy
@@ -60,7 +61,7 @@ defmodule Flezha.Plugin.Extension.TableHealthTest do
   end
 
   test "provider without health/1: an alive owned pid is healthy" do
-    pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+    pid = spawn(&NodeTestHelper.park/0)
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
 
     t = table(%{"n" => plugin(NoHealthProvider)}, %{"n" => :running}, %{"n" => {pid, make_ref()}})

@@ -25,6 +25,8 @@ defmodule Flezha.Observability.AuditLog.Writer do
   use GenServer
   require Logger
 
+  alias Flezha.Observability.AuditLog.Codec, as: AuditCodec
+  alias Flezha.Observability.AuditLog.Reader
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.Index
 
@@ -451,7 +453,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
   end
 
   defp file_ts_range(path) do
-    Flezha.Observability.AuditLog.Reader.head_metadata(path)
+    Reader.head_metadata(path)
   end
 
   defp cancel_fsync_timer(%{pending_fsync_timer: nil} = state), do: state
@@ -474,7 +476,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
   defp broadcast_record(%{subscribers: subs}, _record_bin) when map_size(subs) == 0, do: :ok
 
   defp broadcast_record(%{subscribers: subs}, record_bin) do
-    case Flezha.Observability.AuditLog.Codec.decode(record_bin) do
+    case AuditCodec.decode(record_bin) do
       {:ok, record} ->
         Enum.each(subs, fn {ref, pid} ->
           send(pid, {:audit_record, ref, record})

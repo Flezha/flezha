@@ -31,6 +31,7 @@ defmodule Flezha.Shutdown.Coordinator do
   use GenServer
   require Logger
 
+  alias Flezha.Observability.AuditLog.Writer
   alias Flezha.Service.{HubManager, Identificator}
   alias Flezha.Shutdown.SignalHandler
   alias Flezha.State.FsyncBatcher
@@ -454,7 +455,7 @@ defmodule Flezha.Shutdown.Coordinator do
   defp safe_close_audit_writer() do
     if Process.whereis(Flezha.Observability.AuditLog.Writer) do
       safe_finalise_step(:audit_log_writer, fn ->
-        Flezha.Observability.AuditLog.Writer.close(@finalise_call_timeout_ms)
+        Writer.close(@finalise_call_timeout_ms)
       end)
     else
       :ok

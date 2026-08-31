@@ -2,6 +2,7 @@ defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
 
@@ -262,7 +263,7 @@ defmodule Mix.Tasks.Bench do
   defp parse_runtime(nil), do: :rust
 
   defp parse_runtime(name) do
-    runtimes = Flezha.Service.PortPilot.runtimes()
+    runtimes = PortPilot.runtimes()
 
     Enum.find(runtimes, &(Atom.to_string(&1) == name)) ||
       raise "Unknown --runtime value: #{inspect(name)}. Expected one of: " <>

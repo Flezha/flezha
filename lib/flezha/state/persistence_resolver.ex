@@ -45,7 +45,9 @@ defmodule Flezha.State.PersistenceResolver do
        every release.
   """
 
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.Paths
 
   @default_persistence_enabled true
   @default_retention_hours 6
@@ -209,9 +211,9 @@ defmodule Flezha.State.PersistenceResolver do
   # `max_mailbox_bytes_total` (finish-platform-authn-authz §6.3).
   defp cap_to_namespace_mailbox_quota(window, operative_class) do
     if Flezha.AuthZ.enabled?() do
-      namespace = Flezha.State.Paths.namespace_of_class(operative_class)
+      namespace = Paths.namespace_of_class(operative_class)
 
-      case Flezha.AuthZ.NamespaceStore.get(namespace) do
+      case NamespaceStore.get(namespace) do
         {:ok, %{quotas: %{max_mailbox_bytes_total: limit}}}
         when is_integer(limit) and limit > 0 ->
           min(window, limit)

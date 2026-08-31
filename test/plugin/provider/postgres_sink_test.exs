@@ -22,6 +22,9 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Postgres
   alias Flezha.Plugin.Provider.Postgres.{SinkSup, SinkWorker}
+  alias Flezha.State.Outbox
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :postgres_integration
 
@@ -118,7 +121,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   } do
     rc = "pg_#{System.unique_integer([:positive])}"
     entity_id = {rc, "proc", "k1"}
-    :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+    :ok = TestHelpers.stub_outbox_owner(entity_id)
 
     {opts, _pid} = start_provider()
     entity = "#{rc}/proc/k1"
@@ -126,8 +129,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     ack = fn seq ->
       Map.put(
         stamps(entity, "#{seq}.0", "1", "k#{seq}"),
-        Flezha.State.Outbox.ack_key(),
-        Flezha.State.Outbox.token(entity_id, {:cursor, seq})
+        Outbox.ack_key(),
+        Outbox.token(entity_id, {:cursor, seq})
       )
     end
 
@@ -135,7 +138,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v2", ack.(2))
 
     assert :ok =
-             Flezha.State.TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
+             TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
 
     assert wait_until(fn -> progress(db) == [[entity, "2.0", 1]] end, 10_000)
 
@@ -147,7 +150,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v2", ack.(2))
 
     assert :ok =
-             Flezha.State.TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
+             TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
 
     assert {rows(db), progress(db)} == before,
            "a re-driven batch must leave rows and progress byte-identical"
@@ -274,7 +277,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
     emit(opts, "v2", stamps(entity, "2.0", "1", "k2"))
 
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn ->
                stats = SinkWorker.stats(pid)
                stats.buffer_len == 2 and stats.consecutive_failures >= 1

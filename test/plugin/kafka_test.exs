@@ -14,6 +14,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Kafka
   alias Flezha.Plugin.Provider.Kafka.{ProducerSup, WorkerRegistry}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: Mimic global mode; Mimic stubs; the primary Logger.
 
@@ -298,7 +299,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       # chain that waited on it would block until the GenServer.call timeout.
       # With cast_enqueue the chain returns immediately.
       :sys.replace_state(producer_pid, fn state ->
-        %{state | send_fn: fn _w, _r, _ns -> FlezhaTest.Helper.NodeTestHelper.park() end}
+        %{state | send_fn: fn _w, _r, _ns -> NodeTestHelper.park() end}
       end)
 
       ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "x", metadata: %{}}

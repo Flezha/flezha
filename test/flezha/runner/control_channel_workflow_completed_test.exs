@@ -19,6 +19,9 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Completion
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-task-completed-test"
 
@@ -26,7 +29,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
 
   setup do
     # Isolate the completion record `handle_workflow_completed/2` now writes.
-    base = Flezha.State.TestHelpers.tmp_app_data_dir()
+    base = TestHelpers.tmp_app_data_dir()
     test_pid = self()
     handler_id = "task-completed-test-#{System.unique_integer([:positive])}"
 
@@ -192,7 +195,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
     # off-process teardown, so once teardown is observed the record must exist.
     assert_receive {:stop_operative_called, "task-rec"}, 500
 
-    assert {:ok, rec} = Flezha.State.Completion.read("task-rec")
+    assert {:ok, rec} = Completion.read("task-rec")
     assert rec.namespace == @namespace
     assert rec.status == "ok"
     assert rec.result == "the-answer"
@@ -213,7 +216,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
       ControlChannel.start_link({@namespace, runner_id, stream_ref, write_fun})
 
     on_exit(fn ->
-      FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+      NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
     end)
 
     {pid, stream_ref}

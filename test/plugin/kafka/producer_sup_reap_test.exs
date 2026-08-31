@@ -8,6 +8,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # A stub supervised by the producer dyn-sup and registered under the worker's
   # via-name; it answers :stats with a permanently-parked verdict so
@@ -38,7 +39,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   end
 
   defp fake_worker do
-    pid = spawn(&FlezhaTest.Helper.NodeTestHelper.park/0)
+    pid = spawn(&NodeTestHelper.park/0)
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
     pid
   end

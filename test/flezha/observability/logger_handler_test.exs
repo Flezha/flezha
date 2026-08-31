@@ -9,7 +9,9 @@ defmodule Flezha.Observability.LoggerHandlerTest do
   require Logger
 
   alias Flezha.Observability.{Counters, Registry, TestSinks}
+  alias Flezha.Observability.LoggerHandler
   alias Flezha.Observability.TestSinks.Counting
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     sink_name = :"obs_logger_test_sink_#{:erlang.unique_integer([:positive])}"
@@ -27,7 +29,7 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     on_exit(fn -> Registry.unregister_sink(sink_name) end)
 
     # Make sure logger emits warnings (test config has level: :error)
-    on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+    on_exit(NodeTestHelper.override_log_level(:warning))
 
     {:ok, sink_name: sink_name, counter_ref: ref}
   end
@@ -62,7 +64,7 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     bad_event = %{level: :error, msg: {:string, ["ok"]}, meta: %{}}
 
     # We expect the counter not to drop the call below.
-    :ok = Flezha.Observability.LoggerHandler.log(bad_event, %{})
+    :ok = LoggerHandler.log(bad_event, %{})
 
     # Logger should still work after this call.
     Logger.warning("still-alive")

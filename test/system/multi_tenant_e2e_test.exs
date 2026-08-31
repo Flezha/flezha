@@ -17,6 +17,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @ns_a "tenant-alpha"
@@ -27,7 +28,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     # FIRST and therefore runs LAST — after the runner/namespace teardown
     # below, which still needs the enforced posture to be consistent.
     _ =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_multi_tenant",
         claim: true
       )

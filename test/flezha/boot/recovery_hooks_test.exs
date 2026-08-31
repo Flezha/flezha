@@ -3,6 +3,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Boot.RecoveryHooks
+  alias Flezha.Observability.TelemetryBridge
 
   setup do
     # Restore the configured value rather than deleting the key: `config/test.exs`
@@ -132,7 +133,7 @@ defmodule Flezha.Boot.RecoveryHooksTest do
 
   test "the duplicate alarm is bridged onto the observability bus" do
     assert Map.fetch!(
-             Flezha.Observability.TelemetryBridge.mapping(),
+             TelemetryBridge.mapping(),
              [:flezha, :boot, :reconcile_duplicate]
            ) == {:flezha_boot, :reconcile_duplicate, :event}
   end

@@ -114,6 +114,8 @@ defmodule Flezha.Observability.TestSinks.Slow do
 
   @behaviour Flezha.Observability.Sink
 
+  alias FlezhaTest.Helper.NodeTestHelper
+
   @impl Flezha.Observability.Sink
   def handle_signal(_signal, state), do: {:ok, state}
 
@@ -139,7 +141,7 @@ defmodule Flezha.Observability.TestSinks.Slow do
 
   @impl true
   def handle_info({:signal, _signal}, state) do
-    FlezhaTest.Helper.NodeTestHelper.park()
+    NodeTestHelper.park()
     {:noreply, state}
   end
 

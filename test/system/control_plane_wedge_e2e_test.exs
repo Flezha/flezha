@@ -26,12 +26,15 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   use FlezhaTest.SystemCase, capability: :liveness
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
-  import FlezhaTest.Helper.TierE2EHarness, only: [boot_runner: 3, peek_outputs: 0]
+
+  import FlezhaTest.Helper.TierE2EHarness,
+    only: [boot_runner: 3, peek_outputs: 0, unique_id_path: 1]
 
   alias Flezha.Convergence.{Heal, Loop}
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{HubManager, OperativeManager}
+  alias Flezha.Transport.LivenessCounters
 
   @factory "wedge_probe"
 
@@ -89,7 +92,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     # The runner's heartbeat reports the handout the wedged worker holds.
     assert wait_until(
              fn ->
-               Flezha.Transport.LivenessCounters.snapshot_all().channels
+               LivenessCounters.snapshot_all().channels
                |> Enum.any?(&(&1.runner_id == runner_a and Map.get(&1, :hb_inflight, 0) >= 1))
              end,
              30_000
@@ -106,7 +109,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     # purpose: with nowhere to place the operative, every rebind attempt fails
     # and burns a rung of the standard 5 s → 30 s → 60 s → 300 s cooldown, so
     # the drill would be timing the backoff ladder rather than the remedy.
-    {port_b, runner_b} = boot_runner(namespace, unique_id_path(), env: heartbeat_env())
+    {port_b, runner_b} = boot_runner(namespace, unique_id_path("wedge_e2e"), env: heartbeat_env())
     on_exit(fn -> close_port(port_b) end)
 
     # The Loop runs only in prod config; start one for the drill.
@@ -159,7 +162,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
     # The replacement the orchestrator would bring back, up first: the reroute
     # this drill asserts is the existing disconnect path's, not the Loop's.
-    {port_b, runner_b} = boot_runner(namespace, unique_id_path(), env: heartbeat_env())
+    {port_b, runner_b} = boot_runner(namespace, unique_id_path("wedge_e2e"), env: heartbeat_env())
     on_exit(fn -> close_port(port_b) end)
 
     # The Planner's rung, executed directly: the ladder ordering is proved by
@@ -224,7 +227,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     operative_id = "#{label}_#{System.unique_integer([:positive])}"
 
     {port, runner_id} =
-      boot_runner(namespace, unique_id_path(), [env: heartbeat_env()] ++ opts)
+      boot_runner(namespace, unique_id_path("wedge_e2e"), [env: heartbeat_env()] ++ opts)
 
     assert {:ok, %{runner_id: ^runner_id}} =
              OperativeManager.start_operative(namespace, builder(operative_id, self()))
@@ -319,10 +322,6 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     else
       _ -> nil
     end
-  end
-
-  defp unique_id_path() do
-    Path.join(System.tmp_dir!(), "wedge_e2e_#{System.unique_integer([:positive])}.id")
   end
 
   defp close_port(port) do

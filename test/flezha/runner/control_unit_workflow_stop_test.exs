@@ -15,6 +15,7 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Service.Identificator
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-unit-workflow-stop-test"
 
@@ -31,7 +32,7 @@ defmodule FlezhaTest.Runner.ControlUnitWorkflowStopTest do
     end)
 
     {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
     assert :ok = ControlUnit.workflow_stop(runner_id, "op-1")
 

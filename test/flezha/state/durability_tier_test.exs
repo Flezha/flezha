@@ -25,6 +25,7 @@ defmodule Flezha.State.DurabilityTierTest do
   alias Flezha.State.{Outbox, Paths, TestHelpers}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -413,7 +414,7 @@ defmodule Flezha.State.DurabilityTierTest do
       Stub.set_down(true)
       assert {:error, :backend_down} = Shipper.ship_now(ref)
       # The breach is a millisecond past the failed ship.
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> DurabilityTier.breaches() != [] end,
                1_000,
                1
@@ -458,7 +459,7 @@ defmodule Flezha.State.DurabilityTierTest do
       Stub.set_down(true)
       assert {:error, :backend_down} = Shipper.ship_now(ref)
       # The breach is a millisecond past the failed ship.
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> DurabilityTier.breaches() != [] end,
                1_000,
                1

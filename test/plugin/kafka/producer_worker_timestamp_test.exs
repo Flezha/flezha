@@ -6,6 +6,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
   """
 
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
   # async: false: registered singletons.
@@ -24,7 +25,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
 
     {:ok, pid} =
       GenServer.start_link(ProducerWorker,
-        worker_pid: spawn(&FlezhaTest.Helper.NodeTestHelper.park/0),
+        worker_pid: spawn(&NodeTestHelper.park/0),
         topic: @topic,
         partition: @partition,
         plugin_id: "ts-test-#{System.unique_integer([:positive])}",

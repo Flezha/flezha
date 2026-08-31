@@ -36,7 +36,10 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Service.HubManager
+  alias Flezha.State.Outbox
+  alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
@@ -142,7 +145,7 @@ defmodule Flezha.Operative.Overwatch do
   """
   @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream}
   def deliver(%__MODULE__{} = state, payload),
-    do: Flezha.Runner.StreamChannel.io_in(state.channel, state.id, payload)
+    do: StreamChannel.io_in(state.channel, state.id, payload)
 
   @doc """
   Time a known-blocking procedure and surface a `[Overwatch] proc_slow` warning
@@ -218,7 +221,7 @@ defmodule Flezha.Operative.Overwatch do
     # (journal probe, restore, WAL open) resolves: writes must land under
     # this operative's namespace, and a class owned by another namespace
     # must never be silently read or overwritten.
-    case Flezha.State.Paths.claim_namespace(state.id, state.namespace) do
+    case Paths.claim_namespace(state.id, state.namespace) do
       :ok ->
         continue_bind(stale_runner_id, operative, state)
 
@@ -480,7 +483,7 @@ defmodule Flezha.Operative.Overwatch do
   # the chain has had it, filtered included.
   @impl true
   def handle_cast({:io_out_batch, outputs}, state) do
-    Flezha.State.Outbox.run(outputs, fn message, metadata ->
+    Outbox.run(outputs, fn message, metadata ->
       Plugins.transform_io(state, :on_output, message, metadata)
     end)
 
@@ -489,7 +492,7 @@ defmodule Flezha.Operative.Overwatch do
 
   def handle_cast({:io_out, message, metadata}, state) do
     Plugins.transform_io(state, :on_output, message, metadata)
-    Flezha.State.Outbox.settled(metadata)
+    Outbox.settled(metadata)
     {:noreply, %{state | direct_outputs_seen: state.direct_outputs_seen + 1}}
   end
 

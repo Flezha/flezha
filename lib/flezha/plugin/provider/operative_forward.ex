@@ -28,6 +28,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     * `:plugin_id`            — string, defaults to the enabling plugin's id
   """
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
@@ -213,7 +214,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     )
 
     _ =
-      Flezha.Dlq.Store.append(%{
+      DlqStore.append(%{
         operative_class: source,
         procedure_id: "operative_forward",
         entity_key: target,

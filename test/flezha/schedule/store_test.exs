@@ -3,9 +3,11 @@ defmodule Flezha.Schedule.StoreTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Schedule.Store
+  alias Flezha.Service.Validator
+  alias FlezhaTest.Helper.ScheduleTestHelper
 
   setup do
-    FlezhaTest.Helper.ScheduleTestHelper.isolated_store_setup()
+    ScheduleTestHelper.isolated_store_setup()
   end
 
   defp fields(overrides \\ %{}) do
@@ -80,12 +82,10 @@ defmodule Flezha.Schedule.StoreTest do
     name = String.duplicate("a", 11)
     assert {:ok, _} = Store.add(fields(%{name: name}))
 
-    assert :ok = Flezha.Service.Validator.byte_limit_exceed("#{name}@2026-07-27T05:00:00Z")
+    assert :ok = Validator.byte_limit_exceed("#{name}@2026-07-27T05:00:00Z")
 
     assert :ok =
-             Flezha.Service.Validator.byte_limit_exceed(
-               "#{name}@manual-#{System.system_time(:second)}"
-             )
+             Validator.byte_limit_exceed("#{name}@manual-#{System.system_time(:second)}")
   end
 
   test "entries survive a store restart" do

@@ -11,6 +11,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
   import ExUnit.CaptureLog
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, Config, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.AuthZ.Bootstrap.OnBoot
   alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
@@ -79,7 +80,7 @@ defmodule Flezha.AuthZ.RebootstrapTest do
     {_principal, _} = claim_bootstrap!()
     File.write!(Bootstrap.recovery_marker_path(), "rebootstrap requested\n")
 
-    capture_log(fn -> assert :ignore = Flezha.AuthZ.Bootstrap.OnBoot.init([]) end)
+    capture_log(fn -> assert :ignore = OnBoot.init([]) end)
 
     refute RoleStore.admin_system_exists?()
     assert File.exists?(Config.bootstrap_token_path())

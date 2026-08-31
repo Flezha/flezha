@@ -38,6 +38,8 @@ defmodule Flezha.State.Wire do
   sent the frame from the connection.
   """
 
+  alias Flezha.State.Outbox
+
   @payload_id_entity_state_change "entity_state_change"
   @payload_id_entity_state_snapshot "entity_state_snapshot"
   @payload_id_entity_effect_record "entity_effect_record"
@@ -198,7 +200,7 @@ defmodule Flezha.State.Wire do
 
     stamps
     |> put_stamp("flz.key", Map.get(identity, :key))
-    |> put_stamp(Flezha.State.Outbox.ack_key(), Map.get(identity, :ack))
+    |> put_stamp(Outbox.ack_key(), Map.get(identity, :ack))
   end
 
   defp put_stamp(stamps, key, value) when is_binary(value) and value != "",

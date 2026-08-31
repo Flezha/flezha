@@ -17,8 +17,10 @@ defmodule Flezha.State.WalWriter do
 
   require Logger
 
+  alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.Commands
 
   alias Flezha.State.{
     DurabilityTier,
@@ -1132,7 +1134,7 @@ defmodule Flezha.State.WalWriter do
 
       dlq ->
         {:ok, _ref} =
-          Flezha.Dlq.Store.append(%{
+          DlqStore.append(%{
             operative_class: rc,
             procedure_id: sh,
             entity_key: pk,
@@ -1891,7 +1893,7 @@ defmodule Flezha.State.WalWriter do
          {rc, sh, pk} <- state.entity_id,
          runner_id when is_binary(runner_id) <- state.owning_runner do
       _ =
-        Flezha.State.Commands.notify_entity_backpressure(
+        Commands.notify_entity_backpressure(
           {runner_id, rc, sh, pk},
           status
         )

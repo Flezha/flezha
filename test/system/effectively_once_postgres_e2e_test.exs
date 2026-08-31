@@ -26,6 +26,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   import FlezhaTest.Helper.PostgresSink
   import FlezhaTest.Helper.TierE2EHarness
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
@@ -95,7 +96,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
     # The SDK-declared tier must have been resolved at bind.
     assert wait_until(
-             fn -> Flezha.Operative.ClassRegistry.effectively_once?(operative_id) end,
+             fn -> ClassRegistry.effectively_once?(operative_id) end,
              30_000
            ),
            "the tier declaration never reached the controller"

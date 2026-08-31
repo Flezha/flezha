@@ -27,6 +27,13 @@ defmodule Flezha.Convergence.Loop do
     StallClassifier
   }
 
+  alias Flezha.Service.PluginManager
+  alias Flezha.State.Completion
+  alias Flezha.State.InputLog
+  alias Flezha.State.Paths
+  alias Flezha.State.Watchdog
+  alias Flezha.Transport.Native
+
   alias Flezha.Service.{EventManager, HubManager}
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Server, as: TransportServer
@@ -362,7 +369,7 @@ defmodule Flezha.Convergence.Loop do
     data_drivers =
       LivenessCounters.driver_refs()
       |> Enum.flat_map(fn {{runner_id, type}, ref} ->
-        case Flezha.Transport.Native.driver_stats(ref) do
+        case Native.driver_stats(ref) do
           d when is_map(d) -> [Map.put(d, :transport, {:uds_data, runner_id, type})]
           _ -> []
         end
@@ -438,10 +445,10 @@ defmodule Flezha.Convergence.Loop do
   # cursor fields, and classification degrades to WAL-seq-only.
   @doc false
   def progress_markers() do
-    Flezha.State.Watchdog.entity_statuses()
+    Watchdog.entity_statuses()
     |> Enum.group_by(fn {{rc, _sh, _pk}, _s} -> rc end)
     |> Enum.flat_map(fn {rc, statuses} ->
-      cursors = Flezha.State.InputLog.cursors(rc)
+      cursors = InputLog.cursors(rc)
 
       Enum.map(statuses, fn {{_rc, sh, pk} = entity_id, s} ->
         %{
@@ -540,7 +547,7 @@ defmodule Flezha.Convergence.Loop do
     mismatch =
       evidence
       |> MapSet.difference(live)
-      |> Enum.reject(&Flezha.State.Completion.exists?/1)
+      |> Enum.reject(&Completion.exists?/1)
       |> Enum.sort()
 
     {mismatch, cache}
@@ -572,7 +579,7 @@ defmodule Flezha.Convergence.Loop do
   # trusted — POSIX mtime has 1 s granularity, so a same-second add+remove
   # would otherwise pin a stale listing forever.
   defp state_root_dirs(cache) do
-    root = Flezha.State.Paths.state_root()
+    root = Paths.state_root()
 
     case File.stat(root, time: :posix) do
       {:ok, %File.Stat{mtime: root_mtime}} ->
@@ -584,7 +591,7 @@ defmodule Flezha.Convergence.Loop do
             {dirs, cache}
 
           _ ->
-            dirs = Flezha.State.Paths.operative_classes()
+            dirs = Paths.operative_classes()
             {dirs, {mtime, dirs}}
         end
 
@@ -594,9 +601,9 @@ defmodule Flezha.Convergence.Loop do
   end
 
   defp namespace_dir_mtimes() do
-    for namespace <- Flezha.State.Paths.namespaces(),
+    for namespace <- Paths.namespaces(),
         {:ok, %File.Stat{mtime: mtime}} <-
-          [File.stat(Flezha.State.Paths.namespace_dir(namespace), time: :posix)],
+          [File.stat(Paths.namespace_dir(namespace), time: :posix)],
         do: mtime
   end
 
@@ -651,7 +658,7 @@ defmodule Flezha.Convergence.Loop do
   defp without_pending_enables(%Diff{} = delta) do
     pending =
       if Process.whereis(Flezha.Service.PluginManager),
-        do: Flezha.Service.PluginManager.pending_ids(),
+        do: PluginManager.pending_ids(),
         else: MapSet.new()
 
     %{

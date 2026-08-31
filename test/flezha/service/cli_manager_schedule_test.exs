@@ -9,11 +9,13 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   import ExUnit.CaptureIO
 
   alias Flezha.Runner.FleetManager
+  alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.ScheduleTestHelper
 
   setup do
-    FlezhaTest.Helper.ScheduleTestHelper.isolated_store_setup()
+    ScheduleTestHelper.isolated_store_setup()
   end
 
   test "schedule_add stores the entry and previews the next fire" do
@@ -28,7 +30,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     assert output =~ "next fire 20"
     refute output =~ "warning"
 
-    assert {:ok, entry} = Flezha.Schedule.Store.get("digest")
+    assert {:ok, entry} = ScheduleStore.get("digest")
     assert entry.namespace == "default"
     assert entry.init_values == %{}
   end
@@ -50,7 +52,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
       end)
 
     assert output =~ "warning: factory ai_digest has no live runner in namespace prod"
-    assert {:ok, %{init_values: %{"mode" => "daily"}}} = Flezha.Schedule.Store.get("digest")
+    assert {:ok, %{init_values: %{"mode" => "daily"}}} = ScheduleStore.get("digest")
   end
 
   test "schedule_list renders entries with the next fire time" do
@@ -173,6 +175,6 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     assert capture_io(fn -> CliManager.schedule_remove("digest") end) =~
              "Schedule digest removed"
 
-    assert Flezha.Schedule.Store.list() == []
+    assert ScheduleStore.list() == []
   end
 end

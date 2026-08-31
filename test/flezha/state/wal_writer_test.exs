@@ -5,6 +5,7 @@ defmodule Flezha.State.WalWriterTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.State.{Metrics, Paths, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -168,7 +169,7 @@ defmodule Flezha.State.WalWriterTest do
       assert_receive {:resync_called, ^pid, _}, 1_000
 
       # The CompactEntity round-trip lands as a snapshot at the runner's seq.
-      assert {:ok, _path} = Flezha.State.Snapshot.write_snapshot(pid, 5005, header, "full-state")
+      assert {:ok, _path} = StateSnapshot.write_snapshot(pid, 5005, header, "full-state")
 
       assert WalWriter.last_persisted_seq(srv) == 5005
       assert :ok = WalWriter.append(srv, 5006, header, "d3", "exec-cold")

@@ -19,6 +19,7 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
   """
 
   alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: a shared Kafka broker in Docker.
 
@@ -77,7 +78,7 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
 
     # The paused broker answers nothing: the worker has to have met that —
     # a failed attempt on the wire — before the broker comes back.
-    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+    assert NodeTestHelper.wait_until(
              fn ->
                stats = ProducerWorker.stats(pid)
                stats.consecutive_failures >= 1 or stats.last_error != nil

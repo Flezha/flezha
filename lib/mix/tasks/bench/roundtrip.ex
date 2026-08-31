@@ -3,6 +3,9 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PortPilot
+  alias Flezha.Transport.LivenessCounters
+  alias Flezha.Transport.Native
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
@@ -687,9 +690,9 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     # drain in time is dropped past the per-stream write-buffer cap, with no
     # seq gap and no telemetry to show for it.
     {dropped, written} =
-      Flezha.Transport.LivenessCounters.driver_refs()
+      LivenessCounters.driver_refs()
       |> Enum.flat_map(fn {_key, ref} ->
-        case Flezha.Transport.Native.driver_stats(ref) do
+        case Native.driver_stats(ref) do
           %{streams: streams} -> streams
           _ -> []
         end
@@ -1114,15 +1117,15 @@ defmodule Mix.Tasks.Bench.Roundtrip do
   defp parse_runtime(nil, _durability), do: :rust
 
   defp parse_runtime(name, durability) do
-    runtimes = Enum.map(Flezha.Service.PortPilot.runtimes(), &Atom.to_string/1)
+    runtimes = Enum.map(PortPilot.runtimes(), &Atom.to_string/1)
     runtime = parse_enum(name, runtimes, "--runtime")
     needed = durability_capability(durability)
-    deferred = Flezha.Service.PortPilot.manifest(runtime)["deferred"] || []
+    deferred = PortPilot.manifest(runtime)["deferred"] || []
 
     if needed && Atom.to_string(needed) in deferred do
       Mix.raise(
         "--runtime #{runtime} carries no --durability #{durability}: its SDK defers " <>
-          "#{needed} (#{Flezha.Service.PortPilot.manifest_path(runtime)}), so there is no " <>
+          "#{needed} (#{PortPilot.manifest_path(runtime)}), so there is no " <>
           "fixture to measure"
       )
     end

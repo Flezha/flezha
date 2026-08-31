@@ -23,6 +23,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Installer.Store
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     tmp =
@@ -260,7 +261,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     try do
       case Process.whereis(mod) do
         nil -> :ok
-        pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
+        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       end
     catch
       :exit, _ -> :ok

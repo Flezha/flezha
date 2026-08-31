@@ -13,6 +13,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
   alias Flezha.Runner.{ControlChannel, StreamChannel}
   alias Flezha.State.{Commands, Paths, TestHelpers, Wire}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup :verify_on_exit!
 
@@ -35,7 +36,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     <<byte_size(sid)::16-big, sid::binary, 0::64-big, 0::128, 0::32-big, 0::32-big>>
   end
 
-  defp eventually(fun), do: FlezhaTest.Helper.NodeTestHelper.wait_until(fun, 500, 5)
+  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 500, 5)
 
   test "compensation_markers/1 reflects the persisted marker files" do
     seg = {"rc", "proc", "seg"}

@@ -8,6 +8,8 @@ defmodule Flezha.Transport.TransportAuthTest do
   # async: false: writes Application env; the primary Logger; OS environment variables.
   use ExUnit.Case, async: false
 
+  alias Flezha.Socket.Support
+  alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Native
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.AuthTestHelper
@@ -64,7 +66,7 @@ defmodule Flezha.Transport.TransportAuthTest do
       with_socket_dir("group_sockets", group, fn base ->
         warning =
           AuthTestHelper.capture_log_at(:warning, fn ->
-            Flezha.Socket.Support.prepare_socket_dir()
+            Support.prepare_socket_dir()
           end)
 
         # A member of the group reaches the directory...
@@ -80,14 +82,14 @@ defmodule Flezha.Transport.TransportAuthTest do
     test "an unusable group refuses the boot, naming the group" do
       with_socket_dir("bad_group_sockets", "flezha_no_such_group", fn _base ->
         assert_raise RuntimeError, ~r/flezha_no_such_group/, fn ->
-          Flezha.Socket.Support.prepare_socket_dir()
+          Support.prepare_socket_dir()
         end
       end)
     end
 
     test "prepare_socket_dir creates the base path owner-only" do
       with_socket_dir("prepared_sockets", nil, fn base ->
-        Flezha.Socket.Support.prepare_socket_dir()
+        Support.prepare_socket_dir()
         assert mode_bits(base) == 0o700
       end)
     end
@@ -99,7 +101,7 @@ defmodule Flezha.Transport.TransportAuthTest do
         # An operator can paste the line: the directory it names is absolute
         # even when the configured value is not.
         assert Path.type(base) == :relative
-        resolved = Flezha.Socket.Support.socket_dir()
+        resolved = Support.socket_dir()
 
         assert Path.type(resolved) == :absolute
         assert Flezha.BootLoader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
@@ -196,7 +198,7 @@ defmodule Flezha.Transport.TransportAuthTest do
       Enum.each(overrides, fn {k, v} -> Application.put_env(:flezha, k, v) end)
 
       try do
-        :ok = Flezha.Transport.CertGenerator.ensure_certs()
+        :ok = CertGenerator.ensure_certs()
 
         Enum.each(overrides, fn {_k, path} -> assert File.exists?(path) end)
         assert mode_bits(overrides.server_key_path) == 0o600

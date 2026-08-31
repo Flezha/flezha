@@ -20,6 +20,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
 
   alias Flezha.Observability.{Bus, Registry, Signal}
   alias Flezha.Service.{HubManager, Identificator}
+  alias ProcessHub.Service.Recovery, as: HubRecovery
 
   @impl GenServer
   def init(_opts) do
@@ -82,7 +83,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
 
   defp safe_recovery_state(hub) do
     try do
-      ProcessHub.Service.Recovery.recovery_state(hub)
+      HubRecovery.recovery_state(hub)
     catch
       _, _ -> :normal
     end

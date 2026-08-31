@@ -4,6 +4,7 @@ defmodule Flezha.Observability.PubSubSinkTest do
 
   alias Flezha.Observability
   alias Flezha.Observability.{Bus, PubSubSink, Registry, Signal}
+  alias Flezha.Observability.TestSinks
 
   setup do
     # PubSub sink is disabled by default in test config. Register it
@@ -59,7 +60,7 @@ defmodule Flezha.Observability.PubSubSinkTest do
 
     # The sink broadcasts from its own process, so once it has handled the
     # signal every delivery it was going to make is already in a mailbox.
-    Flezha.Observability.TestSinks.settle(sink)
+    TestSinks.settle(sink)
     refute_received {:flezha_signal, _}
   end
 

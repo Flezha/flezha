@@ -8,13 +8,14 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
 
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Builder
+  alias FlezhaTest.Helper.NodeTestHelper
 
   test "kick_restore does not block the Overwatch on a slow restore disk scan" do
     # Private stub bites only the in-process (regression) path; the spawned
     # worker calls through to the real (fast) scan. A regression therefore
     # hangs here rather than returning late.
     stub(Flezha.State.Paths, :all_entities, fn ->
-      FlezhaTest.Helper.NodeTestHelper.park()
+      NodeTestHelper.park()
       []
     end)
 

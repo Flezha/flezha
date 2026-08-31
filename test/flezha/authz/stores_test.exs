@@ -11,10 +11,12 @@ defmodule Flezha.AuthZ.StoresTest do
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, TokenStore}
+  alias FlezhaTest.Helper.AuthTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
     %{auth_dir: auth_dir} =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_authz_stores",
         stores: [],
         enabled: :unchanged
@@ -117,7 +119,7 @@ defmodule Flezha.AuthZ.StoresTest do
       {:ok, _} = TokenStore.start_link([])
       {:ok, raw, %{expires_at: expires_at}} = TokenStore.issue("alice", "_system", :operator, 1)
       # Expiry is a whole-second wall-clock comparison: wait for that second.
-      assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> System.system_time(:second) >= expires_at end,
                2_000,
                10

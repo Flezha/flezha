@@ -1,5 +1,9 @@
 defmodule FlezhaQuicTest do
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.EventManager
+  alias Flezha.Service.Payloader
+  alias Flezha.Service.PortPilot
+  alias Flezha.State.Paths
   alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.OperativeTestHelper
@@ -24,7 +28,7 @@ defmodule FlezhaQuicTest do
     # namespace's tree before anything binds. Narrower than
     # `State.TestHelpers.reset_all_entities/0`, which wipes the whole state
     # root — nothing here is live yet, so no WalWriter has to be stopped.
-    File.rm_rf(Flezha.State.Paths.namespace_dir(@quic_namespace))
+    File.rm_rf(Paths.namespace_dir(@quic_namespace))
 
     # Start 2 compute engines connected via QUIC for this test module.
     ce_id_1 = NodeTestHelper.start_runner(@quic_namespace, transport: :quic)
@@ -105,7 +109,7 @@ defmodule FlezhaQuicTest do
     {:ok, json_state} =
       OperativeManager.get_entity_state(@quic_namespace, operative_id)
 
-    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Payloader.json_to_map(json_state)
 
     assert entity_state === %{
              "store_input_procedure" => %{
@@ -139,7 +143,7 @@ defmodule FlezhaQuicTest do
   # target dir, so the refused runner below starts without a rebuild.
   test "a QUIC peer without a client certificate is refused" do
     refused_namespace = "quic_refused_namespace"
-    Flezha.Service.EventManager.add_handler(:runner_connected_event)
+    EventManager.add_handler(:runner_connected_event)
 
     MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :refused)
 
@@ -150,7 +154,7 @@ defmodule FlezhaQuicTest do
         "--target-dir=./target -- #{refused_namespace}"
 
     {port, _command} =
-      Flezha.Service.PortPilot.open_port(command,
+      PortPilot.open_port(command,
         transport: :quic,
         env: [
           {"FLEZHA_QUIC_CLIENT_CERT", "/nonexistent/client.pem"},
@@ -167,7 +171,7 @@ defmodule FlezhaQuicTest do
       refute_receive {:runner_connected_event, {^refused_namespace, _}}, 100
       assert FleetManager.active_runners(refused_namespace) == []
     after
-      Flezha.Service.EventManager.rem_handler(:runner_connected_event)
+      EventManager.rem_handler(:runner_connected_event)
       if port_alive?(port), do: Port.close(port)
     end
   end

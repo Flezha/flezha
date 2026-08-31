@@ -16,6 +16,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.Validator
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
 
@@ -159,7 +160,7 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
       assert {:error, %{reason: reason}} =
                OperativeManager.start_operative(@namespace, builder("ghost"))
 
-      assert reason == Flezha.Service.Validator.id_in_use()
+      assert reason == Validator.id_in_use()
     end
 
     test "a concurrent burst of plain starts yields exactly one instance" do

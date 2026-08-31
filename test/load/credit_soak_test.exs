@@ -55,6 +55,7 @@ defmodule Flezha.Load.CreditSoakTest do
   alias Flezha.Plugin
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Metrics
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -186,7 +187,7 @@ defmodule Flezha.Load.CreditSoakTest do
       |> Enum.count(fn [a, b] -> b.parked > a.parked end)
 
     row = active_credit_row(ce_id)
-    shed = Flezha.State.Metrics.get(Flezha.State.Metrics.for_entity(entity_id), :wal_shed_total)
+    shed = Metrics.get(Metrics.for_entity(entity_id), :wal_shed_total)
     counts = anomaly_counts(anomalies)
 
     IO.puts(
@@ -266,7 +267,7 @@ defmodule Flezha.Load.CreditSoakTest do
   defp quiesced?(writer) do
     a = WalWriter.last_persisted_seq(writer)
 
-    not FlezhaTest.Helper.NodeTestHelper.wait_until(
+    not NodeTestHelper.wait_until(
       fn -> WalWriter.last_persisted_seq(writer) != a end,
       2_000
     )

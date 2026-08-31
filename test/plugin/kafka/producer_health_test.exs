@@ -8,6 +8,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerHealthTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Kafka.Producer
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defmodule StatsStub do
     use GenServer
@@ -20,7 +21,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerHealthTest do
 
   defp stub(stats) do
     {:ok, pid} = StatsStub.start(stats)
-    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 

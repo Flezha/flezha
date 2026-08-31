@@ -31,6 +31,7 @@ defmodule Flezha.AuthZ do
   the same trust boundary as node ownership.
   """
 
+  alias Flezha.AuthZ.Action
   alias Flezha.AuthZ.{AuthState, Config, Namespace, Policy, Principal, RoleStore, Scope}
   alias Flezha.Observability.{Bus, Signal}
 
@@ -169,7 +170,7 @@ defmodule Flezha.AuthZ do
   end
 
   defp validate_action(action) do
-    if Flezha.AuthZ.Action.known?(action) do
+    if Action.known?(action) do
       :ok
     else
       emit_denial(nil, :unknown_action, action, nil)
