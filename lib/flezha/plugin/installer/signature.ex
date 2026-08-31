@@ -99,42 +99,38 @@ defmodule Flezha.Plugin.Installer.Signature do
 
   # Everything else: try to decode as PEM.
   defp normalize_key(pem) when is_binary(pem) do
-    try do
-      case :public_key.pem_decode(pem) do
-        [] ->
-          {:error, :not_pem}
+    case :public_key.pem_decode(pem) do
+      [] ->
+        {:error, :not_pem}
 
-        entries ->
-          entries
-          |> Enum.map(&decode_pem_entry/1)
-          |> Enum.find(&match?({:ok, _}, &1))
-          |> case do
-            nil -> {:error, :unsupported_pem}
-            {:ok, raw} -> {:ok, raw}
-          end
-      end
-    rescue
-      _ -> {:error, :pem_decode_failed}
+      entries ->
+        entries
+        |> Enum.map(&decode_pem_entry/1)
+        |> Enum.find(&match?({:ok, _}, &1))
+        |> case do
+          nil -> {:error, :unsupported_pem}
+          {:ok, raw} -> {:ok, raw}
+        end
     end
+  rescue
+    _ -> {:error, :pem_decode_failed}
   end
 
   defp normalize_key(_), do: {:error, :unsupported_key_format}
 
   defp decode_pem_entry({:SubjectPublicKeyInfo, _, _} = entry) do
-    try do
-      case :public_key.pem_entry_decode(entry) do
-        {{:ECPoint, raw}, _params} when is_binary(raw) and byte_size(raw) == 32 ->
-          {:ok, raw}
+    case :public_key.pem_entry_decode(entry) do
+      {{:ECPoint, raw}, _params} when is_binary(raw) and byte_size(raw) == 32 ->
+        {:ok, raw}
 
-        {:ed_pub, :ed25519, raw} when is_binary(raw) and byte_size(raw) == 32 ->
-          {:ok, raw}
+      {:ed_pub, :ed25519, raw} when is_binary(raw) and byte_size(raw) == 32 ->
+        {:ok, raw}
 
-        _ ->
-          {:error, :unsupported_spki}
-      end
-    rescue
-      _ -> {:error, :spki_decode_failed}
+      _ ->
+        {:error, :unsupported_spki}
     end
+  rescue
+    _ -> {:error, :spki_decode_failed}
   end
 
   defp decode_pem_entry(_), do: {:error, :unsupported_pem_entry}

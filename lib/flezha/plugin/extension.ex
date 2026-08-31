@@ -1,24 +1,17 @@
 defmodule Flezha.Plugin.Extension do
   @moduledoc """
-  Typed extension-point dispatch API. The host module holds a
-  `Flezha.Plugin.Extension.Table` in its state and invokes `run/3` at each
+  Typed extension-point dispatch API. The host holds a
+  `Flezha.Plugin.Extension.Table` in its state and calls `run/3` at each
   extension-point call site.
 
-  Dispatch kinds:
+  Five kinds: `:fold` (ordered accumulator, halts on `{:error, _}`),
+  `:transform` (ordered, halts on `{:skip, _}`, tolerates `{:error, _}`),
+  `:fanout` (every subscriber, errors logged, always `:ok`), `:request`
+  (keyed, in a Task under the host's supervisor) and `:timer`.
 
-    * `:fold`      — ordered accumulator, halts on `{:error, _}`
-    * `:transform` — ordered payload transform, halts on `{:skip, _}`,
-                     tolerates `{:error, _}` (prior ctx passes through)
-    * `:fanout`    — runs every subscriber, errors logged, always `:ok`
-    * `:request`   — keyed dispatch to a single subscriber, in a short-lived
-                     Task under the host's `message_handler_task_sup`
-    * `:timer`     — scheduled invocation, driven by `fire_timer/3`
-
-  The first test in `run/3` is a bitmask check against
-  `table.active_mask`; when the extension has no subscribers the call
-  returns the no-op result without allocating. Chains for `:fold`,
-  `:transform`, and `:fanout` are pre-composed at subscribe time and stored
-  in `table.chains[name]`.
+  The first test in `run/3` is a bitmask check against `table.active_mask`, so
+  an extension with no subscribers returns the no-op result without
+  allocating; the chains it dispatches are pre-composed at subscribe time.
   """
 
   alias Flezha.Plugin.Extension.Ctx

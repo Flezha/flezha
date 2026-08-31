@@ -1,31 +1,19 @@
 defmodule Flezha.Plugin.Provider.OperativeForward do
   @moduledoc """
-  Operative-to-operative delivery (`:io_binding`): the member of the sink set
-  whose destination is another operative in the same namespace rather than an
-  external endpoint. Subscribe it to `:on_output` to feed a downstream
-  operative, or to `:on_input` for a pass-through tap.
+  Operative-to-operative delivery (`:io_binding`): the sink whose destination
+  is another operative in the same namespace rather than an external endpoint.
 
-  The callback enqueues and returns; a per-`{plugin_id, target}` worker performs
+  The callback enqueues and returns; a per-`{plugin_id, target}` worker does
   the confirming delivery and retries until the target confirms. Nothing ever
   blocks one Overwatch on another, so a cycle of operatives feeding each other
   is safe by construction.
 
-  The delivery guarantee is derived, never configured: a source with a
-  transactional outbox (effectively-once stream, or durable workflow) already
-  stamps `flz.seq` / `flz.key` / `flz.epoch` identity, and a durable receiver
-  already absorbs duplicates — retry-until-confirmed across those two halves is
-  effectively-once. A source with no outbox gets retry-until-confirmed without
-  deduplication. See `docs/resilience/data_durability.md`.
+  The delivery guarantee is DERIVED, never configured: a source with a
+  transactional outbox already stamps identity and a durable receiver already
+  absorbs duplicates, so retry-until-confirmed across the two is
+  effectively-once. Without an outbox it is at-least-once.
 
-  Required opts:
-    * `:target_operative_id` — the operative to deliver into
-
-  Optional opts (defaults below):
-    * `:queue_max`            — int, default `10_000` (then callers park)
-    * `:retry_backoff_ms`     — int, default `250`
-    * `:retry_max_backoff_ms` — int, default `5_000`
-    * `:call_timeout_ms`      — int, default `5_000` (per delivery attempt)
-    * `:plugin_id`            — string, defaults to the enabling plugin's id
+  Required opt `:target_operative_id`; rest: `docs/plugins/operative_forward.md`.
   """
 
   alias Flezha.Dlq.Store, as: DlqStore
@@ -34,9 +22,9 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.State.Outbox
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Outbox
 
   use ProviderBehaviour
 
@@ -118,15 +106,17 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
         )
       end
 
-      Enum.each(payloads, fn {message, metadata} ->
-        case route(current, metadata) do
-          {:ok, %{pid: new_pid}} -> ForwardWorker.absorb(new_pid, {message, metadata})
-          {:error, reason} -> park_unroutable(opts, message, metadata, reason)
-        end
-      end)
+      Enum.each(payloads, &rehome_payload(&1, current, opts))
     end
 
     :ok
+  end
+
+  defp rehome_payload({message, metadata}, current, opts) do
+    case route(current, metadata) do
+      {:ok, %{pid: new_pid}} -> ForwardWorker.absorb(new_pid, {message, metadata})
+      {:error, reason} -> park_unroutable(opts, message, metadata, reason)
+    end
   end
 
   # Take what a worker still owes and leave it stopped. A successful drain stops
@@ -352,37 +342,4 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   @int_fields Keyword.keys(@int_opts)
 
   defp convert_value(field, value) when field in @int_fields, do: parse_int(value, field)
-
-  # Every event carries the source operative, the target operative and the
-  # plugin id, so a saturating cycle between two operatives is visible to an
-  # operator without parsing log lines.
-  @prefix [:flezha, :plugin, :operative_forward]
-
-  @doc "One payload reached the target. `outcome` is the verdict's terminal tag."
-  @spec delivered(atom(), map()) :: :ok
-  def delivered(outcome, labels) do
-    :telemetry.execute(@prefix ++ [:delivered], %{count: 1}, Map.put(labels, :outcome, outcome))
-  end
-
-  @doc "A delivery attempt failed and the payload is retained for retry."
-  @spec retry(pos_integer(), non_neg_integer(), term(), map()) :: :ok
-  def retry(attempt, backoff_ms, reason, labels) do
-    :telemetry.execute(
-      @prefix ++ [:retry],
-      %{attempt: attempt, backoff_ms: backoff_ms},
-      Map.put(labels, :reason, reason)
-    )
-  end
-
-  @doc "Current queue depth, emitted on every enqueue."
-  @spec queue_depth(non_neg_integer(), map()) :: :ok
-  def queue_depth(depth, labels) do
-    :telemetry.execute(@prefix ++ [:queue_depth], %{depth: depth}, labels)
-  end
-
-  @doc "The queue reached `:queue_max` and the enqueueing caller is parked."
-  @spec saturated(non_neg_integer(), map()) :: :ok
-  def saturated(depth, labels) do
-    :telemetry.execute(@prefix ++ [:saturated], %{depth: depth}, labels)
-  end
 end

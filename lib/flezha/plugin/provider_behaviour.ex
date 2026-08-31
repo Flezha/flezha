@@ -1,21 +1,17 @@
 defmodule Flezha.Plugin.ProviderBehaviour do
   @moduledoc """
-  Behaviour for plugin providers with automatic build/1 implementation.
+  The plugin provider contract, and the shared helpers every provider uses to
+  honour it.
 
-  Usage:
-    defmodule MyProvider do
-      use Flezha.Plugin.ProviderBehaviour
+  `use ProviderBehaviour` generates `build/1`, `help/0` and `provider_info/0`
+  from the module's own `defstruct`: `@enforce_keys` are the required options
+  and the rest are optional, both in declaration order. A provider supplies
+  only its private `convert_value/2` coercion table, which `build/1` runs over
+  a CLI string map — and only over that path, never over typed opts.
 
-      @enforce_keys [:required_field]
-      defstruct @enforce_keys ++ [optional_field: "default"]
-
-      # Optionally override convert_value for custom field processing
-      defp convert_value(:special_field, value) do
-        # custom conversion logic
-      end
-
-      # The build/1 function is automatically generated
-    end
+  Declaring `@known_opts` makes the provider strict: `__before_compile__` then
+  generates both halves of the refusal, `build/1` for the CLI path and
+  `validate_opts/1` for the `init_provider/1` one.
   """
 
   @callback plugin_type() :: :io_binding
@@ -94,12 +90,14 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   @doc """
   The sink retry ladder shared by every provider that holds a bounded queue and
-  retries a failing flush: `base × 2^(attempt-1)`, capped at `max`. `attempt`
-  counts from 1 (the first retry).
+  retries a failing flush: `base × 2^(attempt-1) + jitter_ms`, capped at `max`.
+  `attempt` counts from 1 (the first retry). A caller that spreads a thundering
+  herd passes its own jitter; the default is the plain ladder.
   """
-  @spec retry_backoff_ms(pos_integer(), pos_integer(), pos_integer()) :: pos_integer()
-  def retry_backoff_ms(base, max, attempt) when attempt >= 1 do
-    min(base * Integer.pow(2, attempt - 1), max)
+  @spec retry_backoff_ms(pos_integer(), pos_integer(), pos_integer(), non_neg_integer()) ::
+          pos_integer()
+  def retry_backoff_ms(base, max, attempt, jitter_ms \\ 0) when attempt >= 1 do
+    min(base * Integer.pow(2, attempt - 1) + jitter_ms, max)
   end
 
   @doc "Has the worker's queue reached its bound?"
@@ -130,11 +128,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def release_waiters(%{waiters: []} = state), do: state
 
   def release_waiters(state) do
-    if not saturated?(state) do
+    if saturated?(state) do
+      state
+    else
       Enum.each(state.waiters, &GenServer.reply(&1, :ok))
       %{state | waiters: []}
-    else
-      state
     end
   end
 
@@ -326,175 +324,141 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     end
   end
 
-  defmacro __using__(_opts) do
-    quote do
-      @behaviour Flezha.Plugin.ProviderBehaviour
-      @before_compile Flezha.Plugin.ProviderBehaviour
+  @doc """
+  `module`'s struct field names as `{required, all}`, both in `defstruct`
+  declaration order; `required` is its `@enforce_keys` and the optional set is
+  `all -- required`.
 
-      def build(string_map) do
-        # Try to determine required fields by attempting to create struct
-        enforce_keys = get_required_fields(__MODULE__)
+  The order comes from `__info__/1` and not from the struct's own keys because
+  `Map.keys/1` on a struct answers in VM atom-table order — which varies with
+  what else the runtime has loaded — and this list is rendered into an
+  operator-facing help screen and into the order `build_struct/3` reports the
+  first unconvertible value in.
+  """
+  @spec fields(module()) :: {[atom()], [atom()]}
+  def fields(module) do
+    case module.__info__(:struct) do
+      nil ->
+        raise ArgumentError, "#{inspect(module)} uses ProviderBehaviour but declares no struct"
 
-        # Get struct fields at runtime - use a sample with dummy values for enforce_keys
-        dummy_params =
-          Enum.reduce(enforce_keys, %{}, fn key, acc ->
-            Map.put(acc, key, "dummy")
-          end)
+      declared ->
+        {for(%{field: name, required: true} <- declared, do: name),
+         Enum.map(declared, & &1.field)}
+    end
+  end
 
-        struct_sample = struct!(__MODULE__, dummy_params)
-        struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
+  @doc """
+  Build `module`'s struct from a CLI string map, coercing each field through
+  the provider's own `convert`. Answers the first value `convert` refuses.
+  """
+  @spec build_struct(module(), map(), (atom(), term() -> {:ok, term()} | {:error, binary()})) ::
+          {:ok, struct()} | {:error, binary()}
+  def build_struct(module, string_map, convert) do
+    {required, all} = fields(module)
 
-        {convert_status, params_data} =
-          Enum.reduce_while(struct_fields, {:ok, %{}}, fn field, {_status, params} ->
-            field_str = Atom.to_string(field)
+    # A halted reduce answers the refusal, never the accumulated params, so the
+    # required-field check runs only on the map the success arm built. `convert`
+    # has already formatted the reason; wrapping it again names the field twice.
+    case Enum.reduce_while(all, %{}, &coerce_field(&1, &2, string_map, convert)) do
+      {:error, reason} ->
+        {:error, reason}
 
-            case Map.get(string_map, field_str) do
-              nil ->
-                {:cont, {:ok, params}}
-
-              value ->
-                case convert_value(field, value) do
-                  {:ok, converted_value} ->
-                    params = Map.put(params, field, converted_value)
-                    {:cont, {:ok, params}}
-
-                  {:error, reason} ->
-                    {:halt, {:error, "Invalid value for #{field}: #{reason}"}}
-                end
-            end
-          end)
-
-        # Validate required fields
-        missing_fields =
-          Enum.filter(enforce_keys, fn key ->
-            not Map.has_key?(params_data, key)
-          end)
-
-        cond do
-          !Enum.empty?(missing_fields) ->
-            {:error, "Missing required fields: #{inspect(missing_fields)}"}
-
-          convert_status == :error ->
-            {:error, "Failed to convert fields: #{inspect(params_data)}"}
-
-          true ->
-            try do
-              {:ok, struct!(__MODULE__, params_data)}
-            rescue
-              e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
-            end
+      params ->
+        case Enum.reject(required, &Map.has_key?(params, &1)) do
+          [] -> new_struct(module, params)
+          missing -> {:error, "Missing required fields: #{inspect(missing)}"}
         end
-      end
+    end
+  end
 
-      def help() do
-        module_name = __MODULE__ |> Module.split() |> List.last()
+  defp coerce_field(field, params, string_map, convert) do
+    case Map.get(string_map, Atom.to_string(field)) do
+      nil -> {:cont, params}
+      value -> put_converted(params, field, convert.(field, value))
+    end
+  end
 
-        # Get struct fields
-        enforce_keys = get_required_fields(__MODULE__)
+  defp put_converted(params, field, {:ok, converted}),
+    do: {:cont, Map.put(params, field, converted)}
 
-        dummy_params =
-          Enum.reduce(enforce_keys, %{}, fn key, acc -> Map.put(acc, key, "dummy") end)
+  defp put_converted(_params, _field, {:error, reason}), do: {:halt, {:error, reason}}
 
-        struct_sample = struct!(__MODULE__, dummy_params)
-        struct_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
+  defp new_struct(module, params) do
+    {:ok, struct!(module, params)}
+  rescue
+    e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
+  end
 
-        required_fields = Enum.map(enforce_keys, &Atom.to_string/1)
+  @doc "The screen `flz plugin help <provider>` renders for `module`."
+  @spec render_help(module()) :: binary()
+  def render_help(module) do
+    {required, all} = fields(module)
+    name = module |> Module.split() |> List.last()
 
-        optional_fields =
-          struct_fields |> Enum.reject(&(&1 in enforce_keys)) |> Enum.map(&Atom.to_string/1)
+    """
+    #{name} Plugin Help
 
-        help_text =
-          """
-          #{module_name} Plugin Help
+    USAGE:
+        flz plugin enable <plugin_id> #{String.downcase(name)} [OPTIONS]
+    """ <>
+      param_block("REQUIRED", required) <>
+      param_block("OPTIONAL", all -- required) <>
+      """
 
-          USAGE:
-              flz plugin enable <plugin_id> #{module_name |> String.downcase()} [OPTIONS]
+      COMMON OPTIONS:
+          --namespace <namespace>    Namespace (default: default)
+          --operative_id <id>       Target operative ID
+          --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
+          --position <num>          Plugin position
 
-          REQUIRED PARAMETERS (X-prefixed):
-          """ <>
-            if Enum.empty?(required_fields) do
-              "    None\n"
-            else
-              (Enum.map(required_fields, fn field ->
-                 "    --X#{field} <value>    #{String.capitalize(field)}"
-               end)
-               |> Enum.join("\n")) <> "\n"
-            end <>
-            """
+      Override this help/0 function in your provider module for custom help text.
+      """
+  end
 
-            OPTIONAL PARAMETERS (X-prefixed):
-            """ <>
-            if Enum.empty?(optional_fields) do
-              "    None\n"
-            else
-              (Enum.map(optional_fields, fn field ->
-                 "    --X#{field} <value>    #{String.capitalize(field)}"
-               end)
-               |> Enum.join("\n")) <> "\n"
-            end <>
-            """
+  # The REQUIRED and OPTIONAL sections are one rendering over two lists.
+  defp param_block(heading, fields) do
+    "\n#{heading} PARAMETERS (X-prefixed):\n" <> param_lines(fields)
+  end
 
-            COMMON OPTIONS:
-                --namespace <namespace>    Namespace (default: default)
-                --operative_id <id>       Target operative ID
-                --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
-                --position <num>          Plugin position
+  defp param_lines([]), do: "    None\n"
 
-            Override this help/0 function in your provider module for custom help text.
-            """
+  defp param_lines(fields) do
+    Enum.map_join(fields, "", fn field ->
+      name = Atom.to_string(field)
+      "    --X#{name} <value>    #{String.capitalize(name)}\n"
+    end)
+  end
 
-        help_text
-      end
+  @doc "`module`'s shape, as `flz plugin list` reports it."
+  @spec describe(module()) :: map()
+  def describe(module) do
+    {required, all} = fields(module)
 
-      def provider_info() do
-        enforce_keys = get_required_fields(__MODULE__)
+    %{
+      module: inspect(module),
+      type: module.plugin_type(),
+      required_fields: Enum.map(required, &Atom.to_string/1),
+      optional_fields: Enum.map(all -- required, &Atom.to_string/1)
+    }
+  end
 
-        dummy_params =
-          Enum.reduce(enforce_keys, %{}, fn key, acc -> Map.put(acc, key, "dummy") end)
+  defmacro __using__(_opts) do
+    behaviour = __MODULE__
 
-        struct_sample = struct!(__MODULE__, dummy_params)
-        all_fields = Map.keys(struct_sample) |> Enum.reject(&(&1 == :__struct__))
-        optional_fields = all_fields -- enforce_keys
+    quote do
+      @behaviour unquote(behaviour)
+      @before_compile unquote(behaviour)
 
-        %{
-          module: inspect(__MODULE__),
-          type: plugin_type(),
-          required_fields: Enum.map(enforce_keys, &Atom.to_string/1),
-          optional_fields: Enum.map(optional_fields, &Atom.to_string/1)
-        }
-      end
+      # `convert_value/2` is the provider's own private coercion table; a
+      # capture expands in its context, so the shared builder can call it.
+      def build(string_map),
+        do: unquote(behaviour).build_struct(__MODULE__, string_map, &convert_value/2)
+
+      def help(), do: unquote(behaviour).render_help(__MODULE__)
+
+      def provider_info(), do: unquote(behaviour).describe(__MODULE__)
 
       defoverridable help: 0, provider_info: 0
-
-      defp get_required_fields(module) do
-        try do
-          # Try to create struct with empty map - if it succeeds, no required fields
-          struct!(module, %{})
-          []
-        rescue
-          e in ArgumentError ->
-            # Parse the error message to extract required field names
-            message = Exception.message(e)
-
-            case Regex.run(
-                   ~r/the following keys must also be given when building struct (.+): \[(.+)\]/,
-                   message
-                 ) do
-              [_, _struct_name, fields_str] ->
-                fields_str
-                |> String.split(", ")
-                |> Enum.map(&String.trim/1)
-                |> Enum.map(fn field_str ->
-                  # Remove the colon prefix if present
-                  field_str = String.replace_prefix(field_str, ":", "")
-                  String.to_existing_atom(field_str)
-                end)
-
-              _ ->
-                []
-            end
-        end
-      end
     end
   end
 

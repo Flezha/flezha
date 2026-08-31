@@ -19,7 +19,7 @@ defmodule Flezha.State.DurabilityTier.DeclaredManifest do
 
   @behaviour ProcessHub.Storage.RemoteManifest
 
-  alias Flezha.State.DurabilityTier.Backend
+  alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
   @impl true
   def store(hub_id, version, blob, _opts) do
@@ -48,7 +48,7 @@ defmodule Flezha.State.DurabilityTier.DeclaredManifest do
 
   @impl true
   def info(_opts) do
-    case Backend.resolve() do
+    case BackendConfig.resolve() do
       :none -> %{adapter: :durability_tier, backend: :none}
       {module, _opts} -> %{adapter: :durability_tier, backend: module}
     end
@@ -56,14 +56,14 @@ defmodule Flezha.State.DurabilityTier.DeclaredManifest do
 
   @impl true
   def validate_config(_opts) do
-    case Backend.resolve() do
+    case BackendConfig.resolve() do
       :none -> {:error, :durability_tier_disabled}
       {_module, _opts} -> :ok
     end
   end
 
   defp with_backend(fun) do
-    case Backend.resolve() do
+    case BackendConfig.resolve() do
       :none -> {:error, :durability_tier_disabled}
       {module, opts} -> fun.(module, opts)
     end

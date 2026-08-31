@@ -2,48 +2,18 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @moduledoc """
   Generic HTTP polling input source (`:io_binding`): the member of the source
   set whose upstream is a slowly-changing HTTP resource rather than a socket.
-  Attach it to feed runtime configuration, reference data, or any external
-  state onto an entry channel without restarting the operative.
 
-  It polls `:url` every `:interval_ms` and injects the response body as an
-  ordinary entry frame on `:channel` — the same journaled route as
-  `flz operative send` — but only when the body's SHA-256 differs from the
-  last delivered one. A steady endpoint therefore costs one request per
-  interval and zero frames.
+  It GETs `:url` every `:interval_ms` and injects the body on `:channel` as an
+  ordinary entry frame — but ONLY when the body's SHA-256 differs from the last
+  delivered one, so a steady endpoint costs one request per interval and zero
+  frames. The first successful poll always injects, which is what converges a
+  just-started or handed-over operative within one interval; consumers must
+  treat that seed idempotently.
 
-  The first successful poll after the plugin starts always injects (the seed),
-  which is what converges an operative that has just been started, recovered,
-  or handed over onto current content within one interval. Consumers must
-  treat these frames idempotently: the seed repeats content the pre-handover
-  instance may already have seen.
+  `:idle_after_ms` is the age of the last SETTLED poll past which the worker
+  reports `{:unhealthy, {:poll_idle, age_ms}}`; `0` means three `:interval_ms`.
 
-  Lifecycle follows the two-phase provider contract — `init_provider/1`
-  validates and normalises with no upstream I/O, `activate/1` starts the
-  poller once the SDK side is bound. All HTTP waiting happens in that worker
-  (`#{inspect(__MODULE__)}.PollWorker`), never on the host's dispatch path.
-
-  Required opts:
-    * `:url`     — `http://` or `https://` resource to GET
-    * `:channel` — entry channel the body is injected on
-
-  Optional opts (defaults below):
-    * `:interval_ms`       — int, default `60_000` (minimum `1_000`)
-    * `:timeout_ms`        — int, default `10_000` (must be under the interval)
-    * `:max_body_bytes`    — int, default `1_048_576` (1 MiB, ceiling 64 MiB)
-    * `:failure_threshold` — int, default `3` consecutive failures → unhealthy
-    * `:idle_after_ms`      — int, age of the last SETTLED poll past which the
-      poller reports `{:unhealthy, {:poll_idle, age_ms}}`. Default `0`, meaning
-      three `:interval_ms`.
-    * `:headers`           — map of static request headers (JSON object via CLI)
-    * `:plugin_id`         — label for telemetry/logs; defaults to the URL
-      with its credentials and query stripped
-
-  The `:channel` name is not checked against the operative's declared entry
-  channels: channel names are an SDK-side topology fact and never reach the
-  controller (`AddOperativeResponse.metadata` carries capability declarations
-  only), and `init_provider/1` runs before the operative binds to a runner at
-  all. A name the class does not declare surfaces as a dispatch failure on the
-  runner, exactly as a mistyped `flz operative send --channel` does.
+  Required opts `:url` and `:channel`; the rest: `docs/plugins/http_poll.md`.
   """
 
   alias Flezha.Plugin.Extension.Ctx
@@ -224,12 +194,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     if age > idle_window, do: {:unhealthy, {:poll_idle, age}}, else: :healthy
   end
 
-  @doc """
-  The URL with credentials and query stripped — the only form that reaches a
-  log line, a telemetry label, or an error string. Config endpoints routinely
-  carry an API key in the query or userinfo, and every telemetry label is
-  exported to the observability sinks.
-  """
+  @doc "See `Flezha.Plugin.Provider.HttpFetch.redact/1`."
   @spec redact(binary()) :: binary()
   defdelegate redact(url), to: HttpFetch
 
@@ -278,18 +243,21 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     do: {:error, "http_poll requires :channel — the entry channel to inject on"}
 
   defp validate_tunables(opts) do
-    Enum.reduce_while(@int_opts, {:ok, %{}}, fn {field, default}, {:ok, acc} ->
-      case parse_int(Map.get(opts, field, default), field) do
-        {:ok, value} ->
-          case bound(field, value) do
-            :ok -> {:cont, {:ok, Map.put(acc, field, value)}}
-            {:error, _} = err -> {:halt, err}
-          end
+    Enum.reduce_while(@int_opts, {:ok, %{}}, &validate_tunable(&1, &2, opts))
+  end
 
-        {:error, reason} ->
-          {:halt, {:error, "http_poll #{reason}"}}
-      end
-    end)
+  defp validate_tunable({field, default}, {:ok, acc}, opts) do
+    case parse_int(Map.get(opts, field, default), field) do
+      {:ok, value} -> bounded_put(acc, field, value)
+      {:error, reason} -> {:halt, {:error, "http_poll #{reason}"}}
+    end
+  end
+
+  defp bounded_put(acc, field, value) do
+    case bound(field, value) do
+      :ok -> {:cont, {:ok, Map.put(acc, field, value)}}
+      {:error, _} = err -> {:halt, err}
+    end
   end
 
   # A sub-second interval is a hammer, not a poll; an unbounded body cap

@@ -72,7 +72,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     assert Map.fetch!(table.monitors, original_ref) == plugin_id
 
     # Simulate the watchdog firing: kill the pid with the same shutdown
-    # reason `Flezha.Plugin.Provider.Websocket.handle_info(:idle_check)`
+    # reason `Flezha.Plugin.Provider.Websocket.Client.handle_info(:idle_check)`
     # uses, then drive `Table.handle_down` with the :DOWN we'd receive
     # from the BEAM monitor.
     Process.exit(original_pid, {:shutdown, :idle_timeout})

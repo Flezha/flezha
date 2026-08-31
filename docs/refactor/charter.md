@@ -494,6 +494,28 @@ ignores its brief can still write anywhere, and the check catches it after the f
 rather than before. The scheme buys a small, checkable invariant and a clear owner for
 every shared thing — not a sandbox.
 
+**The Elixir suite is not merely a convention-level singleton — it is enforced by the
+OS, and the collision costs runs** (2026-08-31, measured). Two workers running full
+suites concurrently produced, in one hour: an `EADDRINUSE :4500` abort (the test app
+binds a fixed port), **two** aborts on a state-root lock held by the peer's pids, and one
+`Waiting for lock on the build directory (held by process …)`. **Four wasted runs at
+~60 s each**, plus the compile stalls. Nothing was corrupted — every failure is loud —
+but the time is real and it is subtracted from what the parallelism buys.
+
+**The rule, since two workers cannot see each other**: each runs the **narrow** slice
+freely and the **full** suite **once, at its segment end**; on a lock or port collision
+it **waits and retries, and never kills the peer's processes** — both workers did this
+correctly and it is why nothing was lost. **Take every close-out measurement when the
+other lane is committed and idle**, which the attribution rule above already requires for
+a different reason.
+
+**The `git worktree` alternative is real but is not free here**: it needs symlinked
+`deps`, a scratch `MIX_BUILD_PATH` and `CARGO_TARGET_DIR`, its own
+`FLEZHA_SOCKET_FILES_PATH`, and a genuine NIF build — `RUSTLER_SKIP_COMPILATION=true`
+leaves `Transport.Native` undefined and the app cannot boot. That is a setup cost paid
+against a 14 GB `target/`. It is worth it for a long parallel run and **not** worth it
+for two areas that are each one segment from close-out.
+
 **A whole-repo metric is not attributable while a second worker is dirty** (2026-08-31,
 found by 5a mid-segment). `cycles`, `max_cycle_files` and full-scan `duplicate_pairs` are
 computed over the tree, not over the lane. 5a watched `max_cycle_files` read 20 at HEAD
@@ -501,8 +523,30 @@ and 17 after a batch that touched no dependency edge, and `mix xref` report 4 cy
 where its own survey measured 7 — all of it 5b's uncommitted work. So: **read a
 whole-repo number only against a tree that holds one area's work**, take every close-out
 measurement when the other lane is committed, and say which commit the baseline was.
-Per-file metrics (`prod_loc`, `files_over_800`, `functions_over_50`) are unaffected and
-stay readable at any time.
+**Exactly three rows are movable by a peer**, corrected 2026-08-31 by 5a against the
+supervisor's own looser statement: `duplicate_pairs`, `cycles` **and**
+`max_cycle_files`. The last two come from **one** `xref_cycles()` output by the **same**
+membership test, so there is no sense in which one is exposed and the other is not —
+and 5c, 5d and 5e all cut cycles. The other **fourteen** rows are peer-independent by
+construction, summed or listed over the area's own tracked files: `prod_loc`,
+`test_loc`, `comment_lines`, `doc_lines`, `narrative_markers`, `sleeps`, `refutes`,
+`files`, `test_files`, `comment_density`, `files_over_800`, `functions_over_50`,
+`long_names`, `async_false_share`.
+
+**The `test` area is the harder case and every area that folds tests shares it.** There
+a peer's files are *members* of the area, not merely paired with it. Excluding them
+moved **nine** rows, five of them ratcheted: `test_loc` 38 273 → 29 975,
+`files_over_800` 7 → 4, `narrative_markers` 37 → 32, `refutes` 16 → 13,
+`async_false_share` 0.811 → 0.865, `duplicate_pairs` 115 → 80.
+
+**And the obvious experiment is the wrong instrument.** Dropping the peer's files from
+`tracked_files()` left `lib/flezha/state`'s `duplicate_pairs` unchanged, which *looks*
+like proof of independence and is not: a pair counts when **either** half is in the
+area, and jscpd scans the **filesystem**, so a peer moves the number by editing its own
+source rather than by being tracked. The exclusion test measures attribution, not the
+scan. On record five deep: `test duplicate_pairs` read **118 → 109 → 115 → 109 → 115**
+in one afternoon with 5a's own test files unchanged across the last four. Two workers
+reading different numbers were both reading correctly, from different trees.
 
 **A rename owns its callers, wherever they live** (2026-08-31, first parallel segment).
 Area 5a's `workflow_completed_retention_hours` → `completed_retention_hours` has a caller
@@ -516,6 +560,22 @@ is the mechanical consequence of a change inside it** — a rename, a signature 
 deleted function's last caller. It may not edit anything else there, and it names every
 such file in its report so the supervisor checks the diff is only the consequence. The
 supervisor verifies by reading the hunk, not by trusting the count.
+
+## 11g. A Mix task's `@moduledoc` is a product surface, not narration
+
+Added 2026-08-31, ruling on area 5d's question R6. `use Mix.Task` moduledocs **are
+`mix help` output** — the text an operator reads to use the task. They are exempt from
+§5's 15-line ceiling for the same reason area 6's help screens were treated as
+operator-visible text rather than prose to be trimmed: shortening them removes
+documentation from a user-facing surface while the metric records an improvement.
+
+Four of area 5d's nineteen over-ceiling docs are Mix tasks. They stay. Every other
+moduledoc in that area is ordinary prose and the ceiling binds it.
+
+**The general form**: a comment ceiling applies to text that only a reader of the source
+sees. Where the text is *rendered* — `mix help`, a `--help` screen, a generated
+reference — it is a product surface and is governed by whether it is correct and
+complete, never by its length.
 
 ## 11e. The instrument flatters — three silences, one tendency
 
@@ -575,6 +635,25 @@ funds it** rather than reweighting — after folding to `N` files an area holds
 `async: true ≥ ⌈0.187 × N⌉`, each conversion naming the global state the test does not
 need. Reweighting by test LOC would move an already-armed baseline under all 36 areas
 at once, which is a re-baseline, not a fix.
+
+**A third instance, and this one is about the ruler §11f itself installed.** Area 5a
+split `wal_writer.ex` — one file inside a 56-file strongly-connected component — into
+five. **No edge changed**: the siblings reach exactly the collaborators the single file
+reached. `max_cycle_files` rose **17 → 21**, because five of the area's files now sit in
+the cycle where one did.
+
+So `cycles` and `max_cycle_files` are **both file-count proxies for an edge property**,
+and a file split moves both. `max_cycle_files` fixes the failure `cycles` had (splitting
+one SCC into three) and has a failure of its own (splitting one member into five). That
+is worth stating plainly rather than adding a third ruler under pressure — **the mistake
+to avoid is installing a new metric every time one misreads.**
+
+**Ruled: no third metric. The reporting requirement changes instead.** An area whose work
+touches a cycle reports **the edges it cut, by name**, beside `max_cycle_files` — edges
+are what the work actually changes, and a worker enumerating them is already doing the
+analysis. 5a cut four `→ wal_writer` edges as side effects of one extraction and would
+have shown a flat metric without them. The number stays recorded-but-uncompared until an
+area's close-out, so it blocks nothing while it is being read this way.
 
 **The rule**: when a metric's direction and the work's direction disagree, **fix the
 ruler before the area starts, in its own commit, with a cross-area simulation showing

@@ -97,7 +97,7 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
     assert :ok = Backend.put_if(key, "claim-2", {:claim, 2}, opts)
     assert {:ok, "claim-2"} = Backend.get(key, opts)
 
-    # And the writer it replaced can no longer extend.
+    # And the writer it superseded cannot extend.
     assert {:error, {:claim_held, 2}} = Backend.put_if(key, "stale", {:extend, 1}, opts)
     assert {:ok, "claim-2"} = Backend.get(key, opts)
   end

@@ -1,20 +1,15 @@
 defmodule Flezha.Plugin.SpecDecoder do
   @moduledoc """
   The one decoder for the JSON plugin-spec array carried by
-  `flz operative start --plugins` and `flz schedule add --plugins`.
+  `flz operative start --plugins` and `flz schedule add --plugins`, turning it
+  into `%Flezha.Plugin{}` structs for `Operative.Builder`'s `plugins:` opt.
 
-  Turns the array into `%Flezha.Plugin{}` structs ready for
-  `Flezha.Operative.Builder`'s `opts = [plugins: ...]`. Provider ids are
-  resolved against the controller's currently enabled providers, so the
-  decoded form is runtime state: a durable schedule stores the JSON and decodes
-  it again at every firing.
+  Provider ids resolve against the controller's currently enabled providers, so
+  the decoded form is RUNTIME state: a durable schedule stores the JSON and
+  decodes it again at every firing.
 
-  Error vocabulary (unchanged from the CLI's original decoder):
-
-    * `{:invalid_plugins_json, reason}`
-    * `{:unknown_provider, provider_id}`
-    * `{:invalid_subscription, details}`
-    * `{:invalid_opts, details}`
+  Refusals: `{:invalid_plugins_json, reason}`, `{:unknown_provider, id}`,
+  `{:invalid_subscription, details}`, `{:invalid_opts, details}`.
   """
 
   alias Flezha.Plugin
@@ -41,12 +36,11 @@ defmodule Flezha.Plugin.SpecDecoder do
       {:ok, specs} ->
         providers = ConfigManager.get_enabled_plugins()
 
-        Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
-          case build_plugin(spec, providers, namespace, operative_id, partition_opts) do
-            {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
-            {:error, _} = err -> {:halt, err}
-          end
-        end)
+        specs
+        |> Enum.reduce_while(
+          {:ok, []},
+          &collect_plugin(&1, &2, providers, namespace, operative_id, partition_opts)
+        )
         |> case do
           {:ok, plugins} -> {:ok, Enum.reverse(plugins)}
           err -> err
@@ -54,6 +48,13 @@ defmodule Flezha.Plugin.SpecDecoder do
 
       {:error, reason} ->
         {:error, {:invalid_plugins_json, reason}}
+    end
+  end
+
+  defp collect_plugin(spec, {:ok, acc}, providers, namespace, operative_id, partition_opts) do
+    case build_plugin(spec, providers, namespace, operative_id, partition_opts) do
+      {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
+      {:error, _} = err -> {:halt, err}
     end
   end
 

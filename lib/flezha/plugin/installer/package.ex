@@ -35,9 +35,8 @@ defmodule Flezha.Plugin.Installer.Package do
 
     with {:ok, entries} <- list_entries(fpz_path),
          :ok <- enforce_size_limits(entries, max_bytes, max_files),
-         :ok <- reject_unsafe_entries(entries),
-         :ok <- do_extract(fpz_path, staging_dir) do
-      :ok
+         :ok <- reject_unsafe_entries(entries) do
+      do_extract(fpz_path, staging_dir)
     end
   end
 
@@ -51,9 +50,8 @@ defmodule Flezha.Plugin.Installer.Package do
     with {:ok, entries} <- list_root(staging_dir),
          :ok <- check_required(staging_dir, entries),
          :ok <- check_no_unknown(entries),
-         :ok <- check_src_nonempty(Path.join(staging_dir, "src")),
-         :ok <- check_src_files(Path.join(staging_dir, "src")) do
-      :ok
+         :ok <- check_src_nonempty(Path.join(staging_dir, "src")) do
+      check_src_files(Path.join(staging_dir, "src"))
     end
   end
 

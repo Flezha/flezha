@@ -4,26 +4,15 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   enabled plugin owning the interval timer and the injection state, so the host
   operative's dispatch path is never inside an upstream wait.
 
-  Each request runs in a short-lived monitored child rather than in this
-  process, which keeps the worker's mailbox answerable while a slow or hanging
-  endpoint is outstanding — the health probe reports on exactly the outage that
-  would otherwise block it. The child streams the response and cancels past
-  `:max_body_bytes`, so the cap bounds what the controller allocates, not only
-  what the operative receives.
+  Each request runs in a short-lived monitored child, which keeps this
+  worker's mailbox answerable while a hanging endpoint is outstanding — the
+  health probe reports on exactly the outage that would otherwise block it.
 
-  Injection is content-gated: the body's SHA-256 is compared with the last
-  *delivered* one and a frame is sent only when they differ. Delivery uses the
-  confirming ingest clause, and the hash advances only once the operative has
-  taken the payload — a refused or not-ready ingest leaves the old hash so the
-  next poll re-offers the same content instead of losing a change.
-
-  A fresh worker holds no hash, so its first success always injects. That is
-  the seed, and it is why a handover or a plugin restart converges the
-  rejoining operative onto current content within one interval.
-
-  Started unlinked and monitored by the plugin host (`Extension.Table` tracks
-  the returned pid and kills it on unsubscribe). It monitors the host in turn
-  so a poller cannot outlive the operative it feeds.
+  Injection is content-gated and the hash advances only once the operative has
+  TAKEN the payload, so a refused ingest re-offers the same content rather than
+  losing a change. A fresh worker holds no hash, so its first success always
+  injects: that seed is what converges a rejoining operative within one
+  interval.
   """
 
   alias Flezha.Plugin.Provider.HttpFetch

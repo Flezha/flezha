@@ -12,6 +12,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Commands, Outbox, Paths, ProcJournal, TestHelpers, WalWriter, Wire}
+  alias Flezha.State.ProcJournal.Codec
 
   import Flezha.State.TestHelpers,
     only: [next_output: 0, refute_dispatched: 0, refute_dispatched: 1]
@@ -149,8 +150,8 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # An entry from a future build (unknown type 77) and a known type carrying a
     # shape this build does not understand: both tolerated, neither fatal.
-    unknown = ProcJournal.encode_entry(77, 0, 0, "future")
-    malformed = ProcJournal.encode_entry(4, 0, 5, "not-a-deadline")
+    unknown = Codec.encode_entry(77, 0, 0, "future")
+    malformed = Codec.encode_entry(4, 0, 5, "not-a-deadline")
     path = Paths.journal_path(inst)
     File.write!(path, TestHelpers.build_wal_record(1, <<0::128>>, unknown), [:append])
     File.write!(path, TestHelpers.build_wal_record(2, <<0::128>>, malformed), [:append])
@@ -225,8 +226,8 @@ defmodule FlezhaTest.State.ProcJournalTest do
     assert resume.parked
     assert resume.wake_deadline_ms == nil
 
-    # Once the loop runs again, the instance is no longer parked: the park is
-    # only the LAST entry for as long as nothing has happened since.
+    # Once the loop runs again the instance is unparked: a park holds only
+    # while it is the LAST entry.
     :ok = ProcJournal.append_proc_committed(inst, 0, 2, [], [])
     refute ProcJournal.restore_state(inst).parked
   end
@@ -526,7 +527,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     assert resume.iter == 2
     assert resume.consumed_offset == 2
     assert resume.handoff == [{1, "carry1"}]
-    # Iteration 2's proc is no longer committed progress — it is outstanding undo.
+    # Iteration 2's proc counts as outstanding undo, not committed progress.
     assert Enum.map(resume.committed_procs, & &1.iter) == [0, 1]
     assert [%{proc_idx: 0, iter: 2}] = resume.rewind_undo
 

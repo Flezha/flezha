@@ -18,6 +18,7 @@ defmodule Flezha.State.InputLogTest do
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers}
+  alias Flezha.State.InputLog.Sweep
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -80,7 +81,7 @@ defmodule Flezha.State.InputLogTest do
     InputLog.record_consumed(class, {class, "proc", "b"}, 4)
     assert InputLog.watermark(class) == 4
 
-    :ok = InputLog.sweep(class)
+    :ok = Sweep.run(class)
 
     assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
   end
@@ -110,17 +111,15 @@ defmodule Flezha.State.InputLogTest do
       # A correction replays CONSUMED inputs, so the watermark alone must not be
       # allowed to reclaim them. An hour-long window holds everything just written.
       Application.put_env(:flezha, :input_log_hold_window_ms, 3_600_000)
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
       assert InputLog.read_range(class, 0, 9) |> length() == 10
 
-      # This is the property that used to be missing entirely: `truncation_floor/1`
-      # returned nil for ANY non-zero hold window, i.e. it held everything
-      # forever. A window the records have aged out of must actually reclaim them
+      # A window the records have aged out of must actually reclaim them
       # (down to the floor, which is retained — the existing conservative
       # keep-at-or-above-the-floor contract).
       Application.put_env(:flezha, :input_log_hold_window_ms, 1)
       aged_out()
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
       assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [9]
     end
 
@@ -133,7 +132,7 @@ defmodule Flezha.State.InputLogTest do
       # the floor is min(watermark, aged_out), not the age bound alone.
       Application.put_env(:flezha, :input_log_hold_window_ms, 1)
       aged_out()
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
 
       assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
     end
@@ -143,7 +142,7 @@ defmodule Flezha.State.InputLogTest do
     for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
 
     assert InputLog.watermark(class) == nil
-    :ok = InputLog.sweep(class)
+    :ok = Sweep.run(class)
 
     assert InputLog.read_range(class, 0, 4) |> length() == 5
   end
@@ -170,8 +169,8 @@ defmodule Flezha.State.InputLogTest do
     end)
 
     # First sweep truncates (watermark newly known); second sees it frozen.
-    :ok = InputLog.sweep(class)
-    :ok = InputLog.sweep(class)
+    :ok = Sweep.run(class)
+    :ok = Sweep.run(class)
 
     assert_receive {^ref, %{size_bytes: size}, meta}
     assert size > 0
@@ -198,7 +197,7 @@ defmodule Flezha.State.InputLogTest do
     payload = {"message", %{"input_type" => "2"}}
     assert Ingest.ingest(state, "message", %{"input_type" => "2"}, :cast) == {payload, state}
     refute File.exists?(Paths.input_log_path(class))
-    refute class in InputLog.all_classes()
+    refute class in Sweep.all_classes()
   end
 
   test "tier-on operative journals before forward and stamps flz.offset", %{class: class} do
@@ -222,7 +221,7 @@ defmodule Flezha.State.InputLogTest do
 
     assert_receive {:forwarded, {"message", %{"flz.offset" => "0", "input_type" => "2"}}}
     assert [{0, "message", %{"input_type" => "2"}}] = InputLog.read_range(class, 0, 0)
-    assert class in InputLog.all_classes()
+    assert class in Sweep.all_classes()
   end
 
   describe "append_async/5 (the Overwatch's append)" do
@@ -365,8 +364,8 @@ defmodule Flezha.State.InputLogTest do
       Application.put_env(:flezha, :input_log_hold_window_ms, 0)
       :ok = ClassRegistry.put_correction_window(class, 60_000)
 
-      # This is the whole point: correction used to be unreachable, because the
-      # operator-configured floor defaults to 0 and start was refused against it.
+      # The declaration alone must reach the floor: the operator-configured
+      # window defaults to 0, so nothing else would raise it.
       assert InputLog.hold_window_ms(class) == 60_000
     end
 
@@ -397,7 +396,7 @@ defmodule Flezha.State.InputLogTest do
 
       # Everything is consumed, so the watermark alone would truncate it all —
       # but it is newer than the derived 10-minute window, so it stays.
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
 
       assert InputLog.read_range(class, 0, 1) |> length() == 2,
              "a declared correction window must hold the inputs it would replay"
@@ -466,7 +465,7 @@ defmodule Flezha.State.InputLogTest do
     test "a floor past the index samples keeps exactly the tail", %{class: class} do
       for i <- 0..599, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
       InputLog.record_consumed(class, {class, "proc", "a"}, 400)
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
 
       assert InputLog.read_range(class, 0, 599) |> Enum.map(&elem(&1, 0)) ==
                Enum.to_list(400..599)
@@ -474,7 +473,7 @@ defmodule Flezha.State.InputLogTest do
       # The second cut works against the rebased index, and appends land at the
       # right place afterwards.
       InputLog.record_consumed(class, {class, "proc", "a"}, 550)
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
       {:ok, 600} = InputLog.append(class, "m600", %{})
 
       assert InputLog.read_range(class, 0, 600) |> Enum.map(&elem(&1, 0)) ==
@@ -495,7 +494,7 @@ defmodule Flezha.State.InputLogTest do
 
       {:ok, 300} = InputLog.append(class, "m300", %{})
       InputLog.record_consumed(class, {class, "proc", "a"}, 290)
-      :ok = InputLog.sweep(class)
+      :ok = Sweep.run(class)
 
       assert InputLog.read_range(class, 0, 300) |> Enum.map(&elem(&1, 0)) ==
                Enum.to_list(290..300)

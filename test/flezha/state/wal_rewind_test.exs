@@ -158,8 +158,8 @@ defmodule Flezha.State.WalRewindTest do
 
       :ok = WalWriter.rewind_to(pid, 3, 1)
 
-      # Offsets 4 and 5 are no longer consumed by anyone — the records that
-      # claimed them are gone. Left high, the next retention sweep would truncate
+      # Offsets 4 and 5 are consumed by nobody — the records that claimed
+      # them are gone. Left high, the next retention sweep would truncate
       # away the very inputs the correction is about to replay.
       assert InputLog.watermark(ctx.rc) == 3
     end

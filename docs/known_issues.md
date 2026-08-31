@@ -1926,6 +1926,189 @@ every new production freeze to `incident_log.md` at the repository root.
   as a result. **The operational rule, in force now: the first run of a series on
   this box is not a result.**
 
+### KI-94 · `check-kind-naming` has been red for weeks on the programme's own prose
+
+- **Severity**: P3 · a permanently-red gate is worse than no gate, because people
+  learn to skip it.
+- **Where**: `scripts/check-kind-naming.sh`. **13 occurrences at `9b85b425`**, and
+  **every one is prose in `docs/` using "bounded"/"unbounded" in the capacity or
+  plain-English sense** — "a bounded poll", "a bounded spin on the clock", "OOM
+  from unbounded WAL buffers". Not one is a kind-sense use.
+- **Three of the hits are the gate's own reflection**: `known_issues.md:1639`–`:1640`
+  and `STATE.md:1799`, `:1869` are text *about this gate being red*, which adds hits
+  by describing the problem. The count has been driven up three separate times by
+  supervisor prose and reworded away three separate times — **rewording correct
+  prose to satisfy a regex**, which is precisely what area 5a's batch 2 identified
+  as a false economy in `narrative_markers` (9 of its 17 were the same thing).
+- **The mechanism to fix it already exists and has never been used for this.** The
+  allowlist header names two: `scope:pattern` entries for narrow phrases, and
+  `kind-naming-record:begin` / `:end` comments for a block that deliberately spells
+  the words out — the latter chosen precisely because it "does not pin the prose's
+  exact wording the way a regex here would".
+- **Verdict (supervisor, 2026-08-31)**: **real, and to be fixed as its own small
+  change — not inline by a worker and not by a fourth rewording.** Blinding whole
+  files with a bare-word scope is refused: it would let a genuine kind-sense error
+  hide in the two documents the programme reads most.
+- **A fix must** wrap the recurring prose in `kind-naming-record` markers where it
+  clusters, add narrow `scope:phrase` entries in the existing house style for the
+  scattered ones, and **leave the gate green at HEAD** — then say what coverage, if
+  any, was given up. Until it lands, `check-kind-naming` being red is not evidence
+  about any change, and no worker should reword prose for it.
+
+### KI-96 · Websocket's `convert_value/2` answers a struct where the callback says `String.t()`
+
+- **Severity**: P4 · off-contract, and strictly better than what it replaced.
+- **Where**: `lib/flezha/plugin/provider/websocket.ex` `convert_value/2` — `ws_opts`,
+  `post_connect`, `payload_metadata` and `subscription_headers` return
+  `{:error, %Jason.DecodeError{}}` against the `@callback`'s `String.t()`.
+- **History that matters**: before [[KI-93]] those four *raised*
+  `Protocol.UndefinedError`, because the old builder interpolated the struct into a
+  message. The fix stopped the raise, so the non-binary reason now propagates
+  instead of exploding. **Strictly better, still wrong**, and the fault is the
+  provider's own return value rather than the shared builder's.
+- **A fix must** render the decode error to a string at the provider (`Exception.message/1`),
+  and check the other eight providers for the same shape rather than fixing only
+  the one that was found.
+
+### KI-97 · `mix bench.extension` has been dead since the workload rename
+
+- **Severity**: P3 · a dev instrument, no production impact — but it is a
+  *benchmark*, and a benchmark that cannot run is a regression detector nobody
+  knows they have lost.
+- **Where**: `lib/mix/tasks/bench/extension.ex:120` and `:137` pass `entity: 0` in
+  the producer opts; `ProducerWorker.configured/1` does
+  `Keyword.fetch!(opts, :partition)` (`producer_worker.ex:58`, `:166`).
+- **Evidence** (reproduced by the supervisor at `041dd838`):
+
+  ```
+  $ mix bench.extension
+  Kafka chain mailbox boundedness — 80 ev/s for 5 s
+  ** (EXIT from #PID<0.95.0>) an exception was raised:
+      ** (KeyError) key :partition not found in:
+      [plugin_id: "bench", topic: "bench", entity: 0, ...]
+  $ echo $?
+  1
+  ```
+
+  The Kafka scenario runs **first**, so the task dies before reaching the
+  `Extension.run/3` throughput rows. The whole task is unusable.
+- **Mechanism, named to the commit**: `1926bd28` *"refactor!: rename the workload
+  model to Operative → Procedure → Entity"* renamed `partition:` → `entity:` here.
+  **That `partition` is a Kafka partition, not a Flezha Entity** — a false-positive
+  rename in a mechanical sweep. `fetch!` then raises deterministically.
+- **Blast radius, checked rather than assumed**: **nothing past is invalidated.**
+  No `timings` or `bench` row in `docs/refactor/baseline.json` comes from this task
+  (its bench keys are roundtrip and rust-dispatch), no dev note rests a claim on it,
+  and the only mentions in `STATE.md` are area 5b's survey observing that **no floor
+  for it exists anywhere in the programme** — which, read now, was the first
+  symptom. The loss is prospective only.
+- **Verdict (supervisor, 2026-08-31)**: **real, pre-existing, one-line fix at two
+  sites** (`entity:` → `partition:`). It is in `lib/mix`, which is **area 5d's**
+  tree, so 5d takes it as a fix-first item; area 5b correctly did not touch it.
+- **Consequence for 5b**: its A/B row P1 reclassifies to **`direction` and is not
+  run** — and for a stronger reason than area 4's J1 precedent. J1 was reclassified
+  because its floor could not resolve the effect; **this instrument produces no
+  number at all.** The arm `sha256sum` is recorded in its place.
+- **A fix must** correct both sites, run the task to completion, and record the
+  first floor this instrument has ever had — under [[KI-92]]'s rule that the first
+  run of a series on this box is not a result.
+
+### KI-98 · The cycle metrics silently drop every annotated cycle member
+
+- **Severity**: P2 · a **ratcheted** gate under-reporting, and under-reporting
+  flatters. §11e's fourth instance and §11f's fourth — and the second defect found
+  in `max_cycle_files`, the ruler installed this same day.
+- **Where**: `scripts/refactor_metrics.py:459` appends `line.strip()`, keeping
+  `mix xref`'s ` (compile)` / ` (export)` suffix on the member path. `summarise()`
+  at `:529`–`:531` then tests membership with `f in files`, where `files` holds
+  bare `git ls-files` paths. **Both `cycles` and `max_cycle_files` are in
+  `RATCHETED`** (`:48`).
+- **Evidence** (reproduced by the supervisor at `848ade3c`): `mix xref graph
+  --format cycles | grep -c '(compile)\|(export)'` → **10**. Every one of those ten
+  members is invisible to both metrics, because an annotated string can never equal
+  a bare path. `Cycle of length 56 (1 compile, 9 export)` names exactly ten.
+- **Cross-area simulation on the real graph** — four areas move, **none blocking**,
+  and `cycles` moves for none:
+
+  | area | reported `max_cycle_files` | true |
+  |---|---|---|
+  | `lib/flezha` | 46 | **56** |
+  | `lib/flezha/convergence` | 1 | **5** |
+  | `lib/flezha/operative` | 4 | **9** |
+  | `lib/flezha/service` | 5 | **6** |
+
+- **Why it matters immediately**: area 5c's single highest-value change is cutting
+  `operative_manager.ex:23`'s `@id_in_use Validator.id_in_use()` — a module
+  attribute, hence **the** `1 compile` edge in the 56-file cycle. Cutting it today
+  reports **nothing**; and had the edge merely been downgraded compile → runtime,
+  the file becomes *visible* and the row goes **5 → 6 — a regression for progress.**
+  That is §11f's exact failure mode landing on the best change in the area.
+- **Verdict (supervisor, 2026-08-31)**: **fix it, in its own commit, before area 5c
+  moves its first file**, per §11f's rule that a ruler disagreeing with the work is
+  fixed first.
+- **A fix must** strip the annotation before the membership test; add a
+  `--self-test` case with an annotated member, **proved red first**; re-record the
+  four moved rows in `baseline.json`; and **add no third metric** — §11f rules that
+  out explicitly, and this is a correction to an existing ruler rather than a new
+  one.
+
+## Resolved
+
+### KI-95 · The operator-facing parameter order varies with what the VM has loaded
+
+- **Severity**: P3 · an operator-visible surface whose order is unspecified and
+  irreproducible. Found by area 5b while proving a refactor byte-neutral.
+- **Where**: `lib/flezha/plugin/provider_behaviour.ex` `fields/1`, and identically
+  the pre-B1 `help/0`, `provider_info/0` and `build/1` bodies — **all four derive
+  the field list from `Map.keys/1` on a struct.**
+- **Mechanism, named**: for atom keys an Erlang flatmap orders by the **atom
+  table**, i.e. interning order — not declaration order and not alphabetical.
+  Reproduced by the supervisor:
+
+  ```
+  $ elixir -e 'IO.inspect(Map.keys(%{zebra: 1, apple: 2, mango: 3}))
+               IO.inspect(Map.keys(Map.new([:mango,:apple,:zebra], &{&1,1})))'
+  [:zebra, :apple, :mango]
+  [:zebra, :apple, :mango]
+  ```
+
+  Both orders are identical and neither is the insertion order, so the result is a
+  function of **which atoms the VM has already interned** — what else was loaded,
+  and each provider beam's atom chunk.
+- **It is not any one change's doing**: on one tree and one build, a script that
+  loads only the nine providers puts `overwatcher_pid` **last**, while a script
+  that also calls `help`/`build`/`validate` puts it **fifth** — and the first gives
+  the same answer with the provider list forward and reversed.
+- **And it cannot be preserved by a refactor**: under a *fixed* harness the order
+  moved anyway when B1 removed ~110 generated lines from every provider, changing
+  their atom chunks. **A golden file that pins this order is pinning noise**, which
+  is the practical reason it matters to this programme.
+- **Verdict (supervisor, 2026-08-31)**: **real, fix it** — pin the order to
+  `defstruct` declaration order via `module.__info__(:struct)`. That is stable,
+  reproducible, and the order the provider's author actually wrote. It is a
+  deliberate one-time operator-visible change, so it lands in **its own commit**
+  with the new order of all affected providers recorded, and it is taken **now**,
+  while the golden harness that measured it is still warm — re-deriving it later
+  costs more than doing it.
+- **Measured cost**: reorders **7 of the 9** providers, most fields on each
+  (`Kafka.Producer` and `Websocket` substantially).
+- **RESOLVED 2026-08-31, `d5923bb8`.** `fields/1` reads `module.__info__(:struct)`.
+  Proved stable on the two harnesses that used to disagree — providers-only
+  forward, providers-only **reversed**, and the full capture now answer
+  identically; the supervisor reproduced it independently under two load orders.
+  **Six providers reorder, every field set identical.**
+- **It deleted a second mechanism on the way out**, which is the better half of the
+  fix: `required_fields/1` read `@enforce_keys` by matching the **text of the
+  `ArgumentError`** that `struct!/2` raises. `__info__(:struct)` carries
+  `required: true` per field and the two agreed on **9 of 9** providers, so the
+  parse and its helper are gone — **−29 lines, and an operator-facing list no
+  longer depends on parsing a compiler error message.**
+- **One consequence, the same mechanism**: `build_struct/3` reports the *first*
+  unconvertible field in declaration order, so a map with several invalid values
+  now names a predictable field instead of an atom-table-dependent one. A single
+  invalid value is unchanged.
+
+
 ### KI-93 · The generated `build/1` raises where its own `@callback` says it returns
 
 - **Severity**: P2 · a documented public callback surface that cannot return its
@@ -1970,37 +2153,21 @@ every new production freeze to `incident_log.md` at the repository root.
   the `cond` already expects, restore the unreachable arm, stop double-wrapping
   the reason, and be shown RED first against at least one raising provider. It
   must also confirm **no test asserts the raise** before changing it.
+- **RESOLVED 2026-08-31, `17ec6993`.** The halted reduce answers `{:error, reason}`
+  and the required-field check runs only on the map the success arm built; the
+  double wrap is gone. **44 raising fields across 7 providers → 0 across 9**, and
+  the golden capture over `help/0`, `provider_info/0`, `build/1` and
+  `validate_opts/1` differs in **exactly 5 rows**, every one a raise becoming its
+  documented error. Red first: 4 of 8 new tests fail on the unfixed macro, and the
+  supervisor re-drove the same 4-of-8 split against HEAD's macro. No test asserted
+  the raise — checked before editing, as the verdict required.
+- **One honest deviation from the verdict's wording**, reported rather than
+  silently taken: `:377`'s literal arm could not be kept, because `params_data`
+  would have to be a map (for `Map.has_key?/2`) and the reason (for the message) in
+  one slot. Its **behaviour** is what became reachable; its text is superseded by
+  the reason itself, since `inspect`ing that into `"Failed to convert fields: …"`
+  would recreate the double wrap in another form.
 
-### KI-94 · `check-kind-naming` has been red for weeks on the programme's own prose
-
-- **Severity**: P3 · a permanently-red gate is worse than no gate, because people
-  learn to skip it.
-- **Where**: `scripts/check-kind-naming.sh`. **13 occurrences at `9b85b425`**, and
-  **every one is prose in `docs/` using "bounded"/"unbounded" in the capacity or
-  plain-English sense** — "a bounded poll", "a bounded spin on the clock", "OOM
-  from unbounded WAL buffers". Not one is a kind-sense use.
-- **Three of the hits are the gate's own reflection**: `known_issues.md:1639`–`:1640`
-  and `STATE.md:1799`, `:1869` are text *about this gate being red*, which adds hits
-  by describing the problem. The count has been driven up three separate times by
-  supervisor prose and reworded away three separate times — **rewording correct
-  prose to satisfy a regex**, which is precisely what area 5a's batch 2 identified
-  as a false economy in `narrative_markers` (9 of its 17 were the same thing).
-- **The mechanism to fix it already exists and has never been used for this.** The
-  allowlist header names two: `scope:pattern` entries for narrow phrases, and
-  `kind-naming-record:begin` / `:end` comments for a block that deliberately spells
-  the words out — the latter chosen precisely because it "does not pin the prose's
-  exact wording the way a regex here would".
-- **Verdict (supervisor, 2026-08-31)**: **real, and to be fixed as its own small
-  change — not inline by a worker and not by a fourth rewording.** Blinding whole
-  files with a bare-word scope is refused: it would let a genuine kind-sense error
-  hide in the two documents the programme reads most.
-- **A fix must** wrap the recurring prose in `kind-naming-record` markers where it
-  clusters, add narrow `scope:phrase` entries in the existing house style for the
-  scattered ones, and **leave the gate green at HEAD** — then say what coverage, if
-  any, was given up. Until it lands, `check-kind-naming` being red is not evidence
-  about any change, and no worker should reword prose for it.
-
-## Resolved
 
 ### KI-10 · Credo strict contradicts house style — RESOLVED 2026-08-31
 

@@ -32,9 +32,8 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
              | {:dependency_constraint, binary(), binary(), binary()}
              | {:dependency_cycle, [binary()]}}
   def validate_install(manifest, catalog) do
-    with :ok <- check_deps_present(manifest, catalog),
-         :ok <- check_cycles(manifest, catalog) do
-      :ok
+    with :ok <- check_deps_present(manifest, catalog) do
+      check_cycles(manifest, catalog)
     end
   end
 
@@ -49,9 +48,8 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
   def validate_upgrade(new_manifest, plugin_id, catalog) when is_binary(plugin_id) do
     catalog_without_self = Enum.reject(catalog, fn {id, _} -> id == plugin_id end)
 
-    with :ok <- validate_install(new_manifest, catalog_without_self),
-         :ok <- check_dependents_satisfied(new_manifest, plugin_id, catalog_without_self) do
-      :ok
+    with :ok <- validate_install(new_manifest, catalog_without_self) do
+      check_dependents_satisfied(new_manifest, plugin_id, catalog_without_self)
     end
   end
 
@@ -62,16 +60,14 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
   @spec find_dependents(binary(), [catalog_row()]) :: [binary()]
   def find_dependents(plugin_id, catalog) when is_binary(plugin_id) do
     Enum.flat_map(catalog, fn {id, row} ->
-      deps = Map.get(row, :dependencies, [])
+      if depends_on?(Map.get(row, :dependencies, []), plugin_id), do: [id], else: []
+    end)
+  end
 
-      if Enum.any?(deps, fn
-           {^plugin_id, _} -> true
-           _ -> false
-         end) do
-        [id]
-      else
-        []
-      end
+  defp depends_on?(deps, plugin_id) do
+    Enum.any?(deps, fn
+      {^plugin_id, _} -> true
+      _ -> false
     end)
   end
 
@@ -92,17 +88,18 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
           {:halt, {:error, {:dependency_missing, dep_id, constraint}}}
 
         {:ok, row} ->
-          version = row[:version] || ""
-
-          case Version.match?(version, constraint) do
-            true -> {:cont, :ok}
-            false -> {:halt, {:error, {:dependency_constraint, dep_id, constraint, version}}}
-          end
+          match_constraint(row[:version] || "", dep_id, constraint)
       end
     end)
   rescue
     # Version.match? raises on malformed version strings; treat as failure.
     e -> {:error, {:dependency_constraint, :version_raise, Exception.message(e)}}
+  end
+
+  defp match_constraint(version, dep_id, constraint) do
+    if Version.match?(version, constraint),
+      do: {:cont, :ok},
+      else: {:halt, {:error, {:dependency_constraint, dep_id, constraint, version}}}
   end
 
   # Build an adjacency map from the current catalog PLUS the new manifest's
@@ -142,14 +139,7 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
         children = Map.get(adjacency, node, [])
 
         result =
-          Enum.reduce_while(children, {:ok, colors}, fn child, {:ok, colors} ->
-            child_stack = [child | stack]
-
-            case dfs_cycle(child, adjacency, colors, child_stack) do
-              :ok -> {:cont, {:ok, Map.put(colors, child, :black)}}
-              {:cycle, path} -> {:halt, {:cycle, path}}
-            end
-          end)
+          Enum.reduce_while(children, {:ok, colors}, &visit_child(&1, &2, adjacency, stack))
 
         case result do
           {:ok, _colors} -> :ok
@@ -158,8 +148,19 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
     end
   end
 
+  defp visit_child(child, {:ok, colors}, adjacency, stack) do
+    case dfs_cycle(child, adjacency, colors, [child | stack]) do
+      :ok -> {:cont, {:ok, Map.put(colors, child, :black)}}
+      {:cycle, path} -> {:halt, {:cycle, path}}
+    end
+  end
+
   # For an upgrade of `plugin_id` to the manifest's version, refuse if any
   # installed dependent has a constraint the new version fails.
+  defp blocking_dep(dep_id, constraint, new_version) do
+    if Version.match?(new_version, constraint), do: [], else: [{dep_id, constraint}]
+  end
+
   defp check_dependents_satisfied(new_manifest, plugin_id, catalog) do
     new_version = new_manifest[:version]
     dependents = find_dependents(plugin_id, catalog)
@@ -170,22 +171,12 @@ defmodule Flezha.Plugin.Installer.DependencyResolver do
         deps = Map.get(row, :dependencies, [])
 
         Enum.flat_map(deps, fn
-          {^plugin_id, constraint} ->
-            if Version.match?(new_version, constraint) do
-              []
-            else
-              [{dep_id, constraint}]
-            end
-
-          _ ->
-            []
+          {^plugin_id, constraint} -> blocking_dep(dep_id, constraint, new_version)
+          _ -> []
         end)
       end)
 
-    case blocking do
-      [] -> :ok
-      _ -> {:error, {:dependents_block, blocking}}
-    end
+    if blocking == [], do: :ok, else: {:error, {:dependents_block, blocking}}
   rescue
     _ -> {:error, {:dependents_block, :version_raise}}
   end

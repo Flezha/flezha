@@ -19,42 +19,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   require Logger
 
-  alias Flezha.Plugin.Provider.Kafka
+  alias Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
-  alias KafkaEx.Client, as: KafkaClient
   alias KafkaEx.Client.NodeSelector
-
-  @retriable [
-    :no_broker,
-    :not_leader_for_partition,
-    :network_exception,
-    :request_timed_out,
-    :not_enough_replicas,
-    :not_enough_replicas_after_append,
-    :replica_not_available,
-    :leader_not_available,
-    :broker_not_available,
-    :closed,
-    :correlation_mismatch
-  ]
-
-  @permanent [
-    :invalid_topic_exception,
-    :invalid_topic,
-    :record_list_too_large,
-    :message_size_too_large,
-    :offset_metadata_too_large,
-    :topic_authorization_failed,
-    :cluster_authorization_failed
-  ]
-
-  # The batch is genuinely stored already (a retry that landed twice). Safe to ack.
-  @idempotence_already_delivered [:duplicate_sequence_number]
-
-  # The producer session is fenced/desynced and the batch was NOT stored. The
-  # session must be re-initialised and the batch resent — acking it would drop data.
-  @idempotence_fenced [:out_of_order_sequence_number, :invalid_producer_epoch]
 
   # Consecutive `fail_batch/3` occurrences (a batch that exhausted its
   # retries / delivery timeout) before we force a fresh broker connection.
@@ -145,7 +114,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   @doc """
   Worker-reuse policy for `ProducerSup.ensure_worker/1`: alive AND not
   permanently parked (`last_error` is `{:swap_exhausted, _}` when the
-  in-process broker-swap recovery is exhausted and the queue can no longer
+  in-process broker-swap recovery is exhausted and the queue cannot
   drain). A wedged stats read errs on the side of reuse — only a
   definitively parked/dead worker is reaped.
   """
@@ -176,12 +145,22 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
+    {:ok, initial_state(opts), {:continue, :maybe_init_producer_id}}
+  end
+
+  # Every tunable is read here and nowhere else, so the defaults are one table.
+  defp initial_state(opts) do
     {worker_pid, registry_ref, registry_owned?} = acquire_worker(opts)
 
-    state = %{
-      worker_pid: worker_pid,
-      registry_ref: registry_ref,
-      registry_owned?: registry_owned?,
+    %{worker_pid: worker_pid, registry_ref: registry_ref, registry_owned?: registry_owned?}
+    |> Map.merge(configured(opts))
+    |> Map.merge(fresh_slots())
+  end
+
+  # Every tunable and every injected function, read once: a knob has exactly
+  # one default and it is here.
+  defp configured(opts) do
+    %{
       connection_identity: Keyword.get(opts, :connection_identity),
       topic: Keyword.fetch!(opts, :topic),
       partition: Keyword.fetch!(opts, :partition),
@@ -205,13 +184,22 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       auto_create_replication_factor: Keyword.get(opts, :auto_create_replication_factor, 2),
       topic_configs: Keyword.get(opts, :topic_configs, []),
       metadata_refresh_timeout_ms: Keyword.get(opts, :metadata_refresh_timeout_ms, 5_000),
-      send_fn: Keyword.get(opts, :send_fn, &default_send/3),
-      init_producer_id_fn: Keyword.get(opts, :init_producer_id_fn, &default_init_producer_id/2),
-      create_topic_fn: Keyword.get(opts, :create_topic_fn, &default_create_topic/4),
-      metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, &default_metadata_refresh/2),
+      send_fn: Keyword.get(opts, :send_fn, &Wire.default_send/3),
+      init_producer_id_fn:
+        Keyword.get(opts, :init_producer_id_fn, &Wire.default_init_producer_id/2),
+      create_topic_fn: Keyword.get(opts, :create_topic_fn, &Wire.default_create_topic/4),
+      metadata_refresh_fn:
+        Keyword.get(opts, :metadata_refresh_fn, &Wire.default_metadata_refresh/2),
       now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
       wall_now_fn: Keyword.get(opts, :wall_now_fn, fn -> System.system_time(:millisecond) end),
       jitter_fn: Keyword.get(opts, :jitter_fn, fn max -> :rand.uniform(max + 1) - 1 end),
+      stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold)
+    }
+  end
+
+  # What a fresh worker starts with. None of it is configurable.
+  defp fresh_slots do
+    %{
       producer_id: nil,
       producer_epoch: nil,
       sequence: 0,
@@ -226,14 +214,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       last_error: nil,
       consecutive_failures: 0,
       dropped_total: 0,
-      stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold),
       last_force_replace_at: nil,
       swap_started_at: nil,
       swap_attempt: 0,
       pending_swap_telemetry: nil
     }
-
-    {:ok, state, {:continue, :maybe_init_producer_id}}
   end
 
   @impl true
@@ -262,7 +247,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @impl true
   def handle_call({:enqueue, msg, metadata}, from, state) do
-    record = build_record(msg, metadata, from, state.wall_now_fn.())
+    record = Wire.build_record(msg, metadata, from, state.wall_now_fn.())
 
     case admit_record(state, record, from) do
       {:admitted, state} ->
@@ -300,7 +285,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @impl true
   def handle_cast({:enqueue_async, msg, metadata}, state) do
-    record = build_record(msg, metadata, :async, state.wall_now_fn.())
+    record = Wire.build_record(msg, metadata, :async, state.wall_now_fn.())
 
     case admit_record(state, record, :async) do
       {:admitted, state} -> {:noreply, maybe_kick_batch(state)}
@@ -314,7 +299,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {:noreply, maybe_send_batch(%{state | linger_timer: nil})}
   end
 
-  # A response for a dispatch the window no longer owns (a resend already went
+  # A response for a dispatch the window does not own (a resend already went
   # out, or the batch was rewound) is ignored — the same rule as the fresh
   # handle per dispatch it rests on.
   def handle_info({:kafka_ex_response, ref, result}, state) do
@@ -345,7 +330,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   def handle_info({:metadata_refresh_done, batch_id, latency_ms, error}, state) do
-    Kafka.metadata_refresh(
+    emit_metadata_refresh(
       latency_ms,
       Map.merge(partition_meta(state), %{trigger: :error_recovery, error: error})
     )
@@ -482,7 +467,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       )
     end
 
-    Kafka.dropped(
+    emit_produce_dropped(
       1,
       Map.merge(partition_meta(state), %{
         queue_depth: state.queue_size,
@@ -568,21 +553,21 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp maybe_send_batch(state) do
-    if slot_free?(state) do
-      case drain_batch(state, state.max_batch_bytes) do
-        {[], state} ->
-          state
+    if slot_free?(state), do: send_drained(state), else: state
+  end
 
-        {records, state} ->
-          batch = new_batch(state, records)
-          next_seq = if state.idempotent, do: state.sequence + length(records), else: 0
+  defp send_drained(state) do
+    case drain_batch(state, state.max_batch_bytes) do
+      {[], state} ->
+        state
 
-          %{state | sequence: next_seq, in_flight: state.in_flight ++ [batch]}
-          |> do_send(batch)
-          |> maybe_kick_batch()
-      end
-    else
-      state
+      {records, state} ->
+        batch = new_batch(state, records)
+        next_seq = if state.idempotent, do: state.sequence + length(records), else: 0
+
+        %{state | sequence: next_seq, in_flight: state.in_flight ++ [batch]}
+        |> do_send(batch)
+        |> maybe_kick_batch()
     end
   end
 
@@ -727,10 +712,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   # The client answers by message, so the worker sends from its own process and
   # the dispatch handle it hands back identifies the batch. A handle is fresh
-  # per dispatch: a late outcome from a prior hung send no longer names a batch
+  # per dispatch: a late outcome from a prior hung send does not name a batch
   # in the window and is ignored, so a slow send can't double-apply.
   defp do_send(state, batch) do
-    request = build_produce_request(state, batch.records, batch.base_sequence)
+    request = Wire.build_produce_request(state, batch.records, batch.base_sequence)
     selector = NodeSelector.topic_partition(state.topic, state.partition)
 
     # A crash or call timeout in the shared client (e.g. a wedged socket after a
@@ -764,40 +749,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     })
   end
 
-  defp build_produce_request(state, records, base_sequence) do
-    record_batch = %Kayrock.RecordBatch{
-      attributes: 0,
-      producer_id: if(state.idempotent, do: state.producer_id, else: -1),
-      producer_epoch: if(state.idempotent, do: state.producer_epoch, else: -1),
-      base_sequence: if(state.idempotent, do: base_sequence, else: -1),
-      records:
-        Enum.map(records, fn r ->
-          %Kayrock.RecordBatch.Record{
-            attributes: 0,
-            timestamp: r.timestamp,
-            offset: 0,
-            key: r.key,
-            value: r.value,
-            headers: record_headers(r)
-          }
-        end)
-    }
-
-    %Kayrock.Produce.V5.Request{
-      transactional_id: nil,
-      acks: state.required_acks,
-      timeout: state.request_timeout_ms,
-      topic_data: [
-        %{
-          topic: state.topic,
-          data: [%{partition: state.partition, record_set: record_batch}]
-        }
-      ]
-    }
-  end
-
   defp handle_batch_result(state, batch, result) do
-    case classify_result(result, state) do
+    case Wire.classify_result(result, state) do
       {:ok, base_offset} ->
         deliver_batch(state, batch, base_offset)
 
@@ -818,7 +771,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp deliver_batch(state, batch, base_offset) do
-    Kafka.produce_ok(
+    emit_produce_ok(
       length(batch.records),
       elapsed_ms(state, batch),
       Map.merge(partition_meta(state), %{base_offset: base_offset, attempt: batch.attempt + 1})
@@ -900,7 +853,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp emit_retry(state, batch, reason) do
-    Kafka.retry(
+    emit_produce_retry(
       batch.attempt + 1,
       retry_backoff_ms(state, batch.attempt + 1),
       Map.put(partition_meta(state), :reason, reason)
@@ -916,7 +869,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp handle_topic_create_result(state, batch, result) do
     case result do
       :ok ->
-        Kafka.topic_created(
+        emit_topic_created(
           state.auto_create_partitions,
           state.auto_create_replication_factor,
           %{
@@ -1011,10 +964,15 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
+  # `attempt` reaches here as 0 for a batch that has never been retried, which
+  # is the ladder's first rung.
   defp retry_backoff_ms(state, attempt) do
-    base = trunc(state.retry_backoff_ms * :math.pow(2, max(attempt - 1, 0)))
-    jitter = state.jitter_fn.(100)
-    min(base + jitter, state.retry_max_backoff_ms)
+    ProviderBehaviour.retry_backoff_ms(
+      state.retry_backoff_ms,
+      state.retry_max_backoff_ms,
+      max(attempt, 1),
+      state.jitter_fn.(100)
+    )
   end
 
   defp fail_batch(state, batch, reason) do
@@ -1112,7 +1070,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     total_ms = elapsed_ms(state, batch)
 
     Enum.each(batch.records, fn r ->
-      Kafka.failed(
+      emit_produce_failed(
         batch.attempt + 1,
         total_ms,
         Map.merge(partition_meta(state), %{last_reason: reason, caller: caller_tag(r)})
@@ -1159,12 +1117,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
-  defp record_headers(%{dedup_key: dedup_key}) when is_binary(dedup_key) do
-    [%Kayrock.RecordBatch.RecordHeader{key: "flezha.dedup_key", value: dedup_key}]
-  end
-
-  defp record_headers(_record), do: []
-
   defp elapsed_ms(state, batch), do: state.now_fn.() - batch.first_attempt_at
 
   # The worker's identity, in a log line and in every telemetry event.
@@ -1173,189 +1125,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp partition_meta(state) do
     %{plugin_id: state.plugin_id, topic: state.topic, partition: state.partition}
-  end
-
-  defp build_record(msg, metadata, from, timestamp_ms) do
-    {key, dedup_key} = record_identity(metadata)
-
-    %{
-      from: from,
-      value: msg,
-      key: key,
-      dedup_key: dedup_key,
-      metadata: metadata,
-      timestamp: timestamp_ms,
-      bytes: byte_size_or(0, msg) + byte_size_or(0, key) + byte_size_or(0, dedup_key)
-    }
-  end
-
-  # Effectively-once tier record (`flz.epoch` present): the natural key is
-  # the Kafka message key — stable partitioning across replays, upsert
-  # semantics on compacted/changelog topics — and the full durable identity
-  # travels as the `flezha.dedup_key` header
-  # (`<flz.entity>/<outbox_seq>/<epoch>`) for consumer-side exact dedup on
-  # append-only topics. Re-driven entries carry identical identity.
-  defp record_identity(
-         %{"flz.epoch" => epoch, "flz.entity" => entity, "flz.seq" => outbox_seq} = metadata
-       ) do
-    {Map.get(metadata, "flz.key"), "#{entity}/#{outbox_seq}/#{epoch}"}
-  end
-
-  # At-least-once records: no identity header, but a `.keyed()` channel's
-  # natural key still partitions. Only the effectively-once tier stamps
-  # `flz.epoch`, so requiring it here would ship every ordinary keyed emit
-  # with a nil key — and a nil key scatters one entity's records across
-  # partitions, losing exactly the ordering `.keyed()` was declared for.
-  defp record_identity(metadata) do
-    key =
-      Map.get(metadata, "flz.key") ||
-        Map.get(metadata, "flezha.dedup_key") ||
-        Map.get(metadata, "kafka_msg_key", nil)
-
-    {key, nil}
-  end
-
-  defp byte_size_or(_default, bin) when is_binary(bin), do: byte_size(bin)
-  defp byte_size_or(default, _), do: default
-
-  defp classify_result(result, state) do
-    case result do
-      {:ok, %{responses: responses}} ->
-        case extract_partition(responses, state.topic, state.partition) do
-          {:ok, base_offset} ->
-            {:ok, base_offset}
-
-          {:error, error_atom} when error_atom in @retriable ->
-            {:retry, error_atom}
-
-          {:error, error_atom} when error_atom in @permanent ->
-            {:permanent, error_atom}
-
-          {:error, :unknown_topic_or_partition} ->
-            {:retry, :unknown_topic_or_partition}
-
-          {:error, error_atom} when error_atom in @idempotence_fenced ->
-            {:fenced, error_atom}
-
-          {:error, error_atom} when error_atom in @idempotence_already_delivered ->
-            {:already_delivered, error_atom}
-
-          {:error, other} ->
-            {:permanent, other}
-        end
-
-      {:error, :no_broker} ->
-        {:retry, :no_broker}
-
-      {:error, :timeout} ->
-        {:retry, :request_timed_out}
-
-      {:error, {:exit, _}} ->
-        {:retry, :network_exception}
-
-      {:error, reason} when is_atom(reason) and reason in @retriable ->
-        {:retry, reason}
-
-      {:error, reason} when is_atom(reason) and reason in @permanent ->
-        {:permanent, reason}
-
-      {:error, {:send_crashed, _kind, _reason}} ->
-        {:retry, :network_exception}
-
-      {:error, :dispatch_timeout} ->
-        {:retry, :dispatch_timeout}
-
-      {:error, reason} ->
-        {:permanent, reason}
-    end
-  end
-
-  defp extract_partition(responses, topic, partition) do
-    case Enum.find(responses, fn r -> Map.get(r, :topic) == topic end) do
-      nil ->
-        {:error, :no_topic_in_response}
-
-      %{partition_responses: parts} ->
-        case Enum.find(parts, fn p -> Map.get(p, :partition) == partition end) do
-          nil ->
-            {:error, :no_partition_in_response}
-
-          %{error_code: 0, base_offset: offset} ->
-            {:ok, offset}
-
-          %{error_code: code} ->
-            {:error, Kayrock.ErrorCode.code_to_atom(code)}
-        end
-    end
-  end
-
-  defp default_send(worker_pid, request, node_selector) do
-    KafkaClient.send_request_async(worker_pid, request, node_selector)
-  end
-
-  defp default_init_producer_id(worker_pid, timeout_ms) do
-    request = %Kayrock.InitProducerId.V0.Request{
-      transactional_id: nil,
-      transaction_timeout_ms: timeout_ms
-    }
-
-    case KafkaClient.send_request(worker_pid, request, NodeSelector.first_available(), timeout_ms) do
-      {:ok, %{error_code: 0, producer_id: pid, producer_epoch: epoch}} ->
-        {:ok, %{producer_id: pid, producer_epoch: epoch}}
-
-      {:ok, %{error_code: code}} ->
-        {:error, Kayrock.ErrorCode.code_to_atom(code)}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp default_create_topic(worker_pid, topic, opts, timeout_ms) do
-    request = %Kayrock.CreateTopics.V0.Request{
-      timeout_ms: opts.timeout_ms,
-      topics: [
-        %{
-          name: topic,
-          num_partitions: opts.num_partitions,
-          replication_factor: opts.replication_factor,
-          assignments: [],
-          configs:
-            Enum.map(opts.config_entries, fn
-              {k, v} -> %{name: to_string(k), value: to_string(v)}
-              %{config_name: cn, config_value: cv} -> %{name: to_string(cn), value: to_string(cv)}
-              %{name: _, value: _} = m -> m
-            end)
-        }
-      ]
-    }
-
-    case KafkaClient.send_request(worker_pid, request, NodeSelector.controller(), timeout_ms) do
-      {:ok, %{topics: errors}} ->
-        case Enum.find(errors, fn e ->
-               Map.get(e, :name) == topic
-             end) do
-          %{error_code: 0} ->
-            :ok
-
-          %{error_code: code} ->
-            atom = Kayrock.ErrorCode.code_to_atom(code)
-
-            if atom == :topic_already_exists,
-              do: {:error, :topic_already_exists},
-              else: {:error, atom}
-
-          nil ->
-            :ok
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp default_metadata_refresh(worker_pid, timeout_ms) do
-    GenServer.call(worker_pid, :update_metadata, timeout_ms)
   end
 
   defp acquire_worker(opts) do
@@ -1419,15 +1188,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         now = state.now_fn.()
         elapsed = now - (state.swap_started_at || now)
 
-        cond do
-          elapsed >= state.delivery_timeout_ms ->
-            fail_all_during_swap(state, swap_reason)
-
-          true ->
-            attempt = (state.swap_attempt || 0) + 1
-            backoff = retry_backoff_ms(state, attempt)
-            Process.send_after(self(), {:retry_swap, state.registry_ref, attempt}, backoff)
-            {:noreply, %{state | swap_attempt: attempt, last_error: {:swap_failed, swap_reason}}}
+        if elapsed >= state.delivery_timeout_ms do
+          fail_all_during_swap(state, swap_reason)
+        else
+          attempt = (state.swap_attempt || 0) + 1
+          backoff = retry_backoff_ms(state, attempt)
+          Process.send_after(self(), {:retry_swap, state.registry_ref, attempt}, backoff)
+          {:noreply, %{state | swap_attempt: attempt, last_error: {:swap_failed, swap_reason}}}
         end
     end
   end
@@ -1462,7 +1229,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     Enum.each(queued, fn record ->
       reply_to_record(record, {:error, {:delivery_failed, :worker_swap_exhausted}})
 
-      Kafka.failed(
+      emit_produce_failed(
         state.swap_attempt + 1,
         state.delivery_timeout_ms,
         Map.merge(partition_meta(state), %{
@@ -1490,7 +1257,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp emit_pending_swap_telemetry(%{pending_swap_telemetry: payload} = state) do
     metadata = Map.put(payload.metadata, :producer_id_after, state.producer_id)
-    Kafka.worker_swapped(payload.measurements, metadata)
+    emit_worker_swapped(payload.measurements, metadata)
     %{state | pending_swap_telemetry: nil}
   end
 
@@ -1501,4 +1268,53 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  # This family's telemetry vocabulary. `:telemetry.execute/3` runs handlers
+  # synchronously in the caller's process, so a handler attached to these
+  # events must itself be cheap.
+  @prefix [:flezha, :plugin, :kafka]
+
+  defp emit_produce_ok(batch_size, latency_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :ok],
+      %{batch_size: batch_size, latency_ms: latency_ms},
+      metadata
+    )
+  end
+
+  defp emit_produce_retry(attempt, backoff_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :retry],
+      %{attempt: attempt, backoff_ms: backoff_ms},
+      metadata
+    )
+  end
+
+  defp emit_produce_dropped(count, metadata) do
+    :telemetry.execute(@prefix ++ [:produce, :dropped], %{count: count}, metadata)
+  end
+
+  defp emit_produce_failed(attempts, total_ms, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:produce, :failed],
+      %{attempts: attempts, total_ms: total_ms},
+      metadata
+    )
+  end
+
+  defp emit_metadata_refresh(latency_ms, metadata) do
+    :telemetry.execute(@prefix ++ [:metadata, :refresh], %{latency_ms: latency_ms}, metadata)
+  end
+
+  defp emit_topic_created(partitions, replication_factor, metadata) do
+    :telemetry.execute(
+      @prefix ++ [:topic, :created],
+      %{partitions: partitions, replication_factor: replication_factor},
+      metadata
+    )
+  end
+
+  defp emit_worker_swapped(measurements, metadata) do
+    :telemetry.execute(@prefix ++ [:worker, :swapped], measurements, metadata)
+  end
 end

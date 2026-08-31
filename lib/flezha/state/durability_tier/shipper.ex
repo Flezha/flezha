@@ -23,7 +23,8 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.DurabilityTier
-  alias Flezha.State.DurabilityTier.{Artifact, Backend, Manifest}
+  alias Flezha.State.DurabilityTier.{Artifact, Manifest}
+  alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
   @table :flezha_durability_status
   @retry_base_ms 500
@@ -102,7 +103,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   @impl true
   def init(_opts) do
-    case Backend.resolve() do
+    case BackendConfig.resolve() do
       :none ->
         :ignore
 

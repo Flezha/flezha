@@ -266,7 +266,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
       # The epoch's only home on disk is the dedup cache, which is not an
-      # artifact. It is no longer what gates the manifest write, but it is still
+      # artifact. It does not gate the manifest write, but it is still
       # the supersession fact the manifest algebra reads, so a recovered Entity
       # that came back at epoch 0 would mis-order its own cuts.
       assert Outbox.read(ctx.entity_id).epoch == 2

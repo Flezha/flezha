@@ -19,7 +19,7 @@ defmodule Flezha.State.FsyncBatcher do
 
   use GenServer
 
-  alias Flezha.State.{Supervisor, WalWriter}
+  alias Flezha.State.{WalWriter, WriterRegistry}
 
   @default_interval_ms 5
   @min_interval_ms 1
@@ -90,7 +90,7 @@ defmodule Flezha.State.FsyncBatcher do
 
         {:ok,
          %__MODULE__{
-           dirty_set: MapSet.new(Supervisor.registered_ids()),
+           dirty_set: MapSet.new(WriterRegistry.registered_ids()),
            tick_ref: ref,
            tick_interval_ms: interval
          }}
@@ -136,7 +136,7 @@ defmodule Flezha.State.FsyncBatcher do
     # A writer that did not confirm its sync stays dirty for the next drain.
     still_dirty =
       Enum.filter(state.dirty_set, fn entity_id ->
-        case Supervisor.lookup(entity_id) do
+        case WriterRegistry.lookup(entity_id) do
           {:ok, pid} -> fsync(pid, mode) == :error
           :error -> false
         end

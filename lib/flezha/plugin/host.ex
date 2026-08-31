@@ -57,12 +57,7 @@ defmodule Flezha.Plugin.Host do
       case entry do
         {name, kind, ctx_module}
         when is_atom(name) and kind in @valid_kinds and is_atom(ctx_module) ->
-          if Map.has_key?(acc, name) do
-            raise CompileError,
-              file: caller.file,
-              line: caller.line,
-              description: "Duplicate extension name: #{inspect(name)}"
-          end
+          refuse_duplicate(acc, name, caller)
 
           Map.put(acc, name, %{
             name: name,
@@ -84,4 +79,15 @@ defmodule Flezha.Plugin.Host do
 
   @doc "Returns the set of valid dispatch kinds."
   def valid_kinds, do: @valid_kinds
+
+  defp refuse_duplicate(acc, name, caller) do
+    if Map.has_key?(acc, name) do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description: "Duplicate extension name: #{inspect(name)}"
+    end
+
+    :ok
+  end
 end

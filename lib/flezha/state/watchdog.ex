@@ -32,8 +32,8 @@ defmodule Flezha.State.Watchdog do
     Paths,
     PersistenceResolver,
     Recovery,
-    Supervisor,
-    WalWriter
+    WalWriter,
+    WriterRegistry
   }
 
   # Consecutive compaction failures at which the miss stops being treated as
@@ -44,12 +44,15 @@ defmodule Flezha.State.Watchdog do
   # `compactions` maps `entity_id => {started_at_ms, runner_id}`: the in-flight
   # handshake plus the runner that owns it, so the timeout path can recover.
   # `backoff` is the shared per-`{:compaction, entity_id}` strike/cooldown table
-  # that keeps a repeatedly-failing Entity from re-triggering every sweep.
+  # that keeps a repeatedly-failing Entity from re-triggering every sweep; it is
+  # filled by `init/1` rather than defaulted here, because a struct default is
+  # evaluated at compile time and would make this a compile-time dependency on
+  # a module a sensor only calls.
   defstruct compactions: %{},
             catastrophic: %{},
             rpo_breached: MapSet.new(),
             disk_breaches: MapSet.new(),
-            backoff: Backoff.new()
+            backoff: nil
 
   # ---------- Public API ----------
 
@@ -105,7 +108,7 @@ defmodule Flezha.State.Watchdog do
     # (finish-platform-authn-authz §6.2).
     rebuild_disk_counters()
     schedule_sweep()
-    {:ok, %__MODULE__{}}
+    {:ok, %__MODULE__{backoff: Backoff.new()}}
   end
 
   @impl true
@@ -372,7 +375,7 @@ defmodule Flezha.State.Watchdog do
 
   defp collect_statuses(entities) do
     Enum.flat_map(entities, fn pid ->
-      with {:ok, writer} <- Supervisor.lookup(pid),
+      with {:ok, writer} <- WriterRegistry.lookup(pid),
            {:ok, status} <- safe_stall_status(writer) do
         [{pid, status}]
       else
@@ -405,7 +408,7 @@ defmodule Flezha.State.Watchdog do
 
       with true <- ClassRegistry.capable?(rc, :output_stall_watch?),
            true <- timeout > 0,
-           {:ok, writer} <- Supervisor.lookup(pid),
+           {:ok, writer} <- WriterRegistry.lookup(pid),
            {:ok, status} <- safe_stall_status(writer),
            true <- stalled?(status, now, timeout) do
         flag_output_stall(pid, status, now)

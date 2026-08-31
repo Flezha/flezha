@@ -6,6 +6,7 @@ defmodule Flezha.State.WalWriterTest do
 
   alias Flezha.State.{Metrics, Paths, RecordFrame, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.Snapshot, as: StateSnapshot
+  alias Flezha.State.WalWriter.State, as: WriterState
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -245,7 +246,7 @@ defmodule Flezha.State.WalWriterTest do
     test "init/1 returns instantly with the disk scan deferred to handle_continue",
          %{entity_id: pid} do
       # Run in a child so init's `trap_exit` flag doesn't leak onto the test process.
-      assert {:ok, %WalWriter{file_handle: nil}, {:continue, :open}} =
+      assert {:ok, %WriterState{file_handle: nil}, {:continue, :open}} =
                Task.async(fn -> WalWriter.init(pid) end) |> Task.await()
     end
 

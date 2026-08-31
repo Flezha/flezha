@@ -46,9 +46,6 @@ defmodule Flezha.Plugin.Installer.Supervisor do
     require_signature = Keyword.get(cfg, :require_signature, false)
     trusted_keys = Keyword.get(cfg, :trusted_keys, [])
 
-    cond do
-      require_signature and trusted_keys == [] -> {:error, :trusted_keys_empty}
-      true -> :ok
-    end
+    if require_signature and trusted_keys == [], do: {:error, :trusted_keys_empty}, else: :ok
   end
 end

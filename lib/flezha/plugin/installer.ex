@@ -127,55 +127,95 @@ defmodule Flezha.Plugin.Installer do
 
   defp do_install(path, opts) do
     cfg = config()
-    staging = stage_path(cfg)
-    Process.put(@rollback_key, [])
-    push_rollback({:rm_dir, staging})
 
-    result =
-      with :ok <- Package.extract(path, staging, package_opts(cfg)),
-           :ok <- Package.validate_layout(staging),
-           {:ok, manifest_src} <- File.read(Path.join(staging, "manifest.exs")),
-           {:ok, manifest_term} <- Manifest.parse(manifest_src),
-           :ok <- Manifest.validate(manifest_term),
-           :ok <- verify_checksums(staging),
-           {:ok, signature_bytes, signature_present?} <- load_signature(staging),
-           :ok <-
-             Signature.gate(
-               signature_present?: signature_present?,
-               require_signature: Keyword.get(cfg, :require_signature, false),
-               allow_unsigned: Keyword.get(cfg, :allow_unsigned, true),
-               plugin_id: manifest_term.id
-             ),
-           :ok <- maybe_verify_signature(staging, signature_bytes, cfg),
-           plugin_id = manifest_term.id,
-           :ok <- refuse_if_already_installed(plugin_id, opts),
-           :ok <-
-             DependencyResolver.validate_install(
-               manifest_term,
-               DependencyResolver.live_catalog()
-               |> Enum.reject(fn {id, _} -> id == plugin_id end)
-             ),
-           :ok <- check_module_collisions(manifest_term.modules, plugin_id),
-           {:ok, beams} <- Compiler.compile(Path.join(staging, "src"), manifest_term.modules),
-           install_dir = install_dir_for(cfg, plugin_id, manifest_term.version),
-           :ok <- push_rollback({:rm_dir, install_dir}),
-           :ok <- write_install_dir(staging, install_dir),
-           ebin_dir = Path.join(install_dir, "ebin"),
-           :ok <- Loader.load_beams(plugin_id, manifest_term.version, ebin_dir, beams),
-           :ok <- push_rollback({:purge, plugin_id}),
-           row = build_row(manifest_term, install_dir, beams, manifest_src, staging),
-           :ok <- Store.put(plugin_id, row),
-           :ok <- push_rollback({:delete_store_row, plugin_id}) do
-        {:ok, InstalledPlugin.from_row({plugin_id, row})}
+    authorise = &authorise_install(&1, opts)
+
+    with_staging(cfg, fn staging ->
+      with {:ok, staged} <- stage_and_vet(path, cfg, staging, &noop_vet/1, authorise),
+           {:ok, plugin} <- finish_install(staged) do
+        {:ok, plugin}
       else
         {:error, reason} ->
           run_rollback()
           {:error, reason}
       end
+    end)
+  end
+
+  defp authorise_install(manifest, opts) do
+    with :ok <- refuse_if_already_installed(manifest.id, opts) do
+      others = Enum.reject(DependencyResolver.live_catalog(), fn {id, _} -> id == manifest.id end)
+      DependencyResolver.validate_install(manifest, others)
+    end
+  end
+
+  defp finish_install(staged) do
+    %{manifest: manifest, manifest_src: manifest_src, beams: beams} = staged
+    plugin_id = manifest.id
+    ebin_dir = Path.join(staged.install_dir, "ebin")
+
+    with :ok <- Loader.load_beams(plugin_id, manifest.version, ebin_dir, beams),
+         :ok <- push_rollback({:purge, plugin_id}),
+         row = build_row(manifest, staged.install_dir, beams, manifest_src, staged.staging),
+         :ok <- Store.put(plugin_id, row),
+         :ok <- push_rollback({:delete_store_row, plugin_id}) do
+      {:ok, InstalledPlugin.from_row({plugin_id, row})}
+    end
+  end
+
+  defp noop_vet(_manifest), do: :ok
+
+  # The staging bracket both pipelines run inside: one rollback stack per
+  # attempt, and the staging tree removed however the attempt ends.
+  defp with_staging(cfg, fun) do
+    staging = stage_path(cfg)
+    Process.put(@rollback_key, [])
+    push_rollback({:rm_dir, staging})
+
+    result = fun.(staging)
 
     File.rm_rf(staging)
     Process.delete(@rollback_key)
     result
+  end
+
+  # Extract, read, validate, verify, resolve, compile and write — the fifteen
+  # steps install and upgrade share. `vet` runs against the parsed manifest,
+  # `authorise` after the signature is accepted; the two pipelines differ only
+  # in what they put there. Both run at the position they occupied before, so
+  # a package that fails two checks still reports the same one.
+  defp stage_and_vet(path, cfg, staging, vet, authorise) do
+    with :ok <- Package.extract(path, staging, package_opts(cfg)),
+         :ok <- Package.validate_layout(staging),
+         {:ok, manifest_src} <- File.read(Path.join(staging, "manifest.exs")),
+         {:ok, manifest} <- Manifest.parse(manifest_src),
+         :ok <- Manifest.validate(manifest),
+         :ok <- vet.(manifest),
+         :ok <- verify_checksums(staging),
+         {:ok, signature_bytes, signature_present?} <- load_signature(staging),
+         :ok <-
+           Signature.gate(
+             signature_present?: signature_present?,
+             require_signature: Keyword.get(cfg, :require_signature, false),
+             allow_unsigned: Keyword.get(cfg, :allow_unsigned, true),
+             plugin_id: manifest.id
+           ),
+         :ok <- maybe_verify_signature(staging, signature_bytes, cfg),
+         :ok <- authorise.(manifest),
+         :ok <- check_module_collisions(manifest.modules, manifest.id),
+         {:ok, beams} <- Compiler.compile(Path.join(staging, "src"), manifest.modules),
+         install_dir = install_dir_for(cfg, manifest.id, manifest.version),
+         :ok <- push_rollback({:rm_dir, install_dir}),
+         :ok <- write_install_dir(staging, install_dir) do
+      {:ok,
+       %{
+         manifest: manifest,
+         manifest_src: manifest_src,
+         beams: beams,
+         install_dir: install_dir,
+         staging: staging
+       }}
+    end
   end
 
   defp refuse_if_already_installed(plugin_id, opts) do
@@ -200,68 +240,72 @@ defmodule Flezha.Plugin.Installer do
         old_modules = Loader.modules_of(plugin_id)
         old_status = old_row[:status]
         cfg = config()
-        staging = stage_path(cfg)
-        Process.put(@rollback_key, [])
-        push_rollback({:rm_dir, staging})
 
-        result =
-          with :ok <- Package.extract(new_path, staging, package_opts(cfg)),
-               :ok <- Package.validate_layout(staging),
-               {:ok, manifest_src} <- File.read(Path.join(staging, "manifest.exs")),
-               {:ok, manifest_term} <- Manifest.parse(manifest_src),
-               :ok <- Manifest.validate(manifest_term),
-               :ok <- ensure_ids_match(manifest_term.id, plugin_id),
-               :ok <- verify_checksums(staging),
-               {:ok, signature_bytes, signature_present?} <- load_signature(staging),
-               :ok <-
-                 Signature.gate(
-                   signature_present?: signature_present?,
-                   require_signature: Keyword.get(cfg, :require_signature, false),
-                   allow_unsigned: Keyword.get(cfg, :allow_unsigned, true),
-                   plugin_id: manifest_term.id
-                 ),
-               :ok <- maybe_verify_signature(staging, signature_bytes, cfg),
-               :ok <-
-                 DependencyResolver.validate_upgrade(
-                   manifest_term,
-                   plugin_id,
-                   DependencyResolver.live_catalog()
-                 ),
-               :ok <- check_module_collisions(manifest_term.modules, plugin_id),
-               {:ok, beams} <- Compiler.compile(Path.join(staging, "src"), manifest_term.modules),
-               new_dir = install_dir_for(cfg, plugin_id, manifest_term.version),
-               :ok <- push_rollback({:rm_dir, new_dir}),
-               :ok <- write_install_dir(staging, new_dir),
-               pending_row =
-                 build_row(manifest_term, new_dir, beams, manifest_src, staging)
-                 |> Map.put(:status, :pending_upgrade),
-               :ok <- Store.put(plugin_id, pending_row),
-               :ok <- hot_swap_modules(plugin_id, old_status, old_modules, beams, new_dir, opts) do
-            # Upgrade succeeded. Collapse pending_upgrade to the real status.
-            final_status = if old_status == :enabled, do: :enabled, else: :disabled
-            :ok = Store.update_status(plugin_id, final_status)
+        with_staging(cfg, fn staging ->
+          stage_upgrade(new_path, cfg, staging, plugin_id, old_row, old_status, old_modules, opts)
+        end)
+    end
+  end
 
-            # Delete old version directory.
-            old_dir = old_row[:path]
-            if old_dir && old_dir != new_dir, do: File.rm_rf(old_dir)
+  defp stage_upgrade(new_path, cfg, staging, plugin_id, old_row, old_status, old_modules, opts) do
+    vet = &ensure_ids_match(&1.id, plugin_id)
 
-            {:ok, InstalledPlugin.from_row({plugin_id, Store.get(plugin_id)})}
-          else
-            {:error, reason} ->
-              run_rollback()
-              _ = Store.put(plugin_id, old_row)
+    authorise =
+      &DependencyResolver.validate_upgrade(&1, plugin_id, DependencyResolver.live_catalog())
 
-              if old_status == :enabled and old_modules != [] do
-                reload_old_modules(plugin_id, old_row, old_modules)
-                _ = maybe_reenable(plugin_id, old_row)
-              end
+    case stage_and_vet(new_path, cfg, staging, vet, authorise) do
+      {:ok, staged} ->
+        upgraded(staged, plugin_id, old_row, old_status, old_modules, opts)
 
-              {:error, reason}
-          end
+      {:error, reason} ->
+        restore_old_version(plugin_id, old_row, old_status, old_modules)
+        {:error, reason}
+    end
+  end
 
-        File.rm_rf(staging)
-        Process.delete(@rollback_key)
-        result
+  defp upgraded(staged, plugin_id, old_row, old_status, old_modules, opts) do
+    case finish_upgrade(staged, plugin_id, old_row, old_status, old_modules, opts) do
+      {:ok, plugin} ->
+        {:ok, plugin}
+
+      {:error, reason} ->
+        restore_old_version(plugin_id, old_row, old_status, old_modules)
+        {:error, reason}
+    end
+  end
+
+  defp restore_old_version(plugin_id, old_row, old_status, old_modules) do
+    run_rollback()
+    _ = Store.put(plugin_id, old_row)
+
+    if old_status == :enabled and old_modules != [] do
+      reload_old_modules(plugin_id, old_row, old_modules)
+      _ = maybe_reenable(plugin_id, old_row)
+    end
+
+    :ok
+  end
+
+  defp finish_upgrade(staged, plugin_id, old_row, old_status, old_modules, opts) do
+    %{manifest: manifest, manifest_src: manifest_src, beams: beams} = staged
+    new_dir = staged.install_dir
+
+    pending_row =
+      manifest
+      |> build_row(new_dir, beams, manifest_src, staged.staging)
+      |> Map.put(:status, :pending_upgrade)
+
+    with :ok <- Store.put(plugin_id, pending_row),
+         :ok <- hot_swap_modules(plugin_id, old_status, old_modules, beams, new_dir, opts) do
+      # Upgrade succeeded. Collapse pending_upgrade to the real status.
+      final_status = if old_status == :enabled, do: :enabled, else: :disabled
+      :ok = Store.update_status(plugin_id, final_status)
+
+      # Delete old version directory.
+      old_dir = old_row[:path]
+      if old_dir && old_dir != new_dir, do: File.rm_rf(old_dir)
+
+      {:ok, InstalledPlugin.from_row({plugin_id, Store.get(plugin_id)})}
     end
   end
 
@@ -273,32 +317,30 @@ defmodule Flezha.Plugin.Installer do
   # Hot-swap sequence: disable live subscriptions, quiesce in-flight tasks,
   # purge old modules, load new modules, re-subscribe with new manifest.
   defp hot_swap_modules(plugin_id, old_status, _old_modules, new_beams, new_dir, _opts) do
-    try do
-      if old_status == :enabled do
-        _ = disable_subscriptions(plugin_id)
-        quiesce()
-      end
-
-      _ = Loader.purge_modules(plugin_id)
-
-      ebin_dir = Path.join(new_dir, "ebin")
-
-      case Loader.load_beams(plugin_id, Store.get(plugin_id)[:version], ebin_dir, new_beams) do
-        :ok ->
-          if old_status == :enabled do
-            # Re-subscribe according to the NEW manifest's provides.
-            new_row = Store.get(plugin_id)
-            enable_provisions(plugin_id, new_row)
-          else
-            :ok
-          end
-
-        err ->
-          err
-      end
-    catch
-      kind, reason -> {:error, {:upgrade_crash, kind, reason}}
+    if old_status == :enabled do
+      _ = disable_subscriptions(plugin_id)
+      quiesce()
     end
+
+    _ = Loader.purge_modules(plugin_id)
+
+    ebin_dir = Path.join(new_dir, "ebin")
+
+    case Loader.load_beams(plugin_id, Store.get(plugin_id)[:version], ebin_dir, new_beams) do
+      :ok ->
+        if old_status == :enabled do
+          # Re-subscribe according to the NEW manifest's provides.
+          new_row = Store.get(plugin_id)
+          enable_provisions(plugin_id, new_row)
+        else
+          :ok
+        end
+
+      err ->
+        err
+    end
+  catch
+    kind, reason -> {:error, {:upgrade_crash, kind, reason}}
   end
 
   defp reload_old_modules(plugin_id, old_row, old_modules) do
@@ -528,15 +570,11 @@ defmodule Flezha.Plugin.Installer do
   defp read_checksums_map(staging_dir) do
     path = Path.join(staging_dir, "CHECKSUMS.sha256")
 
-    case File.read(path) do
-      {:ok, body} ->
-        case Checksums.parse(body) do
-          {:ok, entries} -> Map.new(entries, fn %{path: p, digest: d} -> {p, d} end)
-          _ -> %{}
-        end
-
-      _ ->
-        %{}
+    with {:ok, body} <- File.read(path),
+         {:ok, entries} <- Checksums.parse(body) do
+      Map.new(entries, fn %{path: p, digest: d} -> {p, d} end)
+    else
+      _ -> %{}
     end
   end
 
@@ -644,7 +682,7 @@ defmodule Flezha.Plugin.Installer do
         owned_by_other_plugin?(module, plugin_id) ->
           {:halt, {:error, {:module_collision, module}}}
 
-        loaded_from_release?(module) ->
+        Loader.module_from_release?(module) ->
           {:halt, {:error, {:module_collision, module}}}
 
         true ->
@@ -664,26 +702,6 @@ defmodule Flezha.Plugin.Installer do
           {^plugin_id, _} -> false
           {_other, {_ver, mods}} -> module in mods
         end)
-    end
-  end
-
-  defp loaded_from_release?(module) do
-    case :code.which(module) do
-      :non_existing ->
-        false
-
-      :preloaded ->
-        true
-
-      :cover_compiled ->
-        false
-
-      path when is_list(path) ->
-        abs = Path.expand(List.to_string(path))
-        cfg = Application.get_env(:flezha, :plugin_installer, [])
-        root = Keyword.get(cfg, :plugin_root, "app_data/plugins")
-        installed_root = Path.expand(Path.join(root, "installed"))
-        not String.starts_with?(abs, installed_root)
     end
   end
 

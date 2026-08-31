@@ -1,47 +1,27 @@
 defmodule Flezha.Plugin.Extension.Table do
   @moduledoc """
-  Per-host registry of extension subscriptions, compiled dispatch chains,
-  and subscriber lifecycle state (monitors, timer refs, restart counters).
+  Per-host registry of extension subscriptions, compiled dispatch chains, and
+  subscriber lifecycle state.
 
-  Shape:
+  The struct is owned here and the three companions mutate disjoint parts of
+  it: `Subscription` the subscriber lists, `Chain` the compiled closures and
+  the `active_mask`, `Health` the monitors, retries and restart backoff. None
+  of them names this module, so effects and lifecycle stay here.
 
-      %Table{
-        catalog:        %{name => %{kind, ctx_module, bit_index}},
-        active_mask:    integer(),
-        subs:           %{name => [entry]},     # for :fold/:transform/:fanout/:timer
-        request_subs:   %{name => %{key => {plugin_id, entry}}},
-        chains:         %{name => (ctx -> result)},
-        plugins:        %{plugin_id => %Flezha.Plugin{}},
-        phases:         %{plugin_id => :prepared | :running},
-        monitors:       %{ref => plugin_id},
-        owned_pids:     %{plugin_id => {pid, ref}},
-        timers:         %{timer_ref => {plugin_id, name}},
-        retries:        %{plugin_id => non_neg_integer()},
-        started_at:     %{plugin_id => monotonic_ms},
-        host_pid:       pid()
-      }
-
-  Plugins enter the table in the `:prepared` phase: their
-  `init_provider/1` has run, the GenServer is registered, but the provider
-  has not been instructed to acquire upstream resources. The host transitions
-  every plugin to `:running` via `bulk_activate/1` once the operative's SDK side
-  has confirmed bound — the provider's optional `activate/1` callback fires
-  exactly once per binding at that point. See the `operative-extensions`
-  capability "Two-phase plugin lifecycle gated on SDK readiness".
+  Plugins enter in the `:prepared` phase — `init_provider/1` has run and the
+  GenServer is registered, but no upstream resource is held. `bulk_activate/1`
+  moves them to `:running` once the SDK side is bound, firing each provider's
+  optional `activate/1` exactly once per binding.
   """
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Extension.Table.Chain
+  alias Flezha.Plugin.Extension.Table.Health
+  alias Flezha.Plugin.Extension.Table.Subscription
   alias Flezha.Plugin.ProviderBehaviour
 
   require Logger
-
-  # Restart backoff: only reset the retry counter once an owned pid has
-  # stayed up at least this long, so a provider that fails fast (e.g. a WS
-  # whose upstream keeps 429-ing) accumulates backoff instead of hammering.
-  @stable_uptime_ms 60_000
-  @max_retry_delay_ms 60_000
-  @retry_base_delay_ms 4_000
 
   defstruct catalog: %{},
             active_mask: 0,
@@ -107,9 +87,9 @@ defmodule Flezha.Plugin.Extension.Table do
   @spec subscribe(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term()}
   def subscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin)
       when is_binary(plugin_id) do
-    with :ok <- validate_plugin_unique(table, plugin_id),
-         {:ok, plugin} <- canonicalise(table.catalog, plugin),
-         :ok <- validate_subscriptions(table, plugin) do
+    with :ok <- Subscription.validate_plugin_unique(table, plugin_id),
+         {:ok, plugin} <- Subscription.canonicalise(table.catalog, plugin),
+         :ok <- Subscription.validate_subscriptions(table, plugin) do
       try do
         {:ok, do_subscribe(table, plugin_id, plugin, plugin.subscriptions)}
       catch
@@ -158,20 +138,20 @@ defmodule Flezha.Plugin.Extension.Table do
     table = %{table | activation_env: Map.merge(table.activation_env, activation_env)}
 
     {table, failed} =
-      Enum.reduce(table.plugins, {table, []}, fn {plugin_id, plugin}, {acc, failed} ->
-        case Map.get(acc.phases, plugin_id, :prepared) do
-          :running ->
-            {acc, failed}
-
-          :prepared ->
-            case activate_plugin(acc, plugin_id, plugin) do
-              {activated, :ok} -> {activated, failed}
-              {activated, {:error, reason}} -> {activated, [{plugin_id, reason} | failed]}
-            end
-        end
-      end)
+      Enum.reduce(table.plugins, {table, []}, &activate_if_prepared/2)
 
     {table, Enum.reverse(failed)}
+  end
+
+  defp activate_if_prepared({plugin_id, plugin}, {acc, failed}) do
+    if Map.get(acc.phases, plugin_id, :prepared) == :running do
+      {acc, failed}
+    else
+      case activate_plugin(acc, plugin_id, plugin) do
+        {activated, :ok} -> {activated, failed}
+        {activated, {:error, reason}} -> {activated, [{plugin_id, reason} | failed]}
+      end
+    end
   end
 
   defp activate_plugin(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
@@ -199,40 +179,38 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   defp invoke_activate(table, plugin_id, provider, opts) do
-    try do
-      case provider.activate(opts) do
-        {:ok, pid} when is_pid(pid) ->
-          {table
-           |> track_owned_pid(plugin_id, pid)
-           |> put_phase(plugin_id, :running), :ok}
+    case provider.activate(opts) do
+      {:ok, pid} when is_pid(pid) ->
+        {table
+         |> track_owned_pid(plugin_id, pid)
+         |> put_phase(plugin_id, :running), :ok}
 
-        ok when ok == :ok or (is_tuple(ok) and elem(ok, 0) == :ok) ->
-          {put_phase(table, plugin_id, :running), :ok}
+      ok when ok == :ok or (is_tuple(ok) and elem(ok, 0) == :ok) ->
+        {put_phase(table, plugin_id, :running), :ok}
 
-        {:error, reason} ->
-          Logger.error(
-            "[Extension.Table] activate failed for plugin_id=#{plugin_id}: #{inspect(reason)}"
-          )
-
-          {table, {:error, reason}}
-
-        other ->
-          Logger.error(
-            "[Extension.Table] activate invalid return for plugin_id=#{plugin_id}: " <>
-              inspect(other)
-          )
-
-          {table, {:error, {:invalid_activate_return, other}}}
-      end
-    catch
-      kind, reason ->
+      {:error, reason} ->
         Logger.error(
-          "[Extension.Table] activate raised for plugin_id=#{plugin_id}: " <>
-            "#{inspect(kind)}/#{inspect(reason)}"
+          "[Extension.Table] activate failed for plugin_id=#{plugin_id}: #{inspect(reason)}"
         )
 
-        {table, {:error, {kind, reason}}}
+        {table, {:error, reason}}
+
+      other ->
+        Logger.error(
+          "[Extension.Table] activate invalid return for plugin_id=#{plugin_id}: " <>
+            inspect(other)
+        )
+
+        {table, {:error, {:invalid_activate_return, other}}}
     end
+  catch
+    kind, reason ->
+      Logger.error(
+        "[Extension.Table] activate raised for plugin_id=#{plugin_id}: " <>
+          "#{inspect(kind)}/#{inspect(reason)}"
+      )
+
+      {table, {:error, {kind, reason}}}
   end
 
   defp put_phase(table, plugin_id, phase),
@@ -269,76 +247,11 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
-  Health verdict for every plugin on the table (plugin health contract). Only
-  `:running` plugins are evaluated — a `:prepared` plugin has not acquired
-  upstream resources yet, so it is reported `:healthy`, and that verdict is NOT
-  evidence the plugin is running (read the phase for that). Providers that
-  export `health/1` are queried (with `:owned_pid` injected); providers without
-  it default to "owned pid alive (or absent) ⇒ healthy".
-
-  A probe that could not be completed — the provider reported
-  `{:fail_open, reason}`, raised, or answered with nonsense — is reported
-  `:healthy` so the reconciler never escalates on uncertainty, AND emitted as
-  telemetry naming this plugin. Returns
-  `%{plugin_id => :healthy | {:unhealthy, reason}}`.
+  Health verdict for every plugin on the table (plugin health contract). See
+  `Flezha.Plugin.Extension.Table.Health.probe/1` for the rules.
   """
   @spec health(t()) :: %{binary() => ProviderBehaviour.health_verdict()}
-  def health(%__MODULE__{} = table) do
-    Map.new(table.plugins, fn {plugin_id, plugin} ->
-      {plugin_id, plugin_health(table, plugin_id, plugin)}
-    end)
-  end
-
-  defp plugin_health(table, plugin_id, plugin) do
-    case Map.get(table.phases, plugin_id, :prepared) do
-      :running -> running_plugin_health(table, plugin_id, plugin)
-      _ -> :healthy
-    end
-  end
-
-  defp running_plugin_health(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
-    owned_pid =
-      case Map.get(table.owned_pids, plugin_id) do
-        {pid, _ref} -> pid
-        _ -> nil
-      end
-
-    cond do
-      not Code.ensure_loaded?(provider) ->
-        {:unhealthy, :provider_not_loaded}
-
-      function_exported?(provider, :health, 1) ->
-        safe_health(plugin_id, provider, opts, owned_pid)
-
-      is_nil(owned_pid) ->
-        :healthy
-
-      Process.alive?(owned_pid) ->
-        :healthy
-
-      true ->
-        {:unhealthy, :owned_pid_dead}
-    end
-  end
-
-  # An uncertain probe reports healthy so the reconciler never escalates on one
-  # — but it is emitted, because a wedged provider is otherwise
-  # indistinguishable from a working one at every layer above this call. This is
-  # the single place that happens: a provider reports its own uncertainty as
-  # `{:fail_open, reason}` and this is the only layer that knows which plugin
-  # to name.
-  defp safe_health(plugin_id, provider, opts, owned_pid) do
-    case provider.health(Map.put(opts || %{}, :owned_pid, owned_pid)) do
-      :healthy -> :healthy
-      {:unhealthy, _reason} = unhealthy -> unhealthy
-      {:fail_open, reason} -> ProviderBehaviour.fail_open(plugin_id, provider, reason)
-      other -> ProviderBehaviour.fail_open(plugin_id, provider, {:invalid_return, other})
-    end
-  rescue
-    error -> ProviderBehaviour.fail_open(plugin_id, provider, {:raised, error})
-  catch
-    kind, reason -> ProviderBehaviour.fail_open(plugin_id, provider, {kind, reason})
-  end
+  def health(%__MODULE__{} = table), do: Health.probe(table)
 
   @doc """
   Remove every subscription owned by `plugin_id`, cancel its monitors,
@@ -360,7 +273,7 @@ defmodule Flezha.Plugin.Extension.Table do
   """
   @spec fire_timer(t(), atom(), binary()) :: t()
   def fire_timer(%__MODULE__{} = table, name, plugin_id) do
-    case find_entry(table, name, plugin_id) do
+    case Subscription.find_entry(table, name, plugin_id) do
       nil ->
         table
 
@@ -373,7 +286,7 @@ defmodule Flezha.Plugin.Extension.Table do
         }
 
         try do
-          apply(entry.provider, :on_interval, [ctx, entry.provider_opts])
+          entry.provider.on_interval(ctx, entry.provider_opts)
         catch
           kind, reason ->
             Logger.error(
@@ -382,7 +295,7 @@ defmodule Flezha.Plugin.Extension.Table do
             )
         end
 
-        reschedule_timer(table, name, plugin_id, entry)
+        Subscription.reschedule_timer(table, name, plugin_id, entry)
     end
   end
 
@@ -412,13 +325,15 @@ defmodule Flezha.Plugin.Extension.Table do
             Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
 
             {:ok,
-             table |> reset_retries_if_stable(plugin_id) |> schedule_retry(plugin_id, plugin)}
+             table
+             |> Health.reset_retries_if_stable(plugin_id)
+             |> Health.schedule_retry(plugin_id)}
         end
     end
   end
 
   @doc """
-  Retry a previously-failing subscriber. Called when a `{:retry_plugin_restart, plugin_id}`
+  Retry a failing subscriber. Called when a `{:retry_plugin_restart, plugin_id}`
   message is delivered to the host.
   """
   @spec retry(t(), binary(), keyword()) :: t()
@@ -447,11 +362,11 @@ defmodule Flezha.Plugin.Extension.Table do
     end)
 
     Enum.each(table.owned_pids, fn {_plugin_id, {pid, ref}} ->
-      safe_demonitor(ref)
-      safe_kill(pid)
+      Health.safe_demonitor(ref)
+      Health.safe_kill(pid)
     end)
 
-    Enum.each(table.timers, fn {timer_ref, _} -> safe_cancel_timer(timer_ref) end)
+    Enum.each(table.timers, fn {timer_ref, _} -> Health.safe_cancel_timer(timer_ref) end)
 
     {new(table.catalog), Enum.map(table.plugins, fn {plugin_id, _plugin} -> plugin_id end)}
   end
@@ -487,281 +402,16 @@ defmodule Flezha.Plugin.Extension.Table do
     end)
   end
 
-  @doc "Return every subscriber entry registered for the given extension name."
+  @doc "Every subscriber entry registered for the given extension name."
   @spec subscribers(t(), atom()) :: [entry()]
-  def subscribers(%__MODULE__{} = table, name) do
-    case Map.get(table.catalog, name) do
-      %{kind: :request} ->
-        table.request_subs
-        |> Map.get(name, %{})
-        |> Map.values()
-        |> Enum.map(fn {_plugin_id, entry} -> entry end)
-
-      _ ->
-        Map.get(table.subs, name, [])
-    end
-  end
-
-  # `position` orders a chain, and the unordered kinds have none — so they
-  # declare it refused rather than unknown, which is the answer callers read.
-  @position_refused {:refused, :position_not_applicable}
-
-  # The whole sub-option vocabulary, by dispatch kind: every name an operator
-  # may write and the type its value carries. Coercion and refusal both read
-  # it, so a new sub-option is declared in the module that validates it.
-  @sub_opt_types %{
-    fold: [position: :int, timeout_ms: :int, on_error: {:enum, ["fail", "empty"]}],
-    transform: [position: :int],
-    fanout: [position: @position_refused],
-    request: [key: :string, position: @position_refused],
-    timer: [interval_ms: :int, position: @position_refused]
-  }
-
-  # A kind absent from the table would raise at its first subscribe. Fail the
-  # build instead.
-  @undeclared_kinds Flezha.Plugin.Host.valid_kinds() -- Map.keys(@sub_opt_types)
-  if @undeclared_kinds != [] do
-    raise "@sub_opt_types declares no sub-options for #{inspect(@undeclared_kinds)}"
-  end
-
-  # What a sub-option means when the operator omits it — read by the validator
-  # and by the dispatch chain, so it is written once.
-  @sub_opt_defaults [timeout_ms: 5_000, on_error: "fail"]
-
-  defp sub_opt(sub_opts, name),
-    do: Keyword.get(sub_opts, name, Keyword.get(@sub_opt_defaults, name))
+  defdelegate subscribers(table, name), to: Subscription
 
   @doc """
   Canonicalise a plugin's subscriptions against `catalog` and the declared
-  sub-option types: `{atom, keyword}` tuples whose values carry their declared
-  type.
-
-  An extension name may arrive as text or as an atom, and sub-opts as a map or
-  a keyword list — the shapes the CLI, the operative-start spec, an installed
-  package manifest and direct construction produce. Both are resolved against
-  a declaration rather than interned, so operator text never creates an atom;
-  a name that resolves to nothing is refused.
-
-  `subscribe/3` runs it, so the table stores canonical values and a provider
-  restart, an unsubscribe and a handover all observe them. A caller that writes
-  durable intent runs it first, so nothing ill-typed is ever persisted. It is
-  idempotent: canonical input is returned unchanged.
+  sub-option types. See `Flezha.Plugin.Extension.Table.Subscription`.
   """
   @spec canonicalise(map(), Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
-  def canonicalise(catalog, %Plugin{subscriptions: subs} = plugin)
-      when is_map(catalog) and is_list(subs) do
-    subs
-    |> Enum.reduce_while({:ok, []}, fn sub, {:ok, acc} ->
-      case canonicalise_subscription(catalog, sub) do
-        {:ok, canonical} -> {:cont, {:ok, [canonical | acc]}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-    |> case do
-      {:ok, acc} -> {:ok, %Plugin{plugin | subscriptions: Enum.reverse(acc)}}
-      err -> err
-    end
-  end
-
-  def canonicalise(catalog, %Plugin{}) when is_map(catalog),
-    do: {:error, {:invalid_subscription, :not_a_list}}
-
-  defp canonicalise_subscription(catalog, {name, sub_opts}) do
-    with {:ok, name, kind} <- resolve_extension(catalog, name),
-         {:ok, opts} <- canonicalise_sub_opts(kind, sub_opts) do
-      {:ok, {name, opts}}
-    end
-  end
-
-  defp canonicalise_subscription(_catalog, other),
-    do: {:error, {:invalid_subscription, other}}
-
-  defp resolve_extension(catalog, name) when is_atom(name) and not is_nil(name) do
-    case Map.fetch(catalog, name) do
-      {:ok, %{kind: kind}} -> {:ok, name, kind}
-      :error -> {:error, {:unknown_extension, name}}
-    end
-  end
-
-  defp resolve_extension(catalog, name) do
-    case Enum.find(catalog, fn {known, _entry} -> same_name?(known, name) end) do
-      {known, %{kind: kind}} -> {:ok, known, kind}
-      nil -> {:error, {:unknown_extension, name}}
-    end
-  end
-
-  defp canonicalise_sub_opts(kind, sub_opts) do
-    declared = Map.fetch!(@sub_opt_types, kind)
-
-    with {:ok, pairs} <- declared_order(declared, sub_opts) do
-      pairs
-      |> Enum.reduce_while({:ok, []}, fn {key, value}, {:ok, acc} ->
-        with {:ok, name, type} <- resolve_sub_opt(declared, kind, key),
-             {:ok, coerced} <- coerce_sub_opt(type, name, value) do
-          {:cont, {:ok, [{name, coerced} | acc]}}
-        else
-          {:error, _} = err -> {:halt, err}
-        end
-      end)
-      |> case do
-        {:ok, acc} -> {:ok, Enum.reverse(acc)}
-        err -> err
-      end
-    end
-  end
-
-  # A map carries no order to preserve, so it is emitted in declared order:
-  # one declaration canonicalises to one term whatever shape it arrived in.
-  # A keyword list already has one, and keeping it makes canonical input
-  # come back unchanged.
-  defp declared_order(declared, sub_opts) when is_map(sub_opts) do
-    {:ok,
-     Enum.sort_by(sub_opts, fn {key, _value} ->
-       Enum.find_index(declared, fn {name, _type} -> same_name?(name, key) end) ||
-         length(declared)
-     end)}
-  end
-
-  defp declared_order(_declared, sub_opts) when is_list(sub_opts) do
-    if Enum.all?(sub_opts, &match?({_k, _v}, &1)),
-      do: {:ok, sub_opts},
-      else: {:error, {:invalid_subscription_opts, :not_a_keyword}}
-  end
-
-  defp declared_order(_declared, _sub_opts),
-    do: {:error, {:invalid_subscription_opts, :not_a_keyword}}
-
-  defp resolve_sub_opt(declared, kind, key) do
-    case Enum.find(declared, fn {name, _type} -> same_name?(name, key) end) do
-      {name, type} -> {:ok, name, type}
-      nil -> {:error, {:unknown_subscription_opt, kind, key}}
-    end
-  end
-
-  defp same_name?(declared, key) when is_atom(key) and not is_nil(key),
-    do: declared == key
-
-  defp same_name?(declared, key) when is_binary(key), do: Atom.to_string(declared) == key
-  defp same_name?(_declared, _key), do: false
-
-  # Reuses the provider layer's parse_int/2 — the same "the CLI ships text"
-  # problem, already solved once.
-  defp coerce_sub_opt(:int, name, value) when is_integer(value) or is_binary(value) do
-    case ProviderBehaviour.parse_int(value, name) do
-      {:ok, int} -> {:ok, int}
-      {:error, _msg} -> invalid_sub_opt(name, value)
-    end
-  end
-
-  defp coerce_sub_opt(:string, _name, value) when is_binary(value), do: {:ok, value}
-
-  defp coerce_sub_opt(:string, _name, value) when is_atom(value) and not is_nil(value),
-    do: {:ok, Atom.to_string(value)}
-
-  defp coerce_sub_opt({:enum, allowed}, name, value)
-       when is_binary(value) or (is_atom(value) and not is_nil(value)) do
-    text = to_string(value)
-
-    if text in allowed, do: {:ok, text}, else: invalid_sub_opt(name, value)
-  end
-
-  defp coerce_sub_opt({:refused, reason}, _name, _value), do: {:error, reason}
-
-  defp coerce_sub_opt(_type, name, value), do: invalid_sub_opt(name, value)
-
-  defp invalid_sub_opt(name, value), do: {:error, {:invalid_subscription_opts, {name, value}}}
-
-  ## Private — validation
-
-  defp validate_plugin_unique(%__MODULE__{plugins: plugins}, plugin_id) do
-    if Map.has_key?(plugins, plugin_id) do
-      {:error, {:plugin_already_subscribed, plugin_id}}
-    else
-      :ok
-    end
-  end
-
-  defp validate_subscriptions(%__MODULE__{catalog: catalog} = table, %Plugin{} = plugin) do
-    Enum.reduce_while(plugin.subscriptions, :ok, fn {name, sub_opts}, :ok ->
-      with {:ok, entry} <- fetch_catalog_entry(catalog, name),
-           :ok <- validate_callback(plugin.provider, name, entry.kind),
-           :ok <- validate_kind_specific(entry.kind, name, sub_opts, table, plugin) do
-        {:cont, :ok}
-      else
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-  end
-
-  defp fetch_catalog_entry(catalog, name) do
-    case Map.fetch(catalog, name) do
-      {:ok, entry} -> {:ok, entry}
-      :error -> {:error, {:unknown_extension, name}}
-    end
-  end
-
-  defp validate_callback(provider, name, kind) do
-    callback = callback_name(name, kind)
-
-    cond do
-      not Code.ensure_loaded?(provider) ->
-        {:error, {:module_not_loaded, provider}}
-
-      not function_exported?(provider, callback, 2) ->
-        {:error, {:missing_callback, callback}}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp callback_name(name, _kind), do: name
-
-  defp validate_kind_specific(:timer, _name, sub_opts, _table, _plugin),
-    do: validate_positive(sub_opts, :interval_ms)
-
-  defp validate_kind_specific(:fanout, _name, _sub_opts, _table, _plugin), do: :ok
-
-  defp validate_kind_specific(:request, name, sub_opts, table, _plugin) do
-    case Keyword.fetch(sub_opts, :key) do
-      :error ->
-        {:error, {:invalid_subscription_opts, :missing_key}}
-
-      {:ok, key} ->
-        case get_in(table.request_subs, [name, key]) do
-          nil -> :ok
-          _ -> {:error, {:key_conflict, name, key}}
-        end
-    end
-  end
-
-  defp validate_kind_specific(:fold, _name, sub_opts, _table, _plugin) do
-    with :ok <- validate_position(sub_opts) do
-      validate_positive(sub_opts, :timeout_ms)
-    end
-  end
-
-  defp validate_kind_specific(:transform, _name, sub_opts, _table, _plugin),
-    do: validate_position(sub_opts)
-
-  # Canonicalisation types `position` as an integer; only the range is left,
-  # and a negative one would still reach `insert_by_position/3`.
-  defp validate_position(sub_opts) do
-    case Keyword.get(sub_opts, :position) do
-      nil -> :ok
-      n when is_integer(n) and n >= 0 -> :ok
-      other -> {:error, {:invalid_subscription_opts, {:position, other}}}
-    end
-  end
-
-  # The bounds a type cannot express. `interval_ms` has no default, so an
-  # absent one fails the guard — which is what makes it required.
-  defp validate_positive(sub_opts, name) do
-    case sub_opt(sub_opts, name) do
-      n when is_integer(n) and n > 0 -> :ok
-      other -> {:error, {:invalid_subscription_opts, {name, other}}}
-    end
-  end
+  defdelegate canonicalise(catalog, plugin), to: Subscription
 
   @doc """
   Record a value the provider itself committed back onto its stored opts.
@@ -814,7 +464,10 @@ defmodule Flezha.Plugin.Extension.Table do
         table =
           Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
             %{kind: kind} = Map.fetch!(acc.catalog, name)
-            add_subscription(acc, kind, name, plugin_id, plugin, sub_opts)
+
+            acc
+            |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
+            |> Chain.refresh(name)
           end)
 
         table
@@ -869,89 +522,6 @@ defmodule Flezha.Plugin.Extension.Table do
     }
   end
 
-  defp add_subscription(table, kind, name, plugin_id, plugin, sub_opts)
-       when kind in [:fold, :transform] do
-    entry = build_entry(plugin_id, plugin, sub_opts)
-
-    current = Map.get(table.subs, name, [])
-    position = Keyword.get(sub_opts, :position)
-    new_list = insert_by_position(current, entry, position)
-
-    table
-    |> Map.update!(:subs, &Map.put(&1, name, new_list))
-    |> rebuild_chain(name)
-    |> mark_active(name, true)
-  end
-
-  defp add_subscription(table, :fanout, name, plugin_id, plugin, sub_opts) do
-    entry = build_entry(plugin_id, plugin, sub_opts)
-    current = Map.get(table.subs, name, [])
-    new_list = current ++ [entry]
-
-    table
-    |> Map.update!(:subs, &Map.put(&1, name, new_list))
-    |> rebuild_chain(name)
-    |> mark_active(name, true)
-  end
-
-  defp add_subscription(table, :request, name, plugin_id, plugin, sub_opts) do
-    key = Keyword.fetch!(sub_opts, :key)
-    current = Map.get(table.request_subs, name, %{})
-    entry = build_entry(plugin_id, plugin, sub_opts)
-    new_map = Map.put(current, key, {plugin_id, entry})
-
-    table
-    |> Map.update!(:request_subs, &Map.put(&1, name, new_map))
-    |> mark_active(name, true)
-  end
-
-  defp add_subscription(table, :timer, name, plugin_id, plugin, sub_opts) do
-    entry = build_entry(plugin_id, plugin, sub_opts)
-
-    interval_ms = Keyword.fetch!(sub_opts, :interval_ms)
-    timer_ref = Process.send_after(self(), {:extension_timer, name, plugin_id}, interval_ms)
-
-    entry = %{entry | timer_ref: timer_ref}
-    current = Map.get(table.subs, name, [])
-    new_list = current ++ [entry]
-
-    table
-    |> Map.update!(:subs, &Map.put(&1, name, new_list))
-    |> Map.update!(:timers, &Map.put(&1, timer_ref, {plugin_id, name}))
-    |> mark_active(name, true)
-  end
-
-  defp build_entry(plugin_id, %Plugin{provider: provider, opts: opts}, sub_opts) do
-    %{
-      plugin_id: plugin_id,
-      provider: provider,
-      provider_opts: opts || %{},
-      sub_opts: sub_opts,
-      position: Keyword.get(sub_opts, :position),
-      owned_pid: nil,
-      monitor_ref: nil,
-      timer_ref: nil
-    }
-  end
-
-  defp insert_by_position(list, entry, nil) do
-    position = length(list)
-    list ++ [%{entry | position: position}]
-  end
-
-  defp insert_by_position(list, entry, position)
-       when is_integer(position) and position >= 0 do
-    {before_split, after_split} = Enum.split(list, position)
-    entry = %{entry | position: position}
-
-    shifted =
-      after_split
-      |> Enum.with_index(position + 1)
-      |> Enum.map(fn {e, new_pos} -> %{e | position: new_pos} end)
-
-    before_split ++ [entry] ++ shifted
-  end
-
   ## Private — unsubscribe
 
   defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{subscriptions: subs} = plugin) do
@@ -959,7 +529,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
     table =
       Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->
-        remove_subscription(acc, name, plugin_id)
+        acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
       end)
 
     # Release monitor + pid if still present
@@ -969,8 +539,8 @@ defmodule Flezha.Plugin.Extension.Table do
           table
 
         {pid, ref} ->
-          safe_demonitor(ref)
-          safe_kill(pid)
+          Health.safe_demonitor(ref)
+          Health.safe_kill(pid)
 
           %{
             table
@@ -1014,223 +584,7 @@ defmodule Flezha.Plugin.Extension.Table do
     end
   end
 
-  defp remove_subscription(table, name, plugin_id) do
-    case Map.fetch!(table.catalog, name) do
-      %{kind: :request} ->
-        request_map =
-          table.request_subs
-          |> Map.get(name, %{})
-          |> Enum.reject(fn {_key, {pid_id, _entry}} -> pid_id == plugin_id end)
-          |> Map.new()
-
-        table = %{table | request_subs: Map.put(table.request_subs, name, request_map)}
-
-        if map_size(request_map) == 0, do: mark_active(table, name, false), else: table
-
-      %{kind: :timer} ->
-        {removed, remaining} =
-          Enum.split_with(Map.get(table.subs, name, []), &(&1.plugin_id == plugin_id))
-
-        Enum.each(removed, fn e ->
-          safe_cancel_timer(e.timer_ref)
-        end)
-
-        timers_without =
-          Enum.reduce(removed, table.timers, fn e, acc -> Map.delete(acc, e.timer_ref) end)
-
-        table = %{
-          table
-          | subs: Map.put(table.subs, name, remaining),
-            timers: timers_without
-        }
-
-        if remaining == [], do: mark_active(table, name, false), else: table
-
-      %{kind: kind} when kind in [:fold, :transform] ->
-        current = Map.get(table.subs, name, [])
-        remaining = Enum.reject(current, &(&1.plugin_id == plugin_id))
-        remaining = recalc_positions(remaining)
-
-        table = %{table | subs: Map.put(table.subs, name, remaining)}
-        table = rebuild_chain(table, name)
-
-        if remaining == [], do: mark_active(table, name, false), else: table
-
-      %{kind: :fanout} ->
-        current = Map.get(table.subs, name, [])
-        remaining = Enum.reject(current, &(&1.plugin_id == plugin_id))
-
-        table = %{table | subs: Map.put(table.subs, name, remaining)}
-        table = rebuild_chain(table, name)
-
-        if remaining == [], do: mark_active(table, name, false), else: table
-    end
-  end
-
-  defp recalc_positions(list) do
-    list
-    |> Enum.with_index()
-    |> Enum.map(fn {entry, idx} -> %{entry | position: idx} end)
-  end
-
   ## Private — active-mask + chains
-
-  defp mark_active(%__MODULE__{} = table, name, active?) do
-    case Map.fetch(table.catalog, name) do
-      {:ok, %{bit_index: bit}} ->
-        mask_bit = Bitwise.bsl(1, bit)
-
-        new_mask =
-          if active? do
-            Bitwise.bor(table.active_mask, mask_bit)
-          else
-            Bitwise.band(table.active_mask, Bitwise.bnot(mask_bit))
-          end
-
-        %{table | active_mask: new_mask}
-
-      :error ->
-        table
-    end
-  end
-
-  defp rebuild_chain(%__MODULE__{} = table, name) do
-    %{kind: kind} = Map.fetch!(table.catalog, name)
-    entries = Map.get(table.subs, name, [])
-    ordered = Enum.sort_by(entries, & &1.position)
-    fun = compile_chain(kind, name, ordered)
-    %{table | chains: Map.put(table.chains, name, fun)}
-  end
-
-  defp compile_chain(_kind, _name, []), do: nil
-
-  defp compile_chain(:fold, name, entries) do
-    fn ctx ->
-      Enum.reduce_while(entries, {:ok, ctx}, fn entry, {:ok, acc_ctx} ->
-        timeout_ms = sub_opt(entry.sub_opts, :timeout_ms)
-        on_error = sub_opt(entry.sub_opts, :on_error)
-
-        case invoke_fold(name, entry.provider, acc_ctx, entry.provider_opts, timeout_ms) do
-          {:ok, new_ctx} ->
-            merged = merge_fold_ctx(acc_ctx, new_ctx)
-            {:cont, {:ok, merged}}
-
-          {:error, reason} ->
-            handle_fold_error(on_error, acc_ctx, reason)
-
-          :timeout ->
-            handle_fold_error(on_error, acc_ctx, :timeout)
-
-          {:exception, kind, reason, stacktrace} ->
-            handle_fold_error(on_error, acc_ctx, {:exception, kind, reason, stacktrace})
-        end
-      end)
-    end
-  end
-
-  defp compile_chain(:transform, name, entries) do
-    fn ctx ->
-      Enum.reduce_while(entries, {:ok, ctx}, fn entry, {:ok, current_ctx} ->
-        try do
-          case apply(entry.provider, name, [current_ctx, entry.provider_opts]) do
-            {:ok, new_ctx} ->
-              {:cont, {:ok, new_ctx}}
-
-            {:skip, reason} ->
-              {:halt, {:skip, reason}}
-
-            {:error, reason} ->
-              Logger.error(
-                "[Extension.Table] transform subscriber #{entry.plugin_id} returned error: " <>
-                  "#{inspect(reason)}"
-              )
-
-              {:cont, {:ok, current_ctx}}
-          end
-        catch
-          kind, reason ->
-            Logger.error(
-              "[Extension.Table] transform subscriber #{entry.plugin_id} raised " <>
-                "#{inspect(kind)}: #{inspect(reason)}"
-            )
-
-            {:cont, {:ok, current_ctx}}
-        end
-      end)
-    end
-  end
-
-  defp compile_chain(:fanout, name, entries) do
-    fn ctx ->
-      Enum.each(entries, fn entry ->
-        try do
-          apply(entry.provider, name, [ctx, entry.provider_opts])
-        catch
-          kind, reason ->
-            Logger.error(
-              "[Extension.Table] fanout subscriber #{entry.plugin_id} raised " <>
-                "#{inspect(kind)}: #{inspect(reason)}"
-            )
-        end
-      end)
-
-      :ok
-    end
-  end
-
-  defp invoke_fold(name, provider, ctx, opts, timeout_ms) do
-    task =
-      Task.async(fn ->
-        try do
-          {:ok_return, apply(provider, name, [ctx, opts])}
-        catch
-          kind, reason -> {:exception, kind, reason, __STACKTRACE__}
-        end
-      end)
-
-    case Task.yield(task, timeout_ms) do
-      {:ok, {:ok_return, {:ok, %_{} = new_ctx}}} ->
-        {:ok, new_ctx}
-
-      {:ok, {:ok_return, {:ok, other}}} ->
-        {:error, {:invalid_return, other}}
-
-      {:ok, {:ok_return, {:error, reason}}} ->
-        {:error, reason}
-
-      {:ok, {:ok_return, other}} ->
-        {:error, {:invalid_return, other}}
-
-      {:ok, {:exception, _, _, _} = exc} ->
-        exc
-
-      {:exit, reason} ->
-        {:error, {:exit, reason}}
-
-      nil ->
-        Task.shutdown(task, :brutal_kill)
-        :timeout
-    end
-  end
-
-  ## Private — :fold merge/error handling
-
-  defp merge_fold_ctx(%Ctx.Init{accumulated: acc} = _prev, %Ctx.Init{accumulated: new} = next) do
-    merged = Map.merge(acc, new)
-    %Ctx.Init{next | accumulated: merged}
-  end
-
-  defp merge_fold_ctx(_prev, next), do: next
-
-  defp handle_fold_error("fail", _acc_ctx, reason), do: {:halt, {:error, reason}}
-
-  defp handle_fold_error("empty", acc_ctx, reason) do
-    Logger.debug(fn ->
-      "[Extension.Table] fold subscriber skipped on error: #{inspect(reason)}"
-    end)
-
-    {:cont, {:ok, acc_ctx}}
-  end
 
   ## Private — request dispatch
 
@@ -1238,86 +592,31 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private — timer
 
-  defp reschedule_timer(%__MODULE__{} = table, name, plugin_id, entry) do
-    safe_cancel_timer(entry.timer_ref)
-    timers = Map.delete(table.timers, entry.timer_ref)
-
-    interval_ms = Keyword.fetch!(entry.sub_opts, :interval_ms)
-
-    new_timer =
-      Process.send_after(self(), {:extension_timer, name, plugin_id}, interval_ms)
-
-    updated_entry = %{entry | timer_ref: new_timer}
-
-    subs =
-      Map.update!(table.subs, name, fn list ->
-        Enum.map(list, fn e ->
-          if e.plugin_id == plugin_id, do: updated_entry, else: e
-        end)
-      end)
-
-    %{table | subs: subs, timers: Map.put(timers, new_timer, {plugin_id, name})}
-  end
-
   ## Private — lookups
-
-  defp find_entry(%__MODULE__{} = table, name, plugin_id) do
-    case Map.fetch(table.catalog, name) do
-      {:ok, %{kind: :request}} ->
-        table.request_subs
-        |> Map.get(name, %{})
-        |> Map.values()
-        |> Enum.find_value(fn {pid_id, entry} ->
-          if pid_id == plugin_id, do: entry
-        end)
-
-      {:ok, _} ->
-        table.subs
-        |> Map.get(name, [])
-        |> Enum.find(&(&1.plugin_id == plugin_id))
-
-      :error ->
-        nil
-    end
-  end
 
   ## Private — restart/retry
 
   # Reset the backoff counter only when the just-crashed owned pid stayed up
   # long enough to count as a real recovery; a fast-failing provider keeps
   # its accumulated count so `retry_delay/1` grows.
-  defp reset_retries_if_stable(%__MODULE__{} = table, plugin_id) do
-    case Map.get(table.started_at, plugin_id) do
-      nil ->
-        table
+  # Re-register the plugin's subscriptions against its fresh instance: every
+  # entry carries a copy of the provider opts, so a restart that kept the old
+  # entries would dispatch to state the provider does not hold.
+  defp resubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
+    subs = plugin.subscriptions
 
-      started_at ->
-        uptime = :erlang.monotonic_time(:millisecond) - started_at
+    table =
+      Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->
+        acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
+      end)
 
-        if uptime >= @stable_uptime_ms do
-          %{table | retries: Map.delete(table.retries, plugin_id)}
-        else
-          table
-        end
-    end
-  end
+    Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
+      %{kind: kind} = Map.fetch!(acc.catalog, name)
 
-  defp schedule_retry(%__MODULE__{} = table, plugin_id, _plugin) do
-    count = Map.get(table.retries, plugin_id, 0)
-    delay = retry_delay(count)
-
-    Logger.info(
-      "[Extension.Table] scheduling retry plugin_id=#{plugin_id} delay_ms=#{delay} attempt=#{count + 1}"
-    )
-
-    Process.send_after(self(), {:retry_plugin_restart, plugin_id}, delay)
-    %{table | retries: Map.put(table.retries, plugin_id, count + 1)}
-  end
-
-  defp restarted_phase(%Plugin{provider: provider}) do
-    if Code.ensure_loaded?(provider) and function_exported?(provider, :activate, 1),
-      do: :prepared,
-      else: :running
+      acc
+      |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
+      |> Chain.refresh(name)
+    end)
   end
 
   defp attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
@@ -1333,21 +632,13 @@ defmodule Flezha.Plugin.Extension.Table do
         # provider that exports none has nothing to reopen, and leaving it
         # :prepared would have `plugin_health/3` report it healthy without ever
         # probing until the next bind. Same rule `activate_plugin/3` applies.
-        table = %{table | phases: Map.put(table.phases, plugin_id, restarted_phase(plugin))}
+        table = %{
+          table
+          | phases: Map.put(table.phases, plugin_id, Health.restarted_phase(plugin))
+        }
+
         table = track_owned_pid(table, plugin_id, owned_pid)
-
-        subs = fresh_plugin.subscriptions
-
-        table =
-          Enum.reduce(subs, table, fn {name, _}, acc ->
-            remove_subscription(acc, name, plugin_id)
-          end)
-
-        new_table =
-          Enum.reduce(subs, table, fn {name, sub_opts}, acc ->
-            %{kind: kind} = Map.fetch!(acc.catalog, name)
-            add_subscription(acc, kind, name, plugin_id, fresh_plugin, sub_opts)
-          end)
+        new_table = resubscribe(table, plugin_id, fresh_plugin)
 
         # NB: do NOT reset the retry counter here. `init_provider/1` only
         # prepares the provider; the upstream connection opens later in
@@ -1367,42 +658,11 @@ defmodule Flezha.Plugin.Extension.Table do
           "[Extension.Table] init_provider failed for plugin_id=#{plugin_id} reason=#{inspect(reason)}"
         )
 
-        schedule_retry(table, plugin_id, plugin)
+        Health.schedule_retry(table, plugin_id)
     end
   rescue
     err ->
       Logger.error("[Extension.Table] restart failed for #{plugin_id}: #{inspect(err)}")
-      schedule_retry(table, plugin_id, plugin)
-  end
-
-  defp retry_delay(count) do
-    base = Application.get_env(:flezha, :plugin_retry_base_delay_ms, @retry_base_delay_ms)
-
-    # Cap the exponent, not just the product: an unbounded count would build a
-    # bignum the clamp then throws away.
-    ProviderBehaviour.retry_backoff_ms(base, @max_retry_delay_ms, min(count, 20) + 1)
-  end
-
-  ## Private — helpers
-
-  defp safe_demonitor(nil), do: :ok
-  defp safe_demonitor(ref), do: Process.demonitor(ref, [:flush])
-
-  defp safe_cancel_timer(nil), do: :ok
-
-  defp safe_cancel_timer(ref) do
-    _ = Process.cancel_timer(ref)
-    :ok
-  end
-
-  defp safe_kill(nil), do: :ok
-
-  defp safe_kill(pid) when is_pid(pid) do
-    if Process.alive?(pid) do
-      Process.unlink(pid)
-      Process.exit(pid, :shutdown)
-    end
-
-    :ok
+      Health.schedule_retry(table, plugin_id)
   end
 end

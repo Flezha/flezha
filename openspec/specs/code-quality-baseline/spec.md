@@ -625,3 +625,53 @@ minted.
 - **WHEN** the practice is reviewed
 - **THEN** it SHALL NOT be treated as satisfying this requirement
 
+### Requirement: A split names only modules that cannot reach it back
+
+A refactor that splits a module SHALL leave every piece naming only modules that
+cannot reach it back, and SHALL verify that with the dependency graph before the
+split is committed rather than arguing it from the design. Charter §3 states the
+direction between layers; this states what a split owes inside one.
+
+Two shapes produce a cycle by construction and are named because both were met
+here. A behaviour module SHALL NOT name the modules that implement it: every
+implementation names the behaviour, so the behaviour naming them closes a cycle
+with all of them at once. The configuration that selects an implementation is a
+separate concern and belongs in a module that names the implementations and
+nothing else. A piece extracted from a parent SHALL NOT name that parent: the
+parent necessarily names the piece, so anything the two genuinely share — a
+struct, a clock, a constant — moves to a third module that names neither.
+
+A simulation SHALL NOT stand in for the measurement. Predicting the graph from
+the call sites missed a file joining a 56-node cycle, and a set-difference of the
+graph before and against the change named it in one line.
+
+Where the count of an area's cycles or of its files inside one moves against the
+work — a split putting five members where one stood, with no edge changed — the
+area SHALL report the edges it cut by name, with the count beside them. A metric
+that measures the wrong thing is said so and reported around, not replaced by a
+further metric.
+
+#### Scenario: A behaviour module does not name its implementations
+
+- **GIVEN** a behaviour module and the modules that implement it
+- **WHEN** the configuration that selects one is written
+- **THEN** it SHALL live in a module that the behaviour does not name
+
+#### Scenario: An extracted piece does not name its parent
+
+- **GIVEN** a module split into a parent and one or more extracted pieces
+- **WHEN** a piece needs something the parent also uses
+- **THEN** that shared thing SHALL move to a module neither the parent nor the piece is named by
+
+#### Scenario: The graph is measured, not predicted
+
+- **GIVEN** a change that is expected to remove a dependency cycle
+- **WHEN** the change is made
+- **THEN** the cycle graph SHALL be re-read and compared with the graph before it
+
+#### Scenario: A cycle metric moving against the work is reported, not optimised
+
+- **GIVEN** a split that leaves a cycle's membership unchanged while raising the count of an area's files within it
+- **WHEN** the area reports its result
+- **THEN** it SHALL name the edges it cut, with the count reported beside them
+

@@ -20,7 +20,7 @@ defmodule Flezha.State.Retention do
   use GenServer
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.InputLog
+  alias Flezha.State.InputLog.Sweep
 
   alias Flezha.State.{
     Completion,
@@ -29,8 +29,8 @@ defmodule Flezha.State.Retention do
     PersistenceResolver,
     RecordFrame,
     SeqIndex,
-    Supervisor,
-    WalWriter
+    WalWriter,
+    WriterRegistry
   }
 
   defstruct []
@@ -116,7 +116,7 @@ defmodule Flezha.State.Retention do
   # Effectively-once tier: truncate each operative's input-log below its
   # min durable consumed-offset watermark (`durable-input-log`).
   defp sweep_input_logs() do
-    Enum.each(InputLog.all_classes(), &InputLog.sweep/1)
+    Enum.each(Sweep.all_classes(), &Sweep.run/1)
   end
 
   @doc """
@@ -177,7 +177,7 @@ defmodule Flezha.State.Retention do
   """
   @spec rewrite_wal_excluding_pre_seq(Paths.entity_id(), non_neg_integer()) :: :ok
   def rewrite_wal_excluding_pre_seq(entity_id, keep_above_seq) do
-    case Supervisor.lookup(entity_id) do
+    case WriterRegistry.lookup(entity_id) do
       {:ok, pid} ->
         # Delegate through the writer so it controls its own file handle.
         WalWriter.truncate_up_to(pid, keep_above_seq)

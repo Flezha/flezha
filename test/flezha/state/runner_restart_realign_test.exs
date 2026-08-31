@@ -89,7 +89,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     assert meta.operative == "TestOperative"
     assert meta.runner == "exec_new"
 
-    # The WAL is no longer frozen at 5: it follows the new runner down to 3,
+    # The WAL does not stay frozen at 5: it follows the new runner down to 3,
     # then keeps advancing on the new epoch.
     assert WalWriter.last_persisted_seq(ctx.writer) == 2
     feed(new, ctx, 3..5)

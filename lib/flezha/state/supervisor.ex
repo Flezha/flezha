@@ -15,8 +15,7 @@ defmodule Flezha.State.Supervisor do
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias Flezha.State.WalWriter
-
-  @registry Flezha.State.WriterRegistry
+  alias Flezha.State.WriterRegistry
 
   def child_spec(_arg) do
     %{
@@ -105,27 +104,13 @@ defmodule Flezha.State.Supervisor do
     {:ok, %{entity_id: entity_id, status: :ok}}
   end
 
-  @doc """
-  Look up a running writer pid without starting one.
-  """
+  @doc "Look up a running writer pid without starting one."
   @spec lookup(tuple()) :: {:ok, pid()} | :error
-  def lookup(entity_id) do
-    case Elixir.Registry.lookup(@registry, entity_id) do
-      [{pid, _}] -> {:ok, pid}
-      [] -> :error
-    end
-  end
+  defdelegate lookup(entity_id), to: WriterRegistry
 
-  @doc """
-  Pids of every live Entity writer for `operative_class`. The 3-tuple key
-  pattern excludes the class's `{class, :input_log}` registration.
-  """
+  @doc "Pids of every live Entity writer for `operative_class`."
   @spec live_writers(String.t()) :: [pid()]
-  def live_writers(operative_class) do
-    Elixir.Registry.select(@registry, [
-      {{{operative_class, :_, :_}, :"$1", :_}, [], [:"$1"]}
-    ])
-  end
+  defdelegate live_writers(operative_class), to: WriterRegistry
 
   @doc """
   Stop every live writer of `operative_class`; the files stay. What a stopped
@@ -138,15 +123,10 @@ defmodule Flezha.State.Supervisor do
 
   @doc "Every registered writer id — Entity writers and input logs alike."
   @spec registered_ids() :: [tuple()]
-  def registered_ids() do
-    Elixir.Registry.select(@registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
-  end
+  defdelegate registered_ids(), to: WriterRegistry
 
-  @doc """
-  Process-registry name used by `WalWriter` to register itself by
-  `entity_id`. Started alongside this supervisor.
-  """
-  def registry_name(), do: @registry
+  @doc "Process-registry name a writer registers itself under."
+  defdelegate registry_name(), to: WriterRegistry, as: :name
 
   @doc """
   Child specs to add to `Flezha.Application` — the underlying `Registry`
@@ -154,7 +134,7 @@ defmodule Flezha.State.Supervisor do
   """
   def application_children() do
     [
-      {Elixir.Registry, keys: :unique, name: @registry},
+      WriterRegistry.child_spec_for_application(),
       __MODULE__
     ]
   end

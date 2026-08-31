@@ -1,30 +1,15 @@
 defmodule Flezha.Plugin.Provider.Postgres do
   @moduledoc """
-  Transactional PostgreSQL sink (`:io_binding`): per flush batch, ONE
-  database transaction upserts every record into `flezha_records` (keyed by
-  `flz.key`) and advances the per-Entity `flezha_sink_progress` watermark
-  row — effectively-once into the DB for tier operatives, plain inserts for
-  everything else. See `docs/resilience/data_durability.md` "Delivery
-  semantics".
+  Transactional PostgreSQL sink (`:io_binding`): per flush batch, ONE database
+  transaction upserts every record into `flezha_records` (keyed by `flz.key`)
+  and advances the per-Entity `flezha_sink_progress` watermark row.
 
-  Required opts:
-    * `:database` — target database name
-    * `:username` — connection role
+  That single transaction is the guarantee: effectively-once into the DB for
+  tier operatives, plain inserts for everything else. See
+  `docs/resilience/data_durability.md` "Delivery semantics".
 
-  Optional opts (defaults below):
-    * `:hostname`             — string, default `"localhost"`
-    * `:port`                 — int, default `5432`
-    * `:password`             — string; prefer `:password_env`
-    * `:password_env`         — env var holding the password (never logged)
-    * `:ssl`                  — bool, default `false`
-    * `:pool_size`            — int, default `2`
-    * `:linger_ms`            — int, default `25` (batch window)
-    * `:max_batch`            — int, default `500` (records per transaction)
-    * `:queue_max`            — int, default `10_000` (then callers park)
-    * `:auto_create`          — bool, default `false` (opt-in DDL)
-    * `:retry_backoff_ms`     — int, default `250`
-    * `:retry_max_backoff_ms` — int, default `5_000`
-    * `:unhealthy_after_ms`   — int, default `30_000` (commit-stall verdict)
+  Required opts `:database` and `:username`; the rest, with their defaults,
+  are the `@known_opts` table below.
   """
 
   alias Flezha.Plugin.Extension.Ctx

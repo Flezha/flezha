@@ -9,7 +9,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   # async: false: writes Application env; a shared on-disk root; a peer BEAM.
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalWriter, WalTransfer}
+  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalTransfer, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -102,7 +102,7 @@ defmodule FlezhaTest.State.WalTransferTest do
     assert File.read!(Paths.wal_path(destination)) == source_bytes
     refute File.exists?(Paths.wal_path(destination) <> ".transferring")
 
-    # The peer no longer holds it — the delete runs only after the rename.
+    # The peer does not hold it — the delete runs only after the rename.
     assert :erpc.call(peer_node, WalTransfer, :manifest, [source]) == []
 
     # Re-running is a no-op: the source is gone, so nothing is owed and the

@@ -77,26 +77,4 @@ defmodule Flezha.State.DurabilityTier.Backend do
   @spec guard_passes?(guard(), claim()) :: boolean()
   def guard_passes?({:extend, claim}, stored), do: stored <= claim
   def guard_passes?({:claim, claim}, stored), do: stored < claim
-
-  @doc """
-  The configured backend as `{module, opts}`, or `:none` when the tier is off.
-
-  Reads `:flezha, :durability_tier`. The shipped names are `:postgres`, `:s3`
-  and `:local_path`; an explicit `{module, opts}` tuple selects any module implementing
-  this behaviour, which is the extension point that keeps "adding a backend is
-  a module, not a fork" true. Anything else is `:none` — a typo must leave the
-  controller running on local durability, never crash it into a boot loop.
-  """
-  @spec resolve() :: {module(), opts()} | :none
-  def resolve() do
-    config = Application.get_env(:flezha, :durability_tier, [])
-
-    case Keyword.get(config, :backend, :none) do
-      :postgres -> {__MODULE__.Postgres, Keyword.get(config, :backend_opts, [])}
-      :s3 -> {__MODULE__.S3, Keyword.get(config, :backend_opts, [])}
-      :local_path -> {__MODULE__.LocalPath, Keyword.get(config, :backend_opts, [])}
-      {module, opts} when is_atom(module) and is_list(opts) -> {module, opts}
-      _ -> :none
-    end
-  end
 end

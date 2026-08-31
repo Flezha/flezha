@@ -18,7 +18,7 @@ defmodule Flezha.State.WatchdogTest do
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
-  alias Flezha.State.{Supervisor, TestHelpers, Watchdog, WalWriter}
+  alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Watchdog}
   alias FlezhaTest.Helper.DurabilityBackendStub
 
   @stall_ms 20

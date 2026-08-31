@@ -1,33 +1,16 @@
 defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   @moduledoc """
-  Refcounted, per-cluster shared-worker registry for the hardened Kafka producer.
+  Refcounted, per-cluster shared-worker registry for the Kafka producer: two
+  plugins on the same connection identity (hosts + ssl_options + auth) acquire
+  the SAME `KafkaEx.Client` pid, stopped after a linger once the last owner
+  releases it.
 
-  Two plugin instances configured against the same connection identity (hosts +
-  ssl_options + auth) acquire the SAME `KafkaEx.Client` worker pid; the
-  worker is stopped after a 5-second linger once the last owner releases it.
-
-  Design:
-
-    * `acquire/2` is synchronous, returns `{:ok, worker_pid, ref}`. The `ref`
-      is opaque — pass it back to `release/2` from the same plugin lifecycle.
-    * The caller process is monitored. If the owner dies without calling
-      `release/2`, the registry treats the DOWN as an implicit release.
-    * Workers are monitored too. If a worker dies (broker partition restart,
-      kafka_ex internal crash, OS suspend leaving the socket half-dead), the
-      registry sends `{:kafka_worker_dead, ref, reason}` to every caller that
-      still holds a live token BEFORE clearing the entry, then snapshots the
-      entry's `refs` count into `state.pending_refs` so the upcoming swap can
-      restore the same number of seats.
-    * `swap/2` is the recovery API consumed by `ProducerWorker`. It drops
-      the dead token, then either re-attaches to an entry another swap
-      already recreated (no refs change — the seat is inherited) or starts
-      a fresh worker and inherits `entry.refs` from the snapshot. The
-      snapshot is dropped after `:linger_ms` (`:linger_expired_pending_refs`)
-      to bound memory across genuinely-down brokers; callers whose swap
-      arrives after expiry receive `{:error, :no_pending_swap}` and SHOULD
-      fall back to `acquire/2` with their stored identity.
-    * Linger guards against churn during plugin restart (acquire -> release ->
-      acquire within milliseconds reuses the same pid).
+  Both ends are monitored, and that is the invariant: an owner that dies
+  without releasing is an implicit release, and a worker that dies notifies
+  every live token holder BEFORE the entry is cleared, snapshotting the seat
+  count so the swap that follows restores it. A swap arriving after the
+  snapshot expires gets `{:error, :no_pending_swap}` and falls back to
+  `acquire/2`.
   """
 
   use GenServer
@@ -193,22 +176,8 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
       nil ->
         case Map.pop(state.pending_refs, key) do
           {{identity, count}, pending_refs} ->
-            state = %{state | pending_refs: pending_refs}
-
-            case state.starter.(identity) do
-              {:ok, pid} when is_pid(pid) ->
-                state = install_worker(state, key, identity, pid, count, MapSet.new())
-                {token, state} = register_owner(state, key, caller)
-                {:reply, {:ok, pid, {key, token}}, state}
-
-              {:error, reason} ->
-                state = restore_pending(state, key, identity, count)
-                {:reply, {:error, reason}, state}
-
-              other ->
-                state = restore_pending(state, key, identity, count)
-                {:reply, {:error, {:unexpected_start_result, other}}, state}
-            end
+            %{state | pending_refs: pending_refs}
+            |> start_pending(key, identity, count, caller)
 
           {nil, _} ->
             {:reply, {:error, :no_pending_swap}, state}
@@ -218,7 +187,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
   def handle_call({:refresh, {key, req_token}}, _from, state) do
     case Map.get(state.entries, key) do
-      %{pid: old_pid, monitor: old_mon, callers: callers, identity: identity} = entry ->
+      %{pid: old_pid, monitor: old_mon, identity: identity} = entry ->
         # A clean broker restart never kills the shared client, so the
         # monitor-DOWN swap path never fires. Replace the client in place and
         # explicitly notify every holder to re-acquire the fresh pid. Relying on
@@ -229,49 +198,10 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
         case state.starter.(identity) do
           {:ok, new_pid} when is_pid(new_pid) ->
-            wmref = Process.monitor(new_pid)
-
-            state = %{
-              state
-              | entries: Map.put(state.entries, key, %{entry | pid: new_pid, monitor: wmref}),
-                worker_monitors:
-                  state.worker_monitors |> Map.delete(old_mon) |> Map.put(wmref, key)
-            }
-
-            # The calling worker rebinds directly from the returned pid; the
-            # OTHER holders still cache the dead pid, so notify them to swap.
-            Enum.each(callers, fn {caller_pid, ctoken} ->
-              if ctoken != req_token do
-                send(caller_pid, {:kafka_worker_dead, {key, ctoken}, :broker_refresh})
-              end
-            end)
-
-            {:reply, {:ok, new_pid}, state}
+            refreshed(state, key, entry, new_pid, req_token)
 
           other ->
-            # Could not start a replacement (rare — start is lazy). Drop the
-            # entry and snapshot refs so the notified callers rebuild on swap.
-            Logger.warning(
-              "[Kafka.WorkerRegistry] refresh restart failed for #{inspect(key)}: " <>
-                "#{inspect(other)}; tearing down so callers rebuild"
-            )
-
-            if MapSet.size(entry.callers) > 0 do
-              Process.send_after(self(), {:linger_expired_pending_refs, key}, state.linger_ms)
-            end
-
-            state = %{
-              state
-              | entries: Map.delete(state.entries, key),
-                worker_monitors: Map.delete(state.worker_monitors, old_mon),
-                pending_refs: Map.put(state.pending_refs, key, {entry.identity, entry.refs})
-            }
-
-            Enum.each(callers, fn {caller_pid, ctoken} ->
-              send(caller_pid, {:kafka_worker_dead, {key, ctoken}, :broker_refresh})
-            end)
-
-            {:reply, {:error, :restart_failed}, state}
+            refresh_failed(state, key, entry, other)
         end
 
       nil ->
@@ -375,9 +305,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
             "active token holder(s) and clearing entry"
         )
 
-        Enum.each(entry.callers, fn {caller_pid, token} ->
-          send(caller_pid, {:kafka_worker_dead, {key, token}, reason})
-        end)
+        notify_swap(entry.callers, key, reason, :all)
 
         if is_reference(entry.linger), do: Process.cancel_timer(entry.linger)
 
@@ -412,6 +340,54 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   end
 
   # Monitor a freshly started worker and register its entry under `key`.
+  # The calling worker rebinds from this call's own reply; the OTHER holders
+  # still cache the dead pid, so they are notified to swap.
+  defp refreshed(state, key, %{monitor: old_mon} = entry, new_pid, req_token) do
+    wmref = Process.monitor(new_pid)
+
+    state = %{
+      state
+      | entries: Map.put(state.entries, key, %{entry | pid: new_pid, monitor: wmref}),
+        worker_monitors: state.worker_monitors |> Map.delete(old_mon) |> Map.put(wmref, key)
+    }
+
+    notify_swap(entry.callers, key, :broker_refresh, req_token)
+    {:reply, {:ok, new_pid}, state}
+  end
+
+  # Could not start a replacement (rare — start is lazy). Drop the entry and
+  # snapshot refs so the notified callers rebuild on swap.
+  defp refresh_failed(state, key, %{monitor: old_mon} = entry, reason) do
+    Logger.warning(
+      "[Kafka.WorkerRegistry] refresh restart failed for #{inspect(key)}: " <>
+        "#{inspect(reason)}; tearing down so callers rebuild"
+    )
+
+    if MapSet.size(entry.callers) > 0 do
+      Process.send_after(self(), {:linger_expired_pending_refs, key}, state.linger_ms)
+    end
+
+    state = %{
+      state
+      | entries: Map.delete(state.entries, key),
+        worker_monitors: Map.delete(state.worker_monitors, old_mon),
+        pending_refs: Map.put(state.pending_refs, key, {entry.identity, entry.refs})
+    }
+
+    notify_swap(entry.callers, key, :broker_refresh, :all)
+    {:reply, {:error, :restart_failed}, state}
+  end
+
+  # Tell every token holder its cached client pid is gone. `except` is the
+  # token of a caller that rebinds from its own reply instead; `:all` tells
+  # everyone, and can never equal a token because a token is a reference.
+  defp notify_swap(callers, key, reason, except) do
+    Enum.each(callers, fn {caller_pid, token} ->
+      if token != except,
+        do: send(caller_pid, {:kafka_worker_dead, {key, token}, reason})
+    end)
+  end
+
   defp install_worker(state, key, identity, pid, refs, callers) do
     wmref = Process.monitor(pid)
 
@@ -468,16 +444,36 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
               state
 
             entry ->
-              new_callers =
-                entry.callers
-                |> Enum.reject(fn {_pid, tok} -> tok == token end)
-                |> MapSet.new()
-
-              %{state | entries: Map.put(state.entries, key, %{entry | callers: new_callers})}
+              drop_caller(state, key, entry, token)
           end
 
         {state, key}
     end
+  end
+
+  defp start_pending(state, key, identity, count, caller) do
+    case state.starter.(identity) do
+      {:ok, pid} when is_pid(pid) ->
+        state = install_worker(state, key, identity, pid, count, MapSet.new())
+        {token, state} = register_owner(state, key, caller)
+        {:reply, {:ok, pid, {key, token}}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, restore_pending(state, key, identity, count)}
+
+      other ->
+        {:reply, {:error, {:unexpected_start_result, other}},
+         restore_pending(state, key, identity, count)}
+    end
+  end
+
+  defp drop_caller(state, key, entry, token) do
+    new_callers =
+      entry.callers
+      |> Enum.reject(fn {_pid, tok} -> tok == token end)
+      |> MapSet.new()
+
+    %{state | entries: Map.put(state.entries, key, %{entry | callers: new_callers})}
   end
 
   defp decrement_refs(state, key) do

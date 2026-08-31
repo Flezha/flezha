@@ -98,10 +98,10 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `8981157e`, B `d6f6e16f`, fmt `ec0a8725`, C `7decf389`, D `3939cdac`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `119a20d4`, `024daaaa`, `be54a5cc`, `d54b61f4`, `588094e4`, `c5bdc26b` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
-| 5a | Controller `state` | `refactor-5a-state` | 0b | **implementing** (b0–1 done) | `7e5b9884`, `e32f1c99`, `c6137a8b` | ruler `max_cycle_files`; KI-41 + KI-61 fixed red-first |
+| 5a | Controller `state` | `refactor-5a-state` | 0b | **done** | `9bb349dc` (+6) | **files>800 3→0, fn>50 1→0, long_names 2→0, markers 17→0, cycles 2→1, 14 edges cut**; prod_loc +67 ceiling-forced; KI-41+KI-61 red-first; 14th blocking |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | **none (5a dep refuted)** | **implementing** | | |
-| 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | pending | | |
-| 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | 5c | pending | | |
+| 5c | Controller `service` (+ `cli_manager` split) | `refactor-5c-service` | 5b | **proposed** (approved) | | |
+| 5d | Controller `observability` + `mix` tasks | `refactor-5d-observability` | **none (5c dep refuted)** | **proposed** (approved) | | |
 | 5e | Controller `operative`, `runner`, `convergence`, rest | `refactor-5e-runtime` | 5d | pending | | |
 | 6 | `cli` | `refactor-6-cli` | 1 | pending | | |
 | 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | pending | | |
@@ -112,30 +112,220 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**TWO IMPLEMENT WORKERS RUNNING IN PARALLEL — the first of the programme.**
+**AREA 5a IS COMPLETE, archived and committed.** `lib/flezha/plugin` (5b) is on its
+final batches.
 
-| worker | area | segment | lane | state |
-|---|---|---|---|---|
-| `a33563…` | **5a** `lib/flezha/state` | batches 2–3 | `lib/flezha/state/**` + its tests | running |
-| `a2d617…` | **5b** `lib/flezha/plugin` | batches 0–1 | `lib/flezha/plugin/**` + its tests | running |
+| worker | area | segment | state |
+|---|---|---|---|
+| `a2d617…` | **5b** `lib/flezha/plugin` | C2 `Wire`, C3 websocket, close-out | running |
+| — | **5a** `lib/flezha/state` | — | **DONE**, lane frozen |
 
-**Last seen** 14:54 — 5a 21 min / 23 boxes ticked, 5b 22 min / 0 ticked (it ticks at
-validation). Load 1.07, no leaked process, no polling loop, no BEAM alive — so **no
-suite overlap at this sample**. Three new files in flight: `state/record_frame.ex` (5a's
-split), `kafka/telemetry.ex` and `operative_forward/telemetry.ex` (5b's cycle cut).
+### Areas 5c and 5d — surveys VERIFIED and APPROVED 2026-08-31
 
-**One file is outside both lanes and it is NOT a breach**: `cli_manager.ex` (5c's) has a
-one-line edit, and reading the hunk shows it is 5a's `B3` rename updating its own caller.
-Charter §11d now carries the rule this exposed — **a rename owns its callers, wherever
-they live**; the alternative would freeze half the programme's cheapest work behind areas
-that have not started. Verified by reading the hunk, not by trusting the line count.
-5b's four `lib/flezha/operative/` files (2/2/3/13 lines) are its authorised teardown cut
-and get the same hunk-level check at the checkpoint.
+Both proposals `--strict` valid, both written while peers were live, neither touching a
+file. **Both are approved. Neither implements until 5b closes** — two implement workers
+is the ceiling on a shared Elixir suite (§11d), and the measured cost of exceeding it is
+already recorded.
 
-`scripts/refactor_metrics.py` is **read-only for both** from `7e5b9884` — 5a had the one
-write window and it is closed. The retry ladder belongs to neither. Neither may take the
-git index, `known_issues.md` or this file. Both must announce their suite runs with
-wall-clock windows so an overlap is visible.
+**5d's `5d depends on 5c` is refuted, one-way and weak** — three read-only references
+out, one in via `metadata_text/1` which the change does not touch. **They implement in
+parallel**, which is the second dependency this programme has found to be nominal rather
+than real.
+
+#### The fourth ruler defect — KI-98, and it lands on 5c's best change
+
+`refactor_metrics.py:459` keeps `mix xref`'s ` (compile)` / ` (export)` suffix on a
+cycle member, and `summarise()` tests membership against bare `git ls-files` paths — so
+**every annotated member is invisible to both `cycles` and `max_cycle_files`.** I
+reproduced it: **ten** members in the real graph carry an annotation. Four areas
+under-report, `lib/flezha` at **46 against a true 56**.
+
+**It lands exactly on the highest-value change in 5c.** That area's headline is one
+line: `operative_manager.ex:23`'s `@id_in_use Validator.id_in_use()` is a **module
+attribute**, hence a compile-time dependency, and it is the `1 compile` in
+`Cycle of length 56 (1 compile, 9 export)`. Cutting it reports **nothing** today — and
+had the edge merely been downgraded, the file becomes visible and the row goes
+**5 → 6, a regression for progress**. Fix first, own commit, red-first self-test, and
+**no third metric** — §11f rules that out and this is a correction, not a new ruler.
+
+#### 5c — `cli_manager.ex` 4 294 lines → 15 modules + a facade, ACYCLIC
+
+**The module name cannot move**: `Flezha.Service.CliManager` is a **wire identifier**,
+built into RPC strings at **55 sites across 14 `cli/src` files**, five of them generic
+helpers taking the function name as a parameter. So the file becomes ~91 one-line
+`defdelegate`s — and the survey **ran Elixir 1.20.2 to confirm `defdelegate` accepts
+default arguments** rather than assuming.
+
+**It was not acyclic as first drawn, and neither was `hub_manager`.** Both were refuted
+and repaired before reaching the proposal. Its method also caught itself: attributing
+`@doc`/`@spec` blocks to the wrong function invented a nine-member SCC, *"caught by
+disbelieving it"*.
+
+**Twenty edges cut by name**, and the structural finding under them: **`lib/flezha/service`
+is two things** — a service layer of 5 522 lines and eight utilities of 326 that are not
+services. `Identificator` alone is named by **ten areas**. Moving three of them to the
+existing root-module convention cuts **24 upward breaches for ~140 relocated lines**.
+
+**5a's delegation handover is partly refuted**: `operative_manager.ex` calls none of the
+four, `registered_ids/0` has **no caller anywhere**, and `lookup/1` has **15** — one 5c's,
+one 5d's, one 5e's and 13 in the blocking `test` area. 5c can fund exactly one.
+
+**The eight `plugin → service` breaches**: four cuttable, four not, and the proposed
+surface is *a `plugin` module returns what it wants done and the caller performs it* —
+5b's `Extension.Table` seam widened. **Deliberately not a behaviour**, because a
+`service` behaviour that `plugin` implements is the exact cycle shape 5a's own new spec
+requirement forbids.
+
+**Risks it named that I would not have**: `Mimic` intercepts remote calls but not local
+ones, so routing a sibling's call through its facade **silently changes which calls a
+stub intercepts**; and the RPC surface is invisible to the compiler, so a missed
+delegation compiles clean on both sides and fails on an operator's machine.
+
+**Also found**: two dead modules (`Service.Warden`, a never-started GenServer with a
+typo'd table `:flecha_warden`; `Service.PluginHelper`) with zero references anywhere,
+and nine public CLI wrappers no CLI calls. **Ruled: delete all of it**, per KI-82's
+precedent — deletion-funded work is the best kind.
+
+#### 5d — the instrument tree, and three defects
+
+**`roundtrip.ex`'s own eight section rules are CYCLIC as a partition** (`config →
+engines → config`). The survey built a comment-stripped intra-file call-graph tool and
+DFS'd every partition — which is the third area today to find its obvious split cyclic.
+
+**It refused to build an A/B row and said why.** The Prometheus funnel is the one real
+hot path and the existing bench provably cannot reach it; rather than propose a row that
+cannot resolve the effect, it names the ~40-line harness that would be needed, refuses
+it, and offers a **byte diff** over the funnel instead — stronger than any row, because
+the change does not touch it.
+
+**On refactoring the instrument itself**: an extraction that moves a statement across a
+timestamp changes what the bench measures and **no A/B can detect it**, because both arms
+would run the new code. Four checkable proofs replace measurement, including a `mix help`
+golden capture taken **before the first hunk**.
+
+**RULINGS on its three findings.**
+
+- **F1 — real, P2, and it becomes batch 0, red-first.** `registry.ex:480` emits from
+  inside its own `handle_call`, into `:block` sinks with a **30 s** ceiling, and
+  `bus.ex:136`'s `pid == self()` guard cannot fire because `self()` is the Registry. So
+  every `register_source/1` queues behind it on a 5 s default and a boot-time source
+  exits `:timeout` in `init/1` — KI-44's cascade through a different door. It changes
+  which process blocks, so it is its own commit and not folded in.
+- **F2 — delete the callback and correct the spec.** I verified: `Sink.handle_signal/2`
+  is declared at `sink.ex:57` and **has no invoker** — the only calls to that name in the
+  tree are `shutdown/signal_handler.ex`'s own unrelated private function. Delivery is
+  `{:signal, …}` answered in `handle_info/2`. Four of eight implementations are no-op
+  stubs and `prometheus_sink.ex` duplicates its own live body. Four spec clauses say it
+  SHALL be invoked. **A spec requirement that has never been implemented is a false
+  statement about the system**, and keeping dead code so the text stays literally true is
+  backwards.
+- **F3 — real, fix it in 5d.** `bench.workflow` still carries the runtime clause list
+  KI-51 removed from its two siblings, so `--runtime node` is refused though its manifest
+  exists. It survives the gate because the gate's task list names only two tasks.
+- **R6 answered as charter §11g**: a `use Mix.Task` moduledoc **is `mix help` output**, so
+  §5's ceiling does not bind it. Trimming rendered text removes documentation from a
+  user-facing surface while the metric records an improvement.
+
+**And it caught two silences in the ruler**: `comment_density` and `doc_lines` are in
+§11's prose but **not in `RATCHETED`** — a worker must not chase them; and `sleeps: 0`
+hides **21 production `Process.sleep/1`** in the area, which is KI-91's `in_test` gate
+working as designed.
+
+**`targets.md` is stale on every row both areas own — the third and fourth areas in a
+row.** It is a Phase-0 snapshot. `baseline.json` was exact on every row for both.
+
+### Area 5a — `lib/flezha/state` is DONE — `9bb349dc`, archived
+
+**The fourteenth blocking ratchet.** Seven commits.
+
+| metric | before | after |
+|---|---|---|
+| `files_over_800` | 3 | **0** |
+| `functions_over_50` | 1 | **0** |
+| `long_names` | 2 | **0** |
+| `narrative_markers` | 17 | **0** |
+| `duplicate_pairs` | 7 | **5** |
+| `cycles` | 2 | **1** |
+| credo | 28 | **26** |
+| `prod_loc` | 6 844 | 6 911 (+67, ceiling-forced, counted by cause) |
+
+`wal_writer.ex` **2 021 → 666** behind five siblings split by the state they mutate;
+`proc_journal` 946 → 704, `input_log` 907 → 776. **Fourteen dependency edges cut, named
+one by one**, the four-file backend cycle gone and the big cycle's *compile* edges 3 → 1.
+
+**Two defects fixed red-first** (KI-41, KI-61) and **KI-92 filed** from the A/B floor
+measurement.
+
+**What this area is actually worth remembering for is its instrument work.**
+
+- **The ruler was wrong and got fixed before the area started** — `max_cycle_files`,
+  now in the baseline and comparable from here on. Then it turned out to have **its own**
+  blind spot (a file split inside a cycle raises it for unchanged edges), which is in
+  §11f as the third instance, with the ruling that the *reporting* changes and no third
+  metric is added.
+- **§11e produced its most convincing catch**: the untracked read returned a number
+  *identical to a plausible baseline*. The worker's first reading of the consequence was
+  wrong and it corrected itself — it was never a `+6` regression; the real risk is that
+  **`--write-baseline` against an under-reporting tree arms a ratchet below reality**,
+  which is precisely the moment the blindness does most damage.
+- **A re-record rewrites every row**, so a regression silently becomes the new normal.
+  Diffing the new baseline against a byte copy caught `test credo_warnings` rising by
+  one — two pre-existing hits in this area's own test files that none of its commits
+  touched. Fixed to 82, better than it started, and re-recorded.
+- **It corrected my own instruction**: three rows are peer-movable, not the two I named,
+  because `cycles` and `max_cycle_files` come from one `xref_cycles()` output by the same
+  membership test. In the `test` area a peer's files are *members*, and excluding them
+  moves nine rows, five ratcheted. Charter updated (`6eedcbb9`).
+- **The flip is proved in two arms with a control** — same regression, same numbers,
+  exit code flipping purely on `blocking` membership.
+
+**Task 4.3 closed on a false condition, not skipped**: it reads *"if the log is still
+over 800"* and `input_log.ex` is 776, which I verified before archiving.
+
+**Owed to later areas, recorded**: three uncut upward breaches by name for 5c, four
+`Supervisor` delegations that can be deleted outright once their callers re-point, the
+last compile edge inside the 56-cycle (`service/operative_manager.ex`), and 5e's
+`ClassRegistry` question — measured as changing the cycle by nothing while adding ~450
+lines to a now-blocking area, so recorded and not taken.
+
+### Area 5b — KI-93 fixed and segment B mostly landed — `17ec6993`, `153a9434`
+
+**KI-93 is closed and it was the right call to stop for it.** The generated `build/1`
+now returns the error its own `@callback` documents. **44 raising fields across 7
+providers → 0 across 9**, and the golden capture over four surfaces differs in **exactly
+5 rows**, every one a raise becoming its documented error — which is how you show a
+behaviour change is the *only* one.
+
+**I re-drove the red myself**: HEAD's macro restored under a copy, the new test run,
+**4 of 8 failed** on the same split the worker reported, file restored byte-identical.
+The 4 that pass are the refusals the fix must not touch — a red-first that also pins
+what must *not* move.
+
+**The check I made mandatory was done before editing, not after**: no test asserted the
+raise. And there is **one honest deviation, reported rather than taken silently** —
+`:377`'s literal arm could not survive, because `params_data` would have to be a map and
+the reason in one slot. Its *behaviour* became reachable; its text would have recreated
+the double wrap. That is the right way to deviate from a supervisor's wording.
+
+**Segment B: three folds taken, two REFUSED with the price stated.** `worker_registry`
+had a **third** copy of the swap notification the task never named. `installer`/`loader`
+carried one classifier under two names. Refused: `filter.ex`'s boolean parse (6 lines
+before, 6 after, **and the shared function's answer discarded — the tell that it is not
+shared**), and the three tree walks (a new module to save 11 lines, net −3 and one more
+file, while the third shape *keeps* non-regular entries the others drop, so it is not a
+copy at all). `prod_loc` 7 581 → **7 531**, `functions_over_50` 9 → 8,
+`duplicate_pairs` 13 → 11.
+
+**B1 and B2.1 are HELD, not skipped** — both edit `provider_behaviour.ex`, which right
+now carries the KI-93 fix alone. Landing a refactor of that file would make the two
+unsplittable by path and defeat §1b.6. That is the rule being understood rather than
+recited.
+
+**The suite's one failure was confirmed, not dismissed.** `flezha_test.exs:419` matches
+`known_issues.md:889` **to the field** — same test, same assertion, same competing
+`drain_progress` message, same `migrated: 0, forced: 0, remaining_hubs: 0` shape. I read
+the entry. Fourth-plus sighting of a filed flake, and the diff reaches no shutdown or
+drain code.
 
 ### Area 5b segment A — VERIFIED and COMMITTED `c78f7deb` — and the area's OWN PLAN was wrong
 

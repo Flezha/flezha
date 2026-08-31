@@ -16,6 +16,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.ProviderBehaviour
 
+  require Logger
+
+  # A re-assertion (connect, data-liveness re-subscribe) re-sends what is
+  # ALREADY applied, so it has nothing to commit. It carries a reserved id
+  # outside the in-flight space — which starts at 1 — so its acknowledgement,
+  # however late, can never be mistaken for a pending delta's.
+  @reassert_req_id 0
+
   @default_interval_ms 30_000
   @min_interval_ms 1_000
 
@@ -275,4 +283,263 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   end
 
   def applied_set(_items), do: []
+
+  ## ---------- the subscription this socket asserts ----------
+
+  # The ONE answer to "what is this socket subscribed to". Every site that
+  # (re)asserts the full subscription — the connect handshake and the
+  # data-liveness tier — reads it here, which is what stops the watchdog from
+  # resending a boot-time payload a runtime change has since superseded.
+  def subscription_frames(%{subscription: subscription, applied: applied}) do
+    items = Enum.sort(applied)
+
+    if items == [] do
+      []
+    else
+      [{:text, render(subscription.subscribe_template, items, @reassert_req_id)}]
+    end
+  end
+
+  def subscription_frames(state) do
+    pcp = state.post_connect["payload"]
+
+    if is_map(pcp) and Map.has_key?(pcp, "type") and Map.has_key?(pcp, "message") do
+      type = if pcp["type"] == "binary", do: :binary, else: :text
+      [{type, pcp["message"]}]
+    else
+      []
+    end
+  end
+
+  ## ---------- the reconcile cycle ----------
+
+  # A failed poll is "no information", never an empty desired set: the applied
+  # set stands and nothing is unsubscribed. Only a decoded response moves it.
+  #
+  # Delta frames leave through Fresh's reply form, the same mechanism the
+  # data-liveness tier uses, so nothing is ever sent re-entrantly.
+  def settle_poll(state, result) do
+    {state, frames} =
+      case result do
+        {:ok, :not_modified} -> reconcile(%{state | last_error: nil})
+        {:ok, body, etag} -> decoded_source(%{state | source_etag: etag}, body)
+        {:error, reason} -> {poll_failed(state, reason), []}
+      end
+
+    state = schedule_subscription_poll(state)
+
+    case frames do
+      [] -> {:ok, state}
+      frames -> {:reply, frames, state}
+    end
+  end
+
+  defp decoded_source(state, body) do
+    case desired_set(state.subscription, body) do
+      {:ok, desired} -> reconcile(%{state | desired: desired, last_error: nil})
+      {:error, reason} -> {poll_failed(state, reason), []}
+    end
+  end
+
+  defp poll_failed(state, reason) do
+    Logger.warning(
+      "[Plugin.Provider.Websocket] subscription poll failed plugin_id=" <>
+        "#{inspect(state.plugin_id)} reason=#{inspect(reason)}"
+    )
+
+    %{state | last_error: reason}
+  end
+
+  # No subscription source at all — a plain static plugin, whose state carries
+  # no reconcile keys.
+  def reconcile(state) when not is_map_key(state, :desired), do: {state, []}
+
+  # Nothing has been fetched yet, so there is no desired set to converge on.
+  def reconcile(%{desired: nil} = state), do: {state, []}
+
+  def reconcile(state) do
+    added = MapSet.difference(state.desired, state.applied)
+    removed = MapSet.difference(state.applied, state.desired)
+
+    if MapSet.size(added) == 0 and MapSet.size(removed) == 0 do
+      {%{state | last_reconcile: %{added: 0, removed: 0, sent: false}}, []}
+    else
+      send_deltas(%{state | cycle: state.cycle + 1}, added, removed)
+    end
+  end
+
+  def send_deltas(state, added, removed) do
+    if established(state, "reconcile") do
+      {state, frames} =
+        {state, []}
+        |> delta_frame(:add, added, state.subscription.subscribe_template)
+        |> delta_frame(:remove, removed, state.subscription.unsubscribe_template)
+
+      :telemetry.execute(
+        [:flezha, :ws, :reconcile],
+        %{added: MapSet.size(added), removed: MapSet.size(removed)},
+        %{plugin_id: state.plugin_id}
+      )
+
+      state =
+        state
+        |> expire_stale_inflight()
+        |> commit_if_ack_free(frames)
+        |> Map.put(:last_reconcile, %{
+          added: MapSet.size(added),
+          removed: MapSet.size(removed),
+          sent: true
+        })
+
+      {state, frames}
+    else
+      # The delta stays uncommitted and the next cycle re-derives it.
+      {%{state | last_reconcile: %{added: 0, removed: 0, sent: false}}, []}
+    end
+  end
+
+  defp delta_frame({state, frames}, kind, items, template) do
+    if MapSet.size(items) == 0 do
+      {state, frames}
+    else
+      req_id = state.next_req_id
+      sorted = Enum.sort(items)
+
+      state = %{
+        state
+        | next_req_id: req_id + 1,
+          inflight: Map.put(state.inflight, req_id, {kind, sorted, state.cycle})
+      }
+
+      {state, frames ++ [{:text, render(template, sorted, req_id)}]}
+    end
+  end
+
+  # An unanswered request from a previous cycle is abandoned: its delta was
+  # re-derived and re-sent under a fresh req_id, so keeping the old one would
+  # let a very late acknowledgement commit a set the source has moved on from.
+  def expire_stale_inflight(state) do
+    %{
+      state
+      | inflight:
+          state.inflight
+          |> Enum.filter(fn {_req_id, {_kind, _items, cycle}} -> cycle >= state.cycle end)
+          |> Map.new()
+    }
+  end
+
+  def commit_if_ack_free(%{subscription: %__MODULE__{ack_mode: "none"}} = state, frames)
+      when frames != [] do
+    Enum.reduce(Map.keys(state.inflight), state, &commit(&2, &1))
+  end
+
+  def commit_if_ack_free(state, _frames), do: state
+
+  ## ---------- acknowledgement-gated commit ----------
+
+  # The correlation contract: the upstream echoes the `{{req_id}}` the template
+  # carried. An object naming an outstanding one is that request's answer, and
+  # reports success unless it says otherwise.
+  def commit_acknowledged(state, message) do
+    with {:ok, %{"req_id" => req_id} = decoded} <- Jason.decode(message),
+         true <- is_integer(req_id),
+         {:ok, _entry} <- Map.fetch(state.inflight, req_id) do
+      if acknowledged?(decoded) do
+        commit(state, req_id)
+      else
+        # Not committed: the next cycle re-derives an identical delta.
+        Logger.warning(
+          "[Plugin.Provider.Websocket] subscription request rejected plugin_id=" <>
+            "#{inspect(state.plugin_id)} req_id=#{req_id}"
+        )
+
+        %{state | inflight: Map.delete(state.inflight, req_id), last_error: {:rejected, req_id}}
+      end
+    else
+      _ -> state
+    end
+  end
+
+  defp commit(state, req_id) do
+    case Map.fetch(state.inflight, req_id) do
+      {:ok, {kind, items, _cycle}} ->
+        applied =
+          case kind do
+            :add -> MapSet.union(state.applied, MapSet.new(items))
+            :remove -> MapSet.difference(state.applied, MapSet.new(items))
+          end
+
+        state = %{
+          state
+          | applied: applied,
+            inflight: Map.delete(state.inflight, req_id)
+        }
+
+        persist_applied(state)
+        state
+
+      :error ->
+        state
+    end
+  end
+
+  # The applied set is written to the plugin cspec — the same record the enable
+  # lives in — so a plugin restart, an operative handover and a controller
+  # restart all resume with what the socket actually holds. Written after the
+  # commit, so a crash between send and acknowledgement degrades to a re-send
+  # rather than to a subscription nobody remembers.
+  def persist_applied(%{source_plugin_id: plugin_id, overwatcher_pid: host} = state)
+      when is_binary(plugin_id) and is_pid(host) do
+    GenServer.cast(
+      host,
+      {:plugin_opt_persist, plugin_id, :applied_subscriptions, Enum.sort(state.applied)}
+    )
+  end
+
+  def persist_applied(_state), do: :ok
+
+  ## ---------- sending ----------
+
+  def established(%{websocket_established?: true}, _what), do: true
+
+  def established(state, what) do
+    Logger.warning(
+      "[Plugin.Provider.Websocket] skipping #{what}; websocket not established " <>
+        "plugin_id=#{inspect(state.plugin_id)}"
+    )
+
+    false
+  end
+
+  ## ---------- observability ----------
+
+  def subscription_report(state) do
+    %{
+      applied: Enum.sort(state.applied),
+      desired: state.desired && Enum.sort(state.desired),
+      inflight: map_size(state.inflight),
+      last_reconcile: state.last_reconcile,
+      last_error: state.last_error
+    }
+  end
+
+  def schedule_subscription_poll(%{subscription: subscription} = state) do
+    case Map.get(state, :poll_timer) do
+      nil -> :ok
+      ref -> Process.cancel_timer(ref, async: true, info: false)
+    end
+
+    # A literal item list has no endpoint to poll; its desired set is already
+    # final and the reconcile at connect is the whole loop.
+    if polled?(subscription) do
+      %{
+        state
+        | poll_timer: Process.send_after(self(), :subscription_poll, subscription.interval_ms)
+      }
+    else
+      %{state | poll_timer: nil}
+    end
+  end
+
+  def schedule_subscription_poll(state), do: state
 end

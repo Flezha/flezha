@@ -22,16 +22,7 @@ defmodule Flezha.State.GapRecoveryTest do
   setup do
     base = TestHelpers.tmp_app_data_dir()
 
-    for spec <- [
-          {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
-          Supervisor,
-          Flezha.State.FsyncBatcher
-        ] do
-      case start_supervised(spec) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-      end
-    end
+    TestHelpers.start_state_tree()
 
     entity_id = TestHelpers.sample_entity_id("gap_" <> uniq())
     {:ok, _} = Supervisor.find_or_start(entity_id)

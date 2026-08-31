@@ -20,7 +20,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   require Logger
 
   alias Flezha.Dlq
-  alias Flezha.State.DurabilityTier.{Artifact, Backend, Manifest}
+  alias Flezha.State.DurabilityTier.{Artifact, Manifest}
+  alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
   alias Flezha.State.{InputLog, Outbox, Paths}
 
   @doc """
@@ -29,27 +30,25 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   binding a remote-only operative finds its Entities, proc-journal, durable
   inbox, input log and parked failures on disk by the time it enumerates them.
   """
-  @spec hydrate_operative(binary()) :: :ok
-  def hydrate_operative(operative_class) when is_binary(operative_class) do
-    with {module, opts} <- Backend.resolve() do
-      hydrate_prefix(module, opts, Manifest.prefix(:entity, [operative_class]))
+  @spec hydrate_operative(module(), keyword(), binary()) :: :ok
+  def hydrate_operative(module, opts, operative_class) when is_binary(operative_class) do
+    hydrate_prefix(module, opts, Manifest.prefix(:entity, [operative_class]))
 
-      # The input log is class-level, so it sits outside the per-Entity prefix
-      # above and has to be asked for by name. Without it a hydrated Entity
-      # comes back with its consumed floor intact and no log to replay from —
-      # the next input lands at offset 0, below the floor, and is silently
-      # skipped as already-consumed.
-      hydrate_ref(module, opts, {:input_log, operative_class})
+    # The input log is class-level, so it sits outside the per-Entity prefix
+    # above and has to be asked for by name. Without it a hydrated Entity
+    # comes back with its consumed floor intact and no log to replay from —
+    # the next input lands at offset 0, below the floor, and is silently
+    # skipped as already-consumed.
+    hydrate_ref(module, opts, {:input_log, operative_class})
 
-      # Parked failures belong to the operative that produced them, so they come
-      # back with it rather than at boot: a replacement controller's `flz dlq`
-      # sees the inherited parks from the moment it binds the operative.
-      hydrate_prefix(
-        module,
-        opts,
-        Manifest.prefix(:dlq, [Dlq.Store.path_component(operative_class)])
-      )
-    end
+    # Parked failures belong to the operative that produced them, so they come
+    # back with it rather than at boot: a replacement controller's `flz dlq`
+    # sees the inherited parks from the moment it binds the operative.
+    hydrate_prefix(
+      module,
+      opts,
+      Manifest.prefix(:dlq, [Dlq.Store.path_component(operative_class)])
+    )
 
     :ok
   end
@@ -60,18 +59,12 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   The manifest is per-Entity, so a narrowed request costs exactly the artifacts
   it names — no full-Procedure fetch to answer a question about one key.
   """
-  @spec hydrate_entities(binary(), binary(), [binary()]) :: :ok
-  def hydrate_entities(operative_class, procedure_id, entity_keys) do
-    case Backend.resolve() do
-      :none ->
-        :ok
-
-      {module, opts} ->
-        Enum.each(entity_keys, fn entity_key ->
-          ref = {:entity, {operative_class, procedure_id, entity_key}}
-          hydrate_ref(module, opts, ref)
-        end)
-    end
+  @spec hydrate_entities(module(), keyword(), binary(), binary(), [binary()]) :: :ok
+  def hydrate_entities(module, opts, operative_class, procedure_id, entity_keys) do
+    Enum.each(entity_keys, fn entity_key ->
+      ref = {:entity, {operative_class, procedure_id, entity_key}}
+      hydrate_ref(module, opts, ref)
+    end)
   end
 
   @doc """
@@ -106,7 +99,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # orphan reconcile heals the difference, and there is no cluster-wide
   # monotonic source at this layer to do better.
   defp hydrate_replicas(prefix) do
-    with {module, opts} <- Backend.resolve() do
+    with {module, opts} <- BackendConfig.resolve() do
       hydrate_prefix(module, opts, prefix, &newest_replicas/1)
     end
 

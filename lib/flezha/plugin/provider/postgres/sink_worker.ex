@@ -1,20 +1,17 @@
 defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   @moduledoc """
-  Per-`plugin_id` transactional Postgres sink: buffers `:on_output` records,
-  and per flush batch runs ONE database transaction that (a) upserts every
-  record into `flezha_records` keyed by `flz.key` and (b) upserts the
-  per-Entity `flezha_sink_progress` watermark row. Data and progress can
-  never diverge.
+  Per-`plugin_id` transactional Postgres sink. Per flush batch ONE transaction
+  upserts every record into `flezha_records` keyed by `flz.key` AND upserts the
+  per-Entity `flezha_sink_progress` watermark, so data and progress can never
+  diverge.
 
-  Every upsert is guarded by `(epoch, seq)` monotonicity, so a re-driven
-  batch (controller crash between flush and cursor advance) and stale
-  epochs are no-ops. An unreachable database delays the flush (retry with
-  backoff) — records are never dropped; enqueue callers park once the
-  buffer passes `:queue_max`, propagating backpressure into the Overwatch.
+  Every upsert is guarded by `(epoch, seq)` monotonicity, so a re-driven batch
+  and a stale epoch are both no-ops. An unreachable database delays the flush;
+  nothing is dropped, and enqueue callers park past `:queue_max`.
 
-  The committed transaction is the delivery confirmation: it answers the
-  outbox hold each guaranteed record was handed over with, which is what lets
-  the controller's flush cursor advance (`Flezha.State.Outbox`).
+  The committed transaction IS the delivery confirmation: it answers the outbox
+  hold each guaranteed record carries, which is what advances the controller's
+  flush cursor.
   """
 
   alias Flezha.Plugin.ProviderBehaviour
@@ -304,13 +301,11 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # collapse same-key records to the newest identity before the upsert.
   defp dedup_newest_by_key(batch) do
     batch
-    |> Enum.reduce(%{}, fn rec, acc ->
-      Map.update(acc, rec.key, rec, fn kept ->
-        if rec.sort > kept.sort, do: rec, else: kept
-      end)
-    end)
+    |> Enum.reduce(%{}, fn rec, acc -> Map.update(acc, rec.key, rec, &newer_of(rec, &1)) end)
     |> Map.values()
   end
+
+  defp newer_of(rec, kept), do: if(rec.sort > kept.sort, do: rec, else: kept)
 
   defp progress_rows(batch) do
     batch

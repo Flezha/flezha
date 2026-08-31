@@ -8,7 +8,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSup do
   `ensure_worker/1`; a registered worker is shared while
   `ProducerWorker.reusable?/1` holds, else it is reaped first so a
   recovered operative starts a fresh, healthy producer rather than
-  re-attaching to one that can no longer drain.
+  re-attaching to one that cannot drain.
   """
 
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker

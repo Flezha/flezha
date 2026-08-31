@@ -25,7 +25,9 @@ defmodule Flezha.State.Wire do
   @payload_id_compensation_done "compensation_done"
   @payload_id_park_payload "park_payload"
 
-  @header_size 16
+  alias Flezha.State.RecordFrame
+
+  @header_size RecordFrame.header_size()
 
   # Header byte 9 (`format_id`): 1 = plain postcard change, 2 = effect record.
   @format_id_effect_record 2

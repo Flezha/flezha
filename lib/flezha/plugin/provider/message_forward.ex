@@ -5,8 +5,8 @@ defmodule Flezha.Plugin.Provider.MessageForward do
   command and returns the reply.
   """
 
-  alias Flezha.Runner.ControlUnit
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Runner.ControlUnit
 
   def on_message(
         %Ctx.Msg{

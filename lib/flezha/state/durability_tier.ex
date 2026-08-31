@@ -18,7 +18,8 @@ defmodule Flezha.State.DurabilityTier do
   """
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.DurabilityTier.{Artifact, Backend, Hydrator, Shipper}
+  alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
+  alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
 
@@ -36,7 +37,7 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc "Whether a remote backend is configured. `false` makes every entry point inert."
   @spec enabled?() :: boolean()
-  def enabled?(), do: Backend.resolve() != :none
+  def enabled?(), do: BackendConfig.resolve() != :none
 
   @doc """
   How this controller's durable state is protected, as an operator reads it.
@@ -172,7 +173,7 @@ defmodule Flezha.State.DurabilityTier do
   def children() do
     if unconfigured?(), do: refuse_unconfigured_backend!()
 
-    case Backend.resolve() do
+    case BackendConfig.resolve() do
       :none ->
         []
 
@@ -385,7 +386,10 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec hydrate_operative(binary()) :: :ok
   def hydrate_operative(operative_class) when is_binary(operative_class) do
-    if enabled?(), do: Hydrator.hydrate_operative(operative_class), else: :ok
+    with {module, opts} <- BackendConfig.resolve(),
+         do: Hydrator.hydrate_operative(module, opts, operative_class)
+
+    :ok
   end
 
   @doc """
@@ -397,11 +401,11 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec hydrate_entities(binary(), binary(), [binary()]) :: :ok
   def hydrate_entities(operative_class, procedure_id, entity_keys) do
-    if enabled?() do
-      Hydrator.hydrate_entities(operative_class, procedure_id, entity_keys)
-    else
-      :ok
+    with {module, opts} <- BackendConfig.resolve() do
+      Hydrator.hydrate_entities(module, opts, operative_class, procedure_id, entity_keys)
     end
+
+    :ok
   end
 
   # ---------- observability ----------

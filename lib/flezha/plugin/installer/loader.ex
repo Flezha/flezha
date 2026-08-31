@@ -1,21 +1,13 @@
 defmodule Flezha.Plugin.Installer.Loader do
   @moduledoc """
-  In-VM module registry for installed plugins.
+  In-VM module registry for installed plugins: it writes freshly-compiled beams
+  under `installed/<id>/<version>/ebin/`, loads them, and remembers which
+  modules belong to which plugin id so uninstall and upgrade target a precise
+  set.
 
-  Owns three responsibilities:
-
-    1. Write freshly-compiled beam binaries to
-       `installed/<id>/<version>/ebin/<module>.beam` and `:code.load_binary/3`
-       each.
-    2. Remember which modules belong to which plugin id so uninstall and
-       upgrade can target a precise set.
-    3. On boot, hydrate from the `Store`: every catalog row triggers a best
-       effort load from its `ebin/`; rows that fail load are flipped to
-       `:load_failed` and the Loader continues.
-
-  Collision guard: if a module listed in the incoming plugin's `modules`
-  is already loaded and NOT owned by any installed plugin (i.e. it's part
-  of the compiled release), the load is refused.
+  On boot it hydrates from the `Store` best-effort: a row whose beams fail to
+  load is flipped to `:load_failed` and the Loader continues, because one
+  broken plugin may not stop the rest from loading.
   """
 
   use GenServer
@@ -138,23 +130,21 @@ defmodule Flezha.Plugin.Installer.Loader do
   ## Hydration
 
   defp do_hydrate(state) do
-    try do
-      rows = safe_store_all()
+    rows = safe_store_all()
 
-      Enum.reduce(rows, state, fn {plugin_id, row}, acc ->
-        case row[:status] do
-          :load_failed ->
-            acc
+    Enum.reduce(rows, state, fn {plugin_id, row}, acc ->
+      case row[:status] do
+        :load_failed ->
+          acc
 
-          _ ->
-            hydrate_row(plugin_id, row, acc)
-        end
-      end)
-    catch
-      kind, reason ->
-        Logger.warning("[plugin_installer] Loader hydration failed: #{inspect({kind, reason})}")
-        state
-    end
+        _ ->
+          hydrate_row(plugin_id, row, acc)
+      end
+    end)
+  catch
+    kind, reason ->
+      Logger.warning("[plugin_installer] Loader hydration failed: #{inspect({kind, reason})}")
+      state
   end
 
   defp hydrate_row(plugin_id, row, state) do
@@ -235,10 +225,13 @@ defmodule Flezha.Plugin.Installer.Loader do
     end)
   end
 
-  # Classify a module as "already compiled into the release and not owned by
-  # any installed plugin" — those are collisions. A module not yet loaded or
-  # previously loaded by THIS plugin is fine.
-  defp module_from_release?(module) do
+  @doc """
+  Classify a module as "already compiled into the release and not owned by
+  any installed plugin" — those are collisions. A module not yet loaded, or
+  loaded by an installed plugin, is not from the release.
+  """
+  @spec module_from_release?(module()) :: boolean()
+  def module_from_release?(module) do
     case :code.which(module) do
       :non_existing -> false
       :preloaded -> true

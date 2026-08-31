@@ -30,20 +30,14 @@ defmodule Flezha.State.ProcJournal do
     WalWriter
   }
 
-  @type_proc_committed 1
-  @type_outbox_flushed 2
-  @type_iter_committed 3
-  @type_parked 4
-  @type_compensated 5
-  @type_rewound 6
-  @entry_types %{
-    @type_proc_committed => :proc_committed,
-    @type_outbox_flushed => :outbox_flushed,
-    @type_iter_committed => :iter_committed,
-    @type_parked => :parked,
-    @type_compensated => :compensated,
-    @type_rewound => :rewound
-  }
+  alias Flezha.State.ProcJournal.Codec
+
+  @type_proc_committed Codec.type_code(:proc_committed)
+  @type_outbox_flushed Codec.type_code(:outbox_flushed)
+  @type_iter_committed Codec.type_code(:iter_committed)
+  @type_parked Codec.type_code(:parked)
+  @type_compensated Codec.type_code(:compensated)
+  @type_rewound Codec.type_code(:rewound)
 
   @type outbox_entry :: %{
           entity_id: binary(),
@@ -281,7 +275,7 @@ defmodule Flezha.State.ProcJournal do
   def read(instance_id) when is_binary(instance_id) do
     entries =
       RecordLog.read(Paths.journal_path(instance_id), fn seq, <<epoch::32-big, _::96>>, body ->
-        decode_entry(seq, body, epoch)
+        Codec.decode_entry(seq, body, epoch)
       end)
 
     {:ok, entries}
@@ -579,13 +573,15 @@ defmodule Flezha.State.ProcJournal do
   defp barrier_record({:proc_committed, proc_idx, iter, entities_ran, handoff, outbox}),
     do:
       {@type_proc_committed, proc_idx, iter,
-       [encode_committed_payload(entities_ran, handoff), encode_outbox(outbox)]}
+       [Codec.encode_committed_payload(entities_ran, handoff), Codec.encode_outbox(outbox)]}
 
   defp barrier_record({:compensated, proc_idx, iter, outbox}),
-    do: {@type_compensated, proc_idx, iter, encode_outbox(outbox)}
+    do: {@type_compensated, proc_idx, iter, Codec.encode_outbox(outbox)}
 
   defp barrier_record({:iter_committed, iter, consumed_offset, handoff}),
-    do: {@type_iter_committed, 0, iter, [<<consumed_offset::64-big>>, encode_handoff(handoff)]}
+    do:
+      {@type_iter_committed, 0, iter,
+       [<<consumed_offset::64-big>>, Codec.encode_handoff(handoff)]}
 
   # `epoch` defaults to the instance's current one (a journal read); a caller
   # already holding the entry it is marking passes that entry's epoch instead,
@@ -603,7 +599,7 @@ defmodule Flezha.State.ProcJournal do
   end
 
   defp encode(instance_id, type, proc_idx, iter, payload, epoch) do
-    body = encode_entry(type, proc_idx, iter, payload)
+    body = Codec.encode_entry(type, proc_idx, iter, payload)
     max = max_entry_bytes()
 
     if byte_size(body) > max do
@@ -636,7 +632,7 @@ defmodule Flezha.State.ProcJournal do
   # start delivers nothing; the journal still owes the entry to the next flush.
   defp flush_entry(instance_id, pid, entry) do
     comp? = entry.type == :compensated
-    for_type = entry_type_code(entry.type)
+    for_type = Codec.entry_type_code(entry.type)
     key = {:marker, for_type, entry.proc_idx, entry.iter, entry.epoch}
     owner = Paths.journal_id(instance_id)
 
@@ -705,154 +701,4 @@ defmodule Flezha.State.ProcJournal do
         :ok
     end
   end
-
-  # ---------- Entry codec ----------
-
-  @doc false
-  @spec encode_entry(pos_integer(), non_neg_integer(), non_neg_integer(), iodata()) :: binary()
-  def encode_entry(type, proc_idx, iter, payload)
-      when type in 1..255 and proc_idx in 0..0xFFFF and iter in 0..0xFFFF_FFFF do
-    IO.iodata_to_binary([<<type::8, proc_idx::16-big, iter::32-big>>, payload])
-  end
-
-  @doc false
-  @spec decode_entry(non_neg_integer(), binary(), non_neg_integer()) ::
-          {:ok, entry()} | {:error, term()}
-  def decode_entry(seq, body, epoch \\ 0)
-
-  def decode_entry(seq, <<type::8, proc_idx::16-big, iter::32-big, payload::binary>>, epoch) do
-    entry = %{seq: seq, epoch: epoch, proc_idx: proc_idx, iter: iter}
-
-    with {:ok, name} <- entry_type(type),
-         {:ok, decoded} <- decode_payload(name, payload) do
-      {:ok, Map.merge(entry, %{type: name, payload: decoded})}
-    end
-  end
-
-  def decode_entry(_seq, _short, _epoch), do: {:error, :short_entry}
-
-  defp entry_type(type) do
-    case Map.fetch(@entry_types, type) do
-      {:ok, name} -> {:ok, name}
-      :error -> {:error, {:unknown_entry_type, type}}
-    end
-  end
-
-  defp entry_type_code(:proc_committed), do: @type_proc_committed
-  defp entry_type_code(:compensated), do: @type_compensated
-
-  defp decode_payload(:proc_committed, <<n_entities::16-big, rest::binary>>) do
-    with {:ok, entities, rest} <- decode_entities(rest, n_entities, []),
-         {:ok, handoff, rest} <- decode_handoff(rest),
-         {:ok, outbox, <<>>} <- decode_outbox(rest) do
-      {:ok, %{entities_ran: entities, handoff: handoff, outbox: outbox}}
-    else
-      {:error, _} = err -> err
-      _ -> {:error, :bad_payload}
-    end
-  end
-
-  defp decode_payload(:iter_committed, <<consumed_offset::64-big, rest::binary>>) do
-    case decode_handoff(rest) do
-      {:ok, handoff, <<>>} -> {:ok, %{consumed_offset: consumed_offset, handoff: handoff}}
-      _ -> {:error, :bad_payload}
-    end
-  end
-
-  defp decode_payload(:parked, <<deadline::64-big>>),
-    do: {:ok, %{wake_deadline_ms: if(deadline == 0, do: nil, else: deadline)}}
-
-  defp decode_payload(:compensated, payload) do
-    case decode_outbox(payload) do
-      {:ok, outbox, <<>>} -> {:ok, %{outbox: outbox}}
-      _ -> {:error, :bad_payload}
-    end
-  end
-
-  defp decode_payload(:outbox_flushed, <<for_type::8>>) do
-    with {:ok, name} <- entry_type(for_type), do: {:ok, %{for_type: name}}
-  end
-
-  # The rewind target is the entry's own `iter` field — no payload to carry.
-  defp decode_payload(:rewound, <<>>), do: {:ok, %{}}
-
-  defp decode_payload(_name, _payload), do: {:error, :bad_payload}
-
-  defp encode_committed_payload(entities_ran, handoff) do
-    [
-      <<length(entities_ran)::16-big>>,
-      Enum.map(entities_ran, fn id -> [<<byte_size(id)::16-big>>, id] end),
-      encode_handoff(handoff)
-    ]
-  end
-
-  defp encode_handoff(handoff) do
-    [
-      <<length(handoff)::32-big>>,
-      Enum.map(handoff, fn {channel_id, bytes} ->
-        [<<channel_id::32-big, byte_size(bytes)::32-big>>, bytes]
-      end)
-    ]
-  end
-
-  defp encode_outbox(outbox) do
-    [
-      <<length(outbox)::32-big>>,
-      Enum.map(outbox, fn item ->
-        [
-          <<byte_size(item.entity_id)::16-big>>,
-          item.entity_id,
-          <<item.seq_in_proc::32-big, byte_size(item.channel)::16-big>>,
-          item.channel,
-          <<byte_size(item.payload)::32-big>>,
-          item.payload
-        ]
-      end)
-    ]
-  end
-
-  defp decode_entities(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
-
-  defp decode_entities(<<len::16-big, id::binary-size(len), rest::binary>>, n, acc),
-    do: decode_entities(rest, n - 1, [id | acc])
-
-  defp decode_entities(_, _, _), do: {:error, :bad_payload}
-
-  defp decode_handoff(<<n::32-big, rest::binary>>), do: decode_handoff_items(rest, n, [])
-  defp decode_handoff(_), do: {:error, :bad_payload}
-
-  defp decode_handoff_items(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
-
-  defp decode_handoff_items(
-         <<channel_id::32-big, len::32-big, bytes::binary-size(len), rest::binary>>,
-         n,
-         acc
-       ),
-       do: decode_handoff_items(rest, n - 1, [{channel_id, bytes} | acc])
-
-  defp decode_handoff_items(_, _, _), do: {:error, :bad_payload}
-
-  defp decode_outbox(<<n::32-big, rest::binary>>), do: decode_outbox_items(rest, n, [])
-  defp decode_outbox(_), do: {:error, :bad_payload}
-
-  defp decode_outbox_items(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
-
-  defp decode_outbox_items(
-         <<seg_len::16-big, entity_id::binary-size(seg_len), seq_in_proc::32-big,
-           chan_len::16-big, channel::binary-size(chan_len), payload_len::32-big,
-           payload::binary-size(payload_len), rest::binary>>,
-         n,
-         acc
-       ) do
-    item = %{
-      entity_id: entity_id,
-      seq_in_proc: seq_in_proc,
-      channel: channel,
-      payload: payload
-    }
-
-    decode_outbox_items(rest, n - 1, [item | acc])
-  end
-
-  defp decode_outbox_items(_, _, _), do: {:error, :bad_payload}
 end

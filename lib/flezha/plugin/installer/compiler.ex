@@ -90,7 +90,7 @@ defmodule Flezha.Plugin.Installer.Compiler do
             # Purge what we just loaded before returning error; the Loader
             # owns module installation, not us.
             Enum.each(produced, fn {mod, _} -> purge(mod) end)
-            msg = Enum.map(warnings, &Map.get(&1, :message, "")) |> Enum.join("\n")
+            msg = Enum.map_join(warnings, "\n", &Map.get(&1, :message, ""))
             {:halt, {:error, {:compile_failed, file, {:warning, msg}}}}
 
           true ->

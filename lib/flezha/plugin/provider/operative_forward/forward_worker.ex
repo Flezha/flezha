@@ -1,28 +1,22 @@
 defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   @moduledoc """
-  Per-`{plugin_id, target_operative_id}` delivery worker for the
-  operative-forward plugin: buffers payloads handed over by the source
-  operative's `:on_output` / `:on_input` callback and delivers each one into the
-  target operative's durable input stream, retrying until the target confirms.
-  That confirming reply is also what answers the outbox hold a
-  delivery-guaranteed payload carries (`Flezha.State.Outbox`).
+  Per-`{plugin_id, target_operative_id}` delivery worker: buffers payloads the
+  source operative handed over and delivers each into the target's durable
+  input stream, retrying until the target confirms. That confirming reply also
+  answers the outbox hold a delivery-guaranteed payload carries.
 
-  Delivery runs in a short-lived monitored process, never in the worker's own
-  `handle_call`, so the worker always services an enqueue promptly. That is what
-  makes a cycle of operatives forwarding to each other safe: no Overwatch ever
-  waits on another Overwatch, however long a peer takes to answer.
+  Delivery runs in a short-lived monitored process, never in this worker's own
+  `handle_call`, which is what makes a cycle of operatives forwarding to each
+  other safe: no Overwatch ever waits on another.
 
-  Order is preserved — one payload is in flight at a time and a retryable
-  verdict re-arms the same head of the queue. An unreachable target delays the
-  queue (retry with capped exponential backoff); payloads are never dropped, and
-  enqueue callers park once the buffer passes `:queue_max`, propagating
-  backpressure into the source Overwatch.
+  Order is preserved — one payload in flight, a retryable verdict re-arms the
+  same head. Nothing is dropped; enqueue callers park past `:queue_max` and the
+  backpressure propagates into the source Overwatch.
   """
 
-  alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.State.Outbox
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Outbox
 
   # `:transient` so disabling the plugin stops the worker for good: the host
   # kills the owned pid with `:shutdown`, which a permanent child would simply
@@ -80,7 +74,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   @doc """
   Hand back everything this worker still owes and stop it.
 
-  Called when the worker's target no longer exists — a partition group rescaled
+  Called when the worker's target is gone — a partition group rescaled
   out from under it — so the payloads can be re-routed to their new owner
   instead of dying with the worker. The in-flight head is included: it is peeked
   rather than popped, and its delivery is against an operative that is gone, so
@@ -124,11 +118,11 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         buffer_len: state.buffer_len + 1
     }
 
-    OperativeForward.queue_depth(state.buffer_len, state.labels)
+    emit_queue_depth(state.buffer_len, state.labels)
     state = deliver_next(state)
 
     if ProviderBehaviour.saturated?(state) do
-      OperativeForward.saturated(state.buffer_len, state.labels)
+      emit_saturated(state.buffer_len, state.labels)
     end
 
     ProviderBehaviour.park_or_reply(state, from)
@@ -141,7 +135,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         buffer_len: state.buffer_len + 1
     }
 
-    OperativeForward.queue_depth(state.buffer_len, state.labels)
+    emit_queue_depth(state.buffer_len, state.labels)
     {:reply, :ok, deliver_next(state)}
   end
 
@@ -229,7 +223,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         attempts: 0
     }
 
-    OperativeForward.delivered(verdict_tag(verdict), state.labels)
+    emit_delivered(verdict_tag(verdict), state.labels)
 
     state
     |> ProviderBehaviour.release_waiters()
@@ -246,7 +240,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
         attempts
       )
 
-    OperativeForward.retry(attempts, backoff, reason, state.labels)
+    emit_retry(attempts, backoff, reason, state.labels)
 
     if attempts == 1 do
       Logger.warning(
@@ -265,4 +259,33 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
 
   defp verdict_tag(:ok), do: :delivered
   defp verdict_tag({:ok, tag}), do: tag
+
+  # This family's telemetry vocabulary. Every event carries the source
+  # operative, the target operative and the plugin id, so a saturating cycle
+  # between two operatives is visible to an operator without parsing log lines.
+  @prefix [:flezha, :plugin, :operative_forward]
+
+  # One payload reached the target; `outcome` is the verdict's terminal tag.
+  defp emit_delivered(outcome, labels) do
+    :telemetry.execute(@prefix ++ [:delivered], %{count: 1}, Map.put(labels, :outcome, outcome))
+  end
+
+  # A delivery attempt failed and the payload is retained for retry.
+  defp emit_retry(attempt, backoff_ms, reason, labels) do
+    :telemetry.execute(
+      @prefix ++ [:retry],
+      %{attempt: attempt, backoff_ms: backoff_ms},
+      Map.put(labels, :reason, reason)
+    )
+  end
+
+  # Current queue depth, emitted on every enqueue.
+  defp emit_queue_depth(depth, labels) do
+    :telemetry.execute(@prefix ++ [:queue_depth], %{depth: depth}, labels)
+  end
+
+  # The queue reached `:queue_max` and the enqueueing caller is parked.
+  defp emit_saturated(depth, labels) do
+    :telemetry.execute(@prefix ++ [:saturated], %{depth: depth}, labels)
+  end
 end

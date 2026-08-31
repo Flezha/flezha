@@ -26,12 +26,8 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     Identificator.string_to_pid(value)
   end
 
-  defp convert_value(:heartbeat_interval, value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int_val, ""} -> {:ok, int_val}
-      _ -> {:error, "Invalid value for heartbeat_interval: #{value}"}
-    end
-  end
+  defp convert_value(:heartbeat_interval, value) when is_binary(value),
+    do: ProviderBehaviour.parse_int(value, :heartbeat_interval)
 
   def init_provider(opts) do
     case GenServer.start_link(__MODULE__, opts) do

@@ -64,9 +64,8 @@ defmodule Flezha.Plugin.Installer.Manifest do
          :ok <- validate_id(term[:id]),
          :ok <- validate_version(term[:version]),
          :ok <- validate_modules(term[:modules]),
-         :ok <- validate_provides(term[:provides], term[:modules]),
-         :ok <- validate_dependencies(Map.get(term, :dependencies, [])) do
-      :ok
+         :ok <- validate_provides(term[:provides], term[:modules]) do
+      validate_dependencies(Map.get(term, :dependencies, []))
     end
   end
 
@@ -160,12 +159,10 @@ defmodule Flezha.Plugin.Installer.Manifest do
 
     duplicate = ids -- Enum.uniq(ids)
 
-    cond do
-      duplicate != [] ->
-        {:error, {:manifest_invalid, {:duplicate_provision_id, List.first(duplicate)}}}
-
-      true ->
-        Enum.reduce_while(provides, :ok, fn p, _ -> validate_provision(p, mod_set) end)
+    if duplicate == [] do
+      Enum.reduce_while(provides, :ok, fn p, _ -> validate_provision(p, mod_set) end)
+    else
+      {:error, {:manifest_invalid, {:duplicate_provision_id, List.first(duplicate)}}}
     end
   end
 

@@ -55,9 +55,8 @@ defmodule Flezha.Plugin.Installer.Checksums do
   def verify(entries, staging_dir) do
     declared = MapSet.new(entries, & &1.path)
 
-    with :ok <- verify_entries(entries, staging_dir),
-         :ok <- verify_coverage(declared, staging_dir) do
-      :ok
+    with :ok <- verify_entries(entries, staging_dir) do
+      verify_coverage(declared, staging_dir)
     end
   end
 
@@ -84,21 +83,25 @@ defmodule Flezha.Plugin.Installer.Checksums do
   defp valid_hex?(_), do: false
 
   defp verify_entries(entries, staging_dir) do
-    Enum.reduce_while(entries, :ok, fn %{digest: expected, path: rel}, _ ->
-      full = Path.join(staging_dir, rel)
+    Enum.reduce_while(entries, :ok, fn entry, _acc -> verify_entry(entry, staging_dir) end)
+  end
 
-      cond do
-        not File.regular?(full) ->
-          {:halt, {:error, {:checksum_file_missing, rel}}}
+  defp verify_entry(%{digest: expected, path: rel}, staging_dir) do
+    full = Path.join(staging_dir, rel)
 
-        true ->
-          case file_digest(full) do
-            {:ok, actual} when actual == expected -> {:cont, :ok}
-            {:ok, _actual} -> {:halt, {:error, {:checksum_mismatch, rel}}}
-            {:error, reason} -> {:halt, {:error, {:checksum_io_error, rel, reason}}}
-          end
-      end
-    end)
+    if File.regular?(full),
+      do: compare_digest(full, rel, expected),
+      else: {:halt, {:error, {:checksum_file_missing, rel}}}
+  end
+
+  # One read: the digest is computed once and matched against what the
+  # manifest declared.
+  defp compare_digest(full, rel, expected) do
+    case file_digest(full) do
+      {:ok, actual} when actual == expected -> {:cont, :ok}
+      {:ok, _actual} -> {:halt, {:error, {:checksum_mismatch, rel}}}
+      {:error, reason} -> {:halt, {:error, {:checksum_io_error, rel, reason}}}
+    end
   end
 
   defp verify_coverage(declared, staging_dir) do

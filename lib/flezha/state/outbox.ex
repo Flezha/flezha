@@ -20,7 +20,7 @@ defmodule Flezha.State.Outbox do
   require Logger
 
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.State.{Paths, Wire}
+  alias Flezha.State.{Paths, Wire, WriterRegistry}
   alias Flezha.State.ProcJournal
 
   @type t :: %{
@@ -365,7 +365,7 @@ defmodule Flezha.State.Outbox do
   # A writer that is gone cannot be told anything, and needs no telling: its
   # cursor never advanced, so the restart re-drive owes the entry anyway.
   defp report(owner, message) do
-    case Flezha.State.Supervisor.lookup(owner) do
+    case WriterRegistry.lookup(owner) do
       {:ok, pid} -> GenServer.cast(pid, message)
       :error -> :ok
     end

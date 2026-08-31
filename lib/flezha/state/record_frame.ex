@@ -282,4 +282,13 @@ defmodule Flezha.State.RecordFrame do
         error
     end
   end
+
+  @doc "Byte size of the record file at `path`; `0` when it is not there."
+  @spec file_size(Path.t()) :: non_neg_integer()
+  def file_size(path) do
+    case :file.read_file_info(path) do
+      {:ok, info} -> elem(info, 1)
+      _ -> 0
+    end
+  end
 end

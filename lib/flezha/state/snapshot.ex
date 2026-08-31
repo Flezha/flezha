@@ -17,9 +17,9 @@ defmodule Flezha.State.Snapshot do
        own `entity.wal.rewriting` -> rename sequence.
   """
 
-  alias Flezha.State.{Metrics, Paths, Supervisor, WalWriter, Wire}
+  alias Flezha.State.{Metrics, Paths, RecordFrame, WalWriter, WriterRegistry}
 
-  @header_size Wire.header_size()
+  @header_size RecordFrame.header_size()
 
   @doc """
   Persist a snapshot for `entity_id`. Truncates the WAL up to `seq`
@@ -47,7 +47,7 @@ defmodule Flezha.State.Snapshot do
            :ok <- :file.sync(dst),
            :ok <- :file.close(dst),
            :ok <- File.rename(tmp_path, final_path) do
-        case Supervisor.lookup(entity_id) do
+        case WriterRegistry.lookup(entity_id) do
           {:ok, pid} -> WalWriter.truncate_up_to(pid, seq)
           :error -> :ok
         end
