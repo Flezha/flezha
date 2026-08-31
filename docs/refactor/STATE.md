@@ -121,6 +121,54 @@ Rows 5+6 are COMPLETE, archived and committed.
 **Area 4 (`sdk/java`) is APPROVED; segment A is running.** Phase 1 is COMPLETE.
 Baseline tag **`refactor-baseline-4` at `8e038e36`**.
 
+### Area 4 segment B — verified 2026-08-31, commit `c35d4ebe`
+
+`StreamOperativeTopologyBuilder` **1 484 → 761**; `files_over_800` **4 → 3**,
+`functions_over_50` **10 → 7**. Supervisor-verified: builder at 761, the three
+remaining over-ceiling files are the ones segments C–E own, `--check` **exit 0**.
+Nine new files, each named for what it *is*.
+
+**Three rulings this segment needed.**
+
+**1. No `dsl/` sub-package — a language rule, not a preference.** Java's
+package-private access **does not cross into a sub-package**, so the directory tasks
+4.1 and 4.2 ask for are mutually exclusive: getting `builder.dsl` costs seven members
+and two types going `public`, against a change whose own proof obligation is an
+**empty** public-signature diff. **Ruled: encapsulation beats a directory**; `design.md`
+task 4.1 is corrected. The worker found this, refused to spend public surface
+unilaterally, and asked — which is right, because that trade was not its to make.
+
+**2. `prod_loc` +198 against a ~150 estimate — accepted, and the lever declined.**
+Charter §1 is explicit: *"Clearing a ceiling and reducing total lines pull against each
+other; when they do, **the ceiling wins**."* Every one of the 198 is accounted to §7 —
+~100 for nine file headers and imports, ~18 for six inner classes gaining an `owner`,
+~70 for the two extracted modules' explicit parameter lists, ~30 for the extracted
+methods and accessors. That is a charter-admissible reason, unlike row 3.5's alias
+lines, which had none. The offered lever (pass the builder instead of its parts, −27
+lines) is **declined**: it buys 27 lines by making the rules no longer a pure function
+of their inputs and forcing the staging fields package-private.
+
+**But §1's other half binds too — "the area's total is what must fall."** Segment B
+alone is +198 with C, D and E still to come and only **−14** of named funding (segment
+E's fixture collapse and testing merge). **Segments C–E must look harder for deletion
+funding, and segment F states the area's net honestly rather than quietly.** An area
+that clears every ceiling and ends 400 lines heavier is a real trade, not a free one.
+
+**3. `duplicate_pairs` 68 → 75 (area) / 81 → 88 (full), and `design.md` D6's stated
+cause is REFUTED by measurement.** D6 said a split inflates the metric via a copied
+import block. `removeUnusedImports` is configured, ran, and every new file carries only
+what it uses — yet the metric still moved. The real mechanism: **`.jscpd.json` runs
+`mode: weak` at `minTokens: 40`, which matches four to six consecutive long-FQN imports
+against *different* identifiers**. Verified in the `--check` output: most new pairs are
+41–52-token import runs between files in one package. Only two are real code (the two
+`into` overloads, a duplication that existed at HEAD *inside one file*, where jscpd
+could not see it).
+
+The worker **measured the counterfactual instead of asserting it** — folding the six
+handle classes into one file gives +3 rather than +7 — and declined it because it
+contradicts the design's target table more than the package deviation does. That is the
+right shape: price the alternative, then choose with the number in hand.
+
 ### Area 4 segment A — verified 2026-08-31, commit `91699f03`
 
 Batch 0, the classifier correction. **No `sdk/java` file was touched** — this corrects

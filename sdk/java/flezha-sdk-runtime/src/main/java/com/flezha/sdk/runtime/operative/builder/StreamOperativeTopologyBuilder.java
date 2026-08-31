@@ -1,31 +1,41 @@
 package com.flezha.sdk.runtime.operative.builder;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flezha.sdk.channel.Channel;
+import com.flezha.sdk.channel.BeyondWindowPolicy;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.EdgeStream;
 import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.Merge;
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.channel.RoutedDocument;
 import com.flezha.sdk.channel.Stream;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
-import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.runtime.operative.CheckpointPolicy;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.EdgeYield;
-import com.flezha.sdk.runtime.operative.PluginSink;
-import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
+import com.flezha.sdk.state.Change;
+import com.flezha.sdk.state.Clock;
+import com.flezha.sdk.state.EventTimeFrom;
+import com.flezha.sdk.state.LogicalClock;
+import com.flezha.sdk.state.NoChange;
+import com.flezha.sdk.state.RestoreInitPayload;
+import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.WallClock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalInt;
+import java.util.OptionalLong;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import javax.annotation.Nonnull;
 
 /**
@@ -61,9 +71,6 @@ import javax.annotation.Nonnull;
  */
 public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
-    /** One shared Jackson mapper for every default codec (thread-safe once configured). */
-    private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
-
     private final List<ChannelEntry> channels = new ArrayList<>();
     private final List<ProcedureEntry> procedures = new ArrayList<>();
     /**
@@ -76,11 +83,10 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     private final List<String> errors = new ArrayList<>();
     private boolean effectivelyOnce;
     /** {@code null} until {@code checkpointAck()} (or an option implying it). */
-    private com.flezha.sdk.runtime.operative.CheckpointPolicy checkpoint;
+    private CheckpointPolicy checkpoint;
 
     private long correctionWindowMs;
-    private com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy =
-            com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
+    private BeyondWindowPolicy beyondWindowPolicy = BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
 
     /** Set at {@link #build(String)}: every mutating path refuses afterwards. */
     private boolean frozen;
@@ -109,7 +115,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      */
     @Nonnull
     public static StreamOperativeTopology build(
-            @Nonnull String factoryId, @Nonnull java.util.function.Consumer<ChannelBuilder> authoring) {
+            @Nonnull String factoryId, @Nonnull Consumer<ChannelBuilder> authoring) {
         StreamOperativeTopologyBuilder b = new StreamOperativeTopologyBuilder();
         authoring.accept(b);
         return b.build(factoryId);
@@ -120,7 +126,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     public <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name) {
         checkMutable();
         boolean parsed = type != byte[].class && type != String.class;
-        return declareEntry(type, name, defaultEntryParser(type), parsed);
+        return declareEntry(type, name, PayloadCodecs.defaultEntryParser(type), parsed);
     }
 
     @Override
@@ -137,14 +143,14 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         ChannelEntry entry = channels.get(id);
         entry.entryParser = parser;
         entry.entryParsed = parsed;
-        return new EntryChannelImpl<>(id, name, null, type);
+        return new EntryChannelImpl<>(this, id, name, null, type);
     }
 
     @Override
     @Nonnull
     public <I> Merge<I> merge(@Nonnull Class<I> type) {
         checkMutable();
-        return new MergeImpl<>(type);
+        return new MergeImpl<>(this, type);
     }
 
     @Override
@@ -189,7 +195,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         // name it. That is what the `documentType` token is for.
         registerRouterDocumentType(registerNode(LatestDocumentRouter.class, nodeName), documentType);
         EdgeStream<String> keys = traffic.map(String.class, keyFn);
-        MergeImpl<LatestDocumentRouter.Input> merge = new MergeImpl<>(LatestDocumentRouter.Input.class);
+        MergeImpl<LatestDocumentRouter.Input> merge = new MergeImpl<>(this, LatestDocumentRouter.Input.class);
         merge.from(documents, LatestDocumentRouter.Input::ofDocument);
         merge.from(keys, LatestDocumentRouter.Input::ofTrafficKey);
         return (Stream<RoutedDocument<D>>) (Stream<?>) merge.wire(LatestDocumentRouter.class, nodeName);
@@ -230,13 +236,9 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * Turn the checkpoint granularity on (idempotent) and amend its policy, so
      * each option is one call that preserves the others.
      */
-    private void amendCheckpoint(
-            java.util.function.UnaryOperator<com.flezha.sdk.runtime.operative.CheckpointPolicy> amend) {
+    private void amendCheckpoint(UnaryOperator<CheckpointPolicy> amend) {
         checkMutable();
-        this.checkpoint = amend.apply(
-                this.checkpoint == null
-                        ? com.flezha.sdk.runtime.operative.CheckpointPolicy.defaults()
-                        : this.checkpoint);
+        this.checkpoint = amend.apply(this.checkpoint == null ? CheckpointPolicy.defaults() : this.checkpoint);
     }
 
     @Override
@@ -246,7 +248,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     @Override
-    public void beyondWindowPolicy(@Nonnull com.flezha.sdk.channel.BeyondWindowPolicy policy) {
+    public void beyondWindowPolicy(@Nonnull BeyondWindowPolicy policy) {
         checkMutable();
         this.beyondWindowPolicy = policy;
     }
@@ -257,271 +259,46 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         // the operative, whatever build's own outcome.
         frozenFactoryId = factoryId;
         frozen = true;
-
-        // One per-operative channel namespace: derived names (producer node
-        // identity), `.named(...)` overrides, and entry names all collide here.
-        // Checked at build, not declare — a `.named` override frees the
-        // derived name a later declaration may claim.
-        Map<String, Integer> nameToId = new LinkedHashMap<>();
-        for (int id = 0; id < channels.size(); id++) {
-            if (nameToId.put(channels.get(id).name, id) != null) {
-                errors.add("channel `" + channels.get(id).name + "` declared more than once on this operative");
-            }
+        TopologyRules.Checked checked = new TopologyRules(
+                        channels, procedures, pending, effectivelyOnce, checkpoint, correctionWindowMs, errors)
+                .check();
+        if (!checked.errors().isEmpty()) {
+            throw new StreamOperativeConfigurationException(List.copyOf(checked.errors()));
         }
-
-        // Shared graph-shape rule (`sdk-graph-authoring`): one or more entry
-        // channels feeding the graph, every node reachable from some entry, no
-        // cycles. Runs in the VALIDATION phase — the accumulated errors throw
-        // before the descriptor-materialization loop, so a refusal added after
-        // that point would never fire.
-        if (!procedures.isEmpty()) {
-            validateGraphShape();
-        }
-
-        // A transform chain is stored on the consumer edge it terminates in,
-        // so one that no `.into(...)` ever closed would silently do nothing.
-        // Only a chain's tip can dangle — every earlier link was superseded.
-        for (PendingEdge chain : pending) {
-            if (!chain.superseded && !chain.consumed) {
-                errors.add(
-                        StreamOperativeConfigurationException.danglingTransformChain(channels.get(chain.channel).name)
-                                .getMessage());
-            }
-        }
-
-        // Entity mode is read off the WIRING: a procedure reached by an edge
-        // carrying a key function is dynamic. Static keying routes by
-        // entitiesFor and may name several Entities, edge keying names exactly
-        // one, so declaring both is a contradiction — and because the key is
-        // total, a dynamic procedure has no keyless path, which means every
-        // edge into one must carry a key.
-        for (ChannelEntry channel : channels) {
-            for (ConsumerEdge edge : channel.consumers) {
-                if (edge.key().isPresent()) {
-                    procedures.get(edge.procedure()).dynamic = true;
-                }
-            }
-        }
-        for (ChannelEntry channel : channels) {
-            for (ConsumerEdge edge : channel.consumers) {
-                ProcedureEntry target = procedures.get(edge.procedure());
-                if (edge.key().isPresent() && !target.entityKeys.isEmpty()) {
-                    errors.add(StreamOperativeConfigurationException.keyByOnUnkeyableTarget(channel.name, target.name)
-                            .getMessage());
-                }
-                if (edge.key().isEmpty() && target.dynamic) {
-                    errors.add(StreamOperativeConfigurationException.unkeyedEdgeIntoDynamicProcedure(
-                                    channel.name, target.name)
-                            .getMessage());
-                }
-            }
-        }
-
-        // Validate each Procedure's static-mode declaration.
-        for (ProcedureEntry procedure : procedures) {
-            if (!procedure.entityKeys.isEmpty() && !procedure.entitiesForOverridden) {
-                errors.add("procedure `" + procedure.name
-                        + "` declares non-empty entityKeys() but does not override entitiesFor "
-                        + "(set entitiesForOverridden() to return true)");
-            }
-            if (procedure.entitiesForOverridden && procedure.entityKeys.isEmpty()) {
-                errors.add("procedure `" + procedure.name
-                        + "` overrode entitiesFor — single-mode procedures have one implicit entity");
-            }
-        }
-
-        // Resolve mailbox capacity for each Procedure (Procedure override → env var →
-        // default), accumulating any range errors into the errors list.
-        int[] resolvedCapacities = new int[procedures.size()];
-        for (int i = 0; i < procedures.size(); i++) {
-            ProcedureEntry procedure = procedures.get(i);
-            try {
-                resolvedCapacities[i] = MailboxCapacityResolver.resolve(
-                        procedure.name, procedure.mailboxCapacityDeclared, procedure.mailboxCapacityOverridden);
-            } catch (StreamOperativeConfigurationException e) {
-                errors.add(e.getMessage());
-                resolvedCapacities[i] = MailboxCapacityResolver.DEFAULT_MAILBOX_CAPACITY;
-            }
-        }
-
-        if (correctionWindowMs > 0) {
-            if (!effectivelyOnce) {
-                errors.add(StreamOperativeConfigurationException.correctionWindowRequires("`effectivelyOnce()`")
-                        .getMessage());
-            }
-            boolean anyEventTime =
-                    procedures.stream().anyMatch(o -> o.clockType == com.flezha.sdk.state.EventTimeFrom.class);
-            if (!anyEventTime) {
-                errors.add(StreamOperativeConfigurationException.correctionWindowRequires(
-                                "an `EventTimeFrom` clock on at least one procedure")
-                        .getMessage());
-            }
-            boolean allKeyed =
-                    channels.stream().filter(c -> c.pluginSinkName != null).allMatch(c -> c.keyed);
-            if (!allKeyed) {
-                errors.add(StreamOperativeConfigurationException.correctionWindowRequires(
-                                "every plugin-bound channel to be `.keyed()`")
-                        .getMessage());
-            }
-        }
-
-        if (checkpoint != null && !effectivelyOnce) {
-            errors.add(StreamOperativeConfigurationException.checkpointAckWithoutTier()
-                    .getMessage());
-        }
-        if (checkpoint != null && checkpoint.every() < 0) {
-            errors.add(
-                    StreamOperativeConfigurationException.checkpointEveryZero().getMessage());
-        }
-        if (checkpoint != null && checkpoint.outputsAtCheckpoint() && checkpoint.maxDelayMs() <= 0) {
-            errors.add(
-                    StreamOperativeConfigurationException.checkpointDelayZero().getMessage());
-        }
-
-        for (ChannelEntry entry : channels) {
-            boolean pluginWired = entry.pluginSinkName != null;
-            // A key rides as a `flz.key` stamp on a plugin frame; a pure
-            // inter-procedure channel has nowhere to carry it.
-            if (entry.keyed && !pluginWired) {
-                errors.add(StreamOperativeConfigurationException.keyedChannelWithoutPluginWire(entry.name)
-                        .getMessage());
-            }
-            // The tier's replay re-emits outputs; only a keyed sink can absorb
-            // that as an idempotent upsert rather than a duplicate row.
-            if (effectivelyOnce && pluginWired && !entry.keyed) {
-                errors.add(StreamOperativeConfigurationException.tierChannelNotKeyed(entry.name)
-                        .getMessage());
-            }
-            // Promising effectively-once and asking to shed is a contradiction,
-            // not a trade-off: a dropped input's offset is advanced past by a
-            // later item's watermark. `correctionWindow` requires the tier
-            // (checked above), so this arm covers it too.
-            if (effectivelyOnce && entry.overflowPolicy != OverflowPolicy.DROP_NOTHING) {
-                errors.add(
-                        StreamOperativeConfigurationException.tierChannelSheds(entry.name, entry.overflowPolicy.name())
-                                .getMessage());
-            }
-        }
-
-        if (!errors.isEmpty()) {
-            throw new StreamOperativeConfigurationException(List.copyOf(errors));
-        }
-
-        // Materialize ChannelDescriptors.
-        List<ChannelDescriptor> channelDescriptors = new ArrayList<>(channels.size());
-        for (ChannelEntry entry : channels) {
-            Optional<PluginSink> pluginSink = entry.pluginSinkName == null
-                    ? Optional.empty()
-                    : Optional.of(new PluginSink(entry.pluginSinkName, entry.pluginSinkSerializer));
-            // Terminality is derived from the wiring, not from which method the
-            // author called: a sink with nothing consuming behind it IS the
-            // plugin-bound terminal. Deriving it here is what keeps
-            // `sink(...)` one method and makes a sink declared alongside
-            // consumers hybrid by construction rather than by ordering.
-            ChannelKind kind =
-                    entry.pluginSinkName != null && entry.consumers.isEmpty() ? ChannelKind.PLUGIN_BOUND : entry.kind;
-            channelDescriptors.add(new ChannelDescriptor(
-                    entry.name,
-                    kind,
-                    entry.producer == null ? OptionalInt.empty() : OptionalInt.of(entry.producer),
-                    List.copyOf(entry.consumers),
-                    entry.payloadType,
-                    Optional.ofNullable(entry.entryParser),
-                    entry.entryParsed,
-                    pluginSink,
-                    entry.overflowPolicy,
-                    new com.flezha.sdk.channel.RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs),
-                    entry.keyed,
-                    entry.interProcEncoder == null
-                            ? Optional.empty()
-                            : Optional.of(new ChannelDescriptor.InterProcCodec(
-                                    entry.interProcEncoder, entry.interProcDecoder))));
-        }
-
-        // Materialize ProcedureDescriptors.
-        List<ProcedureDescriptor> procedureDescriptors = new ArrayList<>(procedures.size());
-        for (int i = 0; i < procedures.size(); i++) {
-            ProcedureEntry entry = procedures.get(i);
-            procedureDescriptors.add(new ProcedureDescriptor(
-                    entry.name,
-                    entry.procedureClass,
-                    entry.entityKeys,
-                    entry.entitiesForOverridden,
-                    entry.dynamic,
-                    entry.inputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.inputChannelId),
-                    entry.outputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.outputChannelId),
-                    entry.inputType,
-                    entry.outputType,
-                    entry.changeType,
-                    entry.clockType,
-                    entry.configType,
-                    entry.kryoTypes,
-                    entry.schemaVersion,
-                    entry.minReadableSchemaVersion,
-                    entry.compactAfterBytes,
-                    resolvedCapacities[i],
-                    entry.mailboxCapacityOverridden,
-                    entry.compensateOverridden,
-                    entry.entityIdleTtl,
-                    entry.maxEntities));
-        }
-
-        return new StreamOperativeTopology(
+        return TopologyMaterializer.materialize(
                 factoryId,
-                channelDescriptors,
-                Map.copyOf(nameToId),
-                procedureDescriptors,
-                Map.copyOf(procedureNameToId),
+                channels,
+                procedures,
+                checked,
+                procedureNameToId,
                 effectivelyOnce,
                 checkpoint,
                 correctionWindowMs,
                 beyondWindowPolicy);
     }
 
-    // ---- Graph-shape validation ---------------------------------------------
-
-    private void validateGraphShape() {
-        // One OR MORE entry channels feed the graph — a single operative may
-        // ingest several external sources (e.g. a market pipeline reading a
-        // trade feed and an order-book feed on distinct channels); the
-        // controller routes each frame to its entry by metadata["channel"],
-        // falling back to the first entry when unset. Every node must be
-        // reachable from some entry, and the graph must be acyclic.
-        //
-        // The shared graph-shape walk (GraphShape, one mechanism for this
-        // validation and the workflow execution order): a leftover Kahn node
-        // is on a cycle; unreachable is reported only when acyclic (a cycle
-        // already explains its own unreachable nodes) and is defensive — the
-        // stream-handle builder only creates nodes by wiring from the entry.
-        List<int[]> edges = new ArrayList<>();
-        List<Integer> roots = new ArrayList<>();
-        for (ChannelEntry ch : channels) {
-            if (ch.kind == ChannelKind.ENTRY) {
-                ch.consumers.forEach(e -> roots.add(e.procedure()));
-            } else if (ch.producer != null) {
-                for (ConsumerEdge consumer : ch.consumers) {
-                    edges.add(new int[] {ch.producer, consumer.procedure()});
-                }
-            }
-        }
-        GraphShape.Order shape = GraphShape.order(procedures.size(), edges, roots);
-        if (shape.onCycle() >= 0) {
-            errors.add(StreamOperativeConfigurationException.cycle(procedures.get(shape.onCycle()).name)
-                    .getMessage());
-        } else if (shape.unreachable() >= 0) {
-            errors.add(
-                    StreamOperativeConfigurationException.unreachableProcedure(procedures.get(shape.unreachable()).name)
-                            .getMessage());
-        }
-    }
-
     // ---- Internals ----------------------------------------------------------
 
-    private void checkMutable() {
+    void checkMutable() {
         if (frozen) {
             throw new IllegalStateException("operative `" + frozenFactoryId
                     + "`: the topology is frozen; stream handles are only usable inside channels()/procedures()");
         }
+    }
+
+    /** The staging entry for a declared channel, by id. */
+    ChannelEntry channel(int channelId) {
+        return channels.get(channelId);
+    }
+
+    /** The staging entry for a registered node, by id. */
+    ProcedureEntry procedure(int procedureId) {
+        return procedures.get(procedureId);
+    }
+
+    /** Record one refusal; {@link #build(String)} throws the whole accumulated list. */
+    void error(String message) {
+        errors.add(message);
     }
 
     private int declareChannel(Class<?> payloadType, String name, ChannelKind kind) {
@@ -543,24 +320,53 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * identity string replaces the procedure's {@code name()}. An identity
      * claimed by a <i>different</i> declaration is a collision.
      */
-    private int registerNode(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass, String nodeName) {
+    int registerNode(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass, String nodeName) {
         Procedure<?, ?, ?, ?, ?, ?> probe = instantiate(procedureClass);
         String identity = nodeName != null ? nodeName : probe.name();
-        boolean named = nodeName != null;
-        Integer existing = procedureNameToId.get(identity);
+        Integer existing = resolveIdentity(identity, procedureClass, nodeName != null);
         if (existing != null) {
-            ProcedureEntry existingEntry = procedures.get(existing);
-            if (!existingEntry.procedureClass.equals(procedureClass) || existingEntry.named != named) {
-                errors.add(StreamOperativeConfigurationException.nodeIdentityCollision(identity)
-                        .getMessage());
-            }
             return existing;
         }
-        int id = procedures.size();
-        ProcedureEntry entry = new ProcedureEntry();
+        ProcedureEntry entry = probeDeclarations(probe, identity);
         entry.procedureClass = procedureClass;
         entry.name = identity;
-        entry.named = named;
+        entry.named = nodeName != null;
+        int id = procedures.size();
+        procedures.add(entry);
+        procedureNameToId.put(identity, id);
+        return id;
+    }
+
+    /**
+     * The node already registered under {@code identity}, or {@code null} for a
+     * fresh one. A claim by a different class, or by the other of the
+     * named/unnamed spellings, is the collision.
+     */
+    private Integer resolveIdentity(
+            String identity, Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass, boolean named) {
+        Integer existing = procedureNameToId.get(identity);
+        if (existing == null) {
+            return null;
+        }
+        ProcedureEntry existingEntry = procedures.get(existing);
+        if (!existingEntry.procedureClass.equals(procedureClass) || existingEntry.named != named) {
+            errors.add(StreamOperativeConfigurationException.nodeIdentityCollision(identity)
+                    .getMessage());
+        }
+        return existing;
+    }
+
+    /**
+     * Everything a fresh node records off one probe instance: the type tokens,
+     * the Entity-mode and durability declarations, and the two clock refusals.
+     *
+     * <p>Every clock in the sealed hierarchy is wired. What Rust rejects at
+     * compile time (a {@code TimeExtractor<Input>} bound, an unservable clock)
+     * is rejected here instead — erasure precludes the compile-time form, so
+     * the same defect is caught at registration.
+     */
+    private ProcedureEntry probeDeclarations(Procedure<?, ?, ?, ?, ?, ?> probe, String identity) {
+        ProcedureEntry entry = new ProcedureEntry();
         entry.entityKeys = List.copyOf(probe.entityKeys());
         entry.entitiesForOverridden = probe.entitiesForOverridden();
         entry.inputType = probe.inputType();
@@ -576,25 +382,16 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
         entry.compensateOverridden = probe.compensateOverridden();
         entry.entityIdleTtl = probe.entityIdleTtl();
-        entry.maxEntities = probe.maxEntitiesOverridden()
-                ? java.util.OptionalLong.of(probe.maxEntities())
-                : java.util.OptionalLong.empty();
-        // Every clock in the sealed hierarchy is wired. What Rust rejects at
-        // compile time (a `TimeExtractor<Input>` bound, an unservable clock) is
-        // rejected here instead — erasure precludes the compile-time form, so
-        // the same defect is caught at registration.
-        if (entry.clockType == com.flezha.sdk.state.EventTimeFrom.class && !probe.eventTimeOverridden()) {
+        entry.maxEntities = probe.maxEntitiesOverridden() ? OptionalLong.of(probe.maxEntities()) : OptionalLong.empty();
+        if (entry.clockType == EventTimeFrom.class && !probe.eventTimeOverridden()) {
             errors.add(StreamOperativeConfigurationException.eventTimeExtractorMissing(identity)
                     .getMessage());
         }
-        if (entry.clockType == com.flezha.sdk.state.LogicalClock.class
-                && entry.changeType == com.flezha.sdk.state.NoChange.class) {
+        if (entry.clockType == LogicalClock.class && entry.changeType == NoChange.class) {
             errors.add(StreamOperativeConfigurationException.unservableClock(identity)
                     .getMessage());
         }
-        procedures.add(entry);
-        procedureNameToId.put(identity, id);
-        return id;
+        return entry;
     }
 
     private Procedure<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass) {
@@ -609,9 +406,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         }
     }
 
-    private static final Procedure<
-                    Object, Object, Object, com.flezha.sdk.state.NoChange, com.flezha.sdk.state.WallClock, Void>
-            UNINSTANTIABLE = new Procedure<>() {
+    private static final Procedure<Object, Object, Object, NoChange, WallClock, Void> UNINSTANTIABLE =
+            new Procedure<>() {
                 @Override
                 public String name() {
                     return "<uninstantiable>";
@@ -628,13 +424,13 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                 }
 
                 @Override
-                public Class<com.flezha.sdk.state.NoChange> changeType() {
-                    return com.flezha.sdk.state.NoChange.class;
+                public Class<NoChange> changeType() {
+                    return NoChange.class;
                 }
 
                 @Override
-                public Class<com.flezha.sdk.state.WallClock> clockType() {
-                    return com.flezha.sdk.state.WallClock.class;
+                public Class<WallClock> clockType() {
+                    return WallClock.class;
                 }
 
                 @Override
@@ -643,16 +439,12 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                 }
 
                 @Override
-                public Object initState(
-                        Optional<String> entityKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+                public Object initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
                     throw new UnsupportedOperationException("uninstantiable procedure");
                 }
 
                 @Override
-                public void run(
-                        Object input,
-                        com.flezha.sdk.state.StateHandle<Object, com.flezha.sdk.state.NoChange> state,
-                        com.flezha.sdk.procedure.ProcedureCtx ctx) {
+                public void run(Object input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
                     throw new UnsupportedOperationException("uninstantiable procedure");
                 }
             };
@@ -662,7 +454,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * identity), closing {@code pendingChain} onto the resulting edge. Returns
      * the consumer's node id so its handle can continue the chain.
      */
-    private int wireConsumer(
+    int wireConsumer(
             int channelId,
             Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             String nodeName,
@@ -698,7 +490,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * Extend the chain at {@code base} (or open one on {@code channel}) with
      * one more link, returning the new chain's id.
      */
-    private int extendPending(
+    int extendPending(
             int channel,
             Integer base,
             Class<?> payloadType,
@@ -784,7 +576,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * precludes the compile-time form, so the same defect is caught at
      * registration.
      */
-    private int wireConsumer(
+    int wireConsumer(
             int channelId,
             Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             String nodeName,
@@ -793,46 +585,9 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         int procedureId = registerNode(procedureClass, nodeName);
         ProcedureEntry procedure = procedures.get(procedureId);
         ChannelEntry channel = channels.get(channelId);
-        // The delivered payload is what the edge's transforms produce, not what
-        // the channel carries — a merge mapping and a `.map(...)` chain are the
-        // same thing here, and both reshape what the consumer observes.
         Class<?> chainType = pendingChain == null ? null : pending.get(pendingChain).payloadType;
-        Class<?> declared = deliveredTypeOverride != null ? deliveredTypeOverride : chainType;
-        Class<?> deliveredType = declared != null ? declared : channel.payloadType;
-        if (!deliveredType.equals(procedure.inputType)) {
-            String producedBy = deliveredTypeOverride != null
-                    ? "merge maps into"
-                    : chainType != null
-                            ? "edge transforms produce"
-                            : channel.producer == null
-                                    ? "payload type"
-                                    : "producer procedure `" + procedures.get(channel.producer).name
-                                            + "` outputType() =";
-            errors.add("channel `" + channel.name + "`: " + producedBy + " "
-                    + describe(deliveredType)
-                    + " does not match consumer procedure `" + procedure.name
-                    + "` inputType() = " + describe(procedure.inputType));
-        }
-        // Re-declaring an existing bare edge is the fan-in / repeated `.into`
-        // case and stays a no-op. Re-declaring one where either side carries a
-        // transform or a key is refused rather than silently dropped — the edge
-        // would otherwise keep whichever closure was declared first and deliver
-        // the wrong value, to the wrong Entity, forever.
-        PendingEdge chain = closePending(pendingChain);
-        boolean declares = chain != null && (chain.transform != null || chain.key != null);
-        Optional<ConsumerEdge> existing = channel.consumers.stream()
-                .filter(e -> e.procedure() == procedureId)
-                .findFirst();
-        if (existing.isEmpty()) {
-            channel.consumers.add(new ConsumerEdge(
-                    procedureId,
-                    Optional.ofNullable(chain == null ? null : chain.transform),
-                    Optional.ofNullable(chain == null ? null : chain.key)));
-        } else if (existing.get().transform().isPresent()
-                || existing.get().key().isPresent()
-                || declares) {
-            errors.add(StreamOperativeConfigurationException.edgeAlreadyWired(channel.name, procedure.name)
-                    .getMessage());
+        refuseTypeMismatch(channel, procedure, deliveredTypeOverride, chainType);
+        if (!attachEdge(channel, procedureId, procedure.name, closePending(pendingChain))) {
             return procedureId;
         }
         // Cache input channel id on the procedure. A fan-in procedure keeps its
@@ -846,12 +601,66 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     /**
+     * The delivered payload is what the edge's transforms produce, not what the
+     * channel carries — a merge mapping and a {@code .map(...)} chain are the
+     * same thing here, and both reshape what the consumer observes.
+     */
+    private void refuseTypeMismatch(
+            ChannelEntry channel, ProcedureEntry procedure, Class<?> deliveredTypeOverride, Class<?> chainType) {
+        Class<?> declared = deliveredTypeOverride != null ? deliveredTypeOverride : chainType;
+        Class<?> deliveredType = declared != null ? declared : channel.payloadType;
+        if (deliveredType.equals(procedure.inputType)) {
+            return;
+        }
+        String producedBy = deliveredTypeOverride != null
+                ? "merge maps into"
+                : chainType != null
+                        ? "edge transforms produce"
+                        : channel.producer == null
+                                ? "payload type"
+                                : "producer procedure `" + procedures.get(channel.producer).name + "` outputType() =";
+        errors.add("channel `" + channel.name + "`: " + producedBy + " "
+                + describe(deliveredType)
+                + " does not match consumer procedure `" + procedure.name
+                + "` inputType() = " + describe(procedure.inputType));
+    }
+
+    /**
+     * Add the consumer edge, or refuse it. Re-declaring an existing bare edge is
+     * the fan-in / repeated {@code .into} case and stays a no-op. Re-declaring
+     * one where either side carries a transform or a key is refused rather than
+     * silently dropped — the edge would otherwise keep whichever closure was
+     * declared first and deliver the wrong value, to the wrong Entity, forever.
+     *
+     * @return {@code false} when the edge was refused as already wired.
+     */
+    private boolean attachEdge(ChannelEntry channel, int procedureId, String procedureName, PendingEdge chain) {
+        boolean declares = chain != null && (chain.transform != null || chain.key != null);
+        Optional<ConsumerEdge> existing = channel.consumers.stream()
+                .filter(e -> e.procedure() == procedureId)
+                .findFirst();
+        if (existing.isEmpty()) {
+            channel.consumers.add(new ConsumerEdge(
+                    procedureId,
+                    Optional.ofNullable(chain == null ? null : chain.transform),
+                    Optional.ofNullable(chain == null ? null : chain.key)));
+            return true;
+        }
+        if (existing.get().transform().isPresent() || existing.get().key().isPresent() || declares) {
+            errors.add(StreamOperativeConfigurationException.edgeAlreadyWired(channel.name, procedureName)
+                    .getMessage());
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * The node's output channel, created lazily on first use so a leaf node
      * never carries a phantom channel. Named by the node's identity until a
      * {@code .named(...)} override; payload type = the node's declared
      * {@code outputType()}.
      */
-    private int ensureOutputChannel(int procedureId) {
+    int ensureOutputChannel(int procedureId) {
         ProcedureEntry procedure = procedures.get(procedureId);
         if (procedure.outputChannelId != null) {
             return procedure.outputChannelId;
@@ -878,8 +687,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         String pluginSinkName;
         Function<Object, byte[]> pluginSinkSerializer;
         OverflowPolicy overflowPolicy;
-        int retryMaxAttempts = com.flezha.sdk.channel.RetryPolicy.DEFAULT.maxAttempts();
-        long retryBackoffBaseMs = com.flezha.sdk.channel.RetryPolicy.DEFAULT.backoffBaseMs();
+        int retryMaxAttempts = RetryPolicy.DEFAULT.maxAttempts();
+        long retryBackoffBaseMs = RetryPolicy.DEFAULT.backoffBaseMs();
         boolean keyed;
         Function<Object, byte[]> interProcEncoder;
         Function<byte[], Object> interProcDecoder;
@@ -898,7 +707,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * Apply a {@code .retryMax(...)} declaration, rejecting a zero budget at
      * registration time like every other declaration error.
      */
-    private void setRetryMax(int channelId, int maxAttempts) {
+    void setRetryMax(int channelId, int maxAttempts) {
         ChannelEntry entry = channels.get(channelId);
         if (maxAttempts <= 0) {
             errors.add("channel `" + entry.name + "` declared retryMax = " + maxAttempts
@@ -934,8 +743,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
         Class<?> inputType;
         Class<?> outputType;
-        Class<? extends com.flezha.sdk.state.Change> changeType;
-        Class<? extends com.flezha.sdk.state.Clock> clockType;
+        Class<? extends Change> changeType;
+        Class<? extends Clock> clockType;
         Class<?> configType;
         List<Class<?>> kryoTypes;
         int schemaVersion;
@@ -946,539 +755,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         int mailboxCapacityDeclared;
         boolean mailboxCapacityOverridden;
         boolean compensateOverridden;
-        java.util.Optional<java.time.Duration> entityIdleTtl = java.util.Optional.empty();
-        java.util.OptionalLong maxEntities = java.util.OptionalLong.empty();
-    }
-
-    // ---- Builder handle types ----------------------------------------------
-
-    /**
-     * The transform / keying / consumer-side-configuration surface, implemented
-     * ONCE. The entry handle and a procedure's output handle differ only in how
-     * they resolve their channel ({@link #siteChannelId}) — everything else is
-     * shared, which is what keeps the two from drifting.
-     */
-    private abstract class EdgeStreamImpl<T> implements EdgeStream<T>, EdgeSite {
-        /** The chain declared on this handle, {@code null} for a bare one. */
-        final Integer pending;
-        /** The payload type after this handle's transforms. */
-        final Class<?> payloadType;
-
-        EdgeStreamImpl(Integer pending, Class<?> payloadType) {
-            this.pending = pending;
-            this.payloadType = payloadType;
-        }
-
-        @Override
-        public Integer sitePending() {
-            return pending;
-        }
-
-        /** This handle with a new payload type and a new pending chain. */
-        abstract <U> EdgeStream<U> relink(Integer pending, Class<?> payloadType);
-
-        private <U> EdgeStream<U> link(
-                Class<?> newPayloadType, Function<Object, EdgeYield> transform, Function<Object, String> key) {
-            checkMutable();
-            int chain = extendPending(siteChannelId(), pending, newPayloadType, transform, key);
-            return relink(chain, newPayloadType);
-        }
-
-        @Override
-        @Nonnull
-        @SuppressWarnings("unchecked")
-        public <U> EdgeStream<U> map(@Nonnull Class<U> type, @Nonnull Function<T, U> mapper) {
-            return link(type, value -> EdgeYield.one(mapper.apply((T) value)), null);
-        }
-
-        @Override
-        @Nonnull
-        @SuppressWarnings("unchecked")
-        public <U> EdgeStream<U> flatMap(@Nonnull Class<U> type, @Nonnull Function<T, ? extends Iterable<U>> mapper) {
-            return link(
-                    type,
-                    value -> {
-                        List<Object> out = new ArrayList<>();
-                        mapper.apply((T) value).forEach(out::add);
-                        return EdgeYield.many(out);
-                    },
-                    null);
-        }
-
-        @Override
-        @Nonnull
-        @SuppressWarnings("unchecked")
-        public EdgeStream<T> filter(@Nonnull java.util.function.Predicate<T> predicate) {
-            return link(payloadType, value -> predicate.test((T) value) ? EdgeYield.one(value) : EdgeYield.DROP, null);
-        }
-
-        @Override
-        @Nonnull
-        @SuppressWarnings("unchecked")
-        public EdgeStream<T> keyBy(@Nonnull Function<T, String> key) {
-            return link(payloadType, null, value -> key.apply((T) value));
-        }
-
-        @Override
-        @Nonnull
-        public <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass) {
-            return wireInto(procedureClass, null);
-        }
-
-        @Override
-        @Nonnull
-        public <O> Stream<O> into(
-                @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, @Nonnull String nodeName) {
-            return wireInto(procedureClass, nodeName);
-        }
-
-        <O> Stream<O> wireInto(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
-            checkMutable();
-            return new StreamImpl<>(wireConsumer(siteChannelId(), procedureClass, nodeName, pending));
-        }
-
-        @Override
-        @Nonnull
-        public EdgeStream<T> onFull(@Nonnull OverflowPolicy policy) {
-            checkMutable();
-            channels.get(siteChannelId()).overflowPolicy = policy;
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public EdgeStream<T> retryMax(int maxAttempts) {
-            checkMutable();
-            setRetryMax(siteChannelId(), maxAttempts);
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public EdgeStream<T> retryBackoffMs(long baseMs) {
-            checkMutable();
-            channels.get(siteChannelId()).retryBackoffBaseMs = baseMs;
-            return this;
-        }
-    }
-
-    /**
-     * What a merge source resolves to: the channel it subscribes on and the
-     * chain declared on the handle — the erasure-side stand-in for Rust's
-     * {@code MergeSource::merge_site}.
-     */
-    private interface EdgeSite {
-        int siteChannelId();
-
-        Integer sitePending();
-    }
-
-    /**
-     * The producer side of the shared surface: its channel is the node's output
-     * channel, created lazily. {@link StreamImpl} holds one of these rather than
-     * extending it, because {@link Stream} must stay an abstract class (for
-     * {@code @SafeVarargs branch}) and Java has no second superclass to spend.
-     */
-    private final class NodeEdge<T> extends EdgeStreamImpl<T> {
-        private final int node;
-
-        NodeEdge(int node, Integer pending, Class<?> payloadType) {
-            super(pending, payloadType != null ? payloadType : procedures.get(node).outputType);
-            this.node = node;
-        }
-
-        @Override
-        public int siteChannelId() {
-            return ensureOutputChannel(node);
-        }
-
-        @Override
-        <U> EdgeStream<U> relink(Integer chain, Class<?> newPayloadType) {
-            return new NodeEdge<U>(node, chain, newPayloadType);
-        }
-    }
-
-    private final class EntryChannelImpl<T> extends EdgeStreamImpl<T> implements EntryChannel<T> {
-        private final int channelId;
-        private final String name;
-
-        EntryChannelImpl(int channelId, String name, Integer pending, Class<?> payloadType) {
-            super(pending, payloadType);
-            this.channelId = channelId;
-            this.name = name;
-        }
-
-        @Override
-        public int siteChannelId() {
-            return channelId;
-        }
-
-        @Override
-        <U> EdgeStream<U> relink(Integer pending, Class<?> payloadType) {
-            return new EntryChannelImpl<>(channelId, name, pending, payloadType);
-        }
-
-        @Override
-        public String toString() {
-            return "EntryChannel(" + name + ")";
-        }
-    }
-
-    /**
-     * A merged subscription under construction: the source channels declared
-     * so far, each with the mapping that lifts its payload into {@code I}.
-     */
-    private final class MergeImpl<I> implements Merge<I> {
-        private final Class<I> mergedType;
-        private final List<MergeSourceEntry> sources = new ArrayList<>();
-        /**
-         * Every {@code from} the author wrote, including ones already refused.
-         * The arity check reads this so a duplicated source is reported once,
-         * as a duplicate — not also as a merge that declared too few.
-         */
-        private int declared;
-        /**
-         * The one key function a merge declares, applied to the merged value on
-         * every source's edge.
-         */
-        private Function<Object, String> key;
-
-        private boolean duplicateKey;
-
-        MergeImpl(Class<I> mergedType) {
-            this.mergedType = mergedType;
-        }
-
-        @Override
-        @Nonnull
-        @SuppressWarnings("unchecked")
-        public <S> Merge<I> from(@Nonnull EdgeStream<S> source, @Nonnull Function<S, I> map) {
-            checkMutable();
-            if (!(source instanceof EdgeSite site)) {
-                throw new IllegalArgumentException("merge source was not declared on this operative's builder");
-            }
-            int channelId = site.siteChannelId();
-            declared++;
-            if (sources.stream().anyMatch(src -> src.channelId() == channelId)) {
-                errors.add(StreamOperativeConfigurationException.duplicateMergeSource(channels.get(channelId).name)
-                        .getMessage());
-                return this;
-            }
-            // The mapping composes AFTER any transform declared on the source
-            // handle, which is what makes a source transform see that source's
-            // own payload type — and what makes a key declared there trip the
-            // transform-after-key refusal, i.e. "keying is declared once, on
-            // the merge".
-            int chain = extendPending(
-                    channelId, site.sitePending(), mergedType, value -> EdgeYield.one(map.apply((S) value)), null);
-            sources.add(new MergeSourceEntry(channelId, chain));
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Merge<I> keyBy(@Nonnull Function<I, String> key) {
-            checkMutable();
-            if (this.key != null) {
-                duplicateKey = true;
-            }
-            this.key = value -> key.apply(mergedType.cast(value));
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public <O> Stream<O> into(@Nonnull Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure) {
-            return wire(procedure, null);
-        }
-
-        @Override
-        @Nonnull
-        public <O> Stream<O> into(
-                @Nonnull Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName) {
-            return wire(procedure, nodeName);
-        }
-
-        /**
-         * Close the merge on its consumer, named or not — the one body behind
-         * both {@code into} spellings, and the seam a packaged building block
-         * ({@code routeLatest}) closes its own merge with instead of re-deriving
-         * the named/unnamed dispatch.
-         */
-        private <O> Stream<O> wire(Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
-            checkMutable();
-            // Register the consumer before its sources — as Rust's `Merge::wire`
-            // does — so the arity refusal can name it even with no source to
-            // wire it. `registerNode` resolves by identity, so wiring below
-            // returns this same node.
-            int node = registerNode(procedureClass, nodeName);
-            if (declared < 2) {
-                errors.add(StreamOperativeConfigurationException.mergeTooFewSources(procedures.get(node).name, declared)
-                        .getMessage());
-            }
-            if (duplicateKey && !sources.isEmpty()) {
-                errors.add(StreamOperativeConfigurationException.duplicateKeyBy(
-                                channels.get(sources.get(0).channelId()).name)
-                        .getMessage());
-            }
-            for (MergeSourceEntry source : sources) {
-                // The key rides each source's chain, so it is evaluated on the
-                // mapped value.
-                Integer chain = key == null
-                        ? source.chain()
-                        : extendPending(source.channelId(), source.chain(), mergedType, null, key);
-                wireConsumer(source.channelId(), procedureClass, nodeName, mergedType, chain);
-            }
-            return new StreamImpl<>(node);
-        }
-    }
-
-    /** One declared merge source: the channel and the chain ending in its mapping. */
-    private record MergeSourceEntry(int channelId, int chain) {}
-
-    /**
-     * The procedure's output stream handle: a node id into the enclosing
-     * builder. The channel out of the node is created lazily on first use.
-     */
-    private final class StreamImpl<T> extends Stream<T> implements EdgeSite {
-        private final int node;
-
-        /**
-         * The shared surface, held rather than inherited: {@link Stream} is an
-         * abstract class (so {@code branch} can be {@code @SafeVarargs}) and
-         * Java has no second superclass to spend, so the producer-side handle
-         * forwards to the one implementation instead of re-stating it.
-         */
-        private final EdgeStreamImpl<T> edge;
-
-        StreamImpl(int node) {
-            this(node, null, null);
-        }
-
-        StreamImpl(int node, Integer pending, Class<?> payloadType) {
-            this.node = node;
-            this.edge = new NodeEdge<>(node, pending, payloadType);
-        }
-
-        private int channelId() {
-            return ensureOutputChannel(node);
-        }
-
-        @Override
-        public int siteChannelId() {
-            return channelId();
-        }
-
-        @Override
-        public Integer sitePending() {
-            return edge.pending;
-        }
-
-        @Override
-        @Nonnull
-        public <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass) {
-            return edge.into(procedureClass);
-        }
-
-        @Override
-        @Nonnull
-        public <O> Stream<O> into(
-                @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, @Nonnull String nodeName) {
-            return edge.into(procedureClass, nodeName);
-        }
-
-        @Override
-        @Nonnull
-        public <U> EdgeStream<U> map(@Nonnull Class<U> type, @Nonnull Function<T, U> mapper) {
-            return edge.map(type, mapper);
-        }
-
-        @Override
-        @Nonnull
-        public <U> EdgeStream<U> flatMap(@Nonnull Class<U> type, @Nonnull Function<T, ? extends Iterable<U>> mapper) {
-            return edge.flatMap(type, mapper);
-        }
-
-        @Override
-        @Nonnull
-        public EdgeStream<T> filter(@Nonnull java.util.function.Predicate<T> predicate) {
-            return edge.filter(predicate);
-        }
-
-        @Override
-        @Nonnull
-        public EdgeStream<T> keyBy(@Nonnull Function<T, String> key) {
-            return edge.keyBy(key);
-        }
-
-        @Override
-        @Nonnull
-        protected Stream<T> branchArms(@Nonnull List<java.util.function.Consumer<Stream<T>>> arms) {
-            checkMutable();
-            if (arms.size() < 2) {
-                errors.add(StreamOperativeConfigurationException.branchTooFewArms(arms.size())
-                        .getMessage());
-            }
-            for (java.util.function.Consumer<Stream<T>> arm : arms) {
-                arm.accept(this);
-            }
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> named(@Nonnull String name) {
-            checkMutable();
-            channels.get(channelId()).name = name;
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> keyed() {
-            checkMutable();
-            channels.get(channelId()).keyed = true;
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> codec() {
-            // Reuse the SDK's default JSON serialization — the same Jackson
-            // mapper a plugin-bound channel falls back to.
-            return codecWith(defaultSerializer(payloadType()), defaultDeserializer(payloadType()));
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder) {
-            checkMutable();
-            ChannelEntry entry = channels.get(channelId());
-            entry.interProcEncoder = value -> encoder.apply(cast(value));
-            entry.interProcDecoder = bytes -> decoder.apply(bytes);
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> onFull(@Nonnull OverflowPolicy policy) {
-            edge.onFull(policy);
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> retryMax(int maxAttempts) {
-            edge.retryMax(maxAttempts);
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> retryBackoffMs(long baseMs) {
-            edge.retryBackoffMs(baseMs);
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> sink(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
-            checkMutable();
-            ChannelEntry entry = channels.get(channelId());
-            if (entry.pluginSinkName != null) {
-                errors.add(StreamOperativeConfigurationException.duplicatePluginSink(entry.name)
-                        .getMessage());
-                return this;
-            }
-            entry.pluginSinkName = pluginName;
-            entry.pluginSinkSerializer = value -> serializer.apply(cast(value));
-            return this;
-        }
-
-        @Override
-        @Nonnull
-        public Stream<T> sink(@Nonnull String pluginName) {
-            return sink(pluginName, defaultSerializer(payloadType()));
-        }
-
-        @Override
-        @Nonnull
-        public Channel<T> sealed() {
-            checkMutable();
-            return new Channel<>();
-        }
-
-        /** The producer node's declared output type: this stream's payload type. */
-        @SuppressWarnings("unchecked")
-        private Class<T> payloadType() {
-            return (Class<T>) procedures.get(node).outputType;
-        }
-
-        @SuppressWarnings("unchecked")
-        private T cast(Object value) {
-            return (T) value;
-        }
-    }
-
-    /**
-     * The default entry decode for {@code T}: passthrough for {@code byte[]},
-     * UTF-8 for {@code String} (both byte-identical to the pre-typed-entry
-     * contract), the SDK's default JSON codec otherwise.
-     */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Function<byte[], Object> defaultEntryParser(Class<?> payloadType) {
-        if (payloadType == byte[].class) {
-            return bytes -> bytes;
-        }
-        if (payloadType == String.class) {
-            return bytes -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-        }
-        return bytes -> {
-            try {
-                return DEFAULT_MAPPER.readValue(bytes, (Class) payloadType);
-            } catch (Exception e) {
-                throw new RuntimeException("entry channel: JSON deserialization failed: " + e.getMessage(), e);
-            }
-        };
-    }
-
-    /** Mirror of {@link #defaultSerializer}: the decode half of a default {@code codec()}. */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static <T> Function<byte[], T> defaultDeserializer(Class<T> payloadType) {
-        if (payloadType == byte[].class) {
-            return (Function) (Function<byte[], byte[]>) (b -> b);
-        }
-        if (payloadType == String.class) {
-            return (Function) (Function<byte[], String>) (b -> new String(b, java.nio.charset.StandardCharsets.UTF_8));
-        }
-        return bytes -> {
-            try {
-                return DEFAULT_MAPPER.readValue(bytes, payloadType);
-            } catch (Exception e) {
-                throw new RuntimeException("inter-proc codec (Jackson) decode failed: " + e.getMessage(), e);
-            }
-        };
-    }
-
-    /**
-     * Default plugin serializer — what {@code sink(...)} applies when the
-     * author supplies none. {@code byte[]} is passthrough; {@code String} is
-     * UTF-8 encoded; everything else goes through Jackson JSON.
-     */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static <T> Function<T, byte[]> defaultSerializer(Class<T> payloadType) {
-        if (payloadType == byte[].class) {
-            return (Function) (Function<byte[], byte[]>) (b -> b);
-        }
-        if (payloadType == String.class) {
-            return (Function) (Function<String, byte[]>) (s -> s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        }
-        return value -> {
-            try {
-                return DEFAULT_MAPPER.writeValueAsBytes(value);
-            } catch (Exception e) {
-                throw new RuntimeException("plugin serializer (Jackson) failed: " + e.getMessage(), e);
-            }
-        };
+        Optional<Duration> entityIdleTtl = Optional.empty();
+        OptionalLong maxEntities = OptionalLong.empty();
     }
 }
