@@ -309,12 +309,29 @@ def indent_extent(lines, start, indent, closes_with_end):
     return last - start + 1
 
 
+JAVA_TYPE = re.compile(r"\b(?:class|record|interface|enum)\s+(\w+)\b")
+
+
+def java_type_names(lines):
+    """The simple name of every type the file declares. A constructor and a
+    `record` header both have the method shape and are told apart from a method
+    only by carrying their own type's name."""
+    return {
+        m.group(1)
+        for line, kind in zip(lines, CLASSIFIERS["java"](lines))
+        if kind == "code"
+        for m in [JAVA_TYPE.search(STRING.sub('""', line))]
+        if m
+    }
+
+
 def functions(lines, lang):
     """(name, start_line, length) for every definition the shape finds."""
     found = []
+    types = java_type_names(lines) if lang == "java" else ()
     for i, line in enumerate(lines):
         m = DEF[lang].match(line) or (ARROW.match(line) if lang == "ts" else None)
-        if not m or m.group(m.lastindex) in KEYWORDS:
+        if not m or m.group(m.lastindex) in KEYWORDS or m.group(m.lastindex) in types:
             continue
         if lang in ("elixir", "python", "ruby"):
             one_liner = lang == "elixir" and re.search(r",\s*do:", line)
@@ -652,7 +669,12 @@ FIXTURES = {
         "cdddCdcccccc",
         [("go", 1), ("long_name_that_is_far_beyond_the_ceiling", 4)],
     ),
-    "java": ("/** doc */\n// plain\npublic int f(int a) {\n  return a;\n}", "dCccc", [("f", 3)]),
+    "java": (
+        "/** doc */\n// plain\npublic record P(int a) {\n  public P(String s) {\n    this(1);\n  }\n"
+        "  public int f(int a) {\n    return a;\n  }\n}",
+        "dCcccccccc",
+        [("f", 3)],
+    ),
     "ts": (
         "/** doc */\nexport function f(a: number): number {\n  return a;\n}\nconst g = async (x) => {\n  return x;\n};",
         "dcccccc",
@@ -702,6 +724,7 @@ def self_test_classifiers():
     assert (m["counts"]["prod_loc"], m["counts"]["test_loc"], m["counts"]["sleeps"]) == (6, 7, 1)
     assert [n for n, _, _ in functions(rust, "rust")] == ["short", "t", "after"]
     assert measure_file("flz_core/src/generated/runner_commands.rs") is None
+    assert java_type_names(FIXTURES["java"][0].split("\n")) == {"P"}
     assert len(functions(FIXTURES["elixir"][0].split("\n"), "elixir")[1][0]) > NAME_CEILING
     assert SLEEP["elixir"].search("    Process.sleep(10)") and REFUTE.search("refute_receive {:x}")
     assert (

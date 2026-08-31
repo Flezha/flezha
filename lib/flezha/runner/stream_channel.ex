@@ -226,10 +226,6 @@ defmodule Flezha.Runner.StreamChannel do
         # Terminal — the session is evicted right after, never re-bound.
         fenced?: false,
         refused_entities: MapSet.new(),
-        # Whether the driver has reported this stream's send buffer over its
-        # high-water mark. Set from `{:flz_send_gate, ...}`, and the answer
-        # `{:await_send_gate, pid}` is decided against.
-        gate_raised?: false,
         # Processes owed word of an event they are held on: `:bind` (this
         # channel has no stream yet) and `:send_gate` (its send buffer is over
         # the mark). Each set is cleared by the event that serves it, so
@@ -350,11 +346,13 @@ defmodule Flezha.Runner.StreamChannel do
 
   # Send-gate interest, decided and recorded in this process's own turn — the
   # same contract `notify_on_bind/2` has, against the same race.
-  @impl true
-  def handle_call({:await_send_gate, _pid}, _from, %{gate_raised?: false} = state) do
-    {:reply, :open, state}
-  end
-
+  #
+  # The caller is never argued with. It reached here by being refused on an
+  # exact read of the gate bit, which is fresher than anything this channel
+  # could hold: the driver's report of a crossing travels a queue, and the
+  # sender raises the bit itself precisely because that queue is what it
+  # outruns. So interest is recorded whenever it is asked for, and the drain
+  # report is what releases it.
   @impl true
   def handle_call({:await_send_gate, pid}, _from, state) do
     {:reply, :held, record_waiter(state, :send_gate, pid)}
@@ -553,17 +551,15 @@ defmodule Flezha.Runner.StreamChannel do
   # Drain report tagged with a superseded session (reconnect voided it) — stale.
   def handle_info({:credit_drained, _session, _bytes}, state), do: {:noreply, state}
 
-  # The driver crossed a watermark on this stream's send buffer. Raised means
-  # senders must hold; lowered releases every one that is holding. Nothing is
-  # sent on a raise: a sender discovers it from `send_frame/4`'s own answer,
-  # and holding it here would be a second copy of the same bit.
-  def handle_info({:flz_send_gate, _stream_id, true}, state) do
-    {:noreply, %{state | gate_raised?: true}}
-  end
+  # The driver crossed a watermark on this stream's send buffer. A raise is
+  # recorded nowhere: a sender discovers it from `send_frame/4`'s own answer,
+  # which is the same bit read without a queue in between, so keeping a copy
+  # here would only be a staler one. The drain is what this channel is for —
+  # it releases every sender holding on that stream.
+  def handle_info({:flz_send_gate, _stream_id, true}, state), do: {:noreply, state}
 
   def handle_info({:flz_send_gate, _stream_id, false}, state) do
-    {:noreply,
-     wake_waiters(%{state | gate_raised?: false}, :send_gate, {:send_gate, state.name, :open})}
+    {:noreply, wake_waiters(state, :send_gate, {:send_gate, state.name, :open})}
   end
 
   # NIF transport: stream closed. Synchronous rebindability contract — once
@@ -593,7 +589,7 @@ defmodule Flezha.Runner.StreamChannel do
     # undelivered instead of waiting out its hold on a dead binding.
     state = wake_waiters(state, :send_gate, {:send_gate, state.name, :closed})
 
-    {:noreply, %{state | stream_ref: nil, gate_raised?: false} |> reset_credit()}
+    {:noreply, %{state | stream_ref: nil} |> reset_credit()}
   end
 
   def handle_info(msg, state) do

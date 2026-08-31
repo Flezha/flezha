@@ -2,17 +2,40 @@
 //! controller offers bytes (`CreditWindowInit`), every record [`acquire`]s
 //! its size before the sink write, and `CreditGrant` [`grant`]s bytes back
 //! as the controller fsyncs. The invariant: an exhausted window parks the
-//! sending thread and never drops — a bounded wait re-checked every 50 ms,
-//! counted on [`CREDIT_PARKED`] so a parked runner reads as parked, not
-//! wedged — while `arm`/`grant` run on the coordinator and never block. A
-//! frame larger than the whole window is sent once it is fully replenished.
+//! sending thread and never drops — a bounded wait re-checked every
+//! [`PARK_INTERVAL_VAR`] milliseconds (50 by default), counted on
+//! [`CREDIT_PARKED`] so a parked runner reads as parked, not wedged — while
+//! `arm`/`grant` run on the coordinator and never block. A frame larger than
+//! the whole window is sent once it is fully replenished.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-const PARK_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long a parked sender waits before re-checking its window, in
+/// milliseconds. Not a pacing dial: `arm` and `grant` both `notify_all`, so
+/// the wait ends on the event and this bounds only a wake that never came.
+/// Lowering it buys no latency in the normal case and costs wakeups; raising
+/// it only lengthens recovery from a lost wake.
+pub const PARK_INTERVAL_VAR: &str = "FLEZHA_CREDIT_PARK_INTERVAL_MS";
+
+const DEFAULT_PARK_INTERVAL_MS: usize = 50;
 const WARN_AFTER: Duration = Duration::from_secs(5);
+
+/// The lost-wake fallback, read from the process environment inside this crate
+/// so a runner in any SDK satisfies it from its own environment — threading it
+/// through a builder would owe every host SDK a declaration key and a setter
+/// for a diagnostic. Read once: it is per-park, and a knob that can change
+/// under a parked sender is a knob two senders can disagree about.
+fn park_interval() -> Duration {
+    static CACHE: OnceLock<Duration> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        Duration::from_millis(crate::util::env_parse_positive(
+            PARK_INTERVAL_VAR,
+            DEFAULT_PARK_INTERVAL_MS,
+        ) as u64)
+    })
+}
 
 /// Credit-park wait iterations, process-wide; on the heartbeat, where
 /// advancing beside a frozen `dispatches` means parked, not wedged.
@@ -140,7 +163,7 @@ impl CreditWindow {
                     }
                     st = self
                         .cond
-                        .wait_timeout(st, PARK_TIMEOUT)
+                        .wait_timeout(st, park_interval())
                         .expect("credit window mutex poisoned")
                         .0;
                 }
@@ -290,6 +313,22 @@ mod tests {
     /// are documented as never blocking, so a wait for a send buffer taken
     /// inside that body would stall the coordinator.
     ///
+    /// The lost-wake fallback is read from the environment, so the test reads
+    /// the same environment: run bare it proves the default, run with
+    /// `FLEZHA_CREDIT_PARK_INTERVAL_MS` set it proves the knob is honoured,
+    /// and it never mutates the variable — a `set_var` here would race every
+    /// other test in this binary.
+    #[test]
+    fn the_park_interval_comes_from_the_environment_or_its_default() {
+        let expected = std::env::var(PARK_INTERVAL_VAR)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&ms| ms > 0)
+            .unwrap_or(DEFAULT_PARK_INTERVAL_MS);
+
+        assert_eq!(park_interval(), Duration::from_millis(expected as u64));
+    }
+
     /// It cannot be a comment, and it cannot be a runtime assertion either —
     /// what makes nesting impossible is that `acquire` takes a byte count and
     /// returns nothing, so no caller can run anything inside its hold, and

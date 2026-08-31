@@ -1,12 +1,12 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 3. **Phase 1 rows 1, 2, 3, 3.5, 4 and 5+6 are
-DONE.** `mix test` is **1864 passed, exit 0, zero uncaptured-log gate hits**;
-`refactor_metrics.py --check` is **exit 0**; credo 1463 → 378 and ratcheting in all 36
-areas. **Next: Phase 1 row 6.5, `close-transport-send-buffer-loss`** — the user-queued
-P1 pair (KI-3, KI-56), proposal already written and `--strict` valid. Then row 7
-(KI-53), row 8 (the gate re-proof), then area 4 (`sdk/java`). KI-68 and KI-69 are new
-`lib/` defects to be surveyed together; KI-52 is escalated and awaiting the user.
+**Last updated**: 2026-08-31 — session 3. **PHASE 1 IS COMPLETE — all eight rows.**
+The uncaptured-log merge gate is proved and green over two seeded full runs, for the
+first time. `mix test` **1872 passed, exit 0, zero gate hits**; `--include system`
+1953; `refactor_metrics.py --check` **exit 0**; credo 378, ratcheting in all 36 areas.
+**Next: area 4 (`sdk/java`, 8 441 lines)** — the first refactor area since area 3; its
+dependency, area 1, is done. Open: KI-68/69/72 (the runner/controller-seam group, to be
+surveyed together), KI-52 (escalated, awaiting the user), KI-18's flake family.
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -118,8 +118,318 @@ COMPLETE, archived and committed.
 **Row 6.5 (`close-transport-send-buffer-loss`) is APPROVED; segment A is running.**
 Rows 5+6 are COMPLETE, archived and committed.
 
-**Segment B is committed (`443903f9`), but ROW 6.5 IS NOT CLOSEABLE.** Segment C
-must fix **KI-73** first.
+**Area 4 (`sdk/java`) is APPROVED; segment A is running.** Phase 1 is COMPLETE.
+Baseline tag **`refactor-baseline-4` at `8e038e36`**.
+
+### Area 4 segment A — verified 2026-08-31, commit `91699f03`
+
+Batch 0, the classifier correction. **No `sdk/java` file was touched** — this corrects
+the ruler before anything is measured against it. Supervisor-verified: `--self-test`
+**OK**, `--check` **exit 0**, and a baseline diff showing exactly three moved rows with
+**zero blocking areas loosened**.
+
+**The guard on a ratchet-loosening change came back clean, and the worker made it
+stronger than I asked.** I required a cross-area simulation: 36 areas, **exactly one
+moved** (`sdk/java`, `functions_over_50` 11→10 and `long_names` 7→1), the survey's
+predicted numbers to the digit. It then did better — diffing the **complete Java
+function list across all 251 files**, old classifier against new: **84 removals, 0
+additions, 0 unexplained**, each verified from its own source line as a record header
+or a constructor. A metric diff shows what moved; a full-list diff shows that nothing
+moved for a reason nobody checked.
+
+**The one loosened row is not the classifier**: `lib/flezha/state prod_loc` 6823 →
+6844, which is row 7's own landed work, and that area is *measuring*, not blocking.
+
+**The baseline used `--lint`**, so credo and clippy survive rather than being written
+as `null` and silently disabling every credo ratchet — 36 areas, 0 credo nulls, repo
+378. That trap has now been avoided twice by naming it in the brief.
+
+### J1 is reclassified `guard` → `direction`, and the perf row is ruled
+
+The floor was **declared before measuring** at >6 % ⇒ downgrade. Five arm-A runs
+measured **11.61 %** end-to-end spread (14.47 % receive), so J1 was reclassified in
+`design.md` in the same edit as its floor, and the two stale sentences elsewhere in
+that document were corrected so it does not contradict itself. **That is charter §8
+working exactly as written** — declare the class and the floor first, then honour the
+measurement even when it costs you the row.
+
+**The worker's own observation changes the answer, and it asked me to rule.** The five
+readings rise **monotonically** — that is thermal drift on a laptop, not scatter — and
+it noted that *"a paired, alternating A/B can still read a difference; an absolute
+floor cannot."*
+
+**Ruled: keep J1, run it INTERLEAVED, and state what it can and cannot catch.** §11b
+says cut a row that cannot gate, and an absolute-floor J1 cannot. But drift **cancels
+in an interleaved design**, which is why areas 2 and 3 used alternating arms and why
+this row is not the same row when run that way. What it catches is the **categorical**
+failure this split actually risks — a megamorphic call site, a lost `ClassValue`, an
+allocation moved onto the per-record path — which are 2-5× effects, not 2 % ones. What
+it cannot do is certify the absence of a small regression, and segment F must say so
+rather than implying a clean row means no cost. **J2 stays cut**: never floored, and it
+stalls at `--pool-sizes` 1/2/4 on this box.
+
+### KI-76 — ruled at segment A: real, not area 4's, and half of it is the user's
+
+Segment A filed it while setting up measurement. `sdk/php/composer.json` declares
+`php >=8.1` with **no `config.platform.php`**, while `composer.lock` pins
+`symfony/console v8.1.5`, which requires `php >=8.4.1`. The installed vendor tree
+therefore carries PHP 8.4 syntax (`(new \ReflectionClass(...)->getAttributes(...)`)
+that **no interpreter at the declared floor can parse**, so `php-cs-fixer` exits 255
+on this box's system `php` 8.3.6.
+
+**Its worst part is not the version skew.** `scripts/format-check.sh` then reports
+`UNFORMATTED — php-cs-fixer`. Nothing is unformatted; the tool crashed. That is the
+same failure class as `docs/dev_notes/format-gate-tells-the-truth.md` — **a gate
+naming the wrong cause is worse than a gate that is simply red**, because it sends the
+next person to fix formatting that is already correct.
+
+**It also explains a dismissal.** Two workers earlier in this session hit this exact
+`php-cs-fixer` parse error and recorded it as *"environment, pre-existing"* — true, and
+causeless. It now has a mechanism.
+
+**Ruled: real, P2, NOT area 4's work** — it is `sdk/php` and the format gate, and
+folding it into an area whose contract is zero behaviour change is the scope drift this
+programme removes. **The gate half is fixable by whoever next owns the format gate.
+The floor half is escalated**: whether the PHP SDK supports 8.1 or 8.4+ is a
+support-matrix decision, not a supervisor's.
+
+### Area 4 — approved 2026-08-31, with one classifier ruling
+
+`openspec/changes/refactor-4-java-sdk/`, `--strict` valid, **six segments, 61 boxes**,
+and a real spec delta (one ADDED requirement on `refactor-gates` flipping `sdk/java`
+to blocking, on the model of the three areas already there).
+
+**Measured shape**: files>800 **4** (`StreamOperativeTopologyBuilder` 1484,
+`ActivationDispatcherTest` 1392, `FlezhaProcessor` 1075, `ActivationDispatcher` 993);
+functions>50 **11**; and the ratchets that will move — `narrative_markers` 6→0,
+`sleeps` 6→1, `long_names` 7→1.
+
+**The survey measured the risk that sank a previous area rather than fearing it.**
+Area 3 learned that a split *multiplies* `duplicate_pairs`. This survey ran jscpd on
+scratch arms before proposing anything: HEAD **68**; a 9-file split with the import
+header copied → **84**; the same split carrying only the imports each file uses →
+**69**; merging three testing files → **66**. The mitigation (`spotless:apply`, already
+configured with `removeUnusedImports`, before any batch reports numbers) is therefore
+a measurement, not a hope.
+
+**The A/B statement is the row-6.5 shape, made before measuring**: there is **no JMH in
+this repository** (`grep -rn jmh` over every pom, workflow and script is empty), so the
+finest instrument for the Java host is a whole-system row floored at ~5 %, and **no row
+here can resolve the ≤2 % a JVM class extraction plausibly costs**. J1 is declared a
+**guard** for the *categorical* failure — a megamorphic site, a lost `ClassValue`, an
+allocation moved onto the per-record path — and explicitly **not** a certificate of a
+2 % absence. J1r is `direction` always. The arm is one `sha256sum` because
+`java_runner.jar` shades every SDK class, and `libflz_core_ffi.so` being identical
+across arms is what makes any delta Java-side.
+
+**Cross-SDK answered with five checks, none deferred** — the `HostClassDecl` key
+fixture, a `javap -protected` public-signature diff, the 17 JNI names untouched, a
+≥12-char string-literal diff for defaults, and fixtures living in a different area.
+
+### The ruling the survey asked for: fix the classifier, as batch 0
+
+Three metrics read as **more defects than they are**, and I verified the decisive one
+from source: **`StableId` is `public record StableId(long hi, long lo)`** — a record
+header the classifier counts as a 50-line function. The other two are the same kind of
+error (a regex matching domain vocabulary — "no longer owns this key after a rescale" —
+and constructors reported under their public exception class name).
+
+**Ruled: fix it, in batch 0, before any code moves.** Three reasons. A gate that counts
+the wrong thing **makes the wrong work look required** — six of seven `long_names` are
+names that are already right. The programme has done exactly this before, mid-area, and
+recorded it as a *measurement correction* (area 3's `6818eec1`, where `brace_extent`
+stripped `#` as a comment and hid a 348-line function). And it must be batch 0 or the
+before/after numbers are read off two different rulers.
+
+**The guard, because this LOOSENS ratchets** (repo `fn>50` 66→65, `long_names` 14→8):
+the survey simulated the change across **every** area and only `sdk/java` moves. That
+simulation is what separates a correction from a loosening, and it is re-verified after
+the change with the baseline re-recorded and the reason stated.
+
+### What the tree contradicted, and the board is corrected
+
+- **8 441 lines → 8 457** (`baseline.json` already said 8 457).
+- **"Java measures 27–55 % under Rust" is superseded** by KI-34's own 2026-08-30
+  triage: *"OLD AND SOFT… not reproducible"*, re-measured at **11–16 % end-to-end**,
+  with the receive gap inside the rust arm's own 12.1 % spread. The honest form is
+  **direction holds, magnitude unestablished** — and the board carried the old figure
+  into this session's own brief.
+- **`targets.md` is a Phase-0 snapshot** and stale: 147 functions>50 repo-wide against
+  today's 66, and two file sizes that `java-diamond-resume` has since grown.
+
+**And the refactor helps the owed `java-host-dispatch-cost` work** rather than
+foreclosing it: after the split the emit funnel, routing seam and state exchange are
+separately constructible with explicit dependencies, which is what a JMH harness needs
+and what a 993-line file with four private nested classes prevents.
+
+**Two findings outside the area, filed as KI-74 and KI-75** and both verified by the
+supervisor: `scripts/check-jacoco-coverage.py` has **no caller anywhere** — a coverage
+threshold nothing enforces, which reads as an enforced floor to anyone grepping — and
+`sdk/java/flezha-sdk-protobuf/` holds **only** a `target/` tree for a module the
+reactor no longer lists (`grep -c` in `pom.xml` → 0), untracked and therefore invisible
+to every gate.
+
+*Last seen 08:57* — 21 m in. All four artefacts written (`proposal.md`, `design.md`,
+`tasks.md`, `specs/`) with the **tree still clean** — a survey that changed no code,
+which is the requirement. Machine idle at load 0.29, **no leaked `mvn` or `java`**,
+the stated hygiene risk for a Java area. Earlier at 08:46 — 10 m in, tree clean, no
+proposal yet, load 0.30.
+
+**Observation for the invariant, not a problem yet**: `ListAgents` showed a **second
+subagent** (`a86bbce…`, since *completed*) that this supervisor did not spawn — the
+survey worker delegated. The one-worker-at-a-time rule is about who may edit the
+shared tree, and a survey edits nothing, so nothing was violated here. But a worker
+that spawns workers is worth knowing about: if an *implement* worker did it, two
+agents could write the same files with neither aware of the other. Worth a line in a
+future implement brief.
+
+### Row 8 — the uncaptured-log gate is PROVED, and Phase 1 closes
+
+Not a change; the supervisor ran it directly, which is what it is for.
+
+**The gate catches what it exists to catch.** A scratch uncaptured `Logger.error` in
+a test module: `mix test` **exit 0** — a *green* suite — while the CI grep
+(`elixir.yml:159`–`:163`) reports **1** hit. That is the whole point: a suite can pass
+and still leak, and the gate is what notices. Scratch removed, file restored
+**byte-identical** by `sha256sum -c`.
+
+**Then two full runs, different seeds — 793795 and 161433 — both `exit 0`, 1872
+passed, ZERO gate hits**, tree clean after.
+
+**This is the first time the merge gate at `elixir.yml:150`–`:163` can actually
+report**, and it took five rows to get here: KI-48 and KI-49 (row 2), KI-54 (row 4),
+KI-53 (row 7), plus the two sources rows 2 and 4 found that nobody had filed. The
+board's earlier claim that three lines stood between the gate and green was one run's
+sample; the true count was five sources across four changes.
+
+**`code-quality-baseline`'s SHALL about the gate now holds in practice**, not just in
+text.
+
+**The row 7 shutdown-noise risk did not materialise in either run** — the fix stops
+the log at shutdown where HEAD logged one line, and neither clean run carried it.
+Honest caveat: KI-53's own line was 1-in-6, so two runs are two data points, not a
+proof of absence. If it appears later it is expected, understood and recorded — not a
+new defect.
+
+### Phase 1, in total
+
+Eight rows, ~20 commits, and the through-line is that **a defect list is a set of
+hypotheses**. Of the entries these rows carried: KI-21 no longer reproduced at all;
+KI-54's filed mechanism was refuted; KI-33's diagnosis was wrong in both halves;
+KI-23's remedy was unenforceable as filed; KI-18's "most urgent" item was already
+done; KI-13 turned out not to be a repo defect; and KI-3's own published harness did
+not run. Meanwhile the work **found more than it was given** — KI-59 through KI-73,
+including two P1s in code every SDK compiles in, and KI-73, which held row 6.5 open
+until the transport genuinely stopped discarding frames.
+
+
+
+### Row 7 — `close-input-log-syncer-blindness` is DONE — `81fc0db2`
+
+Archived as `2026-08-31-close-input-log-syncer-blindness`, one ADDED requirement on
+`durable-input-log`. `mix test` **1872 passed, exit 0, zero uncaptured-log gate
+hits**; `--include system` 1953; `--check` exit 0.
+
+**The survey found a worse half nobody had filed**, and it is what made the design
+question answerable. The filed defect was silent fsyncs (ten sends to a dead pid with
+the batcher's dirty set empty). The unfiled one: `sync_now/1` was a bare `receive`
+with no `after`, so a `:fsync` **call** against a dead syncer **wedged the GenServer
+permanently** — alive, answering nothing, every append for that class parked forever,
+reachable through graceful shutdown's final flush.
+
+**Both halves proved red on HEAD by the supervisor**, not accepted on report:
+`left: 10, right: 0`, and the log pinned in `sync_now/1` at line 531 with
+`status: :waiting`. Restored byte-identical. The two negative controls are
+**separated** — reverting only the monitor reddens only the wedge test, reverting
+only the `{:EXIT, …}` clause reddens only the count — which is what proves two
+mechanisms rather than one wearing two hats.
+
+**The false comment was the cause and is now the fix's centrepiece.** `sync_now/1`
+said *"the caller's call timeout bounds the wait"*. It bounds the caller, never the
+callee. A sentence that is confidently wrong about which process a timeout protects
+is worth more attention than the missing clause it hid.
+
+### The worker overrode a supervisor instruction, correctly
+
+My brief named a new file, `input_log_syncer_test.exs`. It declined, because a new
+`async: false` module moves the **blocking** `test async_false_share` row — and cited
+charter §9, which folds an incident file into the behaviour file anyway.
+
+**I verified the claim rather than taking it**: a scratch `async: false` test file
+moves the metric **0.813 → 0.814** and `--check` goes **exit 1, BLOCKING**. The brief
+was wrong and following it would have landed a change that fails a blocking gate.
+
+That is the behaviour I want from a worker: override an instruction **with a
+measurement and a charter citation**, and say so in the report. The failure mode is
+the opposite — following a brief into a red gate and reporting it as the brief's
+fault.
+
+### Accepted at close, and it is row 8's to measure
+
+At application shutdown the app master kills processes in unspecified order — KI-53's
+original condition. Where HEAD logged one `[error] … unexpected message`, the fix now
+**stops** the log, and `gen_server` plus the supervisor each report that at
+`[error]`. Zero hits in the close-out run, but KI-53's own line was 1-in-6.
+
+**Left in place deliberately.** Suppressing it means special-casing a shutdown-shaped
+reason, which re-hides the failure the row exists to close, and it would be
+optimising the gate rather than the system. **Row 8 measures it** — if the gate goes
+red there, that is information row 8 must have and not something to have hidden in
+advance.
+
+### Row 6.5 — `close-transport-send-buffer-loss` is DONE
+
+Three segments, archived as `2026-08-31-close-transport-send-buffer-loss`. Tag
+`refactor-baseline-6.5`.
+
+| segment | commit | what |
+|---|---|---|
+| A | `269072b9` | both defects reproduced on the ungated build; the shared gate |
+| B | `443903f9` | the park; the QUIC client (KI-70/71); the dead `send_data` NIF |
+| C | `3e22f480` | **KI-73** — the sender raises the gate; the knobs; the close-out |
+
+**The guarantee is now true, and the supervisor proved it on the same file that
+disproved it.** Running KI-73's harness unchanged, three times:
+
+```
+SENDER: %{ok: 400}
+FINAL:  frames_written=400 write_buffer_dropped=0
+```
+
+against the `write_buffer_dropped=79` the identical file produced before segment C.
+Every frame delivered, nothing discarded, and the crossing is exact — 107 frames of
+64 KiB against a 6.71 MiB mark, call 108 refused.
+
+**Holding the row open was the right call and it is the row's main lesson.** After
+segment B everything was green — 1870 tests, clippy clean, both original defects
+"fixed" — and the platform still dropped 20 % of a burst under an `:ok`. The thing
+that caught it was a worker writing the test that would have proved its own work,
+finding the assertion would be false, and **declining to omit it quietly**. Had that
+assertion been skipped, this row would have archived a spec requirement
+(*Congestion increments nothing*) that the code did not meet.
+
+**Final state, supervisor-verified**: `mix test` **1870 passed, exit 0, zero
+uncaptured-log gate hits**; `--include system` **1951**; cargo **147 + 20 + 45**;
+clippy **0**; `refactor_metrics.py --check` **exit 0**; five naming gates green and
+`check-kind-naming` red only on pre-existing prose, with row 6.5 contributing **zero**
+after one capacity-sense phrase was classified in the allowlist.
+
+**`git add -N` earned its place a third time.** The worker measured "row 6.5
+contributes zero" before its own new dev note existed to the gate; intent-adding it
+surfaced one more hit. Every checkpoint this session that skipped that step read a
+gate's exit code for the wrong reason.
+
+**A warning worth more than this row**: `refactor_metrics.py --write-baseline`
+**without `--lint` writes `null` into every `credo_warnings` and `clippy_warnings`**,
+and `--check` skips a null on either side — so every credo ratchet silently stops
+blocking. The worker hit it, saw it in the diff, and re-recorded with `--lint`.
+Verified at close: 36 areas, **0 credo nulls**, repo **378** — row 3.5's ratchet
+survives.
+
+**KI-72 stays open on purpose** and is named *inside* the requirement: the QUIC
+driver emits no `DriverStats`, so this row's reporting half is UDS-only and a reader
+cannot conclude otherwise. It joins KI-68 and KI-69 as the runner/controller-seam
+group to be surveyed together.
 
 ### Row 6.5 segment B — verified 2026-08-31, commit `443903f9`
 
@@ -308,7 +618,7 @@ otherwise excellent; a rewrite cycle would cost more than it buys):
 |---|---|---|---|
 | A | 1, 2 | make both defects reproducible; the shared gate | **done**, `269072b9` |
 | B | 3, 4 (+KI-70/71, send_data) | the sender side; the QUIC client fix; the dead NIF | **done**, `443903f9` |
-| C | 5, 6 (+**KI-73**) | **fix KI-73 first — the row cannot close without it**; configuration; prove it and close out | next |
+| C | 5, 6 (+KI-73) | KI-73 fixed; configuration; the close-out | **done**, `3e22f480` |
 
 
 
@@ -1589,9 +1899,9 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | **DONE** — `656fd444`, `9820f75d`, `5946464e`, archived. Four of its own entries were refuted or already fixed. Also closed KI-66 and KI-67; filed KI-68 and KI-69. |
 | 5+6 | `correct-runtime-and-conformance-docs` | KI-13, KI-51 | **DONE** — `e4f919c8`, archived. Found a second stale list the entry never named, and fixed it as one list rather than a corrected copy. **MERGED and re-scoped 2026-08-31.** KI-13's own triage says it is **not a defect in this repository** — there is no repo code to change, only a `docs/sdk/conformance.md` line recording the shim's `docker run` (with `--network host` and `-i`). KI-51 is a one-line help string. Together they are one small change, not two rows. |
 | ~~6~~ | — | KI-52 | **NOT WORK — escalated** to *Awaiting the user's decision*. It is a distribution-shape call ("does this block going public"), not a defect: nothing is broken and there is no reproduction to run. Its other half, KI-51, moved to row 5+6. |
-| 6.5 | `close-transport-send-buffer-loss` | **KI-3 (P1), KI-56 (P1)** | **Queued 2026-08-30 by the user; proposal WRITTEN and `--strict` valid.** One watermark gate replaces UDS's silent drop and gives QUIC the bound it never had; the sender parks a BEAM process, never a scheduler thread. Four knobs (both watermarks, the gate's fallback interval, credit's `PARK_TIMEOUT`). Does NOT replace the credit system — see the KI-3 entry above for why they compose. |
-| 7 | `close-input-log-syncer-blindness` | **KI-53 (P1)** | **New, found 2026-08-30 by the gate this programme just proved.** Not a log line: `InputLog` cannot tell that its fsync companion died, and keeps sending to a dead pid. Design question — re-spawn the syncer, or stop the log so its supervisor restarts the pair. Needs its own test; do NOT answer it with a `{:EXIT, _, _}` clause that returns `{:noreply, state}`. |
-| 8 | — | the gate itself | Not a change: after rows 4 and 7 land, re-run the batch-5 proof (a scratch uncaptured `Logger.error` must turn the gate red while `mix test` exits 0) and confirm two full runs clean. Only then is the gate reliable, and only then does `code-quality-baseline`'s new SHALL hold in practice. |
+| 6.5 | `close-transport-send-buffer-loss` | **KI-3, KI-56, KI-70, KI-71, KI-73** | **DONE** — `269072b9`, `443903f9`, `3e22f480`, archived. Closed five P1s; KI-73 was found by the test written to prove the work, and held the row open until nothing dropped. **Queued 2026-08-30 by the user; proposal WRITTEN and `--strict` valid.** One watermark gate replaces UDS's silent drop and gives QUIC the bound it never had; the sender parks a BEAM process, never a scheduler thread. Four knobs (both watermarks, the gate's fallback interval, credit's `PARK_TIMEOUT`). Does NOT replace the credit system — see the KI-3 entry above for why they compose. |
+| 7 | `close-input-log-syncer-blindness` | **KI-53 (P1)** | **DONE** — `81fc0db2`, archived. The survey found a second, unfiled half: `sync_now/1`'s bare `receive` wedged the log permanently. Both halves red-first with separated controls. |
+| 8 | — | the gate itself | **DONE 2026-08-31.** Proved red (a scratch uncaptured `Logger.error` gives `mix test` exit 0 with 1 gate hit), then **two full runs at different seeds, both 1872 passed with zero hits**. The merge gate can report for the first time. |
 
 **Do not touch, and do not let a worker "helpfully" fix:**
 

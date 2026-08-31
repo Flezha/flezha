@@ -29,6 +29,8 @@ defmodule Flezha.State.InputLog do
 
   use GenServer
 
+  require Logger
+
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
@@ -467,6 +469,34 @@ defmodule Flezha.State.InputLog do
   end
 
   @impl true
+  # The sync companion is this log's only link and holds the descriptor every
+  # append's durability rides on, so its death is a durability failure and must
+  # be loud. Stopping is what makes it loud AND recoverable: `terminate/2`
+  # datasyncs the window the companion owed, and the `:transient` restart opens
+  # a fresh pair — `handle_continue(:open)` creates the class directory, so a
+  # log whose directory went away heals on the way back up.
+  def handle_info({:EXIT, syncer, reason}, %{syncer: syncer} = state) do
+    :telemetry.execute(
+      [:flezha, :state, :input_log_syncer_died],
+      %{count: 1},
+      %{operative: state.operative_class, reason: reason}
+    )
+
+    {:stop, {:input_log_syncer_died, reason}, state}
+  end
+
+  # Defining any `handle_info/2` replaces `GenServer`'s default one, which is
+  # what names an unrouted message. This says the same thing, at the same level.
+  def handle_info(message, state) do
+    Logger.error(
+      "#{inspect(__MODULE__)} #{inspect(self())} received unexpected message " <>
+        "in handle_info/2: #{inspect(message)}"
+    )
+
+    {:noreply, state}
+  end
+
+  @impl true
   def terminate(_reason, state) do
     if state.file_handle do
       _ = :file.datasync(state.file_handle)
@@ -524,14 +554,23 @@ defmodule Flezha.State.InputLog do
     end
   end
 
-  # The synchronous flush (`flush_now`, shutdown): the caller's call timeout
-  # bounds the wait.
+  # The synchronous flush (`flush_now`, shutdown). The companion is the only
+  # process that can answer, so the monitor is the bound: a caller's call
+  # timeout bounds the caller, never this loop, and an unbounded wait here
+  # parks every append the log owes for the rest of its life. `:error` is what
+  # the `FsyncBatcher` already reads as "still dirty, sync it on the next
+  # drain", so a lost sync is retried rather than reported durable.
   defp sync_now(syncer) do
-    ref = make_ref()
+    ref = Process.monitor(syncer)
     send(syncer, {:sync, self(), ref})
 
     receive do
-      {^ref, :ok} -> :ok
+      {^ref, :ok} ->
+        Process.demonitor(ref, [:flush])
+        :ok
+
+      {:DOWN, ^ref, :process, _pid, _reason} ->
+        :error
     end
   end
 

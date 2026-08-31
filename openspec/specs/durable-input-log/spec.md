@@ -256,3 +256,43 @@ The host process of an effectively-once operative SHALL NOT wait on the input lo
 - **WHEN** the input log exits while an append is in flight and the re-issued append finds no log
 - **THEN** the confirming call receives `{:error, :refused}` and the input is not forwarded
 
+### Requirement: A dead sync companion stops the log
+
+The log SHALL stop when its sync companion exits, rather than continue with a
+companion that syncs nothing. It SHALL first report the death, naming the
+operative class and the exit reason, so the loss of durability is observable
+rather than inferred from a missing sync. Its termination SHALL datasync and
+close its own handle, so the window the companion owed reaches disk, and the
+restart that follows SHALL open a fresh handle pair, creating the class
+directory if it is absent.
+
+The synchronous flush SHALL answer a failure rather than wait when the
+companion cannot answer. The failure is what the fsync batcher already reads as
+"this writer did not confirm its sync": the writer stays dirty and is synced on
+the next drain, so a lost sync is retried rather than reported durable. The
+flush SHALL NOT depend on its caller's timeout to bound it.
+
+A message the log does not route SHALL be reported at error level, naming the
+message, and SHALL NOT stop the log.
+
+#### Scenario: A dead companion receives no further sync ticks
+
+- **WHEN** the sync companion exits and the fsync batcher's tick then drives the
+  log's class
+- **THEN** no sync tick is sent to the exited companion, the death is reported
+  naming the operative class and the reason, and the class's log is serving
+  again with a live companion
+
+#### Scenario: A synchronous flush against a dead companion is answered
+
+- **WHEN** a synchronous flush reaches the log while its companion is dead and
+  the companion's exit has not yet been handled
+- **THEN** the flush is answered with a failure, the writer stays dirty for the
+  next drain, and the log does not park waiting for an answer that cannot come
+
+#### Scenario: An unrouted message is reported and survived
+
+- **WHEN** a message the log does not route arrives
+- **THEN** it is reported at error level naming the message, and the log keeps
+  serving
+

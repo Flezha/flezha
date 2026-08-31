@@ -40,235 +40,6 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
-### KI-73 · The send gate holds the sender one frame too late, and ~20 % of a burst is still discarded under an `:ok`
-
-- **Severity**: P1 · **REPRODUCED**, 4 of 4 runs, deterministic. Found while
-  implementing the sender-side hold for `close-transport-send-buffer-loss`
-  (row 6.5 segment B), by the test written to prove the hold works.
-- **Where**: `flz_nif/src/stream.rs` `send_frame` reads
-  `SendGate::is_raised`, which is written only by `SendGate::observe` —
-  called from `uds_driver::flush_pending` **on the driver thread**.
-  `flz_nif/src/uds_driver.rs` `enqueue_write` then offers each queued frame to
-  `SendGate::offer`, which discards at the ceiling and answers `false`; that
-  answer is used only to decide whether to close the stream.
-- **What happens**: the gate bit lives on the far side of an unbounded command
-  channel and nothing accounts for what the sender has already queued into it.
-  A sender in a burst therefore issues hundreds of `send_frame` calls before
-  the driver has crossed the high-water mark and set the bit. Every one of
-  those is queued, offered to a buffer already at the cap, and **discarded** —
-  and `send_frame` answered `:ok` for all of them. The hold itself works: the
-  sender is refused exactly once and released when the buffer drains. It is
-  simply taken after the loss.
-- **Why it matters**: this is KI-3 surviving its own fix at one fifth the
-  rate. The row's stated guarantee — a bounded send buffer signals congestion
-  rather than discarding — and the `controller-send-buffer-bound` scenario
-  *"Congestion increments nothing"* are both false while it stands.
-- **It refutes a design claim that was measured**: `design.md` D13 recorded 83
-  overshoot frames on the ungated build and stated *"The residual 83 are what
-  batch 3 removes, by parking the sender instead of letting it discover the
-  refusal one frame at a time."* Parking removes the *repeat* refusals, not the
-  overshoot: the overshoot is everything the sender queued before the bit was
-  set, and the park cannot begin until it is.
-- **Reproduction** — KI-3's harness with the channel and the hold in the path:
-  a real UDS driver, a real peer that connects and never reads, a real
-  `StreamChannel` owning the stream, and one sender on `io_in/3`. The sender
-  runs in its own process because `io_in/3` holds the calling one.
-
-  ```elixir
-  # /tmp/ki73.exs
-  alias Flezha.Runner.StreamChannel
-  alias Flezha.Transport.{LivenessCounters, Native}
-  Application.ensure_all_started(:telemetry)
-  LivenessCounters.ensure_table()
-
-  path = Path.join(System.tmp_dir!(), "ki73_#{System.unique_integer([:positive])}.sock")
-  {:ok, server} = Native.start_uds_server(path, self())
-  {:ok, peer} =
-    :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
-  stream = receive do: ({:flz_connection, s} -> s), after: (5_000 -> raise "no conn")
-
-  name = :ki73_channel
-  {:ok, pid} = StreamChannel.start_link({"ki73_runner", name, :primary})
-  :ok = Native.controlling_process(stream, pid)
-  :ok = GenServer.call(pid, {:bind, stream})
-
-  test = self()
-  payload = :binary.copy("x", 64 * 1024)
-  spawn(fn ->
-    r = Enum.map(1..400, fn i -> StreamChannel.io_in(name, "op_#{i}", {payload, %{}}) end)
-    send(test, {:done, Enum.frequencies(r)})
-  end)
-
-  Process.sleep(700)
-  st = hd(Native.driver_stats(server).streams)
-  %{channels: ch} = LivenessCounters.snapshot_all()
-  c = Enum.find(ch, &(&1.name == name))
-  IO.puts("HELD: send_gate_held=#{c.send_gate_held} send_frame_calls=#{c.send_frame_calls}")
-  IO.puts("DRIVER: frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
-
-  # Drain, so the gate lowers and the held sender is released.
-  spawn(fn ->
-    d = fn d -> if match?({:ok, _}, :gen_tcp.recv(peer, 0, 3_000)), do: d.(d) end
-    d.(d)
-  end)
-
-  receive do: ({:done, f} -> IO.puts("SENDER: #{inspect(f)}")), after: (20_000 -> IO.puts("hung"))
-  st = hd(Native.driver_stats(server).streams)
-  IO.puts("FINAL: frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
-  _ = Native.stream_id(stream)
-  Native.stop_server(server)
-  ```
-
-  ```
-  $ MIX_ENV=test mix run --no-start /tmp/ki73.exs
-  HELD: send_gate_held=1 send_frame_calls=211
-  DRIVER: frames_written=131 write_buffer_dropped=79
-  SENDER: %{ok: 400}
-  FINAL: frames_written=321 write_buffer_dropped=79
-  ```
-
-  321 written + 79 discarded = 400, and the sender was told `:ok` 400 times.
-  Four runs: 78, 79, 79, 92 discarded. The loss is a single burst at the
-  crossing — the counter does not move again once the sender is pacing with
-  the driver — so it is bounded by how far ahead the sender got, which nothing
-  bounds.
-- **A fix must** make the sender's own read exact rather than lagging, since
-  no widening of the watermark gap bounds "how far ahead a sender can get".
-  The shape that does it, for the verdict to weigh: `SendGate` gains
-  `inflight` (bytes `send_frame` has queued and the driver has not yet
-  offered) and `buffered` (the depth the driver last observed).
-  `send_frame` adds its length to `inflight` and raises the bit itself when
-  `buffered + inflight` crosses the high-water mark; `enqueue_write`
-  subtracts before offering; the driver still lowers on the drain. The cost is
-  one `fetch_add` and one extra relaxed load on a path that already crosses
-  into a NIF — the same order as the load `design.md` D9 already argues from
-  placement, so the declared A/B rows are unaffected. It also gives the
-  invariant a test that can be written: `write_buffer_dropped == 0` after a
-  congested burst, which is the assertion
-  `test/flezha/runner/stream_channel_send_gate_test.exs` deliberately does not
-  make today.
-- **Not fixed in segment B**: the remedy changes the gate's mechanism rather
-  than a caller, and the verdict on that is the supervisor's.
-
-- **Supervisor verdict 2026-08-31 — REPRODUCED INDEPENDENTLY, and row 6.5 does not
-  close until it is fixed.** I extracted the harness from this entry and ran it
-  unchanged; it matches the filed numbers to the frame on the first run:
-
-  ```
-  HELD:   send_gate_held=1 send_frame_calls=211
-  DRIVER: frames_written=131 write_buffer_dropped=79
-  SENDER: %{ok: 400}
-  ```
-
-  **79 of 400 frames discarded, and all 400 answered `:ok`.** That is KI-3's exact
-  symptom, still reproducing after the gate and the park are in place.
-- **Why this blocks the row rather than being queued.** Row 6.5 exists so the
-  platform's stated guarantee — nothing drops by default — becomes true. Closing it
-  here would commit a change claiming to resolve KI-3 while KI-3's own reproduction
-  still returns 79. Worse, the spec delta's *Congestion increments nothing* scenario
-  is **not satisfiable in this state**, so archiving would publish a requirement the
-  code does not meet. A requirement that is false on the day it lands is the failure
-  this programme spent the session removing from `docs/known_issues.md`.
-- **The mechanism is sound and the fix is small.** The gate bit is written by
-  `SendGate::observe` on the **driver thread**, behind an unbounded command channel,
-  so the sender's view is always behind by whatever is queued — ~210 frames here. The
-  park cannot begin before the bit is set, so it removes the *repeat* refusals and not
-  the *overshoot*. Fix shape, from the entry: `SendGate` gains `inflight` + `buffered`
-  and **`send_frame` raises the bit itself** — one `fetch_add` and one relaxed load,
-  the same order of cost D9 already argues from placement.
-- **It refutes `design.md` D13**, which claimed the residual 83 frames measured at
-  segment A were "what batch 3 removes". They are not: parking removes repeats, and
-  the overshoot is everything queued before the bit was set. D13 must be corrected,
-  not quietly dropped — it is a measured claim that turned out wrong.
-- **Credit where due**: this was found by the test written to prove the hold works,
-  and the worker then declined to assert `write_buffer_dropped == 0` in that test
-  because the assertion would have been false. A test that quietly omits the
-  assertion its subject cannot yet pass is how KI-67 happened; naming the omission is
-  the opposite.
-
-### KI-70 · The QUIC client drops a frame and tells its caller every byte was written
-
-- **Severity**: P1 · **read-established from the code; not driven at runtime**
-  (see *Evidence*). Found 2026-08-31 while reading the send-buffer sites for
-  `close-transport-send-buffer-loss`.
-- **Where**: `flz_transport/src/transport/quic.rs:543` (`write_or_buffer`),
-  reached from `QuicBidiStream::write` → `DriverCommand::Write` →
-  `handle_command`.
-- **What happens**: the QUIC **client**'s per-stream send buffer is bounded by
-  `would_overflow_write_buffer`, and at the ceiling it does
-  `slot.write_buffer_dropped += 1`, logs one `tracing::warn!`, and then
-  `let _ = reply.send(Ok(total_len))` — it answers its caller that the whole
-  frame was written. `std::io::Write::write` returning `Ok(n)` means `n` bytes
-  were accepted; a caller has no way to tell this apart from a real write, and
-  `slot.write_buffer_dropped` is per-slot state read by nothing.
-- **Why it matters more than it looks**: this is not Rust-SDK-only code.
-  `flz_core → flz_transport` and `flz_core_ffi → flz_transport`, so every SDK
-  that reaches the controller over QUIC compiles this path in. It is KI-3's
-  defect — a silent drop under an `:ok` — on the runner → controller side of
-  the same socket, and the `close-transport-send-buffer-loss` proposal names
-  neither the file nor the behaviour.
-- **Evidence**: the code, quoted above; `grep -n would_overflow_write_buffer
-  flz_transport/src/transport/quic.rs` → `543`, and the reply on the line after
-  the counter bump. **A runtime drive was NOT run**: `write_or_buffer` needs a
-  live `quinn_proto::Connection`, and the only in-memory pair harness in the
-  tree is `flz_nif/src/quic_driver_tests.rs`, on the other side of a crate
-  boundary. Porting it is the first task of the fix, not of the filing.
-- **A fix must** decide this site together with KI-3 and KI-56 — one answer for
-  all three send buffers — and in the meantime must not leave a `Write` impl
-  reporting bytes it discarded.
-
-- **Supervisor verdict 2026-08-31 — REAL, confirmed from source, and folded into
-  row 6.5 (segment B).** Read at `flz_transport/src/transport/quic.rs:543`:
-  `write_or_buffer` increments `write_buffer_dropped`, logs, and then
-  `let _ = reply.send(Ok(total_len))` — it reports **every byte written** for a
-  frame it discarded. That is KI-3's defect on the runner→controller side.
-- **It belongs in this row, not a later one.** Row 6.5 exists to stop the transport
-  losing data silently. Closing the UDS driver and the QUIC driver while leaving the
-  **client** path answering `Ok(n)` on a dropped frame would ship a half-fix whose
-  remaining half is in code **every SDK compiles in** (`flz_core → flz_transport`,
-  `flz_core_ffi → flz_transport`). The proposal's Impact names neither the file nor
-  the behaviour; that is a scope correction, recorded as D11, not a new change.
-
-
-### KI-71 · A second concurrent write on one QUIC client stream discards the first one's buffered remainder
-
-- **Severity**: P1 · **read-established from the code; not driven at runtime**.
-  Found beside KI-70.
-- **Where**: `flz_transport/src/transport/quic.rs`, `write_or_buffer`'s
-  `Err(WriteError::Blocked)` arm: `slot.write_buf = data;` followed by
-  `slot.pending_write_reply = Some((total_len, reply));`.
-- **What happens**: both statements **assign**, they do not append. When a
-  previous call left a partial write buffered (`slot.write_buf` non-empty and
-  `pending_write_reply` `Some`), a second call that blocks replaces the
-  buffered bytes with its own and replaces the pending reply sender. The first
-  writer's remaining bytes are gone from the stream — a torn frame, not a
-  dropped one — and its `reply_rx.recv()` sees the dropped sender and reports
-  `BrokenPipe "Driver reply dropped"`, which names neither the stream nor the
-  loss.
-- **Reachability**: `QuicBidiStream::clone_handle` shares one `cmd_tx` and one
-  `stream_id` across handles, and `impl Write for &QuicBidiStream` exists so an
-  `Arc<FlezhaStream>` can be written from several threads. Two threads writing
-  one stream while the peer's window is full is the condition.
-- **Evidence**: the code. **Not driven**: reproducing it needs two concurrent
-  writers on one stream against a stalled peer, i.e. the same live pair harness
-  KI-70 is waiting on.
-- **A fix must** append rather than assign, and answer the earlier waiter
-  rather than dropping its sender — or refuse concurrent writers on one stream
-  outright, and say so where `clone_handle` invites them.
-
-- **Supervisor verdict 2026-08-31 — REAL, and fixed in the same pass as [[KI-70]]**,
-  because it is in the same function. `slot.write_buf = data;` and
-  `slot.pending_write_reply = Some(...)` both **assign**, so a second concurrent
-  write on one stream discards the first's buffered remainder — a torn frame — and
-  drops its reply sender.
-- **Requirement on the fix**: it is **read-established, not driven**, and it does not
-  ship on that footing. `write_or_buffer` needs a live `quinn_proto::Connection`, and
-  segment A built exactly such a harness on the other side of a crate boundary
-  (`flz_nif/src/quic_driver_tests.rs`). Porting it is the **first task of the fix**.
-  If the drive cannot be made to fail inside the timebox, the fix does not land and
-  the entry stays filed — a torn-frame fix nobody has seen fail is the KI-67 shape.
-
-
 ### KI-72 · The QUIC driver reports no driver stats at all, so nothing above it can see the transport
 
 - **Severity**: P2 · **established**, and it is why KI-56's own reproduction
@@ -320,68 +91,6 @@ below is all that survives — which is enough to write it again.
   change into an instrumentation change. It is queued with KI-68 and KI-69 as the
   runner/controller-seam group to be surveyed together.
 
-
-### KI-56 · The QUIC driver's send buffer has no cap at all
-
-- **Severity**: P1 · **read-established, NOT reproduced** — filed 2026-08-30
-  while answering a question about KI-3, by reading both drivers side by side.
-  The reproduction is owed; see *What would confirm it* below.
-- **Where**: `flz_nif/src/quic_driver.rs:533` (`write_stream`) and `:664`
-  (`flush_quic_write`), against `flz_nif/src/uds_driver.rs:474`
-  (`enqueue_write`).
-- **What happens**: the UDS driver bounds its per-stream send buffer —
-  `would_overflow_write_buffer(buffered, incoming, cap)`, 8 MiB by default,
-  `DropNewest` once non-empty. **The QUIC driver calls that predicate nowhere.**
-  `write_stream` does an unconditional `write_buffer.extend_from_slice(&data)`,
-  and `flush_quic_write` treats `quinn_proto::WriteError::Blocked` — the peer's
-  QUIC flow-control window being full — as a no-op that leaves the bytes
-  buffered. So the same condition that makes UDS *drop* (a peer that stops
-  draining) makes QUIC **grow without bound**.
-- **Two transports, two different failure modes, neither reported.** UDS loses
-  data silently; QUIC risks the process. This repository already carries a
-  production OOM whose root cause was unbounded buffers
-  (`controller-oom-rootcause-unbounded-wal-buffers`), so unbounded growth here
-  is not a hypothetical class.
-- **The documentation asserts the opposite.** `flz_transport/src/transport/
-  config.rs:34` introduces the cap as "Per-stream send-buffer cap **shared by
-  the UDS and QUIC drivers**", and `would_overflow_write_buffer`'s own doc calls
-  itself "the one predicate behind **every** driver's send-buffer bound". Both
-  sentences are false as written: `grep -n would_overflow_write_buffer
-  flz_nif/src/quic_driver.rs` returns nothing. A reader checking whether QUIC is
-  bounded finds a doc comment saying yes.
-- **What would confirm it** (as filed): a QUIC stream whose peer connects,
-  completes the handshake and never reads, then a sustained write; watch the
-  driver's `write_buffer_len` (already emitted as `driver_write_buffer_bytes`
-  by `TransportSource.emit_driver_stats/2`) grow past 8 MiB without bound and
-  without a `write_buffer_dropped` bump.
-- **That reproduction cannot be performed, and the reason is KI-72.** The QUIC
-  driver produces no `DriverStats` at all: `flz_nif/src/server.rs:111` sets
-  `stats: None` for `start_quic_server` and `driver_stats/1` answers
-  `:undefined` for it, so `driver_write_buffer_bytes` is emitted for UDS only
-  and has no QUIC value to grow. There is also no `write_buffer_dropped` on
-  this driver to stay at zero.
-- **REPRODUCED (2026-08-31), by another route**: an in-memory `quinn_proto`
-  pair — `flz_nif/src/quic_driver_tests.rs` — whose client completes the
-  handshake and never reads a byte, driving the driver's own
-  `flush_quic_write` over the driver's own buffer.
-
-  ```
-  $ cargo test -p flz_nif --lib -- --nocapture quic_driver::tests
-  ungated quic write_buffer: offered=52428800 buffered=44040192 cap=8388608
-    (x5.2 the cap); after first burst=17825792 growth=26214400 refused=0
-  quic write_buffer with a draining peer: buffered=0 read=26214400
-  ```
-
-  25 MiB offered leaves 17 MiB buffered — 2.1x the cap — and offering 25 MiB
-  more buffers **all of it** (`growth=26214400`, byte for byte): there is no
-  bound to hold at, which is a stronger statement than "it exceeded the cap".
-  **Control**: the same harness against a peer that reads leaves
-  `buffered=0`, so a clean result is one this probe can report.
-- **A fix must** decide the two transports' behaviour together, not separately —
-  which is the same decision KI-3 is waiting on. Bounding QUIC the way UDS is
-  bounded would give it UDS's silent-drop defect; leaving it unbounded keeps the
-  OOM path. Whatever backpressure answer KI-3 takes should cover both, and the
-  doc comments are corrected in that change either way.
 
 ### KI-57 · UDS socket paths overflow `sun_path` in a full run, and a test dies of it
 
@@ -529,82 +238,6 @@ below is all that survives — which is enough to write it again.
   symmetric. Note that the workflow arm now depends on `valuesForEntity` being
   the consumer-side application — removing it would silently drop workflow edge
   transforms.
-
-### KI-3 · UDS write-buffer drops are invisible to the caller
-
-- **Severity**: P1 · **investigation first**, then proposal.
-- **Where**: the UDS driver behind `Flezha.Transport.Native.send_frame/4`.
-- **What happens**: the write buffer's overflow policy is `DropNewest`, and
-  `send_frame/4` answers `:ok` regardless. Only
-  `driver_stats.write_buffer_dropped` records the loss.
-- **Impact**: this is the last silent-drop default in the platform, against a
-  stated guarantee that nothing drops by default (see
-  `docs/dev_notes/close-silent-data-loss-defaults.md`).
-- **Why not proposed yet**: the fix shape is not obvious — the cast path cannot
-  simply block without reintroducing the wedge that
-  `nonblocking-drop-nothing-backpressure` removed. Needs a design pass first.
-- **A fix must**: decide what a caller is told when the buffer is full, without
-  parking a host thread.
-- **Triage (2026-08-30)**: **REAL**, reproduces at defaults, and the blind spot
-  is wider than filed. `enqueue_write` (`flz_nif/src/uds_driver.rs:474`) still
-  drops on `would_overflow_write_buffer` and only bumps `write_buffer_dropped`;
-  `send_frame` (`flz_nif/src/stream.rs:25`) still answers `atoms::ok()`
-  unconditionally, and does not even check the `cmd_tx.send` result (`let _ =
-  …`) — so a dead driver thread is a *second* drop path that is not counted at
-  all. Correction to the entry: it is not only the caller that cannot see the
-  loss. Nothing in `lib/` reads `write_buffer_dropped`.
-  `TransportSource.emit_driver_stats/2`
-  (`lib/flezha/observability/otp_backend/transport_source.ex:90`) emits
-  `write_buffer_len` — the depth — and never the drop counter; no liveness
-  verdict names it; the only reader in the tree is the printout at
-  `lib/mix/tasks/bench/roundtrip.ex:698`. A production drop is invisible to the
-  caller *and* to the platform.
-- **Reproduction** — a UDS driver with a peer that connects and never reads. No
-  env tuning: the default 8 MiB cap is enough.
-
-  ```elixir
-  # /tmp/ki3.exs
-  alias Flezha.Transport.Native
-  path = Path.join(System.tmp_dir!(), "ki3_#{System.unique_integer([:positive])}.sock")
-  {:ok, server} = Native.start_uds_server(path, self())
-  # A peer that connects and NEVER reads.
-  {:ok, peer} = :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
-  stream = receive do: ({:flz_connection, s} -> s), after: (5_000 -> raise "no connection")
-  payload = :binary.copy("x", 64 * 1024)
-  replies = for i <- 1..400, do: Native.send_frame(stream, "p#{i}", payload, %{})
-  Process.sleep(500)
-  # Keep the handle live: a collected StreamHandle closes its stream, and the
-  # driver then has no snapshot to report.
-  _ = Native.stream_id(stream)
-  st = hd(Native.driver_stats(server).streams)
-  IO.puts("send_frame replies: #{inspect(Enum.frequencies(replies))} over #{length(replies)} calls")
-  IO.puts("frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped} write_buffer_len=#{st.write_buffer_len}")
-  :gen_tcp.close(peer)
-  Native.stop_server(server)
-  ```
-
-  ```
-  $ MIX_ENV=test mix run --no-start /tmp/ki3.exs
-  send_frame replies: %{ok: 400} over 400 calls
-  frames_written=131 write_buffer_dropped=269 write_buffer_len=8357440
-  ```
-
-  269 of 400 frames dropped; all 400 calls answered `:ok`. Deterministic, 3 of
-  3 runs. **Control** (proving the probe can report a clean result): the same
-  script under `FLEZHA_MAX_WRITE_BUFFER_BYTES=1073741824` prints
-  `frames_written=400 write_buffer_dropped=0`.
-- **Correction to the harness as first filed (2026-08-31)**: it raised
-  `** (ArgumentError) :erlang.hd([])` on 3 of 3 runs, not the numbers above.
-  `stream`'s last use was the `for` comprehension, so the `StreamHandle`
-  resource was collectable before `driver_stats/1` ran; `StreamHandle::drop`
-  sends `CloseStream`, the driver removes the stream, and the snapshot is
-  empty. The `Native.stream_id(stream)` line above is what pins it. A harness
-  in an entry is only durable if it runs.
-- **Worth fixing**: yes. "Investigation first" still stands for the real
-  question — what a caster is told — but two things need no design pass and end
-  the silence on their own: emit `write_buffer_dropped` from `TransportSource`
-  beside `driver_write_buffer_bytes`, and give the stall classifier a clause on
-  it. Loud loss is not the fix, but it is strictly better than this.
 
 ### KI-41 · A re-entrant outbox window advances the watermark before the park it is dispatching is durable
 
@@ -950,49 +583,88 @@ below is all that survives — which is enough to write it again.
   does for the text case — the point of that extraction is that there is one of
   it.
 
-### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT`
+### KI-76 · `composer.lock` pins a dependency above the PHP floor `composer.json` declares, and the format gate reports it as unformatted PHP
 
-- **Severity**: P2 · **proposal owed** — the fix is a production behaviour
-  decision, so `finish-the-suite-log-gate` filed it rather than folding it in,
-  the way `green-the-suite-log-gate` filed KI-48.
-- **Where**: `lib/flezha/state/input_log.ex` — `init/1` sets
-  `Process.flag(:trap_exit, true)` (`:359`), the fsync companion is
-  `spawn_link`ed (`:488`, `start_syncer/1`), and the module has **no
-  `handle_info/2` clause at all**. Every message that is not a call or a cast
-  therefore lands on `GenServer`'s default handler, which logs at `[error]`.
-- **What happens**: the syncer's death arrives as `{:EXIT, pid, reason}` and is
-  reported as
+- **Severity**: P2 · no runtime effect (`sdk/php` ships no vendor tree); it makes
+  `scripts/format-check.sh` red on any PHP 8.1–8.3 box and names the wrong cause.
+- **Where**: `sdk/php/composer.json:` `"require": {"php": ">=8.1"}` with no
+  `config.platform.php`, against `sdk/php/composer.lock`'s
+  `symfony/console v8.1.5`, which requires `php >=8.4.1`. The offending syntax is
+  `sdk/php/vendor/symfony/console/Command/Command.php:681` —
+  `(new \ReflectionClass(static::class)->getAttributes(...)`, PHP 8.4's
+  parenthesis-free `new`. `scripts/format-apply.sh:38` runs
+  `${FLEZHA_PHP:-php}`, so an unset `FLEZHA_PHP` picks the host interpreter.
+- **Reproduction** (this box: system `php` 8.3.6 NTS, vendor tree installed from
+  the `flezha-php` image, which carries 8.4.25):
 
   ```
-  [error] Flezha.State.InputLog #PID<0.9412.0> received unexpected message in
-    handle_info/2: {:EXIT, #PID<0.9413.0>, :killed}
+  $ php sdk/php/vendor/bin/php-cs-fixer fix --dry-run --config .php-cs-fixer.dist.php
+  PHP Parse error:  syntax error, unexpected token "->" in
+    /home/moon/Code/flezha/sdk/php/vendor/symfony/console/Command/Command.php on line 681
+  $ echo $?
+  255
+
+  $ scripts/format-check.sh; echo $?
+  ...
+  UNFORMATTED — run scripts/format-apply.sh:
+    php-cs-fixer
+  FAILED — the output above says why:
+    formatters (scripts/format-apply.sh --check)
+  1
   ```
 
-- **Observed at BEAM shutdown**, *after* `Result: 1840 passed` had printed —
-  the application master's terminate sweep exits the app's remaining processes
-  with `:kill`, and the order is unspecified, so a syncer can be killed while
-  its still-trapping `InputLog` is alive to log it. Two lines in one full
-  `mix test`; **1 of 6** full runs on this box (`errorlines=0` in the other
-  five). Not reproducible from `mix test test/flezha/state/input_log_test.exs`
-  alone (0 of 3 runs, 31 passed) — the logs there are stopped by their own
-  supervisor before the sweep reaches them.
-- **The log line is the small half.** With no `EXIT` clause a syncer that dies
-  for a *real* reason — an `:file.datasync` error, a `{:badmatch, …}` out of
-  `open_raw/1` — is logged as an "unexpected message" and then ignored, and
-  every later `send(state.syncer, :sync)` (`:451`) goes to a dead pid and
-  silently succeeds. **The fsync stops happening and nothing says so**, on the
-  path every effectively-once source waits on. `terminate/2` already sends the
-  syncer `:stop` (`:477`), so the syncer's lifetime *is* meant to be managed;
-  the `EXIT` half is the omission.
-- **A fix must** decide what a dead syncer means rather than just silencing the
-  log: re-spawn it (and say so), or stop the `InputLog` so its supervisor
-  restarts the pair. Matching `{:EXIT, _, _}` and returning `{:noreply, state}`
-  turns a durability hole into a *silent* durability hole and must not be the
-  answer.
+  With the interpreter the vendor tree was installed for, the same files are
+  clean and the gate reports only the genuinely absent tool:
+
+  ```
+  $ FLEZHA_PHP="docker run --rm -u $(id -u):$(id -g) -v $PWD:/work -w /work flezha-php php" \
+      scripts/format-check.sh; echo $?
+  ...
+  Found 0 of 89 files that can be fixed in 0.605 seconds
+  NOT RUN — the tool is not installed here:
+    rubocop — no rubocop: install the development dependency in sdk/ruby/flezha.gemspec
+  2
+  ```
+
+- **Mechanism**: `composer.json` declares the package's PHP floor and nothing
+  pins the *platform* composer resolves against, so a `composer update` run on a
+  PHP 8.4 box locks dev dependencies that the declared floor cannot parse. The
+  lock is tracked; the vendor tree is not, so the mismatch is invisible until an
+  8.1–8.3 interpreter loads it. `gate_run` then sees php-cs-fixer exit non-zero
+  and files it under `UNFORMATTED`, which is the one thing it is not: through
+  8.4.25 the same 89 files come back **0 to fix**. This is KI-4's shape one layer
+  down — a tool that *errored* being reported as a check that *failed*.
+- **Not this area's**: found by `refactor-4-java-sdk` segment A task 2.1, which
+  runs the format gate; it touches no `sdk/java` file and predates the area
+  (nothing in the area's diff is PHP, and `composer.lock` is unmodified).
+- **A fix must** make the two tracked files agree — either
+  `config.platform.php` pinned at the declared floor so `composer update`
+  resolves what `>=8.1` can run, or the floor raised to `>=8.4` and said so in
+  `sdk/php`'s manifest and docs — and, separately, keep "the tool errored" out of
+  the `UNFORMATTED` list, since a wrong cause costs more than a missing one.
+
 
 ---
 
 ## P2 — tests that lie or leak
+
+- **Supervisor verdict 2026-08-31 — real, P2, and split.** The **gate half** —
+  `format-check.sh` reporting `UNFORMATTED — php-cs-fixer` for a tool that *crashed* —
+  is a defect on its own terms and fixable by whoever next owns the format gate. It is
+  the same class as `docs/dev_notes/format-gate-tells-the-truth.md`: a gate that names
+  the wrong cause sends the next person to fix something that is already correct, which
+  is worse than a gate that is simply red.
+- **The floor half is the repository owner's, not a supervisor's**: whether the PHP SDK
+  supports **8.1** (add `config.platform.php` so composer resolves inside the declared
+  floor) or **8.4+** (raise the declared floor to match the lock) is a support-matrix
+  decision. Recorded under *Awaiting the user's decision* on the refactor board.
+- **Not area 4's work** and deliberately not folded into it: it is `sdk/php` plus the
+  format gate, and an area whose contract is zero behaviour change is the wrong place
+  for it.
+- **It explains two earlier dismissals.** Rows 5+6 and 6.5 both hit this parse error and
+  recorded it as *"environment, pre-existing"* — accurate, and without a mechanism.
+  This entry supplies the mechanism, which is why the dismissals were not wrong so much
+  as unfinished.
 
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
@@ -1121,6 +793,11 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   ordinary `mix test` (72.3 s, 1863 of 1864, nothing else running) and green
   `1 passed` alone immediately after — so the exposure is not confined to
   self-inflicted load.
+  **Fourth sighting, 2026-08-31** (`refactor-4-java-sdk` segment A, arm-A
+  build): same assertion, same `left: 0`, in the `mix test` run that followed a
+  `mvn -P coverage,native-verify clean verify` — **74.5 s** — and the same suite
+  re-run on a quiet box minutes later was **1872 passed, exit 0, 59.9 s**. The
+  count did not move (1871 *of 1872*), so it is this entry, not a regression.
 - **`test/flezha_test.exs:419`** — *"a deferring operative is force-migrated at
   the drain deadline without wedging"*, the third site in this module.
   `assert_receive :deferred, 1_000` times out; the mailbox holds the competing
@@ -1132,6 +809,12 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   alternating arms, went red, red, then 1836 green four times running, and 3 of
   3 green alone. `:472` carries the identical `arrived_via_hotswap?` exposure
   as `:389`.
+  **Third sighting, 2026-08-31**, in the `FLEZHA_E2E_RUNTIME=java mix test
+  --include sdk_smoke` run of the same session (100.8 s), mailbox
+  `migrated: 0, forced: 0, elapsed_ms: 4, remaining_hubs: 0` — the recorded
+  shape to the field. The two sites went red in **consecutive** suite runs on a
+  box warm from a maven build, one each, which is the shared exposure this entry
+  already names rather than two defects.
 - **`test/system/sdk_smoke_e2e_test.exs:56`** — *"handshake + AssignRunnerId
   succeeds"* (the `@tag scenario: "handshake"` is `:55`, the coordinate filed).
   **Its evidence is a `java` runtime arm, and it reads as a boot budget rather
@@ -1144,6 +827,23 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   5 s budget, which then took the 20 s `{:runner_connect, …}` call and the
   `{Flezha.Transport.Server, :uds}` child down with it. The module alone: 23
   passed. **Not re-run here** — this row builds no `java_runner.jar`.
+
+- **`test/system/schema_evolution_e2e_test.exs:147` and `:69`** — two
+  *different* tests in the same module, each red once in two consecutive runs,
+  seen 2026-08-31 while verifying `close-input-log-syncer-blindness`.
+  `:147` (*"v1 code meeting v2 state is refused, not decoded"*) failed a full
+  `mix test --include system` on `assert_receive {:refused, …}, 30_000` with an
+  empty mailbox; the immediately following run of the module alone instead
+  failed `:69` (*"state written at v1 comes back through the migration"*) on
+  `wait_until(fn -> total(…) == 12 end)`. **Not this change**: an interleaved
+  A/B of the module (HEAD's `input_log.ex` vs the fixed one, 3 rounds each)
+  was **6 of 6 green on both arms**, and the new production path never fired
+  once in the whole system run — `grep -c input_log_syncer_died` over the log
+  is 0, so the only behaviour this change adds was never reached. The second
+  full `--include system` on the fixed arm was **1953 passed, exit 0**. No
+  `sun_path` line precedes either failure, so KI-57 does not explain them.
+  `STATE.md:1427` already records `:65` in this module going red under the
+  python arm behind a `sun_path` overflow — a different mechanism.
 
 #### Method note for the next A/B here
 
@@ -1805,7 +1505,648 @@ every new production freeze to `incident_log.md` at the repository root.
   and costs one argument — charter §2's reuse order, and the reason this is filed
   rather than patched with six allowlist entries.
 
+### KI-74 · `scripts/check-jacoco-coverage.py` has no caller — a threshold nothing enforces
+
+- **Severity**: P3 · found by area 4's survey, outside its scope.
+- **Where**: `scripts/check-jacoco-coverage.py`.
+- **Evidence**: `grep -rn 'check-jacoco-coverage' --include='*.yml' --include='*.yaml'
+  --include='*.sh' --include='*.md' .` returns **nothing** but the script itself.
+  `java-sdk.yml` runs `-P coverage` and never reads the report.
+- **Mechanism**: the script exists, is correct as far as anyone knows, and is invoked
+  by no workflow, script or documented command. A coverage threshold that nothing runs
+  is worse than no threshold: it reads, to anyone grepping the repo, as an enforced
+  floor.
+- **A fix must** either wire it into `java-sdk.yml` after the `-P coverage` run — and
+  then state what the floor **is**, measured, rather than whatever the script's default
+  happens to be — or delete it. Do not leave it as a third state.
+
+### KI-75 · `sdk/java/flezha-sdk-protobuf/` is an orphan build tree
+
+- **Severity**: P3 · cosmetic, but invisible to every gate.
+- **Where**: `sdk/java/flezha-sdk-protobuf/`, holding only `target/` with 91 generated
+  files.
+- **Evidence**: `grep -c flezha-sdk-protobuf sdk/java/pom.xml` → **0**; the directory
+  contains `target` and nothing else.
+- **Mechanism**: the reactor no longer lists the module, but its build output was never
+  removed. It is **untracked**, so `check-build-artifacts.sh` and every `git ls-files`
+  walk are blind to it while `find` and a developer's IDE both see it.
+- **A fix must** delete the directory. There is nothing to preserve: no source, no
+  `pom.xml`, no reactor entry.
+
 ## Resolved
+
+### KI-53 · `InputLog` traps exits, links a syncer, and handles no `EXIT` — RESOLVED
+
+Closed by `close-input-log-syncer-blindness`. Both halves are fixed in
+`lib/flezha/state/input_log.ex`: `sync_now/1` monitors the companion and answers
+`:error`, `handle_info({:EXIT, syncer, _})` reports
+`[:flezha, :state, :input_log_syncer_died]` and stops the log, and a catch-all
+`handle_info/2` reproduces `GenServer`'s default `[error]` report.
+
+**Both halves were driven red first**, in
+`test/flezha/state/input_log_test.exs` → `describe "the fsync companion's
+death"`, against HEAD's `input_log.ex`:
+
+```
+$ mix test test/flezha/state/input_log_test.exs \
+    --only "describe:the fsync companion's death"
+
+  1) test ... no fsync tick is sent to a companion that has exited
+     code:  assert dead_syncs() == 0
+     left:  10
+     right: 0
+
+  2) test ... a :fsync call is answered rather than parking the log for ever
+     the log never answered :fsync: [status: :waiting, current_stacktrace:
+       [{Flezha.State.InputLog, :sync_now, 1, [... line: 531]},
+        {Flezha.State.InputLog, :handle_call, 3, [... line: 417]}, ...]]
+
+Result: 0/2 passed
+```
+
+The ten are the fsync batcher's **own** ticks, one per append — no synthetic
+casts — each `send(state.syncer, :sync)` traced as
+`:send_to_non_existing_process`. After the fix both are green
+(`Result: 33 passed` for the module).
+
+**Two negative controls, each reverting one half of the fix, separate the two
+mechanisms** — they are independent, not one wearing two hats:
+
+| reverted | row 1 (dead ticks) | row 2 (parked call) |
+| --- | --- | --- |
+| `sync_now/1`'s monitor | green | **red**, `status: :waiting` in `sync_now/1` |
+| the `{:EXIT, …}` clause (catch-all kept) | **red**, `left: 10` | green |
+
+The catch-all was driven once with a stray message: it logs
+`[error] Flezha.State.InputLog #PID<0.455.0> received unexpected message in
+handle_info/2: :a_stray_message` and the log keeps serving.
+
+**What was true in the original entry, and what was not.** The filed half —
+silent fsyncs — is real and measured above. The unfiled half is worse and is
+recorded in full below.
+
+- **Supervisor ruling 2026-08-31 — REPRODUCED, and the entry understates it. Option
+  B plus a mandatory `sync_now` bound.** Verified at HEAD: `handle_info` count in
+  `input_log.ex` is **0**; `sync_now/1` (`:529`) is `receive do {^ref, :ok} -> :ok
+  end` with **no `after`**; `terminate/2` (`:471`) does `:file.datasync` on the log's
+  own descriptor.
+- **The half nobody filed is the worse one.** The filed defect is silent fsyncs — 11
+  sends to a dead pid with the batcher's dirty set empty, because `fsync_async` is a
+  cast that cannot fail. But `sync_now/1`'s bare `receive` means a **`:fsync` call
+  against a dead syncer wedges the GenServer permanently**: it stays alive, answers
+  nothing, and every append for that operative class parks forever. The comment above
+  it — *"the caller's call timeout bounds the wait"* — is why this survived, and it is
+  simply false: a caller's timeout bounds the caller, never the callee. **Correct that
+  comment as part of the fix.**
+- **It is reachable through graceful shutdown**: `Shutdown.Coordinator:468` →
+  `FsyncBatcher.flush_all` → `drain(state, :call)` → `GenServer.call(input_log,
+  :fsync)`. A syncer that dies before shutdown makes the final flush of every dirty
+  writer stall past the 5 s finalise timeout, be swallowed by `safe_finalise_step`,
+  and the coordinator proceeds to stop transports with the batcher still blocked.
+- **Why Option B and not A.** The question is not "A or B" — it is "bound + A" or
+  "bound + B", because the wedge happens *before* any `handle_info` clause could run,
+  so a re-spawn clause is unreachable from the wedged state. Given that: **A loops
+  unboundedly in a reachable state** (class directory gone → `open_raw` badmatches
+  instantly → EXIT → re-spawn → …) **with no supervisor budget in the way, because
+  the log never dies**. Bounding that means an intensity counter inside the GenServer
+  — reimplementing a supervisor inside a supervised child, which charter §2 refuses
+  when OTP already owns the mechanism. **B is also stronger on the data**:
+  `terminate/2` datasyncs the log's own descriptor, so stopping *flushes the window
+  the dead syncer owed*, where a re-spawn only re-arms the next tick. And B
+  **self-heals the one looping condition**, since `handle_continue(:open)` mkdir_p's
+  before opening.
+- **The residual is accepted**: repeated deaths spend `Flezha.State.Supervisor`'s
+  restart budget, shared by every writer on the node. It introduces **no new loop
+  class** — ENOSPC/EIO already crash the log directly at `:ok = :file.write(…)`.
+- **Two constraints on the implementation.** `sync_now/1` monitors the syncer and
+  answers `:error`, which `FsyncBatcher.drain/2` already reads as *"stays dirty for
+  the next drain"* — no new contract. And **any `handle_info/2` added replaces
+  GenServer's default handler**, so a catch-all is required and must reproduce
+  today's loud `[error]`, never `{:noreply, state}` on an `{:EXIT, _, _}` — the shape
+  this entry has always forbidden.
+
+**The original entry, as filed:**
+
+
+- **Severity**: P2 · **proposal owed** — the fix is a production behaviour
+  decision, so `finish-the-suite-log-gate` filed it rather than folding it in,
+  the way `green-the-suite-log-gate` filed KI-48.
+- **Where**: `lib/flezha/state/input_log.ex` — `init/1` sets
+  `Process.flag(:trap_exit, true)` (`:359`), the fsync companion is
+  `spawn_link`ed (`:488`, `start_syncer/1`), and the module has **no
+  `handle_info/2` clause at all**. Every message that is not a call or a cast
+  therefore lands on `GenServer`'s default handler, which logs at `[error]`.
+- **What happens**: the syncer's death arrives as `{:EXIT, pid, reason}` and is
+  reported as
+
+  ```
+  [error] Flezha.State.InputLog #PID<0.9412.0> received unexpected message in
+    handle_info/2: {:EXIT, #PID<0.9413.0>, :killed}
+  ```
+
+- **Observed at BEAM shutdown**, *after* `Result: 1840 passed` had printed —
+  the application master's terminate sweep exits the app's remaining processes
+  with `:kill`, and the order is unspecified, so a syncer can be killed while
+  its still-trapping `InputLog` is alive to log it. Two lines in one full
+  `mix test`; **1 of 6** full runs on this box (`errorlines=0` in the other
+  five). Not reproducible from `mix test test/flezha/state/input_log_test.exs`
+  alone (0 of 3 runs, 31 passed) — the logs there are stopped by their own
+  supervisor before the sweep reaches them.
+- **The log line is the small half.** With no `EXIT` clause a syncer that dies
+  for a *real* reason — an `:file.datasync` error, a `{:badmatch, …}` out of
+  `open_raw/1` — is logged as an "unexpected message" and then ignored, and
+  every later `send(state.syncer, :sync)` (`:451`) goes to a dead pid and
+  silently succeeds. **The fsync stops happening and nothing says so**, on the
+  path every effectively-once source waits on. `terminate/2` already sends the
+  syncer `:stop` (`:477`), so the syncer's lifetime *is* meant to be managed;
+  the `EXIT` half is the omission.
+- **A fix must** decide what a dead syncer means rather than just silencing the
+  log: re-spawn it (and say so), or stop the `InputLog` so its supervisor
+  restarts the pair. Matching `{:EXIT, _, _}` and returning `{:noreply, state}`
+  turns a durability hole into a *silent* durability hole and must not be the
+  answer.
+
+- **Supervisor note at close 2026-08-31 — the shutdown-noise trade is accepted,
+  deliberately.** At application shutdown the app master kills processes in
+  unspecified order — the condition KI-53 was first observed under. Where HEAD logged
+  one `[error] … received unexpected message`, the fix now **stops** the log with
+  `{:input_log_syncer_died, :killed}`, which `gen_server` and the supervisor each
+  report at `[error]`. It did not appear in the close-out run (0 gate hits), but
+  KI-53's own line was 1-in-6, so one run settles little.
+  **Left in place on purpose**: suppressing it means special-casing a shutdown-shaped
+  reason, which re-hides the failure this entry exists to stop, and it would be
+  optimising the gate rather than the system. **Row 8 (the uncaptured-log gate
+  re-proof) is where this gets measured** — if it turns that gate red, that is
+  information row 8 must have, not something to have hidden in advance.
+
+### KI-73 · The send gate holds the sender one frame too late, and ~20 % of a burst is still discarded under an `:ok` — RESOLVED
+
+- **Severity**: P1 · **REPRODUCED**, 4 of 4 runs, deterministic. Found while
+  implementing the sender-side hold for `close-transport-send-buffer-loss`
+  (row 6.5 segment B), by the test written to prove the hold works.
+- **Where**: `flz_nif/src/stream.rs` `send_frame` reads
+  `SendGate::is_raised`, which is written only by `SendGate::observe` —
+  called from `uds_driver::flush_pending` **on the driver thread**.
+  `flz_nif/src/uds_driver.rs` `enqueue_write` then offers each queued frame to
+  `SendGate::offer`, which discards at the ceiling and answers `false`; that
+  answer is used only to decide whether to close the stream.
+- **What happens**: the gate bit lives on the far side of an unbounded command
+  channel and nothing accounts for what the sender has already queued into it.
+  A sender in a burst therefore issues hundreds of `send_frame` calls before
+  the driver has crossed the high-water mark and set the bit. Every one of
+  those is queued, offered to a buffer already at the cap, and **discarded** —
+  and `send_frame` answered `:ok` for all of them. The hold itself works: the
+  sender is refused exactly once and released when the buffer drains. It is
+  simply taken after the loss.
+- **Why it matters**: this is KI-3 surviving its own fix at one fifth the
+  rate. The row's stated guarantee — a bounded send buffer signals congestion
+  rather than discarding — and the `controller-send-buffer-bound` scenario
+  *"Congestion increments nothing"* are both false while it stands.
+- **It refutes a design claim that was measured**: `design.md` D13 recorded 83
+  overshoot frames on the ungated build and stated *"The residual 83 are what
+  batch 3 removes, by parking the sender instead of letting it discover the
+  refusal one frame at a time."* Parking removes the *repeat* refusals, not the
+  overshoot: the overshoot is everything the sender queued before the bit was
+  set, and the park cannot begin until it is.
+- **Reproduction** — KI-3's harness with the channel and the hold in the path:
+  a real UDS driver, a real peer that connects and never reads, a real
+  `StreamChannel` owning the stream, and one sender on `io_in/3`. The sender
+  runs in its own process because `io_in/3` holds the calling one.
+
+  ```elixir
+  # /tmp/ki73.exs
+  alias Flezha.Runner.StreamChannel
+  alias Flezha.Transport.{LivenessCounters, Native}
+  Application.ensure_all_started(:telemetry)
+  LivenessCounters.ensure_table()
+
+  path = Path.join(System.tmp_dir!(), "ki73_#{System.unique_integer([:positive])}.sock")
+  {:ok, server} = Native.start_uds_server(path, self())
+  {:ok, peer} =
+    :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
+  stream = receive do: ({:flz_connection, s} -> s), after: (5_000 -> raise "no conn")
+
+  name = :ki73_channel
+  {:ok, pid} = StreamChannel.start_link({"ki73_runner", name, :primary})
+  :ok = Native.controlling_process(stream, pid)
+  :ok = GenServer.call(pid, {:bind, stream})
+
+  test = self()
+  payload = :binary.copy("x", 64 * 1024)
+  spawn(fn ->
+    r = Enum.map(1..400, fn i -> StreamChannel.io_in(name, "op_#{i}", {payload, %{}}) end)
+    send(test, {:done, Enum.frequencies(r)})
+  end)
+
+  Process.sleep(700)
+  st = hd(Native.driver_stats(server).streams)
+  %{channels: ch} = LivenessCounters.snapshot_all()
+  c = Enum.find(ch, &(&1.name == name))
+  IO.puts("HELD: send_gate_held=#{c.send_gate_held} send_frame_calls=#{c.send_frame_calls}")
+  IO.puts("DRIVER: frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
+
+  # Drain, so the gate lowers and the held sender is released.
+  spawn(fn ->
+    d = fn d -> if match?({:ok, _}, :gen_tcp.recv(peer, 0, 3_000)), do: d.(d) end
+    d.(d)
+  end)
+
+  receive do: ({:done, f} -> IO.puts("SENDER: #{inspect(f)}")), after: (20_000 -> IO.puts("hung"))
+  st = hd(Native.driver_stats(server).streams)
+  IO.puts("FINAL: frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
+  _ = Native.stream_id(stream)
+  Native.stop_server(server)
+  ```
+
+  ```
+  $ MIX_ENV=test mix run --no-start /tmp/ki73.exs
+  HELD: send_gate_held=1 send_frame_calls=211
+  DRIVER: frames_written=131 write_buffer_dropped=79
+  SENDER: %{ok: 400}
+  FINAL: frames_written=321 write_buffer_dropped=79
+  ```
+
+  321 written + 79 discarded = 400, and the sender was told `:ok` 400 times.
+  Four runs: 78, 79, 79, 92 discarded. The loss is a single burst at the
+  crossing — the counter does not move again once the sender is pacing with
+  the driver — so it is bounded by how far ahead the sender got, which nothing
+  bounds.
+- **A fix must** make the sender's own read exact rather than lagging, since
+  no widening of the watermark gap bounds "how far ahead a sender can get".
+  The shape that does it, for the verdict to weigh: `SendGate` gains
+  `inflight` (bytes `send_frame` has queued and the driver has not yet
+  offered) and `buffered` (the depth the driver last observed).
+  `send_frame` adds its length to `inflight` and raises the bit itself when
+  `buffered + inflight` crosses the high-water mark; `enqueue_write`
+  subtracts before offering; the driver still lowers on the drain. The cost is
+  one `fetch_add` and one extra relaxed load on a path that already crosses
+  into a NIF — the same order as the load `design.md` D9 already argues from
+  placement, so the declared A/B rows are unaffected. It also gives the
+  invariant a test that can be written: `write_buffer_dropped == 0` after a
+  congested burst, which is the assertion
+  `test/flezha/runner/stream_channel_send_gate_test.exs` deliberately does not
+  make today.
+- **Not fixed in segment B**: the remedy changes the gate's mechanism rather
+  than a caller, and the verdict on that is the supervisor's.
+
+- **Supervisor verdict 2026-08-31 — REPRODUCED INDEPENDENTLY, and row 6.5 does not
+  close until it is fixed.** I extracted the harness from this entry and ran it
+  unchanged; it matches the filed numbers to the frame on the first run:
+
+  ```
+  HELD:   send_gate_held=1 send_frame_calls=211
+  DRIVER: frames_written=131 write_buffer_dropped=79
+  SENDER: %{ok: 400}
+  ```
+
+  **79 of 400 frames discarded, and all 400 answered `:ok`.** That is KI-3's exact
+  symptom, still reproducing after the gate and the park are in place.
+- **Why this blocks the row rather than being queued.** Row 6.5 exists so the
+  platform's stated guarantee — nothing drops by default — becomes true. Closing it
+  here would commit a change claiming to resolve KI-3 while KI-3's own reproduction
+  still returns 79. Worse, the spec delta's *Congestion increments nothing* scenario
+  is **not satisfiable in this state**, so archiving would publish a requirement the
+  code does not meet. A requirement that is false on the day it lands is the failure
+  this programme spent the session removing from `docs/known_issues.md`.
+- **The mechanism is sound and the fix is small.** The gate bit is written by
+  `SendGate::observe` on the **driver thread**, behind an unbounded command channel,
+  so the sender's view is always behind by whatever is queued — ~210 frames here. The
+  park cannot begin before the bit is set, so it removes the *repeat* refusals and not
+  the *overshoot*. Fix shape, from the entry: `SendGate` gains `inflight` + `buffered`
+  and **`send_frame` raises the bit itself** — one `fetch_add` and one relaxed load,
+  the same order of cost D9 already argues from placement.
+- **It refutes `design.md` D13**, which claimed the residual 83 frames measured at
+  segment A were "what batch 3 removes". They are not: parking removes repeats, and
+  the overshoot is everything queued before the bit was set. D13 must be corrected,
+  not quietly dropped — it is a measured claim that turned out wrong.
+- **Credit where due**: this was found by the test written to prove the hold works,
+  and the worker then declined to assert `write_buffer_dropped == 0` in that test
+  because the assertion would have been false. A test that quietly omits the
+  assertion its subject cannot yet pass is how KI-67 happened; naming the omission is
+  the opposite.
+
+**RESOLVED by `close-transport-send-buffer-loss` (segment C).** The fix is the
+shape this entry proposed: `SendGate` gains `inflight` (bytes a sender has
+queued that the driver has not taken) and `buffered` (the depth the driver last
+observed); `send_frame` adds its length and **raises the bit itself** when the
+sum crosses the high-water mark; each driver releases a frame's bytes as it
+takes them. The sender's read is exact rather than lagging, because the half it
+is racing is the half it writes.
+
+The entry's own harness, unchanged, on the fixed build — four runs, identical:
+
+```
+HELD: send_gate_held=1 send_frame_calls=108
+DRIVER: frames_written=107 write_buffer_dropped=0
+SENDER: %{ok: 400}
+FINAL: frames_written=400 write_buffer_dropped=0
+```
+
+**0 discarded against 79, and all 400 frames delivered.** The crossing is now
+where it is meant to be: 107 x 64 KiB is 7.0 MiB against a 6.71 MiB mark, and
+the 108th call is the one refused.
+
+**The assertion this entry said was owed is made.**
+`test/flezha/runner/stream_channel_send_gate_test.exs` asserts
+`write_buffer_dropped == 0` at the crossing and again over a completed run,
+beside a peer that counted every frame's bytes off the socket. Negative
+control: with the sender-side raise removed, those two assertions — and only
+those two — fail, 2 of 4 on two seeds; restored, 4 of 4 on six seeds.
+
+`design.md` D13 is corrected in place rather than dropped, as this entry asked.
+
+### KI-71 · A second concurrent write on one QUIC client stream discards the first one's buffered remainder — RESOLVED
+
+- **Severity**: P1 · **read-established from the code; not driven at runtime**.
+  Found beside KI-70.
+- **Where**: `flz_transport/src/transport/quic.rs`, `write_or_buffer`'s
+  `Err(WriteError::Blocked)` arm: `slot.write_buf = data;` followed by
+  `slot.pending_write_reply = Some((total_len, reply));`.
+- **What happens**: both statements **assign**, they do not append. When a
+  previous call left a partial write buffered (`slot.write_buf` non-empty and
+  `pending_write_reply` `Some`), a second call that blocks replaces the
+  buffered bytes with its own and replaces the pending reply sender. The first
+  writer's remaining bytes are gone from the stream — a torn frame, not a
+  dropped one — and its `reply_rx.recv()` sees the dropped sender and reports
+  `BrokenPipe "Driver reply dropped"`, which names neither the stream nor the
+  loss.
+- **Reachability**: `QuicBidiStream::clone_handle` shares one `cmd_tx` and one
+  `stream_id` across handles, and `impl Write for &QuicBidiStream` exists so an
+  `Arc<FlezhaStream>` can be written from several threads. Two threads writing
+  one stream while the peer's window is full is the condition.
+- **Evidence**: the code. **Not driven**: reproducing it needs two concurrent
+  writers on one stream against a stalled peer, i.e. the same live pair harness
+  KI-70 is waiting on.
+- **A fix must** append rather than assign, and answer the earlier waiter
+  rather than dropping its sender — or refuse concurrent writers on one stream
+  outright, and say so where `clone_handle` invites them.
+
+- **Supervisor verdict 2026-08-31 — REAL, and fixed in the same pass as [[KI-70]]**,
+  because it is in the same function. `slot.write_buf = data;` and
+  `slot.pending_write_reply = Some(...)` both **assign**, so a second concurrent
+  write on one stream discards the first's buffered remainder — a torn frame — and
+  drops its reply sender.
+- **Requirement on the fix**: it is **read-established, not driven**, and it does not
+  ship on that footing. `write_or_buffer` needs a live `quinn_proto::Connection`, and
+  segment A built exactly such a harness on the other side of a crate boundary
+  (`flz_nif/src/quic_driver_tests.rs`). Porting it is the **first task of the fix**.
+  If the drive cannot be made to fail inside the timebox, the fix does not land and
+  the entry stays filed — a torn-frame fix nobody has seen fail is the KI-67 shape.
+
+**RESOLVED by `close-transport-send-buffer-loss` (segment B).** `write_or_buffer`
+appends rather than assigns, and keeps every waiting writer's reply sender
+beside its bytes. The drive this entry's verdict required was performed:
+restoring the assign loses the first writer's 4-byte remainder mid-frame
+(`left: 65536, right: 65540`). The same function held an unfiled third defect —
+a non-empty buffer did not stop a later frame going on the wire ahead of an
+earlier frame's remainder — fixed in the same pass.
+
+### KI-70 · The QUIC client drops a frame and tells its caller every byte was written — RESOLVED
+
+- **Severity**: P1 · **read-established from the code; not driven at runtime**
+  (see *Evidence*). Found 2026-08-31 while reading the send-buffer sites for
+  `close-transport-send-buffer-loss`.
+- **Where**: `flz_transport/src/transport/quic.rs:543` (`write_or_buffer`),
+  reached from `QuicBidiStream::write` → `DriverCommand::Write` →
+  `handle_command`.
+- **What happens**: the QUIC **client**'s per-stream send buffer is bounded by
+  `would_overflow_write_buffer`, and at the ceiling it does
+  `slot.write_buffer_dropped += 1`, logs one `tracing::warn!`, and then
+  `let _ = reply.send(Ok(total_len))` — it answers its caller that the whole
+  frame was written. `std::io::Write::write` returning `Ok(n)` means `n` bytes
+  were accepted; a caller has no way to tell this apart from a real write, and
+  `slot.write_buffer_dropped` is per-slot state read by nothing.
+- **Why it matters more than it looks**: this is not Rust-SDK-only code.
+  `flz_core → flz_transport` and `flz_core_ffi → flz_transport`, so every SDK
+  that reaches the controller over QUIC compiles this path in. It is KI-3's
+  defect — a silent drop under an `:ok` — on the runner → controller side of
+  the same socket, and the `close-transport-send-buffer-loss` proposal names
+  neither the file nor the behaviour.
+- **Evidence**: the code, quoted above; `grep -n would_overflow_write_buffer
+  flz_transport/src/transport/quic.rs` → `543`, and the reply on the line after
+  the counter bump. **A runtime drive was NOT run**: `write_or_buffer` needs a
+  live `quinn_proto::Connection`, and the only in-memory pair harness in the
+  tree is `flz_nif/src/quic_driver_tests.rs`, on the other side of a crate
+  boundary. Porting it is the first task of the fix, not of the filing.
+- **A fix must** decide this site together with KI-3 and KI-56 — one answer for
+  all three send buffers — and in the meantime must not leave a `Write` impl
+  reporting bytes it discarded.
+
+- **Supervisor verdict 2026-08-31 — REAL, confirmed from source, and folded into
+  row 6.5 (segment B).** Read at `flz_transport/src/transport/quic.rs:543`:
+  `write_or_buffer` increments `write_buffer_dropped`, logs, and then
+  `let _ = reply.send(Ok(total_len))` — it reports **every byte written** for a
+  frame it discarded. That is KI-3's defect on the runner→controller side.
+- **It belongs in this row, not a later one.** Row 6.5 exists to stop the transport
+  losing data silently. Closing the UDS driver and the QUIC driver while leaving the
+  **client** path answering `Ok(n)` on a dropped frame would ship a half-fix whose
+  remaining half is in code **every SDK compiles in** (`flz_core → flz_transport`,
+  `flz_core_ffi → flz_transport`). The proposal's Impact names neither the file nor
+  the behaviour; that is a scope correction, recorded as D11, not a new change.
+
+**RESOLVED by `close-transport-send-buffer-loss` (segment B).** `write_or_buffer`
+answers a refused frame with an error naming the condition — `WouldBlock`, since
+the stream is healthy and the peer is behind — and never `Ok(n)` for bytes it
+discarded. Driven, not argued: the `quinn_proto` pair harness moved down into
+`flz_transport` so one harness covers both send buffers, and restoring the
+ceiling arm answers `Ok(n)` for a discarded frame while the control — a reading
+peer refuses nothing — stays green.
+
+### KI-56 · The QUIC driver's send buffer has no cap at all — RESOLVED
+
+- **Severity**: P1 · **read-established, NOT reproduced** — filed 2026-08-30
+  while answering a question about KI-3, by reading both drivers side by side.
+  The reproduction is owed; see *What would confirm it* below.
+- **Where**: `flz_nif/src/quic_driver.rs:533` (`write_stream`) and `:664`
+  (`flush_quic_write`), against `flz_nif/src/uds_driver.rs:474`
+  (`enqueue_write`).
+- **What happens**: the UDS driver bounds its per-stream send buffer —
+  `would_overflow_write_buffer(buffered, incoming, cap)`, 8 MiB by default,
+  `DropNewest` once non-empty. **The QUIC driver calls that predicate nowhere.**
+  `write_stream` does an unconditional `write_buffer.extend_from_slice(&data)`,
+  and `flush_quic_write` treats `quinn_proto::WriteError::Blocked` — the peer's
+  QUIC flow-control window being full — as a no-op that leaves the bytes
+  buffered. So the same condition that makes UDS *drop* (a peer that stops
+  draining) makes QUIC **grow without bound**.
+- **Two transports, two different failure modes, neither reported.** UDS loses
+  data silently; QUIC risks the process. This repository already carries a
+  production OOM whose root cause was unbounded buffers
+  (`controller-oom-rootcause-unbounded-wal-buffers`), so unbounded growth here
+  is not a hypothetical class.
+- **The documentation asserts the opposite.** `flz_transport/src/transport/
+  config.rs:34` introduces the cap as "Per-stream send-buffer cap **shared by
+  the UDS and QUIC drivers**", and `would_overflow_write_buffer`'s own doc calls
+  itself "the one predicate behind **every** driver's send-buffer bound". Both
+  sentences are false as written: `grep -n would_overflow_write_buffer
+  flz_nif/src/quic_driver.rs` returns nothing. A reader checking whether QUIC is
+  bounded finds a doc comment saying yes.
+- **What would confirm it** (as filed): a QUIC stream whose peer connects,
+  completes the handshake and never reads, then a sustained write; watch the
+  driver's `write_buffer_len` (already emitted as `driver_write_buffer_bytes`
+  by `TransportSource.emit_driver_stats/2`) grow past 8 MiB without bound and
+  without a `write_buffer_dropped` bump.
+- **That reproduction cannot be performed, and the reason is KI-72.** The QUIC
+  driver produces no `DriverStats` at all: `flz_nif/src/server.rs:111` sets
+  `stats: None` for `start_quic_server` and `driver_stats/1` answers
+  `:undefined` for it, so `driver_write_buffer_bytes` is emitted for UDS only
+  and has no QUIC value to grow. There is also no `write_buffer_dropped` on
+  this driver to stay at zero.
+- **REPRODUCED (2026-08-31), by another route**: an in-memory `quinn_proto`
+  pair — `flz_nif/src/quic_driver_tests.rs` — whose client completes the
+  handshake and never reads a byte, driving the driver's own
+  `flush_quic_write` over the driver's own buffer.
+
+  ```
+  $ cargo test -p flz_nif --lib -- --nocapture quic_driver::tests
+  ungated quic write_buffer: offered=52428800 buffered=44040192 cap=8388608
+    (x5.2 the cap); after first burst=17825792 growth=26214400 refused=0
+  quic write_buffer with a draining peer: buffered=0 read=26214400
+  ```
+
+  25 MiB offered leaves 17 MiB buffered — 2.1x the cap — and offering 25 MiB
+  more buffers **all of it** (`growth=26214400`, byte for byte): there is no
+  bound to hold at, which is a stronger statement than "it exceeded the cap".
+  **Control**: the same harness against a peer that reads leaves
+  `buffered=0`, so a clean result is one this probe can report.
+- **A fix must** decide the two transports' behaviour together, not separately —
+  which is the same decision KI-3 is waiting on. Bounding QUIC the way UDS is
+  bounded would give it UDS's silent-drop defect; leaving it unbounded keeps the
+  OOM path. Whatever backpressure answer KI-3 takes should cover both, and the
+  doc comments are corrected in that change either way.
+
+**RESOLVED by `close-transport-send-buffer-loss`.** The QUIC driver reaches the
+same `SendGate` both other send buffers do: `WriteError::Blocked` raises it, a
+drain below the low-water mark lowers it, and the ceiling holds the buffer at
+`max_write_buffer_bytes`. The two false doc sentences in
+`flz_transport/src/transport/config.rs` are true as written now, because the
+predicate they describe is what every send buffer calls.
+
+Driven on the in-memory `quinn_proto` pair this entry's reproduction was
+replaced by (`cargo test -p flz_nif --lib -- --nocapture quic_driver::tests`):
+
+```
+gated quic write_buffer:   buffered=8388608 cap=8388608 raised=true refused=544 raises=1
+ungated quic write_buffer: offered=52428800 buffered=44040192 cap=8388608 (x5.2 the cap)
+quic write_buffer with a draining peer: buffered=0 read=26214400 refused=0 raised=false
+```
+
+The gated buffer holds at the cap exactly with the signal raised; the ungated
+control still grows to 5.2x it; a peer that reads leaves nothing behind. The
+counter is what the sender crossed the ceiling without honouring the gate,
+which on this driver is the harness pushing deliberately.
+
+**Not closed with it: KI-72.** The QUIC driver still produces no `DriverStats`,
+so the reporting half of `controller-send-buffer-bound` is UDS-only — stated in
+the requirement itself rather than left to be inferred.
+
+### KI-3 · UDS write-buffer drops are invisible to the caller — RESOLVED
+
+- **Severity**: P1 · **investigation first**, then proposal.
+- **Where**: the UDS driver behind `Flezha.Transport.Native.send_frame/4`.
+- **What happens**: the write buffer's overflow policy is `DropNewest`, and
+  `send_frame/4` answers `:ok` regardless. Only
+  `driver_stats.write_buffer_dropped` records the loss.
+- **Impact**: this is the last silent-drop default in the platform, against a
+  stated guarantee that nothing drops by default (see
+  `docs/dev_notes/close-silent-data-loss-defaults.md`).
+- **Why not proposed yet**: the fix shape is not obvious — the cast path cannot
+  simply block without reintroducing the wedge that
+  `nonblocking-drop-nothing-backpressure` removed. Needs a design pass first.
+- **A fix must**: decide what a caller is told when the buffer is full, without
+  parking a host thread.
+- **Triage (2026-08-30)**: **REAL**, reproduces at defaults, and the blind spot
+  is wider than filed. `enqueue_write` (`flz_nif/src/uds_driver.rs:474`) still
+  drops on `would_overflow_write_buffer` and only bumps `write_buffer_dropped`;
+  `send_frame` (`flz_nif/src/stream.rs:25`) still answers `atoms::ok()`
+  unconditionally, and does not even check the `cmd_tx.send` result (`let _ =
+  …`) — so a dead driver thread is a *second* drop path that is not counted at
+  all. Correction to the entry: it is not only the caller that cannot see the
+  loss. Nothing in `lib/` reads `write_buffer_dropped`.
+  `TransportSource.emit_driver_stats/2`
+  (`lib/flezha/observability/otp_backend/transport_source.ex:90`) emits
+  `write_buffer_len` — the depth — and never the drop counter; no liveness
+  verdict names it; the only reader in the tree is the printout at
+  `lib/mix/tasks/bench/roundtrip.ex:698`. A production drop is invisible to the
+  caller *and* to the platform.
+- **Reproduction** — a UDS driver with a peer that connects and never reads. No
+  env tuning: the default 8 MiB cap is enough.
+
+  ```elixir
+  # /tmp/ki3.exs
+  alias Flezha.Transport.Native
+  path = Path.join(System.tmp_dir!(), "ki3_#{System.unique_integer([:positive])}.sock")
+  {:ok, server} = Native.start_uds_server(path, self())
+  # A peer that connects and NEVER reads.
+  {:ok, peer} = :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
+  stream = receive do: ({:flz_connection, s} -> s), after: (5_000 -> raise "no connection")
+  payload = :binary.copy("x", 64 * 1024)
+  replies = for i <- 1..400, do: Native.send_frame(stream, "p#{i}", payload, %{})
+  Process.sleep(500)
+  # Keep the handle live: a collected StreamHandle closes its stream, and the
+  # driver then has no snapshot to report.
+  _ = Native.stream_id(stream)
+  st = hd(Native.driver_stats(server).streams)
+  IO.puts("send_frame replies: #{inspect(Enum.frequencies(replies))} over #{length(replies)} calls")
+  IO.puts("frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped} write_buffer_len=#{st.write_buffer_len}")
+  :gen_tcp.close(peer)
+  Native.stop_server(server)
+  ```
+
+  ```
+  $ MIX_ENV=test mix run --no-start /tmp/ki3.exs
+  send_frame replies: %{ok: 400} over 400 calls
+  frames_written=131 write_buffer_dropped=269 write_buffer_len=8357440
+  ```
+
+  269 of 400 frames dropped; all 400 calls answered `:ok`. Deterministic, 3 of
+  3 runs. **Control** (proving the probe can report a clean result): the same
+  script under `FLEZHA_MAX_WRITE_BUFFER_BYTES=1073741824` prints
+  `frames_written=400 write_buffer_dropped=0`.
+- **Correction to the harness as first filed (2026-08-31)**: it raised
+  `** (ArgumentError) :erlang.hd([])` on 3 of 3 runs, not the numbers above.
+  `stream`'s last use was the `for` comprehension, so the `StreamHandle`
+  resource was collectable before `driver_stats/1` ran; `StreamHandle::drop`
+  sends `CloseStream`, the driver removes the stream, and the snapshot is
+  empty. The `Native.stream_id(stream)` line above is what pins it. A harness
+  in an entry is only durable if it runs.
+- **Worth fixing**: yes. "Investigation first" still stands for the real
+  question — what a caster is told — but two things need no design pass and end
+  the silence on their own: emit `write_buffer_dropped` from `TransportSource`
+  beside `driver_write_buffer_bytes`, and give the stall classifier a clause on
+  it. Loud loss is not the fix, but it is strictly better than this.
+
+**RESOLVED by `close-transport-send-buffer-loss`.** `enqueue_write` no longer
+discards as a policy: the driver raises a congestion signal on crossing a
+high-water mark, `send_frame` reads it and answers
+`{:error, :send_buffer_full}`, and `StreamChannel.io_in/3` holds the calling
+process until the buffer drains. The ceiling under it is a last resort a sender
+honouring the gate never reaches, so `write_buffer_dropped` becomes an
+invariant — emitted by `TransportSource` beside `write_buffer_len` and named by
+a liveness verdict, which closes the second half of this entry's triage
+("nothing in `lib/` reads the counter").
+
+This entry's own harness on the fixed build, three runs, identical:
+
+```
+send_frame replies: %{:ok => 106, {:error, :send_buffer_full} => 294} over 400 calls
+frames_written=106 write_buffer_dropped=0 write_buffer_len=6717990
+```
+
+**Nothing discarded, and every refusal reported to the caller.** This harness
+drives the NIF directly, with no channel above it to hold on the refusal, which
+is why 294 calls are answered rather than held.
+
+**Negative control** — the gate forced off with the ceiling kept
+(`with_watermarks(cap, MAX, MAX)`): this entry's numbers return byte for byte,
+`%{ok: 400}`, `frames_written=131`, `write_buffer_dropped=269`,
+`write_buffer_len=8357440`. With the ceiling removed as well, nothing is
+discarded and the UDS buffer reaches **24.8 MiB against an 8 MiB cap** — KI-56's
+failure mode on the other transport, which is what a bound without a signal and
+a signal without a bound each get you.
+
+The third drop path this entry's triage added — `let _ = cmd_tx.send(…)` on a
+dead driver thread — is answered rather than discarded: `send_frame` returns
+`{:error, :driver_gone}` and the caller reports the frame undelivered.
 
 ### KI-51 · The bench `--runtime` help names three runtimes, not seven — RESOLVED
 
@@ -2127,8 +2468,9 @@ assertion turned it **GREEN**. The scratch test was then deleted.
 **The lesson this entry kept re-learning, and which stands**: *the population is
 whatever the last N runs sampled, and N is always too small.* Its own count of
 three was one run's sample. KI-48, KI-49, KI-50, KI-53 and KI-54 were each found
-afterwards by the same gate, each in roughly 1 of 6 runs. Of those, [[KI-53]] is
-the only one still open, and it did not fire in these six runs.
+afterwards by the same gate, each in roughly 1 of 6 runs. All five are now
+closed; KI-53 did not fire in these six runs and was closed on a driven
+reproduction instead.
 
 ### KI-54 · A `ForwardWorker` retry outlives its test — RESOLVED
 

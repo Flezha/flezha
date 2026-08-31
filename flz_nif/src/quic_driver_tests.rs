@@ -27,13 +27,6 @@ fn offer_and_flush(
     change
 }
 
-/// A gate that never engages: watermarks and ceiling at `usize::MAX`. It is
-/// the negative control every gate drive owes, because a gate that never
-/// engages looks exactly like a gate that works.
-fn ungated() -> SendGate {
-    SendGate::with_watermarks(usize::MAX, usize::MAX, usize::MAX)
-}
-
 /// KI-56, and the negative control for the bound below. `write_stream` extends
 /// the per-stream buffer with no bound, and `flush_quic_write` treats
 /// `WriteError::Blocked` — the peer's flow-control window being full — as a
@@ -43,7 +36,7 @@ fn ungated() -> SendGate {
 #[test]
 fn an_ungated_quic_send_buffer_grows_past_the_cap_when_the_peer_stops_reading() {
     let cap = flz_transport::transport::config::max_write_buffer_bytes();
-    let gate = ungated();
+    let gate = SendGate::ungated();
     let mut pair = Pair::new();
     pair.connect();
     let stream_id = pair.open_stream();

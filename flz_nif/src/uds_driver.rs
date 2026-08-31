@@ -251,12 +251,13 @@ impl UdsDriver {
                 message,
                 metadata,
             } => {
+                let reserved = message.len();
                 let frame = flz_transport::service::payloader::build_from_binary(
                     &payload_id,
                     &message,
                     metadata,
                 );
-                self.enqueue_or_close(stream_id, frame, now_ms);
+                self.enqueue_or_close(stream_id, frame, reserved, now_ms);
             }
             ServerCommand::SetActive { stream_id } => {
                 if let Some(state) = self.streams.get_mut(&stream_id) {
@@ -290,9 +291,17 @@ impl UdsDriver {
     }
 
     /// Queue `data` on a stream and flush what it will take now; a broken
-    /// stream is reported to its owner and closed.
-    fn enqueue_or_close(&mut self, stream_id: u64, data: Vec<u8>, now_ms: u64) {
-        if enqueue_write(stream_id, data, &mut self.streams, &mut self.poll, now_ms) {
+    /// stream is reported to its owner and closed. `reserved` is what the
+    /// sender counted against the gate when it queued this frame.
+    fn enqueue_or_close(&mut self, stream_id: u64, data: Vec<u8>, reserved: usize, now_ms: u64) {
+        if enqueue_write(
+            stream_id,
+            data,
+            reserved,
+            &mut self.streams,
+            &mut self.poll,
+            now_ms,
+        ) {
             self.report_and_close(stream_id, "write_error");
         }
     }
@@ -457,11 +466,16 @@ impl UdsDriver {
 fn enqueue_write(
     stream_id: u64,
     data: Vec<u8>,
+    reserved: usize,
     streams: &mut HashMap<u64, StreamState>,
     poll: &mut Poll,
     now_ms: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
+        // The frame has arrived, so it stops being counted as queued and
+        // starts being counted as buffered.
+        state.gate.release(reserved);
+
         // The last-resort ceiling; a sender honouring the gate never reaches it.
         if !state.gate.offer(&mut state.write_buffer, &data) {
             return false;

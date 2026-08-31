@@ -17,8 +17,22 @@
 //! Only the ceiling counts. Being turned away at the gate is the signal
 //! working: the sender is told, holds, and offers the frame again — nothing
 //! is lost, so nothing is counted.
+//!
+//! The depth the gate weighs is not the buffer's alone. A driver takes its
+//! frames off a queue, so between a sender's write and the buffer that
+//! receives it sit however many frames the sender got in while the driver
+//! thread was descheduled — a burst can queue hundreds. A gate weighing only
+//! what the driver has already buffered is therefore raised after the sender
+//! has passed it, and the frames in between arrive at a full buffer and are
+//! refused at the ceiling under an answer that said they were sent.
+//!
+//! So both halves are counted: [`SendGate::queued`] adds a frame's bytes to
+//! `inflight` on the sender's own thread and raises the bit there, and the
+//! driver [`SendGate::release`]s them as it takes each frame. The gate weighs
+//! `buffered + inflight`, which no sender can outrun, because the count the
+//! sender is racing is the one it writes itself.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use super::config::{max_write_buffer_bytes, would_overflow_write_buffer};
 
@@ -26,6 +40,41 @@ use super::config::{max_write_buffer_bytes, would_overflow_write_buffer};
 pub const DEFAULT_HIGH_WATER_FRACTION: f64 = 0.8;
 /// …and fall back under this one before it lowers again.
 pub const DEFAULT_LOW_WATER_FRACTION: f64 = 0.5;
+
+/// The marks are fractions of the cap rather than byte counts, so lowering
+/// `FLEZHA_MAX_WRITE_BUFFER_BYTES` moves them with it — an absolute mark above
+/// a lowered cap is a gate that never rises.
+pub const HIGH_WATER_VAR: &str = "FLEZHA_SEND_GATE_HIGH_WATER";
+pub const LOW_WATER_VAR: &str = "FLEZHA_SEND_GATE_LOW_WATER";
+
+/// The two marks a gate runs with, read from the environment.
+fn configured_fractions() -> (f64, f64) {
+    fractions_from(
+        std::env::var(HIGH_WATER_VAR).ok().as_deref(),
+        std::env::var(LOW_WATER_VAR).ok().as_deref(),
+    )
+}
+
+/// A mark means nothing on its own — hysteresis is the pair — so the pair is
+/// refused as a pair: anything but two fractions with `0 < low < high < 1`
+/// leaves both defaults standing. One configured mark beside one default is
+/// how a low-water mark ends up above its high-water one, which is a gate that
+/// raises and lowers on the same byte.
+fn fractions_from(high: Option<&str>, low: Option<&str>) -> (f64, f64) {
+    match (parse_fraction(high), parse_fraction(low)) {
+        (Some(high), Some(low)) if low < high => (high, low),
+        _ => (DEFAULT_HIGH_WATER_FRACTION, DEFAULT_LOW_WATER_FRACTION),
+    }
+}
+
+/// A fraction strictly inside `(0, 1)`. A mark at either end is a gate that
+/// cannot signal, so both ends are refused along with anything unparseable.
+fn parse_fraction(raw: Option<&str>) -> Option<f64> {
+    raw?.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|f| f.is_finite() && *f > 0.0 && *f < 1.0)
+}
 
 /// What one observation of the buffer's depth did to the gate. `None` is the
 /// common case: the depth moved and the gate did not.
@@ -45,6 +94,13 @@ pub enum GateChange {
 pub struct SendGate {
     raised: AtomicBool,
     refused: AtomicU64,
+    /// Bytes senders have queued that the driver has not yet taken. Written
+    /// by both sides — `+` on the sending thread, `-` on the driver's — and
+    /// balanced by construction: every [`SendGate::queued`] has exactly one
+    /// [`SendGate::release`].
+    inflight: AtomicUsize,
+    /// The depth the driver last saw, from [`SendGate::observe`].
+    buffered: AtomicUsize,
     high_water: usize,
     low_water: usize,
     cap: usize,
@@ -55,31 +111,76 @@ impl SendGate {
     /// configured per-stream cap, so lowering the cap moves both with it.
     pub fn new() -> SendGate {
         let cap = max_write_buffer_bytes();
-        SendGate::with_watermarks(
-            cap,
-            fraction_of(cap, DEFAULT_HIGH_WATER_FRACTION),
-            fraction_of(cap, DEFAULT_LOW_WATER_FRACTION),
-        )
+        let (high, low) = configured_fractions();
+        SendGate::with_watermarks(cap, fraction_of(cap, high), fraction_of(cap, low))
     }
 
-    /// A gate with watermarks and a ceiling given outright. Tests use it to
-    /// build the *ungated* driver — `usize::MAX` throughout — which is the
-    /// negative control every gate test needs: a gate that never engages looks
-    /// exactly like a gate that works.
+    /// A gate with watermarks and a ceiling given outright, for a test that
+    /// needs marks it can reach in a few bytes. [`SendGate::ungated`] is the
+    /// one every gate test also needs: a gate that never engages looks exactly
+    /// like a gate that works, so the control has to be built too.
     pub fn with_watermarks(cap: usize, high_water: usize, low_water: usize) -> SendGate {
         SendGate {
             raised: AtomicBool::new(false),
             refused: AtomicU64::new(0),
+            inflight: AtomicUsize::new(0),
+            buffered: AtomicUsize::new(0),
             high_water,
             low_water,
             cap,
         }
     }
 
+    /// A gate that cannot raise and cannot refuse: every mark and the ceiling
+    /// at `usize::MAX`. Two callers need exactly that — the negative control
+    /// a gate test must have, and a stream handle whose writer holds no send
+    /// buffer of the drivers' kind and so has no depth to signal about.
+    pub fn ungated() -> SendGate {
+        SendGate::with_watermarks(usize::MAX, usize::MAX, usize::MAX)
+    }
+
     /// The sender's read: one relaxed load, on a path that already crosses
     /// into the NIF per frame.
     pub fn is_raised(&self) -> bool {
         self.raised.load(Ordering::Relaxed)
+    }
+
+    /// What the gate weighs: the driver's last reading plus what senders have
+    /// queued past it.
+    fn pending(&self) -> usize {
+        self.buffered
+            .load(Ordering::Relaxed)
+            .saturating_add(self.inflight.load(Ordering::Relaxed))
+    }
+
+    /// A sender has handed `len` bytes to the driver's queue. One `fetch_add`
+    /// and one relaxed load, on the sending thread — which is the only place
+    /// the crossing can be seen before the frames that caused it arrive.
+    ///
+    /// The frame that crosses the mark is taken; the sender learns from
+    /// [`SendGate::is_raised`] on its next one, which is the same answer it
+    /// gets when the driver raises the gate on its own depth.
+    pub fn queued(&self, len: usize) -> Transition {
+        self.inflight.fetch_add(len, Ordering::Relaxed);
+        if !self.is_raised() && self.pending() > self.high_water {
+            self.raised.store(true, Ordering::Relaxed);
+            return Some(GateChange::Raised);
+        }
+        None
+    }
+
+    /// The driver has taken `len` queued bytes off the sender's hands — or the
+    /// queue refused them and they were never sent. Saturating, so a ledger
+    /// broken by a future caller reads as zero rather than as `usize::MAX`.
+    pub fn release(&self, len: usize) {
+        if len == 0 {
+            return;
+        }
+        let _ = self
+            .inflight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
+                Some(held.saturating_sub(len))
+            });
     }
 
     /// Record a frame this stream discarded at the ceiling. Private because
@@ -108,12 +209,14 @@ impl SendGate {
     /// a watermark. Hysteresis is the point: raising at `high` and lowering at
     /// `low` keeps a buffer hovering at the mark from flapping the sender.
     pub fn observe(&self, buffered: usize) -> Transition {
+        self.buffered.store(buffered, Ordering::Relaxed);
+        let pending = self.pending();
         if self.is_raised() {
-            if buffered <= self.low_water {
+            if pending <= self.low_water {
                 self.raised.store(false, Ordering::Relaxed);
                 return Some(GateChange::Lowered);
             }
-        } else if buffered > self.high_water {
+        } else if pending > self.high_water {
             self.raised.store(true, Ordering::Relaxed);
             return Some(GateChange::Raised);
         }
@@ -210,6 +313,132 @@ mod tests {
         assert!(!gate.offer(&mut buffer, &[0u8; 200]));
         assert_eq!(buffer.len(), 900, "the refused frame did not land");
         assert_eq!(gate.refused(), 1);
+    }
+
+    #[test]
+    fn a_sender_raises_the_gate_on_what_it_has_queued_not_on_what_arrived() {
+        let gate = SendGate::with_watermarks(1000, 800, 500);
+
+        // The driver has seen nothing at all: every one of these frames is
+        // still sitting in its command queue.
+        for _ in 0..8 {
+            assert_eq!(gate.queued(100), None);
+            assert!(!gate.is_raised());
+        }
+
+        assert_eq!(gate.queued(100), Some(GateChange::Raised));
+        assert!(
+            gate.is_raised(),
+            "900 bytes queued past an 800-byte mark raises it before any arrive"
+        );
+    }
+
+    #[test]
+    fn a_released_frame_stops_being_counted_twice() {
+        let gate = SendGate::with_watermarks(1000, 800, 500);
+        let mut buffer = Vec::new();
+
+        gate.queued(600);
+        gate.release(600);
+        assert!(gate.offer(&mut buffer, &[0u8; 600]));
+
+        // 600 buffered, nothing queued: were the released frame still counted
+        // as in flight this would read 1200 and raise.
+        assert_eq!(gate.observe(buffer.len()), None);
+        assert!(!gate.is_raised());
+
+        gate.queued(300);
+        assert!(gate.is_raised(), "600 buffered + 300 queued crosses 800");
+    }
+
+    #[test]
+    fn a_gate_lowers_only_once_the_queue_behind_it_has_drained_too() {
+        let gate = SendGate::with_watermarks(1000, 800, 500);
+
+        gate.queued(900);
+        assert!(gate.is_raised());
+
+        // The driver's buffer is empty — but 900 bytes are still queued for it.
+        assert_eq!(
+            gate.observe(0),
+            None,
+            "an empty buffer is not an empty gate"
+        );
+        assert!(gate.is_raised());
+
+        gate.release(900);
+        assert_eq!(gate.observe(0), Some(GateChange::Lowered));
+    }
+
+    #[test]
+    fn an_ungated_gate_never_raises_however_much_is_queued() {
+        let gate = SendGate::ungated();
+
+        for _ in 0..1000 {
+            assert_eq!(gate.queued(1 << 20), None);
+        }
+        assert!(!gate.is_raised(), "the negative control has to stay open");
+
+        let mut buffer = vec![0u8; 1 << 20];
+        assert!(gate.offer(&mut buffer, &[0u8; 1 << 20]));
+        assert_eq!(gate.refused(), 0);
+    }
+
+    #[test]
+    fn releasing_more_than_is_held_reads_as_nothing_held() {
+        let gate = SendGate::with_watermarks(1000, 800, 500);
+
+        gate.queued(100);
+        gate.release(400);
+
+        assert_eq!(gate.observe(400), None, "not 400 + a wrapped-around usize");
+        assert!(!gate.is_raised());
+    }
+
+    #[test]
+    fn a_watermark_pair_is_taken_whole_or_refused_whole() {
+        let defaults = (DEFAULT_HIGH_WATER_FRACTION, DEFAULT_LOW_WATER_FRACTION);
+
+        assert_eq!(fractions_from(Some("0.9"), Some("0.2")), (0.9, 0.2));
+
+        // The refusals, which are the half worth testing.
+        assert_eq!(
+            fractions_from(Some("0.9"), None),
+            defaults,
+            "one mark alone"
+        );
+        assert_eq!(fractions_from(None, Some("0.2")), defaults, "the other one");
+        assert_eq!(
+            fractions_from(Some("0.2"), Some("0.9")),
+            defaults,
+            "a low mark above the high one raises and lowers on the same byte"
+        );
+        assert_eq!(
+            fractions_from(Some("0.5"), Some("0.5")),
+            defaults,
+            "and marks that meet are the same gate with extra steps"
+        );
+        assert_eq!(
+            fractions_from(Some("1.0"), Some("0.5")),
+            defaults,
+            "at the cap"
+        );
+        assert_eq!(fractions_from(Some("0.9"), Some("0")), defaults, "at zero");
+        assert_eq!(
+            fractions_from(Some("0.9"), Some("-0.1")),
+            defaults,
+            "below it"
+        );
+        assert_eq!(
+            fractions_from(Some("high"), Some("0.2")),
+            defaults,
+            "unparseable"
+        );
+        assert_eq!(
+            fractions_from(Some("0.9"), Some("NaN")),
+            defaults,
+            "not finite"
+        );
     }
 
     #[test]

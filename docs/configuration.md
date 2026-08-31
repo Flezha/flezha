@@ -211,7 +211,9 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `flz_transport`, `Flezha.SDK.Transport` |
 | `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem` / `app_data/certs/client.key` | `flz_transport` — the client pair presented to a QUIC server that requires peer authentication |
 | `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | `flz_transport` — pre-auth frame-length limit enforced by both frame parsers, cached on first read |
-| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | `flz_transport` — per-stream send-buffer cap |
+| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | `flz_transport` — per-stream send-buffer cap. A sender that honours the send gate never reaches it; what it refuses is answered to the caller, never discarded |
+| `FLEZHA_SEND_GATE_HIGH_WATER` / `FLEZHA_SEND_GATE_LOW_WATER` | `0.8` / `0.5` | `flz_transport::transport::send_gate` — the send gate's watermarks, as **fractions** of `FLEZHA_MAX_WRITE_BUFFER_BYTES` so lowering the cap moves them with it. The gate rises when a stream's buffered plus queued bytes cross the high mark and falls when they drop under the low one; the sender holds in between. **The pair is taken whole or refused whole**: anything but two fractions with `0 < low < high < 1` leaves both defaults standing, because one configured mark beside one default is how a low-water mark ends up above its high-water one. Widening the gap costs memory and buys fewer wake-ups; narrowing it does the reverse. Neither is a throughput dial — the frames are sent either way |
+| `FLEZHA_CREDIT_PARK_INTERVAL_MS` | `50` | `flz_core::credit` — how long a sender parked on an exhausted credit window waits before re-checking it. **A lost-wake fallback and a diagnostic, not a pacing dial**: `arm` and `grant` both `notify_all`, so the wait normally ends on the event and this bounds only a wake that never came. Lowering it buys no latency in the normal case and costs wakeups; raising it only lengthens recovery from a wake that was lost. `0` or an unparseable value reads as unset. Read inside `flz_core`, so a runner in any SDK satisfies it from its own environment |
 | `FLEZHA_CONTROL_ACK_TIMEOUT_MS` | `10000` | `flz_transport` — first-frame ack deadline |
 | `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` | `45000` | `flz_transport` — steady-state idle window |
 | `FLEZHA_CONTROL_KEEPALIVE_MS` | `15000` | `flz_transport` — control-channel ping interval |
@@ -356,6 +358,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:socket_files_path` | — | `lib/flezha/service/port_pilot.ex`, `lib/flezha/socket/support.ex` |
 | `:external_processes` | — | `lib/flezha/service/port_pilot.ex` |
 | `:concurrent_channel_count` | `0` | `lib/flezha/service/config_manager.ex` |
+| `:send_gate_hold_ms` | `5_000` | `lib/flezha/runner/stream_channel.ex` — how long a sender held on a stream's raised send gate waits for the driver to report the buffer drained. **The gate's own lost-wake fallback**, the counterpart of `FLEZHA_CREDIT_PARK_INTERVAL_MS` above: the release arrives on the crossing, and this bounds only a drain report that never came. Running out returns `{:error, :send_buffer_full}` to the caller with the frame still unsent — nothing was discarded on the way, so it is the caller's decision, not a loss |
 
 ### Cluster and nodes
 

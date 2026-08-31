@@ -212,22 +212,26 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
     let owner = Arc::new(Mutex::new(owner_pid));
     let (cmd_tx, cmd_rx) = unbounded::<ServerCommand>();
 
+    // A client stream's writer thread drains the command channel itself and
+    // holds no send buffer of the drivers' kind, so there is no depth to
+    // signal about: the handle carries a gate that cannot raise, so that every
+    // per-stream NIF op is the same op on both sides. It still discharges each
+    // frame's reservation as the writer takes it, because `send_frame` counts
+    // one on every stream and a ledger only one side keeps is not a ledger.
+    let gate = Arc::new(SendGate::ungated());
+
     let read_stream = stream
         .clone_handle()
         .expect("clone client stream for reader");
     spawn_reader(read_stream, stream_id, Arc::clone(&owner));
-    spawn_writer(stream, cmd_rx);
+    spawn_writer(stream, cmd_rx, Arc::clone(&gate));
 
     ResourceArc::new(StreamHandle {
         stream_id,
         cmd_tx,
         waker: StreamWaker::Channel,
         owner,
-        // A client stream's writer thread drains the command channel itself
-        // and holds no send buffer of the drivers' kind, so nothing here ever
-        // raises this gate; the handle carries one so every per-stream NIF op
-        // is the same op on both sides.
-        gate: Arc::new(SendGate::new()),
+        gate,
     })
 }
 
@@ -265,7 +269,11 @@ fn spawn_reader(mut read_stream: FlezhaStream, stream_id: u64, owner: Arc<Mutex<
 
 /// Writer: drain the command channel. Client streams are active from birth and
 /// route by the shared `owner`, so SetActive/SetPassive/UpdateOwner are inert.
-fn spawn_writer(mut write_stream: FlezhaStream, cmd_rx: Receiver<ServerCommand>) {
+fn spawn_writer(
+    mut write_stream: FlezhaStream,
+    cmd_rx: Receiver<ServerCommand>,
+    gate: Arc<SendGate>,
+) {
     thread::spawn(move || {
         let mut buf = Vec::new();
 
@@ -277,6 +285,7 @@ fn spawn_writer(mut write_stream: FlezhaStream, cmd_rx: Receiver<ServerCommand>)
                     metadata,
                     ..
                 } => {
+                    gate.release(message.len());
                     buf.clear();
                     build_from_binary_into(&mut buf, &payload_id, &message, &metadata);
                     if write_stream.write_all(&buf).is_err() {

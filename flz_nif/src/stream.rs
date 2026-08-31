@@ -18,6 +18,16 @@ fn send_frame<'a>(
     if stream.gate.is_raised() {
         return Ok((atoms::error(), atoms::send_buffer_full()).encode(env));
     }
+
+    // The gate weighs what this call is about to queue as well as what the
+    // driver already holds, and it is raised HERE rather than on the driver
+    // thread. The bit lives on the far side of an unbounded command channel,
+    // so a sender reading only what the driver has buffered is refused after
+    // it has queued the whole burst — and the ceiling then turns those frames
+    // away behind an answer that said they were sent.
+    let reserved = message.len();
+    stream.gate.queued(reserved);
+
     let queued = stream.cmd_tx.send(ServerCommand::SendFrame {
         stream_id: stream.stream_id,
         payload_id,
@@ -29,8 +39,13 @@ fn send_frame<'a>(
         // The command channel is unbounded, so the only way a send fails is
         // that the driver thread is gone — and then the frame is lost. Saying
         // so is the whole of the answer: a discarded result here was a drop
-        // with no counter, no log, and `:ok` to the sender.
-        Err(_) => (atoms::error(), atoms::driver_gone()).encode(env),
+        // with no counter, no log, and `:ok` to the sender. Nothing was
+        // queued, so the reservation is discharged here instead of by a
+        // driver that will never see it.
+        Err(_) => {
+            stream.gate.release(reserved);
+            (atoms::error(), atoms::driver_gone()).encode(env)
+        }
         Ok(()) => atoms::ok().encode(env),
     })
 }

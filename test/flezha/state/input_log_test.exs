@@ -2,21 +2,22 @@ defmodule Flezha.State.InputLogTest do
   @moduledoc """
   §2.4 `durable-input-log`: offset monotonicity across appends and restarts,
   torn-tail discard, watermark truncation that respects the slowest Entity,
-  frozen-watermark telemetry, and the tier-off cost-free default (no
-  journaling work, no file).
+  frozen-watermark telemetry, the fsync companion's death, and the tier-off
+  cost-free default (no journaling work, no file).
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
 
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.State.{InputLog, Paths, Supervisor, TestHelpers}
+  alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -579,5 +580,139 @@ defmodule Flezha.State.InputLogTest do
       assert InputLog.watermark(class) == 2
       assert {{:reply, {:ok, 3}}, :parked, _} = :gen_server.wait_response(reqids, 2_000, true)
     end
+  end
+
+  describe "the fsync companion's death" do
+    test "no fsync tick is sent to a companion that has exited", %{class: class} do
+      {log, syncer} = live_log(class)
+      died = attach_syncer_died()
+      :erlang.trace(log, true, [:send])
+
+      capture_log(fn ->
+        Process.exit(syncer, :kill)
+        # Once the companion is gone its `EXIT` is in the log's queue, so this
+        # call is answered strictly after the log has handled it — or not at all.
+        assert wait_until(fn -> not Process.alive?(syncer) end, 1_000)
+        settle(log)
+
+        # No synthetic casts: every append marks the class dirty and the shared
+        # `FsyncBatcher`'s own tick casts `:fsync` at whichever log is
+        # registered, which is the whole durability path this log has.
+        for i <- 1..10 do
+          await_live_log(class)
+          {:ok, _} = InputLog.append(class, "m#{i}", %{})
+          await_fsync_tick(class)
+        end
+      end)
+
+      if Process.alive?(log), do: :erlang.trace(log, false, [:send])
+
+      assert dead_syncs() == 0
+      assert_receive {^died, %{operative: ^class, reason: :killed}}, 500
+      assert Process.alive?(:sys.get_state(await_live_log(class)).syncer)
+      assert InputLog.last_offset(class) == 10
+    end
+
+    test "a :fsync call is answered rather than parking the log for ever", %{class: class} do
+      {log, syncer} = live_log(class)
+
+      on_exit(fn ->
+        # A parked log never reaches a system message, so the shared teardown's
+        # polite stop would not return.
+        if Process.alive?(log), do: Process.exit(log, :kill)
+      end)
+
+      capture_log(fn ->
+        # Suspended, the call queues ahead of the companion's `EXIT`, so the log
+        # reaches `:fsync` with a dead companion and no `EXIT` seen yet — the
+        # order the shutdown flush arrives in.
+        :ok = :sys.suspend(log)
+        reqid = :gen_server.send_request(log, :fsync)
+        assert wait_until(fn -> queued?(log) end, 1_000)
+        Process.exit(syncer, :kill)
+        :ok = :sys.resume(log)
+
+        assert :gen_server.receive_response(reqid, 300) == {:reply, :error},
+               "the log never answered :fsync: " <>
+                 inspect(Process.info(log, [:status, :current_stacktrace]))
+
+        await_live_log(class)
+        assert InputLog.last_offset(class) == 0
+      end)
+    end
+  end
+
+  # A live log for `class` with its companion running and nothing owed to the
+  # shared batcher, so a later tick can only come from an append made after it.
+  defp live_log(class) do
+    {:ok, 0} = InputLog.append(class, "seed", %{})
+    log = await_live_log(class)
+    await_fsync_tick(class)
+    settle(log)
+    syncer = :sys.get_state(log).syncer
+    assert Process.alive?(syncer)
+    {log, syncer}
+  end
+
+  # The log has handled everything queued ahead of this call, or has stopped.
+  defp settle(log) do
+    GenServer.call(log, :last_offset, 1_000)
+  catch
+    :exit, _ -> :stopped
+  end
+
+  # A log for `class` that answers. Alive is not enough: one inside `terminate/2`
+  # is alive and takes no more requests, and an append handed to it exits.
+  defp await_live_log(class) do
+    assert pid = wait_until(fn -> responding_log(class) end, 2_000)
+    pid
+  end
+
+  defp responding_log(class) do
+    with {:ok, pid} <- Supervisor.lookup({class, :input_log}),
+         true <- Process.alive?(pid),
+         offset when is_integer(offset) <- settle(pid) do
+      pid
+    else
+      _ -> nil
+    end
+  end
+
+  # The shared batcher has drained: its tick cast `:fsync` at the class's log.
+  defp await_fsync_tick(class) do
+    assert wait_until(
+             fn -> not MapSet.member?(FsyncBatcher.dirty_set(), {class, :input_log}) end,
+             2_000
+           )
+  end
+
+  defp queued?(log) do
+    match?({:message_queue_len, n} when n > 0, Process.info(log, :message_queue_len))
+  end
+
+  # Every `:sync` the traced log sent to a pid that had already exited.
+  defp dead_syncs(count \\ 0) do
+    receive do
+      {:trace, _pid, :send_to_non_existing_process, :sync, _to} -> dead_syncs(count + 1)
+      {:trace, _pid, _event, _message, _to} -> dead_syncs(count)
+    after
+      200 -> count
+    end
+  end
+
+  defp attach_syncer_died() do
+    ref = make_ref()
+    parent = self()
+    handler = "input-log-syncer-died-#{inspect(ref)}"
+
+    :telemetry.attach(
+      handler,
+      [:flezha, :state, :input_log_syncer_died],
+      fn _event, _measurements, metadata, _ -> send(parent, {ref, metadata}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+    ref
   end
 end

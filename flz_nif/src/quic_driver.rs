@@ -459,12 +459,13 @@ impl QuicDriver {
                 message,
                 metadata,
             } => {
+                let reserved = message.len();
                 let frame = flz_transport::service::payloader::build_from_binary(
                     &payload_id,
                     &message,
                     metadata,
                 );
-                self.write_stream(nif_id, frame);
+                self.write_stream(nif_id, frame, reserved);
             }
             ServerCommand::SetActive { stream_id: nif_id } => {
                 if let Some(stream_state) = self.stream_mut(nif_id) {
@@ -532,12 +533,16 @@ impl QuicDriver {
         self.connections.get_mut(&ch)?.streams.get_mut(&qstream_id)
     }
 
-    /// Queue `data` on a stream and flush what it will take now.
-    fn write_stream(&mut self, nif_id: u64, data: Vec<u8>) {
+    /// Queue `data` on a stream and flush what it will take now. `reserved` is
+    /// what the sender counted against the gate when it queued this frame.
+    fn write_stream(&mut self, nif_id: u64, data: Vec<u8>, reserved: usize) {
         let Some(&(ch, qstream_id)) = self.nif_stream_map.get(&nif_id) else {
             return;
         };
         if let Some(stream_state) = self.stream_mut(nif_id) {
+            // The frame has arrived, so it stops being counted as queued and
+            // starts being counted as buffered.
+            stream_state.gate.release(reserved);
             stream_state
                 .gate
                 .offer(&mut stream_state.write_buffer, &data);

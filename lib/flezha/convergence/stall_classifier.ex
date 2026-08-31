@@ -127,17 +127,25 @@ defmodule Flezha.Convergence.StallClassifier do
   def classify(current, previous, opts) do
     o = Map.merge(@defaults, opts)
 
+    transport_verdict(current, previous, o) || participant_verdict(current, previous, o) || :ok
+  end
+
+  # The order across both is the rule — deepest wedged layer wins — so the
+  # transport is asked in full before anything above it is asked at all.
+  defp transport_verdict(current, previous, o) do
     driver_loop_frozen(current, previous, o) ||
       nif_queue_backing_up(current, previous, o) ||
       send_buffer_dropping(current, previous) ||
-      socket_write_blocked(current, previous, o) ||
-      runner_not_consuming(current, previous, o) ||
+      socket_write_blocked(current, previous, o)
+  end
+
+  defp participant_verdict(current, previous, o) do
+    runner_not_consuming(current, previous, o) ||
       runner_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
       operative_not_forwarding(current, previous) ||
       entity_dispatch_stalled(current, previous, o) ||
-      producer_push_stalled(current, previous, o) ||
-      :ok
+      producer_push_stalled(current, previous, o)
   end
 
   # ---------- driver-global checks ----------

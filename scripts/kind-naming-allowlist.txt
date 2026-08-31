@@ -53,7 +53,7 @@ sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.jav
 # near-duplicate line — that is how `bounded queue` and `bounded-queue` once
 # ended up as two entries.
 *:[Bb]ounded `GenServer\.call`
-*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade|state|input|number|ladder|connect|re-send|in-process|accounting|[0-9]+ ms|concurrency|`Task\.async_stream`)
+*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade|state|input|number|ladder|connect|re-send|in-process|accounting|[0-9]+ ms|concurrency|send buffer|`Task\.async_stream`)
 *:[Bb]ounded \(1024
 # `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, not a
 # kind — the one English-sense identifier in the tree, plus its own docs.
@@ -67,6 +67,17 @@ sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.jav
 *:mailbox (is |)bounded
 *:unbounded[ -](growth|buffer|cardinality|allocation|count|body cap|history|in size)
 *:(grow(s|ing)?|count is) unbounded
+# The transport's send-buffer work: a driver's command channel has no
+# capacity limit, and a send buffer that had neither a limit nor a count.
+*:unbounded command( channel)?
+*:unbounded channel
+*:unbounded-wal-buffers
+*:leaving it unbounded
+*:channel is unbounded
+*:channel being unbounded
+*:neither bounded nor
+*:bounded finds a doc comment
+*:bounded would give it
 openspec/specs/runner-controller-connection-healing/spec.md:bounded `:start_operative` retry
 
 docs/dev_notes/wire-frame-limits.md:slice-bounded

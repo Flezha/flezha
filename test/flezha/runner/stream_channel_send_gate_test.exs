@@ -12,12 +12,16 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
 
   What is asserted here is the hold: a congested stream refuses its sender,
   the sender waits in its own process rather than on a scheduler, and it is
-  released — or told the stream went — instead of being left. What is NOT
-  asserted is `write_buffer_dropped == 0` after a burst, because it is not
-  true yet: the gate bit is set by the driver behind an unbounded command
-  channel, so a sender queues frames it has not been refused for and the
-  ceiling discards them under an `:ok` (KI-73). That assertion is what the
-  fix for KI-73 owes; adding it here now would only make this file red.
+  released — or told the stream went — instead of being left.
+
+  And what the hold is *for*: `write_buffer_dropped == 0`, beside a peer that
+  read every frame. That counter is the invariant the whole gate exists to
+  keep, so it is asserted where the loss would happen — at the crossing, and
+  again over a completed run of every frame. It is the assertion that catches a gate raised one frame too late:
+  the bit is read by the sender and written by both the sender and a driver
+  thread behind a queue, so a gate that weighs only what the driver has
+  already buffered passes every other assertion in this file and still lets a
+  fifth of a burst reach the ceiling under an `:ok` (KI-73).
   """
 
   alias Flezha.Runner.StreamChannel
@@ -82,10 +86,17 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
       assert held(ctx.name) > 0, "the sender is recorded as held, not merely slow"
       assert written(ctx.server) > 0, "and the driver is writing, not wedged"
 
+      assert dropped(ctx.server) == 0, "a held sender is a sender nothing is discarded for"
+
       drain_peer(ctx.peer)
 
       assert_receive {:sender_done, results}, 10_000
       assert results == %{ok: @frames}, "the held sender resumed and finished its run"
+
+      # The invariant, over the whole burst, proved at the far end of the
+      # socket: the peer read every frame the sender was told `:ok` for.
+      assert_receive {:peer_drained, _}, 10_000
+      assert dropped(ctx.server) == 0
     end
 
     test "wakes the held sender with an error when the stream closes under it", ctx do
@@ -94,7 +105,7 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
       assert held(ctx.name) > 0
 
       # The stream goes while the sender is still holding on its gate. It must
-      # be told, not left waiting out a hold on a binding that no longer exists.
+      # be told, not left waiting out a hold on a binding that has gone.
       :gen_tcp.close(ctx.peer)
 
       assert_receive {:sender_done, results}, 10_000
@@ -117,6 +128,7 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
 
       assert counters.nil_drops == 0, "and holding is not dropping"
       assert counters.send_frame_calls > 0, "the channel is sending, not wedged"
+      assert dropped(ctx.server) == 0, "nor is the driver dropping behind it"
 
       drain_peer(ctx.peer)
       assert_receive {:sender_done, _}, 10_000
@@ -132,6 +144,9 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
       # and a gate that works both leave a sender that has not come back.
       assert_receive {:sender_done, results}, 20_000
       assert results == %{ok: @frames}
+
+      assert_receive {:peer_drained, _}, 10_000
+      assert dropped(ctx.server) == 0, "a clean result is one this file can report"
 
       Process.exit(reader, :kill)
     end
@@ -153,14 +168,30 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
     end)
   end
 
+  # Read until the peer has taken the whole burst, and say so once. The
+  # threshold is the burst's payload bytes, which is a count 399 framed frames
+  # cannot reach even with their headers — so the message is the delivery
+  # proof, and it is read off the socket rather than off a driver counter the
+  # driver refreshes once per loop iteration.
   defp spawn_drainer(peer) do
-    spawn(fn -> drain_forever(peer) end)
+    test_pid = self()
+    spawn(fn -> drain_forever(peer, 0, test_pid) end)
   end
 
-  defp drain_forever(peer) do
+  @burst_bytes @frames * @frame_bytes
+
+  defp drain_forever(peer, seen, test_pid) do
     case :gen_tcp.recv(peer, 0, 5_000) do
-      {:ok, _} -> drain_forever(peer)
-      _ -> :ok
+      {:ok, bytes} ->
+        total = seen + byte_size(bytes)
+
+        if seen < @burst_bytes and total >= @burst_bytes,
+          do: send(test_pid, {:peer_drained, total})
+
+        drain_forever(peer, total, test_pid)
+
+      _ ->
+        :ok
     end
   end
 
@@ -177,9 +208,15 @@ defmodule FlezhaTest.Runner.StreamChannelSendGateTest do
 
   defp held(name), do: channel_counters(name).send_gate_held
 
-  defp written(server) do
+  defp written(server), do: driver_sum(server, :frames_written)
+
+  # The invariant, not a metric: a bounded send buffer signals congestion, so
+  # every increment here is a frame the sender was never told about.
+  defp dropped(server), do: driver_sum(server, :write_buffer_dropped)
+
+  defp driver_sum(server, slot) do
     case Native.driver_stats(server) do
-      %{streams: streams} -> Enum.reduce(streams, 0, &(&1.frames_written + &2))
+      %{streams: streams} -> Enum.reduce(streams, 0, &(Map.fetch!(&1, slot) + &2))
       _ -> 0
     end
   end
