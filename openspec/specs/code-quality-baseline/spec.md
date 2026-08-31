@@ -343,7 +343,9 @@ would hide a live defect behind a green gate.
 A test SHALL scope its observation of a process-global signal to what the test
 itself caused, by a discriminator the test controls. This covers any VM-wide
 facility a signal arrives through — a `:telemetry` handler, a named table, or a
-shared registry.
+shared registry — and it covers a **direct read** of such a facility as well as
+a delivered signal: an assertion over a whole node-global ledger asserts about
+every emitter on the node, not about the code under test.
 
 Handlers of this kind fire for events raised in any process, so an unscoped
 observation in an `async: true` module receives whatever a concurrently running
@@ -354,6 +356,11 @@ most expensive shape a test failure can take.
 Waiting, retrying, or settling before the assertion SHALL NOT satisfy this: it
 defers the foreign signal rather than excluding it, and leaves the same
 observation open for the next emitter.
+
+A test that scopes one observation of a facility and leaves another unscoped in
+the same body SHALL be treated as unscoped. The scoping SHALL be demonstrated by
+a foreign entry the test itself creates, so the discriminator is proved
+load-bearing rather than assumed.
 
 #### Scenario: A concurrent emitter does not reach another test's assertion
 
@@ -366,6 +373,12 @@ observation open for the next emitter.
 - **GIVEN** an unscoped observation made to pass by waiting, retrying, or settling
 - **WHEN** the practice is reviewed
 - **THEN** it SHALL NOT be treated as satisfying this requirement
+
+#### Scenario: A direct read of a node-global ledger is scoped like a signal
+
+- **GIVEN** a test asserting on the contents of a node-global ledger it did not create alone
+- **WHEN** another module has left an entry in that ledger
+- **THEN** the assertion SHALL be scoped to the reference the test itself created, and SHALL NOT be satisfied by clearing or re-reading the ledger
 
 ### Requirement: A module SHALL be named so that its last segment survives aliasing
 
@@ -543,4 +556,72 @@ its removal, before the rename it guards is committed.
 - **WHEN** the gate runs
 - **THEN** that occurrence SHALL be exempt by an explicit recorded-history marker, and
   SHALL NOT be deleted to satisfy the gate
+
+### Requirement: A test SHALL stop the background worker it starts
+
+A test SHALL stop, before it ends, every long-lived process it starts under a
+supervisor that outlives the test. A supervisor from the application's own
+supervision tree is such a supervisor: a worker started under it is owned by the
+application, not by the test, and `start_supervised/1` does not apply to it.
+
+A worker left behind keeps running its own timers. Its next tick executes
+against whatever global state the suite has reached by then — a stub owned by an
+unrelated module, a table whose owner has exited — and raises somewhere no test
+is watching. The run stays green and the console carries an unattributable
+error, which is the most expensive shape a defect can take.
+
+Answering the crash rather than the leak SHALL NOT satisfy this. Hardening the
+one function the retry happened to reach closes one landing site out of an open
+set, because the leaked worker calls into whatever is currently installed.
+
+#### Scenario: A worker started by a test does not outlive it
+
+- **GIVEN** a test that starts a worker under a supervisor from the application's supervision tree
+- **WHEN** the test ends
+- **THEN** that worker SHALL no longer be running
+
+#### Scenario: The leak is detected at the next test, not at the next release
+
+- **GIVEN** a test module whose tests start such workers
+- **WHEN** a test in that module begins
+- **THEN** any worker surviving from an earlier test SHALL fail that test and SHALL be named in the failure
+
+#### Scenario: Hardening the landing site does not count
+
+- **GIVEN** a leaked worker whose retry raised inside a helper or a stub, closed by making that helper answer instead of raising
+- **WHEN** the practice is reviewed
+- **THEN** it SHALL NOT be treated as satisfying this requirement
+
+### Requirement: A minted test identifier SHALL fit the limit its subject enforces
+
+A helper that mints an identifier SHALL bound what it mints to the limit its
+subject enforces, so the result is accepted at any value of the varying part.
+The limit SHALL be read from the production constant's own accessor, never
+restated as a literal in test code.
+
+A per-call-site truncation SHALL NOT satisfy this. It leaves the bound wherever
+someone remembered to write it, cannot be applied to a computed prefix, and
+budgets a fixed number of digits that a longer run exceeds silently.
+
+A bound that reserves a digit count SHALL NOT satisfy this either: it moves the
+cliff rather than removing it. The bound SHALL be computed from the value being
+minted.
+
+#### Scenario: A minted id is accepted at any counter width
+
+- **GIVEN** an identifier minted from a prefix and a monotonically growing counter
+- **WHEN** the counter reaches any width
+- **THEN** the minted identifier SHALL be accepted by the validator the subject enforces
+
+#### Scenario: An id that already fits is unchanged
+
+- **GIVEN** a prefix and counter whose concatenation is already within the limit
+- **WHEN** the identifier is minted
+- **THEN** it SHALL be byte-identical to the plain `prefix <> "_" <> counter` concatenation
+
+#### Scenario: A per-call-site truncation is not the bound
+
+- **GIVEN** a call site that truncates its prefix by hand before minting
+- **WHEN** the practice is reviewed
+- **THEN** it SHALL NOT be treated as satisfying this requirement
 

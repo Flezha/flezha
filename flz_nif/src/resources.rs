@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crossbeam::channel::Sender;
+use flz_transport::transport::send_gate::SendGate;
 use mio::Waker;
 use rustler::{LocalPid, ResourceArc};
 
@@ -52,6 +53,9 @@ pub struct StreamHandle {
     pub cmd_tx: Sender<ServerCommand>,
     pub waker: StreamWaker,
     pub owner: Arc<Mutex<LocalPid>>,
+    /// Shared with the driver's stream state: the driver raises it as its send
+    /// buffer fills, `send_frame` reads it before queueing anything more.
+    pub gate: Arc<SendGate>,
 }
 
 impl Drop for StreamHandle {

@@ -22,6 +22,7 @@ use flz_transport::service::payloader::{build_from_binary_into, extract_payload}
 use flz_transport::transport::config::{self as transport_config, QuicEntry, TransportType};
 use flz_transport::transport::protocol::{STREAM_TYPE_PRIMARY, STREAM_TYPE_SECONDARY};
 use flz_transport::transport::quic::QuicClient;
+use flz_transport::transport::send_gate::SendGate;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::socket_dir::{self, Role};
 use flz_transport::utility::socket_probe;
@@ -222,6 +223,11 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
         cmd_tx,
         waker: StreamWaker::Channel,
         owner,
+        // A client stream's writer thread drains the command channel itself
+        // and holds no send buffer of the drivers' kind, so nothing here ever
+        // raises this gate; the handle carries one so every per-stream NIF op
+        // is the same op on both sides.
+        gate: Arc::new(SendGate::new()),
     })
 }
 

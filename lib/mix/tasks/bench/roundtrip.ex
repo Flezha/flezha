@@ -24,12 +24,12 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
   ## Engines
 
-    * `flezha` — N operatives, one Kafka producer plugin each; `--runtime
-      rust|java|elixir` (default `rust`) picks which SDK's runners serve them,
-      launched from that SDK's `test/apps/<runtime>_runner/conformance.json`.
-      A number is a number for the runtime that produced it — `--runtime elixir`
-      carries only `--durability off`, because the Elixir SDK v1 defers the
-      persistence family (`docs/sdk/elixir_sdk.md`)
+    * `flezha` — N operatives, one Kafka producer plugin each; `--runtime`
+      (default `rust`) picks which SDK's runners serve them and accepts any SDK
+      with a `test/apps/<runtime>_runner/conformance.json`, which is also what
+      launches it. A number is a number for the runtime that produced it, so a
+      `--durability` posture whose capability that manifest defers is refused by
+      name before a runner starts
     * `flink` — one submitted job (`--flink-jobs n` submits N instead)
     * `passthrough` — bare consume→produce, no engine. This is the broker +
       harness **floor**, not a competitor: it does none of the offset

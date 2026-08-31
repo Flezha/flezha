@@ -13,6 +13,9 @@ fn send_data<'a>(
     stream: StreamHandleArc,
     data: rustler::Binary<'a>,
 ) -> NifResult<Term<'a>> {
+    if let Some(refusal) = refusal(env, &stream) {
+        return Ok(refusal);
+    }
     let _ = stream.cmd_tx.send(ServerCommand::SendData {
         stream_id: stream.stream_id,
         data: data.as_slice().to_vec(),
@@ -30,6 +33,9 @@ fn send_frame<'a>(
     message: rustler::Binary<'a>,
     metadata: HashMap<String, String>,
 ) -> NifResult<Term<'a>> {
+    if let Some(refusal) = refusal(env, &stream) {
+        return Ok(refusal);
+    }
     let _ = stream.cmd_tx.send(ServerCommand::SendFrame {
         stream_id: stream.stream_id,
         payload_id,
@@ -38,6 +44,17 @@ fn send_frame<'a>(
     });
     stream.waker.wake();
     Ok(atoms::ok().encode(env))
+}
+
+/// The gate read every outbound frame pays: one relaxed atomic load, on a
+/// crossing the sender already makes. A refused frame never leaves the caller,
+/// and the caller is the one told.
+fn refusal<'a>(env: Env<'a>, stream: &StreamHandleArc) -> Option<Term<'a>> {
+    if !stream.gate.is_raised() {
+        return None;
+    }
+    stream.gate.refuse();
+    Some((atoms::error(), atoms::send_buffer_full()).encode(env))
 }
 
 /// Enable active mode: the driver delivers incoming frames as Erlang messages.

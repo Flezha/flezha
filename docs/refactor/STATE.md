@@ -1,11 +1,12 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 3. **Phase 1 rows 1, 2, 3 and 3.5 are DONE.**
-Row 3.5 (`fix-opaque-module-names`) closed in four segments — credo 1463 → 378,
-`credo_warnings` now ratchets in all 36 areas, and `refactor_metrics.py --check` is
-exit 0 for the first time in 60+ commits. **Next: Phase 1 row 4,
-`green-the-test-hygiene-tail`** (KI-18, KI-21, KI-23, KI-54); rows 5, 6, 6.5, 7 and
-8 follow, then area 4 (`sdk/java`).
+**Last updated**: 2026-08-31 — session 3. **Phase 1 rows 1, 2, 3, 3.5, 4 and 5+6 are
+DONE.** `mix test` is **1864 passed, exit 0, zero uncaptured-log gate hits**;
+`refactor_metrics.py --check` is **exit 0**; credo 1463 → 378 and ratcheting in all 36
+areas. **Next: Phase 1 row 6.5, `close-transport-send-buffer-loss`** — the user-queued
+P1 pair (KI-3, KI-56), proposal already written and `--strict` valid. Then row 7
+(KI-53), row 8 (the gate re-proof), then area 4 (`sdk/java`). KI-68 and KI-69 are new
+`lib/` defects to be surveyed together; KI-52 is escalated and awaiting the user.
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -114,7 +115,295 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 **Segment A of row 4 is verified and committed; segment B is next.** Row 3.5 is
 COMPLETE, archived and committed.
 
-**Segment B of row 4 is verified and committed; segment C is next.**
+**Row 6.5 (`close-transport-send-buffer-loss`) is APPROVED; segment A is running.**
+Rows 5+6 are COMPLETE, archived and committed.
+
+**Segment B of row 6.5 is running (batches 3-4 + KI-70/71 + `send_data` + the
+narrative marker).** Spawned ~06:19.
+
+*Last seen 06:52* — 32 m in, **24 files +476/−405**. Machine clean: no zombies, no
+containers, load 0.94. **Scope checked, not assumed**: three files sit outside the
+proposal's declared Impact — `convergence/stall_classifier.ex` (in scope; the
+proposal names "the liveness verdict that gains the clause" without the filename) and
+`operative/ingest.ex` + `operative/overwatch.ex`, which are the **new error term
+propagating to callers that must handle it**: `{:error, :no_stream}` widens to
+`{:error, _reason}` because an undrained send buffer is undeliverable the same way,
+plus a `@spec` and a moduledoc. Necessary consequence, not creep — and it is what
+D11's scope correction anticipated, that the Impact list is not exhaustive at
+filename granularity.
+
+*Last seen 06:30 — STALL CHECK SENT.* Ten minutes in with **no observable progress
+on any instrument**: `git status` clean, no `cargo`/`rustc`/`beam.smp`, load 0.08,
+nothing written to the scratchpad, and `tasks.md`'s mtime still 06:13 — segment A's
+last write, not this worker's. That is the skill's stall definition exactly, and the
+rule is to act at the first heartbeat rather than wait a second one.
+
+*Resolved 06:41 — it was reading, and the nudge worked.* Eleven minutes later the
+same instruments read **13 files, +180/−356**, a `rustc` six minutes in, load 1.29,
+and `flz_nif/Cargo.toml` touched (the `quinn_proto` harness port KI-71's driven
+reproduction needs). The net **−176** says the `send_data` deletion landed — the
+deliberately small first step the nudge named, chosen so progress would become
+visible fast. **No worker was lost and no context was thrown away.**
+
+The lesson to keep: on this harness a subagent that is *reading* is indistinguishable
+from one that is *stalled* — no process, no write, no tick, an idle box. The skill's
+"act at the first heartbeat" is still right, but the action should be a message that
+is useful either way, never a kill. A brief that asks for six documents buys itself
+one silent heartbeat, and a first step that produces a visible artefact is what
+converts the ambiguity back into evidence.
+
+**Nudged, not killed** (charter §1: a worker's context is worth more than a restart,
+and a worker mid-read looks identical to a stalled one from outside — this brief asks
+for six documents including `design.md` in full). The message asks for one line on
+where it is and names a deliberately small first step, the `send_data` deletion, so
+that progress becomes visible quickly. If it does not answer by the next heartbeat, a
+fresh worker takes the resume brief.
+
+### Row 6.5 segment A — verified 2026-08-31, commit `269072b9`
+
+Batches 1-2: both defects reproduced on the **ungated** build, then one shared gate.
+Baseline tag **`refactor-baseline-6.5` created at `74d9132b`**.
+
+Supervisor-verified: `cargo test -p flz_nif -p flz_transport` **20 + 36 green**; the
+gate calls the existing `would_overflow_write_buffer`, so `config.rs`'s "one
+predicate behind every driver's send-buffer bound" **becomes true** rather than
+staying a false comment.
+
+**Batch 1 did its job, and its first result was that a filed harness does not run.**
+KI-3's published reproduction raised `:erlang.hd([])` 3 of 3 — the `StreamHandle` is
+collectable before `driver_stats/1`, its `Drop` sends `CloseStream`, and the snapshot
+comes back empty. Pinned and re-run: **`%{ok: 400}` replies, `frames_written=131`,
+`write_buffer_dropped=269`** — 269 frames discarded after the caller was told `:ok`.
+Control at a 1 GiB cap: 400 written, 0 dropped.
+
+**KI-56's filed reproduction was unperformable, and the worker said so instead of
+faking it.** `TransportServer.stats` is `None` for QUIC, so there is no
+`driver_write_buffer_bytes` to watch grow. Reproduced by another route — an in-memory
+`quinn_proto` pair whose client never reads: **`offered=52428800 buffered=44040192`
+against a cap of 8388608**, and the second 25 MiB burst buffered **byte for byte**
+(`growth=26214400`). That is stronger than "over the cap": there is no bound at all.
+
+**The finding that changes the row's shape — KI-70, confirmed by the supervisor from
+source.** `flz_transport/src/transport/quic.rs:543`'s `write_or_buffer` drops a frame
+at the ceiling and then `reply.send(Ok(total_len))`: it reports **every byte written**
+for a frame it discarded. That is KI-3's defect on the client side, in code **every
+SDK compiles in**. **Ruled into this row (segment B)** — closing both drivers while
+the client path still lies would ship a half-fix.
+
+**Two more filed**: KI-71 (same function — `write_buf` and `pending_write_reply` both
+**assign**, so a concurrent write tears a frame and drops a reply sender), ruled
+**fixed in the same pass but only on a driven reproduction**, since read-established
+is the KI-67 shape; and KI-72 (the QUIC driver emits no `DriverStats` at all), ruled
+**deferral named, row does not grow** — which makes the row's reporting half
+explicitly UDS-only and must be written where the requirement is stated.
+
+**The A/B rows are declared, and the honest answer is that none can resolve the
+change.** One relaxed atomic load is ~1 ns against an ~8.7 µs per-frame budget —
+**~0.01 %**, two orders under row 1's 1.93 % floor and three under row 6's ~18 %
+spread. Row 6 and the new QUIC arm are **direction** rows; the cost is argued from
+*where the load sits*, not measured. That argument is a **constraint, not a
+preference**: a gate read costing its own NIF call would be 1–2 %, which row 6 also
+cannot resolve.
+
+**Cross-SDK answered with evidence: no Java and no Elixir work owed** — provided the
+knob is read *inside* `flz_core`. The credit window has one caller
+(`flusher.rs:260`), `PARK_TIMEOUT` is a private `const` with no accessor, Java reaches
+it as compiled `flz_core` over the C ABI with no credit surface of its own
+(`grep -ril credit sdk/java` is empty), and the Elixir SDK answers
+`:credit_window_init` in its "persistence is deferred" ignore clause. **This is a
+constraint on task 5.3**: read it with `util::env_parse` as `dynamic.rs` already does;
+thread it through a builder or API parameter instead and Java immediately owes a
+`HostClassDecl` key and a JNI setter.
+
+**`refactor_metrics.py --check` is exit 1 with 3 regressions and they are this
+change's** — `flz_transport prod_loc` +85, `flz_nif prod_loc` +60,
+`flz_nif narrative_markers` 0 → 1. **Ruled**: a Phase 1 defect row that adds a
+required mechanism is not the case charter §1's net-lines rule governs — that rule is
+measured over a *refactor area*. The two `prod_loc` rows are **expected red for the
+duration of row 6.5 and re-baselined at its close**, with the number justified there.
+The `narrative_markers` hit is **not** accepted: it is a quality defect in a new file
+and segment B fixes it.
+
+**Deletion funding ruled in**: the `send_data` NIF is **dead** — its only Elixir
+reference is a stub declaration at `native.ex:53`, `Transport.Stream` omits it
+deliberately, and `ServerCommand::SendData` is produced only by it. ~30 lines across
+four files. **Delete it in segment B.** It is a public-surface removal, which is why
+the worker left it to me, and the deciding reason is not the line count: a dead
+second send path that must track the gate forever is a trap for the next reader.
+
+### Row 6.5 — approved 2026-08-31, with two required additions
+
+The user queued this on 2026-08-30 and another session wrote the proposal. It is a
+**P1 production transport change** and the strongest proposal in the queue: both
+defects carry file:line evidence, the mechanism is **one** watermark gate shared by
+both drivers, and the reuse decision is explicit — it extends the existing
+`push_gated` / `rearm_deferred_pushes` holdback rather than inventing a second
+backpressure mechanism. `--strict` valid. 6 batches, 30 boxes, ~8.5 h.
+
+**What it fixes**: UDS silently discards a frame after `send_frame` has already
+answered `:ok`, and **nothing in `lib/` reads the drop counter**; QUIC calls the
+overflow predicate **nowhere** and grows without bound on the same non-draining
+peer — in a repository that has already taken a production OOM from unbounded
+buffers. Both doc comments claiming a shared bound are false as written.
+
+**Design risk 1 is the best sentence in the proposal** and it names this session's
+own failure: *"A gate that never engages looks exactly like a gate that works.
+Every test must first drive the ungated build and see the drop or the growth, or it
+proves nothing."* That is KI-45's trap, KI-33's trap, and — as of this session —
+KI-67's. Batch 1 exists to do it in the right order.
+
+**Approved with two additions, briefed rather than sent back** (the proposal is
+otherwise excellent; a rewrite cycle would cost more than it buys):
+
+1. **The A/B is under-specified against charter §8.** Task 6.5 has the right shape —
+   interleaved, mains power, and 6.4 adds an explicit QUIC arm because the default
+   sweep covers QUIC nowhere. What it lacks is §8's contract: a baseline **tag**, and
+   each row declared **`gate` / `guard` / `direction` with its measured floor, in
+   `design.md`, before anything is measured**. A row whose floor cannot resolve the
+   effect being claimed is a direction row and must say so. This is a data-path
+   change — one relaxed atomic load per frame on a path measured at 115K msg/s.
+2. **The cross-SDK rule is unanswered.** `CLAUDE.md` requires that a surface every
+   SDK carries — explicitly including **a default** — changes in Rust, Java **and**
+   Elixir in one change, *or* the change names the SDK it defers and the follow-up
+   that owes it. This makes `flz_core/src/credit.rs`'s hard-coded `PARK_TIMEOUT`
+   configurable, and `flz_core` is compiled into the **Java** SDK over JNI. The
+   proposal mentions Java nowhere. It may well resolve as "the knob is read inside
+   the shared core, so Java gets it for free" — but that must be **established and
+   written down**, not assumed.
+
+### Segmentation of row 6.5
+
+| segment | batches | content | state |
+|---|---|---|---|
+| A | 1, 2 | make both defects reproducible; the shared gate | **done**, `269072b9` |
+| B | 3, 4 (+KI-70/71, send_data) | the sender side; make the loss reportable; the QUIC client fix; delete the dead NIF | next |
+| C | 5, 6 | configuration; prove it and close out | |
+
+
+
+### Row 5+6 — `correct-runtime-and-conformance-docs` is DONE — `e4f919c8`
+
+Archived as `2026-08-31-correct-runtime-and-conformance-docs`, one MODIFIED
+requirement on `sdk-conformance`. Supervisor-verified: `mix test` **1864 passed,
+exit 0, zero uncaptured-log gate hits**; `--check` exit 0; five naming gates green.
+Production `lib/` **net −1**.
+
+**The entry named one stale list; there were three.** `bench/roundtrip.ex` advertised
+three runtimes of seven, and **`bench.ex` — which KI-51 does not mention** — named
+five and omitted `python`. A third copy restated a manifest's `deferred` key for one
+runtime when the restriction holds for three. **The fix is one list, not a corrected
+second one**: both help texts name `test/apps/<runtime>_runner/conformance.json` and
+enumerate nothing, which is the rule `sdk-conformance` already states for the launch
+line. Two lists that must agree *are* the defect; correcting the copy would have
+rebuilt it.
+
+**The drift is now gated, and the supervisor proved it red rather than accepting the
+claim** — the KI-67 lesson applied. Reverting `bench.ex` alone: the gate reports
+`Mix.Tasks.Bench names ["elixir", "java", "node", "ruby"] … a second copy of the set
+its --runtime reads from the manifests`, **18/19**; restored byte-identical, **19
+passed**.
+
+**KI-13 needed no code, exactly as its triage said** — and the useful finding is
+*where* the knowledge lived. The shim's requirements and the Ruby version floor
+existed only in a refactor dev note, not where a person running the suite would look;
+`docs/sdk/conformance.md` now carries both. Where the exact `docker run` mount and
+`-e` spellings are **written down nowhere**, the worker stated the requirement with a
+placeholder rather than inventing flags — the right call, since a wrong command in
+the docs is worse than a pointer.
+
+**A triage fact was false and is corrected, not carried**: KI-13 records "there is no
+PHP on this box at all". There is — **PHP 8.3.6 with `ext-ffi`**, supervisor-verified,
+which satisfies the default `sync` executor. The shim remains the only route to the
+`swoole` executor. An entry that has gone stale in the *reassuring* direction is the
+kind that quietly licenses a wrong conclusion later.
+
+**KI-65 recursion, twice in one session.** `check-kind-naming` reached 10, then 11 —
+and on both occasions the new hit was a **supervisor heartbeat line on this board**,
+the second one being a line whose subject was the count drifting. Both reworded. The
+board no longer quotes a fixed number for that gate, because the number is a function
+of how much the board discusses it. That is KI-65's argument for `record_tag` made
+visible in the metric itself.
+
+**KI-18 gains a third sighting** of `flezha_test.exs:403` (`assert m.migrated >= 1`,
+`left: 0`) — new information, because the entry recorded the exposure as
+self-inflicted triple load and this was one ordinary run on an idle box. It did
+**not** recur in the supervisor's own run, and the change cannot reach that file.
+
+### Row 4 — `green-the-test-hygiene-tail` is DONE
+
+Three segments, three commits plus close-outs, archived as
+`2026-08-31-green-the-test-hygiene-tail` with 2 ADDED and 1 MODIFIED requirement on
+`code-quality-baseline`.
+
+| segment | commit | what |
+|---|---|---|
+| A | `656fd444` | KI-54 ownership; the `worker_registry` barrier; the KI-66 claim |
+| B | `9820f75d` | the watchdog pin; KI-23's generator bound; four sibling mints unified |
+| C | `5946464e` | the KI-67 repair; the entries made true; verification |
+
+**Final state, supervisor-verified**: `mix test` **1863 passed, exit 0, ZERO
+uncaptured-log gate hits**; `--include system` 1944 passed; `--include multi_node`
+1872 passed; `refactor_metrics.py --check` **exit 0**; five of six naming gates
+green (the sixth is KI-65, untouched by this row).
+
+**Four of the row's own entries did not survive verification as filed**, which is
+the row's real product: KI-21 no longer reproduced at all, KI-54's landing site was
+refuted, KI-23's remedy was unenforceable because three of five sites are not
+literals, and KI-18's "most urgent" item was already done. A defect list is a set of
+hypotheses, and this row tested them.
+
+### The lesson that outlives row 4 — KI-67
+
+Segment A's KI-66 regression test **passed on the code it existed to catch**, and it
+took a *later worker running its negative control* to find that out. Measured three
+times: the segment-B worker 15 red / 20 seeds, the supervisor **7 red / 5 green** at
+12 seeds, and the repaired test **12 red / 0 green** at the same twelve.
+
+The mechanism is worth carrying: `System.unique_integer` is node-global **and
+per-scheduler striped**, so a fixed band has no relation to where the next mint
+lands — drift measured from `+6365` to **`−260`**. And the old test's vacuity guard
+was **true in both the caught and the missed case**, which is what made it look
+rigorous while separating nothing.
+
+**Two supervisor process failures caused it, both recorded rather than quietly
+repaired:**
+
+1. At segment A's checkpoint I ran the full suite, read the fix, and **accepted the
+   worker's negative-control claim without running it**. A regression test is proved
+   by its negative control and by nothing else. Row 3.5 proved its gate red twice —
+   worker and supervisor — and that is the standard segment A's checkpoint missed.
+   At segment C's checkpoint I ran all twelve seeds myself before believing the
+   repair.
+2. I skipped the skill's §4 `git add -N`, so `--check` read exit 0 only because the
+   new file was **untracked and invisible to the gates**. The segment-C worker
+   flagged the same trap back at me in its own report.
+
+**The repair's construction is the durable part**: a **real second BEAM**, because
+the defect *is* a previous BEAM's leftovers — reproducing it beats simulating it,
+with no retry loop and no probabilistic argument. Its guard was **demonstrated** to
+discriminate (on a deliberately mis-sized arm it failed with *"the claim asked for
+325 first, outside the planted band"* — precisely the case the old test passed).
+
+### KI-65 demonstrated on the supervisor
+
+`check-kind-naming` reached **10** hits during this row, and the tenth was **my own
+heartbeat prose** on this board describing a worker's "bounded" wait. I reworded it;
+back to 9. The gate genuinely does get redder every time anyone writes about it,
+which is what KI-65 says and why its fix is `record_tag`, not more allowlist entries.
+
+### Filed this row, not fixed — both `lib/`, both queued
+
+- **KI-68** — an opted-out workflow's teardown burns the whole 60 s drain bound
+  after a crash-resume (`deregistered=true after 59994 ms`). Deterministic in
+  isolation, pre-existing since `a9787a0f`.
+- **KI-69** — a runner connect racing a hub teardown exits `:shutdown` out through
+  `connect_handler/4` and takes `Transport.Server.Uds` — the acceptor for **every**
+  runner — down. **One sighting, not reproduced** in the timebox (3 full re-runs +
+  5 module runs), but the mechanism is read off a real stack. Recorded as a
+  suspicion per charter §1b.
+
+Both are teardown-ordering defects on the runner/controller seam and **should be
+surveyed together**, not separately.
 
 ### Row 4 segment B — verified 2026-08-31, commit `9820f75d`
 
@@ -265,7 +554,7 @@ them is a known leak left standing in a row whose subject is tests that leak.
 |---|---|---|---|
 | A | 1, 2, 3 (+KI-66) | baseline; KI-54 ownership; the `worker_registry` barrier; the KI-66 claim | **done**, `656fd444` |
 | B | 4, 5 (+4 mints) | the watchdog pin; KI-23 generator bound; the four sibling mint sites | **done**, `9820f75d` |
-| C | 6, 7 (+KI-67) | fix the KI-66 regression test; make the entries true; verification | next |
+| C | 6, 7 (+KI-67) | fix the KI-66 regression test; make the entries true; verification | **done**, `5946464e` |
 
 ### Row 3.5 — `fix-opaque-module-names` is DONE
 
@@ -700,6 +989,39 @@ the supervisor's; the options with the cost of each; a recommendation; and what
 it blocks, if anything. An entry without a recommendation is a question the
 supervisor has not finished thinking about.
 
+### KI-52 — do Java and PHP ship five native triples, or one? (P3, blocks going public)
+
+**What it is.** `sdk/java/flezha-sdk-native` and the PHP packaging each ship **all
+five native triples in one artefact**, so a consumer downloads five platforms to use
+one. The other three SDKs already solved it differently: Node uses per-triple
+`optionalDependencies`, Ruby compiles at install, Python ships maturin wheels.
+
+**Why it is yours and not mine.** It is not a defect — nothing is broken, and there
+is no reproduction to run. It is a **distribution-shape decision** with a cost on
+both sides, and its real question is *does this block going public*, which is a
+product call. `docs/known_issues.md` files it as provisional for exactly this reason.
+
+**Not the same as the artefact purge.** `unbundle-committed-build-artifacts` changed
+what **git** carries; this is what a **release** carries. Conflating the two is what
+made the predecessor entry read as six SDKs when it was two.
+
+**Options, with costs:**
+
+| option | cost | consequence |
+|---|---|---|
+| **Java classifier artifacts + a PHP per-platform mechanism** | the larger piece of work — a Maven classifier build per triple, a PHP packaging decision that has no in-tree precedent, and CI matrix changes to publish them | consumers download one platform; consistent with the other three SDKs |
+| **Ship as-is and say so** | ~an hour: document the artefact shape where a consumer meets it | a Java consumer downloads ~5× what they need. Defensible while unpublished, hard to defend at launch |
+| **Defer until a publish date exists** | zero now | the decision returns, and later it is a breaking packaging change rather than a first shape |
+
+**My recommendation: option 3 until a publish date exists, then option 1.** Nothing
+is published yet (`open-source-licensing`: "nothing is published"), so the cost today
+is zero and the information needed to choose well — who consumes the jar, on which
+platforms — does not exist yet. What I would *not* do is option 2: documenting a
+shape you intend to change is work spent twice.
+
+**Blocks**: nothing in the programme. It was Phase 1 row 6's second half; row 6 is
+now KI-51 alone, and this entry replaces its other half.
+
 ### KI-3 — what is a caller told when its frame was discarded? (P1)
 
 The last silent-drop default in a platform whose stated guarantee is that
@@ -768,48 +1090,6 @@ relaxed atomic load per frame on the happy path, reusing the `push_gated` /
 `rearm_deferred_pushes` holdback shape rather than inventing a mechanism, and
 never parking a scheduler thread. QUIC is the easier half: `WriteError::Blocked`
 IS the high-water signal and is currently swallowed. Blocks nothing today.
-
-### KI-10 — Credo strict: disable two checks, or edit 1 083 sites? (P2)
-
-`mix credo --strict` reports **1 461** issues, and **1 083** of them (653
-`AliasUsage` + 430 `ParenthesesOnZeroArityDefs`) are checks this codebase
-deliberately does not follow — 74 % of the count. Every one of the 36 areas in
-`baseline.json` carries `"credo_warnings": null`, so no area ratchets this
-metric at all and the number is not currently a signal.
-
-Why it is yours: it is a house-style decision, not a defect.
-
-- **Disable both** in `.credo.exs` with a one-line reason each, then ratchet on
-  the remaining 378 (139 of which are real nesting depth). Cost: minutes.
-- **Adopt them** and edit ~1 083 sites against the style already chosen. Cost:
-  days, and a diff that touches nearly every file.
-
-**DECIDED 2026-08-30 — this is now queued work, not a question.** Row 3.5
-below. The user ruled: `ParenthesesOnZeroArityDefs` is rejected and disabled;
-`AliasUsage` is **adopted**, and with it the underlying naming problem it
-surfaces. The measurement that settled it is in that row. What follows is the
-history.
-
-**Half decided 2026-08-30.** The user has ruled on
-`ParenthesesOnZeroArityDefs` (430 issues): **disable it** — they do not agree
-with the check. `AliasUsage` (653) is still open: they want to see what it
-actually asks for before ruling, and the concrete example is
-`lib/flezha/application.ex`, which aliases `Flezha.Runner.FleetManager` at the
-top and then writes `Flezha.Boot.StateRootLock.claim!()`,
-`Flezha.Boot.StatePathMigrator.migrate()` and
-`Flezha.State.DurabilityTier.children()` fully qualified inline — so the check
-is a **consistency** argument, not a style preference: the file already does
-both things.
-
-Held as ONE item rather than editing `.credo.exs` now, because both checks feed
-the same decision — the ratchet cannot be set until the remaining count is
-known, and 653 of the 1 083 are on the undecided side. When `AliasUsage` is
-ruled on, one pass disables what was rejected and records the ratchet.
-
-Recommendation: disable both and ratchet the ~378 that remain; the ~125
-"function body nested too deep" in that residue are real complexity signal and
-overlap the programme's own function-ceiling work. Blocks the credo ratchet
-only; area 5a owes the decision.
 
 ### Gate finding — the format gate aborts before it checks Rust
 
@@ -1275,9 +1555,9 @@ entry before briefing a worker; do not re-derive what triage already measured.
 | 2 | ~~`fix-control-unit-abnormal-exit`~~ → `finish-the-suite-log-gate` | KI-48, KI-49, KI-50 | **DONE** — `21185253` + the close-out commit. Absorbed all three: they were believed to be the only sources keeping the uncaptured-log gate from reporting. They were not — see rows 7 and 8. |
 | 3 | `close-prometheus-label-coercion` | KI-45 (P1), KI-59 | **DONE** — `55f32234` + close-out. KI-46 deferred by name (`close-otlp-typed-attributes`): typing the values would have destroyed this change's only control. |
 | 3.5 | `fix-opaque-module-names` | KI-10 | **DONE** — `0cb58166`, `055054f2`, `1848cb80`, `14c7cfc5`, archived. credo 1463 → 378; `credo_warnings` ratchets in all 36 areas for the first time; `--check` exit 0. Fixed KI-63 on the way; filed KI-61/62/64/65. 3 renames, 4 folds, 260 keeps; one change in three ordered commits. The survey refuted this board's sequencing claim by an order of magnitude — see the detail block below. |
-| 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | Tests that lie or leak. KI-49 and KI-50 went to row 2's change; KI-54 arrives here — a `ForwardWorker` retry outliving its test, the same shape as the KI-49 row 2 closed, so row 2's await pattern is the candidate fix. |
-| 5 | `fix-php-container-gate` | KI-13 (P2) | Production behaviour, proposal owed. |
-| 6 | `correct-runtime-and-triple-docs` | KI-51, KI-52 (P3) | Wording and a distribution-shape note; KI-52 is provisional. |
+| 4 | `green-the-test-hygiene-tail` | KI-18, KI-21, KI-23, **KI-54** | **DONE** — `656fd444`, `9820f75d`, `5946464e`, archived. Four of its own entries were refuted or already fixed. Also closed KI-66 and KI-67; filed KI-68 and KI-69. |
+| 5+6 | `correct-runtime-and-conformance-docs` | KI-13, KI-51 | **DONE** — `e4f919c8`, archived. Found a second stale list the entry never named, and fixed it as one list rather than a corrected copy. **MERGED and re-scoped 2026-08-31.** KI-13's own triage says it is **not a defect in this repository** — there is no repo code to change, only a `docs/sdk/conformance.md` line recording the shim's `docker run` (with `--network host` and `-i`). KI-51 is a one-line help string. Together they are one small change, not two rows. |
+| ~~6~~ | — | KI-52 | **NOT WORK — escalated** to *Awaiting the user's decision*. It is a distribution-shape call ("does this block going public"), not a defect: nothing is broken and there is no reproduction to run. Its other half, KI-51, moved to row 5+6. |
 | 6.5 | `close-transport-send-buffer-loss` | **KI-3 (P1), KI-56 (P1)** | **Queued 2026-08-30 by the user; proposal WRITTEN and `--strict` valid.** One watermark gate replaces UDS's silent drop and gives QUIC the bound it never had; the sender parks a BEAM process, never a scheduler thread. Four knobs (both watermarks, the gate's fallback interval, credit's `PARK_TIMEOUT`). Does NOT replace the credit system — see the KI-3 entry above for why they compose. |
 | 7 | `close-input-log-syncer-blindness` | **KI-53 (P1)** | **New, found 2026-08-30 by the gate this programme just proved.** Not a log line: `InputLog` cannot tell that its fsync companion died, and keeps sending to a dead pid. Design question — re-spawn the syncer, or stop the log so its supervisor restarts the pair. Needs its own test; do NOT answer it with a `{:EXIT, _, _}` clause that returns `{:noreply, state}`. |
 | 8 | — | the gate itself | Not a change: after rows 4 and 7 land, re-run the batch-5 proof (a scratch uncaptured `Logger.error` must turn the gate red while `mix test` exits 0) and confirm two full runs clean. Only then is the gate reliable, and only then does `code-quality-baseline`'s new SHALL hold in practice. |

@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crossbeam::channel::{Receiver, Sender};
-use flz_transport::transport::config::{max_write_buffer_bytes, would_overflow_write_buffer};
+use flz_transport::transport::send_gate::SendGate;
 use mio::net::UnixListener;
 use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::LocalPid;
 
-use crate::driver_msg::{send_closed_msg, send_connection_msg};
+use crate::driver_msg::{report_gate, send_closed_msg, send_connection_msg};
 use crate::driver_stats::{DriverStats, StreamSnapshot};
 use crate::frame_buffer::{FrameBuffer, Inbox};
 use crate::resources::StreamHandle;
@@ -53,13 +53,10 @@ struct StreamState {
     frame_buffer: FrameBuffer,
     inbox: Inbox,
     write_buffer: Vec<u8>,
-    // Hard cap on the per-stream send buffer: past it `enqueue_write` drops the
-    // newest frame so a slow/non-reading runner cannot grow controller memory
-    // without bound (mirrors the SDK bounded-mailbox DropNewest).
-    max_write_buffer_bytes: usize,
+    // Shared with the `StreamHandle` Elixir holds, and carrying the ceiling.
+    gate: Arc<SendGate>,
     // Liveness counters (single-threaded driver, no contention). Copied into
     // the DriverStats snapshot once per loop iteration.
-    write_buffer_dropped: u64,
     frames_written: u64,
     frames_read: u64,
     last_write_ms: u64,
@@ -336,7 +333,7 @@ impl UdsDriver {
                     id,
                     StreamSnapshot {
                         write_buffer_len: s.write_buffer.len() as u64,
-                        write_buffer_dropped: s.write_buffer_dropped,
+                        write_buffer_dropped: s.gate.refused(),
                         frames_written: s.frames_written,
                         frames_read: s.frames_read,
                         last_write_ms: s.last_write_ms,
@@ -369,6 +366,7 @@ impl UdsDriver {
         self.next_token_id += 1;
 
         let owner = Arc::new(Mutex::new(self.acceptor_pid));
+        let gate = Arc::new(SendGate::new());
 
         if let Err(e) = self
             .poll
@@ -384,6 +382,7 @@ impl UdsDriver {
             cmd_tx: self.cmd_tx.clone(),
             waker: crate::resources::StreamWaker::Mio(Arc::clone(&self.waker)),
             owner: Arc::clone(&owner),
+            gate: Arc::clone(&gate),
         });
 
         self.streams.insert(
@@ -395,8 +394,7 @@ impl UdsDriver {
                 frame_buffer: FrameBuffer::new(),
                 inbox: Inbox::new(),
                 write_buffer: Vec::new(),
-                max_write_buffer_bytes: max_write_buffer_bytes(),
-                write_buffer_dropped: 0,
+                gate,
                 frames_written: 0,
                 frames_read: 0,
                 last_write_ms: 0,
@@ -471,20 +469,13 @@ fn enqueue_write(
     now_ms: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
-        if would_overflow_write_buffer(
-            state.write_buffer.len(),
-            data.len(),
-            state.max_write_buffer_bytes,
-        ) {
-            // DropNewest: the peer is not draining; drop rather than grow the
-            // buffer without bound. Counted, not silent.
-            state.write_buffer_dropped += 1;
+        // The last-resort ceiling; a sender honouring the gate never reaches it.
+        if !state.gate.offer(&mut state.write_buffer, &data) {
             return false;
         }
 
         state.frames_written += 1;
-        state.write_buffer.extend_from_slice(&data);
-        return flush_pending(state, poll, now_ms);
+        return flush_pending(stream_id, state, poll, now_ms);
     }
     false
 }
@@ -492,7 +483,7 @@ fn enqueue_write(
 /// Attempt to write buffered data to the stream.
 /// If WouldBlock, registers for WRITABLE events so we retry later.
 /// Returns true if the stream is broken (write error).
-fn flush_pending(state: &mut StreamState, poll: &mut Poll, now_ms: u64) -> bool {
+fn flush_pending(stream_id: u64, state: &mut StreamState, poll: &mut Poll, now_ms: u64) -> bool {
     while !state.write_buffer.is_empty() {
         match state.stream.write(&state.write_buffer) {
             Ok(0) => break,
@@ -506,6 +497,7 @@ fn flush_pending(state: &mut StreamState, poll: &mut Poll, now_ms: u64) -> bool 
                     state.token,
                     Interest::READABLE | Interest::WRITABLE,
                 );
+                observe_gate(stream_id, state);
                 return false;
             }
             Err(_) => {
@@ -520,7 +512,17 @@ fn flush_pending(state: &mut StreamState, poll: &mut Poll, now_ms: u64) -> bool 
             .registry()
             .reregister(&mut state.stream, state.token, Interest::READABLE);
     }
+    observe_gate(stream_id, state);
     false
+}
+
+/// Move the gate on the depth this flush left behind, and report a crossing.
+fn observe_gate(stream_id: u64, state: &StreamState) {
+    report_gate(
+        &state.owner,
+        stream_id,
+        state.gate.observe(state.write_buffer.len()),
+    );
 }
 
 /// Flush write buffer for a specific stream by ID.
@@ -532,7 +534,7 @@ fn flush_write_buffer(
     now_ms: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
-        return flush_pending(state, poll, now_ms);
+        return flush_pending(stream_id, state, poll, now_ms);
     }
     false
 }

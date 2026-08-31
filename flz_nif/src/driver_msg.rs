@@ -1,15 +1,26 @@
 //! Erlang-term message builders shared by the UDS and QUIC drivers.
 //! Each sends a `{:flz_*, ...}` tuple to the owning Elixir process.
 
-use rustler::{Encoder, LocalPid, OwnedEnv, ResourceArc, Term};
+use std::sync::{Arc, Mutex};
+
+use flz_transport::transport::send_gate::{GateChange, Transition};
+use rustler::{Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
 
 use crate::atoms;
 use crate::frame_buffer::ParsedFrame;
 use crate::resources::StreamHandle;
 
-pub(crate) fn send_data_msg(owner: LocalPid, stream_id: u64, frame: ParsedFrame) {
+/// Send one `{:flz_*, ...}` tuple to `owner`. Every message below is this
+/// shape; only the elements differ.
+fn send_tuple(owner: LocalPid, elements: impl for<'a> FnOnce(Env<'a>) -> Vec<Term<'a>>) {
     let mut env = OwnedEnv::new();
     let _ = env.send_and_clear(&owner, |env| {
+        rustler::types::tuple::make_tuple(env, &elements(env))
+    });
+}
+
+pub(crate) fn send_data_msg(owner: LocalPid, stream_id: u64, frame: ParsedFrame) {
+    send_tuple(owner, |env| {
         let metadata_pairs: Vec<(Term, Term)> = frame
             .metadata
             .iter()
@@ -22,31 +33,24 @@ pub(crate) fn send_data_msg(owner: LocalPid, stream_id: u64, frame: ParsedFrame)
         let mut msg_binary = rustler::NewBinary::new(env, frame.message.len());
         msg_binary.as_mut_slice().copy_from_slice(&frame.message);
 
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_data().encode(env),
-                stream_id.encode(env),
-                frame.payload_id.as_str().encode(env),
-                rustler::Binary::from(msg_binary).encode(env),
-                metadata_term,
-            ],
-        )
+        vec![
+            atoms::flz_data().encode(env),
+            stream_id.encode(env),
+            frame.payload_id.as_str().encode(env),
+            rustler::Binary::from(msg_binary).encode(env),
+            metadata_term,
+        ]
     });
 }
 
 pub(crate) fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &str) {
     let reason_owned = reason.to_string();
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&owner, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_closed().encode(env),
-                stream_id.encode(env),
-                reason_owned.as_str().encode(env),
-            ],
-        )
+    send_tuple(owner, |env| {
+        vec![
+            atoms::flz_closed().encode(env),
+            stream_id.encode(env),
+            reason_owned.as_str().encode(env),
+        ]
     });
 }
 
@@ -56,28 +60,20 @@ pub(crate) fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &str) {
 /// writing to stderr from the driver thread.
 pub(crate) fn send_refused_msg(acceptor: LocalPid, reason: &str) {
     let reason_owned = reason.to_string();
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&acceptor, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_refused().encode(env),
-                reason_owned.as_str().encode(env),
-            ],
-        )
+    send_tuple(acceptor, |env| {
+        vec![
+            atoms::flz_refused().encode(env),
+            reason_owned.as_str().encode(env),
+        ]
     });
 }
 
 pub(crate) fn send_connection_msg(acceptor: LocalPid, stream_handle: ResourceArc<StreamHandle>) {
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&acceptor, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_connection().encode(env),
-                stream_handle.encode(env),
-            ],
-        )
+    send_tuple(acceptor, |env| {
+        vec![
+            atoms::flz_connection().encode(env),
+            stream_handle.encode(env),
+        ]
     });
 }
 
@@ -92,17 +88,31 @@ pub(crate) fn send_stream_msg(
     index: u8,
     conn_id: u64,
 ) {
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&acceptor, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_stream().encode(env),
-                stream_handle.encode(env),
-                (stream_type as u64).encode(env),
-                (index as u64).encode(env),
-                conn_id.encode(env),
-            ],
-        )
+    send_tuple(acceptor, |env| {
+        vec![
+            atoms::flz_stream().encode(env),
+            stream_handle.encode(env),
+            (stream_type as u64).encode(env),
+            (index as u64).encode(env),
+            conn_id.encode(env),
+        ]
+    });
+}
+
+/// Tell a stream's owner that its send gate crossed a watermark, as
+/// `{:flz_send_gate, stream_id, raised?}` — `true` means senders must hold,
+/// `false` wakes them. It rides the same driver -> owner route as
+/// `{:flz_data, ...}` rather than opening a second one. Both drivers report
+/// here; a depth that moved without crossing says nothing and sends nothing.
+pub(crate) fn report_gate(owner: &Arc<Mutex<LocalPid>>, stream_id: u64, change: Transition) {
+    let Some(change) = change else {
+        return;
+    };
+    send_tuple(*owner.lock().unwrap(), |env| {
+        vec![
+            atoms::flz_send_gate().encode(env),
+            stream_id.encode(env),
+            (change == GateChange::Raised).encode(env),
+        ]
     });
 }

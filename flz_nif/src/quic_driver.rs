@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use bytes::BytesMut;
 use crossbeam::channel::{Receiver, Sender};
 use flz_transport::transport::quic::{expire_timer, flush_transmits, send_transmit};
+use flz_transport::transport::send_gate::{SendGate, Transition};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token, Waker};
 use quinn_proto::{
@@ -15,7 +16,9 @@ use quinn_proto::{
 };
 use rustler::LocalPid;
 
-use crate::driver_msg::{send_closed_msg, send_connection_msg, send_refused_msg, send_stream_msg};
+use crate::driver_msg::{
+    report_gate, send_closed_msg, send_connection_msg, send_refused_msg, send_stream_msg,
+};
 use crate::frame_buffer::{FrameBuffer, Inbox};
 use crate::resources::StreamHandle;
 use crate::uds_driver::ServerCommand;
@@ -49,6 +52,8 @@ struct QuicStreamState {
     frame_buffer: FrameBuffer,
     inbox: Inbox,
     write_buffer: Vec<u8>,
+    /// Shared with the `StreamHandle` Elixir holds, and carrying the ceiling.
+    gate: Arc<SendGate>,
     type_byte_state: TypeByteState,
 }
 
@@ -329,7 +334,14 @@ impl QuicDriver {
         };
         let mut broken: Option<(u64, LocalPid)> = None;
         if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-            if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+            let (is_broken, change) = flush_quic_write(
+                &mut conn_state.connection,
+                qstream_id,
+                &mut stream_state.write_buffer,
+                &stream_state.gate,
+            );
+            report_gate(&stream_state.owner, stream_state.nif_stream_id, change);
+            if is_broken {
                 broken = Some((
                     stream_state.nif_stream_id,
                     *stream_state.owner.lock().unwrap(),
@@ -364,26 +376,14 @@ impl QuicDriver {
                 TypeByteState::AwaitingPrefix(Vec::with_capacity(2))
             };
 
-            let owner = Arc::new(Mutex::new(self.acceptor_pid));
-
-            let stream_handle = rustler::ResourceArc::new(StreamHandle {
-                stream_id: nif_id,
-                cmd_tx: self.cmd_tx.clone(),
-                waker: crate::resources::StreamWaker::Mio(Arc::clone(&self.waker)),
-                owner: Arc::clone(&owner),
-            });
-
-            conn_state.streams.insert(
-                stream_id,
-                QuicStreamState {
-                    nif_stream_id: nif_id,
-                    owner,
-                    frame_buffer: FrameBuffer::new(),
-                    inbox: Inbox::new(),
-                    write_buffer: Vec::new(),
-                    type_byte_state,
-                },
+            let (state, stream_handle) = new_stream(
+                nif_id,
+                self.acceptor_pid,
+                &self.cmd_tx,
+                &self.waker,
+                type_byte_state,
             );
+            conn_state.streams.insert(stream_id, state);
 
             self.nif_stream_map.insert(nif_id, (ch, stream_id));
 
@@ -427,7 +427,14 @@ impl QuicDriver {
         let mut broken_streams: Vec<(StreamId, u64, LocalPid)> = Vec::new();
         for qstream_id in stream_ids {
             if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                let (broken, change) = flush_quic_write(
+                    &mut conn_state.connection,
+                    qstream_id,
+                    &mut stream_state.write_buffer,
+                    &stream_state.gate,
+                );
+                report_gate(&stream_state.owner, stream_state.nif_stream_id, change);
+                if broken {
                     broken_streams.push((
                         qstream_id,
                         stream_state.nif_stream_id,
@@ -535,7 +542,9 @@ impl QuicDriver {
             return;
         };
         if let Some(stream_state) = self.stream_mut(nif_id) {
-            stream_state.write_buffer.extend_from_slice(&data);
+            stream_state
+                .gate
+                .offer(&mut stream_state.write_buffer, &data);
         }
         self.flush_one(ch, qstream_id);
     }
@@ -659,29 +668,60 @@ fn consume_type_prefix(
     }
 }
 
-/// Attempt to flush buffered write data to a QUIC stream.
-/// Returns true if the stream is broken (write error).
+/// One accepted stream's driver state and the handle Elixir holds: they share
+/// the owner and the send gate the driver signals through.
+fn new_stream(
+    nif_id: u64,
+    acceptor_pid: LocalPid,
+    cmd_tx: &Sender<ServerCommand>,
+    waker: &Arc<Waker>,
+    type_byte_state: TypeByteState,
+) -> (QuicStreamState, rustler::ResourceArc<StreamHandle>) {
+    let owner = Arc::new(Mutex::new(acceptor_pid));
+    let gate = Arc::new(SendGate::new());
+    let handle = rustler::ResourceArc::new(StreamHandle {
+        stream_id: nif_id,
+        cmd_tx: cmd_tx.clone(),
+        waker: crate::resources::StreamWaker::Mio(Arc::clone(waker)),
+        owner: Arc::clone(&owner),
+        gate: Arc::clone(&gate),
+    });
+    let state = QuicStreamState {
+        nif_stream_id: nif_id,
+        owner,
+        frame_buffer: FrameBuffer::new(),
+        inbox: Inbox::new(),
+        write_buffer: Vec::new(),
+        gate,
+        type_byte_state,
+    };
+    (state, handle)
+}
+
+/// Flush what the peer will take of a stream's buffered bytes. Answers whether
+/// the stream broke, and whether that flush moved its send gate.
 fn flush_quic_write(
     connection: &mut quinn_proto::Connection,
     qstream_id: StreamId,
-    stream_state: &mut QuicStreamState,
-) -> bool {
-    if stream_state.write_buffer.is_empty() {
-        return false;
+    write_buffer: &mut Vec<u8>,
+    gate: &SendGate,
+) -> (bool, Transition) {
+    if write_buffer.is_empty() {
+        return (false, gate.observe(0));
     }
 
-    match connection
-        .send_stream(qstream_id)
-        .write(&stream_state.write_buffer)
-    {
+    match connection.send_stream(qstream_id).write(write_buffer) {
         Ok(written) => {
-            stream_state.write_buffer.drain(..written);
-            false
+            write_buffer.drain(..written);
+            (false, gate.observe(write_buffer.len()))
         }
-        Err(quinn_proto::WriteError::Blocked) => false,
+        // The peer's flow-control window is full: the protocol has already
+        // computed the backpressure, so it raises the gate directly rather
+        // than waiting for a byte count to say the same thing.
+        Err(quinn_proto::WriteError::Blocked) => (false, gate.raise()),
         Err(_) => {
-            stream_state.write_buffer.clear();
-            true
+            write_buffer.clear();
+            (true, None)
         }
     }
 }
@@ -735,3 +775,7 @@ pub fn build_quic_server_config(
 
     Ok(server_config)
 }
+
+#[cfg(test)]
+#[path = "quic_driver_tests.rs"]
+mod tests;

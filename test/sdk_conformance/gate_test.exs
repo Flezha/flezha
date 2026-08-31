@@ -60,6 +60,11 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # so a new SDK either fits an existing model or extends this list on purpose.
   @dispatch_models ~w(thread-pool event-loop process-per-entity)
 
+  # Bench tasks whose `--runtime` resolves against `PortPilot.runtimes/0`. Their
+  # help text may name a runtime as an example but may not enumerate the set: a
+  # second copy of it goes stale the run after an SDK is added.
+  @manifest_runtime_tasks [Mix.Tasks.Bench, Mix.Tasks.Bench.Roundtrip]
+
   defp runtimes, do: PortPilot.runtimes()
 
   defp reference, do: NodeTestHelper.reference_runtime()
@@ -67,6 +72,11 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   defp manifest(runtime), do: PortPilot.manifest(runtime)
 
   defp fail(message), do: flunk(message <> "\n\nSee " <> @docs_section <> ".")
+
+  defp moduledoc(module) do
+    {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(module)
+    doc
+  end
 
   describe "manifests" do
     test "every SDK test app carries one" do
@@ -318,6 +328,22 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
         unless File.read!(docs) =~ path do
           fail("#{docs} does not reference #{path}; the manifest is where the scope is declared")
+        end
+      end
+    end
+
+    test "no bench task documents a runtime list beside the one it derives" do
+      names = Enum.map(runtimes(), &Atom.to_string/1)
+
+      for task <- @manifest_runtime_tasks, line <- String.split(moduledoc(task), "\n") do
+        named = Enum.filter(names, &Regex.match?(~r/\b#{&1}\b/, line))
+
+        if length(named) > 1 do
+          fail(
+            "#{inspect(task)} names #{inspect(named)} on one documentation line, a second " <>
+              "copy of the set its `--runtime` reads from the manifests: " <>
+              "#{inspect(names)}. Name the manifest path, not the runtimes"
+          )
         end
       end
     end

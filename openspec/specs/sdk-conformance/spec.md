@@ -95,7 +95,7 @@ The capability vocabulary SHALL be one list in the harness (`runner_lifecycle`, 
 
 ### Requirement: A static drift gate runs in the default test suite
 
-An untagged ExUnit module SHALL run under plain `mix test` — on every pull request, with no runner spawned — and SHALL assert: every manifest under `test/apps/*/conformance.json` parses and declares every field of the manifest requirement; every capability named under `deferred` or `fixtures` is in the vocabulary; for every capability an SDK does not defer, its fixture set equals the reference's; every module under `test/system/` carries a vocabulary capability tag; every string literal in a `test/system/` file that equals a reference fixture id belongs to a capability that file is tagged with; no `runtime:` literal appears in `test/system/` outside a module or test tagged `interop: true`; every directory matching `test/apps/*_runner/` carries a manifest; every manifest's `runtime` is an option of `nightly-e2e.yml`'s `workflow_dispatch` `runtime` input; every manifest's `docs` page exists and contains the manifest's path. The gate SHALL print, not fail on, every vocabulary capability with no tagged module. Every gate failure message SHALL end with the path of the "Adding an SDK to the conformance suite" documentation section.
+An untagged ExUnit module SHALL run under plain `mix test` — on every pull request, with no runner spawned — and SHALL assert: every manifest under `test/apps/*/conformance.json` parses and declares every field of the manifest requirement; every capability named under `deferred` or `fixtures` is in the vocabulary; for every capability an SDK does not defer, its fixture set equals the reference's; every module under `test/system/` carries a vocabulary capability tag; every string literal in a `test/system/` file that equals a reference fixture id belongs to a capability that file is tagged with; no `runtime:` literal appears in `test/system/` outside a module or test tagged `interop: true`; every directory matching `test/apps/*_runner/` carries a manifest; every manifest's `runtime` is an option of `nightly-e2e.yml`'s `workflow_dispatch` `runtime` input; every manifest's `docs` page exists and contains the manifest's path; and no `@moduledoc` of a bench task whose `--runtime` resolves against the manifests names two or more of those runtimes on one line. The gate SHALL print, not fail on, every vocabulary capability with no tagged module. Every gate failure message SHALL end with the path of the "Adding an SDK to the conformance suite" documentation section.
 
 #### Scenario: A fixture added to one SDK and not the others fails the PR
 - **WHEN** the Rust manifest gains `new_probe` under `liveness` and the Java manifest, which does not defer `liveness`, does not
@@ -112,6 +112,10 @@ An untagged ExUnit module SHALL run under plain `mix test` — on every pull req
 #### Scenario: An untested capability is visible
 - **WHEN** no module under `test/system/` is tagged `capability: :keyed_channels`
 - **THEN** the gate's output names `keyed_channels` as untested and the gate passes
+
+#### Scenario: A documented runtime list fails the PR
+- **WHEN** `mix bench.roundtrip`'s `@moduledoc` advertises `--runtime rust|java|elixir` while `--runtime` accepts every runtime with a manifest
+- **THEN** `mix test` fails in the gate naming the task, the runtimes the line lists and the set the manifests hold
 
 ### Requirement: Rolling out a new SDK is enforced by the gate, not remembered
 

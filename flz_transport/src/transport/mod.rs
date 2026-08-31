@@ -2,6 +2,7 @@ pub mod config;
 pub mod liveness;
 pub mod protocol;
 pub mod quic;
+pub mod send_gate;
 pub mod tls;
 
 use std::io::{self, Read, Write};

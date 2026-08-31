@@ -40,6 +40,141 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-70 · The QUIC client drops a frame and tells its caller every byte was written
+
+- **Severity**: P1 · **read-established from the code; not driven at runtime**
+  (see *Evidence*). Found 2026-08-31 while reading the send-buffer sites for
+  `close-transport-send-buffer-loss`.
+- **Where**: `flz_transport/src/transport/quic.rs:543` (`write_or_buffer`),
+  reached from `QuicBidiStream::write` → `DriverCommand::Write` →
+  `handle_command`.
+- **What happens**: the QUIC **client**'s per-stream send buffer is bounded by
+  `would_overflow_write_buffer`, and at the ceiling it does
+  `slot.write_buffer_dropped += 1`, logs one `tracing::warn!`, and then
+  `let _ = reply.send(Ok(total_len))` — it answers its caller that the whole
+  frame was written. `std::io::Write::write` returning `Ok(n)` means `n` bytes
+  were accepted; a caller has no way to tell this apart from a real write, and
+  `slot.write_buffer_dropped` is per-slot state read by nothing.
+- **Why it matters more than it looks**: this is not Rust-SDK-only code.
+  `flz_core → flz_transport` and `flz_core_ffi → flz_transport`, so every SDK
+  that reaches the controller over QUIC compiles this path in. It is KI-3's
+  defect — a silent drop under an `:ok` — on the runner → controller side of
+  the same socket, and the `close-transport-send-buffer-loss` proposal names
+  neither the file nor the behaviour.
+- **Evidence**: the code, quoted above; `grep -n would_overflow_write_buffer
+  flz_transport/src/transport/quic.rs` → `543`, and the reply on the line after
+  the counter bump. **A runtime drive was NOT run**: `write_or_buffer` needs a
+  live `quinn_proto::Connection`, and the only in-memory pair harness in the
+  tree is `flz_nif/src/quic_driver_tests.rs`, on the other side of a crate
+  boundary. Porting it is the first task of the fix, not of the filing.
+- **A fix must** decide this site together with KI-3 and KI-56 — one answer for
+  all three send buffers — and in the meantime must not leave a `Write` impl
+  reporting bytes it discarded.
+
+- **Supervisor verdict 2026-08-31 — REAL, confirmed from source, and folded into
+  row 6.5 (segment B).** Read at `flz_transport/src/transport/quic.rs:543`:
+  `write_or_buffer` increments `write_buffer_dropped`, logs, and then
+  `let _ = reply.send(Ok(total_len))` — it reports **every byte written** for a
+  frame it discarded. That is KI-3's defect on the runner→controller side.
+- **It belongs in this row, not a later one.** Row 6.5 exists to stop the transport
+  losing data silently. Closing the UDS driver and the QUIC driver while leaving the
+  **client** path answering `Ok(n)` on a dropped frame would ship a half-fix whose
+  remaining half is in code **every SDK compiles in** (`flz_core → flz_transport`,
+  `flz_core_ffi → flz_transport`). The proposal's Impact names neither the file nor
+  the behaviour; that is a scope correction, recorded as D11, not a new change.
+
+
+### KI-71 · A second concurrent write on one QUIC client stream discards the first one's buffered remainder
+
+- **Severity**: P1 · **read-established from the code; not driven at runtime**.
+  Found beside KI-70.
+- **Where**: `flz_transport/src/transport/quic.rs`, `write_or_buffer`'s
+  `Err(WriteError::Blocked)` arm: `slot.write_buf = data;` followed by
+  `slot.pending_write_reply = Some((total_len, reply));`.
+- **What happens**: both statements **assign**, they do not append. When a
+  previous call left a partial write buffered (`slot.write_buf` non-empty and
+  `pending_write_reply` `Some`), a second call that blocks replaces the
+  buffered bytes with its own and replaces the pending reply sender. The first
+  writer's remaining bytes are gone from the stream — a torn frame, not a
+  dropped one — and its `reply_rx.recv()` sees the dropped sender and reports
+  `BrokenPipe "Driver reply dropped"`, which names neither the stream nor the
+  loss.
+- **Reachability**: `QuicBidiStream::clone_handle` shares one `cmd_tx` and one
+  `stream_id` across handles, and `impl Write for &QuicBidiStream` exists so an
+  `Arc<FlezhaStream>` can be written from several threads. Two threads writing
+  one stream while the peer's window is full is the condition.
+- **Evidence**: the code. **Not driven**: reproducing it needs two concurrent
+  writers on one stream against a stalled peer, i.e. the same live pair harness
+  KI-70 is waiting on.
+- **A fix must** append rather than assign, and answer the earlier waiter
+  rather than dropping its sender — or refuse concurrent writers on one stream
+  outright, and say so where `clone_handle` invites them.
+
+- **Supervisor verdict 2026-08-31 — REAL, and fixed in the same pass as [[KI-70]]**,
+  because it is in the same function. `slot.write_buf = data;` and
+  `slot.pending_write_reply = Some(...)` both **assign**, so a second concurrent
+  write on one stream discards the first's buffered remainder — a torn frame — and
+  drops its reply sender.
+- **Requirement on the fix**: it is **read-established, not driven**, and it does not
+  ship on that footing. `write_or_buffer` needs a live `quinn_proto::Connection`, and
+  segment A built exactly such a harness on the other side of a crate boundary
+  (`flz_nif/src/quic_driver_tests.rs`). Porting it is the **first task of the fix**.
+  If the drive cannot be made to fail inside the timebox, the fix does not land and
+  the entry stays filed — a torn-frame fix nobody has seen fail is the KI-67 shape.
+
+
+### KI-72 · The QUIC driver reports no driver stats at all, so nothing above it can see the transport
+
+- **Severity**: P2 · **established**, and it is why KI-56's own reproduction
+  could not be run as filed.
+- **Where**: `flz_nif/src/server.rs:111` sets `stats: None` for
+  `start_quic_server`; `driver_stats/1` (`:126`–`:133`) answers `:undefined`
+  when it is `None`. `flz_nif/src/quic_driver.rs` mentions `DriverStats`
+  nowhere.
+- **What happens**: `write_buffer_len`, `frames_written`, `frames_read`,
+  `last_write_ms`, `loop_iterations` — the whole self-report — exists for UDS
+  and does not exist for QUIC. So
+  `TransportSource.emit_driver_stats/2` emits nothing for a QUIC controller,
+  and `Flezha.Convergence.StallClassifier`'s driver clauses
+  (`lib/flezha/convergence/stall_classifier.ex:178`) can never fire on it. A
+  QUIC deployment is running with the data-plane liveness instrumentation
+  switched off, and nothing says so.
+- **Evidence**:
+
+  ```
+  $ grep -n 'stats' flz_nif/src/quic_driver.rs
+  (no output)
+  $ sed -n '105,133p' flz_nif/src/server.rs
+          stats: None,
+  ...
+  /// Self-reported driver liveness for this server. Returns a map for UDS
+  /// servers, or `:undefined` for QUIC (no per-stream stats yet).
+  ```
+
+  The comment at `resources.rs` states it outright — "`None` for the QUIC
+  driver, which does not yet surface per-stream stats (the silent-stall
+  incident was UDS)" — so it is known and deliberate; what is new is that KI-56
+  was filed with a reproduction that reads a value this driver never produces.
+- **A fix must** either give the QUIC driver the same `DriverStats` the UDS
+  driver has, or state in the liveness docs that QUIC is uninstrumented so a
+  green `/healthz` on QUIC is not evidence about the data plane. Note for
+  `close-transport-send-buffer-loss` task 4.1/4.2: a liveness verdict on the
+  drop counter is UDS-only until this is answered.
+
+- **Supervisor verdict 2026-08-31 — REAL; the deferral is NAMED and the row does not
+  grow.** The QUIC driver produces no `DriverStats`, so `TransportSource` emits
+  nothing and `StallClassifier`'s driver clauses cannot fire on a QUIC controller.
+- **What this constrains, and it must be written into the change**: tasks 4.1/4.2
+  make the drop counter reportable, and that reporting is **UDS-only** until this is
+  answered. Row 6.5 must say so where the requirement is stated, rather than leaving
+  a reader to infer that a QUIC controller is covered.
+- **Why not fix it here**: row 6.5's purpose is to stop the transport losing data.
+  Making QUIC observable is a separate and larger piece — it is why KI-56's own filed
+  reproduction was unperformable — and folding it in would grow a P1 correctness
+  change into an instrumentation change. It is queued with KI-68 and KI-69 as the
+  runner/controller-seam group to be surveyed together.
+
+
 ### KI-56 · The QUIC driver's send buffer has no cap at all
 
 - **Severity**: P1 · **read-established, NOT reproduced** — filed 2026-08-30
@@ -68,12 +203,34 @@ below is all that survives — which is enough to write it again.
   sentences are false as written: `grep -n would_overflow_write_buffer
   flz_nif/src/quic_driver.rs` returns nothing. A reader checking whether QUIC is
   bounded finds a doc comment saying yes.
-- **What would confirm it**: a QUIC stream whose peer connects, completes the
-  handshake and never reads, then a sustained write; watch the driver's
-  `write_buffer_len` (already emitted as `driver_write_buffer_bytes` by
-  `TransportSource.emit_driver_stats/2`) grow past 8 MiB without bound and
-  without a `write_buffer_dropped` bump. KI-3 carries a working UDS harness of
-  exactly this shape to adapt.
+- **What would confirm it** (as filed): a QUIC stream whose peer connects,
+  completes the handshake and never reads, then a sustained write; watch the
+  driver's `write_buffer_len` (already emitted as `driver_write_buffer_bytes`
+  by `TransportSource.emit_driver_stats/2`) grow past 8 MiB without bound and
+  without a `write_buffer_dropped` bump.
+- **That reproduction cannot be performed, and the reason is KI-72.** The QUIC
+  driver produces no `DriverStats` at all: `flz_nif/src/server.rs:111` sets
+  `stats: None` for `start_quic_server` and `driver_stats/1` answers
+  `:undefined` for it, so `driver_write_buffer_bytes` is emitted for UDS only
+  and has no QUIC value to grow. There is also no `write_buffer_dropped` on
+  this driver to stay at zero.
+- **REPRODUCED (2026-08-31), by another route**: an in-memory `quinn_proto`
+  pair — `flz_nif/src/quic_driver_tests.rs` — whose client completes the
+  handshake and never reads a byte, driving the driver's own
+  `flush_quic_write` over the driver's own buffer.
+
+  ```
+  $ cargo test -p flz_nif --lib -- --nocapture quic_driver::tests
+  ungated quic write_buffer: offered=52428800 buffered=44040192 cap=8388608
+    (x5.2 the cap); after first burst=17825792 growth=26214400 refused=0
+  quic write_buffer with a draining peer: buffered=0 read=26214400
+  ```
+
+  25 MiB offered leaves 17 MiB buffered — 2.1x the cap — and offering 25 MiB
+  more buffers **all of it** (`growth=26214400`, byte for byte): there is no
+  bound to hold at, which is a stronger statement than "it exceeded the cap".
+  **Control**: the same harness against a peer that reads leaves
+  `buffered=0`, so a clean result is one this probe can report.
 - **A fix must** decide the two transports' behaviour together, not separately —
   which is the same decision KI-3 is waiting on. Bounding QUIC the way UDS is
   bounded would give it UDS's silent-drop defect; leaving it unbounded keeps the
@@ -265,27 +422,38 @@ below is all that survives — which is enough to write it again.
   path = Path.join(System.tmp_dir!(), "ki3_#{System.unique_integer([:positive])}.sock")
   {:ok, server} = Native.start_uds_server(path, self())
   # A peer that connects and NEVER reads.
-  {:ok, _s} = :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
+  {:ok, peer} = :gen_tcp.connect({:local, String.to_charlist(path)}, 0, [:binary, active: false, packet: :raw])
   stream = receive do: ({:flz_connection, s} -> s), after: (5_000 -> raise "no connection")
   payload = :binary.copy("x", 64 * 1024)
   replies = for i <- 1..400, do: Native.send_frame(stream, "p#{i}", payload, %{})
   Process.sleep(500)
+  # Keep the handle live: a collected StreamHandle closes its stream, and the
+  # driver then has no snapshot to report.
+  _ = Native.stream_id(stream)
   st = hd(Native.driver_stats(server).streams)
-  IO.puts("send_frame replies: #{inspect(Enum.uniq(replies))} over #{length(replies)} calls")
-  IO.puts("frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped}")
+  IO.puts("send_frame replies: #{inspect(Enum.frequencies(replies))} over #{length(replies)} calls")
+  IO.puts("frames_written=#{st.frames_written} write_buffer_dropped=#{st.write_buffer_dropped} write_buffer_len=#{st.write_buffer_len}")
+  :gen_tcp.close(peer)
   Native.stop_server(server)
   ```
 
   ```
   $ MIX_ENV=test mix run --no-start /tmp/ki3.exs
-  send_frame replies: [:ok] over 400 calls
-  frames_written=131 write_buffer_dropped=269
+  send_frame replies: %{ok: 400} over 400 calls
+  frames_written=131 write_buffer_dropped=269 write_buffer_len=8357440
   ```
 
-  269 of 400 frames dropped; all 400 calls answered `:ok`. **Control** (proving
-  the probe can report a clean result): the same script under
-  `FLEZHA_MAX_WRITE_BUFFER_BYTES=1073741824` prints `frames_written=400
-  write_buffer_dropped=0`.
+  269 of 400 frames dropped; all 400 calls answered `:ok`. Deterministic, 3 of
+  3 runs. **Control** (proving the probe can report a clean result): the same
+  script under `FLEZHA_MAX_WRITE_BUFFER_BYTES=1073741824` prints
+  `frames_written=400 write_buffer_dropped=0`.
+- **Correction to the harness as first filed (2026-08-31)**: it raised
+  `** (ArgumentError) :erlang.hd([])` on 3 of 3 runs, not the numbers above.
+  `stream`'s last use was the `for` comprehension, so the `StreamHandle`
+  resource was collectable before `driver_stats/1` ran; `StreamHandle::drop`
+  sends `CloseStream`, the driver removes the stream, and the snapshot is
+  empty. The `Native.stream_id(stream)` line above is what pins it. A harness
+  in an entry is only durable if it runs.
 - **Worth fixing**: yes. "Investigation first" still stands for the real
   question — what a caster is told — but two things need no design pass and end
   the silence on their own: emit `write_buffer_dropped` from `TransportSource`
@@ -503,35 +671,6 @@ below is all that survives — which is enough to write it again.
   `.credo.exs` with a one-line reason each, then ratchet on the 378. Until then
   the count is not a signal and should not be quoted as one.
 
-### KI-13 · The PHP container arm needs `--network host`, and leaks containers
-
-- **Where**: the `FLEZHA_E2E_RUNTIME=php` shim.
-- **What happens**: without `--network host` every `transport=quic` test fails
-  with "temporary test runner not connected" while UDS passes. Separately, the
-  shim leaks one container per wedge drill: the port kill reaches only the
-  `docker run` client, and `wedge_probe`'s handler never returns.
-- **Triage (2026-08-30)**: true as recorded, but it is **not a defect in this
-  repository** and I could **not reproduce it**. The shim is not tracked: the
-  manifest's launch line is a bare `php` (`test/apps/php_runner/conformance.json`
-  → `command.test`), and there is no PHP on this box at all (`command -v php` →
-  absent), so the container arm exists only as a `php` shim an individual puts on
-  `PATH`. Both facts are already written down in
-  `docs/dev_notes/refactor-2-ffi-veneers.md:208-230` (with the QUIC signature —
-  "seven failures, all QUIC" — and the `-i` flag the entry omits) and in
-  `docs/refactor/STATE.md` under 2e.
-- **What I tried**: reproducing either half needs the shim built plus a full
-  `FLEZHA_E2E_RUNTIME=php transport=quic` conformance arm, and the leak half also
-  needs the wedge drill. I did not run it. I did confirm the fallout is not
-  present now: `docker ps` lists **no containers**, so nothing is leaked in the
-  current tree.
-- **Worth fixing**: **not as a defect** — there is no repo code to change. Two
-  things are worth doing, both cheap: fold the shim's exact `docker run` line
-  (with `--network host` and `-i`) into `docs/sdk/conformance.md` beside the Ruby
-  `PATH` note, so it is findable from where someone runs the suite rather than
-  from a refactor dev note; and if the shim ever becomes a tracked script, give
-  it a `--rm`-plus-name teardown so the wedge drill's container cannot survive
-  the run. Until then this is an environment note, like KI-15.
-
 ### KI-14 · `flezha-php-zts` has no coverage driver
 
 - **Where**: the PHP image — neither xdebug nor pcov, so `phpunit --coverage-text`
@@ -709,533 +848,263 @@ below is all that survives — which is enough to write it again.
 
 ## P2 — tests that lie or leak
 
-### KI-54 · A `ForwardWorker` retry outlives its test and reaches a deleted ETS table
-
-- **Severity**: P2 · found by `finish-the-suite-log-gate`'s own gate, and **not
-  fixed by it** — a fifth uncaptured-error source, outside that change's task
-  list. **Same shape as the KI-49 that change closed**: a background retry
-  outliving the test that started it.
-- **Where**: `test/helpers/fake_start_registry.ex:186` (`pid_of/2`), reached
-  from `Flezha.Plugin.Provider.OperativeForward.ForwardWorker.deliver_next/1`
-  (`forward_worker.ex:208`) → `OperativeManager.send_io_confirming/5`
-  (`operative_manager.ex:593`) → `get_operative_pid/3` (`:49`). The owning
-  module is `test/flezha/plugin/provider/operative_forward_test.exs`.
-- **What happens**: a delivery is deferred — the log line immediately before it
-  is `[operative-forward] src_19972 -> stuck_19940 delivery deferred:
-  {:unreachable, {:timeout, …}} (retrying in 250 ms)` — and the 250 ms retry
-  fires after the owning test has finished and its `FakeStartRegistry` ETS table
-  has been deleted:
-
-  ```
-  [error] Process #PID<0.4506.0> on node :"test_agent_node1@127.0.0.1" raised an exception
-  ** (ArgumentError) errors were found at the given arguments:
-    * 1st argument: the table identifier does not refer to an existing ETS table
-      :ets.lookup(#Reference<…>, "grp_15523#p1")
-      test/helpers/fake_start_registry.ex:186: FakeStartRegistry.pid_of/2
-  ```
-
-- **Reproduction**: not isolated. Seen **1 of 6** full `mix test` runs on this
-  box (seed 983242); every test passed in that run — which is exactly the shape
-  the uncaptured-log gate exists to catch, and is why it was seen at all.
-- **A fix must** stop the retry with the test that started it, or make the
-  registry lookup answer "gone" instead of raising — and should first establish
-  whether a `ForwardWorker` retrying into a namespace that no longer exists is
-  *also* a production question, since only the ETS-table half is test-side.
-
----
-
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
 Recorded so a future red run is not mistaken for a regression. **Green in
 isolation is not evidence** — reproduce under load before concluding anything
-(see `docs/refactor/STATE.md` for the stress-regime method). Five were filed
-together and the dated triage below reasons about those five; anything added
-since carries its own date.
+(see `docs/refactor/STATE.md` for the stress-regime method).
 
-- `test/flezha_test.exs:591` (runner disconnect, preserve) — 1/6 full runs,
-  0/10 alone, 0/3 instrumented. Root cause never established.
-- `workflow_crash_resume_e2e_test.exs:249` — **reproduced at
-  `refactor-baseline-2`, so provably pre-existing**.
-- `effectively_once_e2e_test.exs:34` — a different module from KI-2's second face.
-- `test/plugin/kafka/worker_registry_test.exs:303` — a controller unit test with
-  no runner involved.
-- `flezha_test.exs:383` (live handover) — not the same as `:591`.
-- `test/system/sdk_smoke_e2e_test.exs:55` (`transport=uds` handshake +
-  `AssignRunnerId`) — added 2026-08-30 from `java-build-runs-twice`. One red in
-  three consecutive `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` runs
-  against a `java_runner.jar` whose md5 never changed, so the artifact is not the
-  variable. The red run took **133.9 s against 68.3 s and 69.3 s** for the two
-  green ones and is the only one of the three carrying `[fleet_manager]
-  proceeding past recovery timeout`; the failure itself is
-  `command_assign_runner_id` timing out at its 5 s budget, which then took the
-  20 s `{:runner_connect, …}` call and the `{Flezha.Transport.Server, :uds}`
-  child down with it. The module alone: **23 passed**.
-- `test/flezha_test.exs:413` (`a deferring operative is force-migrated at the
-  drain deadline without wedging`) — added 2026-08-30 from
-  `format-gate-tells-the-truth`, and the **third** site in this module after
-  `:383` and `:591`. `assert_receive :deferred, 1_000` times out; the mailbox
-  holds the competing `[:flezha, :shutdown, :drain_progress]` with `migrated: 0,
-  forced: 0, elapsed_ms: 5, remaining_hubs: 0`, so the drain found nothing to
-  drain and the `migration_deferred` hook never had an operative to fire on —
-  a start/registration race ahead of the drain, not a drain defect.
-  **It failed twice in a row, which looked deterministic and was not.**
-  Interleaved A/B, alternating arms: the change's tree **red, red**, then
-  HEAD (worktree at `73f453d3`) **1836 green**, the change's tree **1836
-  green**, HEAD **1836 green**, the change's tree **1836 green** — 3/3 green
-  alone as a single test as well. Causation was independently impossible: that
-  change's diff holds no file under `elixirc_paths(:test)` (`lib`,
-  `test/fixtures`, `test/helpers`, `test/support`), none under `config/` or
-  `test/`, and `mix test` never reads `.formatter.exs`.
-- `test/flezha/state/watchdog_test.exs:390` (`a remote-durability RPO breach
-  alarms once and clears when it catches up`) — added 2026-08-30 from
-  `small-mechanical-fixes`, and it has a **named mechanism, so it is a leak
-  rather than load**. The closing `assert Flezha.State.DurabilityTier.breaches()
-  == []` (`:444`) is node-global and **unpinned**, and the entry it found belongs
-  to another module: `{:entity, {"TestOperative", "TestProcedure", "p1"}}` — the
-  default id in `test/helpers/state_test_helpers.ex` — carrying `failures: 1,
-  last_error: ":backend_down"`. Eight lines above, the same test pins its
-  `assert_receive` for exactly this reason ("the RPO sweep is node-global, so an
-  unpinned receive takes whatever reference another module left pending"); the
-  assertion below was left unpinned. The fix is to pin it to `ref`, or to clear
-  the ledger in `setup` — not to retry. **Not caused by the change that found
-  it**: that diff carries no Elixir source or test file at all, the backend on
-  this path is `FlezhaTest.Helper.DurabilityBackendStub` and not Postgrex, the
-  module alone is 13 passed at the failing run's own seed (233764), and the whole
-  suite re-run at that seed is **1836 passed**.
-- **Method note for the next A/B here.** A HEAD worktree cannot run this suite
-  beside the main tree without `TMPDIR` isolation: `config/test.exs:148` keys
-  the socket directory on `System.tmp_dir!()` and `node()` alone, so two
-  checkouts land in the same `/tmp/flezha_sockets/<node>` and the second
-  refuses to boot — `is another controller's socket directory … answered a
-  connect`, out of `Flezha.Socket.Support.refuse_live_peer!/1`, taking
-  `Flezha.BootLoader` and the whole run down before the first test. Run the
-  baseline arm under `TMPDIR=/tmp/<short>`; it must be short, because the
-  resolved UDS path still has to fit `SUN_LEN`'s 108 bytes.
-- **Second sightings (2026-08-30, from `green-the-suite-log-gate`'s runs)**: two
-  of the five now have a second, and the "exactly one sighting each" below is
-  that much weaker. `worker_registry_test.exs:303` failed one plain `mix test`
-  (`assert entry.callers == 3`, left `2`) and passes alone, 14 passed;
-  `flezha_test.exs:383` and `workflow_crash_resume_e2e_test.exs:249` each failed
-  one of two `--include system` runs — **a different one each run**, 1914/1915
-  both times, which is the load-sensitive signature rather than a regression.
-- **Triage (2026-08-30)**: **the set does not hold together — one defect, one
-  stale, three suspicions.** Established by reading the code for each named
-  mechanism, not by re-running anything: the entry's own instruction is that
-  green-in-isolation proves nothing, and the converse is that a red nobody can
-  explain is a suspicion. Four of the five have exactly one sighting each.
-- **The evidence anchor is orphaned, and so is every one of its siblings.** The
-  entry's only reproduction rests on tag `refactor-baseline-2`. It still
-  resolves (`b76b600e`) but this morning's rewrite left it off the mainline:
+**Status 2026-08-31, `green-the-test-hygiene-tail`**: of the eight tests this
+entry collected, **two are fixed, two are dropped as verified cured, and four
+stay recorded with their mechanisms and no fix.** Every coordinate below has
+been re-pointed and now carries the test's name — **six of the eight had
+drifted** (`591→598`, `383→389`, `413→419`, `303→304`, `390→395`, `384→440`),
+and a `file:line` that rots is how an entry stops being checkable.
 
-  ```
-  $ git merge-base --is-ancestor refactor-baseline-2 HEAD ; echo $?
-  1        # NOT an ancestor of dev
-  ```
+**The tag paragraph this entry used to carry is deleted, because the work it
+called "the most urgent thing in this entry" is done.** All seven
+`refactor-baseline-*` tags resolve and all seven are ancestors of HEAD:
 
-  All seven `refactor-baseline-*` tags are in this state. They are **recoverable,
-  because every one has a tree-identical twin on `dev`** — so the reproduction
-  instructions are still valid in content, and re-pointing the tags is mechanical:
+```
+$ for t in refactor-baseline refactor-baseline-0a refactor-baseline-0b \
+           refactor-baseline-1 refactor-baseline-1s refactor-baseline-2 refactor-baseline-3; do
+    printf "%-22s " "$t"; git merge-base --is-ancestor "$t" HEAD && echo "$(git rev-parse -q --verify $t^{commit}) ancestor=YES"; done
+refactor-baseline      2a12065d2b0de3740f2f387567dd56934e4d1421 ancestor=YES
+refactor-baseline-0a   2a12065d2b0de3740f2f387567dd56934e4d1421 ancestor=YES
+refactor-baseline-0b   a147111c2c32c59ec540fb9f78aebfebd0b7d141 ancestor=YES
+refactor-baseline-1    df3fc0f4fd56c30f792641e73b2c1d30f4f34f82 ancestor=YES
+refactor-baseline-1s   10939a9c71ac1c52123a6b5df82ce0260d1829ea ancestor=YES
+refactor-baseline-2    b0697e49ae36f3caabcdcfd449c279e99e5ed1b1 ancestor=YES
+refactor-baseline-3    61bbcb987df5e665d9196c73d43bb47d78dc3112 ancestor=YES
+```
 
-  | tag | orphaned commit | `dev` twin (tree identical) |
-  |---|---|---|
-  | `refactor-baseline` / `-0a` | `31866dc5` | `2a12065d` |
-  | `refactor-baseline-0b` | `20b850ca` | `a147111c` |
-  | `refactor-baseline-1` | `8cf49fa5` | `df3fc0f4` |
-  | `refactor-baseline-1s` | `b94255a2` | `10939a9c` |
-  | `refactor-baseline-2` | `b76b600e` | `b0697e49` |
-  | `refactor-baseline-3` | `ead07960` | `61bbcb98` |
+Each points at the `dev` twin the 2026-08-30 triage table named, so every
+reproduction instruction that rests on one is valid again.
 
-  Fourteen places in `docs/` and `CLAUDE.md` cite these tags, and
-  `docs/refactor/charter.md:135` makes them the A/B method of the whole
-  programme. A `git gc --prune` — or any fresh clone — loses all seven. **This is
-  the most urgent thing in this entry and it is not about tests at all.**
-- **Per test:**
-  1. `test/flezha_test.exs:591` — **SUSPICION, and the coordinate is wrong.**
-     `:591` is `@tag :runner_disconnect_preserve`; the test is `:592`, so `mix
-     test …:591` selects the *previous* test under ExUnit's at-or-before rule.
-     Its own record is 1/6 full runs, 0/10 alone, 0/3 instrumented, and it has
-     not been seen since. Plenty of candidate mechanisms (a fixed
-     `@temp_namespace` and fixed `operative_1..15` shared with three sibling
-     tests; `reset_recovery_states/0` on a process-global cache; the singleton
-     convergence `Loop` started at a 1 s tick while `:657` also drives
-     `tick_now/0`) — **none of them is *the* mechanism.** Weakest of the five.
-  2. `workflow_crash_resume_e2e_test.exs:249` — **RESOLVED, and it was never a
-     load-sensitive test.** It was a KI-42 site: the module carried its **own
-     private** `cleanup/3` whose `File.rm_rf` named `<state_root>/<class>`, so
-     each of its **seven** call sites (`554, 696, 741, 794, 975, 1034, 1093`,
-     the last being `drive_crash_resume/5`) leaked one class tree per run, and a
-     later run whose `unique/1` id collided read the leftovers.
-     `assertions-that-cannot-fail` deleted that private copy — the module now
-     imports `TierE2EHarness.cleanup/3` — and measured the leak both ways on one
-     scenario. **Drop it from the list; four remain.**
-  3. `effectively_once_e2e_test.exs:34` — **STALE**, cured today by
-     `fix-first-input-drop-on-bind` (`e16260a7`) in both halves: the module lost
-     its `await_stream_bound` call, and its `on_exit` rides
-     `TierE2EHarness.cleanup/3`, whose state path the same commit corrected. The
-     deleted settle only ever covered Phase 0; the SIGKILL-and-rebind face it
-     actually failed on is now gated in the product
-     (`Lifecycle.complete_init/4`). Drop it from the list.
-  4. `worker_registry_test.exs:303` — **SUSPICION, but with a mechanism and a
-     one-line fix.** The Mimic hypothesis is *refuted*: the module contains zero
-     Mimic references, and the leaked stubs in its converted siblings are on
-     arity 1 while this test calls arity 2 (Mimic keys on `{mod, fun, arity}`).
-     The real gap is that after `Process.exit(worker_pid, :kill)` at `:364`
-     nothing waits for the registry to process the monitor `:DOWN` before three
-     callers issue `swap/2` at `:367`; `handle_call({:swap, …})` checks the entry
-     first, so a queued DOWN returns the dead pid, the starter is never called,
-     and `:373`'s 100 ms `assert_receive {:starter_called, _}` fails. **Its own
-     sibling at `:384` has the missing barrier verbatim** (`eventually(fn -> …
-     worker_monitors == %{} and pending_refs == %{} end, 1_000)`).
-  5. `flezha_test.exs:383` — **SUSPICION, with a mechanism.**
-     `:402` asserts `ow_state.arrived_via_hotswap?`, which is
-     `serialized_state != <<>>` (`handover.ex:99`), fed by a control-channel
-     round trip (`handover.ex:184`) bounded by `ControlUnit`'s
-     `@default_reply_timeout_ms 5_000`. A peer slower than 5 s under load falls
-     back to `state.snapshot`, which this test never creates — and the failure
-     reads verbatim "expected live HotSwap handover, not a WAL cold restore".
-     The 5 s bound is unrelated to the drain's own 30 s, so widening the drain
-     does nothing. **`flezha_test.exs:466` (test `:413`) carries the identical
-     exposure and is not listed here.**
-- **What could NOT be established**: which assertion actually failed in any of
-  the five original sightings. No captured failure output survives anywhere in
-  the repo — `docs/refactor/STATE.md` and the archived `refactor-0-tests`
-  design record only `file:line` and a count, and for items 3 and 4 that line is
-  the *test* line, so it names a whole scenario rather than an assertion. The
-  mechanisms named for 2, 4 and 5 are demonstrably present and would each produce
-  a red under load; **none is proven to be the one that fired.**
-- **Worth fixing**: re-point the seven tags — that is the real risk here and it
-  is minutes of work. Then reshape the entry: delete item 3, correct item 1's
-  coordinate to `:592`, and attach the mechanisms to 4 and 5 so they stop
-  reading as unexplained. (Item 2 is done — closed with KI-42.) Item 4 can be
-  closed without a reproduction, because the missing barrier is visible in the
-  code and its own sibling shows the correct form. Item 1 should be demoted to what it is: one
-  sighting, no mechanism, not reproduced in 13 attempts.
+#### Fixed
 
+- **`test/plugin/kafka/worker_registry_test.exs:304`** — *"three callers swap
+  after worker death; entry refs is preserved (1.7 / path A)"*. **A missing
+  barrier, and it had two faces.** `handle_call({:swap, {key, old_token}, caller}, …)` (`worker_registry.ex:185`)
+  checks `state.entries[key]` first, so a monitor `:DOWN` still queued behind
+  the three `send(pid, :swap)` leaves the dead pid in the entry: the starter is
+  never called and `:385`'s `assert_receive {:starter_called, _new_worker_pid}, 100` fails —
+  or, if the DOWN lands between the swaps, tokens are dropped and
+  `:390`'s `assert entry.callers == 3` fails with `2`, which is the face this entry
+  originally recorded. Fixed by waiting for the signal the registry already
+  publishes: the three spawned callers forward
+  `{:kafka_worker_dead, {key, token}, reason}` — `worker_registry.ex:378`–`:380`
+  sends it, and this same module already waits on it at `:294`–`:295` — and the
+  test asserts three arrivals before it issues any swap. The `eventually/2` +
+  `inspect_state` poll its sibling uses at `:440` was deliberately **not**
+  copied: it polls for the effect of an event the system announces, and needs a
+  timeout to tune. **The window was forced, never sampled** — a scratch
+  instrument blocked the registry inside `handle_call` through its
+  test-supplied `starter`, queued the three swaps, killed the worker behind
+  them and released; the unfixed test then failed at `:385` on every run. The
+  instrument was deleted; the module is 5 for 5 across five seeds.
+- **`test/flezha/state/watchdog_test.exs:395`** — *"a remote-durability RPO
+  breach alarms once and clears when it catches up"*. **A leak, not load.**
+  `DurabilityTier.breaches/0` folds `Shipper.status()`, which is node-global,
+  and the closing `assert DurabilityTier.breaches() == []` asserted about every
+  emitter on the node; the entry it found belonged to another module
+  (`{:entity, {"TestOperative", "TestProcedure", "p1"}}`, the default id in
+  `test/helpers/state_test_helpers.ex`). Eight lines above, the same test pins
+  its `assert_receive` for exactly this reason. Fixed by carrying that pin to
+  the closing assertion —
+  `breached? = fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end`
+  (`:434`), used both at `:456` and at the `wait_until` at `:437`, which
+  acquires the identical exposure the moment a foreign entry exists.
+  **Forced deterministically**: the test now records a *second, foreign* breach
+  through the same production path and never clears it, so the ledger is
+  deliberately not empty (`:460` asserts that it is not). The foreign breach is
+  committed, not scratch — it is what keeps the pin load-bearing, and removing
+  only the pin is the negative control, which was run and came back red.
 
-### KI-21 · Three uncaptured `[error]` lines in a plain `mix test`
+#### Dropped — verified cured
 
-- Two sdk_lang-mismatch restore refusals and one ControlUnit abnormal shutdown.
-  Would trip CI's uncaptured-log gate on this suite shape.
-- **Triage (2026-08-30)**: **REAL, exactly as filed — and the entry understates
-  it.** "Would trip CI's uncaptured-log gate" is wrong in tense: the gate exists,
-  it is unconditional, and **it fails on this suite at HEAD today**.
-  `.github/workflows/elixir.yml:150`–`:163` runs `mix test | tee
-  /tmp/mix-test.log` and then greps that log; any hit is `exit 1`. So the
-  `elixir.yml` `mix test` job is red on every run, on a suite that is otherwise
-  1830/1830 green.
-- **Reproduction** — the suite, then CI's own gate command verbatim against its
-  log:
+Kept here rather than deleted, so "was never true" stays distinguishable from
+"was fixed" (charter §1b.5).
 
-  ```
-  $ mix test > /tmp/ki21_run.log 2>&1        # 1830 passed, 0 failures, 56.8 s
-  $ grep -nE '\[(error|critical)\]' /tmp/ki21_run.log
-  69:...[error] [Overwatch] restore REFUSED entity={"tier_refused_48578", "p0", "k"}
-       runner=runner_1: "sdk_lang mismatch: this SDK is rust (1), the record was
-       written by java (2)"; leaving the operative unbound rather than folding
-       new inputs onto empty state
-  70:...[error] [Overwatch] restore REFUSED entity={"refused_49122", "p0", "k"}  (same text)
-  158:[error] Child Flezha.Runner.ControlUnit of Supervisor
-       {Flezha.Service.Identificator, "test_temp_namespace_147568631510_wus"}
-       shut down abnormally
-  GATE RESULT: exit 1 — FAILS
-  ```
+- `workflow_crash_resume_e2e_test.exs:249` — **never a load-sensitive test.**
+  It was a KI-42 site: the module carried its own private `cleanup/3` whose
+  `File.rm_rf` named `<state_root>/<class>`, a path that cannot exist, so each
+  of its seven call sites leaked one class tree per run and a later run whose
+  `unique/1` id collided read the leftovers. `assertions-that-cannot-fail`
+  deleted that private copy; the module now imports `TierE2EHarness.cleanup/3`.
+- `effectively_once_e2e_test.exs:35` (filed `:34`) — cured by
+  `fix-first-input-drop-on-bind` (`e16260a7`) in both halves: the module lost
+  its `await_stream_bound` call, and its `on_exit` rides
+  `TierE2EHarness.cleanup/3`, whose state path the same commit corrected. The
+  deleted settle only ever covered Phase 0; the SIGKILL-and-rebind face it
+  actually failed on is now gated in the product (`Lifecycle.complete_init/4`).
 
-  Three lines, matching the entry's count and its split (two sdk_lang refusals,
-  one ControlUnit) exactly. The gate can report clean — it is a plain grep over a
-  log that is otherwise 1830 dots — so the red is the finding, not the probe.
-- **Attribution**: both restore refusals are
-  `test/flezha/operative/restore_refusal_test.exs` — `:84` (`entity("tier_refused")`)
-  and its sibling in the same `describe`. That module contains **no `capture_log`
-  anywhere**, which is precisely what the gate's own message asks for: "a test
-  that drives a failure path on purpose must wrap it in `ExUnit.CaptureLog` and
-  assert the message". Both tests already *have* the refusal text as a literal in
-  the body, so asserting on it costs nothing.
-- **What I could NOT pin**: the third line's owning test. It is a
-  `Flezha.Runner.ControlUnit` child under `Identificator.gen_via(runner_id,
-  "wus")` (`lib/flezha/service/identificator.ex:39`), so the id is a
-  `NodeTestHelper.start_runner`-style runner in the `test_temp_namespace` family
-  — but `control_channel_disconnect_test.exs` alone emits **zero** `[error]`
-  lines, so it is not that one. Naming it needs a `--trace` run I did not spend.
-- **Worth fixing**: yes, and it is the highest value-per-line item in this band —
-  a merge-blocking gate is currently red for three log lines, two of which are
-  one `capture_log` wrapper in a single module. Until it is fixed the gate
-  protects nothing, because nobody can tell a new uncaptured error from the three
-  standing ones.
-- **Resolution (2026-08-30, `green-the-suite-log-gate`)**: **two of the three
-  lines closed; the third is a production defect and is re-filed as KI-48.**
-  Both refusals in `test/flezha/operative/restore_refusal_test.exs` now run
-  inside `ExUnit.CaptureLog.with_log/1` and assert on what was captured — that
-  the line says `restore REFUSED`, names the Entity (`inspect(id)`) and carries
-  the SDK's own reason — so the diagnostic became the assertion the module was
-  missing rather than console noise. `capture_log` without an assertion, and
-  `@moduletag capture_log: true`, were both rejected: they make the run quiet by
-  making the module deaf. Measured: a plain `mix test` grepped **2** refusal
-  lines at HEAD and **0** after, 1836 passed both times.
-- **The gate itself was proved, not assumed** — it had never been seen to pass,
-  so a green run only showed it was quiet. A scratch test emitting one
-  uncaptured `Logger.error` turned CI's grep **RED while `mix test` still exited
-  0** (which is the whole point of the gate); the same test wrapped in
-  `capture_log` with an assertion turned it **GREEN**. The scratch test was then
-  deleted.
-- **The attribution the entry could not pin**: `test/flezha_test.exs:592`
-  ("runner disconnect preserve"), found with `--trace`. The line is intermittent
-  — absent from the baseline full run, present in the post-fix one, present in
-  2 of 2 runs of that file alone — so the gate is **intermittently** red on it,
-  not permanently. See KI-48 for the mechanism.
-  **Corrected 2026-08-30 by `finish-the-suite-log-gate`**: the "2 of 2 runs of
-  that file alone" did **not** hold at the later HEAD on the same box. With
-  KI-48's guard removed, `mix test test/flezha_test.exs` printed the line in
-  **0 of 2** runs (`14 passed` each, zero `[error]`), while a full `mix test`
-  still carried it. Treat that file as *an* owner, not as a reproducer.
-- **The entry's "three lines" is one run's sample, not the population.** A third
-  full run turned up a **fourth** source the baseline never showed — two
-  `[error]` lines from a task `overwatch_suspension_test` leaks into its own
-  next test, filed as KI-49 and reproducible in that module alone. So the gate
-  cannot be relied on to be green until KI-48 and KI-49 are both closed; what
-  this change bought is that a *new* uncaptured error is now visible against a
-  known, named set of two instead of an unexplained three.
-  **The sample was still short.** `finish-the-suite-log-gate` closed KI-48,
-  KI-49 and KI-50 and then, in its own gate runs, turned up **two more**
-  sources neither change had seen: KI-53 (`InputLog` logging its linked
-  syncer's `EXIT` at BEAM shutdown) and KI-54 (a `ForwardWorker` retry reaching
-  a deleted ETS table after its test). Each appeared in 1 of 6 full runs. The
-  standing lesson is the one this entry keeps re-learning: **the population is
-  whatever the last N runs sampled**, and N is always too small.
+#### Recorded, not fixed — and why each has no designable red-first
 
+- **`test/flezha_test.exs:598`** — *"runner disconnect preserve"* (the `@tag :runner_disconnect_preserve` is `:597`,
+  so `mix test …:597` selects the *previous* test under ExUnit's at-or-before
+  rule; this is the coordinate the entry filed as `:591`). **Demoted to what it
+  is: one sighting, no mechanism.** 1 of 6 full runs, 0 of 10 alone, 0 of 3
+  instrumented, and not seen since. Candidate mechanisms exist — a fixed
+  `@temp_namespace` and fixed `operative_1..15` shared with three sibling
+  tests, `reset_recovery_states/0` on a process-global cache, the singleton
+  convergence `Loop` on a 1 s tick while `:663` also drives `Loop.tick_now/0` — and
+  **none of them is *the* mechanism.** A fix with no mechanism is a guess.
+- **`test/flezha_test.exs:389`** — *"graceful shutdown drains an operative to a
+  peer through live handover"*. Mechanism established and **the fix is not
+  test-side.** `:408` asserts `ow_state.arrived_via_hotswap?`, which is
+  `serialized_state != <<>>` (`handover.ex:99`), fed by a control-channel round
+  trip (`handover.ex:184`) whose limit is `ControlUnit`'s
+  `@default_reply_timeout_ms 5_000`. A peer slower than that falls back to
+  `state.snapshot`, which this test never creates, and the failure reads
+  verbatim "expected live HotSwap handover, not a WAL cold restore". The 5 s
+  limit is unrelated to the drain's own 30 s, so widening the drain does
+  nothing. The only test-side "fix" is to accept the cold restore the test
+  exists to refuse; the only production-side one is widening a production
+  timeout to make a test pass. **Its red-first cannot be designed without
+  forcing a slow peer, which is load, not a window.**
+  **Second sighting, 2026-08-31, and it is a different assertion in the same
+  test**: under self-inflicted load (three full suites back to back, 88.7 s and
+  88.4 s against 57 s) it failed **2 of 3** runs at `:403` on
+  `assert m.migrated >= 1` with `left: 0` — the drain finding nothing to drain,
+  which is `:419`'s mechanism, not the handover timeout described above. So the
+  two `flezha_test.exs` sites share one exposure and the module has **two**
+  independent ways to go red under load; a red here names the assertion before
+  it names the mechanism.
+  **Third sighting, 2026-08-31**, same assertion and same `left: 0`, in a single
+  ordinary `mix test` (72.3 s, 1863 of 1864, nothing else running) and green
+  `1 passed` alone immediately after — so the exposure is not confined to
+  self-inflicted load.
+- **`test/flezha_test.exs:419`** — *"a deferring operative is force-migrated at
+  the drain deadline without wedging"*, the third site in this module.
+  `assert_receive :deferred, 1_000` times out; the mailbox holds the competing
+  `[:flezha, :shutdown, :drain_progress]` with `migrated: 0, forced: 0,
+  elapsed_ms: 5, remaining_hubs: 0`, so the drain found nothing to drain and
+  the `migration_deferred` hook never had an operative to fire on — a
+  start/registration race ahead of the drain, not a drain defect. **It failed
+  twice in a row, which looked deterministic and was not**: interleaved A/B,
+  alternating arms, went red, red, then 1836 green four times running, and 3 of
+  3 green alone. `:472` carries the identical `arrived_via_hotswap?` exposure
+  as `:389`.
+- **`test/system/sdk_smoke_e2e_test.exs:56`** — *"handshake + AssignRunnerId
+  succeeds"* (the `@tag scenario: "handshake"` is `:55`, the coordinate filed).
+  **Its evidence is a `java` runtime arm, and it reads as a boot budget rather
+  than a test defect.** One red in three consecutive
+  `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` runs against a
+  `java_runner.jar` whose md5 never changed, so the artifact is not the
+  variable. The red run took **133.9 s against 68.3 s and 69.3 s** and is the
+  only one of the three carrying `[fleet_manager] proceeding past recovery
+  timeout`; the failure itself is `command_assign_runner_id` timing out at its
+  5 s budget, which then took the 20 s `{:runner_connect, …}` call and the
+  `{Flezha.Transport.Server, :uds}` child down with it. The module alone: 23
+  passed. **Not re-run here** — this row builds no `java_runner.jar`.
 
-### KI-23 · `unique/1` suffixes can breach the operative-id cap
+#### Method note for the next A/B here
 
-- Suffixes reach 7 digits within one BEAM, so any id prefix over 24 characters
-  breaches the 32-byte operative-id cap late in a combined run.
-- **Triage (2026-08-30)**: **PARTLY TRUE — the mechanism is real, both numbers
-  are off by one digit, and the headroom is two orders of magnitude.** Confirmed:
-  `TierE2EHarness.unique/1` (`test/helpers/tier_e2e_harness.ex:182`) is `prefix
-  <> "_" <> Integer.to_string(System.unique_integer([:positive]))`, and the cap
-  is `@operative_id_max_bytes 32` (`lib/flezha/constant.ex:5`) enforced at
-  `lib/flezha/service/validator.ex:23`–`:27`, refusing with `"operative id
-  exceeds 32 bytes"`.
-- **Correction 1 — the breach starts at 8 digits, not 7, and no prefix at HEAD
-  exceeds 24.** Run against the real validator:
+A HEAD worktree cannot run this suite beside the main tree without `TMPDIR`
+isolation: `config/test.exs:148` keys the socket directory on
+`System.tmp_dir!()` and `node()` alone, so two checkouts land in the same
+`/tmp/flezha_sockets/<node>` and the second refuses to boot — `is another
+controller's socket directory … answered a connect`, out of
+`Flezha.Socket.Support.refuse_live_peer!/1`, taking `Flezha.BootLoader` and the
+whole run down before the first test. Run the baseline arm under
+`TMPDIR=/tmp/<short>`; it must be short, because the resolved UDS path still
+has to fit `SUN_LEN`'s 108 bytes.
+
+#### What could NOT be established, and still cannot
+
+Which assertion actually failed in any of the five original sightings. No
+captured failure output survives anywhere in the repo — `docs/refactor/STATE.md`
+and the archived `refactor-0-tests` design record only `file:line` and a count,
+and for two of them that line is the *test* line, so it names a whole scenario
+rather than an assertion. The two mechanisms now fixed were established by
+reading the code, not by reproducing the original red; neither is *proven* to be
+the one that fired, and both are real defects that would each produce a red
+under load.
+
+### KI-69 · A runner connect racing a hub teardown kills the whole UDS transport server
+
+- **Severity**: P2 · found by `green-the-test-hygiene-tail` segment C's batch-7
+  verification, in one of three full `mix test` runs. **Recorded, verdict owed.**
+  It is a `lib/` defect and row 4 changes nothing in `lib/` by design.
+- **Where**: `lib/flezha/service/hub_manager.ex:504` (`register_handler/2` →
+  `ProcessHub.register_hook_handlers/3`), reached from
+  `Flezha.Runner.FleetManager`'s `{:runner_connect, …}` handler, called by
+  `FleetManager.connect_handler/4` (`fleet_manager.ex:64`) from
+  `Flezha.Transport.Server.handle_new_runner/4` (`transport/server.ex:472`).
+- **What happens**: a runner's `connect_control_channel` frame lands while its
+  namespace's hub is going down. `register_hook_handlers/3` is a plain
+  `GenServer.call(:default_hub, …, 5000)` with nothing between it and a hub
+  that is terminating, so it exits `:shutdown`; that exit propagates out of
+  `FleetManager`'s `handle_call` and out of `connect_handler/4`, and it takes
+  `Flezha.Transport.Server.Uds` — the **acceptor for every runner on this
+  node** — down with it, logging an uncaptured `[error]`:
 
   ```
-  checkpoint_batched_store   24-wide prefix + 1 + 7 = 32  :ok
-  checkpoint_batched_store   24-wide prefix + 1 + 8 = 33  {:error, "operative id exceeds 32 bytes"}
-  live unique("checkpoint_batched_store") = checkpoint_batched_store_3206 (29 bytes) -> :ok
+  05:01:02.861 [warning] [shutdown] drain ns=default force-migrated 1 deferred operative(s)
+  05:01:02.891 [error] GenServer Flezha.Transport.Server.Uds terminating
+  ** (stop) exited in: GenServer.call(Flezha.Runner.FleetManager,
+       {:runner_connect, #Reference<0.1054811107.79298560.47071>, "default", […], …}, 20000)
+      ** (EXIT) exited in: GenServer.call(:default_hub,
+           {:register_hook_handlers, :child_registered_hook,
+            [%ProcessHub.Service.HookManager{id: "default_28669168419_hub_pid_insertion",
+              m: Flezha.Service.HubManager, f: :hook_insert_pid,
+              a: ["default_28669168419", :_], p: 0}]}, 5000)
+          ** (EXIT) shutdown
+      (elixir 1.20.2) lib/gen_server.ex:1183: GenServer.call/3
+      (flezha 0.1.0) lib/flezha/runner/fleet_manager.ex:64: …connect_handler/4
+      (flezha 0.1.0) lib/flezha/transport/server.ex:472: …handle_new_runner/4
   ```
 
-  The two longest prefixes are both exactly 24
-  (`checkpoint_batched_outputs_e2e_test.exs:41`, and
-  `workflow_crash_resume_e2e_test.exs:1090`'s `String.slice(factory_id, 0, 24)`);
-  every other tops out at 18. So the entry's "any prefix over 24 characters" is
-  right in form but names a population that is currently empty, and "7 digits"
-  should read 8.
-- **Correction 2 — `tier_commit_block_workflow_` is no longer a prefix.** It
-  survives only as a *factory id* (`test/apps/rust_runner/src/main.rs:335`, the
-  Java twin, both `conformance.json`) — the `block` → `drop_nothing` rename never
-  reached the fixture name. `workflow_crash_resume_e2e_test.exs:1090` already
-  truncates it, with a comment saying why, landed in `5f381a3e`. The mitigation
-  exists but budgets exactly 7 digits with **zero margin**.
-- **Reproduction — refuted for a plain run, with the generator characterised.** A
-  probe attached to a full suite:
+  **30 ms after the drain line**, so the window is the teardown that drain
+  starts.
+- **The existing guard does not cover it.** `connect_handler/4` opens with
+  `check_not_shutting_down/1` (`fleet_manager.ex:79`), which reads
+  `ShutdownCoordinator.shutting_down?/0` — a **node-wide** flag. The hub here is
+  one namespace's, torn down by a drain drill while the node itself is not
+  shutting down, so the guard passes and the call goes into a dying hub anyway.
+- **Reproduction — ONE sighting, NOT reproduced, and that is stated plainly.**
+  Seen in `mix test --seed 303` (exit 0, `1863 passed`, one gate hit). Then, in a
+  30-minute timebox: `mix test --seed 303` × 3 → **0 hits**, and
+  `mix test test/flezha_test.exs --seed 303` × 5 → **0 hits**. Two of the three
+  full re-runs failed instead on `flezha_test.exs:389` with `m.migrated == 0`,
+  which is [[KI-18]]'s recorded family under load (88.7 s and 88.4 s against
+  57 s), not this. So: a complete stack trace and a mechanism read from it, and
+  **no reproduction**. Charter §1b calls that a recorded suspicion with a named
+  mechanism, and the mechanism here is the stack, not an inference.
+- **The owning test is not pinned.** The drain line is `ns=default` and the
+  reroute lines around it name `test_temp_namespace_958502630122`, so it is the
+  `test/flezha_test.exs` shutdown-drill family; naming the test needs a `--trace`
+  run this segment did not spend.
+- **This is the same population [[KI-21]] keeps re-teaching**: the set of
+  uncaptured-`[error]` sources is whatever the last N runs sampled. Three quiet
+  runs preceded this one.
+- **A fix must** decide whether a hub that is terminating is a *refusal* for the
+  connecting runner or a *retry*, and must not let either answer travel as an
+  exit through `Transport.Server`. One connect arriving at the wrong instant
+  taking the node's whole UDS acceptor down is the part that is wrong regardless
+  of which answer is chosen. The node-wide `shutting_down?/0` guard is the wrong
+  granularity for a per-namespace hub and cannot be widened into one — the hub's
+  own liveness is what the caller needs to know.
 
-  ```
-  [UNIQPROBE] start_max=17541 end_max=53893 digits=5
-  [UNIQPROBE] worst id: "checkpoint_batched_store_53893" = 30 bytes (cap 32)
-  ```
+- **Supervisor verdict 2026-08-31 — RECORDED AS A SUSPICION, not fixed, and queued
+  with [[KI-68]] for a production-defect row.** Charter §1b: a defect that will not
+  reproduce inside the 30-minute timebox is recorded with what was tried and does
+  **not** halt the area. What was tried is here — 3 full re-runs at the same seed
+  plus 5 module runs, 0 hits against 1 sighting.
+- **Confidence and severity point opposite ways, and the entry must keep them
+  apart.** The *mechanism* is strong: it was read off a real stack, not inferred —
+  `register_handler/2`'s plain `GenServer.call` to a terminating hub exits
+  `:shutdown`, and that exit travels out through `connect_handler/4` into
+  `Transport.Server.Uds`. The *rate* is one sighting in an unmeasured population.
+  So: a severe consequence — one badly-timed connect takes down the acceptor for
+  **every** runner on the node — held at P2 because nobody has yet made it happen
+  twice. Do not let a future reader round that to either "rare, ignore it" or
+  "P1, drop everything".
+- **Why not row 4**: it is a `lib/` defect and row 4 changes nothing in `lib/` by
+  design. Same disposition as KI-68, and the two should be surveyed together — both
+  are teardown-ordering defects on the runner/controller seam.
 
-  5 digits, 30 bytes, 2 under the cap. The whole suite advances the stream by
-  36,352 — about 1,136 calls at this box's stride of 32 per call (stride is
-  scheduler-count dependent: 16 at 2 schedulers, 64 at 16). Only bare
-  `:erlang.unique_integer/0` and `[:positive]` share that stream —
-  `[:monotonic]` and `make_ref/0` do not, measured at 200k calls each — which is
-  why the suite barely moves it. **The arithmetic**: 24 + 1 + d ≤ 32 → d ≤ 7, so
-  d = 8 needs a value ≥ 10⁷ ≈ 281,250 calls at stride 32. That is ~167× what the
-  full plain suite consumes here, or ~46× on a 32-core box.
-- **What could NOT be established**: the combined `--include system --include
-  multi_node` consumption, which needs a built SDK runner. It is heavier, but
-  plausibly 3–5×, not 46–167× — so "late in a combined run" is very likely wrong,
-  though I cannot rule it out on a very large box.
-- **Worth recording, and tighter than the filed issue**: the *partitioned* path
-  has less headroom. `lib/flezha/operative/partition_group.ex:110` requires
-  `member_id(base, N-1)` to fit in 32, so the `#pK` suffix (3–4 bytes) comes out
-  of the same budget and a partitioned start with a 32-byte base id is refused
-  today by `id_budget_refusal/2` (`:126`–`:131`).
-- **Worth fixing**: low priority, and cheap when done — hold prefixes to ≤ 23
-  (which leaves 8 digits) or use a fixed-width suffix. Only the two 24-byte
-  prefixes sit at the edge, and one of them is already a manual truncation with
-  no margin, which is the fragile part worth removing.
-
-### KI-66 · A `/tmp` state tree left by a previous BEAM turns `append(pid, 0, …)` into `:duplicate`
-
-- **Severity**: P2 · found by `green-the-test-hygiene-tail` segment A's own
-  batch-1 baseline, outside that segment's scope. **Recorded, verdict owed.**
-- **Where**: `test/helpers/state_test_helpers.ex:60`–`:70`
-  (`tmp_app_data_dir/0`) and `test/flezha/state/wal_writer_outbox_test.exs:53`
-  (`rc = "wo_" <> …`). Both mint their name from
-  `System.unique_integer([:positive])`, which **restarts low in every BEAM**, so
-  run *N+1* re-mints run *N*'s directory names. `File.mkdir_p!/1` on an existing
-  directory succeeds silently, and the fresh writer then reads a WAL the
-  previous run left there.
-- **What happens**: `WalWriter`'s append handler
-  (`lib/flezha/state/wal_writer.ex:547`) answers `:duplicate` for
-  `seq <= state.last_persisted_seq`, so a test that starts at seq 0 over a
-  re-minted tree fails on its own first append:
-
-  ```
-  1) test a held output holds the cursor until the sink confirms (Flezha.State.WalWriterOutboxTest)
-     test/flezha/state/wal_writer_outbox_test.exs:605
-     ** (MatchError) no match of right hand side value:
-
-         :duplicate
-
-     code: :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "held")], 1))
-     stacktrace:
-       test/flezha/state/wal_writer_outbox_test.exs:612: (test)
-  ```
-
-  Seen once — `mix test --seed 202202`, exit 2, `1856/1857 passed`, with **124
-  `/tmp/flezha_state_test_*` trees on the box**, eight of them holding a
-  `_system/wo_<n>/proc/k1.wal` at exactly the path this module mints
-  (`.../flezha_state_test_34051/_system/wo_34083/proc/k1.wal` — base and `rc`
-  32 apart, which is this box's `unique_integer` stride).
-- **Reproduction — by construction; the natural rate is unmeasured.** The same
-  seed with the same leftovers still in place came back `1857 passed`: *which*
-  base is minted depends on scheduling, not on the seed. The mechanism is
-  proved directly by planting one effect record at the path the setup mints:
-
-  ```
-  $ mix test <scratch>/ki_dup_probe_test.exs
-  ===== KI PROBE: append/4 answered =====
-  append(pid, 0, …): :duplicate
-       code:  assert :ok = answer
-       left:  :ok
-       right: :duplicate
-  ```
-
-  Control: the same suite with `/tmp/flezha_state_test_*` moved aside is
-  `1857 passed` and leaves **0** such directories behind — the suite at HEAD
-  leaks none, so the 124 are historical (25 stamped 08-31 02:02, this row's own
-  survey session).
-- **The failing test is the messenger, not the defect.** All 47 call sites of
-  `tmp_app_data_dir/0` are exposed the same way; the WAL path is only where a
-  stale byte is loudest.
-- **A fix must** make the minted name unique across BEAMs and not merely within
-  one — refuse a base that already exists, or mint from something monotonic
-  across runs — rather than sweeping `/tmp` by hand or hardening `append/4`,
-  which would hide a genuinely duplicated seq.
-- **Fixed** in `green-the-test-hygiene-tail` segment A. `tmp_app_data_dir/0`
-  now claims its directory with `File.mkdir/1` and re-mints on `:eexist`, so
-  the name it returns is one this call created — which also makes two
-  concurrent BEAMs unable to share a state root, where `mkdir_p` let them.
-  Regression test: `test/flezha/state/test_helpers_test.exs`, which **claims the
-  whole 512-wide band the next mint can land in** (this box's stride is 32) and
-  asserts the returned name is past every claimed one, so the collision is
-  forced rather than sampled. Negative control — restore `File.mkdir_p!/1` and
-  it is red on `refute base in planted`, `left: "/tmp/flezha_state_test_8323"`.
-- **The planted-record probe above is NOT the regression test**, and cannot be:
-  it plants at a path the helper has already returned, so it asserts
-  `WalWriter`'s dedup, which is correct behaviour. It answers `:duplicate`
-  against the fixed helper too.
-- **Four sibling sites are NOT fixed** — the same per-BEAM mint over a `/tmp`
-  directory lives at `test/helpers/schedule_test_helper.ex:20`,
-  `test/helpers/durability_backend_stub.ex:61`,
-  `test/helpers/tier_e2e_harness.ex:189` (`unique_id_path/0`, which
-  `green-the-test-hygiene-tail` batch 5 already widens for KI-23) and
-  `test/helpers/auth_test_helper.ex:40`. None is reproduced;
-  `node_test_helper.ex:147` is deliberately **not** in the set (a peer's
-  directory name is meant to be stable across runs). A §2 answer is one claimed
-  mint shared by the four; that is a scope call, recorded here rather than taken.
-  **Taken in segment B**: the claim is `NodeTestHelper.claim_tmp_dir/1` and all
-  five sites call it. `unique_id_path/0` claims a *directory* and returns a path
-  inside it, because there the file itself has to be absent — a runner that finds
-  an id at `FLEZHA_RUNNER_ID_PATH` adopts it.
-- **This changes a measurement `green-the-suite-log-gate` relied on**: the helper
-  no longer reclaims a stale name, so a run can no longer show a *net loss* of
-  `/tmp/flezha_*` directories. The timestamp-marker method that note prescribes
-  is unaffected and remains the right one.
-
-### KI-67 · [[KI-66]]'s regression test passes on the defective helper, 1 run in 4
-
-- **Severity**: P2 · found by `green-the-test-hygiene-tail` segment B, re-running
-  segment A's negative control before reusing the mechanism at four more call
-  sites. **Recorded, verdict owed.**
-- **Where**: `test/flezha/state/test_helpers_test.exs:11`–`:46`, the test *"a
-  state root a previous BEAM left behind is never handed out again"*, landed in
-  `656fd444`.
-- **What happens**: the test plants a 512-wide band of directories at
-  `flezha_state_test_<counter+1 … counter+512>` and asserts the mint is not one
-  of them. `System.unique_integer([:positive])` is node-global **and
-  per-scheduler striped**, so the value the test draws and the value the mint
-  draws afterwards are not adjacent: the whole node draws from the same stream
-  while the 512 directories are being written, and a scheduler migration moves
-  the draw to a different stripe. When the mint starts past the band — or below
-  it — nothing collides and the test passes without the claim ever engaging.
-- **Its vacuity guard cannot see that.** `assert minted > counter + band` holds
-  both when the claim walked the whole band and when the first candidate was
-  already past it, so it separates the two cases it exists to separate.
-- **Reproduction — the negative control, 20 runs.** Revert the claim to
-  `File.mkdir_p!/1` (the defect the test exists to catch) and run the module at
-  20 seeds:
-
-  ```
-  $ for i in $(seq 1 20); do mix test test/flezha/state/test_helpers_test.exs --seed $((i*104729)); done
-  15 red    refute base in planted / left: "/tmp/flezha_state_test_7170"
-   5 green  vacuous (seeds 1466206 and 1885122 among them)
-  ```
-
-  **5 of 20 — 25 % — pass on the defective helper.** With the claim in place the
-  module is 10/10 green, so the flakiness is one-sided: it never reports a false
-  red, it reports a false green.
-- **The drift, measured.** A probe printing the stream head before and after the
-  planting loop, five runs: `+6365`, `+829`, `+509`, `+29`, **`−260`**. Only the
-  `+29` run left the mint inside the planted band; the negative delta is the
-  stripe change, and it is why "plant ahead of the counter" is not a position at
-  all.
-- **A fix must** make the collision **observed rather than assumed**: read the
-  stream head immediately before the mint and require it to lie inside the
-  planted band, re-planting ahead of the head when it does not and failing
-  loudly after a fixed number of attempts. A band the stream has already
-  passed must not read as a pass. (The one construction that needs no guard is a
-  fresh BEAM — plant a low band, then run the claim in a child process whose
-  stream genuinely starts low, which is the real defect — at the cost of seconds
-  per run.)
-- **Not fixed in segment B.** The test is segment A's and the verdict is the
-  supervisor's. Segment B moves the mechanism unchanged to
-  `NodeTestHelper.claim_tmp_dir/1` and points four more helpers at it, so its own
-  proof is that the move is pure, not this test.
-
-- **Supervisor verdict 2026-08-31 — REAL, CONFIRMED, and worse than filed. Fix the
-  test in segment C.** Reproduced independently: the claim in
-  `NodeTestHelper.claim_tmp_dir/1` reverted to `File.mkdir_p!/1`, then
-  `test/flezha/state/test_helpers_test.exs` run at 12 seeds (1, 2, 3, 5, 8, 13, 21,
-  34, 55, 89, 144, 233) — **7 red, 5 green**. The worker measured 15/20; I measure
-  7/12. Either way the test **passes on the code it exists to catch**, roughly two
-  times in five.
-- **This invalidates a claim in commit `656fd444`'s message**, which states the
-  KI-66 fix was proved red-first. The *fix* is not in doubt — its correctness rests
-  on `File.mkdir/1` being atomic, which is true by construction and not by sampling
-  — but the *proof* is unreliable, and a test that green-lights defective code two
-  times in five is worse than no test, because it will be trusted.
-- **Mechanism**: `System.unique_integer([:positive])` is node-global **and
-  per-scheduler striped**, so a band planted at `counter+1 … counter+512` has no
-  fixed relation to where the next mint lands. The drift across runs was measured at
-  `+6365`, `+829`, `+509`, `+29` and **`−260`** — a negative drift puts the mint
-  *below* the band entirely. The vacuity guard `assert minted > counter + band` is
-  true in both the caught and the missed case, so it separates nothing. The failure
-  is one-sided: never a false red from this cause, only a false green.
-- **Also observed by the supervisor**: immediately after the 12 defective runs, the
-  test failed once *with the correct helper in place* and passed on re-run with the
-  residue gone. So it is sensitive to `/tmp` state in **both** directions.
-- **A fix must** make the plant cover where the mint actually lands — probe the
-  stride, then re-plant — or force the condition in a fresh BEAM where the counter
-  starts known. Whichever is chosen, the acceptance is **12 of 12 red** against the
-  reverted helper, not a majority.
-- **Supervisor process note, recorded because it is the real cause**: at segment A's
-  checkpoint I ran the full suite and read the fix, and I accepted the worker's
-  negative-control claim **without running it**. A regression test is proved by its
-  negative control and by nothing else. In row 3.5 segment B the gate was proved red
-  twice — once by the worker, once by me — and that is the standard this checkpoint
-  failed to meet.
 
 ### KI-68 · An opted-out workflow's teardown burns the whole 60 s drain bound after a crash-resume
 
@@ -1301,42 +1170,6 @@ since carries its own date.
   budget without deciding that is the shape this file exists to refuse.
 
 ---
-
-## P3 — warts, wording, and measurement notes
-
-- **Supervisor verdict 2026-08-31 — REAL, and fixed inside row 4** rather than in a
-  change of its own: this row's subject is *tests that lie or leak*, and a helper
-  that re-mints a previous BEAM's directory name is the purest instance in the set.
-  Every link was verified before ruling — the mint at `state_test_helpers.ex:60`,
-  the silent `File.mkdir_p!/1`, and `wal_writer.ex:547`'s
-  `seq <= state.last_persisted_seq -> {:reply, :duplicate, state}`. A per-BEAM
-  counter, a silent mkdir and a seq-ordered dedup is a complete causal chain and
-  needs no sampling to be believed.
-- **Fixed by making the mint a CLAIM**: `File.mkdir/1` instead of `mkdir_p!/1`,
-  retrying on `:eexist`. No new naming scheme, no new helper, no call site changed —
-  the claim is an existing atomic primitive, and the fix does not depend on `/tmp`
-  being clean, which was the binding constraint (leftovers are the whole defect).
-- **A shared mechanism with [[KI-23]] was refused, and the refusal is right.** The
-  subjects differ: KI-23 bounds a **length** against a 32-byte id cap, KI-66
-  establishes **exclusive ownership of a filesystem name**. An operative id cannot
-  be claimed at mint time — nothing exists on disk when the generator returns, so
-  there is no `mkdir` to fail and no retry-until-free to perform. And the one scheme
-  that would serve both, a cross-BEAM-monotonic suffix like
-  `System.os_time(:microsecond)`, **spends KI-23's entire budget**: 16 digits plus a
-  separator leaves 15 bytes of 32. What the two share is the diagnosis, and that is
-  written once.
-- **Regression test**: `test/flezha/state/test_helpers_test.exs`, which FORCES the
-  collision by claiming the whole band the next mint can land in, and carries a
-  vacuity guard that the returned name is past every claimed one — so it cannot pass
-  by the band having missed. Proved red on the reverted helper and red again as a
-  negative control.
-- **Note for anyone re-reading `docs/dev_notes/green-the-suite-log-gate.md`**: that
-  note measured *around* this hazard with a timestamp marker, and observed that a
-  fixed module could show as a net LOSS of `/tmp` directories because a re-minted
-  name reclaimed a stale one. After this fix the helper no longer reclaims, so that
-  particular arithmetic no longer applies. The timestamp-marker method itself is
-  unaffected.
-
 - **Supervisor verdict 2026-08-31 — REAL and PRE-EXISTING; filed, not fixed here,
   and queued as its own Phase 1 row.** `@drain_owed_ms 60_000`
   (`lib/flezha/runner/control_channel.ex:492`) was introduced by `a9787a0f`, the
@@ -1351,6 +1184,8 @@ since carries its own date.
   module, 3/3 alone) with the mechanism named to the millisecond — raising only the
   test budget to 90 s yields `deregistered=true after 59994 ms`. That is a better
   starting point than most entries in this file ever had.
+
+## P3 — warts, wording, and measurement notes
 
 ### KI-61 · `RecordLog`'s two `@spec`s name `Elixir.Registry.entity_id/0`, a type that does not exist
 
@@ -1401,18 +1236,6 @@ since carries its own date.
   spec that names the type its callers actually pass. Area 5a reads every spec in
   `lib/flezha/state/` and is where the proof is affordable, the same treatment
   [[KI-41]] already has.
-
----
-
-### KI-51 · `mix bench.roundtrip`'s `--runtime` help names three runtimes, not seven
-
-- **Severity**: P3 · one line.
-- **Where**: `lib/mix/tasks/bench/roundtrip.ex:24` says `rust|java|elixir` while
-  `parse_runtime/2` reads all seven conformance manifests.
-- **Reproduction**: compare the `@shortdoc`/usage line with `parse_runtime/2`'s
-  manifest walk. Understates by four.
-- **Was**: the surviving quarter of KI-27, whose other three claims triage
-  measured gone.
 
 ---
 
@@ -1837,6 +1660,396 @@ every new production freeze to `incident_log.md` at the repository root.
   rather than patched with six allowlist entries.
 
 ## Resolved
+
+### KI-51 · The bench `--runtime` help names three runtimes, not seven — RESOLVED
+
+Closed by `correct-runtime-and-conformance-docs`. The entry was right about the
+count and understated the spread: **two** tasks carried the stale list.
+
+- **The accepted set, read off the code.** `parse_runtime/2`
+  (`lib/mix/tasks/bench/roundtrip.ex`) calls `PortPilot.runtimes/0`, which globs
+  `test/apps/*_runner/conformance.json` and answers `[:elixir, :java, :node,
+  :php, :python, :ruby, :rust]` — seven manifests, confirmed by `ls
+  test/apps/*_runner/conformance.json`. The advertised set was `rust|java|elixir`.
+- **`Mix.Tasks.Bench` had the same defect, one runtime short.** Its `--runtime`
+  bullet named ``java``, ``elixir``, ``node``, ``ruby``, ``php`` and omitted
+  `python`, which was added after the line was written, while its own
+  `parse_runtime/1` reads the same `PortPilot.runtimes/0`.
+- **The `elixir`-only durability sentence was a third copy.** `--runtime elixir
+  carries only --durability off` restates a manifest's `deferred` key that
+  `parse_runtime/2` already reads per runtime; the same restriction holds for
+  `node`, `php` and `ruby`, and `python` defers only `workflow`.
+- **The fix is one list, not a corrected second one.** Both help texts now name
+  `test/apps/<runtime>_runner/conformance.json` and enumerate nothing; the
+  refusals (`parse_enum/3`, `parse_runtime/1`) already print the derived set.
+  This is the rule `sdk-conformance` states for the launch line and the dispatch
+  model — "a per-runtime clause is a list a new SDK has to remember to join".
+- **Gated, and proved red first.** `test/sdk_conformance/gate_test.exs` gained
+  *"no bench task documents a runtime list beside the one it derives"*. At HEAD:
+
+  ```
+  $ mix test test/sdk_conformance/gate_test.exs
+  Mix.Tasks.Bench names ["elixir", "java", "node", "ruby"] on one documentation
+  line, a second copy of the set its `--runtime` reads from the manifests:
+  ["elixir", "java", "node", "php", "python", "ruby", "rust"].
+  Name the manifest path, not the runtimes
+  Result: 18/19 passed
+  ```
+
+  Each half was proved separately: with only the `roundtrip.ex` line reverted the
+  same test reports `Mix.Tasks.Bench.Roundtrip names ["elixir", "java", "rust"]`.
+  With both corrected, `19 passed`.
+
+### KI-13 · The PHP container arm needs `--network host`, and leaks containers — RESOLVED
+
+Closed by `correct-runtime-and-conformance-docs` as an **environment note made
+findable**, which is what its own triage recommended. No repo code changed.
+
+- **The triage's verdict stands: not a defect here.** No shim is tracked — `git
+  ls-files` matches no PHP shim — and `test/apps/php_runner/conformance.json`
+  launches a bare `php {artifact} {namespace}`, so the container arm is a `PATH`
+  arrangement an individual makes, not something the tree ships.
+- **One triage fact is now false and is corrected rather than carried.** The
+  entry recorded "there is no PHP on this box at all (`command -v php` →
+  absent)". It resolves today:
+
+  ```
+  $ command -v php && php -v | head -1
+  /usr/bin/php
+  PHP 8.3.6 (cli) (built: Jul 16 2026 18:30:41) (NTS)
+  $ php -m | grep -i ffi
+  FFI
+  ```
+
+  That satisfies `sdk/php/composer.json` (`php >= 8.1`, `ext-ffi`) for the
+  default `sync` executor, so the shim is not the only way to run the arm on
+  this box. It remains the only way to run `FLEZHA_PHP_EXECUTOR=swoole`, which
+  needs a ZTS build carrying `Swoole\Thread`. The arm was **not run** — that is
+  a live conformance run, outside this change.
+- **The remedy.** `docs/sdk/conformance.md` gained *"What an arm needs on the
+  host"*, covering the Ruby interpreter floor and the PHP shim: the `docker run`
+  invocation with `--network host` and `-i`, the three mounts at their same
+  absolute paths, the `FLEZHA_*` forwarding, why each is load-bearing, and the
+  container sweep the `wedge_probe` fixture forces. Every fact is cited to its
+  source (`sdk/ruby/flezha.gemspec`, `sdk/php/composer.json`,
+  `docker/dev/Dockerfile.php`, the PHP manifest); where
+  `docs/dev_notes/refactor-2-ffi-veneers.md` records no exact spelling — the
+  mount flags and the forwarded variables — the section states the requirement
+  rather than inventing a command line.
+- **The second remedy's condition is unmet, and that is the outcome.** The entry
+  asks for a `--rm`-plus-name teardown *"if the shim ever becomes a tracked
+  script"*. It has not, and none was written. The sweep is documented instead.
+- **Nothing is leaked now**: `docker ps` lists no running containers.
+
+### KI-67 · [[KI-66]]'s regression test passes on the defective helper — RESOLVED
+
+Closed by `green-the-test-hygiene-tail` segment C, which **replaced the
+construction rather than widening the band**.
+
+- **What was wrong.** `test/flezha/state/test_helpers_test.exs` planted a
+  512-wide band of directories at `flezha_state_test_<counter+1 … counter+512>`
+  and asserted the mint was not one of them. `System.unique_integer([:positive])`
+  is node-global **and per-scheduler striped**, so the value the test drew and
+  the value the mint drew afterwards were not adjacent: the whole node draws
+  from the same stream while the 512 directories are being written, and a
+  scheduler migration moves the draw to a different stripe. Drift across five
+  probe runs: `+6365`, `+829`, `+509`, `+29` and **`−260`** — a negative drift
+  puts the mint *below* the band entirely. The vacuity guard
+  `assert minted > counter + band` held in both the caught and the missed case,
+  so it separated nothing, and the failure was one-sided: never a false red,
+  only a false green. Measured **15 red of 20 seeds** by the worker and **7 red
+  of 12** by the supervisor, independently.
+- **The fix is a real second BEAM, which is what the defect is.** The child is
+  `elixir -pa <flezha ebin> -e <script>`; it draws until it is past a floor of
+  `4096` so the band the parent must plant is known here (a boot alone lands
+  anywhere in `99..1417` on this box, which is why the first attempt still
+  missed), reports the stream head and the stride it measured, then calls
+  `Flezha.State.TestHelpers.tmp_app_data_dir/0` and prints what it got.
+- **The vacuity guard now discriminates**, and that was demonstrated rather than
+  argued: `assert (head + stride) in @band` names the first candidate the claim
+  asks for, so a band the stream never reached fails **loudly**. In the run
+  where the band was deliberately mis-sized, one of twelve seeds drew `325`
+  against a band of `1024..2048` and the test reported
+  `the claim asked for 325 first, outside the planted band 1024..2048` — the
+  exact case in which the old test returned a green.
+- **Acceptance, and it is 12 of 12, not a majority.** With
+  `NodeTestHelper.claim_tmp_dir/1` reverted to `File.mkdir_p!/1`, at the twelve
+  seeds the supervisor named:
+
+  ```
+  $ for s in 1 2 3 5 8 13 21 34 55 89 144 233; do
+      mix test test/flezha/state/test_helpers_test.exs --seed $s; done
+  seed=1    exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4162
+  seed=2    exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4163
+  seed=3    exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4164
+  seed=5    exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4165
+  seed=8    exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4162
+  seed=13   exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4169
+  seed=21   exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4165
+  seed=34   exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4164
+  seed=55   exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4165
+  seed=89   exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4165
+  seed=144  exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4165
+  seed=233  exit=2  handed back a state root it did not create: /tmp/flezha_state_test_4164
+  ```
+
+  **12 of 12 red, and every one on the assertion the test exists for** — not on
+  the vacuity guard. Restored: 12 of 12 green at the same seeds, 0.4 s each.
+- **Robust to `/tmp` residue in both directions**, which the old test was not:
+  the band is planted with `mkdir_p!` so leftovers inside it are absorbed, and
+  the claim walks past leftovers outside it. Proved with 292 foreign trees
+  planted at `4609..4900`, immediately adjacent to and past the band: 1 passed.
+- **The process lesson, recorded because it is the real cause.** At segment A's
+  checkpoint the supervisor ran the full suite and read the fix, and accepted
+  the worker's negative-control claim **without running it**. A regression test
+  is proved by its negative control and by nothing else. This also invalidated a
+  claim in commit `656fd444`'s message; the KI-66 *fix* was never in doubt —
+  `File.mkdir/1` is atomic by construction, not by sampling — but its *proof*
+  was, and a test that green-lights defective code two times in five is worse
+  than no test, because it will be trusted.
+
+### KI-66 · A `/tmp` state tree left by a previous BEAM turns `append(pid, 0, …)` into `:duplicate` — RESOLVED
+
+Closed by `green-the-test-hygiene-tail` segment A (`656fd444`) for
+`tmp_app_data_dir/0`, and by segment B (`9820f75d`) for the four sibling mints.
+
+- **Where it was**: `test/helpers/state_test_helpers.ex` (`tmp_app_data_dir/0`)
+  and `test/flezha/state/wal_writer_outbox_test.exs:53` (`rc = "wo_" <> …`).
+  Both mint their name from `System.unique_integer([:positive])`, which
+  **restarts low in every BEAM**, so run *N+1* re-mints run *N*'s directory
+  names. `File.mkdir_p!/1` on an existing directory succeeds silently, and the
+  fresh writer then reads a WAL the previous run left there.
+- **What happened**: `WalWriter`'s append handler
+  (`lib/flezha/state/wal_writer.ex:547`) answers `:duplicate` for
+  `seq <= state.last_persisted_seq`, so a test that starts at seq 0 over a
+  re-minted tree fails on its own first append:
+
+  ```
+  1) test a held output holds the cursor until the sink confirms (Flezha.State.WalWriterOutboxTest)
+     test/flezha/state/wal_writer_outbox_test.exs:605
+     ** (MatchError) no match of right hand side value:
+
+         :duplicate
+
+     code: :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "held")], 1))
+  ```
+
+  Seen once — `mix test --seed 202202`, exit 2, `1856/1857 passed`, with **124
+  `/tmp/flezha_state_test_*` trees on the box**, eight of them holding a
+  `_system/wo_<n>/proc/k1.wal` at exactly the path that module mints
+  (`.../flezha_state_test_34051/_system/wo_34083/proc/k1.wal` — base and `rc`
+  32 apart, which is this box's `unique_integer` stride).
+- **The failing test was the messenger, not the defect.** All 47 call sites of
+  `tmp_app_data_dir/0` were exposed the same way; the WAL path is only where a
+  stale byte is loudest.
+- **Supervisor verdict**: every link was verified before ruling — the mint, the
+  silent `File.mkdir_p!/1`, and `wal_writer.ex:547`'s
+  `seq <= state.last_persisted_seq -> {:reply, :duplicate, state}`. A per-BEAM
+  counter, a silent mkdir and a seq-ordered dedup is a complete causal chain and
+  needs no sampling to be believed.
+- **Fixed by making the mint a CLAIM**: `File.mkdir/1` instead of `mkdir_p!/1`,
+  retrying on `:eexist`. No new naming scheme, no call site changed, and the fix
+  does not depend on `/tmp` being clean — which was the binding constraint,
+  since leftovers are the whole defect. It also makes two concurrent BEAMs
+  unable to share a state root, where `mkdir_p` let them.
+- **One claim, five callers.** Segment B generalised it into
+  `FlezhaTest.Helper.NodeTestHelper.claim_tmp_dir/1` — the lowest layer among
+  the test helpers, and already the owner of the sibling concept `peer_dir/2` —
+  and pointed the four sibling mints at it: `schedule_test_helper.ex:20`,
+  `durability_backend_stub.ex:61`, `auth_test_helper.ex:40` and
+  `tier_e2e_harness.ex`'s `unique_id_path/1`. Every minted name is byte-identical
+  to before, so the claim is the only change; net 0 lines (`+20` in the helper,
+  `−20` across the callers). `node_test_helper.ex`'s `peer_dir/2` is deliberately
+  **excluded**, with a comment saying why: its name carries no per-BEAM counter
+  to re-mint and is meant to be stable per peer.
+- **`unique_id_path/1` claims a directory and returns a path inside it**,
+  because there the file itself must be absent — a runner that finds an id at
+  `FLEZHA_RUNNER_ID_PATH` adopts it — and `File.mkdir` is the atomic claim a
+  bare file path has no equivalent of.
+- **A shared mechanism with [[KI-23]] was refused, and the refusal is right.**
+  The subjects differ: KI-23 holds a **length** under a 32-byte id cap, KI-66
+  establishes **exclusive ownership of a filesystem name**. An operative id
+  cannot be claimed at mint time — nothing exists on disk when the generator
+  returns, so there is no `mkdir` to fail and no retry-until-free to perform.
+  And the one scheme that would serve both, a cross-BEAM-monotonic suffix like
+  `System.os_time(:microsecond)`, **spends KI-23's entire budget**: 16 digits
+  plus a separator leaves 15 bytes of 32. What the two share is the diagnosis,
+  and that is written once.
+- **The planted-record probe used during triage is NOT the regression test**,
+  and cannot be: it plants at a path the helper has already returned, so it
+  asserts `WalWriter`'s dedup, which is correct behaviour. It answers
+  `:duplicate` against the fixed helper too.
+- **The regression test is `test/flezha/state/test_helpers_test.exs`**, and its
+  first form was itself defective — see [[KI-67]], closed in segment C. It now
+  forces the collision in a real second BEAM.
+- **This changes a measurement `green-the-suite-log-gate` relied on**: the helper
+  no longer reclaims a stale name, so a run can no longer show a *net loss* of
+  `/tmp/flezha_*` directories. The timestamp-marker method that note prescribes
+  is unaffected and remains the right one.
+
+### KI-23 · `unique/1` suffixes can breach the operative-id cap — RESOLVED
+
+Closed by `green-the-test-hygiene-tail` segment B (`9820f75d`): **the generator
+carries its own bound**, so no rule about call sites has to hold it.
+
+- **The filed remedy was unenforceable, and that is the part worth keeping.**
+  "Hold prefixes to ≤ 23" cannot be checked at the call sites, because **three
+  of the five are not literals**: `workflow_crash_resume_e2e_test.exs` truncated
+  a *factory id* by hand, `sdk_smoke_e2e_test.exs` did the same a second time
+  with a different width, and a third site computed `unique("pipe_#{factory}")`
+  with no limit at all. A fourth carried a private second copy of `unique/1`.
+  The bound belongs in the one function they all reach.
+- **Two numbers in the original entry were off.** The breach starts at **8**
+  digits, not 7 (24 + 1 + 7 = 32 is `:ok`; 24 + 1 + 8 = 33 is
+  `{:error, "operative id exceeds 32 bytes"}` against the real
+  `Flezha.Service.Validator`), and no prefix at HEAD exceeded 24, so "any prefix
+  over 24 characters" named a population that was empty.
+- **The fix**, `TierE2EHarness.unique/2` (`test/helpers/tier_e2e_harness.ex:195`):
+
+  ```elixir
+  def unique(prefix), do: unique(prefix, System.unique_integer([:positive]))
+
+  def unique(prefix, counter) do
+    suffix = "_" <> Integer.to_string(counter)
+    binary_slice(prefix, 0, max(Validator.id_byte_limit() - byte_size(suffix), 0)) <> suffix
+  end
+  ```
+
+  Exact and unconditional — the result fits at *any* counter width, where a
+  reserved digit count only moves the cliff — and `32` is never written down,
+  because `Validator.id_byte_limit/0` already surfaces
+  `Flezha.Constant`'s `@operative_id_max_bytes`.
+- **Its red-first is a negative control, not a natural red, and that is stated
+  rather than dressed up.** The natural red needs a counter ≥ 10⁷ ≈ 281,250
+  `unique_integer` calls at this box's stride of 32 — about **167× a full plain
+  suite**. Reverting only the `binary_slice`: 3 of 5 contract tests red, first
+  failure `24-byte prefix at 8 digits: checkpoint_batched_store_99999999 is 33
+  bytes`, exactly the predicted row.
+- **Inertness was proved, not asserted**: all **40** literal `unique("…")`
+  prefixes in the tree × counter widths 1–7 = **280 pairs, 280 byte-identical,
+  0 differing**. The inertness test is green in *both* arms of the negative
+  control, which is what makes it an inertness assertion rather than a second
+  bound assertion. Exactly **5** ids change, all from the two over-conservative
+  hand truncations, all getting *longer*, all still inside 32 by construction.
+- **Deletion-funded**: the private `unique/1` copy, two hand truncations with
+  their comments, and **four** private `unique_id_path/0` copies (the design
+  named one) collapse onto `unique_id_path/1` with a neutral default, leaving 15
+  existing call sites untouched. Net over the three system modules: **−12**.
+- **What remains, and is already refused**: the *partitioned* path has less
+  headroom, because `lib/flezha/operative/partition_group.ex:111` requires
+  `member_id(base, N-1)` to fit in 32, so the `#pK` suffix (3–4 bytes) comes out
+  of the same budget. A partitioned start with a 32-byte base id is refused
+  today by `id_budget_refusal/2` (`:125`–`:131`), which names the byte counts
+  and the limit. Nothing is owed there.
+
+### KI-21 · Three uncaptured `[error]` lines in a plain `mix test` — RESOLVED
+
+All three lines are accounted for and none reproduces. The entry was **real
+exactly as filed** — CI's gate (`.github/workflows/elixir.yml:150`–`:163`) is a
+`grep -nE '\[(error|critical)\]'` over the run's own log and any hit is exit 1,
+so the `mix test` job was red on a suite that was otherwise wholly green.
+
+| filed line | what closed it |
+|---|---|
+| two sdk_lang-mismatch restore refusals | `green-the-suite-log-gate`. Both now run inside `ExUnit.CaptureLog.with_log/1` and **assert on what was captured** — that the line says `restore REFUSED`, names the Entity and carries the SDK's own reason: `test/flezha/operative/restore_refusal_test.exs:20` (the import), `:75` and `:118` (the two calls). `capture_log` without an assertion, and `@moduletag capture_log: true`, were both refused — they make a run quiet by making the module deaf |
+| one `ControlUnit` abnormal shutdown | a **production** ordering defect, re-filed as KI-48 (`RunnerSupervisor` lists `ControlChannel` before `ControlUnit`, so the reverse-order terminate sweep stops the channel under a unit blocked in `GenServer.call`) and closed by `finish-the-suite-log-gate` |
+
+**Verification, six full `mix test` runs at random seeds**, each redirected to
+its own file and each grepped with CI's command verbatim. All six: exit 0,
+`1857 passed, 121 excluded`, ~57 s.
+
+| run | seed | result | gate hits |
+|---|---|---|---|
+| 1 | 44367 | 1857 passed | **0** |
+| 2 | 462837 | 1857 passed | **0** |
+| 3 | 109802 | 1857 passed | **0** |
+| 4 | 844813 | 1857 passed | **0** |
+| 5 | 147075 | 1857 passed | 2 — both [[KI-54]], now fixed |
+| 6 | 253624 | 1857 passed | **0** |
+
+**None of the three filed lines appears in any of the six.** The only hits were
+the two KI-54 lines in run 5, which `green-the-test-hygiene-tail` segment A
+closed; `green-the-test-hygiene-tail`'s own batch-7 runs at the fixed helper are
+quiet.
+
+**The gate itself was proved, not assumed** — it had never been seen to pass, so
+a green run only showed it was quiet. A scratch test emitting one uncaptured
+`Logger.error` turned CI's grep **RED while `mix test` still exited 0**, which is
+the whole point of the gate; the same test wrapped in `capture_log` with an
+assertion turned it **GREEN**. The scratch test was then deleted.
+
+**The lesson this entry kept re-learning, and which stands**: *the population is
+whatever the last N runs sampled, and N is always too small.* Its own count of
+three was one run's sample. KI-48, KI-49, KI-50, KI-53 and KI-54 were each found
+afterwards by the same gate, each in roughly 1 of 6 runs. Of those, [[KI-53]] is
+the only one still open, and it did not fire in these six runs.
+
+### KI-54 · A `ForwardWorker` retry outlives its test — RESOLVED
+
+Closed by `green-the-test-hygiene-tail` segment A (`656fd444`).
+**The filed landing site was wrong, and half the filed remedy with it** — that
+is the part worth keeping. The entry named
+`test/helpers/fake_start_registry.ex:186` (`pid_of/2`) and an ETS
+`ArgumentError`; the sighting at this row's own HEAD was a `FunctionClauseError`
+in a narrow Mimic global stub owned by a *different* module —
+`test/flezha/service/operative_manager_request_stop_test.exs:71` and `:113`,
+raised for the operative ids `"stuck_28962"` and `"reuse_29250"` that
+`operative_forward_test.exs:281`/`:296` mint:
+
+```
+[error] Process #PID<0.8639.0> on node :"test_agent_node1@127.0.0.1" raised an exception
+** (FunctionClauseError) no function clause matching in anonymous fn/2 in
+   FlezhaTest.Service.OperativeManagerRequestStopTest."test stop_operative releases both
+   the operative and entity quota"/1
+    test/flezha/service/operative_manager_request_stop_test.exs:113: anonymous fn("default", "stuck_28962")
+    lib/flezha/service/operative_manager.ex:53: … get_operative_pid/3
+    lib/flezha/service/operative_manager.ex:597: … send_io_confirming/5
+    lib/flezha/plugin/provider/operative_forward/forward_worker.ex:209:
+      anonymous fn/7 in …ForwardWorker.deliver_next/1
+```
+
+So "make the registry lookup answer *gone* instead of raising" would have closed
+one door in an open corridor: the leaked worker calls `HubManager.get_pid/2`
+under Mimic **global** mode, and what answers is whatever stub the suite has
+installed at that instant — two different modules in two sightings, and any
+future one. It would also have made that helper lie about a genuinely deleted
+table.
+
+**The verified mechanism**, each link read at HEAD:
+
+| link | evidence |
+|---|---|
+| `ForwardSup` is application-owned, not test-owned | `lib/flezha/application.ex:90` lists it; `MIX_ENV=test mix run -e '…Process.whereis…'` → `#PID<0.315.0>` |
+| so the module's own guard never fired | its `unless Process.whereis(ForwardSup), do: start_supervised!(ForwardSup)` — the `unless` was always false. Proved unreachable and **deleted**: left beside a detector reading the same registry it would claim the module might own the supervisor |
+| 26 tests created a worker, 1 stopped one | 26 `prepare/3` call sites, one `ForwardSup.stop_worker/1` |
+| a refused delivery retries for ever | `forward_worker.ex:266` arms `retry_timer`; `:17` states the guarantee, "payloads are never dropped" |
+| the raise is uncaptured | `forward_worker.ex:206`–`:212` is a bare `spawn` whose `try` catches `:exit` only, so a raise inside it is reported by the default error logger — an uncaptured `[error]` on a run where every test passed |
+
+**The fix is row 2's remedy for KI-49, not a hardened lookup: the background
+work stops with the test that started it.**
+`test/flezha/plugin/provider/operative_forward_test.exs`'s `setup` (`:30`–`:51`)
+now sweeps every key in `ForwardSup.registry_name()` on exit and asserts on entry
+that the set was empty, naming the survivors.
+
+**The acceptance is the registry, not the log.** The defect showed through the
+log 1 run in 6 and through the registry **every** time; converting a sampled
+symptom into a deterministic one is the whole reason the fix can be believed.
+Detector red at **1 of 28** tests before the sweep, module green at 28 after.
+Two deviations from the design, both forced by measurement: the sweep repeats
+until the registry stays empty (`WorkerSup.ensure_worker/4` drops a key before it
+re-registers the replacement, so a single `Registry.select` can miss a live
+worker, which left 8 of 28 still failing), and the `on_exit` is armed **before**
+the assertion, or the first leak disarms the sweep for every test behind it —
+which is why one key appeared in 20 consecutive failures.
+
+**The production question the entry asked is answered, and the answer is no
+change.** `deliver_next/1`'s `try` still catches `:exit` and not `:error`:
+`forward_worker.ex:176`–`:177` names the reason — a dead delivery process is
+indistinguishable from an unreachable target, so it is retryable — and widening
+it to `:error` would convert a real raise into a silent retry loop, the same call
+`finish-the-suite-log-gate` made on KI-53. `ForwardSup` also stays in the
+application supervision tree: production wants it there, and a test's hygiene is
+not a reason to change a supervision tree.
 
 ### KI-63 · `.credo.exs`'s `test/apps/` exclusion is inert — FIXED
 

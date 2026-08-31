@@ -27,6 +27,56 @@ reference SDK: it is written against the reference fixtures, so pointing a run
 at an SDK that carries a subset of them would turn it red for a reason that is
 not about that SDK. `FlezhaTest.SystemCase` is what opts a module in.
 
+## What an arm needs on the host
+
+Two manifests launch through a bare interpreter name, so those arms are a `PATH`
+question the tree cannot answer for you.
+
+**Ruby** — `test/apps/ruby_runner/conformance.json` runs `ruby {artifact}`, and
+the SDK's floor is `>= 3.3.0` (`sdk/ruby/flezha.gemspec`). A distro Ruby under
+that fails at load, not at a test, so the arm runs against an interpreter put in
+front of it:
+
+```bash
+PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH" \
+  FLEZHA_E2E_RUNTIME=ruby mix test --include system
+```
+
+**PHP** — `test/apps/php_runner/conformance.json` runs `php {artifact}`, and the
+SDK needs `ext-ffi` (`sdk/php/composer.json`); `FLEZHA_PHP_EXECUTOR=swoole`
+additionally needs a ZTS build carrying `Swoole\Thread` with `ffi.enable=true`,
+which `docker/dev/Dockerfile.php --target zts` builds. A host whose `php` does
+not satisfy the arm runs it through a `php` shim on `PATH` that execs that
+image:
+
+```sh
+#!/bin/sh
+exec docker run --rm -i --init --network host \
+  <the repo, /tmp/flezha_sockets and $XDG_RUNTIME_DIR bind-mounted at the same
+   absolute paths, and every FLEZHA_* variable forwarded by name> \
+  flezha-php-zts php "$@"
+```
+
+Four parts of that line are load-bearing:
+
+- `--network host`. Without it the container has its own loopback, the UDS half
+  of the suite passes and every `transport=quic` test fails with "temporary test
+  runner not connected" — the runner dials `127.0.0.1:4433` and reaches itself.
+  Seven failures, all QUIC, is the signature.
+- `-i`. The harness stops a runner by closing its port's stdin. With `-i` the
+  attach stream drops, the PHP inside sees EOF and drains; without it the
+  container outlives the run.
+- The three mounts at their **same absolute paths**. A UDS path has to mean one
+  thing on both sides of the container boundary.
+- Every `FLEZHA_*` variable forwarded by name. A runner's transport environment
+  comes from `PortPilot.open_port/2`'s `:env` and from no file, so a shim that
+  drops the environment produces a runner that cannot find the control socket.
+
+A fixture whose handler never returns — `wedge_probe`, driven by the `liveness`
+and `pool_wedge` capabilities — is not stopped by closing the port, because the
+port holds only the `docker run` client. Give the containers a common `--name`
+prefix and `docker rm -f` them after the arm.
+
 ## The manifest
 
 Each SDK's test app carries `test/apps/<sdk>_runner/conformance.json`:
@@ -236,6 +286,9 @@ What the gate enforces, in the order it checks — a pull request adding
    source-of-truth table (`test/sdk_conformance/gate_test.exs`), so the manifest
    can be checked against the constant rather than trusted. That row is data,
    not a clause: nothing else about admitting a runtime touches the harness.
+10. No bench task's help text enumerates the runtimes. `mix bench` and
+    `mix bench.roundtrip` resolve `--runtime` against the manifests, so a new
+    SDK joins them by existing; the gate fails a list that reappears in docs.
 
 ### `sdk_lang`
 
