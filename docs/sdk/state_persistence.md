@@ -265,7 +265,7 @@ is never journaled. Such a write survives graceful shutdown and live migration (
 the live object) and is lost by every restore, which rebuilds from snapshot + change log —
 it disappears exactly under an unplanned crash. Java adds no runtime guard (a defensive
 copy or proxy on every `get()` would tax every read); the detection offered instead is the
-opt-in `ProcedureTestHarness.replayEquals()`, run in CI (`StateMutationBypassTest` is the
+opt-in `ProcedureTestHarness.replayEquals()`, run in CI (`HarnessBehaviourTest` is the
 reference case).
 
 ### Change, Clock and registration refusals

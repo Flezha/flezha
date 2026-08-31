@@ -79,8 +79,8 @@ public interface ChannelBuilder {
      * cannot receive one — every key function is total, and inside a partitioned
      * member a computed key is admitted against that member's key-group range.
      * Delivering by fanning out over a <i>remembered</i> key set would emit keys
-     * this member may no longer own (a rescale moved them, or one out-of-range
-     * item was seen during a reconcile window), and every such delivery parks
+     * this member does not own (a rescale moved them, or one out-of-range item
+     * was seen during a reconcile window), and every such delivery parks
      * against the partition guard. Delivering on the key's own traffic makes
      * over-delivery impossible by construction: the only keys emitted are keys
      * whose traffic just proved this member owns them.

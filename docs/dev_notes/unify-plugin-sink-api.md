@@ -56,7 +56,7 @@
   wire fixture: body + `{"channel": name}` and nothing else) and
   `sealing_a_leaf_declares_no_channel`; Java mirrors the first and last in
   `StreamOperativeTopologyBuilderTest$GraphAuthoring`, and
-  `OldApiNotImportableTest` gained in-process javac cases for the removed
+  `ApiSurfaceCompilationTest` gained in-process javac cases for the removed
   spellings — with a POSITIVE CONTROL, because a classpath that resolved
   nothing would make every refusal vacuously true.
 - **Docs**: `docs/sdk/naming_conventions.md` §9 (rule + migration table),

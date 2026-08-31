@@ -36,32 +36,40 @@ final class NativeLibraryLoader {
         if (LOADED.contains(baseName)) {
             return;
         }
-
         String platform = detectPlatform();
         String extension = extensionFor(platform);
-        String resourcePath = RESOURCE_PREFIX + platform + "/" + baseName + "." + extension;
+        byte[] libraryBytes = readBundled(platform, baseName + "." + extension);
+        load(extractOnce(baseName, extension, libraryBytes));
+        LOADED.add(baseName);
+    }
 
-        byte[] libraryBytes;
+    /** The bundled binary for {@code platform}, straight off the classpath. */
+    private static byte[] readBundled(String platform, String fileName) {
+        String resourcePath = RESOURCE_PREFIX + platform + "/" + fileName;
         try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
                 throw new UnsatisfiedLinkError("Missing bundled native library for " + platform
                         + " (resource " + resourcePath + " not on classpath). "
                         + "Supported platforms: " + SUPPORTED);
             }
-            libraryBytes = in.readAllBytes();
+            return in.readAllBytes();
         } catch (IOException e) {
             UnsatisfiedLinkError err =
                     new UnsatisfiedLinkError("Failed to read bundled native library from classpath: " + resourcePath);
             err.initCause(e);
             throw err;
         }
+    }
 
-        String hash = sha256(libraryBytes);
-        String version = VersionInfo.VERSION;
-
-        Path extractionDir = resolveExtractionDir().resolve("flezha-" + version + "-" + hash);
+    /**
+     * The on-disk path for these bytes, written if it is not already there.
+     * The directory carries a content hash, so concurrent JVMs extracting the
+     * same binary agree on the path and a differing one never collides.
+     */
+    private static Path extractOnce(String baseName, String extension, byte[] libraryBytes) {
+        Path extractionDir =
+                resolveExtractionDir().resolve("flezha-" + VersionInfo.VERSION + "-" + sha256(libraryBytes));
         Path target = extractionDir.resolve(baseName + "." + extension);
-
         try {
             Files.createDirectories(extractionDir);
 
@@ -79,14 +87,15 @@ final class NativeLibraryLoader {
             err.initCause(e);
             throw err;
         }
+        return target;
+    }
 
+    private static void load(Path target) {
         try {
             System.load(target.toAbsolutePath().toString());
         } catch (UnsatisfiedLinkError e) {
             throw new UnsatisfiedLinkError("System.load failed for " + target + ": " + e.getMessage());
         }
-
-        LOADED.add(baseName);
     }
 
     static String detectPlatform() {

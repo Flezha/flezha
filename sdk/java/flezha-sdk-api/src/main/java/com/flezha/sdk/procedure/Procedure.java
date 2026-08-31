@@ -204,9 +204,8 @@ public interface Procedure<
      * that version wrote it.
      *
      * <p>Keep the old type in your own source and decode it here — the runtime
-     * cannot know a type that no longer exists in this build. Must be
-     * deterministic: crash-resume, retry-replay and rewind all re-enter the
-     * restore fold.
+     * knows only the types this build declares. Must be deterministic:
+     * crash-resume, retry-replay and rewind all re-enter the restore fold.
      */
     @Nonnull
     default State migrateState(int fromVersion, @Nonnull byte[] bytes) {

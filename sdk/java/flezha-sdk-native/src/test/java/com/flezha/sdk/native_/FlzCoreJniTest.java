@@ -3,6 +3,7 @@ package com.flezha.sdk.native_;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -42,10 +43,18 @@ class FlzCoreJniTest {
 
     @Test
     @DisplayName("the monotonic clock advances and never goes backwards")
-    void monotonicClockAdvances() throws InterruptedException {
+    void monotonicClockAdvances() {
         long first = FlzCore.monotonicNanos();
-        Thread.sleep(2);
-        assertThat(FlzCore.monotonicNanos()).isGreaterThan(first);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        long later = first;
+        while (later == first) {
+            assertThat(System.nanoTime())
+                    .as("the monotonic clock never advanced")
+                    .isLessThan(deadline);
+            later = FlzCore.monotonicNanos();
+            assertThat(later).as("the monotonic clock went backwards").isGreaterThanOrEqualTo(first);
+        }
+        assertThat(later).isGreaterThan(first);
     }
 
     @Test

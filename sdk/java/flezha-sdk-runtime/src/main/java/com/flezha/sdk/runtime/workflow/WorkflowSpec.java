@@ -1,12 +1,15 @@
 package com.flezha.sdk.runtime.workflow;
 
 import com.flezha.sdk.channel.ChannelKind;
+import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
+import com.flezha.sdk.runtime.operative.builder.GraphShape;
 import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
+import com.flezha.sdk.workflow.LoopMode;
 import com.flezha.sdk.workflow.RollbackMode;
 import com.flezha.sdk.workflow.WorkflowOperative;
 import com.flezha.sdk.workflow.WorkflowOperativeConfigurationException;
@@ -33,36 +36,34 @@ public final class WorkflowSpec {
     private final RollbackMode rollbackMode;
     private final boolean persistenceEnabled;
     private final boolean syncDurability;
-    private final com.flezha.sdk.workflow.LoopMode loopMode;
-    private final com.flezha.sdk.channel.RetryPolicy retry;
+    private final LoopMode loopMode;
+    private final RetryPolicy retry;
     private final int barrierRetryAttempts;
     private final Optional<Duration> wakeAfter;
 
+    /**
+     * Every value but the shape is read off the probe here, so the two build
+     * arms cannot record a class's declarations differently.
+     */
     private WorkflowSpec(
-            String factoryId,
             Class<? extends WorkflowOperative> operativeClass,
+            WorkflowOperative probe,
             Optional<StreamOperativeTopology> topology,
             List<Integer> chain,
-            Optional<Duration> maxDuration,
-            RollbackMode rollbackMode,
-            boolean persistenceEnabled,
-            boolean syncDurability,
-            com.flezha.sdk.workflow.LoopMode loopMode,
-            Optional<Duration> wakeAfter,
-            com.flezha.sdk.channel.RetryPolicy retry,
-            int barrierRetryAttempts) {
-        this.retry = retry;
-        this.barrierRetryAttempts = barrierRetryAttempts;
-        this.loopMode = loopMode;
-        this.wakeAfter = wakeAfter;
-        this.factoryId = factoryId;
+            LoopMode loopMode,
+            Optional<Duration> wakeAfter) {
+        this.factoryId = probe.factoryId();
         this.operativeClass = operativeClass;
         this.topology = topology;
         this.chain = List.copyOf(chain);
-        this.maxDuration = maxDuration;
-        this.rollbackMode = rollbackMode;
-        this.persistenceEnabled = persistenceEnabled;
-        this.syncDurability = syncDurability;
+        this.loopMode = loopMode;
+        this.wakeAfter = wakeAfter;
+        this.maxDuration = probe.maxDuration();
+        this.rollbackMode = probe.rollbackMode();
+        this.persistenceEnabled = probe.persistenceEnabled();
+        this.syncDurability = probe.syncDurability();
+        this.retry = resolveRetry(this.factoryId, probe);
+        this.barrierRetryAttempts = Math.max(1, probe.barrierRetryAttempts());
     }
 
     @Nonnull
@@ -98,14 +99,13 @@ public final class WorkflowSpec {
         return rollbackMode;
     }
 
-    /** Class-level persistence toggle; when true, a structured workflow's Changes are flushed to the WAL. */
     /**
      * The failing-entity retry ladder. Resolved onto the SAME
-     * {@link com.flezha.sdk.channel.RetryPolicy} the stream dead-letter ladder
-     * uses, so both share one backoff implementation.
+     * {@link RetryPolicy} the stream dead-letter ladder uses, so both share one
+     * backoff implementation.
      */
     @Nonnull
-    public com.flezha.sdk.channel.RetryPolicy retry() {
+    public RetryPolicy retry() {
         return retry;
     }
 
@@ -116,7 +116,7 @@ public final class WorkflowSpec {
 
     /** How many times this class runs its chain. */
     @Nonnull
-    public com.flezha.sdk.workflow.LoopMode loopMode() {
+    public LoopMode loopMode() {
         return loopMode;
     }
 
@@ -126,6 +126,7 @@ public final class WorkflowSpec {
         return wakeAfter;
     }
 
+    /** Class-level persistence toggle; a structured workflow's Changes are flushed to the WAL. */
     public boolean persistenceEnabled() {
         return persistenceEnabled;
     }
@@ -155,6 +156,30 @@ public final class WorkflowSpec {
      */
     @Nonnull
     public static WorkflowSpec build(@Nonnull Class<? extends WorkflowOperative> operativeClass) {
+        WorkflowOperative probe = resolveProbe(operativeClass);
+        String factoryId = probe.factoryId();
+
+        StreamOperativeTopology topology;
+        try {
+            topology = StreamOperativeTopologyBuilder.build(factoryId, probe::procedures);
+        } catch (StreamOperativeConfigurationException e) {
+            // A structured workflow reuses the unbounded topology builder, which
+            // rejects dynamic-entity procedures and unwired channels.
+            throw new WorkflowOperativeConfigurationException(
+                    "workflow operative `" + factoryId + "` has an invalid topology: " + e.getMessage());
+        }
+
+        return topology.procedures().isEmpty()
+                ? buildRunSugar(operativeClass, probe, factoryId)
+                : buildStructured(operativeClass, probe, factoryId, topology);
+    }
+
+    /**
+     * Instantiate the class and refuse an operative that cannot terminate: one
+     * whose only possible exit is an external stop, with no duration backstop.
+     */
+    @Nonnull
+    private static WorkflowOperative resolveProbe(Class<? extends WorkflowOperative> operativeClass) {
         WorkflowOperative probe;
         try {
             probe = operativeClass.getDeclaredConstructor().newInstance();
@@ -169,112 +194,95 @@ public final class WorkflowSpec {
             throw new IllegalArgumentException(
                     "WorkflowOperative class `" + operativeClass.getName() + "` returned null/empty from factoryId()");
         }
-
-        // Self-termination guard: an operative whose only exit is an external
-        // stop, with no duration backstop, can never terminate cooperatively.
         if (!probe.selfTerminating() && probe.maxDuration().isEmpty()) {
             throw new WorkflowOperativeConfigurationException("workflow operative `" + factoryId
                     + "` is not terminable: its only possible exit is an external stop. Add a terminal condition — "
                     + "let run()/the chain complete, give the loop a terminal predicate, or declare maxDuration().");
         }
+        return probe;
+    }
 
-        StreamOperativeTopology topology;
-        try {
-            topology = StreamOperativeTopologyBuilder.build(factoryId, probe::procedures);
-        } catch (StreamOperativeConfigurationException e) {
-            // A structured workflow reuses the unbounded topology builder, which
-            // rejects dynamic-entity procedures and unwired channels.
-            throw new WorkflowOperativeConfigurationException(
-                    "workflow operative `" + factoryId + "` has an invalid topology: " + e.getMessage());
+    /**
+     * The bare {@code run} body. A loop iterates the CHAIN and run-sugar has
+     * none — its body owns its own control flow, so a declared loop mode has
+     * nothing to iterate and is a contradiction, not a no-op.
+     */
+    @Nonnull
+    private static WorkflowSpec buildRunSugar(
+            Class<? extends WorkflowOperative> operativeClass, WorkflowOperative probe, String factoryId) {
+        if (probe.loopMode() != LoopMode.ONCE) {
+            throw WorkflowOperativeConfigurationException.loopWithoutChain(factoryId);
         }
+        return new WorkflowSpec(operativeClass, probe, Optional.empty(), List.of(), LoopMode.ONCE, Optional.empty());
+    }
 
-        // No declared procedures ⇒ run-sugar.
-        if (topology.procedures().isEmpty()) {
-            // A loop iterates the CHAIN. Run-sugar has no chain — its `run` body
-            // owns its own control flow, so a declared loop mode has nothing to
-            // iterate and is a contradiction, not a no-op.
-            if (probe.loopMode() != com.flezha.sdk.workflow.LoopMode.ONCE) {
-                throw WorkflowOperativeConfigurationException.loopWithoutChain(factoryId);
-            }
-            return new WorkflowSpec(
-                    factoryId,
-                    operativeClass,
-                    Optional.empty(),
-                    List.of(),
-                    probe.maxDuration(),
-                    probe.rollbackMode(),
-                    probe.persistenceEnabled(),
-                    probe.syncDurability(),
-                    com.flezha.sdk.workflow.LoopMode.ONCE,
-                    java.util.Optional.empty(),
-                    resolveRetry(factoryId, probe),
-                    Math.max(1, probe.barrierRetryAttempts()));
-        }
-
-        List<Integer> chain = topologicalOrder(factoryId, topology);
-
-        // A durable class journals its inter-proc handoff at every proc barrier, so
-        // every inter-proc channel needs a codec. An opted-out class re-runs from
-        // the top by design and needs none.
-        if (probe.persistenceEnabled()) {
-            for (ChannelDescriptor channel : topology.channels()) {
-                boolean interProc = channel.kind() == com.flezha.sdk.channel.ChannelKind.INTER_PROCEDURE
-                        && !channel.consumers().isEmpty();
-                if (interProc && channel.interProcCodec().isEmpty()) {
-                    throw WorkflowOperativeConfigurationException.missingInterProcCodec(factoryId, channel.name());
-                }
-            }
-        }
-
-        // A durable CHAINED loop re-seeds each iteration from the terminal proc's
-        // journaled handoff. With no codec there it would re-seed EMPTY on a
-        // crash-resume — which the loop reads as "converged" and stops, silently
-        // truncating the run. Refuse it at registration instead.
-        if (probe.loopMode() == com.flezha.sdk.workflow.LoopMode.CHAINED && probe.persistenceEnabled()) {
-            int terminalProc = chain.get(chain.size() - 1);
-            boolean terminalHasCodec = topology.channels().stream()
-                    .anyMatch(c -> c.producer().isPresent()
-                            && c.producer().getAsInt() == terminalProc
-                            && c.interProcCodec().isPresent());
-            if (!terminalHasCodec) {
-                throw WorkflowOperativeConfigurationException.loopTerminalWithoutCodec(factoryId);
-            }
-        }
-
+    /** The declared DAG: its ordered chain, and the codecs durability needs. */
+    @Nonnull
+    private static WorkflowSpec buildStructured(
+            Class<? extends WorkflowOperative> operativeClass,
+            WorkflowOperative probe,
+            String factoryId,
+            StreamOperativeTopology topology) {
+        List<Integer> chain = chainOrder(factoryId, topology, entryChannelOf(factoryId, topology));
+        requireInterProcCodecs(factoryId, probe, topology, chain);
         return new WorkflowSpec(
-                factoryId,
-                operativeClass,
-                Optional.of(topology),
-                chain,
-                probe.maxDuration(),
-                probe.rollbackMode(),
-                probe.persistenceEnabled(),
-                probe.syncDurability(),
-                probe.loopMode(),
-                probe.wakeAfter(),
-                resolveRetry(factoryId, probe),
-                Math.max(1, probe.barrierRetryAttempts()));
+                operativeClass, probe, Optional.of(topology), chain, probe.loopMode(), probe.wakeAfter());
+    }
+
+    /**
+     * A durable class journals its inter-proc handoff at every proc barrier, so
+     * every inter-proc channel needs a codec; an opted-out class re-runs from
+     * the top by design and needs none. A durable CHAINED loop additionally
+     * re-seeds each iteration from the terminal proc's journaled handoff: with
+     * no codec there it re-seeds EMPTY on a crash-resume, which the loop reads
+     * as "converged" and stops, silently truncating the run.
+     */
+    private static void requireInterProcCodecs(
+            String factoryId, WorkflowOperative probe, StreamOperativeTopology topology, List<Integer> chain) {
+        if (!probe.persistenceEnabled()) {
+            return;
+        }
+        for (ChannelDescriptor channel : topology.channels()) {
+            boolean interProc = channel.kind() == ChannelKind.INTER_PROCEDURE
+                    && !channel.consumers().isEmpty();
+            if (interProc && channel.interProcCodec().isEmpty()) {
+                throw WorkflowOperativeConfigurationException.missingInterProcCodec(factoryId, channel.name());
+            }
+        }
+        if (probe.loopMode() != LoopMode.CHAINED) {
+            return;
+        }
+        int terminalProc = chain.get(chain.size() - 1);
+        boolean terminalHasCodec = topology.channels().stream()
+                .anyMatch(c -> c.producer().isPresent()
+                        && c.producer().getAsInt() == terminalProc
+                        && c.interProcCodec().isPresent());
+        if (!terminalHasCodec) {
+            throw WorkflowOperativeConfigurationException.loopTerminalWithoutCodec(factoryId);
+        }
     }
 
     /** Resolve the retry ladder, rejecting a hot-spinning zero backoff. */
-    private static com.flezha.sdk.channel.RetryPolicy resolveRetry(String factoryId, WorkflowOperative probe) {
+    private static RetryPolicy resolveRetry(String factoryId, WorkflowOperative probe) {
         int attempts = Math.max(1, probe.retryAttempts());
         long backoffMs = probe.retryBackoff().toMillis();
         if (attempts > 1 && backoffMs <= 0) {
             throw WorkflowOperativeConfigurationException.zeroRetryBackoff(factoryId);
         }
-        return new com.flezha.sdk.channel.RetryPolicy(attempts, backoffMs);
+        return new RetryPolicy(attempts, backoffMs);
     }
 
     /**
-     * Resolve the topological execution order of a structured workflow's DAG
-     * and reject anything outside the shared shape rule (no entry channel,
-     * multi-consumer entry, dynamic entity mode, cycles, disconnected
-     * procedures). Procedure ids are indices into {@code topology.procedures()};
-     * a channel's {@code consumerIds()} are downstream procedure ids.
+     * The entry channel that seeds the first procedure(s) from the spawn args.
+     * The seed is a bare payload naming no channel — the spawn args, or a
+     * PER_INPUT loop's inbox item — and it bypasses the routing seam entirely,
+     * so no edge closure declared there could ever be selected: a merge mapping
+     * (every entry channel past the first would be unreadable) or a plain
+     * transform (it would silently never run). Refuse the shape rather than
+     * accept one that cannot run. Mirrors Rust's MergeFromEntryChannel.
      */
-    private static List<Integer> topologicalOrder(String factoryId, StreamOperativeTopology topology) {
-        // The entry channel seeds the first procedure(s) from the spawn args.
+    @Nonnull
+    private static ChannelDescriptor entryChannelOf(String factoryId, StreamOperativeTopology topology) {
         ChannelDescriptor entry = null;
         for (ChannelDescriptor c : topology.channels()) {
             if (c.kind() == ChannelKind.ENTRY) {
@@ -291,13 +299,6 @@ public final class WorkflowSpec {
             throw new WorkflowOperativeConfigurationException(
                     "workflow operative `" + factoryId + "` declares an entry channel with no consumer");
         }
-        // The seed is a bare payload naming no channel — the spawn args, or a
-        // PER_INPUT loop's inbox item — and it bypasses the routing seam
-        // entirely, so no edge closure declared there could ever be selected:
-        // a merge mapping (every entry channel past the first would be
-        // unreadable) or a plain transform (it would silently never run).
-        // Refuse the shape rather than accept one that cannot run. Mirrors
-        // Rust's MergeFromEntryChannel.
         for (ChannelDescriptor ch : topology.channels()) {
             if (ch.kind() != ChannelKind.ENTRY) {
                 continue;
@@ -314,16 +315,23 @@ public final class WorkflowSpec {
                 }
             }
         }
+        return entry;
+    }
 
-        // The shared graph-shape walk (GraphShape, the same mechanism the
-        // stream validation runs): Kahn order makes the driver's sequential
-        // walk dispatch a join only after ALL its producers, with the
-        // accumulated batch — the former BFS enqueued a join on its FIRST
-        // producer. Kahn-FIFO equals BFS numbering for a tree, so journaled
-        // proc_idx values keep their meaning. Reachability is named before the
-        // cycle so a genuinely disconnected procedure is not reported as a
-        // cycle symptom.
-        int n = topology.procedures().size();
+    /**
+     * The execution order of the declared DAG, over the shared {@link
+     * GraphShape} walk the stream validation also runs: Kahn order makes the
+     * driver's sequential walk dispatch a join only after ALL its producers,
+     * with the accumulated batch. Kahn-FIFO equals BFS numbering for a tree, so
+     * journaled {@code proc_idx} values keep their meaning. Reachability is
+     * named before the cycle so a genuinely disconnected procedure is not
+     * reported as a cycle symptom. Procedure ids are indices into
+     * {@code topology.procedures()}; a channel's {@code consumerIds()} are
+     * downstream procedure ids.
+     */
+    @Nonnull
+    private static List<Integer> chainOrder(
+            String factoryId, StreamOperativeTopology topology, ChannelDescriptor entry) {
         List<int[]> edges = new ArrayList<>();
         for (ChannelDescriptor ch : topology.channels()) {
             if (ch.producer().isPresent()) {
@@ -332,8 +340,7 @@ public final class WorkflowSpec {
                 }
             }
         }
-        com.flezha.sdk.runtime.operative.builder.GraphShape.Order shape =
-                com.flezha.sdk.runtime.operative.builder.GraphShape.order(n, edges, entry.consumerIds());
+        GraphShape.Order shape = GraphShape.order(topology.procedures().size(), edges, entry.consumerIds());
         if (shape.unreachable() >= 0 && shape.onCycle() < 0) {
             throw new WorkflowOperativeConfigurationException("workflow operative `" + factoryId
                     + "` declares procedure `"
@@ -355,7 +362,6 @@ public final class WorkflowSpec {
                         + "`; workflow operatives do not support dynamic entity mode");
             }
         }
-
         return shape.order();
     }
 }

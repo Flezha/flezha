@@ -171,12 +171,17 @@ below is all that survives — which is enough to write it again.
 ### KI-55 · A host SDK applies an inter-procedure edge transform twice
 
 - **Severity**: P1 · **proposal owed**.
-- **Where**: `ActivationDispatcher.EmitContext.collectEdgeOutputs`
-  (`sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:841`)
+- **Where** (re-pointed 2026-08-31 by area 4 segment D, which split the file and
+  did **not** touch either site): `EmitContext.collectEdgeOutputs`
+  (`sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/EmitContext.java`)
   applies the consumer edge's transform chain producer-side, and
-  `ActivationDispatcher.valuesForEntity` (`:318`) applies the *same* chain again
-  when the consumer receives the value. Both sites run for one inter-procedure
-  **stream** edge.
+  `EntityRouting.valuesForEntity`
+  (`.../runtime/core/EntityRouting.java`) applies the *same* chain again when the
+  consumer receives the value. Both sites run for one inter-procedure **stream**
+  edge. Both were `ActivationDispatcher.java:841` and `:318` before the split.
+  `valuesForEntity`'s javadoc — *"re-run symmetrically at delivery"* — was carried
+  across **verbatim** rather than corrected: that sentence is this entry's to fix,
+  not a refactor's.
 - **What happens**: a `map` / `flatMap` / `filter` declared on an inter-proc
   edge composes with itself. A `.map(String.class, s -> "M:" + s)` between two
   procedures delivers `M:M:mid:v` where the contract says `M:mid:v`. Silent —
@@ -196,7 +201,7 @@ below is all that survives — which is enough to write it again.
   `docs/dev_notes/stream-dsl-keyby-and-transforms.md:20`. Re-running is
   symmetric for a key and for an entry channel; it is composition for a map on
   an inter-proc edge.
-- **Reproduction** — `ActivationDispatcherTest.interProcEdgeMapAppliesTwice`
+- **Reproduction** — `EntityRoutingTest.interProcEdgeMapAppliesTwice`
   (added by `java-diamond-resume`, and asserting the CURRENT wrong value so the
   suite is green and a fix is not silent). Invert its assertion to
   `["=M:mid:v"]` and it fails:
@@ -646,6 +651,103 @@ below is all that survives — which is enough to write it again.
 
 ---
 
+### KI-79 · Five `flz` verbs exit 0 when the RPC they issued failed
+
+- **Severity**: P2 · a script cannot tell "the CLI said no" from "the CLI said
+  nothing", which is the exact distinction
+  `docs/dev_notes/restore-state-persistence-smoke.md` had to add an exit-code
+  check to recover.
+- **Where**: `cli/src/operative.rs:217` (`handle_stop`), `:314` (`handle_rewind`),
+  `:361` (`handle_replay`), `:388` (`handle_state`), and `cli/src/controller.rs:96`
+  (`handle_start`). Each ends in a `match status { Ok(s) if s.success() => {},
+  Ok(_) => eprintln!(...), Err(e) => eprintln!(...) }` with **no `exit()` in
+  either failure arm**, so `main` returns normally and the process exits 0.
+- **Evidence** — a copy of `target/debug/flz` in a temp dir beside a `flzvm`
+  shim that prints to stderr and exits 7:
+
+  ```
+  exit=0   flz operative stop op1
+  exit=0   flz operative rewind op1 --to-iteration 3
+  exit=0   flz operative replay a/b/c --from 5
+  exit=0   flz operative state op1
+  exit=0   flz controller start
+  exit=1   flz operative send op1 chan {}      <- the correct sibling
+  exit=1   flz operative list
+  ```
+
+  Deterministic, 5/5 on repeat. `flz operative send`
+  (`cli/src/operative.rs:263`) has the identical `match` **with**
+  `Ok(_) => exit(1)` and a comment saying why — so this is drift between hand-copied
+  blocks, not a decision anyone made.
+- **Mechanism**: there is no shared "run one RPC" seam. The area has **34**
+  `Command::new(...).arg("rpc")` sites in **five** exit-code dialects — 17 exit 1
+  with `"Error: Command execution failed."`, 5 propagate `status.code()`, 2 exit 3
+  silently, 3 diagnose the spawn and exit 3, and these 5 exit 0. Only four sites
+  call a helper, and three of those four helpers are copies of each other.
+- **Why it was not fixed on the spot**: found by the `refactor-6-cli` survey,
+  which changes no code. It is **not** a refactor: it changes the exit code of
+  five operator verbs, so charter §1b step 6 requires its own commit with a
+  red-first test.
+- **A fix must** give the five failure arms the `exit(1)` their sibling already
+  has, and be proved by a test that is **shown red on unmodified HEAD** for all
+  five verbs — a `TempDir` holding a copy of `CARGO_BIN_EXE_flz` beside a failing
+  `flzvm` shim is enough and needs no controller. It must **not** also unify the
+  five dialects: which of 1 / 3 / `code` each verb should return is an
+  operator-surface decision, separate from "a failure is not a success".
+
+- **Supervisor verdict 2026-08-31 — REAL, and it is area 6's batch 0.** It is drift,
+  not a decision: `operative send` carries the identical `match status` **with**
+  `exit(1)` and a comment, six lines away. Fix it **red-first and as its own commit,
+  before the rpc-seam refactor touches those 34 sites** — the survey's own risk 3 is
+  right that one commit would leave a bisect unable to separate an exit-code change
+  from a structural regression.
+
+### KI-81 · Two `docker/prod` scripts call `flz cluster` verbs that do not exist
+
+- **Severity**: P2 · a production recovery path that logs an error and does
+  nothing, on every controller stop and every controller boot.
+- **Where**: `docker/prod/snapshot-on-stop.sh:32` runs
+  `"$FLZ" cluster snapshot "$SNAPSHOT_TMP" --peer-timeout-ms "$PEER_TIMEOUT_MS"`;
+  `docker/prod/controller-entrypoint.sh:104` runs `"$FLZ" cluster restore
+  "$SNAPSHOT_FILE"`. `cli/src/cluster.rs` implements **`status` and `help`, and
+  nothing else**, and `lib/flezha/service/cli_manager.ex` has no
+  `cluster_snapshot` / `cluster_restore` (only `cluster_status/2` and
+  `cluster_status_recovery/2`).
+- **Evidence**:
+
+  ```
+  $ ./flz cluster snapshot /tmp/x --peer-timeout-ms 5000
+  Error: Unknown cluster subcommand 'snapshot'
+  ... (the cluster help screen) ...
+  exit=1
+  $ ./flz cluster restore /tmp/x
+  Error: Unknown cluster subcommand 'restore'
+  exit=1
+  $ grep -n 'def cluster_' lib/flezha/service/cli_manager.ex
+  777:  def cluster_status(namespace, output_format \\ "text") do
+  805:  def cluster_status_recovery(namespace, nodes) do
+  ```
+
+- **Mechanism**: the verbs existed — `git log -S'cluster snapshot'` names
+  `d80d8511 "Add cluster snapshot/restore for operator-driven recovery"` — and
+  were removed when `9235bcde auto-restore-on-boot` replaced operator-driven
+  recovery with an orphan reconcile. The two prod scripts were never updated. The
+  failure is soft in both directions: the snapshot step logs
+  `"ERROR: flz cluster snapshot failed; leaving previous ... in place"` and
+  continues, and the restore step is guarded by `if [ -f "$SNAPSHOT_FILE" ]`,
+  which is never true because nothing writes it. Auto-restore-on-boot covers the
+  recovery these were for, so this is dead code that lies rather than a live data
+  path — which is why it is P2 and not P1.
+- **Why it was not fixed on the spot**: found by the `refactor-6-cli` survey,
+  which changes no code and whose scope is `cli/**`. The remedy is a **product
+  decision** (charter §1c): delete the dead path, or re-implement the two verbs.
+- **A fix must** pick one and say why. Deleting is the smaller change and matches
+  the architecture that replaced them; re-implementing needs a
+  `CliManager.cluster_snapshot/2` and a spec, because operator-driven snapshot is
+  a capability nothing currently specifies. Either way the entrypoint's comment
+  block (`controller-entrypoint.sh:11`) must stop describing a step that does not
+  run.
+
 ## P2 — tests that lie or leak
 
 - **Supervisor verdict 2026-08-31 — real, P2, and split.** The **gate half** —
@@ -665,6 +767,26 @@ below is all that survives — which is enough to write it again.
   recorded it as *"environment, pre-existing"* — accurate, and without a mechanism.
   This entry supplies the mechanism, which is why the dismissals were not wrong so much
   as unfinished.
+
+- **Supervisor verdict 2026-08-31 — CONFIRMED FROM SOURCE, and escalated.** Verified
+  independently: `docker/prod/snapshot-on-stop.sh:32` invokes `flz cluster snapshot`
+  and `controller-entrypoint.sh` invokes `flz cluster restore`, while
+  `cli/src/cluster.rs` matches **only** `"status"` — `grep -cE '"snapshot"|"restore"'`
+  returns **0**.
+- **What that means in production**: the controller's pre-stop hook calls a command
+  that does not exist, so **every graceful shutdown runs a snapshot step that cannot
+  succeed**, and the entrypoint's restore path is equally dead. The scripts' own error
+  handling makes this quiet — `snapshot-on-stop.sh:42` logs *"snapshot failed; leaving
+  previous file in place"*, which reads like a transient failure rather than a missing
+  verb.
+- **Why it is the user's call, not mine**: the verbs were removed by `9235bcde`
+  (`auto-restore-on-boot`) and the scripts were never updated. Restoring them, or
+  deleting the scripts' use of them, is a decision about **whether cluster
+  snapshot/restore is a supported operation at all** — a product question. Recorded
+  under *Awaiting the user's decision* with options.
+- **Not area 6's work.** It is `docker/prod/` and a controller capability, not the CLI
+  refactor, and folding it in would put a behaviour decision inside a zero-behaviour-
+  change area.
 
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
@@ -798,6 +920,14 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   `mvn -P coverage,native-verify clean verify` — **74.5 s** — and the same suite
   re-run on a quiet box minutes later was **1872 passed, exit 0, 59.9 s**. The
   count did not move (1871 *of 1872*), so it is this entry, not a regression.
+  **Fifth sighting, 2026-08-31** (`refactor-4-java-sdk` segment C), and it
+  repeats the fourth exactly: same assertion, same `left: 0`, in the `mix test`
+  that followed a `mvn -P coverage,native-verify clean verify`, a native
+  rebuild, an `install`, a `package` and a full `--include sdk_smoke` suite —
+  60.6 s, 1871 *of* 1872, 121 excluded, uncaptured-log gate **0**. **A maven
+  build immediately before the suite is now the recorded exposure**: four of the
+  five sightings across this module's two sites follow one, which is a stronger
+  statement than "under load" and is what a future reproducer should force.
 - **`test/flezha_test.exs:419`** — *"a deferring operative is force-migrated at
   the drain deadline without wedging"*, the third site in this module.
   `assert_receive :deferred, 1_000` times out; the mailbox holds the competing
@@ -815,6 +945,23 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   shape to the field. The two sites went red in **consecutive** suite runs on a
   box warm from a maven build, one each, which is the shared exposure this entry
   already names rather than two defects.
+  **Fourth sighting, 2026-08-31** (`refactor-4-java-sdk` segment C): the same
+  `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` run, 69.5 s, mailbox
+  `migrated: 0, forced: 0, elapsed_ms: 4, remaining_hubs: 0` — the recorded
+  shape to the field again, and **1894 of 1895 with 98 excluded**, the same
+  total the arm-A and arm-B builds of this area measured. This segment changes
+  only `sdk/java/flezha-sdk-processor`, which runs at compile time and is in no
+  running system, so the count is what makes it this entry and not a regression.
+  **Fifth sighting, 2026-08-31** (`refactor-4-java-sdk` segment D): this one is
+  the plain `mix test`, not the java smoke — **1871 of 1872 passed, 121
+  excluded**, mailbox `migrated: 0, forced: 0, elapsed_ms: 4,
+  remaining_hubs: 0`, the recorded shape to the field a third time. The suite
+  ran on a box warm from `mvn verify` plus the arm's `install` and `package`,
+  which makes it **five of six sightings across the two sites following a maven
+  build immediately before the suite**. `mix test test/flezha_test.exs:419`
+  alone: **1 passed** in 4.7 s. The total did not move (1872), and the
+  `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` run of the same
+  segment was **1895 of 1895**, so the java arm is not what reddened it.
 - **`test/system/sdk_smoke_e2e_test.exs:56`** — *"handshake + AssignRunnerId
   succeeds"* (the `@tag scenario: "handshake"` is `:55`, the coordinate filed).
   **Its evidence is a `java` runtime arm, and it reads as a boot budget rather
@@ -1132,10 +1279,51 @@ under load.
 
 ---
 
+### KI-80 · `--json` and `--output json` are two dialects, each silently ignored by the other's verbs
+
+- **Severity**: P3 · a wart, but one that fails closed into wrong output rather
+  than an error.
+- **Where**: `cli/src/utils.rs:196 get_output_format` reads `--output` / `-o` and
+  maps everything else to `"text"`; `cli/src/audit.rs:28 want_json` and
+  `cli/src/observe.rs:28 want_json` (two byte-identical copies) read `--json` /
+  `-o=json`; `cli/src/controller.rs:36` and `:229` inline the same predicate a
+  third and fourth time.
+- **Evidence** — a `flzvm` shim that echoes the RPC expression it was handed:
+
+  ```
+  cluster status --json           -> cluster_status("", "text")     <- flag ignored
+  cluster status --output json    -> cluster_status("", "json")
+  audit list --json               -> audit_log_render_list("json")
+  audit list --output json        -> audit_log_render_list("text")  <- flag ignored
+  controller status --json        -> controller_status("json")
+  controller status --output json -> controller_status("text")      <- flag ignored
+  ```
+
+- **Mechanism**: two readers, written at different times for different verbs,
+  neither aware of the other. Neither refuses an unrecognised spelling — both
+  default to `"text"` — so a script piping `flz cluster status --json` into `jq`
+  gets a human table and a parse error, with nothing on stderr to say why.
+- **Why it was not fixed on the spot**: found by the `refactor-6-cli` survey.
+  Choosing which spelling wins (or accepting both everywhere) changes the
+  operator surface on eleven verbs, which charter §1c makes the user's call, not
+  a refactor's.
+- **A fix must** decide one of three: accept both spellings everywhere (largest
+  surface, no breakage), keep `--output` as canonical and make `--json` an alias,
+  or refuse an unrecognised output spelling instead of silently defaulting to
+  text. The third is the smallest change that stops the silent failure and is
+  compatible with either of the first two later. `refactor-6-cli` puts both
+  readers in one module so whichever is chosen costs one line.
+
 ## Older defects, found before the refactor programme
 
 These predate `docs/refactor/STATE.md` and were carried only in session memory
 until 2026-08-30. Dates are when each was last established, not when it started.
+
+- **Supervisor verdict 2026-08-31 — real, and which spelling wins is the USER's, not
+  mine.** `--json` and `--output json` is a CLI surface question with no technically
+  correct answer; both are cheap. Escalated to *Awaiting the user's decision*. Area 6
+  does **not** unify them unasked — a refactor whose contract is zero behaviour change
+  is the wrong vehicle for picking a flag spelling.
 
 ### KI-34 · Java host dispatch costs 27–55 % more than Rust
 
@@ -1532,6 +1720,61 @@ every new production freeze to `incident_log.md` at the repository root.
   walk are blind to it while `find` and a developer's IDE both see it.
 - **A fix must** delete the directory. There is nothing to preserve: no source, no
   `pom.xml`, no reactor entry.
+
+### KI-82 · Seven unreferenced public members in the Java SDK, ~50 lines
+
+- **Severity**: P3 · dead surface, not a defect. **The decision is the user's.**
+- **Where** (found by area 4 segment E, scanning declarations in
+  `sdk/java/**/src/main` against every reference in the repo, docs and specs
+  included): `RetryPolicy.backoffFor`, `TimerOp.encodeList`, `TimerOp.decodeList`,
+  `PendingTimers.due`, `PendingTimers.asRegisterOps`, `TimerCounters.noteArmed`,
+  `TimerCounters.firedTotal`, `KryoCodec.serializeWithHeader`,
+  `StreamOperativeClassRegistry.getStreamOperativeClass` — plus
+  `OperativeInstance.operativeId()`, found by segment D.
+- **Why it is not funding for area 4**: every one is `public`, and that area's proof
+  obligation is an **empty `javap -protected` diff** between the baseline tag and its
+  close. Deleting them is an API change, which a zero-behaviour-change refactor is the
+  wrong vehicle for. Both segments found them, both left them, and both said why —
+  which is the correct call twice.
+- **Why it is worth doing separately**: ~50 lines of surface that nothing in the repo,
+  its docs or its specs references. The Java SDK is unpublished
+  (`open-source-licensing`: "nothing is published"), so the cost of removing it now is
+  **zero** and the cost after publication is a breaking change.
+- **A fix must** confirm each member against the *published* surface as well as the
+  repo — a public method with no in-repo caller may still be part of what the SDK
+  offers deliberately — and then delete in one change with its own `javap` diff as the
+  record of what left.
+
+### KI-83 · `--write-baseline --timing` silently deletes every timing it is not given
+
+- **Severity**: P2 · a defect in the programme's own instrument, so it corrupts the
+  record rather than the code.
+- **Where**: `scripts/refactor_metrics.py:793` —
+  `data[key] = given or baseline.get(key, {})`, inside `write_baseline`, governing
+  **both** `timings` and `bench`.
+- **Mechanism**: `given` is built only from **this invocation's** `--timing`/`--bench`
+  arguments, so it is either empty — and the baseline's map is preserved — or
+  complete-as-passed, and the baseline's map is **replaced**. Recording one new timing
+  therefore deletes every timing not re-passed on the same command line.
+- **Evidence**: found by area 4 segment F while recording `mvn_test_sdk_java`. Writing
+  it the way `tasks.md` 12.3 words the step would have dropped `mix_test_exunit` and
+  `mix_test_wall`. The worker avoided it by editing `baseline.json` directly and
+  reported the trap instead — the three timings are intact today, which is why this is
+  a latent defect and not an incident.
+- **Why it matters more than a lost number**: the only way to keep the others on the
+  command line is to **re-pass their values**, which re-stamps measurements taken at
+  `a147111c` with the current head. Segment F's own `mix test` read **77.3 s** against
+  the recorded 56.2 — so obeying the tool would have written a number it could not
+  support, attributed to the wrong commit.
+- **It is the same failure class as `--lint`**, which writes `null` into every
+  `credo_warnings`/`clippy_warnings` when omitted, and `--check` then **skips a null on
+  either side** — silently disarming every credo ratchet. Two arguments on one script,
+  both of which destroy state when you forget them, both silently. That is a pattern in
+  the instrument, not two accidents.
+- **A fix must** merge rather than replace — `data[key] = {**baseline.get(key, {}), **given}`
+  — for `timings` **and** `bench`, with a test that records one key and asserts the
+  others survive. It should also consider making `--lint`'s omission loud, since the
+  same class of silence is the reason both exist as traps.
 
 ## Resolved
 
@@ -2708,7 +2951,7 @@ output. That is the same argument `AuditLog.Codec.stringify_value/1` carries.
 
 | Issue | Closed by |
 |---|---|
-| KI-33 · Java workflow resume re-runs committed producers | `java-diamond-resume` (`4de341b5`) — **and its diagnosis was wrong in both halves: nothing was re-run, and the defect is not in resume.** The mechanism is one line of the emit funnel: `ActivationDispatcher.EmitContext.collectEdgeOutputs` (`ActivationDispatcher.java:841`) added one `Edge` output **per consumer** of the producing channel. That is the correct *stream* shape — `flz_core`'s `host/activation.rs:509` destructures `Edge { channel, consumer }` and routes on it — and the wrong *workflow* one: `host/workflow.rs:70` matches `Edge { channel, .. }`, **discards the consumer**, collects every output as one released value, and the driver then fans that batch out to each child itself (`driver.rs::run_iteration` → `Children::accumulate`). `DiamA`'s `dfan` has two consumers, so every downstream node's work doubled. The fix is the arm the Rust SDK already has (`WorkflowCollectAdapter::emit`, one `sink.collect(value)`): on a structured workflow class one emitted value becomes exactly ONE edge output on the producing channel, untransformed and unkeyed, and each consumer evaluates its own edge at delivery in `valuesForEntity` — the seam a live run and a journal re-seed both cross. **Two probes refuted the filed diagnosis**, both on a `java_runner.jar` rebuilt from HEAD. (1) The journal holds exactly **one** `proc_committed` per `proc_idx` 0…4, every one at `iter=0`, on both runtimes — no procedure was re-run and no journal gate failed. What it shows instead is proc 0 releasing **two** byte-identical values on one channel (`handoff_n=2`, `outbox_n=1`, bytes `[17,17]`) where rust writes `handoff_n=1`; procs 1–3 `handoff_n=2` and the join `outbox_n=4` against rust's `2` all follow from that. (2) **The same 9 payloads arrive with no crash at all** — one runner, `FLEZHA_WORKFLOW_E2E_RELEASE` set, no SIGKILL, no rebind, no resume — `[a, c, c, b, b, j:c, j:c, j:b, j:b]` with the same `handoff_n=2` at proc 0. So the entry's *"the resume re-runs producers whose handoff was already journaled"* and its *"a fix must journal-gate the Java resume"* are both refuted; the resume-skip contract was working the whole time. The `@tag skip:` that hid this is deleted, not narrowed, and a **no-crash** diamond scenario now runs beside the crash one in `test/system/workflow_crash_resume_e2e_test.exs` so the next reader cannot re-acquire the resume reading. Red-then-green, measured: that file on java was **17/21** before the fix (both diamond cells and both no-crash cells failing, uds and quic) and **21/21** after, with rust **21/21** either way; the narrowest proof is `ActivationDispatcherTest.workflowStageReleasesOneEdgeOutputPerValue`, red on HEAD with `Expected size: 1 but was: 2` over `Edge[channel=1, consumer=1]` and `Edge[channel=1, consumer=2]`. The shared contract was what was wrong — `sdk-poll-core`'s producer-side rule stated the stream shape unconditionally — so it is amended for every SDK, and `workflow-branching` gains the scenario that a channel's consumer count SHALL NOT multiply the released batch. One defect found on the way and deliberately not fixed: KI-55 |
+| KI-33 · Java workflow resume re-runs committed producers | `java-diamond-resume` (`4de341b5`) — **and its diagnosis was wrong in both halves: nothing was re-run, and the defect is not in resume.** The mechanism is one line of the emit funnel: `ActivationDispatcher.EmitContext.collectEdgeOutputs` added one `Edge` output **per consumer** of the producing channel. That is the correct *stream* shape — `flz_core`'s `host/activation.rs:509` destructures `Edge { channel, consumer }` and routes on it — and the wrong *workflow* one: `host/workflow.rs:70` matches `Edge { channel, .. }`, **discards the consumer**, collects every output as one released value, and the driver then fans that batch out to each child itself (`driver.rs::run_iteration` → `Children::accumulate`). `DiamA`'s `dfan` has two consumers, so every downstream node's work doubled. The fix is the arm the Rust SDK already has (`WorkflowCollectAdapter::emit`, one `sink.collect(value)`): on a structured workflow class one emitted value becomes exactly ONE edge output on the producing channel, untransformed and unkeyed, and each consumer evaluates its own edge at delivery in `valuesForEntity` — the seam a live run and a journal re-seed both cross. **Two probes refuted the filed diagnosis**, both on a `java_runner.jar` rebuilt from HEAD. (1) The journal holds exactly **one** `proc_committed` per `proc_idx` 0…4, every one at `iter=0`, on both runtimes — no procedure was re-run and no journal gate failed. What it shows instead is proc 0 releasing **two** byte-identical values on one channel (`handoff_n=2`, `outbox_n=1`, bytes `[17,17]`) where rust writes `handoff_n=1`; procs 1–3 `handoff_n=2` and the join `outbox_n=4` against rust's `2` all follow from that. (2) **The same 9 payloads arrive with no crash at all** — one runner, `FLEZHA_WORKFLOW_E2E_RELEASE` set, no SIGKILL, no rebind, no resume — `[a, c, c, b, b, j:c, j:c, j:b, j:b]` with the same `handoff_n=2` at proc 0. So the entry's *"the resume re-runs producers whose handoff was already journaled"* and its *"a fix must journal-gate the Java resume"* are both refuted; the resume-skip contract was working the whole time. The `@tag skip:` that hid this is deleted, not narrowed, and a **no-crash** diamond scenario now runs beside the crash one in `test/system/workflow_crash_resume_e2e_test.exs` so the next reader cannot re-acquire the resume reading. Red-then-green, measured: that file on java was **17/21** before the fix (both diamond cells and both no-crash cells failing, uds and quic) and **21/21** after, with rust **21/21** either way; the narrowest proof is `WorkflowDispatchTest.workflowStageReleasesOneEdgeOutputPerValue`, red on HEAD with `Expected size: 1 but was: 2` over `Edge[channel=1, consumer=1]` and `Edge[channel=1, consumer=2]`. The shared contract was what was wrong — `sdk-poll-core`'s producer-side rule stated the stream shape unconditionally — so it is amended for every SDK, and `workflow-branching` gains the scenario that a channel's consumer count SHALL NOT multiply the released batch. One defect found on the way and deliberately not fixed: KI-55 |
 | KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down | `finish-the-suite-log-gate` — `ControlChannel.send_control/3` now wraps its `GenServer.call` in the two-clause `catch` `ControlUnit.ping_runner/2` already used one layer up: `:exit, {:timeout, _} -> {:error, :timeout}` and `:exit, reason -> {:error, {:control_channel_exit, reason}}`. Design D1's Shape B, in the single funnel all six `ControlUnit` `handle_call`s cross; no caller changed (nine sites read, each already carrying an `{:error, reason}` arm) and the child list was **not** reordered — starting `ControlChannel` first would open a window in which `handle_info`'s `GenServer.cast` to an unregistered `ControlUnit` returns `:ok` and drops an SDK reply, trading an `[error]` line for a silent drop. **Two corrections to this entry, both measured.** (1) Its premise was **inverted**: `runner_supervisor.ex:18`–`:39` lists `ControlUnit` **first** and `ControlChannel` third, and the reverse-order terminate sweep is what stops the channel first — so its own fix wording ("stop `ControlUnit` before `ControlChannel` in the child list") reads as *list it earlier*, which is already the case and would change nothing; to stop it first you must move it **later**. (2) Its reproduction claim did not hold: `test/flezha_test.exs` alone printed the line in **0 of 2** runs with the guard removed, against the "2 of 2" recorded when it was filed. The evidence is the full run instead — one hit at baseline, **zero** across four post-fix full runs including two on fixed seeds. Both new cases were run **red first** (`1/3 passed`: the caller *exits* rather than being answered) and are green after |
 | KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub | `finish-the-suite-log-gate` — the six tests that spawn a real bind task now `await_migrate_task/1`, which reads the `%{pid: pid}` handle they already hold and asserts `{:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}`. That is strictly stronger than the `assert migrate_task != nil` it follows, and the `^inst` pin is untouched — the entry forbids loosening it and nothing did. **Two corrections.** (1) **Six tests leak, not one**: `:116`, `:155` (the one filed), `:185`, `:275`, `:320` and `:330`; the last two spawned through `stub_rebind/0` and **discarded the state** as `{:reply, :ok, _}`, so their leak was invisible to anyone grepping for `migrate_task != nil`. (2) The `startup attempt 1 failed … — retrying` line the entry quotes is **unreachable while the test is running**: the module's `setup` overrides `:overwatch_retry_backoff_ms` to `[1]`, so `rest == []` on the first attempt and there is no ladder. It appears because the orphan reaches `resolve_runner/4` only after its test's `on_exit` has **restored the production backoff** — which is the mechanism by which the task survives long enough to reach the next test at all. Measured: **3 of 10** seeds red at HEAD (777, 432113, 5150 — each `20 passed`, exit 0, two `[error]` lines), **0 of 10** on the same ten seeds after, at an unchanged 1.6 s. The await is proved load-bearing: expecting a wrong reason turns exactly those six red |
 | KI-50 · `Extension.PhaseTest` "uncertain health probe" fails about 1 run in 3, in-suite only | `finish-the-suite-log-gate` — the structural defect is fixed and **the rate was never reproduced at this HEAD**; both halves are stated because the second one matters. The module's hand-rolled `:telemetry.attach` is replaced by `MessageTestHelper.forward_telemetry/3`, which gained an optional metadata predicate, and each test now mints its own `plugin_id` and forwards only events carrying it — so a foreign `fail_open` is never delivered rather than merely waited past (no settle, no `async: false`, both of which this entry forbids). **Not reproduced in 15 runs** at this HEAD: `phase_test.exs` alone 5/5 green, the plugin tree 8/8 and then 5/5 green, and two full `mix test` runs green — so the ~1-in-3 claim stands neither confirmed nor refuted here. **The census explains why the window is narrow.** A scratch telemetry recorder plus an `ExUnit` formatter on one monotonic clock, over two full runs: **exactly four `fail_open` emits per run**, identical population both times — three from `phase_test` itself and **one** from `table_health_test.exs` (`plugin_id: "r"`) — and the two `async: true` emitters **never overlapped** in either run. Design D3's second named candidate, `Convergence.Probe`'s Loop tick, emitted **zero** times in both runs and is removed from suspicion. What replaces the missing race as proof is a **deterministic** one: with only the filter argument removed, the change's new scoping case fails with `Unexpectedly received message {:fail_open, …, %{plugin_id: "foreign_fail_open_1380"}}` — the entry's mechanism, on demand |

@@ -28,7 +28,7 @@
   `snapshot_seq` becomes a truncation point. Pinned by
   `a_read_leaves_the_entity_undrained_and_its_seq_unchanged` (Rust — the Java
   twin went with the kernel mirror; nearest Java coverage is
-  `ActivationDispatcherTest.restoreSnapshotAndLiveRead`), which drops the
+  `StateExchangeTest.restoreSnapshotAndLiveRead`), which drops the
   flusher registration so "unflushed" is a fact of
   the test rather than a race against the 5 ms linger.
 - **The old Java keyset trap is GONE with the kernel mirror**: Java once kept

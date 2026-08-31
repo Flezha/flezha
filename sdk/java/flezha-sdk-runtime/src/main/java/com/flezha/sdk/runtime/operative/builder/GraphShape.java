@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.operative.builder;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import javax.annotation.Nonnull;
@@ -47,7 +48,11 @@ public final class GraphShape {
             adjacency.get(edge[0]).add(edge[1]);
             indegree[edge[1]]++;
         }
+        return kahnOrder(n, adjacency, indegree, reachableFrom(n, adjacency, roots));
+    }
 
+    /** Which nodes {@code roots} can reach, by depth-first descent. */
+    private static boolean[] reachableFrom(int n, List<List<Integer>> adjacency, List<Integer> roots) {
         boolean[] reachable = new boolean[n];
         Deque<Integer> stack = new ArrayDeque<>(roots);
         while (!stack.isEmpty()) {
@@ -58,14 +63,15 @@ public final class GraphShape {
             reachable[node] = true;
             stack.addAll(adjacency.get(node));
         }
-        int unreachable = -1;
-        for (int i = 0; i < n; i++) {
-            if (!reachable[i]) {
-                unreachable = i;
-                break;
-            }
-        }
+        return reachable;
+    }
 
+    /**
+     * Kahn's algorithm over a FIFO queue, and the two nodes the caller refuses
+     * on: the first unreachable one, and the first Kahn left over — which is on
+     * (or strictly downstream of) a cycle.
+     */
+    private static Order kahnOrder(int n, List<List<Integer>> adjacency, int[] indegree, boolean[] reachable) {
         Deque<Integer> queue = new ArrayDeque<>();
         for (int i = 0; i < n; i++) {
             if (indegree[i] == 0) {
@@ -74,7 +80,7 @@ public final class GraphShape {
         }
         List<Integer> order = new ArrayList<>(n);
         int[] pos = new int[n];
-        java.util.Arrays.fill(pos, -1);
+        Arrays.fill(pos, -1);
         while (!queue.isEmpty()) {
             int node = queue.poll();
             pos[node] = order.size();
@@ -85,14 +91,16 @@ public final class GraphShape {
                 }
             }
         }
+        int unreachable = -1;
         int onCycle = -1;
         for (int i = 0; i < n; i++) {
-            if (pos[i] < 0) {
+            if (unreachable < 0 && !reachable[i]) {
+                unreachable = i;
+            }
+            if (onCycle < 0 && pos[i] < 0) {
                 onCycle = i;
-                break;
             }
         }
-
         return new Order(List.copyOf(order), pos, unreachable, onCycle);
     }
 }

@@ -27,38 +27,10 @@ import org.slf4j.LoggerFactory;
  * result and calls {@code complete} itself.
  *
  * <p>The core decides what runs next and caps how much may be underway; a
- * host's only job is to bring threads. Java's answer is virtual threads, so
- * an activation that blocks for a minute inside user code costs a stack and
- * nothing else — the fetchers keep fetching and the core keeps handing out
- * work for other Entities. Concurrency is bounded by the core's
- * jobs-underway limit, never by the fetcher count.
- *
- * <p><b>The fetchers stay platform threads.</b> {@code FlzCore.poll} blocks
- * in native code, and a native frame pins its carrier — virtual fetchers
- * would pin one carrier each and buy nothing. The short native calls the
- * virtual threads make ({@code complete}, emits) pin only for their duration,
- * which is how JNI and virtual threads are meant to compose.
- *
- * <p>Per-Entity ordering needs no help here: exclusivity is the core's
- * handout guarantee (one outstanding activation per Entity), and a virtual
- * thread completes its activation only after the dispatch returns, so the
- * next one for that Entity cannot start early.
- *
- * <p><b>Nothing here may stop on its own.</b> That same exclusivity means an
- * activation that returns unanswered retires its Entity for the life of the
- * process, so every dispatch answers exactly once through a {@code finally}
- * (complete, or abandon); and a fetcher that ends on a throwable is replaced,
- * because a runner whose last fetcher died stays connected, heartbeating and
- * processing nothing.
- *
- * <p><b>And it brings a supervisor.</b> A fixed fetcher set is not enough on
- * its own: a virtual thread that parks inside {@code complete} — pushing into
- * a consumer nobody is draining — holds its fetcher's handout, and with every
- * fetcher held the runner processes nothing and reports nothing. One platform
- * thread parked in {@code waitStarvation} is the other half of the core's
- * bring-your-own-thread contract: on an observation it starts one more
- * fetcher, up to a ceiling. What it does <em>not</em> buy is a thread against
- * user code that never returns — no ceiling outruns that.
+ * host's only job is to bring threads, and this one brings three kinds —
+ * fetchers ({@link #fetchLoop}), a virtual thread per activation
+ * ({@link #runActivation}) and a supervisor against a wedge
+ * ({@link #superviseLoop}). Each carries the rule that shapes it.
  */
 final class PollHost implements AutoCloseable {
 
@@ -94,7 +66,7 @@ final class PollHost implements AutoCloseable {
         /**
          * Park up to {@code timeoutMs} for the core to observe starvation.
          *
-         * @return {@link com.flezha.sdk.native_.FlzCore#STARVATION_OBSERVED},
+         * @return {@link FlzCore#STARVATION_OBSERVED},
          *     {@code STARVATION_TIMEOUT} or {@code STARVATION_SHUTTING_DOWN}.
          */
         int waitStarvation(long timeoutMs);
@@ -167,7 +139,12 @@ final class PollHost implements AutoCloseable {
 
     /**
      * The supervisor loop: park in the core's starvation wait, and answer
-     * every observation with one more fetcher.
+     * every observation with one more fetcher. A fixed fetcher set is not
+     * enough on its own — a virtual thread that parks inside {@code complete},
+     * pushing into a consumer nobody is draining, holds its fetcher's handout,
+     * and with every fetcher held the runner processes nothing and reports
+     * nothing. What one more fetcher does <em>not</em> buy is a thread against
+     * user code that never returns; no ceiling outruns that.
      *
      * <p>Growth is self-limiting without a settle here — a new fetcher's own
      * {@code poll} entry restarts the core's dwell, so the next one is at
@@ -277,6 +254,12 @@ final class PollHost implements AutoCloseable {
      * One fetcher: never runs user code, so it is always available to take
      * the core's next activation. Per-activation failures are logged, never
      * rethrown — a fetcher must not die on one bad activation.
+     *
+     * <p><b>Fetchers stay platform threads.</b> {@code FlzCore.poll} blocks in
+     * native code, and a native frame pins its carrier — virtual fetchers
+     * would pin one carrier each and buy nothing. The short native calls the
+     * virtual threads make ({@code complete}, emits) pin only for their
+     * duration, which is how JNI and virtual threads are meant to compose.
      */
     private void fetchLoop() {
         try {
@@ -339,14 +322,23 @@ final class PollHost implements AutoCloseable {
     }
 
     /**
-     * Run one activation and answer it exactly once.
+     * Run one activation and answer it exactly once, on a virtual thread of
+     * its own: an activation that blocks for a minute inside user code costs a
+     * stack and nothing else — the fetchers keep fetching and the core keeps
+     * handing out work for other Entities. Concurrency is bounded by the
+     * core's jobs-underway limit, never by the fetcher count.
      *
-     * <p>The {@code finally} is the contract, not politeness: per-entity
-     * exclusivity IS the handout, so an activation that returns without
-     * {@code complete} retires its entity for the life of the process. A
-     * throwable from the dispatcher, from encoding the result, or from
-     * {@code complete} itself therefore abandons — logging it and returning,
-     * which is what this method used to do, silently retired the entity.
+     * <p>Per-Entity ordering needs no help here: exclusivity is the core's
+     * handout guarantee (one outstanding activation per Entity), and this
+     * thread completes its activation only after the dispatch returns, so the
+     * next one for that Entity cannot start early.
+     *
+     * <p>The {@code finally} is the contract, not politeness: that same
+     * exclusivity means an activation that returns without {@code complete}
+     * retires its entity for the life of the process. A throwable from the
+     * dispatcher, from encoding the result, or from {@code complete} itself
+     * therefore abandons; logging it and returning would retire the entity
+     * silently.
      */
     private void runActivation(Activation activation) {
         boolean answered = false;

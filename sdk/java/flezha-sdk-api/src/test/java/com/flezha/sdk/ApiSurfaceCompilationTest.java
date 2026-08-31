@@ -14,82 +14,42 @@ import javax.tools.ToolProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * Mirror of the Rust SDK's {@code OldApiNotImportable} test (per
- * {@code operative-mvp-rust/boundeds.md §9.5}). Asserts that user code importing
- * any of the deleted legacy types (e.g. {@code StreamOperativeHandler}) fails
- * to compile after the cutover.
+ * The api module's surface, asserted by compiling user code against it: a
+ * deleted spelling must not resolve, and the spelling that replaced it must.
+ * Mirrors the Rust SDK's {@code OldApiNotImportable}.
  */
-class OldApiNotImportableTest {
+class ApiSurfaceCompilationTest {
 
     /** Class output for the sources that do compile; JUnit removes it. */
     @TempDir
     static Path classOutput;
 
-    @Test
-    @DisplayName("user code importing StreamOperativeHandler fails to compile")
-    void importingStreamOperativeHandlerFails() {
+    @ParameterizedTest(name = "{0} does not resolve")
+    @ValueSource(
+            strings = {
+                "com.flezha.sdk.StreamOperativeHandler",
+                "com.flezha.sdk.FactoryRegistry",
+                "com.flezha.sdk.RunnerBuilder",
+                "com.flezha.sdk.operative.StreamOperativeRegistry",
+                "com.flezha.sdk.workflow.WorkflowOperativeRegistry",
+            })
+    void deletedTypesDoNotResolve(String type) {
         Compilation result = compile(
                 """
                 package nowhere;
-                import com.flezha.sdk.StreamOperativeHandler;
-                public final class UsesLegacyApi {
-                    void foo(StreamOperativeHandler<?, ?, ?> h) { }
-                }
-                """);
-
-        assertThat(result.ok())
-                .as("import com.flezha.sdk.StreamOperativeHandler should not resolve after operative-mvp-java")
-                .isFalse();
-        assertThat(result.diagnostics()).contains("com.flezha.sdk.StreamOperativeHandler");
-    }
-
-    @Test
-    @DisplayName("user code importing FactoryRegistry fails to compile")
-    void importingFactoryRegistryFails() {
-        assertDoesNotCompile(
+                import %s;
+                public final class UsesLegacyApi { }
                 """
-                package nowhere;
-                import com.flezha.sdk.FactoryRegistry;
-                public final class UsesLegacyApi {
-                    void foo() { FactoryRegistry.factoryIds(); }
-                }
-                """);
-    }
+                        .formatted(type));
 
-    @Test
-    @DisplayName("user code importing RunnerBuilder fails to compile")
-    void importingRunnerBuilderFails() {
-        assertDoesNotCompile(
-                """
-                package nowhere;
-                import com.flezha.sdk.RunnerBuilder;
-                public final class UsesLegacyApi {
-                    void foo(RunnerBuilder b) { }
-                }
-                """);
-    }
-
-    @Test
-    @DisplayName("user code importing the public registry facades fails to compile")
-    void importingRegistryFacadesFails() {
-        assertDoesNotCompile(
-                """
-                package nowhere;
-                import com.flezha.sdk.operative.StreamOperativeRegistry;
-                public final class UsesLegacyApi {
-                    void foo() { StreamOperativeRegistry.factoryIds(); }
-                }
-                """);
-        assertDoesNotCompile(
-                """
-                package nowhere;
-                import com.flezha.sdk.workflow.WorkflowOperativeRegistry;
-                public final class UsesLegacyApi {
-                    void foo() { WorkflowOperativeRegistry.factoryIds(); }
-                }
-                """);
+        assertThat(result.ok()).as("import %s should not resolve", type).isFalse();
+        assertThat(result.diagnostics())
+                .as("the failure names the missing type")
+                .contains(type);
     }
 
     @Test

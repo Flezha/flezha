@@ -44,6 +44,10 @@ class PollHostTest {
         private final AtomicInteger starvationWaits = new AtomicInteger();
         /** How many {@code waitStarvation} calls still throw an Exception. */
         private final AtomicInteger starvationErrors = new AtomicInteger();
+        /** Never released: parking on it is how a quiet core spends its wait. */
+        private final CountDownLatch quiet = new CountDownLatch(1);
+        /** The thread the supervisor loop runs on, as this core sees it. */
+        private volatile Thread supervisor;
 
         void handOut(Activation activation) {
             handouts.add(ActivationCodec.encodeActivation(activation));
@@ -78,6 +82,7 @@ class PollHostTest {
 
         @Override
         public int waitStarvation(long timeoutMs) {
+            supervisor = Thread.currentThread();
             starvationWaits.incrementAndGet();
             if (starvationErrors.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw new IllegalStateException("starvation wait failed");
@@ -86,7 +91,7 @@ class PollHostTest {
                 return FlzCore.STARVATION_OBSERVED;
             }
             try {
-                Thread.sleep(Math.min(timeoutMs, 20));
+                quiet.await(Math.min(timeoutMs, 20), TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -118,7 +123,16 @@ class PollHostTest {
 
     private static PollHost start(
             FakeCore core, Function<Activation, ActivationResult> dispatch, int fetchers, int max) {
-        PollHost host = new PollHost(core, dispatch, fetchers, max, () -> {});
+        return start(core, dispatch, fetchers, max, () -> {});
+    }
+
+    private static PollHost start(
+            FakeCore core,
+            Function<Activation, ActivationResult> dispatch,
+            int fetchers,
+            int max,
+            Runnable onFetchersDrained) {
+        PollHost host = new PollHost(core, dispatch, fetchers, max, onFetchersDrained);
         host.start();
         return host;
     }
@@ -175,12 +189,13 @@ class PollHostTest {
         List<String> trace = new CopyOnWriteArrayList<>();
         AtomicInteger handedOut = new AtomicInteger();
         CountDownLatch done = new CountDownLatch(1);
+        CountDownLatch insideFirst = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
         Function<Activation, ActivationResult> dispatch = activation -> {
             trace.add("enter-" + activation.token());
-            try {
-                Thread.sleep(20);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            if (activation.token() == 1) {
+                insideFirst.countDown();
+                await(releaseFirst);
             }
             trace.add("exit-" + activation.token());
             // The core's exclusivity, reproduced: the next activation for this
@@ -196,6 +211,13 @@ class PollHostTest {
 
         try (PollHost host = start(core, dispatch, 2)) {
             core.handOut(activation(1, "same-entity"));
+            assertThat(insideFirst.await(10, TimeUnit.SECONDS))
+                    .as("the first activation is held inside the dispatch")
+                    .isTrue();
+            assertThat(new ArrayList<>(trace))
+                    .as("nothing follows an activation that has not returned")
+                    .containsExactly("enter-1");
+            releaseFirst.countDown();
             assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
         }
 
@@ -319,11 +341,11 @@ class PollHostTest {
         PollHost host = start(core, PollHostTest::ok, 1, 4);
         awaitTrue(() -> core.starvationWaits.get() > 0, "the supervisor parked at least once");
         host.close();
-        int waits = core.starvationWaits.get();
-        Thread.sleep(100);
-        assertThat(core.starvationWaits.get())
+        Thread supervisor = core.supervisor;
+        supervisor.join(TimeUnit.SECONDS.toMillis(10));
+        assertThat(supervisor.isAlive())
                 .as("the supervisor was still parking after close() returned")
-                .isEqualTo(waits);
+                .isFalse();
     }
 
     private static void awaitTrue(java.util.function.BooleanSupplier done, String what) throws InterruptedException {
@@ -334,22 +356,24 @@ class PollHostTest {
         }
     }
 
+    /**
+     * The activation is released by the fetcher drain itself, so close() is
+     * provably still running when the dispatch returns — the overlap is forced
+     * rather than sampled from a window.
+     */
     @Test
     @DisplayName("close() lets in-flight activations finish and complete")
     void closeCompletesInFlightActivations() throws Exception {
         FakeCore core = new FakeCore();
         CountDownLatch dispatching = new CountDownLatch(1);
+        CountDownLatch fetchersDrained = new CountDownLatch(1);
         Function<Activation, ActivationResult> dispatch = activation -> {
             dispatching.countDown();
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            await(fetchersDrained);
             return ok(activation);
         };
 
-        PollHost host = start(core, dispatch, 2);
+        PollHost host = start(core, dispatch, 2, 20, fetchersDrained::countDown);
         core.handOut(activation(1, "in-flight"));
         assertThat(dispatching.await(10, TimeUnit.SECONDS)).isTrue();
 
@@ -357,5 +381,17 @@ class PollHostTest {
         assertThat(core.completed.get())
                 .as("close() returned before the in-flight activation completed")
                 .isEqualTo(1);
+    }
+
+    /** Wait on a latch the test is about to release; an interrupt is a failure. */
+    private static void await(CountDownLatch latch) {
+        try {
+            assertThat(latch.await(10, TimeUnit.SECONDS))
+                    .as("the test released the dispatch")
+                    .isTrue();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 }

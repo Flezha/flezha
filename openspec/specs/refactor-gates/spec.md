@@ -119,3 +119,27 @@ reads, which is the same defect the requirement exists to prevent.
 - **WHEN** the check runs
 - **THEN** it SHALL compare them normally
 
+### Requirement: The Java SDK area ratchets as blocking and its host splits by owner
+
+Once `refactor-4-java-sdk` lands, the area `sdk/java` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree over the full scan set, so that any later rise in a ratcheted metric for that area fails `scripts/refactor_metrics.py --check`. The Java host SHALL carry no source file over 800 lines and no production function over 50 lines; its activation dispatcher SHALL be split by the state it mutates — one file for the instance map, one for a live operative, and one each for the emit context, the entity routing, the state exchange and the workflow arm — rather than by activation kind; and a consumer edge's fused transform closure SHALL be applied through a single shared function, so that the producer-side and delivery-side applications cannot drift from one another.
+
+#### Scenario: A Java SDK metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `sdk/java` has more files over 800 lines, more functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, more test sleeps, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: The edge transform has one implementation
+
+- **WHEN** the Java host applies a consumer edge's transform chain, either when a producing activation completes or when a consumer receives the value
+- **THEN** both SHALL call the same shared application function, so that changing which site is authoritative is a change at one place
+
+#### Scenario: A split file carries only the imports it uses
+
+- **WHEN** a batch of this change creates a new Java source file by extracting from an existing one
+- **THEN** `mvn -f sdk/java/pom.xml -DskipTests spotless:apply` SHALL run before the batch reports its metrics, so that a copied import block cannot raise `duplicate_pairs` for source that did not change
+
+#### Scenario: The Java host is measured by a row that can resolve the claim
+
+- **WHEN** this change reports its interleaved A/B for the Java host
+- **THEN** each row SHALL be declared `gate`, `guard` or `direction` with its measured floor, the whole-system receive window SHALL be reported as `direction` only, and a row whose floor cannot resolve the effect being claimed SHALL be recorded as such rather than run as a gate
+

@@ -1,12 +1,12 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 3. **PHASE 1 IS COMPLETE — all eight rows.**
-The uncaptured-log merge gate is proved and green over two seeded full runs, for the
-first time. `mix test` **1872 passed, exit 0, zero gate hits**; `--include system`
-1953; `refactor_metrics.py --check` **exit 0**; credo 378, ratcheting in all 36 areas.
-**Next: area 4 (`sdk/java`, 8 441 lines)** — the first refactor area since area 3; its
-dependency, area 1, is done. Open: KI-68/69/72 (the runner/controller-seam group, to be
-surveyed together), KI-52 (escalated, awaiting the user), KI-18's flake family.
+**Last updated**: 2026-08-31 — session 3. **Phase 1 complete (8 rows) and AREA 4
+COMPLETE.** `sdk/java` is a blocking ratchet with **every ceiling at zero**;
+`refactor_metrics.py --check` **exit 0**; `mix test` **1872 passed, zero uncaptured-log
+gate hits**. **Next: area 6 (`cli`)** — survey approved, batch 0 carries KI-79 and
+KI-83, both "a tool reports success it did not earn". Then areas 5a–5e (the controller,
+~32 K lines and the 55-file cycle), 7 and 8. Two workers run concurrently on disjoint
+lanes (charter §11c/§11d). Awaiting the user: KI-52, KI-80, KI-81.
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -120,6 +120,244 @@ Rows 5+6 are COMPLETE, archived and committed.
 
 **Area 4 (`sdk/java`) is APPROVED; segment A is running.** Phase 1 is COMPLETE.
 Baseline tag **`refactor-baseline-4` at `8e038e36`**.
+
+### TWO WORKERS FROM 2026-08-31 — charter §11c
+
+The owner asked for more throughput after four days reached 42 % by production LOC.
+**Two workers now run concurrently on disjoint file sets**, and area 6 (`cli`, 3 314
+lines) is the second track — its only dependency, area 1, is done, and it shares **no
+file** with `sdk/java`.
+
+**The second track started as a survey deliberately: a survey changes no code, so it
+needs no worktree and carries zero conflict risk.** The `git worktree` cost (symlinked
+`deps`, scratch `MIX_BUILD_PATH`/`CARGO_TARGET_DIR`, its own socket path, a real NIF
+build) is paid only when area 6 reaches *implementation*.
+
+**Three cuts made alongside**, all waste rather than verification:
+
+1. **The heavyweight Maven profile is gone from mid-area segments.** Segments A–C each
+   ran `-P coverage,native-verify clean verify`; a class extraction needs neither
+   JaCoCo instrumentation nor a native re-verify. Segment D was told mid-flight. The
+   full form belongs at segment F. **The `Building jar:` tell still gets checked** —
+   dropping `clean` makes the shade fixpoint *more* likely, not less.
+2. **No more double full-suite runs.** The worker runs `mix test`; the supervisor was
+   re-running the whole thing rather than §4's *narrowest slice covering the riskiest
+   move*. Pure duplication, and it was mine.
+3. **One verify-then-fix worker for rows under ~2 000 lines**, not survey-then-
+   implement. Rows 5+6 proved it.
+
+**Two things explicitly NOT cut, because this week priced them both**: the **negative
+control** on a regression test — accepted on report once, and a test that passed on
+broken code shipped (KI-67), costing a whole segment to repair — and the **red-first
+drive**, because row 6.5 segment B was fully green, 1 870 tests and clippy clean with
+both filed defects "fixed", while the transport still discarded **20 % of a burst**
+under an `:ok`. Speed comes from not doing work twice, not from believing claims nobody
+checked.
+
+**None. AREA 4 IS COMPLETE, archived and committed.** Next: **area 6 (`cli`)**, whose
+survey is approved and waiting — and whose batch 0 now carries two tool-truth fixes.
+
+### Area 4 — `sdk/java` is DONE — `352af734`
+
+Six segments, archived as `2026-08-31-refactor-4-java-sdk`. **`sdk/java` is now a
+BLOCKING ratchet** (supervisor-verified in `baseline.json`), and `--check` is **exit 0**
+against it.
+
+| segment | commit | what |
+|---|---|---|
+| A | `91699f03` | the classifier correction — record headers and constructors miscounted |
+| B | `c35d4ebe` | `StreamOperativeTopologyBuilder` 1 484 → 761 |
+| C | `d4abc020` | `FlezhaProcessor` 1 075 → 148; twelve emitters → three |
+| D | `5b59d1f9` | `ActivationDispatcher` 993 → 68 — the hot path |
+| E | `7610ea3d` | the test split; every ceiling reaches zero |
+| F | `352af734` | the measurement, the baseline, the close-out |
+
+**Every ceiling is zero**: `files_over_800` **4 → 0**, `functions_over_50` **10 → 0**,
+`long_names` **1 → 0**, `narrative_markers` **6 → 0**, `sleeps` **6 → 1**, credo 0,
+clippy 0, cycles 0. Verified in the written baseline, not just the report.
+
+### The A/B, and the analysis that beat my own read
+
+Five paired rounds, interleaved, natives sha-identical on both arms. **No direction
+detected** — geometric mean **+1.98 %**, **+0.03 %** with each arm's slowest reading
+dropped, and the paired deltas span **12.36 points** against the row's own **11.61 %**
+floor. F holds both the fastest of the ten readings and the slowest.
+
+**It found an order confound I had missed.** I read the first four pairs as "mixed, 2
+and 2". The worker saw *why*: the first three rounds **all ran A first**, putting F in
+the hotter second slot every time. Rounds 4 and 5 reverse the order and the sign flips
+again. That is a better reading of the same table than mine, and it is the reason the
+row went to five — not §8's consistency test, which had already failed.
+
+**And it wrote down what the row cannot say**, in `design.md` and the dev note rather
+than leaving it implied: no JMH exists here, no row resolves the ≤2 % a class
+extraction plausibly costs, and **the point estimate sits inside exactly that band**.
+*A clean J1 is not "no cost."* The evidence that the hot path is intact is segment D's
+**structural** check — 2 objects per operative and 0 per record, no interface so every
+call stays monomorphic, every cached lookup enumerated.
+
+### The line budget, stated plainly
+
+**prod +372, test −62, net +310** against a ~150 estimate. **The estimate was wrong,
+not the work.** Every line is accounted to a §7 ceiling; charter §1 says the ceiling
+wins when the two pull against each other, and it won five times. Funding was **taken**
+where it existed (C ≈ −127, E −50) and **refused** where it would have cost a
+per-record allocation (D's three candidates) or public surface (~50 dead lines, KI-82).
+
+### KI-83 — the instrument has a pattern, not two accidents
+
+`--write-baseline --timing` **replaces** rather than merges
+(`refactor_metrics.py:793`, supervisor-verified verbatim), so recording one timing
+deletes every other. Segment F hit it recording `mvn_test_sdk_java`, avoided it, and
+reported the trap.
+
+**It is the same failure class as `--lint`**, whose omission writes `null` into every
+credo count while `--check` skips nulls — silently disarming the ratchet row 3.5 spent
+a whole change establishing. **Two arguments on one script, both destroying state when
+you forget them, both silently.** That is a pattern in the programme's own instrument,
+and both fixes go to area 6's batch 0 beside KI-79 — which is also a tool reporting
+success it did not earn.
+
+### Area 4 segment E — verified 2026-08-31, commit `7610ea3d` — every ceiling at zero
+
+`files_over_800` **1 → 0**, `functions_over_50` **4 → 0**, `narrative_markers`
+**5 → 0**, `long_names` 0, `sleeps` **6 → 1**. Supervisor-verified: **no file over 800
+lines in `sdk/java`**, KI-55's test intact in its new home with the deliberately-wrong
+assertion, `--check` exit 0.
+
+**The test split preserved the per-class count exactly** — 29 → 3 + 8 + 8 + 5 + 5 — and
+the Java total went 208 → **209**, where the extra is *coverage*: parameterising four
+methods that drove five spellings means the diagnostics check now runs on **all five**
+instead of only the first.
+
+**The shared setup is extracted once, not copied five times**, which is the difference
+between a split and a fan-out. Fifteen fixtures that were fifteen copies of
+`factoryId()`+`channels()` are one base; the seven procedure fixtures that *were* the
+twelve jscpd clones are one base.
+
+**`sleeps` 6 → 1, and the five went by being replaced with observations, not shorter
+waits** — a park on a latch nothing releases, a bounded spin on the clock itself, and
+one released by the **fetcher drain itself**, because releasing it from the test would
+let the dispatch finish before `close()` was entered and the assertion would pass
+vacuously. That last reason is the segment in miniature.
+
+**The area's line budget came back**: prod +12, test −62 ⇒ segment **−50**, area
+**+360 → +310**. The +12 is ceiling-forced and counted line by line.
+
+**`duplicate_pairs` +2, with the sharpest metric observation of the area**: of 24 new
+pairs, **nineteen are the same clone re-anchored after a move** — the twelve
+`StatelessTestProcedure` clones are now anchored at *one* copy in a base class instead
+of twelve in one file. That is a **real reduction the metric cannot see**, and it is
+segment B's blind spot running in reverse: jscpd counts cross-file pairs, so collapsing
+twelve in-file copies into one shared base *raises* the number while removing the
+duplication.
+
+**Four coordinates went stale the moment these renames landed** — two inside defect
+entries, two in docs. Re-pointed by the supervisor; the worker correctly declined to
+edit a defect entry's `Where`.
+
+**KI-82 filed**: seven unreferenced public members, plus `operativeId()` from segment
+D. **Both segments found dead surface, both left it, and both said why** — every one is
+`public`, and this area's contract is an empty `javap` diff. Correct twice. Worth a
+separate change while the SDK is unpublished and removal is free.
+
+### Area 4 segment D — verified 2026-08-31, commit `5b59d1f9` — the hot path
+
+`ActivationDispatcher` **993 → 68**; `files_over_800` **2 → 1** (only the test file,
+segment E's). Supervisor-verified: dispatcher at 68, `--check` **exit 0**, Java suite
+**BUILD SUCCESS** on the new light `mvn verify`.
+
+**This is the segment where measurement could not help, and it was handled by not
+relying on it.** J1 is a `direction` row at 11.61 % spread, so the brief asked for the
+three *categorical* failures to be checked directly. Each came back with a mechanism,
+not a reassurance:
+
+- **Allocation**: `EntityRouting` and `WorkflowDispatch` are constructed once per
+  materialized operative — **2 objects per operative, 0 per record**. `StateExchange`
+  and `EdgeTransforms` are static-only. And `EmitContext`, the one object minted per
+  work item, **kept its single reference and its 11 fields** — task 6.2's literal
+  reading would have given it four fields where there was one, growing a per-record
+  allocation. It declined and said why.
+- **Megamorphic**: no interface introduced; every new type `final` with one
+  implementation, so calls stay monomorphic. Nested-private → top-level
+  package-private is the **same bytecode** on Java 11 nestmates.
+- **Cached lookups**: all preserved and enumerated — the `identityBytes` cache, the
+  shared `edgeCodec`, the `procedureId`-indexed lists, both `ConcurrentHashMap`s, and
+  the static `ObjectMapper`, which moved but is still one per classloader.
+
+**Three funding candidates were rejected on that rule and recorded** so nobody
+re-proposes them: merging the two run prologues needs a record *per record*; a lambda
+over `prepareKeys`' arms captures `edge`; hoisting the `LinkedHashSet` allocates when
+neither branch is taken. **Refusing funding for a stated reason is worth more than the
+lines**, on a path nothing can measure.
+
+**KI-55 is untouched and provably so** — `ActivationDispatcherTest` is byte-identical,
+sha `90003eb79113` before and after (supervisor-checked), so the test asserting the
+wrong value on purpose crossed intact. And `valuesForEntity`'s javadoc, the sentence
+KI-55 calls false, was carried **verbatim** rather than corrected: that is the entry's
+to fix, not a refactor's. That restraint is the right instinct.
+
+**Three findings, all ruled:**
+
+1. **KI-55's coordinates were stale the moment the file split.** Fixed here by the
+   supervisor — the worker correctly declined to edit a P1 entry's `Where`. Both
+   `known_issues.md` and `CLAUDE.md`'s index line now point at `EmitContext` and
+   `EntityRouting`. A stale P1 coordinate is how a defect list stops being trusted.
+2. **A log category moved** (`workflowRun`'s warn now under `…core.WorkflowDispatch`).
+   Message byte-identical, no logback/log4j config exists in the repo, nothing greps
+   the category. **Accepted** — and the worker was right not to call it zero.
+3. **`OperativeInstance.operativeId()` has zero call sites** but is `public` on a class
+   users reach via `Flezha.operatives()`. **Ruled: not funding.** Deleting it is an API
+   change against an area whose contract is an empty public-signature diff. Noted for a
+   future API review.
+
+**The area is +360 against `design.md`'s ~150** (B +198, C +78, D +84). Segment F owes
+an honest statement of that, not a quiet one. D's share is almost entirely file-header
+cost and it said so rather than hunting for cosmetic deletions.
+
+### Area 4 segment C — verified 2026-08-31, commit `d4abc020`
+
+`FlezhaProcessor` **1 075 → 148**; `files_over_800` **3 → 2**, `functions_over_50`
+**7 → 4**, `long_names` **1 → 0**. Supervisor-verified at 148 lines, only the two
+`ActivationDispatcher*` files left over ceiling, `--check` **exit 0**.
+
+**The reuse is the segment, not the file count.** Twelve `StateGenerator` emitters were
+one function with a parameter — four factories, four variants, four handle mutators —
+and are now **three**. `TypeMirrors` folds four copies of *"erasure equals X, arity N"*
+onto one probe. `classLit` is **deleted outright**: dead, zero call sites. That is
+deletion funding found inside the segment, which is what segment B's checkpoint asked
+for: ≈ **−127** taken against **+205** forced by headers, models and the 50-line
+ceiling.
+
+**Byte-identity proved on two corpora, not argued.** A branch-complete synthetic corpus
+of 26 sources through `javac -proc:only`: **29 files, 738 lines, `diff -r` identical,
+and all 35 javac diagnostics identical including `file:line`**. Then the real corpus,
+byte-identical across the rebuild. **The bad corpus is load-bearing** — two refusal
+fixtures in both runs pin that the sink refusal fires *after* the procedure source is
+written, which is why that check stayed in the render half instead of being hoisted.
+
+**`tasks.md` named a corpus that does not exist** — `flezha-sdk-examples`' generated
+sources, from a module that declares no `@State` or `@Procedure`. Corrected to the one
+that generates.
+
+### The stall call was right, and a correction against me was wrong
+
+**Not replacing at 43 m was correct**: the worker was running the byte-identity proofs
+and composing the report — work that produces no file, no process and no diff. Killing
+it would have destroyed both corpora and the diagnostic comparison.
+
+**It also reported that my stall-check commit `0efb0325` swept its `tasks.md` edits.
+That is false, and I checked rather than accepting it.** `git show --stat` on that
+commit is **one file, `docs/refactor/STATE.md`, 22 insertions** — and
+`openspec/changes` is gitignored at `.gitignore:55`, so `tasks.md` cannot be committed
+by anyone. Its ticks are in the working tree, ignored, exactly where they have been all
+area. The hazard it names is **real** (§1's shared-tree rule, and this supervisor did
+sweep a worker's edits on 2026-08-30) — but it did not happen here, and a hazard
+recorded as an event that did not occur is how a board stops being trusted.
+
+**KI-18 gained two more sightings and one genuinely new observation**: four of the five
+across this module's two sites follow a **maven build immediately before the suite** —
+a sharper reproducer than "under load", and worth more than the sightings themselves.
 
 ### Area 4 segment B — verified 2026-08-31, commit `c35d4ebe`
 
@@ -1377,6 +1615,44 @@ it, and takes the agreed item before the next queued row.
 the supervisor's; the options with the cost of each; a recommendation; and what
 it blocks, if anything. An entry without a recommendation is a question the
 supervisor has not finished thinking about.
+
+### KI-81 — `docker/prod/` calls two `flz cluster` verbs that do not exist (P2)
+
+**What it is.** `docker/prod/snapshot-on-stop.sh:32` runs `flz cluster snapshot` and
+`docker/prod/controller-entrypoint.sh:104` runs `flz cluster restore`.
+`cli/src/cluster.rs` implements **only** `status` — supervisor-verified,
+`grep -cE '"snapshot"|"restore"'` returns **0**, and `CliManager` has neither. The verbs
+were removed by `9235bcde` (`auto-restore-on-boot`) and the scripts were never updated.
+
+**Why it matters more than P2 suggests**: the controller's **pre-stop hook** calls a
+command that cannot succeed, so every graceful shutdown runs a snapshot step that
+fails, and the entrypoint's restore path is dead too. It is quiet because the script's
+own handler logs *"snapshot failed; leaving previous file in place"* — which reads as a
+transient failure, not a missing verb.
+
+**Why it is yours.** Restoring the verbs or deleting their use is a decision about
+**whether cluster snapshot/restore is a supported operation**, which is a product call.
+
+| option | cost | consequence |
+|---|---|---|
+| **Delete the calls from both scripts** | ~an hour | Honest immediately. The pre-stop hook stops pretending to snapshot; whatever `auto-restore-on-boot` replaced it with is what actually protects you. |
+| **Re-implement both verbs** | days — a CLI surface, a `CliManager` path, and the controller capability behind them | Only worth it if a *manual* cluster snapshot is something you want, distinct from the automatic restore that replaced it |
+| **Leave it** | zero | A shutdown hook that logs a failure on every stop, and the next person to read that log chases a phantom |
+
+**My recommendation: delete the calls.** `auto-restore-on-boot` deliberately replaced
+this mechanism, so the scripts are the stale half of a change that already landed —
+not a missing feature. **Blocks nothing.**
+
+### KI-80 — `--json` and `--output json` are two dialects (P3)
+
+`cluster status --json` works and `--output json` is ignored; `audit list --output
+json` works and `--json` is ignored. Each is silently dropped by the other's verbs.
+
+**Yours because there is no technically correct answer** — it is a CLI surface
+preference. Both spellings are cheap to standardise on; picking is the whole question.
+**Recommendation: `--output <fmt>`**, since it extends to formats beyond JSON and the
+audit verbs already use it. Area 6 will **not** unify them unasked — a refactor whose
+contract is zero behaviour change is the wrong vehicle for choosing a flag.
 
 ### KI-52 — do Java and PHP ship five native triples, or one? (P3, blocks going public)
 

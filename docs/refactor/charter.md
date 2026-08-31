@@ -362,6 +362,129 @@ whose noise floor exceeds the effect it is asked to detect (§8's `direction`
 rows) spends the machine for a number nobody may act on. Record its arm sha as
 the evidence and skip it.
 
+## 11c. Two workers, on disjoint file sets
+
+Amended 2026-08-31 on the repository owner's instruction, after four days of work
+reached 42 % by production LOC and the owner asked for more throughput.
+
+**The one-worker rule was never about workers. It was about the shared tree.** Two
+agents editing one working tree cannot see each other, and neither can the supervisor.
+So the rule becomes explicit about what it protects:
+
+- **Two workers may run concurrently if and only if their file sets are disjoint**, and
+  the supervisor states the disjointness before spawning the second. `sdk/java` and
+  `cli` share no file; `5a` and `5b` do.
+- **A survey needs no isolation at all** — it changes no code, so it may run in the
+  main tree beside an implement worker. Start parallel work with a survey and the
+  setup cost is zero.
+- **An implement worker on a second area takes a `git worktree`.** Note what that
+  costs here: symlinked `deps`, a scratch `MIX_BUILD_PATH` and `CARGO_TARGET_DIR`, its
+  own `FLEZHA_SOCKET_FILES_PATH`, and a real NIF build — `RUSTLER_SKIP_COMPILATION`
+  leaves `Transport.Native` undefined and the app will not boot.
+- **A worktree arm is not comparable to a tree arm** (§8). Anything measured stays in
+  the main tree; a worktree is for editing, never for a benchmark row.
+- **The supervisor still verifies and commits both**, one checkpoint at a time. Two
+  workers, one committer — the serialisation that matters is at the commit, not the
+  edit.
+
+### What was cut alongside it, and what was not
+
+Cut as waste, same amendment: the **double full-suite run** (the worker runs it, the
+supervisor re-ran the whole thing rather than §4's narrowest slice covering the
+riskiest move); the **heavyweight Maven profile** on mid-area segments
+(`-P coverage,native-verify clean verify` belongs at the close-out, not every
+checkpoint); and **survey-then-implement for rows under ~2 000 lines**, where one
+verify-then-fix worker is enough — rows 5+6 proved it.
+
+**Not cut, because this week priced both**: the **negative control** on a regression
+test — the one time it was accepted on report rather than run, a test that passed on
+broken code shipped and cost a whole segment to repair (KI-67) — and the **red-first
+drive** before a fix, because row 6.5 segment B was fully green, 1 870 tests and clippy
+clean with both filed defects fixed, while the transport still discarded 20 % of a
+burst under an `:ok`. Speed comes from not doing work twice, not from believing claims
+that were never checked.
+
+## 11d. Lanes — how two workers stay out of each other's way
+
+Added 2026-08-31, after the first concurrent pair collided on `docs/known_issues.md`
+KI numbering (the `cli` survey found KI-76 taken and skipped to 79). Content survived;
+the numbering did not. That collision is the specification for this section.
+
+**Every resource two workers can touch is one of two kinds, and they need opposite
+remedies.**
+
+- **Partitionable** — files, directories, number ranges, output paths. Remedy:
+  **allocate disjoint slices up front**, in writing, before the second worker spawns.
+- **Singleton** — a thing there is exactly one of, which cannot be split. Remedy:
+  **one holder, or isolation.** Treating a singleton as partitionable is what fails,
+  and it is what failed here.
+
+### A lane is a worker's written allocation
+
+Every concurrent worker is given a **lane**, stated in its brief and recorded on the
+board *before* it spawns:
+
+| field | meaning |
+|---|---|
+| **paths** | the only paths it may write. Everything else in the tree is read-only to it. |
+| **dev note** | `docs/dev_notes/<change-id>.md` — one per change, so disjoint by construction. |
+| **singletons held** | which of the list below it holds, or `none`. |
+
+A lane is exclusive on write and unrestricted on read. Two lanes must be disjoint on
+paths, and the supervisor states that disjointness in the brief — not as a hope, as a
+claim it has checked.
+
+### The singleton list, and who may hold each
+
+| singleton | includes | holder |
+|---|---|---|
+| **the Elixir suite** | `mix test` in any form, `_build/`, `deps/`, `/tmp/flezha_sockets`, `/tmp/flezha_state_test_*`, the `FsyncBatcher` | one worker at a time |
+| **the Maven reactor** | `mvn` in any form, `sdk/java/**/target/` | one worker at a time |
+| **the cargo target dir** | `cargo build|test|clippy` | one worker at a time |
+| **the git index** | `git add` in **any** form, including `-N` | **the supervisor only** |
+| **`docs/refactor/STATE.md`** | the board | **the supervisor only** |
+| **`docs/known_issues.md`** | the defect record | **the supervisor only** — see below |
+
+### Workers no longer write `docs/known_issues.md`
+
+This is the change the collision forces, and it costs nothing.
+
+**A worker reports a finding in full in its report — `Where`, `Evidence` with the
+command and its actual output, `A fix must`, the mechanism named to the function — and
+the supervisor appends it.** Every §1b finding this week already arrived fully formed
+in the report text; the file write was pure duplication, and it was the one shared
+write left.
+
+Three things fall out, all good: the last shared-write file becomes single-writer, so
+the numbering collision cannot recur; the supervisor was **already** appending a
+verdict to every entry, so this is one edit instead of two; and entries stop needing
+correction after the fact — this week the supervisor had to re-point KI-55's
+coordinates and move a verdict that had landed under the wrong heading.
+
+**A worker still owns the reproduction.** The rule moves the *typing*, not the
+*evidence*. A finding without a command and its output is still refused.
+
+### When both workers need the same singleton
+
+The second takes a **`git worktree`** with its own `MIX_BUILD_PATH`,
+`CARGO_TARGET_DIR` and `FLEZHA_SOCKET_FILES_PATH`, and a real NIF build
+(`RUSTLER_SKIP_COMPILATION` leaves `Transport.Native` undefined and the app will not
+boot). Until then, **start the second track with a survey** — a survey holds no
+singleton and writes no code, so it needs no isolation at all and can begin
+immediately.
+
+### The heartbeat check that makes this operational
+
+At every heartbeat the supervisor runs `git status --short` and asks one question:
+**does every dirty path belong to exactly one live lane, or to the supervisor?** A path
+outside every lane is the alarm, and it is the only mechanical detector this scheme
+has.
+
+**What this does not do**, stated plainly: nothing *enforces* a lane. A worker that
+ignores its brief can still write anywhere, and the check catches it after the fact
+rather than before. The scheme buys a small, checkable invariant and a clear owner for
+every shared thing — not a sandbox.
+
 ## 12. The session contract
 
 Every area runs as one OpenSpec change, `refactor-<n>-<area>`, through the

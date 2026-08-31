@@ -101,8 +101,8 @@ final class RouteLatestRouterTest {
 
     /**
      * fails when: a delivery is made for a key that produced no traffic — a
-     * remembered-set fan-out. After a rescale such a key is no longer this
-     * member's, and every delivery to it parks against the partition guard.
+     * remembered-set fan-out. After a rescale such a key belongs to another
+     * member, and every delivery to it parks against the partition guard.
      */
     @Test
     void onlyKeysProvenByTrafficAreEmitted() {
