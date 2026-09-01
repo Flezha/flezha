@@ -3,8 +3,9 @@
 For authors of plugin providers — the modules an operative host
 (`Flezha.Operative.Overwatch`) attaches through `Flezha.Plugin.Extension.Table`. It covers
 the two phases and the split between `init_provider/1` and `activate/1`, the optional
-callbacks, the identity the host injects, phase and health introspection, the restart
-policy, the shared helpers for queue-holding workers, and teardown. Packaging is in
+callbacks, the option contract, the identity the host injects, phase and health
+introspection, the restart policy, the shared helpers for queue-holding workers, and
+teardown. Packaging is in
 [installation.md](installation.md).
 
 ## Two phases
@@ -32,6 +33,20 @@ supervisor, a collector), struct construction — anything fast, deterministic a
 the host's supervisor is waiting on the call. Not here: TLS handshakes, subscribe-style
 handshakes that solicit upstream traffic, long blocking calls, anything that assumes the
 SDK side is bound — it is not yet.
+
+**Validate before you start anything.** Convert every option the provider interprets at
+the top of the call, ahead of `start_link`, `ensure_worker` or a connection pool: an
+invalid configuration must be a refusal, not a half-applied one. A value that reaches a
+linked child is past the point a refusal can be made — a linked child's crash reaches the
+caller as a signal, and only a caller that traps exits survives it at all.
+
+**A raise, a throw or an exit is a refusal, not an escape.** `Extension.Table` converts
+whatever `init_provider/1` fails with into
+`{:error, {:init_provider_crashed, provider, kind, payload}}` at the point it invokes the
+callback, on the enable path and on the plugin-heal restart path alike, and logs the
+formatted exception with its stacktrace at `:error`. Nothing is hidden — the stacktrace is
+in the log and the reason names the provider — but a provider bug can no longer take the
+operative host, or the other plugins on it, down with it.
 
 ## `activate/1`
 
@@ -104,6 +119,41 @@ Declaring `@known_opts [...]` (optionally `@internal_opts`) makes the option set
 `build/1` refuses unknown `--X` keys and the generated `validate_opts/1` — call it first in
 `init_provider/1` — refuses unknown keys on the `--plugins` spec path, which never builds
 the struct. The host-injected keys (`ProviderBehaviour.host_opts/0`) are always allowed.
+`@internal_opts` is for the provider's OWN resolved state, read back on a re-prepare
+(`OperativeForward`'s `:worker_pid` and `:routes`): those are not host keys, and a strict
+check that does not allow them refuses every plugin heal rather than only a bad config.
+
+## Option values
+
+Declaring `@converted_opts [...]` makes the option VALUES strict. A provider's private
+`convert_value/2` table is its one conversion surface: `build/1` runs it over a CLI string
+map, and `init_provider/1` reads its own tunables through
+`ProviderBehaviour.convert_opts/4`, which takes each field's default from the provider's
+`defstruct` and answers the first refusal. `use ProviderBehaviour` injects a permissive
+last clause, so an option no clause names passes through unchanged — right for a URL or a
+topic, wrong for a value the provider interprets. Every field listed in `@converted_opts`
+is REFUSED when none of its own clauses match, and a provider that defines
+`convert_value/2` while declaring no `@converted_opts` does not compile.
+
+**`@converted_opts []` is a verdict, not an unfinished declaration.** It means every clause
+in that table guards on the FIELD and is already total through the shared helpers below, so
+an injected refusal would generate a clause that never matches. Seven of the eight
+providers that declare it are there; the injected clause is what protects the one whose
+clauses guard on the VALUE.
+
+| Helper | Accepts |
+| --- | --- |
+| `parse_int/2` | an integer, or a string naming one |
+| `parse_bool/2` | a boolean, or `"true"` / `"false"` |
+| `parse_enum/3` | a member of a closed atom set, or its string spelling |
+| `parse_pid/2` | a pid, or a registered name |
+
+All four are total: anything else is `{:error, message}` naming the option and the value.
+There is deliberately no raising counterpart. An option reaching `init_provider/1` is
+operator-supplied and unvalidated, so a helper that raises on a shape it did not expect
+turns a bad value into a crash instead of a refusal — and a closed set resolved with
+`String.to_existing_atom/1` is the same defect twice over, raising for one typo and
+answering a wrong-but-existing atom for the next.
 
 ## Host identity
 

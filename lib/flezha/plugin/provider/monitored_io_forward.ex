@@ -8,7 +8,6 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   Optional: `:heartbeat_interval` (ms, default 5000).
   """
 
-  alias Flezha.Identificator
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.PluginManager
@@ -16,23 +15,35 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   use GenServer
   use ProviderBehaviour
 
+  # Both options are total through `parse_int/2` and `parse_pid/2`; neither
+  # needs the injected refusal.
+  @converted_opts []
+
   @enforce_keys [:recv_pid, :plugin_id, :operative_id, :namespace]
   defstruct @enforce_keys ++ [:binding_pid, heartbeat_interval: 5000]
 
   @impl true
   def plugin_type(), do: :io_binding
 
-  defp convert_value(:recv_pid, value) when is_binary(value) do
-    Identificator.string_to_pid(value)
-  end
+  defp convert_value(:recv_pid, value), do: ProviderBehaviour.parse_pid(value, :recv_pid)
 
-  defp convert_value(:heartbeat_interval, value) when is_binary(value),
+  defp convert_value(:heartbeat_interval, value),
     do: ProviderBehaviour.parse_int(value, :heartbeat_interval)
 
+  # The interval is converted BEFORE the child is linked: it reaches
+  # `Process.send_after/3` inside `init/1`, and a linked child's crash is not
+  # something the caller's own `try`/`catch` can turn into a refusal.
   def init_provider(opts) do
-    case GenServer.start_link(__MODULE__, opts) do
-      {:ok, pid} -> {:ok, Map.put(opts, :binding_pid, pid), pid}
-      {:error, reason} -> {:error, reason}
+    with {:ok, tuned} <-
+           ProviderBehaviour.convert_opts(
+             __MODULE__,
+             opts,
+             [:heartbeat_interval],
+             &convert_value/2
+           ),
+         opts = Map.merge(opts, tuned),
+         {:ok, pid} <- GenServer.start_link(__MODULE__, opts) do
+      {:ok, Map.put(opts, :binding_pid, pid), pid}
     end
   end
 

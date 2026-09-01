@@ -32,6 +32,13 @@ defmodule Flezha.Plugin.Provider.Websocket do
   ]
   @ms_fields Keyword.keys(@ms_defaults)
 
+  @frame_types [:text, :binary]
+
+  # The value-guarded options. The `@ms_fields` and `:post_connect` clauses
+  # are total on their own, so listing them would generate a clause that
+  # never matches.
+  @converted_opts [:ws_opts, :payload_metadata, :subscription_headers]
+
   @enforce_keys [:uri]
   defstruct @enforce_keys ++
               [
@@ -100,13 +107,28 @@ defmodule Flezha.Plugin.Provider.Websocket do
     Jason.decode(value)
   end
 
-  # `handle_connect/3` indexes `state.post_connect["payload"]`, so the value
-  # must be a map. CLI flags arrive as strings — decode them here.
+  # `handle_connect/3` indexes `state.post_connect["payload"]`, so the value must
+  # be a map; CLI flags arrive as strings. The frame type is a two-value enum
+  # that `Subscription.subscription_frames/1` reads with no check of its own, so
+  # it is closed here rather than silently read as `:text`.
   defp convert_value(:post_connect, value) when is_binary(value) and value != "" do
-    Jason.decode(value)
+    case Jason.decode(value) do
+      {:ok, %{} = decoded} -> convert_value(:post_connect, decoded)
+      _ -> ProviderBehaviour.refuse_value(:post_connect, value)
+    end
   end
 
-  defp convert_value(:post_connect, _), do: {:ok, %{}}
+  defp convert_value(:post_connect, %{"payload" => %{"type" => type}} = value) do
+    with {:ok, _frame} <- ProviderBehaviour.parse_enum(type, "post_connect type", @frame_types),
+         do: {:ok, value}
+  end
+
+  defp convert_value(:post_connect, %{} = value), do: {:ok, value}
+  defp convert_value(:post_connect, nil), do: {:ok, %{}}
+  defp convert_value(:post_connect, ""), do: {:ok, %{}}
+
+  defp convert_value(:post_connect, value),
+    do: ProviderBehaviour.refuse_value(:post_connect, value)
 
   defp convert_value(:subscription_headers, value) when is_binary(value) do
     Jason.decode(value)
@@ -137,25 +159,15 @@ defmodule Flezha.Plugin.Provider.Websocket do
     end
   end
 
+  # `ms_opt/2`'s own last clause: a value that is neither takes the default.
+  defp convert_value(field, _value) when field in @ms_fields,
+    do: {:ok, Keyword.fetch!(@ms_defaults, field)}
+
   defp convert_value(:ignore_pattern, value) when is_binary(value) and value != "" do
     {:ok, value}
   end
 
   defp convert_value(:ignore_pattern, _), do: {:ok, nil}
-
-  # init_provider receives `opts` from Flezha.Plugin, where the value may be
-  # a raw JSON string (legacy CLI path), a map (installer/new path), or nil.
-  # Coerce all of those to a map so handle_connect/3 can safely index into it.
-  defp normalize_post_connect(value) when is_map(value), do: value
-
-  defp normalize_post_connect(value) when is_binary(value) and value != "" do
-    case Jason.decode(value) do
-      {:ok, decoded} when is_map(decoded) -> decoded
-      _ -> %{}
-    end
-  end
-
-  defp normalize_post_connect(_), do: %{}
 
   # `init_provider/1` validates and normalises config; it does NOT open the
   # upstream WebSocket. The TLS handshake + subscribe round-trip moves to
@@ -164,13 +176,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # "Two-phase plugin lifecycle gated on SDK readiness".
   def init_provider(opts) do
     with :ok <- validate_opts(opts),
+         {:ok, post_connect} <- convert_value(:post_connect, Map.get(opts, :post_connect)),
+         {:ok, tuned} <-
+           ProviderBehaviour.convert_opts(__MODULE__, opts, @ms_fields, &convert_value/2),
          {:ok, subscription} <- Subscription.from_opts(opts) do
       uri = Map.fetch!(opts, :uri)
-      idle_timeout_ms = ms_opt(Map.get(opts, :idle_timeout_ms), Client.default_idle_timeout_ms())
-
-      resubscribe_after_ms =
-        ms_opt(Map.get(opts, :resubscribe_after_ms), Client.default_resubscribe_after_ms())
-
       ignore_pattern = normalize_ignore_pattern(Map.get(opts, :ignore_pattern))
       plugin_id = Map.get(opts, :plugin_id) || uri
 
@@ -181,12 +191,11 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
       opts =
         opts
+        |> Map.merge(tuned)
         |> Map.put(:overwatcher_pid, self())
-        |> Map.put(:post_connect, normalize_post_connect(Map.get(opts, :post_connect)))
+        |> Map.put(:post_connect, post_connect)
         |> Map.put(:payload_metadata, Map.get(opts, :payload_metadata, %{}))
         |> Map.put(:ws_opts, Map.get(opts, :ws_opts, []))
-        |> Map.put(:idle_timeout_ms, idle_timeout_ms)
-        |> Map.put(:resubscribe_after_ms, resubscribe_after_ms)
         |> Map.put(:ignore_pattern, ignore_pattern)
         |> Map.put(:plugin_id, plugin_id)
         |> Map.put(:subscription, subscription)
@@ -330,17 +339,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @doc "The watchdog tick interval for `state`, or `nil` when both tiers are off."
   @spec idle_tick_interval(map()) :: pos_integer() | nil
   defdelegate idle_tick_interval(state), to: Client
-
-  defp ms_opt(value, _default) when is_integer(value), do: max(value, 0)
-
-  defp ms_opt(value, default) when is_binary(value) do
-    case Integer.parse(value) do
-      {n, ""} -> max(n, 0)
-      _ -> default
-    end
-  end
-
-  defp ms_opt(_value, default), do: default
 
   defp normalize_ignore_pattern(value) when is_binary(value) and value != "", do: value
   defp normalize_ignore_pattern(_), do: nil

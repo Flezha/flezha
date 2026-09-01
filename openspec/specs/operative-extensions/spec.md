@@ -593,3 +593,80 @@ values.
 - **WHEN** an enable succeeds with a sub-option supplied as text
 - **THEN** the durable declared intent for that plugin MUST hold the coerced value, not the text
 
+### Requirement: A provider's conversion table SHALL refuse a value it cannot interpret
+
+A plugin provider's `convert_value/2` table SHALL be total for every option the provider declares it converts: a value none of that option's clauses match SHALL be answered `{:error, binary()}` naming the option and the offered value, never passed through unchanged.
+
+The set of converted options SHALL be declared by the provider, as `@converted_opts`, and `Flezha.Plugin.ProviderBehaviour.__before_compile__/1` SHALL generate the refusal from it. An option the provider names no clause for keeps the permissive default: a provider deliberately does not convert its string and host-injected options, and refusing those would refuse every working configuration.
+
+A provider that defines `convert_value/2` and declares no `@converted_opts` SHALL NOT compile, and the compile error SHALL name the module and the attribute. Discipline is not a mechanism: an option table whose totality depends on each author remembering to write a terminal clause regenerates this defect on the next option added.
+
+The shared conversion helpers `ProviderBehaviour.parse_int/2` and `ProviderBehaviour.parse_bool/2` SHALL be total, accepting both the CLI string form and the native form of their type and refusing everything else. The system SHALL NOT offer a partial or raising counterpart for the `init_provider/1` path: an option that reaches `init_provider/1` is operator-supplied and unvalidated, so a helper that raises on a shape it does not expect turns a bad value into a crash rather than a refusal.
+
+An option a provider interprets SHALL be converted before the provider takes any side effect — before a worker is started, a connection pool is opened, or a process is linked — so that an invalid configuration is refused rather than half-applied.
+
+#### Scenario: An unmatched value for a declared-converted option is refused
+
+- **GIVEN** a provider that declares an option in `@converted_opts` and whose clauses for it do not match the value supplied
+- **WHEN** the value is converted
+- **THEN** the result SHALL be `{:error, message}` naming the option and the value
+- **AND** the value SHALL NOT reach the provider's struct, its worker options, or its stored opts
+
+#### Scenario: An option the table does not name is unaffected
+
+- **GIVEN** a provider option no `convert_value/2` clause names — a URL, a topic, a database name, or a host-injected key
+- **WHEN** the value is converted
+- **THEN** it SHALL be accepted unchanged, exactly as before
+
+#### Scenario: A provider that converts without declaring its options is a compile error
+
+- **GIVEN** a provider module that `use`s `Flezha.Plugin.ProviderBehaviour` and defines a `convert_value/2` clause
+- **AND** the module declares no `@converted_opts`
+- **WHEN** the module is compiled
+- **THEN** compilation SHALL fail with an error naming the module and `@converted_opts`
+
+#### Scenario: The shared integer helper refuses a shape it cannot parse
+
+- **GIVEN** a value that is neither an integer nor a string naming one
+- **WHEN** it is converted through `ProviderBehaviour.parse_int/2`
+- **THEN** the result SHALL be `{:error, message}` naming the field and the value
+- **AND** it SHALL NOT raise
+
+#### Scenario: An invalid tunable is refused before any worker is started
+
+- **GIVEN** a plugin whose configuration carries a value its provider cannot interpret
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}`
+- **AND** no worker, pool or linked process SHALL have been started for that plugin
+
+### Requirement: A crashing `init_provider/1` SHALL be a refusal, not an escape
+
+`Flezha.Plugin.Extension.Table` SHALL turn an exception, a throw or an exit raised inside a provider's `init_provider/1` into `{:error, reason}` at the point the callback is invoked, so that the plugin fails to enable rather than the failure escaping into the caller. The reason SHALL name the provider and carry the kind and payload of the failure.
+
+The conversion SHALL apply to both call sites of the callback — the enable path and the plugin-heal restart path — because a provider that crashes on a stored value crashes identically on every heal that re-prepares it.
+
+The failure SHALL be logged at `:error` with the formatted exception and its stacktrace. Nothing is hidden by this requirement: an escaping exception today kills the operative host process that invoked the enable, taking every other plugin on that host with it, and a refusal plus a full stacktrace in the log is strictly more legible than a crash.
+
+A refusal produced this way SHALL travel the path a refused enable already travels, and SHALL NOT be reported to the operator as a success.
+
+#### Scenario: A raise inside `init_provider/1` refuses the enable
+
+- **GIVEN** a plugin whose provider raises inside `init_provider/1` — for example a boolean option whose value the provider's helpers cannot match
+- **WHEN** the plugin is subscribed
+- **THEN** `Extension.Table.subscribe/3` SHALL return `{:error, reason}`
+- **AND** the reason SHALL name the provider
+- **AND** the caller SHALL remain alive with the table unchanged
+
+#### Scenario: A throw that is not the internal sentinel refuses the enable
+
+- **GIVEN** a plugin whose provider throws a plain value inside `init_provider/1`
+- **WHEN** the plugin is subscribed
+- **THEN** `Extension.Table.subscribe/3` SHALL return `{:error, reason}` rather than letting the throw escape
+
+#### Scenario: The plugin-heal restart path refuses the same way
+
+- **GIVEN** a subscribed plugin whose provider raises when `init_provider/1` is re-run
+- **WHEN** the table attempts a provider restart
+- **THEN** the restart SHALL be recorded as failed and the failure logged
+- **AND** the exception SHALL NOT escape into the host process
+

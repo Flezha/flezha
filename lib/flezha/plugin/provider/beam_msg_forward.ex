@@ -13,11 +13,14 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
     * `:include_metadata` (boolean, default `false`)
   """
 
-  alias Flezha.Identificator
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
   use ProviderBehaviour
+
+  # `:recv_pid` is total through `parse_pid/2`; no option needs the injected
+  # refusal.
+  @converted_opts []
 
   @enforce_keys [:recv_pid]
   defstruct @enforce_keys
@@ -25,9 +28,7 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
   @impl true
   def plugin_type(), do: :io_binding
 
-  defp convert_value(:recv_pid, value) when is_binary(value) do
-    Identificator.string_to_pid(value)
-  end
+  defp convert_value(:recv_pid, value), do: ProviderBehaviour.parse_pid(value, :recv_pid)
 
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)

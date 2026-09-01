@@ -7,7 +7,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   use ExUnit.Case, async: true
 
-  import ExUnit.CaptureLog, only: [capture_log: 1]
+  import ExUnit.CaptureLog, only: [capture_log: 1, with_log: 1]
 
   @catalog Host.build_catalog(
              [
@@ -530,6 +530,92 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                  provider: FoldA,
                  subscriptions: [{:on_operative_init, [on_error: :weird]}]
                })
+    end
+  end
+
+  defmodule FoldErrInit do
+    def init_provider(_opts), do: {:error, :declined}
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  defmodule RaisingInit do
+    def init_provider(_opts), do: raise(ArgumentError, "boom from init_provider")
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  defmodule ThrowingInit do
+    def init_provider(_opts), do: throw("bare throw from init_provider")
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  defmodule ExitingInit do
+    def init_provider(_opts), do: exit(:collaborator_gone)
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  defmodule CrashingOnReprepare do
+    def init_provider(%{reprepare: :raise}), do: raise(ArgumentError, "boom on re-prepare")
+    def init_provider(%{reprepare: :throw}), do: throw("bare throw on re-prepare")
+    def init_provider(%{reprepare: :exit}), do: exit(:collaborator_gone)
+    def init_provider(%{mode: mode} = opts), do: {:ok, Map.put(opts, :reprepare, mode)}
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  describe "a provider that crashes in init_provider/1 refuses the enable" do
+    for {kind, provider} <- [
+          {"raises", RaisingInit},
+          {"throws a value that is not the internal sentinel", ThrowingInit},
+          {"exits", ExitingInit}
+        ] do
+      test "a provider that #{kind} is refused, not escaped" do
+        plugin = %Plugin{
+          id: "crashing",
+          provider: unquote(provider),
+          opts: %{},
+          subscriptions: [{:on_input, []}]
+        }
+
+        {result, log} =
+          with_log(fn -> Table.subscribe(Table.new(@catalog), "crashing", plugin) end)
+
+        assert {:error, reason} = result
+        assert inspect(reason) =~ inspect(unquote(provider))
+        assert log =~ "init_provider"
+      end
+    end
+
+    # `attempt_restart/3` carries its own `rescue`, so a RAISE on the heal path
+    # is already contained — but a throw and an exit are not, and the reason it
+    # logs names neither the callback nor the provider.
+    for mode <- [:raise, :throw, :exit] do
+      test "the plugin-heal path refuses a provider that #{mode}s on re-prepare" do
+        plugin = %Plugin{
+          id: "heal",
+          provider: CrashingOnReprepare,
+          opts: %{mode: unquote(mode)},
+          subscriptions: [{:on_input, []}]
+        }
+
+        {:ok, table} = Table.subscribe(Table.new(@catalog), "heal", plugin)
+
+        {table, log} = with_log(fn -> Table.retry(table, "heal") end)
+
+        assert %Table{} = table
+        assert log =~ "init_provider"
+        assert log =~ "CrashingOnReprepare"
+        refute Map.has_key?(table.owned_pids, "heal")
+      end
+    end
+
+    test "a provider whose init_provider/1 returns an error is unchanged" do
+      plugin = %Plugin{
+        id: "declined",
+        provider: FoldErrInit,
+        opts: %{},
+        subscriptions: [{:on_input, []}]
+      }
+
+      assert {:error, :declined} = Table.subscribe(Table.new(@catalog), "declined", plugin)
     end
   end
 

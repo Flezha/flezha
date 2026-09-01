@@ -40,6 +40,41 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-117 · A 1 ms wall-clock budget asserted on the Kafka enqueue path, 30 000x tighter than the property it defends
+
+- **Severity**: P3 · test hygiene. **Reproduced by the supervisor 2026-09-01**, on a
+  loaded box, at a checkpoint of `close-provider-value-validation`.
+- **Where**: `test/flezha/plugin/kafka_test.exs:381` at `a305d1f3`
+  (`:463` after that change adds tests above it) —
+  `assert elapsed_us < 1_000, "expected <1ms, got #{elapsed_us}us"`.
+- **Evidence**:
+
+  ```
+  $ mix test test/flezha/plugin/kafka_test.exs test/flezha/plugin/provider_behaviour_test.exs \
+      test/flezha/plugin/extension_test.exs
+  1) test on_input / on_output enqueue path on_output returns {:ok, ctx} immediately
+     even when broker would block 30 s (FlezhaTest.Plugin.KafkaTest)
+     expected <1ms, got 1364us
+  Result: 96/97 passed
+  ```
+
+- **NOT caused by the change that found it**: the test is byte-identical at HEAD
+  (`git show HEAD:test/flezha/plugin/kafka_test.exs`, `:356`/`:381`) and appears
+  nowhere in that change's diff. The R1 worker saw it once in five runs and
+  recorded it as a suspicion rather than filing; the supervisor then hit it on the
+  first independent run, which is what moved it from suspicion to established.
+- **Mechanism, named to the assertion**: the test's own title states the property —
+  the enqueue returns *instead of* waiting on a broker that would park for 30 s.
+  A 1 ms absolute budget is **30 000x tighter than that property needs**, so on a
+  laptop running other suites concurrently, ordinary scheduler jitter fails a test
+  whose subject never blocked. The failure carries no information about the
+  behaviour it names.
+- **A fix must** assert the property rather than a microsecond count — that the
+  call returns while a broker stub is still parked — or, if an absolute bound is
+  kept, size it against the 30 s it is distinguishing itself from, not against
+  1 ms. Whichever is chosen, this is `test/` work and belongs to whoever next
+  opens that file; it is **not** a product defect and it does not gate any change.
+
 ### KI-116 · Plugin providers coerce operator-supplied values without validating them, and a raise escapes the enable
 
 Found by the sibling survey `validate-kafka-queue-overflow` was required to run, 2026-09-01.
@@ -963,6 +998,24 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   alone (8 passed) and green in the `--include multi_node` superset (1932 passed) — the
   recorded load-sensitive signature exactly. The coordinates below are the pre-move ones
   and are kept because the evidence was gathered against them.
+- **SIXTH SIGHTING 2026-09-01**, during `make-entry-idle-claims-honest`'s task-4
+  checkpoint: `mix test --include sdk_smoke` gave **1982/1983**, the failure being this
+  test with the same `assert m.migrated >= 1` / `left: 0`, green alone immediately after
+  (8 passed). The run followed a Maven package and four e2e arms — the recorded load
+  exposure exactly.
+- **A NEW CONFOUND EXISTS FROM THAT DATE, and it is recorded rather than waved through.**
+  `make-entry-idle-claims-honest` arms `on_entry_idle` **unconditionally** at
+  `test/apps/rust_runner/src/main.rs:42` (and the Java twin in `Main.main`), with a 1 s
+  threshold whose tick clamps to **250 ms**. So from that change on, **every reference
+  runner process the suite launches carries a watcher thread waking 4x a second**, and
+  `NodeTestHelper.start_runner/2` — which this test calls four times — launches a real
+  reference runner. That is genuinely new load in a load-sensitive test.
+  **Ruled unrelated, on three grounds**: this entry's recorded mechanism is controller-side
+  ("the drain finding nothing to drain"), five sightings predate the thread entirely, and
+  both new e2e arms that DO carry it passed. **But if a seventh sighting arrives, this is
+  the first thing to eliminate** — re-run with the arming commented out before looking
+  anywhere else. Noting the asymmetry that makes it worth remembering: defining an
+  operative is passive until used, whereas arming a watcher spawns a live thread at once.
 - **`test/flezha_test.exs:389`** — *"graceful shutdown drains an operative to a
   peer through live handover"*. Mechanism established and **the fix is not
   test-side.** `:408` asserts `ow_state.arrived_via_hotswap?`, which is

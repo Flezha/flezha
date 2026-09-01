@@ -612,3 +612,35 @@ A non-policy value SHALL NOT be coerced, defaulted or carried into the worker. C
 - **WHEN** the plugin is enabled
 - **THEN** the producer worker SHALL be started with `:drop_nothing` in force
 
+### Requirement: The SASL configuration is validated where it is read
+
+`init_provider/1` SHALL refuse an `:auth` map carrying a key outside `mechanism`, `username`, `password` and `mechanism_opts`, or a `mechanism` outside the set the broker client supports, and SHALL do so before any producer worker or broker client is started. The refusal SHALL name the key or the mechanism and SHALL be returned as `{:error, binary()}`, never raised.
+
+An unknown key SHALL NOT be silently dropped. The broker client's constructor takes only the four keys it knows, so a misspelled `username` today means *no username* — a configuration that reads as accepted and authenticates as anonymous.
+
+Operator-supplied auth text SHALL NOT be resolved to an atom by name. Resolving it raises for a string that names no existing atom and succeeds for any string that happens to name one, which is the same defect in both directions: a crash for one typo and a silently wrong value for another.
+
+Validation SHALL happen once, at preparation, and the resolved configuration SHALL be what the client-restart closure re-reads. The closure is re-invoked on every client restart so a rotated password environment variable takes effect; a validation living inside it would raise inside the shared worker registry rather than at the enable that supplied the bad value.
+
+A `%KafkaEx.Auth.Config{}` supplied directly, and an absent `:auth`, SHALL be accepted unchanged.
+
+#### Scenario: An unsupported mechanism is refused at enable time
+
+- **GIVEN** a plugin configured with `auth` carrying `mechanism` set to a value the broker client does not support
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}` naming the mechanism
+- **AND** no producer worker and no broker client SHALL have been started
+
+#### Scenario: An unknown auth key is refused rather than dropped
+
+- **GIVEN** a plugin configured with `auth` carrying a key that is not one of the four the broker client accepts
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}` naming the key
+
+#### Scenario: A valid SASL configuration is unaffected
+
+- **GIVEN** a plugin configured with a supported mechanism, a username and a password, in either their atom or their string spelling
+- **WHEN** the plugin is enabled
+- **THEN** the resolved auth configuration SHALL be the one the broker client receives
+- **AND** the password SHALL still be redacted in the returned and persisted opts
+

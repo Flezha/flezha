@@ -104,7 +104,9 @@ defmodule Flezha.Identificator do
       pid -> {:ok, pid}
     end
   catch
-    _ -> {:error, "Invalid PID format"}
+    # `String.to_existing_atom/1` RAISES for a name no atom matches, so a
+    # one-argument `catch` (throws only) let the documented refusal be skipped.
+    _kind, _reason -> {:error, "Invalid PID format"}
   end
 
   defp gen_via(prefix, suffix) do

@@ -23,7 +23,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   use ProviderBehaviour
 
-  import ProviderBehaviour, only: [coerce_int: 1, parse_int: 2]
+  import ProviderBehaviour, only: [convert_opts: 4, parse_int: 2]
 
   require Logger
 
@@ -48,6 +48,11 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   @min_interval_ms 1_000
   @max_body_ceiling_bytes 64 * 1_048_576
+
+  # Field-guarded and therefore already total; see `Postgres`.
+  @converted_opts []
+
+  @int_fields Keyword.keys(@int_opts)
 
   @enforce_keys [:url, :channel]
   defstruct @enforce_keys ++ [:plugin_id, :overwatcher_pid, headers: %{}] ++ @int_opts
@@ -146,7 +151,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    threshold = coerce_int(Map.get(opts, :failure_threshold, @int_opts[:failure_threshold]))
+    threshold = Map.get(opts, :failure_threshold) || @int_opts[:failure_threshold]
 
     ProviderBehaviour.worker_health(
       opts,
@@ -164,9 +169,9 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   # The window an operator did not set is derived from the cadence they did.
   defp idle_window(opts) do
-    case coerce_int(Map.get(opts, :idle_after_ms, @int_opts[:idle_after_ms])) do
+    case Map.get(opts, :idle_after_ms, @int_opts[:idle_after_ms]) do
       ms when ms > 0 -> ms
-      _ -> @idle_intervals * coerce_int(Map.get(opts, :interval_ms, @int_opts[:interval_ms]))
+      _ -> @idle_intervals * Map.get(opts, :interval_ms, @int_opts[:interval_ms])
     end
   end
 
@@ -243,20 +248,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     do: {:error, "http_poll requires :channel — the entry channel to inject on"}
 
   defp validate_tunables(opts) do
-    Enum.reduce_while(@int_opts, {:ok, %{}}, &validate_tunable(&1, &2, opts))
-  end
-
-  defp validate_tunable({field, default}, {:ok, acc}, opts) do
-    case parse_int(Map.get(opts, field, default), field) do
-      {:ok, value} -> bounded_put(acc, field, value)
-      {:error, reason} -> {:halt, {:error, "http_poll #{reason}"}}
+    with {:ok, tuned} <- convert_opts(__MODULE__, opts, @int_fields, &convert_value/2),
+         :ok <- Enum.find_value(tuned, :ok, &bound_failure/1) do
+      {:ok, tuned}
     end
   end
 
-  defp bounded_put(acc, field, value) do
+  defp bound_failure({field, value}) do
     case bound(field, value) do
-      :ok -> {:cont, {:ok, Map.put(acc, field, value)}}
-      {:error, _} = err -> {:halt, err}
+      :ok -> nil
+      {:error, _} = err -> err
     end
   end
 
@@ -289,8 +290,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
          "cannot outlast its own interval"}
 
   defp validate_budget(_), do: :ok
-
-  @int_fields Keyword.keys(@int_opts)
 
   defp convert_value(field, value) when field in @int_fields, do: parse_int(value, field)
 end

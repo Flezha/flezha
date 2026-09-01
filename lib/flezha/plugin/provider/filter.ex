@@ -13,6 +13,10 @@ defmodule Flezha.Plugin.Provider.Filter do
 
   use ProviderBehaviour
 
+  # `:inverted` is total through `parse_bool/2`; no option needs the injected
+  # refusal.
+  @converted_opts []
+
   @enforce_keys [:regex_pattern]
   defstruct @enforce_keys ++ [inverted: false]
 
@@ -26,6 +30,8 @@ defmodule Flezha.Plugin.Provider.Filter do
       _ -> {:error, "Invalid value for inverted: #{value}"}
     end
   end
+
+  defp convert_value(:inverted, value), do: ProviderBehaviour.parse_bool(value, :inverted)
 
   def init_provider(opts) do
     pattern = Map.fetch!(opts, :regex_pattern)

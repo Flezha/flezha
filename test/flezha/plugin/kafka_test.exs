@@ -200,6 +200,88 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     end
   end
 
+  describe ":auth validation" do
+    test "a mechanism the broker client does not support is refused at preparation" do
+      for value <- ["plian", :plian, "PLAIN", 5] do
+        plugin_id = "auth-mech-#{System.unique_integer([:positive])}"
+
+        assert {:error, message} =
+                 Kafka.Producer.init_provider(
+                   build_opts(plugin_id, 0, %{
+                     auth: %{"mechanism" => value, "username" => "u", "password" => "p"}
+                   })
+                 ),
+               "expected mechanism #{inspect(value)} to be refused"
+
+        assert is_binary(message)
+        assert message =~ "mechanism"
+        assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+      end
+    end
+
+    test "an auth key the broker client does not accept is refused, not dropped" do
+      for key <- ["user", "usernmae", "timeout"] do
+        plugin_id = "auth-key-#{System.unique_integer([:positive])}"
+
+        assert {:error, message} =
+                 Kafka.Producer.init_provider(
+                   build_opts(plugin_id, 0, %{
+                     auth: %{"username" => "u", "password" => "p", key => "x"}
+                   })
+                 ),
+               "expected auth key #{key} to be refused"
+
+        assert is_binary(message)
+        assert message =~ key
+        assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+      end
+    end
+
+    test "every supported mechanism is accepted, as an atom and as its string" do
+      for {value, expected} <- [
+            {:plain, :plain},
+            {"plain", :plain},
+            {:scram, :scram},
+            {"scram", :scram}
+          ] do
+        plugin_id = "auth-ok-#{System.unique_integer([:positive])}"
+
+        assert {:ok, opts, _pid} =
+                 Kafka.Producer.init_provider(
+                   build_opts(plugin_id, 0, %{
+                     auth: %{"mechanism" => value, "username" => "u", "password" => "hunter2"}
+                   })
+                 ),
+               "expected mechanism #{inspect(value)} to be accepted"
+
+        assert opts.auth[:mechanism] == expected
+        assert opts.auth[:username] == "u"
+        assert opts.auth[:password] == "**redacted**"
+        ProducerSup.stop_worker(plugin_id, @topic, 0)
+      end
+    end
+
+    test "an auth config supplied as the broker client's own struct is accepted" do
+      plugin_id = "auth-struct-#{System.unique_integer([:positive])}"
+
+      config = %KafkaEx.Auth.Config{mechanism: :plain, username: "u", password: "hunter2"}
+
+      assert {:ok, _opts, _pid} =
+               Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{auth: config}))
+
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+
+    test "no auth at all is still the default" do
+      plugin_id = "auth-none-#{System.unique_integer([:positive])}"
+
+      assert {:ok, opts, _pid} = Kafka.Producer.init_provider(build_opts(plugin_id, 0))
+      refute Map.has_key?(opts, :auth)
+
+      ProducerSup.stop_worker(plugin_id, @topic, 0)
+    end
+  end
+
   describe "build/1 conversion" do
     test "parses integer params from binary CLI input" do
       assert {:ok, %Kafka.Producer{queue_max: 20_000, retries: 7, linger_ms: 25}} =
@@ -527,8 +609,11 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
     assert_receive {:client_started, _client, worker_opts}, 2_000
     assert %KafkaEx.Auth.Config{username: "svc", password: @secret} = worker_opts[:auth]
 
-    # ...while the returned (and therefore persisted) opts are redacted.
-    assert returned.auth["password"] == "**redacted**"
+    # ...while the returned (and therefore persisted) opts are redacted. The
+    # keys are the closed set `KafkaEx.Auth.Config` accepts, whichever spelling
+    # the operator wrote: validation normalises them at preparation.
+    assert returned.auth[:password] == "**redacted**"
+    assert returned.auth[:mechanism] == :plain
     refute inspect(returned, limit: :infinity) =~ @secret
   end
 

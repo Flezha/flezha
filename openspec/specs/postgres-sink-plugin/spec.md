@@ -133,3 +133,31 @@ inserted under a unique synthetic key, unchanged.
 - **THEN** the row is overwritten, because a non-empty sequence outranks an empty
   one — no backfill or migration is required
 
+### Requirement: The sink's option set is strict and its tunables are validated at preparation
+
+`init_provider/1` SHALL refuse an option key the provider does not offer, and SHALL refuse a tunable whose value it cannot interpret, before the sink worker or its connection pool is started. Both refusals SHALL be returned as `{:error, binary()}` naming the key or the option and the offered value.
+
+The strict option set SHALL be declared, so that the check runs on the path an operator's stored configuration travels. A plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct, so a check reachable only from the CLI string-map builder does not satisfy this requirement.
+
+The health threshold SHALL be validated at preparation and read as a plain value by the health probe. A conversion performed on the probe path is a conversion performed on every probe: when it raises, the probe's uncertainty handling reports `{:fail_open, …}`, which reads as healthy, so a single unreadable value disables that plugin's health verdict for as long as it stays configured — silently, and for ever.
+
+#### Scenario: An unknown option is refused at enable time
+
+- **GIVEN** a plugin configured with a key the sink does not offer
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}` naming the key
+- **AND** no sink worker and no connection pool SHALL have been started
+
+#### Scenario: An uninterpretable health threshold is refused at enable time
+
+- **GIVEN** a plugin configured with a `unhealthy_after_ms` value that is not an integer and does not name one
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}` naming the option
+- **AND** the plugin SHALL NOT reach a state where its health probe reports an uncertain verdict for that reason
+
+#### Scenario: Host-injected keys are still accepted
+
+- **GIVEN** a plugin enabled on an operative, so that the host merges its identity keys into the provider's opts
+- **WHEN** the plugin is enabled
+- **THEN** those keys SHALL be accepted, and the sink SHALL start exactly as it does today
+

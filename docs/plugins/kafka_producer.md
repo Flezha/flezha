@@ -87,7 +87,7 @@ identical key, header and partition:
 | `:auto_create_replication_factor` | `2` | `int` | replication factor at auto-create |
 | `:topic_configs` | `[]` | `[{name, value}]` | extra topic configs at auto-create |
 | `:metadata_refresh_timeout_ms` | `5_000` | `int` | bound on an active metadata refresh |
-| `:auth` | `nil` | map or `%KafkaEx.Auth.Config{}` | SASL: `mechanism` (`:plain` default, `:scram`), `username`, `password`, `mechanism_opts` |
+| `:auth` | `nil` | map or `%KafkaEx.Auth.Config{}` | SASL. Exactly four keys — `mechanism`, `username`, `password`, `mechanism_opts` — and any other key is refused at preparation rather than dropped. `mechanism` is `:plain` (default), `:scram`, `:oauthbearer` or `:msk_iam`, in either its atom or its string spelling; anything else is refused. Keys and mechanism are validated once, at preparation, so the client-restart closure cannot raise inside the shared worker registry |
 | `:sasl_password_env` | `nil` | `binary` | env var holding the SASL password; overrides an inline one and survives a restart, which the redacted persisted opts cannot |
 | `:use_ssl`, `:ssl_options` | `nil` | — | passed to the broker client |
 | `:metadata_update_interval` | `nil` | `int` | passed to the broker client |

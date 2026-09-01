@@ -160,12 +160,305 @@ row done, plus the RULE #1 reuse candidate KI-116 names itself — total `parse_
 `parse_int/2` already exist beside the partial `coerce_*` pair and are wired only into
 `build/1`, which KI-93 records has no production caller.
 
-**R1 last seen**: 2026-09-01 15:54 (worker +10m). `ListAgents` running; my `claude` PID
-at 13.5 % CPU — a subagent has no OS process of its own, so that IS the worker. No files
-under `openspec/changes/close-provider-value-validation/` yet, which is EXPECTED: step 1 is
-read-then-write and the three proposal files appear only at its end. Not stalled — §6 needs
-all three of no-process / nothing-written / ticks-unchanged and the first fails. Load
-1.54/0.67/0.73, box quieting, no leaked cargo/beam/mvn.
+**R1 PROPOSAL VERIFIED AND APPROVED 2026-09-01 16:10; step 2 authorised.**
+`openspec/changes/close-provider-value-validation/` — proposal, design, tasks (8 batches,
+36 boxes) and three `## ADDED` spec deltas, `--strict` valid, tree byte-identical. Verified
+against the REPO, not the report: `coerce_int/1`/`coerce_bool/1` partial and raising under a
+false "pre-validated" docstring; `parse_bool/2` total at `:89`; `parse_int/2` integer/binary
+only; `provider_behaviour_test.exs:41` pins `"Invalid value for linger_ms: zz"` byte for
+byte; nine `use ProviderBehaviour` modules; gate row exactly `prod_loc 7515 /
+duplicate_pairs 13 / files_over_800 1 / rest 0`, whole-repo `--check` exit 0.
+
+**It corrected KI-116 three times and I re-ran each before recording it** (`9ef8c207`):
+a bare throw from `Kafka.parse_hosts/1` is a THIRD escape flavour the entry never named;
+site 2 is half-wrong as filed (a misspelled REQUIRED key raises in `require_keys!/2`, the
+silent drop is for EXTRA keys via `Map.take/2`); and the mechanism-2 fix belongs in
+`run_init_provider/1`, not the `subscribe/3` KI-116 prescribes — `table.ex:480`, reached
+from `do_subscribe/4:458` AND `attempt_restart/3:627`, the plugin-heal path the entry does
+not mention. **My own brief was wrong on one point too**: `lib/flezha/extension` is not an
+area — `extension/table.ex` lives inside `lib/flezha/plugin`, so BOTH mechanisms ratchet
+against that one `prod_loc 7515` row.
+
+**KI-93 RULED — real, and it is this change's (batch 6.4), no pause.** Reproduced by me:
+`BeamMsgForward.build(%{"recv_pid" => "zzz"})` raises `ArgumentError`. KI-93 lists that
+provider under **Clean**, but its blast-radius scan drove every OPTIONAL field and
+`:recv_pid` is `@enforce_keys` — outside the measurement, not cleared by it. An instance of
+KI-116's mechanism 1, not a separate defect and not a reopening of the 5b fix.
+
+**A GAP MY VERIFICATION FOUND, handed to the worker as batch 8.3's condition.**
+`refactor_metrics.py --check` prints `not compared, unmeasured on this run:
+clippy_warnings in 36 area(s), credo_warnings in 36 area(s)` — so a plain `--check` **cannot
+see a credo regression**, while `lib/flezha/plugin`'s blocking row carries `credo_warnings
+0`, a number area 5b drove from 51. **An exit 0 from that invocation is a green light that
+never looked at the row.** Worker told to make the run measure credo or state in one line
+why it cannot, and not to tick 8.3 on the exit code alone. This applies to EVERY future
+area verification in this programme, not just R1.
+
+Worker told to stop and report after **batch 4** (both mechanisms + Kafka), not all eight.
+
+**R1 last seen 16:19 (+11m into step 2). Batch 1 ticked; two `tasks.md` amendments the
+worker made on its own, both RULED SOUND and both worth keeping as precedent:**
+
+1. **Rows 9–15 move to the batch that fixes each, instead of all being written now.** Its
+   reason is the right one: my checkpoint falls after batch 4 and **every commit is green
+   (§1)**, so writing fifteen tests up front would leave seven failing at a commit boundary.
+   **Red-first is per FIX, not per change** — the rule is kept, not weakened.
+2. **`coerce_int/1`/`coerce_bool/1` cannot be deleted in batch 3 (moved 3.4 → 5.5).**
+   Postgres, HttpPoll and OperativeForward still call them, so the tree would not compile
+   between batches 3 and 5. Deletion lands in the batch that rewires the last caller.
+
+**And it found a third escape the proposal did not have.** `attempt_restart/3` already
+carries a function-level `rescue` (`table.ex:662`), so a RAISE on the plugin-heal path is
+contained TODAY — what escapes there is a throw and an exit, and the rescue's own log names
+neither the callback nor the provider. It caught this because the row it wrote **was not red
+for its stated reason**, and rewrote it to drive all three kinds rather than tick a green
+box. New task 2.3 deletes that rescue as a second mechanism for the same thing. This is the
+red-first rule paying for itself: a test that passes before its fix is the signal, not noise.
+
+Batch 1 evidence to re-verify at the checkpoint: **12 RED, 0 false greens, three consecutive
+runs at 85/97**. **16:30 heartbeat**: 18 boxes ticked, batches 1–4 complete through 4.4, at the
+checkpoint boundary I set; diff +690/−280 (deletions up from 142, so the funding is
+landing). Machine clean, load 1.02/0.94/0.88, no `beam.smp`/`mix`/polling loop. Diff at this heartbeat: `provider_behaviour.ex` +96, `table.ex` +31, seven
+providers +2..5 (the `@converted_opts` declarations), tests +241 over three files. Machine
+clean — no `beam.smp`, no `mix`, no polling loop; load 0.53/0.83/0.83.
+
+### R1 CHECKPOINT 1 (batches 1-4) — VERIFIED, NOT COMMITTED, and the reason is the gate
+
+**Verified against the repo, 2026-09-01 16:35.** Every claim held: `prod_loc` **7515 -> 7536
+(+21)** exactly as reported; diff touches nothing outside `lib/flezha/plugin/` and
+`test/flezha/plugin/`; `parse_enum`/`convert_opts`/`refuse_value` have **10 / 3 / 8** callers
+between them (no orphan helper); `coerce_*` still present at 22 references, ticked as *moved
+to 5.5* rather than as done; `duplicate_pairs` **13 -> 10**; `files_over_800` still 1 (the
+pre-existing `producer_worker.ex`, ruled in 5b). My own slice re-run: **96/97**.
+
+**NOT COMMITTED, deliberately.** `refactor_metrics.py --check` is **exit 1** at +21, and
+charter §1 (`charter.md:13`) requires the §9 gates green at every commit. The deletions that
+fund this land in batches 5-6 (`coerce_*` -5, Postgres -12..-15, HttpPoll -8,
+OperativeForward -2, Websocket -6, totality clauses +7 = **-27**, projecting **7509**). So
+this segment stays uncommitted and the worker continues; I commit both segments together
+when the ratchet is green. **A green checkpoint is not worth a red commit** — committing red
+and promising to fix it two batches later is how a blocking ratchet stops meaning anything.
+
+**The `:auth` behaviour change beyond the proposal — RULED APPROVED, verified not taken on
+trust.** Kafka's `:auth` keys are now normalised to atoms at preparation, so
+`returned.auth[:password]` replaces `returned.auth["password"]` and one pinned line in
+`KafkaSaslRedactionTest` changed. I checked the compatibility claim at the code rather than
+the report: `convert_value(:auth, %{} = map)` maps every key through
+`parse_enum(key, "auth key", @auth_keys)`, so **a stored string-keyed cspec row still
+enables** — and the new tests prove it by passing string-keyed input and asserting
+atom-keyed output. The redaction guarantee is still asserted, with a second assertion
+pinning the normalisation. Editing a pinned expectation is exactly what I said I would check
+hardest; this one is the output spelling of a value the change deliberately re-keys, not a
+loosened assertion.
+
+**A design correction from the compile gate, worth keeping.** `__before_compile__`'s new
+`CompileError` refused all eight providers on first compile, which forced the declaration
+everywhere — and established that **`@converted_opts []` is a legitimate verdict, not an
+omission**: Postgres, HttpPoll, OperativeForward and Kafka guard every clause on the FIELD,
+so their tables are total once `parse_int/2` is, and an injected clause could never match.
+The injected refusal earns its keep on the five VALUE-guarded fields in Websocket,
+MonitoredIOForward, BeamMsgForward and Filter. Mechanism 1 therefore splits cleanly: helper
+totality carries four providers, the injected clause carries four.
+
+**It also took the reuse candidate a previous change explicitly deferred.**
+`ProviderBehaviour.parse_enum/3` is the shared closed-set helper
+`validate-kafka-queue-overflow` named as *"a real candidate and a real change, and it is not
+this one"*. It is this one: it collapses `:queue_overflow`'s three clauses and the whole auth
+key/mechanism pair, and its refusal mirrors `parse_int/2`'s asymmetry so both pinned
+messages survive byte-for-byte.
+
+**KI-117 FILED BY ME**, not by the worker. `kafka_test.exs:381` asserts `elapsed_us < 1_000`
+on a path whose stated property is "returns instead of waiting on a broker that would park
+30 s" — a budget **30 000x tighter than the property needs**. The worker saw it once in five
+runs and recorded it as a suspicion; I hit it on my first independent run
+(`expected <1ms, got 1364us`), which moved it from suspicion to established. Byte-identical
+at HEAD and absent from the change's diff, so it is **not this change's** and gates nothing.
+
+**16:44 heartbeat — the ratchet is GREEN again, ahead of the ticks.** `--check` **exit 0**,
+`lib/flezha/plugin` `prod_loc` **7512** — three UNDER the 7515 baseline, against a projection
+of 7509 with batch 6 still to run. Boxes still read 18 because the worker ticks a batch at
+its end, but the diff moved 15 -> 18 files and +692/-280 -> +1079/-436, so the deletions are
+real and the funding held without reaching outside the scope fence. Not stalled: §6 needs
+no-process AND nothing-written AND ticks-unchanged, and only the third holds. Load
+3.58/1.86/1.28 is the worker's own test runs; no leaked `beam.smp`, `mix` or polling loop.
+
+### THE CREDO GAP IS REAL, AND IT CAUGHT A LIVE REGRESSION — programme-wide, not R1's
+
+**`python3 scripts/refactor_metrics.py --check` DOES NOT MEASURE `credo_warnings` OR
+`clippy_warnings`.** It prints `not compared, unmeasured on this run: clippy_warnings in 36
+area(s), credo_warnings in 36 area(s)` and still exits 0. `--lint`
+(`refactor_metrics.py:567`) is the flag that measures both.
+
+**This is not theoretical.** I handed the gap to the R1 worker as batch 8.3's condition, it
+ran `--check --lint`, and the run reported **`BLOCKING lib/flezha/plugin credo_warnings:
+0 -> 2`** — `run_init_provider/1` at cyclomatic complexity 11 (max 10) and nested depth 3
+(max 2), from the `cond` wrapping its new `case`. Flattened into `settle_init/2`, six heads,
+no nesting; back to 0. **A bare `--check` would have shipped that green.**
+
+**The programme-wide consequence, which is the point.** `credo_warnings 0` is a BLOCKING
+number in all 36 areas — `fix-opaque-module-names` drove it 1463 -> 378 and area 5b drove
+`lib/flezha/plugin` from 51 to 0. Every one of those ratchets is enforced by an instrument
+that, invoked the documented way, does not look at the row. **Any area verification in this
+programme that ran a bare `--check` proved nothing about credo or clippy.** From here every
+verification runs `--check --lint`, and this belongs in the charter's §9 gate list rather
+than in one row's task file.
+
+### R1 IS DONE — `eb938c8b`, archived, specs synced
+
+**KI-116 closed as its two mechanisms, not its eight sites.** 41/41 boxes,
+`openspec` ✓ Complete, archived as `2026-09-01-close-provider-value-validation`,
+4 requirements added across `kafka-producer-plugin`, `operative-extensions` and
+`postgres-sink-plugin`.
+
+**Gates at the commit, every one verified by me and not by the report**:
+`prod_loc` **7515 -> 7515 exactly flat**, `duplicate_pairs` **13 -> 12**, `lib/flezha`
+dups **1 -> 0**, `credo_warnings` 0, `clippy_warnings` 0, `files_over_800` 1 (the
+pre-existing `producer_worker.ex`), `cycles` 0; `--check --lint` **exit 0, 0 regressions
+in all 36 areas** with no `unmeasured` line; five naming gates + `naming_gate --self-test`
+exit 0; `mix format --check-formatted` exit 0; full suite **1960 passed, 0 failures**; my
+own re-run of `test/flezha/plugin/` **514 passed**. Diff 24 files, +1358/-332, everything
+inside `lib/flezha/plugin`, `test/flezha/plugin`, `docs/plugins` except the approved
+`identificator.ex` (+3/-1), whose `string_to_pid/1` has exactly ONE caller in the tree.
+
+**Two findings worth carrying forward, both bigger than the row:**
+
+- **The `--lint` gap above.** It caught a live `credo_warnings 0 -> 2` in this very change.
+- **`Identificator.string_to_pid/1` caught with ONE argument** — throws only — while
+  `String.to_existing_atom/1` RAISES, so its own documented `{:error, "Invalid PID
+  format"}` could never run. **A one-argument `catch` is a grep worth running across the
+  tree**; this one sat in `lib/flezha`, nowhere near where KI-116 pointed.
+
+**OWED, and deliberately not done here.** `CLAUDE.md`'s maintenance rule wants a hook line
+and `docs/dev_notes/INDEX.md` an abstract for every landed change. `docs/dev_notes/close-provider-value-validation.md` **is** written and committed, but **both index
+files are the other session's uncommitted work** (the 15:37 index split), and the invariant
+against staging a file another session may be editing outranks the maintenance rule. The
+hook and the abstract are owed the moment that split is committed. **This is now true of
+every change that lands until it is.**
+
+### NEXT: queue row R2 — `entry_idle`, honest in all seven
+
+rust/java/python claim the capability with **0 fixtures**; node/ruby/php/elixir defer it.
+The user's rule is that tests must cover what is claimed, so the answer is a fixture in all
+seven unless the MECHANISM is absent in some — which is the question the row has to settle
+first, and phase A's audit is the input.
+
+### R2 RULED AND RE-SCOPED 2026-09-01 — the audit's boundary was wrong, and python claims what it cannot do
+
+**Fact-finding verified by me at the repo, not taken from the report.**
+
+- **`test/apps/python_runner/conformance.json:79` claims `"entry_idle": []`, and
+  `sdk/python/src/flezha/runner.py` has NEITHER `last_entry_delivery` NOR `on_entry_idle`.**
+  A conformance manifest asserting a capability with no mechanism behind it is exactly what
+  the user's standing instruction exists to stop, and it was doing so in the file that
+  defines what "claimed" means.
+- Rust does implement it (`sdk/rust/src/runner_handle.rs:373`), Java likewise.
+- **Zero `test/system/` scenarios reference `entry_idle` in any SDK.** The gate prints
+  `no test/system module is tagged for: :entry_idle` and PASSES — by design,
+  `gate_test.exs:434`, `test "a capability with no tagged module is reported, not failed"`.
+  It is the only capability of the 16 in that state.
+
+**The audit's phase-A table marked `entry_idle` M (missing mechanism) for the four
+deferrers. Right conclusion, wrong boundary, and the boundary is what prices the row.**
+`entry_idle` is TWO layers: the stamp in `flz_core` (one `AtomicU64` per entry channel,
+written at `routing.rs:368`) and the per-SDK host policy (accessor, observer, episode latch,
+tick at `threshold/4`). **node, ruby and php already have layer 1** — the ABI read is
+plumbed in all three — and lack only layer 2. **Elixir lacks both**, because its SDK is its
+own core and inherits nothing from `flz_core`. So the real matrix is **2 implement / 5 do
+not**, with one of the five claiming it.
+
+**RULING — R2 keeps the size it was priced at, and the feature work is re-queued as R2b.**
+Taken under the row's own escape clause (*"a fixture is the answer unless the mechanism is
+absent"*), so it is mine, not the user's:
+
+1. **Python stops claiming** — `entry_idle` moves to `deferred`, joining the four already
+   there. `docs/dev_notes/python-sdk.md:193` is the sentence that made the free claim look
+   earned and is corrected in the same change.
+2. **Rust and Java write the fixture and the first `test/system/` scenario**, so the two
+   SDKs that DO implement it are proved end to end and the vocabulary's one untested entry
+   is closed.
+3. **R2b carries the displaced feature work** — host layer in node/ruby/php, both layers in
+   Elixir. **This must not be lost**: R2 was the only row carrying `entry_idle` for
+   node/ruby/php, since R5 covers six other capabilities and R7 covers `workflow`.
+
+**On the worker's open design risk I ruled AGAINST its fallback.** It asked whether, if an
+e2e scenario cannot observe an idle episode, rust and java should also stop claiming. No:
+they demonstrably implement the capability and carry 3 and 6 unit tests respectively.
+Deferring a mechanism that works would be the wrong kind of honesty and would shrink the
+proven surface to make a scenario easier to write. If the sketch does not hold inside a
+45-minute timebox, it reports what it tried and the fixture step stands over from the
+scenario step.
+
+**Worth noting for R8, not for this row**: the gate REPORTING a missing scenario instead of
+failing is why this survived a year. R8 ("move each capability into `@required_capabilities`
+as it becomes universal") is where that silence gets closed.
+
+**R2 last seen 17:20**: `make-entry-idle-claims-honest` proposal, design and tasks all
+written (tasks.md seconds old), tree untouched, report imminent. Machine clean, load flat.
+
+### R2 PROPOSAL VERIFIED AND APPROVED 2026-09-01 — and it corrected this board twice
+
+`openspec/changes/make-entry-idle-claims-honest/`, `--strict` valid, 36 boxes, tree
+untouched. **I machine-checked the named trap myself**: the live requirement carries three
+scenarios, the `MODIFIED` block carries **the same three verbatim** plus two new ones.
+Nothing silently deleted.
+
+**TWO CORRECTIONS AGAINST THIS BOARD, both verified in `baseline.json`:**
+
+1. **`async_false_share` 0.788 with "ZERO headroom" is STALE.** The recorded baseline is
+   **0.777** and the instrument reads **0.773**. §11f on the measured values:
+   `required_true = ceil((1 − 0.777) × 195) = 44`, held 44, new share 0.774 ≤ 0.777.
+   **One `async: false` system-test file fits.** Area 7 spent the budget it was warned
+   about and left change behind; this board never re-read it. Task 6.2 re-computes from the
+   instrument immediately before writing, because a peer landing test files moves the
+   denominator.
+2. **`test/apps` is BLOCKING** — it is in `baseline.json`'s `blocking` list (area 7 armed it
+   as the 36th) and `sleeps` is **8 against a baseline of 8: ZERO headroom.** `test`'s
+   `sleeps` is 2/2, also zero. **A `Process.sleep` in this change is a RED BLOCKING GATE,
+   not a style violation** — which is what forced the scenario's shape rather than taste.
+
+**The scenario shape, and why it is not a workaround.** `flz_core/src/entry_input.rs:47`
+interns one observation cell **per channel NAME**, process-globally — 25 operatives in the
+reference app declare `input`. A fixture watching `input` would be stamped by whatever else
+the fleet was running. So the fixture watches **`idle_input`**, which nothing else declares,
+and the scenario polls a SECOND entry channel `idle_report` to read counters **without
+stamping the watched one** — the silence continues while the test polls, so `wait_until`
+polls a real condition and no `Process.sleep` is needed. This reuses `resolve_entry_channel`
+(`routing.rs:454`) and the metadata-key routing two e2e tests already drive. Documented,
+deliberate core behaviour, so **no KI**.
+
+**THE SPEC CONTRADICTS ITSELF IN ONE FILE, and I verified both halves.**
+`openspec/specs/sdk-conformance/spec.md:82` says `pool_wedge` *"is therefore optional rather
+than required"*; its own scenario at `:48`, *"pool_wedge cannot be deferred either"*, says
+the opposite — and the CODE agrees with the scenario, with the reason in a comment at
+`node_test_helper.ex:288`. The delta keeps the true general rule and drops the false example.
+
+### RULING on task 5.5 — the gate flips to FAILING, and this one is not close
+
+The delta adds *"a capability no `test/system/` module is tagged for SHALL be deferred by
+every manifest"*, and today **nothing enforces it**: `gate_test.exs:434` prints an untested
+capability and passes, by design. **That silence is exactly why `entry_idle` stayed
+uncovered for the whole programme.**
+
+**Ruled IN.** This repository has already paid for this once and wrote it down —
+`pin-sdk-test-toolchains`'s own note is titled *"a pin nothing reads stops nothing"*. Adding
+a second unenforced SHALL a week later would be the same mistake with a spec instead of a
+pin. It is also the direction R8 already carries (make parity un-regressable), so it is
+inside the programme's agreed remit and mine to take. **Three conditions:**
+
+- **It must land GREEN**, verified after task 4, when all sixteen capabilities have a tagged
+  module. A gate that lands red is KI-94 again, which R12 exists to avoid repeating.
+- **The second `MODIFIED` block carries all five of its scenarios**, machine-diffed like the
+  first. Silent scenario deletion is the trap this change has already avoided once.
+- **Red-first for the flip itself**: show the gate FAILING on a deliberately untagged
+  capability, then restore. A gate that has never failed is a gate nobody has tested.
+
+**Task 5.4 — correct only what this change falsifies.** `docs/architecture/runner.md:461`
+claims Node/Ruby/PHP/Python *"implement every one of them"*. This change falsifies it for
+`entry_idle`; the paragraph is **separately** already wrong about Python's deferred set,
+which is pre-existing and stays for whoever owns that page. Recorded here so it is not lost.
+
+
+
 
 
 **Session 5, 2026-09-01 — opened by `/loop /refactor`. Tree clean at `f967b106`, no
@@ -3784,7 +4077,8 @@ verifies and commits, §4 checkpoint each time.
 | # | Work | Why now |
 |---|---|---|
 | **R1** | **KI-116 — the two mechanisms** (P1). Make provider `convert_value/2` refuse by default instead of the injected catch-all accepting anything; make `Extension.Table.subscribe/3` turn a crash into a refusal, not only a `:throw`. Then the 8 sites follow. | Only item where today's code can lose data. Fix the mechanism, not the sites |
-| **R2** | **`entry_idle` — honest in all seven.** rust/java/python claim it with **0 fixtures**; node/ruby/php/elixir defer it. Either write the fixture in all seven or stop claiming it. **The user's rule says tests must cover what is claimed, so a fixture is the answer unless the mechanism is absent.** | Smallest parity row; unblocks nothing but makes the matrix true |
+| **R2** | **`entry_idle` — make the matrix TRUE.** RE-SCOPED 2026-09-01 on measurement: the real split is **2 implement / 5 do not**, not 3/4, and **python CLAIMS it with no mechanism**. Python defers by name; rust+java write the fixture and the first `test/system/` scenario; spec and docs corrected. **The five-SDK feature work moves to R2b** | The row's own escape clause: a fixture unless the mechanism is absent. It is absent in five |
+| **R2b** | **`entry_idle` host layer — node, ruby, php (accessor + observer + latch + tick), and BOTH layers in elixir.** Displaced from R2 by the measurement above. **Do not lose this**: R2 was the only row carrying `entry_idle` for node/ruby/php — R5 covers six other capabilities and R7 covers `workflow` | Real feature work, priced separately from R2's doc-and-fixture size |
 | **R3** | **`connect_discovery` into `@required_capabilities`** (`test/helpers/node_test_helper.ex:293`). All seven already carry it. | One line, zero SDK work, makes one capability un-regressable today |
 | **R4** | **Identity stamps in node/ruby/php** — `flz.entity`/`flz.seq`/`flz.key` on a non-tier keyed plugin emit. Reference: `emit_sink.rs:357-378`, Java `EmitContext.java:283-285`, Python `ctx.py:267-280`, ~15 lines each. Then `keyed_channels` fixtures. | Mechanism gap, small, proof already written in two SDKs |
 | **R5** | **Veneer fixture port — node, ruby, php.** `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`, `dynamic_entity`, `schema_evolution`. Python is the template. **Do `state_persistence` FIRST — it gates four of the others.** | 18 fixture cells; the SDKs can already do this |

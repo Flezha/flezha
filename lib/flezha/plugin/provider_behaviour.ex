@@ -79,14 +79,58 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def parse_int(value, field) when is_binary(value) do
     case Integer.parse(value) do
       {int_val, ""} -> {:ok, int_val}
-      _ -> {:error, "Invalid value for #{field}: #{value}"}
+      _ -> refuse_value(field, value)
     end
   end
+
+  def parse_int(value, field), do: refuse_value(field, value)
 
   def parse_bool(value, _field) when is_boolean(value), do: {:ok, value}
   def parse_bool("true", _field), do: {:ok, true}
   def parse_bool("false", _field), do: {:ok, false}
-  def parse_bool(value, field), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
+  def parse_bool(value, field), do: refuse_value(field, value)
+
+  @doc """
+  A process, as a pid or as the registered name a CLI or a stored spec carries
+  it as. Anything else is refused: a value that is neither is nothing a provider
+  can resolve to a destination.
+  """
+  @spec parse_pid(term(), atom() | binary()) :: {:ok, pid()} | {:error, binary()}
+  def parse_pid(value, _field) when is_pid(value), do: {:ok, value}
+
+  def parse_pid(value, field) when is_binary(value) do
+    with {:error, _} <- Flezha.Identificator.string_to_pid(value), do: refuse_value(field, value)
+  end
+
+  def parse_pid(value, field), do: refuse_value(field, value)
+
+  @doc """
+  A closed set of atoms, in either spelling: the option's own atom, or the
+  string a CLI or a stored spec carries it as. Anything else is refused, which
+  is what makes an enum option total — `String.to_existing_atom/1` in its place
+  raises for one typo and answers a wrong-but-existing atom for the next.
+  """
+  @spec parse_enum(term(), atom() | binary(), [atom()]) :: {:ok, atom()} | {:error, binary()}
+  def parse_enum(value, field, allowed) do
+    case Enum.find(allowed, &(&1 === value or Atom.to_string(&1) === value)) do
+      nil -> refuse_value(field, value)
+      member -> {:ok, member}
+    end
+  end
+
+  @doc """
+  The one refusal a conversion table answers: it names the option and the value
+  it was given. Argument order mirrors `convert_value/2`, whose injected last
+  clause delegates here, rather than the `parse_*` helpers' own `(value, field)`.
+
+  A string is echoed as written and anything else is inspected: an operator
+  reads back what they typed, and every other shape needs its type to be legible.
+  """
+  @spec refuse_value(atom() | binary(), term()) :: {:error, binary()}
+  def refuse_value(field, value) when is_binary(value),
+    do: {:error, "Invalid value for #{field}: #{value}"}
+
+  def refuse_value(field, value), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
 
   @doc """
   The sink retry ladder shared by every provider that holds a bounded queue and
@@ -135,14 +179,6 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       %{state | waiters: []}
     end
   end
-
-  @doc "Raising variants for `init_provider/1`, where opts are pre-validated."
-  def coerce_int(v) when is_integer(v), do: v
-  def coerce_int(v) when is_binary(v), do: String.to_integer(v)
-
-  def coerce_bool(v) when is_boolean(v), do: v
-  def coerce_bool("true"), do: true
-  def coerce_bool("false"), do: false
 
   @probe_timeout_ms 500
 
@@ -337,14 +373,14 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   """
   @spec fields(module()) :: {[atom()], [atom()]}
   def fields(module) do
-    case module.__info__(:struct) do
-      nil ->
-        raise ArgumentError, "#{inspect(module)} uses ProviderBehaviour but declares no struct"
+    declared = declared(module)
 
-      declared ->
-        {for(%{field: name, required: true} <- declared, do: name),
-         Enum.map(declared, & &1.field)}
-    end
+    {for(%{field: name, required: true} <- declared, do: name), Enum.map(declared, & &1.field)}
+  end
+
+  defp declared(module) do
+    module.__info__(:struct) ||
+      raise ArgumentError, "#{inspect(module)} uses ProviderBehaviour but declares no struct"
   end
 
   @doc """
@@ -374,6 +410,35 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   defp coerce_field(field, params, string_map, convert) do
     case Map.get(string_map, Atom.to_string(field)) do
       nil -> {:cont, params}
+      value -> put_converted(params, field, convert.(field, value))
+    end
+  end
+
+  @doc """
+  Convert `fields` out of `opts` through the provider's own `convert`, answering
+  the first refusal. This is the `init_provider/1` counterpart of
+  `build_struct/3`: same table, same halt-on-refusal, but reading typed opts
+  under atom keys instead of a CLI string map.
+
+  A field's default is the provider's own `defstruct` default, so no default is
+  written twice. An option that is absent, or written `nil`, takes that default
+  and is not converted — only a value an operator supplied can be wrong.
+  """
+  @spec convert_opts(module(), map(), [atom()], (atom(), term() ->
+                                                   {:ok, term()} | {:error, binary()})) ::
+          {:ok, map()} | {:error, binary()}
+  def convert_opts(module, opts, fields, convert) do
+    defaults = Map.new(declared(module), &{&1.field, &1.default})
+
+    case Enum.reduce_while(fields, %{}, &convert_opt(&1, &2, opts, defaults, convert)) do
+      {:error, reason} -> {:error, reason}
+      params -> {:ok, params}
+    end
+  end
+
+  defp convert_opt(field, params, opts, defaults, convert) do
+    case Map.get(opts, field) do
+      nil -> {:cont, Map.put(params, field, Map.get(defaults, field))}
       value -> put_converted(params, field, convert.(field, value))
     end
   end
@@ -463,9 +528,42 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   end
 
   defmacro __before_compile__(env) do
-    case strict_opts(env) do
-      nil -> catch_all()
-      strict -> [strict, catch_all()]
+    Enum.reject([strict_opts(env), refuse_converted(env), catch_all()], &is_nil/1)
+  end
+
+  # A provider that converts a value must name the options it owns. Without the
+  # declaration the permissive `catch_all/0` below answers `{:ok, anything}` for
+  # every shape the provider's own clauses do not match, which makes a table
+  # that reads as a validator inert. Fields the table does not name keep that
+  # pass-through: they are the strings and host-injected values a provider
+  # deliberately does not convert.
+  defp refuse_converted(env) do
+    converted = Module.get_attribute(env.module, :converted_opts)
+
+    cond do
+      not Module.defines?(env.module, {:convert_value, 2}, :defp) ->
+        nil
+
+      # An empty declaration is a verdict, not an omission: a table whose every
+      # clause guards on the FIELD is already total through `parse_int/2` and
+      # `parse_bool/2`, and an injected clause for it would never match.
+      converted == [] ->
+        nil
+
+      is_nil(converted) ->
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "#{inspect(env.module)} defines convert_value/2 but declares no @converted_opts. " <>
+              "Name the options whose values it converts, or a value none of its clauses " <>
+              "match is passed through instead of refused."
+
+      true ->
+        quote do
+          defp convert_value(field, value) when field in unquote(converted),
+            do: unquote(__MODULE__).refuse_value(field, value)
+        end
     end
   end
 
@@ -525,7 +623,6 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   defp catch_all do
     quote do
       # Default convert_value catch-all clause - injected at the end
-      defp convert_value(nil, value), do: {:error, "Empty value provided for field"}
       defp convert_value(_field, value), do: {:ok, value}
     end
   end

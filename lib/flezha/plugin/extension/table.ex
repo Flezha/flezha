@@ -179,7 +179,7 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   defp invoke_activate(table, plugin_id, provider, opts) do
-    case provider.activate(opts) do
+    case invoke(:activate, plugin_id, provider, fn -> provider.activate(opts) end) do
       {:ok, pid} when is_pid(pid) ->
         {table
          |> track_owned_pid(plugin_id, pid)
@@ -195,6 +195,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
         {table, {:error, reason}}
 
+      {:crashed, kind, payload} ->
+        {table, {:error, {kind, payload}}}
+
       other ->
         Logger.error(
           "[Extension.Table] activate invalid return for plugin_id=#{plugin_id}: " <>
@@ -203,14 +206,23 @@ defmodule Flezha.Plugin.Extension.Table do
 
         {table, {:error, {:invalid_activate_return, other}}}
     end
+  end
+
+  # Every provider callback this table invokes goes through here: what a
+  # provider raises, throws or exits with is a refusal of the operation, never
+  # a crash of the host that asked for it. The stacktrace is logged so a
+  # provider bug stays as legible as the crash it replaces.
+  defp invoke(callback, plugin_id, provider, fun) do
+    fun.()
   catch
-    kind, reason ->
+    kind, payload ->
       Logger.error(
-        "[Extension.Table] activate raised for plugin_id=#{plugin_id}: " <>
-          "#{inspect(kind)}/#{inspect(reason)}"
+        "[Extension.Table] #{callback} crashed for plugin_id=#{plugin_id} " <>
+          "provider=#{inspect(provider)}: " <>
+          Exception.format(kind, payload, __STACKTRACE__)
       )
 
-      {table, {:error, {kind, reason}}}
+      {:crashed, kind, payload}
   end
 
   defp put_phase(table, plugin_id, phase),
@@ -483,18 +495,31 @@ defmodule Flezha.Plugin.Extension.Table do
         {:error, {:module_not_loaded, provider}}
 
       function_exported?(provider, :init_provider, 1) ->
-        case provider.init_provider(with_host_identity(opts || %{}, plugin)) do
-          {:ok, new_opts} -> {:ok, %Plugin{plugin | opts: new_opts}, nil}
-          {:ok, new_opts, pid} when is_pid(pid) -> {:ok, %Plugin{plugin | opts: new_opts}, pid}
-          {:ok, new_opts, nil} -> {:ok, %Plugin{plugin | opts: new_opts}, nil}
-          {:error, _} = err -> err
-          other -> {:error, {:invalid_init_provider_return, other}}
-        end
+        settle_init(
+          plugin,
+          invoke(:init_provider, plugin.id, provider, fn ->
+            provider.init_provider(with_host_identity(opts || %{}, plugin))
+          end)
+        )
 
       true ->
         {:ok, plugin, nil}
     end
   end
+
+  # What the callback answered, in the shape both call sites read.
+  defp settle_init(%Plugin{} = plugin, {:ok, new_opts}),
+    do: settle_init(plugin, {:ok, new_opts, nil})
+
+  defp settle_init(%Plugin{} = plugin, {:ok, new_opts, pid}) when is_pid(pid) or is_nil(pid),
+    do: {:ok, %Plugin{plugin | opts: new_opts}, pid}
+
+  defp settle_init(_plugin, {:error, _} = err), do: err
+
+  defp settle_init(%Plugin{provider: provider}, {:crashed, kind, payload}),
+    do: {:error, {:init_provider_crashed, provider, kind, payload}}
+
+  defp settle_init(_plugin, other), do: {:error, {:invalid_init_provider_return, other}}
 
   # The host operative's own identity, merged last so stored opts cannot spoof
   # it — the same rule `bulk_activate/2` applies to `activation_env`. A provider
@@ -660,9 +685,5 @@ defmodule Flezha.Plugin.Extension.Table do
 
         Health.schedule_retry(table, plugin_id)
     end
-  rescue
-    err ->
-      Logger.error("[Extension.Table] restart failed for #{plugin_id}: #{inspect(err)}")
-      Health.schedule_retry(table, plugin_id)
   end
 end

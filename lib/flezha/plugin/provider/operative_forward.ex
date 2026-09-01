@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
 
   use ProviderBehaviour
 
-  import ProviderBehaviour, only: [coerce_int: 1, parse_int: 2]
+  import ProviderBehaviour, only: [convert_opts: 4, parse_int: 2]
 
   require Logger
 
@@ -44,6 +44,13 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   # Resolved by the host at prepare time, never settable by config.
   @injected_opts [:worker_pid, :routes, :source_namespace, :source_operative_id]
 
+  # The two of those the HOST does not inject: this provider resolves them and a
+  # re-prepare carries them back, so `validate_opts/1` has to allow them.
+  @internal_opts @injected_opts -- ProviderBehaviour.host_opts()
+
+  # Field-guarded and therefore already total; see `Postgres`.
+  @converted_opts []
+
   @enforce_keys [:target_operative_id]
   defstruct @enforce_keys ++ [:plugin_id] ++ @injected_opts ++ @int_opts
 
@@ -51,7 +58,9 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   # ProviderBehaviour` generates the `build/1` refusal from it, so a config
   # asking for a delivery guarantee this provider deliberately does not offer
   # fails loudly instead of reading as accepted.
-  @known_opts [:target_operative_id, :plugin_id | Keyword.keys(@int_opts)]
+  @int_fields Keyword.keys(@int_opts)
+
+  @known_opts [:target_operative_id, :plugin_id | @int_fields]
 
   @impl true
   def plugin_type(), do: :io_binding
@@ -64,10 +73,12 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     # prepare carries none.
     previous_routes = Map.get(opts, :routes, [])
 
-    with :ok <- validate_target(target, source_namespace, source_operative_id),
+    with :ok <- validate_opts(opts),
+         {:ok, tuned} <- convert_opts(__MODULE__, opts, @int_fields, &convert_value/2),
+         :ok <- validate_target(target, source_namespace, source_operative_id),
          plugin_id = Map.get(opts, :plugin_id) || default_plugin_id(source_operative_id, target),
          {:ok, routes} <-
-           ensure_workers(plugin_id, source_namespace, source_operative_id, target, opts) do
+           ensure_workers(plugin_id, source_namespace, source_operative_id, target, tuned) do
       opts =
         opts
         |> Map.put(:plugin_id, plugin_id)
@@ -253,7 +264,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   # because a worker is one queue with one in-flight slot: a shared one would
   # head-of-line-block every partition behind the slowest, and per-key ordering
   # only needs per-member FIFO.
-  defp ensure_workers(plugin_id, source_namespace, source_operative_id, target, opts) do
+  defp ensure_workers(plugin_id, source_namespace, source_operative_id, target, tuned) do
     target
     |> target_members(source_namespace)
     |> Enum.reduce_while({:ok, []}, fn {member_id, range}, {:ok, acc} ->
@@ -263,7 +274,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
                source_namespace: source_namespace,
                source_operative_id: source_operative_id,
                target_operative_id: member_id
-             ] ++ tunables(opts)
+             ] ++ Map.to_list(tuned)
            ) do
         {:ok, pid} -> {:cont, {:ok, [%{id: member_id, range: range, pid: pid} | acc]}}
         {:error, _} = err -> {:halt, err}
@@ -332,14 +343,6 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   end
 
   defp default_plugin_id(source, target), do: "#{source}->#{target}"
-
-  defp tunables(opts) do
-    Enum.map(@int_opts, fn {field, default} ->
-      {field, coerce_int(Map.get(opts, field, default))}
-    end)
-  end
-
-  @int_fields Keyword.keys(@int_opts)
 
   defp convert_value(field, value) when field in @int_fields, do: parse_int(value, field)
 end
