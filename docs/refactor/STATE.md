@@ -3751,7 +3751,7 @@ was decided with the user; the detail blocks follow further down this section.
 | 4.7 | **DONE**, archived. Ratchet funded 7515→7515; KI-116 filed (P1, 8 sites). `validate-kafka-queue-overflow` — **RULED BY THE USER 2026-09-01**: validate the policy in `init_provider/1`. `coerce_atom/1` validates nothing, so any stored string that is an existing atom enables silently and kills the worker at saturation. NOT the coercion shim they declined | queued, after area 8 | 2026-09-01 |
 | 8 | `unify-cli-output-flag` — KI-80: **`--output <fmt>` wins**; `--json` becomes its alias or is dropped. Today `cluster status --json` ignores `--output json` and `audit list --output json` ignores `--json` | queued | 2026-09-01 |
 | 9 | `add-publish-readiness-checklist` — the pre-publish gate the user asked for; see below | queued | 2026-09-01 |
-| 10 | **PHASE A ONLY approved 2026-09-01** — the audit: for each of the 9 × 4 deferred capabilities, missing FIXTURE or missing MECHANISM? Phases B–D wait on that table. `sdk-durable-fixture-parity` — **every SDK carries every capability, and proves it with a test.** The user's instruction 2026-09-01. Large; phased; see below | queued | 2026-09-01 |
+| 10 | **PHASE A DONE** — table above; phase D refuted as planned. **PHASE A ONLY approved 2026-09-01** — the audit: for each of the 9 × 4 deferred capabilities, missing FIXTURE or missing MECHANISM? Phases B–D wait on that table. `sdk-durable-fixture-parity` — **every SDK carries every capability, and proves it with a test.** The user's instruction 2026-09-01. Large; phased; see below | queued | 2026-09-01 |
 
 **`## Awaiting the user's decision` is now EMPTY of open items for the first time since
 the section was created.** KI-52 is deferred into row 9's checklist; KI-80, KI-100,
@@ -3811,7 +3811,69 @@ the notes the commit message and diff can support; for any that cannot, leave BO
 index line absent and list them here as owed. The `CHANGELOG` gap belongs to queue row 9,
 not here.
 
-### ROW 10 PHASE A running — the SDK capability audit (the user's ruling: phase A ONLY)
+### ROW 10 PHASE A — DONE. The table, persisted here because its own files are gitignored
+
+`openspec/changes/` is gitignored, so this table exists on this machine only. **It is the
+deliverable**, so it lives here too. `F` = missing FIXTURE (the SDK can already do it);
+`M` = missing MECHANISM.
+
+| capability | node | ruby | php | elixir |
+|---|---|---|---|---|
+| `state_persistence` | F | F | F | **M** |
+| `effectively_once` | F | F | F | **M** |
+| `entity_timers` | F | F | F | **M** |
+| `correction_window` | F | F | F | **M** |
+| `keyed_channels` | **M** | **M** | **M** | **M** |
+| `workflow` | **M** | **M** | **M** | **M** |
+| `dynamic_entity` | F | F | F* | **M** |
+| `entry_idle` | **M** | **M** | **M** | **M** |
+| `schema_evolution` | F | F | F | **M** |
+
+**18 fixture cells, 18 mechanism cells.** node 6F/3M, ruby 6F/3M, php 6F/3M, **elixir
+0F/9M**. `F*` = a fixture exists but is thinner than the reference (one attribute argument).
+
+**FOUR CORRECTIONS TO THIS BOARD'S OWN FRAMING, and they change the estimate:**
+
+1. **PHASE D CANNOT FIRE AS PLANNED.** `@required_capabilities` is ONE GLOBAL list checked
+   against every manifest, so a capability joins only when **all seven** SDKs carry it.
+   Finishing Node, Ruby and PHP entirely moves the required set by **ZERO**. The phasing
+   reads as if C completes the row; it completes **three sevenths**.
+2. **"Python already did eight of the nine" is SEVEN** — plus one free claim no test proves.
+   Python claims `entry_idle` on the strength of having ZERO fixtures for it: it has the raw
+   core read, not the observer, and `docs/sdk/entry_input_idle.md`'s own implementation
+   table names Rust and Java only. **The template teaches the wrong lesson on that cell —
+   that a zero-fixture capability is free — and phase C would copy the free claim into three
+   more manifests.**
+3. **"Converts most of the row into repetition" is 18 of 36 cells, and far less by effort.**
+   `workflow` alone (mechanism × 4, plus ~1 060 fixture lines × 4) outweighs every fixture
+   cell combined. **18 of the reference's 19 workflow fixtures** need one or both of the two
+   missing builder surfaces; only `echo_workflow` is expressible today.
+4. **The four deferring SDKs are costed as ONE group and are TWO.** The veneers defer
+   FIXTURES over a working mechanism; **Elixir defers the SURFACE ITSELF** — a call raises
+   `UndefinedFunctionError`, reported as `{:DeferredBuilderSurface, module, …}`. Its nine are
+   kernel re-expressions in Elixir, not a fixture port. **Elixir's column is a different
+   programme wearing the same nine names**, and flattening them is what produces the
+   optimistic estimate.
+
+**ONE THING AVAILABLE TODAY AT ZERO COST**: `connect_discovery` is carried by **all seven**
+manifests and is **absent from `@required_capabilities`** (six entries,
+`node_test_helper.ex:293`). A one-line ratchet, no SDK work. **I verified this myself —
+and my first probe returned a false negative because the manifests have no `capabilities`
+key at all; the parse was wrong, not the claim.** The same lesson as the piped exit code
+and the negative grep.
+
+**Recommended sequencing (the worker's, and I agree)**: cheapest-with-unblocking-first over
+the veneers, with `workflow` and Elixir split into their own changes — B1 `connect_discovery`
+into the required set; B2/B3 the identity stamps in Node/Ruby/PHP (~15 lines each, zero
+fixtures, the reference proof already written); B4 decide `entry_idle`; then C1
+`state_persistence` (the gate for four other cells), C2–C6 in dependency order. The
+alternative — Elixir's `state_persistence` first — is the only work that makes the ratchet
+fire at all, but it is the largest single item and shows nothing until finished.
+
+**Two doc drifts found and NOT fixed**: `docs/sdk/conformance.md` enumerates 14 capabilities
+where the code has 16, and names a FIVE-member required set where the code has six (omitting
+`pool_wedge`, which the same page then argues is optional); `openspec/specs/sdk-conformance/
+spec.md` carries the same stale 14.
 
 Spawned at `bf6cfae9`. Last seen +10 min: `proposal.md` written, tree CLEAN — correct, an
 audit edits nothing.
