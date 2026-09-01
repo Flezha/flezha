@@ -28,8 +28,8 @@ The plugin:
 - Cuts a batch at `:linger_ms` or `:max_batch_bytes`, whichever comes first, and only into
   a free slot of the `:max_in_flight` window; a batch that fails retriably halts new sends
   and is resent with everything behind it, in order, under its original sequence numbers.
-- Caps buffering at `:queue_max` records and applies `:queue_overflow` when full — `:block`
-  by default, so nothing is dropped unless an operator chose a drop mode.
+- Caps buffering at `:queue_max` records and applies `:queue_overflow` when full —
+  `:drop_nothing` by default, so nothing is dropped unless an operator chose a drop mode.
 - Under `:idempotent = true` uses Produce v5+ with per-partition sequence numbers, acks a
   `:duplicate_sequence_number` as delivered, and on a fence
   (`:out_of_order_sequence_number`, `:invalid_producer_epoch`) re-initialises the producer
@@ -78,8 +78,8 @@ identical key, header and partition:
 | `:linger_ms` | `10` | `int` | batch window; `0` disables batching |
 | `:max_batch_bytes` | `1_048_576` | `int` | flush early at this size |
 | `:queue_max` | `10_000` | `int` | queue depth per `(plugin, topic, partition)` |
-| `:queue_overflow` | `:block` | atom | `:block` / `:drop_oldest` / `:drop_newest` |
-| `:queue_block_timeout_ms` | `5_000` | `int` | how long a sync `enqueue/4` caller waits under `:block` |
+| `:queue_overflow` | `:drop_nothing` | atom | `:drop_nothing` / `:drop_oldest` / `:drop_newest` |
+| `:queue_block_timeout_ms` | `5_000` | `int` | how long a sync `enqueue/4` caller waits under `:drop_nothing` |
 | `:idempotent` | `false` | `bool` | Kafka 0.11+; falls back to non-idempotent (window 1) if `InitProducerId` fails |
 | `:max_in_flight` | `5` with `:idempotent`, else `1` | `int` | `> 1` without `:idempotent` is refused at preparation (`{:max_in_flight_requires_idempotent, n}`) |
 | `:auto_create_topic` | `true` | `bool` | `CreateTopics` on the first `:unknown_topic_or_partition` |
@@ -112,7 +112,7 @@ order without idempotence, so a wider window without `:idempotent` is refused.
 
 ### `:queue_overflow`
 
-- **`:block`** (default) — back-pressure instead of loss. A sync `enqueue/4` caller waits
+- **`:drop_nothing`** (default) — back-pressure instead of loss. A sync `enqueue/4` caller waits
   out `:queue_block_timeout_ms`; a chain-dispatched record waits for room without blocking
   the process that enqueued it, so the pressure lands on the outbox flush that produced
   it rather than on ingest.

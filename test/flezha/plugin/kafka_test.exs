@@ -188,6 +188,24 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                })
     end
 
+    test "queue_overflow accepts drop_nothing and refuses the retired spelling" do
+      assert {:ok, %Kafka.Producer{queue_overflow: :drop_nothing}} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x",
+                 "queue_overflow" => "drop_nothing"
+               })
+
+      assert {:error, "Invalid value for queue_overflow: block"} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x",
+                 # overflow-naming-record:begin
+                 "queue_overflow" => "block"
+                 # overflow-naming-record:end
+               })
+    end
+
     test "default required_acks is -1 (acks=all) — BREAKING change from previous default of 1" do
       assert {:ok, %Kafka.Producer{required_acks: -1}} =
                Kafka.Producer.build(%{

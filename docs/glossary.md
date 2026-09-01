@@ -230,7 +230,10 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   which is what the author declared. Declared per channel with `.on_full(...)` / `.onFull(...)`
   and frozen at registration — an authoring declaration, never operator config. Not to be confused
   with the Kafka producer's `:queue_overflow`, the observability bus's per-sink `overflow:`, or
-  the transport write buffer: separate mechanisms with their own vocabulary.
+  the transport write buffer: separate mechanisms. `:queue_overflow` is operator config and
+  answers the same question about a producer queue, so it spells its three values the same way
+  (`:drop_nothing` / `:drop_newest` / `:drop_oldest`); the bus's `overflow:` is `:drop | :block`
+  and keeps its own vocabulary.
 - **Deferred wake** — the one ordered list in the poll core holding retry backoffs and
   processing-time timer deadlines; it owns no thread, and a due entry is promoted by the next
   thread that enters or wakes inside `poll`.

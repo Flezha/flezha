@@ -44,14 +44,14 @@ public interface Procedure<
     @Nonnull
     String name();
 
-    /** Compile-time typed Input class. Used at registerUnbounded time for wiring checks. */
+    /** Compile-time typed Input class. Used at registerStream time for wiring checks. */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<Input> inputType() {
         return (Class<Input>) TypeTokens.require(getClass(), TypeTokens.Token.INPUT);
     }
 
-    /** Compile-time typed Output class. Used at registerUnbounded time for wiring checks. */
+    /** Compile-time typed Output class. Used at registerStream time for wiring checks. */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<Output> outputType() {

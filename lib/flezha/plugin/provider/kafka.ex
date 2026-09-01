@@ -28,7 +28,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       * `:linger_ms`                       — int, default `10`
       * `:max_batch_bytes`                 — int, default `1_048_576`
       * `:queue_max`                       — int, default `10_000`
-      * `:queue_overflow`                  — `:block` (default), `:drop_oldest`, or `:drop_newest`
+      * `:queue_overflow`                  — `:drop_nothing` (default), `:drop_oldest`, or `:drop_newest`
       * `:queue_block_timeout_ms`          — int, default `5_000`
       * `:idempotent`                      — bool, default `false` (opt in for exactly-once)
       * `:max_in_flight`                   — int, default `5` with `:idempotent`, else `1`
@@ -67,7 +67,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   linger_ms: 10,
                   max_batch_bytes: 1_048_576,
                   queue_max: 10_000,
-                  queue_overflow: :block,
+                  queue_overflow: :drop_nothing,
                   queue_block_timeout_ms: 5_000,
                   idempotent: false,
                   # Unset: the window's width follows `:idempotent` (see below).
@@ -240,7 +240,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
         linger_ms: coerce_int(Map.get(opts, :linger_ms, 10)),
         max_batch_bytes: coerce_int(Map.get(opts, :max_batch_bytes, 1_048_576)),
         queue_max: coerce_int(Map.get(opts, :queue_max, 10_000)),
-        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow, :block)),
+        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow, :drop_nothing)),
         queue_block_timeout_ms: coerce_int(Map.get(opts, :queue_block_timeout_ms, 5_000)),
         retries: coerce_int(Map.get(opts, :retries, 5)),
         retry_backoff_ms: coerce_int(Map.get(opts, :retry_backoff_ms, 100)),
@@ -390,13 +390,13 @@ defmodule Flezha.Plugin.Provider.Kafka do
       case value do
         "drop_oldest" -> {:ok, :drop_oldest}
         "drop_newest" -> {:ok, :drop_newest}
-        "block" -> {:ok, :block}
+        "drop_nothing" -> {:ok, :drop_nothing}
         other -> {:error, "Invalid value for queue_overflow: #{other}"}
       end
     end
 
     defp convert_value(:queue_overflow, value)
-         when value in [:drop_oldest, :drop_newest, :block],
+         when value in [:drop_oldest, :drop_newest, :drop_nothing],
          do: {:ok, value}
 
     defp coerce_atom(v) when is_atom(v), do: v

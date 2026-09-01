@@ -92,9 +92,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   Returns `:ok` immediately after handing the message off to the worker's
   mailbox. Admission against the bounded queue happens inside the worker;
   overflow is resolved per the configured `:queue_overflow` strategy. Under
-  `:block` a cast-admitted record waits for room instead of being dropped —
-  the caller is never blocked, the record simply is not admitted yet, which is
-  what back-pressures the outbox flush that produced it.
+  `:drop_nothing` a cast-admitted record waits for room instead of being
+  dropped — the caller is never blocked, the record simply is not admitted yet,
+  which is what back-pressures the outbox flush that produced it.
 
   Permanent delivery failures of cast-admitted records surface through
   `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry tagged with
@@ -168,7 +168,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       linger_ms: Keyword.get(opts, :linger_ms, 10),
       max_batch_bytes: Keyword.get(opts, :max_batch_bytes, 1_048_576),
       queue_max: Keyword.get(opts, :queue_max, 10_000),
-      queue_overflow: Keyword.get(opts, :queue_overflow) || :block,
+      queue_overflow: Keyword.get(opts, :queue_overflow) || :drop_nothing,
       queue_block_timeout_ms: Keyword.get(opts, :queue_block_timeout_ms, 5_000),
       retries: Keyword.get(opts, :retries, 5),
       retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 100),
@@ -416,7 +416,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   # A full queue never discards a record unless the operator chose a drop
-  # strategy: the default is `:block` for every record, guaranteed or not.
+  # strategy: the default is `:drop_nothing` for every record, guaranteed or not.
   defp admit_record(state, record, from_or_async) do
     if state.queue_size < state.queue_max do
       {:admitted, push(state, record)}
@@ -443,10 +443,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   # Room is made by a drained batch, never by evicting an admitted record. A
   # synchronous caller waits out its own timeout; a cast-admitted record simply
   # waits — the enqueueing process is not blocked either way.
-  defp overflow(state, record, :async, :block),
+  defp overflow(state, record, :async, :drop_nothing),
     do: {:blocked, %{state | blocked: :queue.in({:async, record}, state.blocked)}}
 
-  defp overflow(state, record, from, :block) do
+  defp overflow(state, record, from, :drop_nothing) do
     Process.send_after(self(), {:block_timeout, from}, state.queue_block_timeout_ms)
     {:blocked, %{state | blocked: :queue.in({from, record}, state.blocked)}}
   end

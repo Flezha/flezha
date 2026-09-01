@@ -653,13 +653,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     assert_receive {:send_called, _, _}, 1_000
   end
 
-  test "block mode applies back-pressure with timeout" do
+  test "drop-nothing mode applies back-pressure with timeout" do
     # The dispatch is never answered — the batch is guaranteed to still be in
     # flight when the block-timeout fires for the queued enqueue.
     {pid, script_pid} =
       start_worker(
         queue_max: 1,
-        queue_overflow: :block,
+        queue_overflow: :drop_nothing,
         queue_block_timeout_ms: 50,
         linger_ms: 1
       )
@@ -782,8 +782,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert ProducerWorker.stats(pid).dropped_total == 1
     end
 
-    test ":block on the cast path waits for room instead of dropping" do
-      cast_path_waits_for_room(:block)
+    test ":drop_nothing on the cast path waits for room instead of dropping" do
+      cast_path_waits_for_room(:drop_nothing)
     end
 
     test "with no configured overflow policy a plain record waits instead of being dropped" do

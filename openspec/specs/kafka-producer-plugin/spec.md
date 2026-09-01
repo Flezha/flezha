@@ -146,11 +146,11 @@ When either condition is exceeded and a slot of the in-flight window is free, th
 
 Each `(worker, topic, partition)` triple SHALL maintain its own bounded outbound queue. When the queue has reached `:queue_max` (default 10 000) items, the producer SHALL apply the configured `:queue_overflow` strategy:
 
-- `:block` (default): synchronously block the chain caller until queue space is available, with a hard timeout of `:queue_block_timeout_ms` (default 5000); if the timeout fires, return `{:error, {:queue_full, :timeout}}`.
+- `:drop_nothing` (default): synchronously block the chain caller until queue space is available, with a hard timeout of `:queue_block_timeout_ms` (default 5000); if the timeout fires, return `{:error, {:queue_full, :timeout}}`.
 - `:drop_oldest`: pop the head of the queue, push the new message at the tail. Increment the per-`(topic, partition)` `dropped_total` counter.
 - `:drop_newest`: reject the new message. Increment `dropped_total`.
 
-The default SHALL be `:block` for every record, whether or not it serves a delivery-guaranteed outbox. A producer SHALL NOT discard a record by default: dropping output SHALL be a strategy the runner selects explicitly, never one derived from the record's durability class. Back-pressure runs off the emit hot path, so blocking degrades ingest rate rather than silently reducing delivered volume.
+The default SHALL be `:drop_nothing` for every record, whether or not it serves a delivery-guaranteed outbox. A producer SHALL NOT discard a record by default: dropping output SHALL be a strategy the runner selects explicitly, never one derived from the record's durability class. Back-pressure runs off the emit hot path, so blocking degrades ingest rate rather than silently reducing delivered volume.
 
 The `dropped_total` counter SHALL be exposed via:
 
@@ -162,7 +162,7 @@ Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous
 #### Scenario: Default overflow blocks rather than dropping
 - **GIVEN** a producer configured without `:queue_overflow`, serving output that is not delivery-guaranteed
 - **WHEN** the queue reaches `:queue_max` while further messages arrive
-- **THEN** the producer SHALL apply `:block` back-pressure and SHALL NOT discard any message
+- **THEN** the producer SHALL apply `:drop_nothing` back-pressure and SHALL NOT discard any message
 - **AND** `dropped_total` SHALL remain 0
 
 #### Scenario: `stats/1` reports drops
@@ -185,8 +185,8 @@ Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous
 - **AND** the second 100 SHALL each result in `{:error, {:queue_full, :overflow}}` returned to the chain
 - **AND** `dropped_total` SHALL equal 100
 
-#### Scenario: Block mode applies back-pressure
-- **GIVEN** a producer with `:queue_overflow = :block` and `:queue_block_timeout_ms = 1000`
+#### Scenario: Drop-nothing mode applies back-pressure
+- **GIVEN** a producer with `:queue_overflow = :drop_nothing` and `:queue_block_timeout_ms = 1000`
 - **WHEN** the queue is at capacity
 - **THEN** the next `on_output` call SHALL block until either space is available OR 1 second elapses
 - **AND** if the queue drains within 1 second, the call SHALL succeed normally
@@ -339,7 +339,7 @@ The Kafka producer plugin's transform-subscriber callbacks (`on_input/2`, `on_ou
 
 The callback SHALL be implemented as a `GenServer.cast` to the per-(plugin_id, topic, partition) worker, returning immediately after admission. Admission SHALL apply the configured `:queue_overflow` strategy (per the existing "Bounded outbound queue with configurable overflow strategy" requirement). The synchronous `enqueue/4` API is retained for tests, ad-hoc tooling, and explicit-flush call sites; chain-facing callbacks SHALL NOT use it.
 
-Under `:block` — the default — a cast-admitted record that finds the queue full SHALL wait inside the worker for room instead of being dropped; the chain caller is never blocked, because the record, not the caller, is what waits. Room SHALL be made only by a drained batch, never by evicting an admitted record. A synchronous `enqueue/4` caller additionally waits out its own `:queue_block_timeout_ms`.
+Under `:drop_nothing` — the default — a cast-admitted record that finds the queue full SHALL wait inside the worker for room instead of being dropped; the chain caller is never blocked, because the record, not the caller, is what waits. Room SHALL be made only by a drained batch, never by evicting an admitted record. A synchronous `enqueue/4` caller additionally waits out its own `:queue_block_timeout_ms`.
 
 #### Scenario: Chain dispatch returns within a millisecond regardless of broker latency
 - **GIVEN** a producer plugin attached to a chain with a `KafkaEx.Server` configured to delay 30 seconds on Produce
@@ -357,13 +357,13 @@ Under `:block` — the default — a cast-admitted record that finds the queue f
 - **AND** zero `OOM` events SHALL occur
 - **AND** the protobuf `timestamp_ms` (or any caller-provided event timestamp) SHALL NOT diverge from the host process's wall-clock by more than the worker's `:linger_ms + :request_timeout_ms` window
 
-#### Scenario: Block-mode admission from the chain holds the record, not the caller
-- **GIVEN** a producer worker with `:queue_overflow` unset (so `:block`)
+#### Scenario: Drop-nothing admission from the chain holds the record, not the caller
+- **GIVEN** a producer worker with `:queue_overflow` unset (so `:drop_nothing`)
 - **AND** the worker's queue is at `:queue_max`
 - **WHEN** `on_output/2` admits a new message via cast
 - **THEN** the chain caller SHALL still observe `{:ok, ctx}` immediately
 - **AND** the record SHALL wait in the worker and be produced once a batch drains, with no `[:flezha, :plugin, :kafka, :produce, :dropped]` event and `dropped_total` unchanged
-- **AND** the synchronous `enqueue/4` call from a test-mode caller SHALL still apply the documented block-mode semantics (block until space or `:queue_block_timeout_ms`)
+- **AND** the synchronous `enqueue/4` call from a test-mode caller SHALL still apply the documented drop-nothing semantics (block until space or `:queue_block_timeout_ms`)
 
 ### Requirement: Failure surfacing for async-admitted records
 
@@ -464,14 +464,14 @@ work. The plugin SHALL NOT claim broker-side exactly-once.
 
 A producer chain serving an effectively-once (delivery-guaranteed) outbox SHALL
 back-pressure the outbox flush — which runs off the ingest hot path — under the
-`:block` default rather than evict admitted records. An operator MAY still
+`:drop_nothing` default rather than evict admitted records. An operator MAY still
 configure `drop_oldest` or `drop_newest` explicitly on such a chain; each
 resulting drop SHALL emit an alarm-grade event, not only the `dropped_total`
 counter. On permanent failure of a batch carrying guaranteed records, the
 producer SHALL surface the failure to the outbox confirmation seam (so the batch
 parks through the dead-letter path) instead of dropping the records with only
-`:produce, :failed` telemetry. Plain (non-guaranteed) chains share the `:block`
-default; the alarm-grade drop event and the outbox park path remain specific to
+`:produce, :failed` telemetry. Plain (non-guaranteed) chains share the
+`:drop_nothing` default; the alarm-grade drop event and the outbox park path remain specific to
 guaranteed records.
 
 #### Scenario: Overflow back-pressures the flush, not the broker's data
@@ -552,4 +552,26 @@ When a batch fails retriably while later batches are outstanding behind it, the 
 - **GIVEN** batches k and k+1 outstanding
 - **WHEN** k's dispatch timeout fires before any response
 - **THEN** the producer awaits k+1's outcome, then resends k and k+1 in that order with their original sequence numbers
+
+### Requirement: `:queue_overflow` names what it discards, and the retired spelling is refused
+
+The `:queue_overflow` option's three values SHALL be `:drop_nothing`, `:drop_oldest` and `:drop_newest`, spelled exactly as the SDK overflow policy spells them, because both surfaces answer one question — what does a full queue discard? — and an operator reading a Flezha pipeline SHALL meet one answer to it.
+
+<!-- overflow-naming-record:begin -->
+The retired spelling `:block` SHALL NOT be accepted on this option, on any path: no alias, no coercion, no deprecation window.
+<!-- overflow-naming-record:end -->
+A configuration carrying it SHALL be refused with a message naming the option and the offered value, never silently mapped onto the default. A CI gate SHALL fail a build that reintroduces the retired spelling on this surface, and that gate SHALL match the option's own name rather than requiring the retired value to appear beside a sibling value.
+
+The option remains operator configuration on a controller-side plugin provider. It is not an authoring surface, carries no SDK spelling and crosses no wire, so no SDK is owed a companion change.
+
+#### Scenario: A configuration offering the retired spelling is refused
+
+- **WHEN** a plugin is configured with `queue_overflow` set to the string `block`
+- **THEN** the configuration SHALL be refused with a message naming `queue_overflow` and the offered value
+- **AND** the producer SHALL NOT fall back to the default policy
+
+#### Scenario: The gate catches the option's own shape
+
+- **WHEN** a source, document or specification line names `:queue_overflow` and the retired policy spelling, with no sibling policy value beside it
+- **THEN** `scripts/check-overflow-naming.sh` SHALL exit non-zero naming the file and line
 

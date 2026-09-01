@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Changed — the Kafka producer's queue-overflow option joins the policy vocabulary (`rename-kafka-queue-overflow`)
+
+**BREAKING for a producer plugin that configured `:queue_overflow` explicitly.**
+`:block` is now `:drop_nothing`; `:drop_oldest` and `:drop_newest` are unchanged.
+
+- **Rename, no behaviour change.** The option's three values answer the same
+  question as `OverflowPolicy` — what does a full queue discard? — and now spell
+  it the same way. `:drop_nothing` is already true of the mechanism: a full
+  queue holds the record and makes room only from a drained batch.
+- **No compatibility alias.** `--Xqueue_overflow=block` is refused with
+  `Invalid value for queue_overflow: block`. A stored plugin row carrying the
+  retired atom must be re-enabled with the new spelling; because `:block` was
+  the default, a row carries it only if an operator set the value already in
+  force.
+- **The parking mechanism keeps its own names.** `:queue_block_timeout_ms`
+  still bounds a synchronous `enqueue/4` caller's wait, and the worker's
+  `blocked` queue and `:block_timeout` message are unchanged — they name the
+  park, not the policy.
+- **`scripts/check-overflow-naming.sh`** now catches this surface: it matched
+  the policy list only when the retired name sat next to a sibling, which is
+<!-- overflow-naming-record:begin -->
+  why it passed over `queue_overflow: :block` for the whole of its life.
+<!-- overflow-naming-record:end -->
+
 ### Added — Python SDK (`python-sdk`)
 
 A sixth host for `flz_core`, over PyO3: a `python` feature on `flz_core_ffi`
@@ -283,7 +307,7 @@ every health surface green.
   — and the loss is a stated intent at the declaration site. The cost: a
   blocked entry parks the shared wire reader, so siblings on the same
   connection wait with it. Inter-procedure channels already blocked.
-- **The Kafka producer defaults to `:queue_overflow = :block`** for every
+- **The Kafka producer defaults to `:queue_overflow = :drop_nothing`** for every
   record, not only delivery-guaranteed ones. `:drop_oldest` / `:drop_newest`
   remain available and must be chosen. `Producer.stats/1` now reports
   `dropped_total`, so a chosen drop is readable synchronously, not only via

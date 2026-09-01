@@ -1871,35 +1871,6 @@ every new production freeze to `incident_log.md` at the repository root.
   as a result. **The operational rule, in force now: the first run of a series on
   this box is not a result.**
 
-### KI-94 · `check-kind-naming` has been red for weeks on the programme's own prose
-
-- **Severity**: P3 · a permanently-red gate is worse than no gate, because people
-  learn to skip it.
-- **Where**: `scripts/check-kind-naming.sh`. **13 occurrences at `9b85b425`**, and
-  **every one is prose in `docs/` using "bounded"/"unbounded" in the capacity or
-  plain-English sense** — "a bounded poll", "a bounded spin on the clock", "OOM
-  from unbounded WAL buffers". Not one is a kind-sense use.
-- **Three of the hits are the gate's own reflection**: `known_issues.md:1639`–`:1640`
-  and `STATE.md:1799`, `:1869` are text *about this gate being red*, which adds hits
-  by describing the problem. The count has been driven up three separate times by
-  supervisor prose and reworded away three separate times — **rewording correct
-  prose to satisfy a regex**, which is precisely what area 5a's batch 2 identified
-  as a false economy in `narrative_markers` (9 of its 17 were the same thing).
-- **The mechanism to fix it already exists and has never been used for this.** The
-  allowlist header names two: `scope:pattern` entries for narrow phrases, and
-  `kind-naming-record:begin` / `:end` comments for a block that deliberately spells
-  the words out — the latter chosen precisely because it "does not pin the prose's
-  exact wording the way a regex here would".
-- **Verdict (supervisor, 2026-08-31)**: **real, and to be fixed as its own small
-  change — not inline by a worker and not by a fourth rewording.** Blinding whole
-  files with a bare-word scope is refused: it would let a genuine kind-sense error
-  hide in the two documents the programme reads most.
-- **A fix must** wrap the recurring prose in `kind-naming-record` markers where it
-  clusters, add narrow `scope:phrase` entries in the existing house style for the
-  scattered ones, and **leave the gate green at HEAD** — then say what coverage, if
-  any, was given up. Until it lands, `check-kind-naming` being red is not evidence
-  about any change, and no worker should reword prose for it.
-
 ### KI-96 · Websocket's `convert_value/2` answers a struct where the callback says `String.t()`
 
 - **Severity**: P4 · off-contract, and strictly better than what it replaced.
@@ -2063,7 +2034,421 @@ path, so none needs a red-first test.
   `Heal` with a drill that proves it fires, or delete the function **and correct the dev
   note in the same commit** — the note is the reason this looked like a capability.
 
+### KI-107 · `scripts/format-check.sh` is red at HEAD on `cli_manager.ex`
+
+- **Severity**: P3 · a merge-gating formatter check that fails on a file no
+  in-flight change touches, which trains people to ignore its output.
+- **Where**: `lib/flezha/service/cli_manager.ex:89`–`:91`, a `defdelegate` whose
+  `), to: Cli.Schedule` the formatter wants split across two lines.
+- **Evidence**, on a tree whose only modifications are `docs/refactor/STATE.md`
+  and `close-kind-naming-gate-red`'s own files:
+
+  ```
+  $ bash scripts/format-check.sh
+  ...
+  UNFORMATTED — run scripts/format-apply.sh:
+    mix format
+    php-cs-fixer
+  FAILED — the output above says why:
+    formatters (scripts/format-apply.sh --check)
+  EXIT=1
+
+  $ mix format --check-formatted
+  ** (Mix) mix format failed due to --check-formatted.
+  The following files are not formatted:
+      /home/moon/Code/flezha/lib/flezha/service/cli_manager.ex
+   89  89  |                arg7 \\ "workflow",
+   90  90  |                arg8 \\ ""
+   91     -|              ), to: Cli.Schedule
+       91 +|              ),
+       92 +|              to: Cli.Schedule
+
+  $ git status --short lib/flezha/service/cli_manager.ex
+  (empty — the file is exactly as committed)
+  ```
+
+  The useful half: **it reproduces with every file of the change in flight
+  reverted**, and the file is unmodified in the working tree, so it is committed
+  in this state.
+- **Mechanism, and the reason it was NOT fixed on the spot**: `cli_manager.ex`
+  lost a delegate in `retire-cluster-snapshot-remnants`, which is the most
+  likely origin of the re-wrap. But this box runs Elixir 1.20 and CI runs 1.19,
+  and the standing rule is never to run a bare `mix format` here — a local
+  reformat can produce a diff CI then rejects. Deciding this needs the CI
+  formatter's own verdict, not this box's.
+- **The other half of that red is already recorded**: `php-cs-fixer` dies on a
+  parse error inside `sdk/php/vendor/symfony/`, filed separately, and the diff
+  contains no PHP.
+- **A fix must** establish which Elixir version's formatting is authoritative
+  before editing the file — reproduce under CI's 1.19, then apply that
+  formatting — and must not reformat the file on a 1.20 toolchain and assume CI
+  agrees. It is three lines in `lib/`, so it is a behaviour-neutral edit inside a
+  finished area and belongs to whoever owns that lane, not to a naming-gate
+  change.
+
 ## Resolved
+
+### KI-108 · A one-line migration-record pair blinds a naming gate to the rest of the file — RESOLVED
+
+- **Severity**: P2 · three merge-gating naming checks stop reading six files
+  partway through, silently, and the exemption that does it looks correct.
+- **Where**: `scripts/naming_gate.py:104`–`:113`, the per-line loop inside
+  `walk/1`. Live instances (a line carrying BOTH markers):
+  `docs/dev_notes/close-overflow-silent-failures.md:200`,
+  `docs/dev_notes/assertions-that-cannot-fail.md:5`,
+  `docs/dev_notes/finish-platform-authn-authz.md:54`,
+  `docs/dev_notes/fix-first-input-drop-on-bind.md:153`,
+  `docs/known_issues.md:2485` and `:3966`.
+- **Evidence**, `rename-kafka-queue-overflow`'s tree, the same violating line
+  placed either side of `close-overflow-silent-failures.md:200` and the file
+  restored byte-identical after:
+
+  ```
+  probe = "The push is refused under `OverflowPolicy::Block` policy."
+
+  A  probe appended AFTER  line 200 -> exit 0, 'no hit in this file'
+  B  probe inserted at line 151     -> exit 1,
+     'docs/dev_notes/close-overflow-silent-failures.md:151: The push is
+      refused under `OverflowPolicy::Block` policy.'
+  restored, identical: True
+  ```
+
+  Arm A is the defect: lines 201–279 of that file are unchecked by every
+  record-tagged gate, and the gate says `overflow naming OK`.
+- **Mechanism, named to the line**: `walk/1` tests `begin in line` first and
+  `continue`s, so the `end in line` branch below it never runs for a line that
+  carries both. `in_record` latches `True` and is cleared only when the next
+  file starts. The inline form is the one used in prose, where a marker pair
+  around a phrase reads better than two lines around a paragraph — so the
+  shape that breaks it is the shape a writer reaches for.
+- **A fix must** make a line carrying both markers a self-contained record —
+  skipped, with `in_record` unchanged — rather than an opening one, and be
+  shown red first with the probe above at `close-overflow-silent-failures.md`.
+  It must then re-run all five naming checks over the six files above, because
+  each has an unread tail today and any of those tails may hold a real hit.
+- **Not fixed on the spot**: it is not the rename this session owns, and the
+  fix changes what three merge gates read — the verdict is the supervisor's.
+
+- **Resolved 2026-09-01 by `fix-record-block-latch`.** `walk/1` reads both
+  markers before deciding, and only a line carrying exactly one of them moves
+  the block state — so a line carrying both exempts itself and leaves the
+  surrounding block alone. A block left open at end of file is refused by name
+  as well, because it reaches the same blindness by the other route; zero
+  tracked files are open today, so that half is armed rather than owed.
+- **Three corrections to the entry above.** The instances are **six across five
+  walked files**, not six files: the sixth,
+  `scripts/kind-naming-allowlist.txt:30`, is a `self_files` entry for
+  `check-kind-naming` and is never opened, so the kind gate lost nothing at all.
+  The two lines in this file are `:2527` and `:4008` at `1825c053`, not `:2485`
+  and `:3966`. And **this file is the mild case, not the severe one**: its later
+  record blocks carry `:end` markers that clear the latch, so the blinded region
+  here is `2528`–`2540` and `4009`–EOF, **18 lines**. The severe case is a dev
+  note whose inline pair sits near the top with nothing below to close it —
+  `assertions-that-cannot-fail.md` was read **4 lines out of 159**.
+- **What the unread tails held: nothing.** With the ordering corrected all five
+  naming checks still exit 0. This was a **latent** defect, and that is the
+  reason it was worth fixing rather than a reason it was not: a gate printed
+  `OK` for two different reasons — nothing is wrong, or it stopped looking — and
+  the two were indistinguishable from outside.
+- **Coverage recovered**, counted by wrapping `check` and running the three
+  record-tagged gates against the committed module and against the fixed one:
+
+  | gate | file | lines read before → after |
+  |---|---|---|
+  | module | `docs/dev_notes/assertions-that-cannot-fail.md` | 4 → 159 |
+  | module | `docs/dev_notes/finish-platform-authn-authz.md` | 53 → 126 |
+  | module | `docs/dev_notes/fix-first-input-drop-on-bind.md` | 152 → 263 |
+  | module | `docs/known_issues.md` | 3938 → 3956 |
+  | overflow | `docs/dev_notes/close-overflow-silent-failures.md` | 199 → 278 |
+
+  **436 lines** across five files, over three merge-gating checks. The kind gate
+  is unchanged, for the `self_files` reason above.
+- **Red first, on this entry's own probe**, run before any edit and again after,
+  with the file restored byte-identical each time:
+
+  ```
+  probe appended AFTER line 200
+    before the fix -> exit 0, "overflow naming OK"
+    after  the fix -> exit 1, "…close-overflow-silent-failures.md:210: The push
+                               is refused under `OverflowPolicy::Block` policy."
+  probe inserted at line 151
+    before and after -> exit 1, naming :151
+  the file unmodified
+    after the fix -> exit 0 — the inline pair still exempts its own line
+  ```
+
+- **The regression proof is automated, not a drill.** Nothing in this repository
+  tested `scripts/` — `test/scripts/` is manual shell drills against a running
+  system and `sdk/python/tests/` is the Python SDK's own suite — so rather than
+  build a harness for a one-line fix, `scripts/naming_gate.py` gained a
+  `--self-test` that runs the real `walk` over a throwaway `git init` tree with
+  four fixtures: a record written on one line, a record spanning two markers, a
+  block left open, and a file with no markers. It runs as a sixth step of the
+  existing `kind-naming` job. Against the unfixed `walk` it reports
+  `expected ['block.md:4', 'inline.md:2', 'unclosed.md:1']` / `found
+  ['block.md:4']` — only the shape that already worked — which is both halves of
+  the change red in one run.
+- **An inline pair stays legal.** Refusing it would remove the footgun outright
+  and give every record one shape, at the cost of converting five live
+  instances, four of which wrap a phrase *inside a sentence* and one of which is
+  a table cell where a line break ends the row. That is a prose edit forced on
+  correct prose by a regex, which is the false economy [[KI-94]] closed. The
+  cost of the choice is two shapes for one mechanism; it is answered by the
+  comment at the branch and by the `inline.md` fixture, which is the rule in
+  executable form.
+
+### KI-105 · A retired kind identifier survives in two shipped javadocs, hidden by the gate's own allowlist — RESOLVED
+
+<!-- kind-naming-record:begin -->
+
+- **Severity**: P3 · stale prose in a shipped SDK API file. No runtime effect —
+  the identifier names a method that does not exist — but it is exactly the
+  occurrence `scripts/check-kind-naming.sh` exists to catch, and the gate could
+  not see it.
+- **Where**: `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:47`
+  and `:54`, two javadoc lines reading *"Used at registerUnbounded time for
+  wiring checks."*
+- **Evidence**:
+
+  ```
+  $ grep -rn registerUnbounded --include='*.java' sdk/ test/
+  .../procedure/Procedure.java:47:    /** Compile-time typed Input class. Used at registerUnbounded time for wiring checks. */
+  .../procedure/Procedure.java:54:    /** Compile-time typed Output class. Used at registerUnbounded time for wiring checks. */
+
+  $ git ls-files | grep -v '^openspec/changes' | xargs grep -ln registerUnbounded
+  scripts/kind-naming-allowlist.txt
+  sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java
+  ```
+
+  There is no such method. `Flezha.registerUnbounded` was a real entry point and
+  the kind rename retired it — `openspec/changes/archive/`
+  `2026-08-13-rename-operative-kinds-to-stream-and-workflow/rename-table.md:58`
+  lists it among the Java camelCase twins to rename. The two javadocs were
+  missed, and the same file's neighbouring line already says *"Stable identifier
+  within the StreamOperative class"*, so the rename reached the prose either
+  side of them.
+- **Mechanism — why no gate saw it for the rename's whole lifetime**: the
+  allowlist erases **destructively and in file order**, and its plain-English
+  rule for the capacity sense carried a `time` branch. Against
+  `... registerUnbounded time for wiring ...` that branch matched the substring
+  `Unbounded time` and deleted it, cutting the identifier in half; the residue
+  `registerUn` contains no `bounded`, so the line came out clean. The rule was
+  written for "bounded time" and had no idea it was covering an identifier. Any
+  allowlist rule that can match inside a word has this failure mode, which is why
+  every bare-word rule in that file now carries `(?<![A-Za-z0-9_])`.
+- **How it surfaced**: replacing the enumerated-noun rule with a shape rule that
+  refuses to match inside an identifier left these two lines as the gate's only
+  remaining hits.
+- **A fix must** correct the two javadocs to name the surviving entry point, and
+  then delete the `Procedure.java:registerUnbounded` line from
+  `scripts/kind-naming-allowlist.txt` — the entry exists only to keep the gate
+  green while the text is wrong, and leaving it behind would re-hide the next
+  one. It is a two-word prose edit in `sdk/java/**`, which is why it is filed
+  rather than taken.
+
+- **Resolved 2026-09-01 by `close-kind-naming-gate-red`.** Both javadocs now read
+  `registerStream`, which is the house spelling already used by
+  `StreamOperativeConfigurationException.java:165` and `ProcedureCtx.java:190`
+  (`{@code registerStream} time`) and is what `rename-table.md:13` maps
+  `Unbounded` to. The same file's `:43` already said "Stable identifier within
+  the StreamOperative class", so the rename had reached the prose either side of
+  these two lines.
+- **The allowlist exemption is DELETED, not kept.** Those lines are now covered
+  by the gate for real; the check no longer has a path entry for that file, and
+  `grep -ln registerUnbounded` over every tracked non-archive file returns no
+  Java source.
+- **Evidence — the residue that hid it**, reproduced against HEAD's allowlist
+  before the fix. The plain-English rule's `time` branch matched inside the
+  identifier:
+
+  ```
+  line    : /** Compile-time typed Input class. Used at registerUnbounded time for wiring checks. */
+  residue : '/** Compile-time typed Input class. Used at registerUn for wiring checks. */'
+  contains 'bounded'? -> False  => the gate PASSED on a retired kind identifier
+  ```
+
+  The rule was written for "bounded time" and had no idea it was covering an
+  identifier. Every bare-word rule in the allowlist now carries
+  `(?<![A-Za-z0-9_])` or a `\b`, which is what surfaced these two lines.
+- **Scope**: two javadoc words. No signature, no annotation, no behaviour; the
+  emitted API is untouched.
+
+<!-- kind-naming-record:end -->
+
+### KI-106 · `check-module-naming.sh` is red at HEAD, on a defect entry citing a renamed module — RESOLVED
+
+<!-- module-naming-record:begin -->
+
+- **Severity**: P3 · a second permanently-red naming gate, red for the same
+  reason [[KI-94]] describes: writing a defect down trips the gate that defect
+  is about.
+- **Where**: `docs/known_issues.md`, the two lines inside [[KI-104]] that quote
+  the old module path. At the commit this was found on they are `:2208` and
+  `:2214`; they move whenever anything above them is edited, which is part of
+  the problem.
+- **Evidence**, at `f967b106` with only `docs/refactor/STATE.md` modified:
+
+  ```
+  $ ./scripts/check-module-naming.sh; echo "EXIT=$?"
+  retired module path still named (see scripts/check-module-naming.sh for the seven and their replacements):
+
+    docs/known_issues.md:2208: `Flezha.State.Registry` (renamed `Flezha.State.Paths` by `fix-opaque-module-names`)
+    docs/known_issues.md:2214:   MISSING: Flezha.State.Registry
+
+  2 occurrence(s). A live reference takes the new name. A document citing the old name as history wraps it in a `module-naming-record` block.
+  EXIT=1
+  ```
+
+  Both lines are **citations, not references**: the first says in so many words
+  that the module was renamed, and the second is captured tool output quoted as
+  evidence. Neither is a live use.
+- **Mechanism**: `naming_gate.walk`'s `record_tag` exemption is per block, and
+  [[KI-104]]'s entry was written without one. The gate's own hint names the
+  remedy on the line it prints. `docs/known_issues.md` already carries
+  `module-naming-record` markers elsewhere — the KI-42 row in the resolved table
+  wraps the same module path inline — so the mechanism is in use in this very
+  file and was simply not reached for here.
+- **Not caused by, and not fixed by, `close-kind-naming-gate-red`**: proved by
+  restoring that change's only shared file, `scripts/naming_gate.py`, to its
+  committed content and re-running — identical output, same two lines.
+- **A fix must** wrap the two cited lines in
+  `module-naming-record:begin` / `:end`, and leave the surrounding prose
+  unedited: the entry is accurate, and rewording it to satisfy a regex is the
+  false economy [[KI-94]] closed. One block, two markers, no prose change.
+
+
+- **Resolved 2026-09-01 by `close-kind-naming-gate-red`.**
+  `./scripts/check-module-naming.sh` exits **0**. The two citations inside
+  [[KI-104]] are wrapped in `module-naming-record` markers and **no prose was
+  changed**: the inline one takes the same shape the resolved-table KI-42 row
+  already used, and the captured tool output is wrapped *outside* its fence so
+  the code block renders exactly as before.
+- **Why it was in scope for a change about a different gate**:
+  `.github/workflows/naming.yml` runs `check-kind-naming`,
+  `check-overflow-naming`, `check-module-naming`, `check-sdk-boundary` and
+  `check-mimic-global` as **five steps of one job**. A red step fails the Naming
+  workflow whichever step it is, so greening only the kind gate would have left
+  CI red and the branch still gated.
+
+<!-- module-naming-record:end -->
+
+### KI-94 · `check-kind-naming` has been red for weeks on the programme's own prose — RESOLVED
+
+<!-- kind-naming-record:begin -->
+
+- **Severity**: P3 · a permanently-red gate is worse than no gate, because people
+  learn to skip it.
+- **Where**: `scripts/check-kind-naming.sh`. **13 occurrences at `9b85b425`**, and
+  **every one is prose in `docs/` using "bounded"/"unbounded" in the capacity or
+  plain-English sense** — "a bounded poll", "a bounded spin on the clock", "OOM
+  from unbounded WAL buffers". Not one is a kind-sense use.
+- **Three of the hits are the gate's own reflection**: `known_issues.md:1639`–`:1640`
+  and `STATE.md:1799`, `:1869` are text *about this gate being red*, which adds hits
+  by describing the problem. The count has been driven up three separate times by
+  supervisor prose and reworded away three separate times — **rewording correct
+  prose to satisfy a regex**, which is precisely what area 5a's batch 2 identified
+  as a false economy in `narrative_markers` (9 of its 17 were the same thing).
+- **The mechanism to fix it already exists and has never been used for this.** The
+  allowlist header names two: `scope:pattern` entries for narrow phrases, and
+  `kind-naming-record:begin` / `:end` comments for a block that deliberately spells
+  the words out — the latter chosen precisely because it "does not pin the prose's
+  exact wording the way a regex here would".
+- **Verdict (supervisor, 2026-08-31)**: **real, and to be fixed as its own small
+  change — not inline by a worker and not by a fourth rewording.** Blinding whole
+  files with a bare-word scope is refused: it would let a genuine kind-sense error
+  hide in the two documents the programme reads most.
+- **A fix must** wrap the recurring prose in `kind-naming-record` markers where it
+  clusters, add narrow `scope:phrase` entries in the existing house style for the
+  scattered ones, and **leave the gate green at HEAD** — then say what coverage, if
+  any, was given up. Until it lands, `check-kind-naming` being red is not evidence
+  about any change, and no worker should reword prose for it.
+
+- **Resolved 2026-09-01 by `close-kind-naming-gate-red`.** The gate exits **0**.
+
+  | | before | after |
+  |---|---|---|
+  | `./scripts/check-kind-naming.sh` | exit **1** | exit **0** |
+  | occurrences, working tree | **26** | **0** |
+  | occurrences, committed `docs/refactor/STATE.md` | **22** | **0** |
+  | allowlist rules | **69** | **30** (45 deleted, 6 added) |
+
+  The two counts differ because four of the 26 were in the board's own
+  uncommitted edit, written while this change was in flight — the defect
+  reproducing itself one more time.
+
+- **What changed.** The gate now runs **two** judgements and fails a line that
+  trips either, both built from `naming_gate.pattern_check` with no new
+  mechanism: the allowlist (mask-then-match) carries the open-ended
+  plain-English sense, and an unmaskable `KIND_SENSE` pattern set
+  (match-directly, the judgement `check-overflow-naming.sh` already used)
+  carries the closed kind sense — the word bound to `operative`, `kind`,
+  `class`, `factory` or `one`, and a kind or operative predicated to *be* the
+  retired name. Because no allowlist entry can mask those, the allowlist was
+  free to stop enumerating nouns: a 45-noun alternation became one rule for the
+  attributive shape, one for the word quoted as a token, one for a line-wrapped
+  ending, and one for the adverb. **45 of the 69 rules were then dead and were
+  deleted.** `KIND_SENSE` fires on **0** tracked lines outside record blocks.
+
+- **Negative control — the gate still bites.** Each shape injected on its own
+  into `docs/known_issues.md`, one gate run each, then reverted:
+
+  ```
+  a `bounded` operative.                             CAUGHT
+  The operative this class declares is bounded       CAUGHT
+  `BoundedOperative` is retired.                     CAUGHT
+  def bounded_operative(x), do: x                    CAUGHT
+  spawn_bounded(ref)                                 CAUGHT
+  kind: :bounded                                     CAUGHT
+  Each operative is a bounded one.                   CAUGHT
+  BoundedOperative     — in Procedure.java           CAUGHT
+  registerUnbounded    — in Procedure.java           CAUGHT
+  ---- deliberately not caught ----
+  We ship bounded workflows.                         PASSED
+  We ship bounded streams.                           PASSED
+  "…limited by a bounded" / "poll on the clock."     PASSED
+  ```
+
+  The last CAUGHT row is the one that matters most: while the allowlist carried
+  a path entry for that file, `registerUnbounded` there **passed**. With the
+  entry deleted it is caught, so the coverage was restored rather than moved.
+  Detection is per injected line, not by exit code, because the board's
+  uncommitted working copy holds an unrelated hit of its own.
+
+  And for the record-block mechanism, in the same file:
+
+  ```
+  R1 · kind-sense line INSIDE the block              exit=0  not caught (by design)
+  R2 · the SAME line outside it, same file           exit=1  CAUGHT
+  R3 · a line below a closed block                   exit=1  CAUGHT
+  ```
+
+- **Coverage given up, named by shape.** Three, all in prose, none reachable by
+  an identifier:
+  1. **A wrapped line ending in the bare word after a determiner** — "…limited
+     by a bounded" / "poll on the clock". Excused, because that is how prose
+     wraps; a kind-sense sentence ending the same way passes. Ending after a
+     *verb* ("…is bounded") stays caught, which is why the rule names
+     determiners rather than any word.
+  2. **The word attributive to `workflow` or `stream`** — "bounded workflows".
+     Deliberate: those are the *current* kind names, so "bounded workflow" is a
+     contradiction rather than a reintroduction, and binding them would fail the
+     glossary's own sanctioned "folds an unbounded input".
+  3. **Anything inside a `kind-naming-record` block**, including this entry.
+     Scoped to the block and greppable, which is the whole point of the
+     delimiter; proved by control R2 above.
+- **One working-tree hit remains, and it is not this change's to fix.** With
+  `docs/refactor/STATE.md` taken from HEAD the gate reports **0 occurrences**,
+  exit **0**. The supervisor's uncommitted board edit adds one line quoting
+  `registerUnbounded` while describing this very defect — the disease
+  reproducing during its own cure. It needs a two-marker `kind-naming-record`
+  block from the board's owner; a `+` line in `git diff docs/refactor/STATE.md`
+  is where it lives.
+- **Not done, and deliberately**: `docs/refactor/STATE.md` was not edited. Its
+  15 hits are covered by path-independent shape rules, not by a bare-word scope
+  over the file — which this entry's own verdict refuses — so the board can be
+  written on without re-reddening the gate.
+
+<!-- kind-naming-record:end -->
 
 ### KI-81 · Two `docker/prod` scripts call `flz cluster` verbs that do not exist — RESOLVED
 
@@ -2205,11 +2590,12 @@ path, so none needs a red-first test.
   no public API between them, and the breakage is invisible until a user clicks.
 - **Where**: `/home/moon/Code/flezha_ui` (a separate repo) reaches the controller by
   `erpc` through its own `NodeManager.erpc_call/3`. Confirmed broken today:
-  `Flezha.State.Registry` (renamed `Flezha.State.Paths` by `fix-opaque-module-names`)
+  <!-- module-naming-record:begin -->`Flezha.State.Registry`<!-- module-naming-record:end --> (renamed `Flezha.State.Paths` by `fix-opaque-module-names`)
   and `Flezha.Service.Identificator` (moved to `Flezha.Identificator` by area 5c).
 - **Evidence**: every `Flezha.*` name in `flezha_ui`, resolved against
   `defmodule … do` in this tree:
 
+  <!-- module-naming-record:begin -->
   ```
   MISSING: Flezha.State.Registry
   MISSING: Flezha.Service.Identificator
@@ -2218,6 +2604,7 @@ path, so none needs a red-first test.
   MISSING: Flezha.Plugin.OperativeStdout
   MISSING: Flezha.Plugin.Provider.OperativeWebsocket
   ```
+  <!-- module-naming-record:end -->
 
   The first two are ours and dated. The other four have no same-named successor and
   are NOT traced — they may predate the programme. `Flezha.Totally.Gone` also appears

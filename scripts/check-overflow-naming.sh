@@ -42,9 +42,20 @@ PATTERNS = [re.compile(p) for p in (
     r"\bon_?[Ff]ull\b.{0,40}:block\b",
     r"\bonFull\s*\([^)]*\bBLOCK\b",
     r'\bon_?[Ff]ull\s*=\s*"block"',
-    # The wire literal, and the atom lists that enumerate the policies.
+    # The wire literal, and the atom lists that enumerate the policies. The
+    # list runs both ways: the retired name is as often the last member as the
+    # first, and requiring one order is how a policy list stays unread.
     r'"overflow"\s*[:,)][^"]*"block"',
     r":block\s*[,|]\s*:drop_(newest|oldest)",
+    r":drop_(newest|oldest)\s*[,|]\s*:block\b",
+    # The Kafka producer's `:queue_overflow`, whose value set is the same three
+    # policies. Anchored on that option's own name, so the observability bus's
+    # per-sink `overflow:` — a different mechanism, keeping its own vocabulary
+    # — stays out of scope by construction rather than by exemption.
+    r'\bqueue_overflow\b.{0,80}[:"]block\b',
+    # The clause or call that takes the policy as an argument. `overflow(` with
+    # the paren is the function; `overflow:` the map key is the bus's.
+    r"\boverflow\([^)]*:block\b",
     # The conformance fixture and its per-SDK classes.
     r"\bbounded_mailbox_block\b",
     r"\bBoundedMailboxBlock",
@@ -63,10 +74,37 @@ ALLOWED = [
     # mention, not a use — bare prose naming the policy is still caught, which
     # is the only shape that could reintroduce it.
     ("docs/known_issues.md", re.compile(r"""['"`]OverflowPolicy::Block['"`]""")),
+    # `docs/refactor/STATE.md` is the programme board: it has to quote the
+    # retired spelling to name the work that retires it, and a backticked span
+    # is a quotation. Bare prose naming the policy is still caught.
+    ("docs/refactor/STATE.md", re.compile(r"`[^`\n]*:block[^`\n]*`")),
 ]
 
+# Inside the Kafka producer's own files, a bare `:block` / `"block"` names the
+# queue-overflow policy and nothing else: the parking mechanism there is spelled
+# `queue_block_timeout_ms`, `blocked` and `:block_timeout`, none of which is a
+# bare `:block` atom. Scoping the broad shape to those paths reaches the prose,
+# the scenario titles and the function clauses that carry no `:queue_overflow`
+# on their own line — the shapes a repo-wide pattern cannot claim, because
+# elsewhere `:block` is the observability bus's own policy.
+KAFKA_SCOPE = (
+    "lib/flezha/plugin/provider/kafka",
+    "test/flezha/plugin/kafka",
+    "docs/plugins/kafka_producer.md",
+    "openspec/specs/kafka-producer-plugin/",
+)
+KAFKA_POLICY = [re.compile(p) for p in (
+    r":block\b",
+    r'"block"',
+    r"[Bb]lock[- ]mode\b",
+)]
+
+policy = naming_gate.pattern_check(PATTERNS, ALLOWED)
+kafka_policy = naming_gate.pattern_check(KAFKA_POLICY)
+
 sys.exit(naming_gate.walk(
-    check=naming_gate.pattern_check(PATTERNS, ALLOWED),
+    check=lambda rel, line: policy(rel, line)
+    or (kafka_policy(rel, line) if rel.startswith(KAFKA_SCOPE) else []),
     prefilter=lambda text: "lock" in text or "LOCK" in text,
     # The gate's own files carry the retired names as data.
     self_files={"scripts/check-overflow-naming.sh", ".github/workflows/naming.yml"},

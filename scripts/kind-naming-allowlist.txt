@@ -2,27 +2,46 @@
 #
 # The two operative kinds are `stream` and `workflow`. The words "bounded" and
 # "unbounded" survive in this repository in two other senses, and this file
-# enumerates them so `scripts/check-kind-naming.sh` can tell them apart from a
-# kind-sense regression.
+# tells `scripts/check-kind-naming.sh` how to recognise them so they are not
+# read as a kind-sense regression.
 #
 #   capacity — a mailbox with a capacity limit (`BoundedMailboxSource`,
 #              `:flezha_bounded_mailbox`, "backpressure and bounded mailboxes")
 #   english  — ordinary usage: "bounded by the deadline", "a bounded (1024)
 #              FIFO", "bounded cardinality", "unbounded growth"
 #
-# A block that deliberately spells the words out — a changelog entry or the
-# public-API rename table MENTIONING the retired names, the CLAUDE.md notes, the
-# glossary paragraph that retains `bounded`/`unbounded` as adjectives for the
-# RUN — is exempted instead by wrapping it in `kind-naming-record:begin` /
-# `kind-naming-record:end` comments. That keeps the exemption greppable and
-# scoped to the block, and it does not pin the prose's exact wording the way a
-# regex here would.
+# THREE mechanisms cover those two senses. Reach for them in this order.
+#
+# 1. The gate's own KIND-SENSE PATTERNS, in `check-kind-naming.sh`, decide what
+#    this file may not excuse. They match `bounded`/`unbounded` bound to a noun
+#    that can only name the operative construct — `operative`, `kind`, `class`,
+#    `factory`, and a `kind`/`operative` predicated to BE the retired name. No
+#    entry here can mask them, so a broad rule below is safe: it cannot hide the
+#    error the gate exists to catch. Widening those patterns is how the gate
+#    gets stronger; adding entries here is how it gets quieter.
+#
+# 2. SHAPE RULES here, matching how the legitimate senses are WRITTEN rather
+#    than which nouns they use. The plain-English sense takes an open-ended set
+#    of nouns — every new limit anyone describes is a new noun — so enumerating
+#    them makes the gate go red on correct prose about once a week. Prefer a
+#    rule that describes the shape ("the word applied to a following word", "the
+#    word quoted as a token") over one that pins a phrase.
+#
+# 3. `kind-naming-record:begin` / `kind-naming-record:end` comments, for a block
+#    that deliberately spells the words out — a changelog entry, a public-API
+#    rename table, the glossary paragraph that keeps `bounded`/`unbounded` as
+#    adjectives for the RUN, a resolved defect entry quoting the gate's output.
+#    Greppable, scoped to the block, and it does not pin the prose's exact
+#    wording the way a regex here would.
 #
 # Format: <path-prefix>:<regex>   (first colon separates; `*` matches any path)
 # The checker DELETES every match of <regex> from a line and then looks for a
 # residual identifier CONTAINING `bounded` — so `BoundedOperative` and
 # `spawn_bounded` are caught, not only the bare word, and a line carrying two
-# senses is excused only for the phrase named here.
+# senses is excused only for the phrase named here. Because erasure is
+# destructive and runs in file order, every rule that masks the bare word
+# carries `(?<![A-Za-z0-9_])` or a `\b`: without it a rule written for prose
+# cuts an identifier in half and the residue no longer says `bounded`.
 #
 # NOT a target of the rename and NOT listed here: the binding word family —
 # `bound`, `unbound`, `bind`, `rebind`, `misbound`, `inbound`, `outbound`,
@@ -37,109 +56,63 @@
 *:= (un)?bounded(::<[^>]*>)?\(
 
 # --- capacity sense -----------------------------------------------------
-*:[Bb]ounded[ -](Entity )?mailbox(es)?
-*:BoundedMailbox
+# The mailbox family, in every case convention it is written in.
 *:bounded_mailbox
-# The same capacity sense in camel and Pascal case, which the two entries above
-# (snake case, and the spaced/hyphenated phrase) do not reach.
 *:[Bb]ounded[Mm]ailbox
 *:BOUNDED_MAILBOX
-# historical archived-spec filename cited in a javadoc
-sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.java:boundeds\.md
 
-# --- plain English ------------------------------------------------------
-# One rule per shape. The first is the adjective list: "bounded X" where X is a
-# limit, not an operative concept. Extend the alternation rather than adding a
-# near-duplicate line — that is how `bounded queue` and `bounded-queue` once
-# ended up as two entries.
-*:[Bb]ounded `GenServer\.call`
-*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade|state|input|number|ladder|connect|re-send|in-process|accounting|[0-9]+ ms|concurrency|send buffer|`Task\.async_stream`)
-*:[Bb]ounded \(1024
-# `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, not a
-# kind — the one English-sense identifier in the tree, plus its own docs.
-*:SafeCall\.bounded
-*:`bounded/3`
-*:bounded\(target\(\)
-*:def bounded\(server
-# "X is/stays bounded", and the unbounded-as-"without limit" family.
+# --- plain English and capacity: the ATTRIBUTIVE shape ------------------
+# The word applied to a following word — "bounded by", "bounded wait",
+# "unbounded growth", "bounded (1024) FIFO", "bounded `Task.async_stream`".
+# One rule instead of an enumeration of the nouns a limit can have, because
+# that enumeration is open-ended and chasing it is what kept this gate red.
+# A kind-sense use of this shape ("a bounded operative", "the bounded kind")
+# is caught by the gate's kind-sense patterns, which this cannot mask.
+*:(?<![A-Za-z0-9_])(?:[Uu]n)?[Bb]ounded[ -][A-Za-z0-9`"(]
+
+# The word MENTIONED as a token rather than used — quoted or in a code span,
+# as prose about the naming itself does. A kind atom (`:bounded`) keeps its
+# colon and an identifier (`bounded_put`) keeps its tail, so neither matches.
+*:(?:[`"](?:[Uu]n)?[Bb]ounded\b|\b(?:[Uu]n)?[Bb]ounded[`"])
+
+# Line-wrapped prose whose noun landed on the next line. Restricted to a
+# preceding determiner or preposition: after a verb ("the operative it
+# declares is bounded") the line reads as a claim about the subject, and that
+# shape stays caught.
+*:\b(?:a|an|the|its|one|same|of|to|from|with|over|and|per) (?:un)?bounded$
+
+# The adverb. It qualifies a verb, so it can never be naming a kind.
+*:(?<![A-Za-z0-9_])(?:[Uu]n)?[Bb]oundedly
+
+# --- plain English: the PREDICATIVE shape -------------------------------
+# "X is/stays bounded", anchored to the noun X. Deliberately NOT generalised
+# to any subject: "<something> is bounded" is exactly how a kind-sense claim
+# would read, so each legitimate subject is named.
 *:(stay|stays|SHALL be) bounded
 *:(memory|[Cc]ardinality|back-pressure|cost|wait|buffer|pull|park|handshake|depth) is bounded
 *:mailbox (is |)bounded
-*:unbounded[ -](growth|buffer|cardinality|allocation|count|body cap|history|in size)
 *:(grow(s|ing)?|count is) unbounded
-# The transport's send-buffer work: a driver's command channel has no
-# capacity limit, and a send buffer that had neither a limit nor a count.
-*:unbounded command( channel)?
-*:unbounded channel
-*:unbounded-wal-buffers
-*:leaving it unbounded
 *:channel is unbounded
-*:channel being unbounded
-*:neither bounded nor
-*:bounded finds a doc comment
-*:bounded would give it
-openspec/specs/runner-controller-connection-healing/spec.md:bounded `:start_operative` retry
-
-docs/dev_notes/wire-frame-limits.md:slice-bounded
-flz_transport/src/service/payloader.rs:length_bounded_by_enclosing_payload
-openspec/specs/wire-frame-limits/spec.md:Bounded frame allocation
-
-# Plain-English "hold / latency / interval" family — the output-hold posture and
-# assorted capacity phrasings, none a kind name. (Introduced by the
-# effectively-once output-confirmation and durable-path work.)
-*:unbounded output
-*:unbounded hold
-*:hold outputs, unbounded
-*:unbounded amount
-*:Bounded producer queue
-*:visible, bounded
-*:bounded upstream
-*:bounded interval
-*:park, bounded
-*:unbounded concurrent
+*:drain is bounded
+*:drain had to be BOUNDED
+docs/sdk/poll_core.md:holdback is \*\*bounded\*\*
+docs/plugins/http_poll.md:would be unbounded$
 
 # --- plain English: the bare adjective, standing alone -------------------
-# Prose uses the word with no noun attached — followed by a comma, wrapped in
-# parentheses, or left at the end of a wrapped line. The lookbehind keeps a
-# reintroduced identifier (`spawn_bounded,`) caught: only the bare word is
-# masked, so `spawn_` is never what is left over.
+# Followed by a comma, wrapped in parentheses, or set off by a dash.
 *:(?<![A-Za-z0-9_])[Bb]ounded,
 *:\((?:un)?bounded\)
-*:Bounded and crash-proof
+*:visible, bounded
 lib/flezha/parallel.ex:shape, bounded —
-lib/flezha/runner/control_channel.ex:bounded so a sink
-# Line-wrapped prose, where the noun is on the next line.
-docs/dev_notes/state-evolution.md:over a bounded$
-docs/plugins/http_poll.md:would be unbounded$
-openspec/specs/controller-packaging/spec.md:available and bounded$
-test/apps/rust_runner/src/main.rs:shape with a bounded$
-
-# --- capacity / plain English: the push holdback's bound and its fallback wake
-docs/sdk/poll_core.md:a bounded fallback wake
-docs/sdk/poll_core.md:holdback is \*\*bounded\*\*
 flz_core/src/flusher.rs:Bounded — a gated Entity
-flz_core/src/poll_core.rs:the bounded fallback the entry-path
-flz_core/src/poll_core.rs:The bounded fallback for a gated producer
 
-# --- plain English / capacity: the Ruby SDK's parallelism ceiling, its
-# --- documented interrupt bound, and the bounded-capacity fixture
-docs/sdk/ruby_sdk.md:bounded to one core
-docs/sdk/ruby_sdk.md:bounded by a timeout
-sdk/ruby/test/native_test.rb:a bounded poll
-test/apps/ruby_runner/fixtures.rb:the same bounded procedure
-flz_core_ffi/src/:an unbounded coordinator send
-sdk/ruby/lib/flezha/executor.rb:Bounded so a fetcher
-
-# --- plain English: a drain with a time bound on it
-*:[Uu]nbounded drain
-*:drain is bounded
-*:bounded drain
-*:drain had to be BOUNDED
-sdk/ruby/lib/flezha/executor.rb:Bounded for the reason
-
-# --- an identifier quoted verbatim: the JavaScript fixture builder whose rename
-# --- collided with an existing declaration (recorded on the refactor board).
-# --- Matches the bare identifier, not the whole phrase: rules erase text in file
-# --- order, so the [Bb]ounded[Mm]ailbox rule above has already consumed the other
-# --- half of that line by the time this one is applied.
-docs/refactor/STATE.md:`const bounded`
+# --- identifiers in the English sense -----------------------------------
+# `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, and
+# `bounded_put/3` puts a tunable only when a range check passes. Neither is a
+# kind. Named here so their every mention, in code and in prose, is excused.
+*:SafeCall\.bounded
+*:bounded\(target\(\)
+*:def bounded\(server
+*:(?<![A-Za-z0-9_])(?:un)?bounded_put
+docs/dev_notes/wire-frame-limits.md:slice-bounded
+flz_transport/src/service/payloader.rs:length_bounded_by_enclosing_payload

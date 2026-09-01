@@ -162,7 +162,7 @@ defmodule Mix.Tasks.Bench.Roundtrip.Engines do
             queue_max: 100_000,
             # Blocking propagates back-pressure to the bridge, which is what we
             # want to measure; stated so the bench never depends on the default.
-            queue_overflow: :block,
+            queue_overflow: :drop_nothing,
             queue_block_timeout_ms: 60_000,
             # Single-broker bench cluster; the plugin default of 2 fails.
             auto_create_replication_factor: 1,

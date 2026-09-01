@@ -117,7 +117,135 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**Session 4, 2026-08-31 21:40 → 2026-09-01.** All decisions in this session were taken
+**Session 5, 2026-09-01 — opened by `/loop /refactor`. Tree clean at `f967b106`, no
+worker inherited (`ListAgents`: no subagents, no peer sessions).** Verified before
+spawning anything: `check-kind-naming` **exit 1 / 22 hits**, `check-overflow-naming`
+**exit 0**, `openspec list` shows only `refactor-7-tests` (0/47).
+
+**ROW 2 worker spawned 2026-09-01** — `rename-kafka-queue-overflow`, fresh
+`general-purpose`. Brief carries the user's binding ruling (plain rename, NO accept-both,
+NO read-side migration clause — the user declined the one-line coercion I offered; do not
+re-propose it), the gate widening as RED-FIRST, and one instruction to STOP before
+renaming if the durable-cspec failure mode reads worse than "that plugin fails to enable",
+because the user priced the decision on that milder description.
+
+**KI-108 worker spawned 2026-09-01** — `fix-record-block-latch`, fresh `general-purpose`.
+Ruled real but **LATENT**: I applied the one-line fix temporarily and all three
+record-tagged gates still exit 0, so the blinded tails hide nothing today. Worth fixing
+because the gate reports OK for two different reasons — nothing wrong, or not looking —
+and those are currently indistinguishable. Brief carries that measurement so the worker
+cannot claim it caught a hidden violation.
+
+**KI-108 IS DONE. NO WORKER IS ALIVE.** `fix-record-block-latch`, archived. An inline
+marker pair now exempts its own line only, and an UNCLOSED block is refused — the same
+whole-file blinding reached by a different route. `naming_gate.py --self-test` runs the
+real `walk` over a throwaway git tree and is wired as a **sixth step** of the Naming job,
+so `_self_test` has a caller (my checkpoint question — answered yes, and I verified it).
+
+**I verified the red-first independently rather than reading it**: I rebuilt the module as
+HEAD's `walk()` plus the new self-test, and it FAILS (`expected [block.md:4, inline.md:2,
+unclosed.md:1], found [block.md:4]`) — so the test judges the logic, not itself. Restored
+byte-identical.
+
+**A CORRECTION AGAINST ME, and the worker is right.** I told the user `known_issues.md`
+had 1495 lines unread. **That was wrong** — later `:end` markers clear the latch, so the
+blinded region there is small. My conclusion (no live violation hidden) was unaffected and
+still holds, but the line count was not. The SEVERE case is a dev note whose inline pair
+sits near the top with nothing below to close it: `assertions-that-cannot-fail.md` was
+read **4 lines of 159** by `check-module-naming`, 97.5 % invisible. Coverage recovered
+across five files and three gates.
+
+**Lesson for this board**: a crude regex sweep is not a measurement of what a gate reads.
+The instrument is the gate itself — run it with the fix applied, which is what settled it.
+
+**ROW 2 IS DONE — `1825c053`, archived.** 16 sites renamed — the decision's list named 4 and
+missed 12, incl. `CLAUDE.md`, `CHANGELOG.md`, a bench engine and 11 spec lines. All five
+naming gates exit 0; kafka suites 104 passed; full suite 1923 passed; metrics 0
+regressions.
+
+**§4 caught one thing the worker could not**: its own new dev note reddens the overflow
+gate, and that was INVISIBLE while the file was untracked — `git add -N` first is exactly
+why the checkpoint does it. Wrapped in a record block, using the TWO-LINE form because of
+KI-108 below. Gate widened on BOTH list
+orders plus `queue_overflow`- and `overflow(`-anchored patterns, and a path-scoped rule
+for the Kafka files — which keeps the observability bus's own `overflow: :block` out of
+scope BY CONSTRUCTION rather than by the exemption its predecessor needed. It has found
+sites the decision's list missed, incl. `CLAUDE.md`'s dev-notes index line and
+`lib/mix/tasks/bench/roundtrip/engines.ex`. STATE.md diff verified as MINE ALONE — the
+worker respected the boundary. **To verify at checkpoint**: the new
+`docs/refactor/STATE.md` allowlist entry exempts backticked spans only, so confirm bare
+prose naming the policy is still caught.
+
+**ROW 1 IS DONE — `a79cefc0`, archived.** `close-kind-naming-gate-red`, archived.
+**All five naming gates exit 0 for the first time in the programme's life**, so the
+Naming CI job passes on `dev`. Next: queue row 2 (`rename-kafka-queue-overflow`).
+
+**Last seen 2026-09-01, +10 min**: worker running, gate flipped **exit 1 / 26 → exit 0**,
+`scripts/kind-naming-allowlist.txt` rewritten (~30 narrow phrase rules → 5 broad ones,
+self-marked `EXPERIMENT (to be reshaped)`). No OpenSpec change dir yet. Not a stall.
+**Sent one direction note**: three of the five new rules are repo-wide BARE-WORD erasures
+with no kind-noun lookahead, so the drill the brief asked for can pass while rules 2 and 3
+are blind — handed the worker the four falsification shapes the checkpoint will use.
+
+**Last seen 2026-09-01, +22 min**: worker running, now editing the gate MACHINERY
+(`naming_gate.py`, `check-kind-naming.sh`) as well as the allowlist. It answered the
+direction note with a real design rather than a patch: **two judgements, a line fails
+either.** `mask-then-match` keeps the allowlist for the open-ended plain-English sense;
+a new `KIND_SENSE` pattern set runs with **no allowlist in front of it** and carries the
+closed kind sense, so a broad allowlist rule can no longer hide the error the gate exists
+to catch. That is what makes the rule-count reduction safe, and it reuses
+`naming_gate.pattern_check` twice rather than adding machinery (§2 order, use-as-is).
+`check-overflow-naming` still **exit 0**. **To verify at checkpoint**: `KIND_SENSE`
+deliberately EXCLUDES `stream`/`workflow`/`run`/`input`/`iteration` on the argument that
+the glossary keeps those adjectives for the RUN — check that against the glossary itself,
+because it is the one place a real kind-sense error could still pass. Still no OpenSpec
+change dir at 22 min.
+
+**Checkpoint 1 verified 2026-09-01 (+32 min), worker sent back with two verdicts.**
+Verified against the repo: diff scope clean, `openspec validate --strict` passes,
+`refactor_metrics.py --check` **0 regressions**, and `naming_gate.py` is **provably
+docstring-only** (both versions parsed; ASTs identical after dropping the module
+docstring) — the shared module gained no machinery. Gate **exit 1 / 26 → exit 0**,
+allowlist **69 rules → 30**.
+
+**The KIND_SENSE exclusion I flagged holds, on stronger evidence than the worker cited**:
+excluding `stream`/`workflow`/`run`/`input`/`iteration` is FORCED by
+`openspec/specs/operative-kind-naming/spec.md:95` and `:100`, which mandate the prose
+"a workflow operative runs a bounded iteration … folds an unbounded input forever" and
+"only its iteration is bounded". A gate binding those nouns fails its own spec.
+
+**KI-105 — RULED real, fix now.** Reproduced independently: HEAD's `time` branch matched
+the retired Java entry point's name from the inside, leaving a residue carrying no
+`bounded` at all, so the name was invisible in production source — the exact failure KI-94
+exists to end. The verbatim strings:
+
+<!-- kind-naming-record:begin -->
+    erased:  `bounded time`  (inside `registerUnbounded time`)
+    residue: `   * Used at registerUn, before the first poll.`
+<!-- kind-naming-record:end --> Replacement is not a judgement call: `registerStream` is already the house
+spelling at `StreamOperativeConfigurationException.java:165` and `ProcedureCtx.java:190`,
+and `rename-table.md:13` maps `Unbounded`→`Stream`. Two javadoc words in `Procedure.java`,
+then the exemption entry is DELETED.
+
+**KI-106 — RULED real, fix now, AND THIS BOARD WAS WRONG.** Confirmed pre-existing (both
+lines verbatim in `git show HEAD:docs/known_issues.md:2208`,`:2214`). What neither of us
+had checked: **`.github/workflows/naming.yml` runs all five naming gates as FIVE STEPS OF
+ONE JOB**, so a red `check-module-naming` fails the Naming workflow exactly as the kind
+gate does. **The claim elsewhere on this board that "only the naming gate (row 1) was red
+on `dev`" is FALSE** — two gates were red and the workflow fails on either. Row 1 scoped
+to one gate does not close row 1. Scope widened deliberately; the worker states it in
+`proposal.md`.
+
+**Supervisor read the four `lib/` hits before briefing** so the checkpoint has an
+independent verdict to check against: all four are plain-English/capacity sense and
+allowlisting is correct for each — `http_poll.ex:251`/`:256` `bounded_put` is a
+RANGE check (`bound(field, value)` on a tunable), `service/cli/boot.ex:3` "the bounded
+await" and `service/operative_manager/placement.ex:4` "the bounded poll a caller waits
+on" are both time-limits. **A rename of `bounded_put` is refused**: it would be a
+behaviour-neutral edit inside a finished blocking area to satisfy a regex, which is the
+false economy KI-94 itself names.
+
+### Session 4, 2026-08-31 21:40 → 2026-09-01. All decisions in this session were taken
 with the user present; every one is recorded in *Next steps* → **THE WORK QUEUE** and in
 `docs/known_issues.md`. Nothing agreed lives only in a transcript.
 
@@ -173,7 +301,10 @@ KI-100 and the Kafka rename were all answered on 2026-08-31/09-01 and are queued
 
 **CI is red on `main` and mostly not our problem** — six failing workflows, four causes,
 and two of them are fixed on `dev` already (`main` is 287 commits behind). See *CI is red*
-below. Only the naming gate (row 1) was red on `dev`.
+below. **CORRECTED 2026-09-01: TWO naming gates were red on `dev`, not one** —
+`check-module-naming` as well as `check-kind-naming`, and `.github/workflows/naming.yml`
+runs all five as five steps of ONE job, so either one fails the whole workflow. Both are
+fixed in `close-kind-naming-gate-red`.
 
 ### The five things area 7 must know before it starts
 
@@ -2589,6 +2720,42 @@ can act on decays into a red CI nobody reads.
 
 ## Awaiting the user's decision
 
+### The Kafka overflow exposure was described wrongly when you priced it (2026-09-01)
+
+**You decided row 2 on a description that measurement has now refuted.** You were told a
+stored cspec row carrying `queue_overflow: :block` means *"that plugin fails to enable on
+the next boot"*, and on that basis you declined the one-line read-side coercion I offered.
+I verified the real path at the code, and it is not that.
+
+`init_provider/1` (`kafka.ex:243`) does NOT use the validating `convert_value/2` — that
+one belongs to `build/1`, which has **no production caller in `lib/`** (already recorded
+as KI-93). It uses `coerce_atom/1` (`:402`–`:403`), which **validates nothing**: an atom
+passes through untouched, and a string goes through `String.to_existing_atom/1`, which
+succeeds for the retired name because the observability bus keeps that atom alive in four
+loaded modules. So the plugin **enables, starts and serves normally, logging nothing.**
+The `FunctionClauseError` waits in `overflow/4` until the queue first reaches
+`:queue_max`, killing the worker and its in-memory queue. `ProducerSup` is a
+`DynamicSupervisor` with `restart: :transient`, so nothing cascades — guaranteed records
+are re-driven, plain chain records are **lost** — and it recurs on every fill.
+
+Smaller blast radius than you were told, but **silent instead of loud, and load-triggered
+instead of at boot**, which is the opposite of what you priced.
+
+**The finding is bigger than the rename.** `coerce_atom/1` validates NO value, so this
+hole is not about the retired name at all: any stored `queue_overflow` string that happens
+to be an existing atom enables silently and crashes at saturation. The rename adds one
+instance to a hole that was already there.
+
+| option | cost | what it buys |
+|---|---|---|
+| **Validate the policy in `init_provider/1`** (recommended) | ~4 lines + a test | Closes the whole hole, not the rename's instance. It is input validation, which `CLAUDE.md` mandates — **not** a legacy shim, so `feedback_no_legacy_shims` does not argue against it. Any bad value fails loudly at enable |
+| The `"block" -> {:ok, :drop_nothing}` coercion you declined | 1 line | Only the retired name; leaves every typo silent. This is a legacy shim and your original reasoning against it still holds |
+| Nothing | 0 | The hole stays; likelihood is low (the retired value was the default, so a row carries it only if an operator typed the value already in force) |
+
+**My recommendation: the first.** It is the option you were never offered, it is not the
+shim you rejected, and it closes a defect that predates this rename. Not urgent — nothing
+is deployed from this branch.
+
 ### Gate finding — allowlist rules erase in file order
 
 `scripts/naming_gate.py`'s `pattern_check` applies allowlist rules **destructively
@@ -3031,8 +3198,8 @@ was decided with the user; the detail blocks follow further down this section.
 | # | Change | Status | Decided |
 |---|---|---|---|
 | 0 | `retire-cluster-snapshot-remnants` | **DONE** `f3c30502`, archived | 2026-08-31 |
-| 1 | **CI cause C** — `check-kind-naming` red on `dev` (19 hits, 15 prose, 4 in `lib/`) | queued, next | 2026-08-31 |
-| 2 | `rename-kafka-queue-overflow` — `:block` → `:drop_nothing`, **plain rename, no accept-both**, + widen `check-overflow-naming.sh:47` which requires adjacency and so missed it | queued | 2026-08-31 |
+| 1 | **CI cause C** — `check-kind-naming` red on `dev`. Widened at checkpoint: the Naming workflow gates FIVE checks in one job and `check-module-naming` was red too | **DONE** `close-kind-naming-gate-red`, archived | 2026-08-31 |
+| 2 | `rename-kafka-queue-overflow` — `:block` → `:drop_nothing`, plain rename + gate widening | **DONE**, archived. **The exposure's description was WRONG — see *Awaiting the user's decision*** | 2026-08-31 |
 | 3 | `collapse-observability-source-behaviours` — KI-100: rename `OtpBackend.Source` → `Poller`, macro declares the real behaviour | queued | 2026-09-01 |
 | 4 | **CI cause D** — Ruby SDK `NoMethodError: undefined method 'stub' for module Process` on 3.3 and 3.4. **Reproduce on `dev` first** (`cd sdk/ruby && rake test`); it has only been seen on `main` | queued | 2026-08-31 |
 | 5 | **CI cause D′** — Ruby `cross-gem` fails on all three triples with no error of its own. One look to decide external-vs-ours before spending | queued | 2026-08-31 |
@@ -3194,7 +3361,11 @@ change for them. They are already fixed on `dev`; `main` is 287 commits behind a
 merge is the user's call on commits they have not reviewed. **What a session SHOULD do is
 check whether a failure is red on `dev`** — that is the only question that matters here,
 and the method is in *CI is red* below: reproduce the cause against this branch rather
-than reading `main`'s run log. Only the naming gate (row 1) was ever red on `dev`.
+than reading `main`'s run log. **CORRECTED 2026-09-01: `check-module-naming` was red on
+`dev` too** (2 hits, both citations inside KI-104's own text, pre-existing — verified in
+`git show HEAD:docs/known_issues.md:2208`,`:2214`). The five naming gates are five steps
+of one CI job, so row 1 scoped to a single gate would have landed with the Naming workflow
+still red. Filed KI-106, folded into row 1.
 
 **Not queued, and deliberately so:**
 - **KI-104** (`flezha_ui` on controller internals) — the owed fix is a **public API

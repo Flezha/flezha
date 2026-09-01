@@ -20,6 +20,13 @@ name: Naming
 # `test/helpers/mimic_global.ex` defines the releasing wrapper and is the one
 # exemption, declared by path.
 #
+# The five gates share one walk (scripts/naming_gate.py), whose recorded-history
+# escape hatch decides which lines each gate reads. Its self-test proves that
+# escape scopes to its own block: it runs the walk over a throwaway git tree
+# where a whole record on one line, a two-line block and a block left open each
+# have a known answer. A gate that says OK because it stopped reading is
+# indistinguishable from one that says OK because the tree is clean.
+#
 # check-build-artifacts is the repository-weight gate: `tracked` refuses a
 # committed build artefact (native libraries and fat jars are build output —
 # `scripts/build-native.sh` produces the one triple a test needs, and a release
@@ -55,6 +62,8 @@ jobs:
         run: scripts/check-sdk-boundary.sh
       - name: check-mimic-global
         run: scripts/check-mimic-global.sh
+      - name: naming_gate self-test
+        run: python3 scripts/naming_gate.py --self-test
 
   build-artifacts:
     runs-on: ubuntu-latest

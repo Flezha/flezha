@@ -535,6 +535,18 @@ The gate SHALL extend the repository's shared naming-gate walk rather than intro
 second gate mechanism, and SHALL provide a recorded-history escape so that a note
 citing a retired name as history is not an offence.
 
+The recorded-history escape SHALL exempt the lines its markers delimit and no others.
+A line carrying both the opening and the closing marker SHALL be a whole record: it
+SHALL exempt that line alone, and SHALL leave the surrounding block state unchanged.
+An opening marker with no matching closing marker before end of file SHALL fail the
+gate, naming the line that opened the block, because such a block exempts every line
+below it and that is the whole-file exemption this escape exists to avoid.
+
+The shared walk's own scoping SHALL be covered by a test that runs wherever the gates
+run. A gate that reports success because it stopped reading and a gate that reports
+success because the tree is clean are indistinguishable from the outside, so the
+scoping of the exemption is not something a passing gate can evidence about itself.
+
 The gate SHALL be demonstrated to fail on a deliberate reintroduction and to pass on
 its removal, before the rename it guards is committed.
 
@@ -556,6 +568,28 @@ its removal, before the rename it guards is committed.
 - **WHEN** the gate runs
 - **THEN** that occurrence SHALL be exempt by an explicit recorded-history marker, and
   SHALL NOT be deleted to satisfy the gate
+
+#### Scenario: A record written on one line exempts that line only
+
+- **GIVEN** a document whose sentence wraps a retired name in an opening and a closing
+  marker on the same line
+- **WHEN** the gate runs and a later line of that file names the retired name outside
+  any marker
+- **THEN** the gate SHALL exempt the marked line and SHALL fail on the later one
+
+#### Scenario: A record block left open fails the gate
+
+- **GIVEN** a document containing an opening marker with no matching closing marker
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero and SHALL name the file and the line the block was
+  opened on, rather than silently exempting the rest of that file
+
+#### Scenario: The escape's scoping is proved rather than assumed
+
+- **WHEN** the naming gates run in CI
+- **THEN** a test of the shared walk SHALL run beside them, covering a record written
+  on one line, a record spanning two markers, a block left open, and a file with no
+  markers, and SHALL fail if any of those exempts more or fewer lines than it delimits
 
 ### Requirement: A test SHALL stop the background worker it starts
 

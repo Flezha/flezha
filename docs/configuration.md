@@ -579,7 +579,7 @@ Passed in the plugin's `opts` map at install time. The Kafka producer
 | Option | Default | What it does |
 |---|---|---|
 | `:hosts` / `:topic` | required | Broker list and destination topic. `:partition` defaults to `0`. |
-| `:queue_overflow` | `:block` | What a full producer queue does: `:block`, `:drop_oldest`, `:drop_newest`. A configured drop of a delivery-guaranteed record is alarm-grade and does not advance the outbox cursor. |
+| `:queue_overflow` | `:drop_nothing` | What a full producer queue does: `:drop_nothing`, `:drop_oldest`, `:drop_newest`. A configured drop of a delivery-guaranteed record is alarm-grade and does not advance the outbox cursor. |
 | `:queue_max` | `10_000` | Bounded producer queue depth. |
 | `:queue_block_timeout_ms` | `5_000` | How long a synchronous caller parks on a full queue. |
 | `:linger_ms` | `10` | Batch linger before a produce request. |
