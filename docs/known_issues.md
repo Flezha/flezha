@@ -108,6 +108,30 @@ should turn a raise into a refusal rather than letting it escape. Fixing sites o
 time leaves the mechanism that generates them.
 
 
+
+**Three corrections to this entry, verified 2026-09-01 by the R1 worker and
+re-run by the supervisor before they were written here.**
+
+1. **A bare throw is a third escape flavour this entry does not name.**
+   `Kafka.parse_hosts/1` throws a plain string, and `subscribe/3`'s
+   sentinel-only `catch` lets it past exactly as it lets a raise past:
+   `PROBE subscribe kafka hosts=nocolon -> CAUGHT :throw: "Invalid host format: nocolon"`.
+   Any fix that catches only `:error` leaves this one standing.
+2. **Site 2 is half-wrong as filed.** A misspelled *required* auth key does not
+   silently mean "no username" — the dependency's `require_keys!/2` raises
+   first (`PROBE kafka auth %{"user" => "svc"} -> RAISED ArgumentError: Missing
+   keys: [:username]`). The silent drop is real for *extra* keys, which
+   `KafkaEx.Auth.Config.new/1` discards through `Map.take/2`
+   (`PROBE kafka auth %{..., "timeout" => 1} -> accepted`). One closed key set
+   fixes both halves.
+3. **The mechanism-2 fix belongs in `run_init_provider/1`, not `subscribe/3`.**
+   That is the single point invoking the callback, and it is called from BOTH
+   `do_subscribe/4` (enable) and `attempt_restart/3` (plugin heal) — the second
+   of which this entry does not mention. Both already handle its
+   `{:error, reason}` arm, so the refusal reaches the operator on both paths
+   rather than only on enable.
+
+
 ### KI-72 · The QUIC driver reports no driver stats at all, so nothing above it can see the transport
 
 - **Severity**: P2 · **established**, and it is why KI-56's own reproduction
@@ -3539,6 +3563,23 @@ path, so none needs a red-first test.
   the reason itself, since `inspect`ing that into `"Failed to convert fields: …"`
   would recreate the double wrap in another form.
 
+
+- **Correction, 2026-09-01 — "Clean: BeamMsgForward" is true only of the path
+  the scan drove.** The blast-radius measurement above drove every *optional*
+  field; `BeamMsgForward`'s `:recv_pid` is `@enforce_keys`, so it was outside
+  that scan rather than cleared by it. It still raises at HEAD:
+
+  ```
+  $ MIX_ENV=test mix run --no-start -e 'Flezha.Plugin.Provider.BeamMsgForward.build(%{"recv_pid" => "zzz"})'
+  RAISED ArgumentError: errors were found at the given arguments:
+    * 1st argument: not an already existing atom
+  ```
+
+  Ruled by the supervisor: **real, and it is an instance of [[KI-116]]'s
+  mechanism 1** — a partial `convert_value/2` clause with the permissive
+  catch-all behind it — not a separate defect and not a reopening of this entry's
+  own fix, which did what it measured. `close-provider-value-validation` closes
+  it where every other site is closed; no separate change is owed.
 
 ### KI-10 · Credo strict contradicts house style — RESOLVED 2026-08-31
 

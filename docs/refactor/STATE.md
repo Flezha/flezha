@@ -127,6 +127,47 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
+**Session 6, 2026-09-01 15:41 — opened by `/loop /refactor`.** Orientation from the files:
+board rows 0a–8 all `done`; live queue is **R1–R12** (*Next steps* → REMAINING WORK);
+`openspec list` shows only `sdk-durable-fixture-parity` **10/22** — phase A done and phases
+B–D deliberately unauthorised (`a5fc37cf`), so that change is parked, not in flight.
+`ListAgents`: **no subagents**, peer `flezha-00` interactive/idle. Machine clean — no
+`cargo`/`rustc`/`beam.smp`/`mvn`, no polling loops, no zombies; load 2.31/1.30/1.02.
+
+**UNRECORDED UNCOMMITTED WORK IN THE TREE, and it is not mine.** `M CLAUDE.md`
+(+119/−114) and `?? docs/dev_notes/INDEX.md` (167 KB, 110 entries), both mtime **15:37**
+— i.e. AFTER the last commit `a305d1f3` (15:26). It is the CLAUDE.md index split: the long
+abstracts move to a new `docs/dev_notes/INDEX.md` and `CLAUDE.md` keeps one short hook per
+change. It looks complete and self-consistent — **110 hooks = 110 INDEX entries = 110
+`docs/dev_notes/*.md` files**, the bijection area 8 established. Left untouched per §0 and
+NOT staged. Two things its owner should know before it is committed:
+
+1. **Its links are written repo-root-relative from inside `docs/dev_notes/`.** Every entry
+   reads `](docs/dev_notes/<x>.md)`, but INDEX.md *lives in* `docs/dev_notes/`, so a
+   renderer resolving relatively gets `docs/dev_notes/docs/dev_notes/<x>.md` — broken. All
+   110 resolve only when read from the repo root. Area 8's "0 broken links across 307
+   files" was a one-off measurement, not a gate: **no link checker exists in `scripts/` or
+   `.github/workflows/`** (grep for `link_check`/`check-links`/`broken.link` → nothing), so
+   nothing will catch this. R12 (the docs-citation gate) is where it would be caught.
+2. It is unattributed. If it is `flezha-00`'s, it is theirs to commit; a later session that
+   finds it must not assume it is stale.
+
+**ROW R1 worker spawned 2026-09-01 15:45** — KI-116, fresh `general-purpose`, change id
+`close-provider-value-validation`. Two-step: write the proposal, STOP for supervisor
+approval, then implement. Brief carries the queue row's own framing verbatim (*"Fix the
+mechanism, not the sites"*) so the worker cannot deliver eight site patches and call the
+row done, plus the RULE #1 reuse candidate KI-116 names itself — total `parse_bool/2` /
+`parse_int/2` already exist beside the partial `coerce_*` pair and are wired only into
+`build/1`, which KI-93 records has no production caller.
+
+**R1 last seen**: 2026-09-01 15:54 (worker +10m). `ListAgents` running; my `claude` PID
+at 13.5 % CPU — a subagent has no OS process of its own, so that IS the worker. No files
+under `openspec/changes/close-provider-value-validation/` yet, which is EXPECTED: step 1 is
+read-then-write and the three proposal files appear only at its end. Not stalled — §6 needs
+all three of no-process / nothing-written / ticks-unchanged and the first fails. Load
+1.54/0.67/0.73, box quieting, no leaked cargo/beam/mvn.
+
+
 **Session 5, 2026-09-01 — opened by `/loop /refactor`. Tree clean at `f967b106`, no
 worker inherited (`ListAgents`: no subagents, no peer sessions).** Verified before
 spawning anything: `check-kind-naming` **exit 1 / 22 hits**, `check-overflow-naming`
