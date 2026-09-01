@@ -164,7 +164,7 @@ final class Core implements SpawnBridge
         $this->check($this->ffi->flz_core_abandon($this->live(), $token));
     }
 
-    /** Wake every blocked poller and stop the runner loop. */
+    /** Ship every Entity's state to the controller, then wake every blocked poller and stop the runner loop. */
     public function shutdown(): void
     {
         $this->ffi->flz_core_shutdown($this->live());

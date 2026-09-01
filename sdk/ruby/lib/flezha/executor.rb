@@ -144,15 +144,18 @@ module Flezha
       self
     end
 
-    # Stop fetching and drain: a worker inside a handler finishes it, completes
-    # it, and only then observes the shutdown on its next poll. Bounded by
-    # `DRAIN_TIMEOUT_S` — a handler that never returns must not keep the runner
-    # alive forever.
+    # Stop fetching and drain. The core says when: a worker leaves on the poll
+    # that reports the core shutting down, which the core reports only once
+    # the shutdown sequence has shipped every Entity's state through these
+    # same workers; a worker inside a handler finishes it, completes it, and
+    # only then observes it. Bounded by `DRAIN_TIMEOUT_S` — a handler that
+    # never returns must not keep the runner alive forever — and the flag is
+    # raised after the join so a worker spawned late still leaves.
     def stop
-      @stopping = true
       deadline = Executor.deadline
-      @supervisor&.join(Executor.remaining(deadline))
       @lock.synchronize { @workers.dup }.each { |worker| worker.join(Executor.remaining(deadline)) }
+      @stopping = true
+      @supervisor&.join(Executor.remaining(deadline))
       undrained = @lock.synchronize { @workers.count(&:alive?) }
       Executor.report_undrained(undrained)
       @lock.synchronize { @workers.clear }
@@ -261,10 +264,12 @@ module Flezha
       self
     end
 
+    # The fetchers leave on the core's word, as the thread executor's workers
+    # do; the flag is raised after their join.
     def stop
-      @stopping = true
       deadline = Executor.deadline
       @threads.each { |thread| thread.join(Executor.remaining(deadline)) }
+      @stopping = true
       # Closing the queue is what ends the dispatcher: a scheduler-aware pop
       # answers nil on a closed queue rather than parking forever.
       @queue.close

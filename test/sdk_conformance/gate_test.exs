@@ -440,6 +440,17 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         for [line] <- Regex.scan(~r/^.*\bruntime: :\w+.*$/m, source) do
           fail("#{file} pins a runtime (#{String.trim(line)}); the run selects it")
         end
+
+        # A hand-written runner command is the same bypass, invisible to the
+        # literal check: the scenario is green on every runtime for the
+        # reference's reasons. `test/apps/#{...}_runner` is the harness
+        # selecting, and `\w+` does not match it.
+        for [line] <- Regex.scan(~r/^.*test\/apps\/\w+_runner\/.*$/m, source) do
+          fail(
+            "#{file} spawns a runner by hand (#{String.trim(line)}); go through " <>
+              "NodeTestHelper.start_runner_port/2, which spawns the runtime the run selected"
+          )
+        end
       end
     end
 

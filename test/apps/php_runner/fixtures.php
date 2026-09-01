@@ -23,6 +23,7 @@ use Flezha\Graph\Builder;
 use Flezha\Overflow;
 use Flezha\Procedure;
 use Flezha\StreamOperative;
+use Flezha\Timer;
 
 /** The wire codecs every fixture that talks to another SDK declares. */
 final class Wire
@@ -43,6 +44,12 @@ final class Wire
     public static function prefix(mixed $input): string
     {
         return explode(':', (string) $input)[0];
+    }
+
+    /** An entry as the reference's `i64`: an unparsable input reads 0. */
+    public static function int(mixed $input): int
+    {
+        return preg_match('/^-?\d+$/', (string) $input) === 1 ? (int) $input : 0;
     }
 }
 
@@ -387,50 +394,6 @@ final class EntityStressOperative extends StreamOperative
     }
 }
 
-// -- bench_keyed_nopersist ---------------------------------------------------
-
-#[Proc(name: 'tier_store_procedure')]
-final class TierStore extends Procedure
-{
-    public function state(?string $entityKey): mixed
-    {
-        return ['values' => []];
-    }
-
-    public function applyChange(mixed &$state, mixed $change): void
-    {
-        $state['values'][$change['key']] = $change['value'];
-    }
-
-    public function run(mixed $input, Ctx $ctx): mixed
-    {
-        [$key, $value] = array_pad(explode(':', (string) $input, 2), 2, null);
-        if ($value === 'poison') {
-            throw new \RuntimeException('poison value');
-        }
-
-        $ctx->change(['key' => $key, 'value' => $value]);
-        $ctx->emitKeyed((string) $key, "$key=$value");
-
-        return null;
-    }
-}
-
-/**
- * Per-entity persistence off: the heap-only posture the bench isolates against
- * the durable one.
- */
-#[Operative(factoryId: 'bench_keyed_nopersist', persistent: false)]
-final class BenchKeyedNoPersistOperative extends StreamOperative
-{
-    public static function channels(Builder $c): void
-    {
-        $c->input('input', Wire::text(...))->onFull(Overflow::DropNothing)
-            ->into(TierStore::class)->named('sink')->keyed()
-            ->sink('tier_sink', Wire::bytes(...));
-    }
-}
-
 // -- poison_probe / wedge_probe ----------------------------------------------
 
 #[Proc(name: 'poison_probe_procedure')]
@@ -505,6 +468,58 @@ final class WedgeProbeOperative extends StreamOperative
         $c->input('input', Wire::text(...))
             ->into(WedgeProbe::class)->named('out')
             ->sink('wedge_sink', Wire::bytes(...));
+    }
+}
+
+// -- session_timeout ---------------------------------------------------------
+//
+// The worked session-timeout shape: each input pushes the idle deadline out,
+// and the firing closes the session. Single-entity so the e2e's crash-resume
+// half exercises a durable Entity. The timeout is read from
+// `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
+
+#[Proc(name: 'session_timeout_procedure')]
+final class SessionTimeout extends Procedure
+{
+    public function state(?string $entityKey): mixed
+    {
+        return ['touched' => [], 'closed_at' => []];
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        if (array_key_exists('touched', $change)) {
+            $state['touched'][] = $change['touched'];
+        } else {
+            $state['closed_at'][] = $change['closed'];
+        }
+    }
+
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->change(['touched' => $input]);
+        // A processing-time timer, because the answer to "nothing has arrived"
+        // cannot be an event-time one: nothing would advance the clock.
+        $ctx->timerAfter(Wire::int(getenv('TIMER_TEST_TIMEOUT_MS')) ?: 1000);
+
+        return null;
+    }
+
+    public function onTimer(Timer $timer, Ctx $ctx): void
+    {
+        $ctx->change(['closed' => $timer->scheduledAt]);
+        $ctx->emit("closed@{$timer->scheduledAt}");
+    }
+}
+
+#[Operative(factoryId: 'session_timeout')]
+final class SessionTimeoutOperative extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('input', Wire::text(...))
+            ->into(SessionTimeout::class)->named('kafka')
+            ->sink('test_kafka', Wire::bytes(...));
     }
 }
 
@@ -680,8 +695,21 @@ final class Fixtures
             HybridChannelOperative::class,
             EntityStressOperative::class,
             BenchKeyedNoPersistOperative::class,
+            StoreInputOperative::class,
+            StatefulCounterOperative::class,
+            PersistenceOffCounterOperative::class,
+            CoalescingCounterOperative::class,
+            ResumeProbeOperative::class,
+            BenchKeyedOperative::class,
+            SchemaEvolutionV1Operative::class,
+            SchemaEvolutionV2Operative::class,
+            TierStoreOperative::class,
+            CheckpointStoreOperative::class,
+            CheckpointBatchedOperative::class,
+            BenchCheckpointOperative::class,
             PoisonProbeOperative::class,
             WedgeProbeOperative::class,
+            SessionTimeoutOperative::class,
             BoundedMailboxDropNothingOperative::class,
             BoundedMailboxDropNewestOperative::class,
             BoundedMailboxDropOldestOperative::class,

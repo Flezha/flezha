@@ -210,11 +210,11 @@
   "flz_core_ffi": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.181,
-   "comment_lines": 197,
+   "comment_density": 0.183,
+   "comment_lines": 202,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 910,
+   "doc_lines": 934,
    "duplicate_pairs": 7,
    "duplicate_pairs_list": [
     "flz_core_ffi/src/napi_glue.rs:303-308 <-> flz_core_ffi/src/ruby_glue.rs:331-336 (52 tokens)",
@@ -225,14 +225,14 @@
     "flz_core_ffi/tests/abi/veneer_python.rs:16-21 <-> flz_core_ffi/tests/abi/veneer_ruby.rs:17-21 (42 tokens)",
     "flz_core_ffi/tests/abi/veneer_python.rs:29-45 <-> flz_core_ffi/tests/abi/veneer_ruby.rs:23-39 (70 tokens)"
    ],
-   "files": 20,
+   "files": 21,
    "files_over_800": 0,
    "files_over_800_list": [],
    "functions_over_50": 0,
    "functions_over_50_list": [],
    "long_names": 1,
    "long_names_list": [
-    "flz_core_ffi/src/lib.rs:554 flz_core_entry_last_delivery_nanos"
+    "flz_core_ffi/src/lib.rs:562 flz_core_entry_last_delivery_nanos"
    ],
    "max_cycle_files": 0,
    "narrative_markers": 0,
@@ -256,7 +256,7 @@
    "sleeps": 0,
    "sleeps_by_file": {},
    "test_files": 0,
-   "test_loc": 1775
+   "test_loc": 1853
   },
   "flz_nif": {
    "async_false_share": null,
@@ -1386,10 +1386,10 @@
    "async_false_share": null,
    "clippy_warnings": 0,
    "comment_density": 0.267,
-   "comment_lines": 369,
+   "comment_lines": 372,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 4740,
+   "doc_lines": 4742,
    "duplicate_pairs": 93,
    "duplicate_pairs_list": [
     "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-16 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/Journal.java:1-27 (57 tokens)",
@@ -1648,7 +1648,7 @@
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/PollHostTest.java": 1
    },
    "test_files": 0,
-   "test_loc": 5214
+   "test_loc": 5227
   },
   "sdk/node": {
    "async_false_share": null,
@@ -1712,8 +1712,8 @@
   "sdk/php": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.249,
-   "comment_lines": 202,
+   "comment_density": 0.25,
+   "comment_lines": 206,
    "credo_warnings": 0,
    "cycles": 0,
    "doc_lines": 1856,
@@ -1731,12 +1731,12 @@
     "sdk/php/examples/E05_WorkflowSaga.php:33-39 <-> sdk/php/tests/Fixture.php:211-217 (46 tokens)",
     "sdk/php/src/Operative.php:87-96 <-> sdk/php/tests/AuthoringTest.php:313-322 (68 tokens)",
     "sdk/php/tests/AuthoringTest.php:370-381 <-> sdk/php/tests/DeclKeysTest.php:147-158 (41 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:121-133 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:592-604 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:627-647 (98 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:127-139 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:554-566 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:592-612 (98 tokens)",
     "sdk/php/tests/ExecutorTest.php:133-137 <-> sdk/php/tests/SwooleExecutorTest.php:70-74 (46 tokens)",
-    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:601-606 (45 tokens)",
-    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:251-258 (42 tokens)"
+    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:563-568 (45 tokens)",
+    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:257-264 (42 tokens)"
    ],
    "files": 87,
    "files_over_800": 0,
@@ -1748,7 +1748,7 @@
    "max_cycle_files": 0,
    "narrative_markers": 0,
    "narrative_markers_by_file": {},
-   "prod_loc": 4165,
+   "prod_loc": 4163,
    "prod_loc_by_file": {
     "sdk/php/examples/E01_Echo.php": 28,
     "sdk/php/examples/E02_StatefulCounter.php": 56,
@@ -1809,7 +1809,7 @@
     "sdk/php/src/Overflow.php": 9,
     "sdk/php/src/Procedure.php": 37,
     "sdk/php/src/RollbackMode.php": 8,
-    "sdk/php/src/Runner.php": 229,
+    "sdk/php/src/Runner.php": 227,
     "sdk/php/src/Shutdown.php": 59,
     "sdk/php/src/SpawnBridge.php": 12,
     "sdk/php/src/StreamOperative.php": 13,
@@ -1831,11 +1831,11 @@
   "sdk/python": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.225,
+   "comment_density": 0.226,
    "comment_lines": 298,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 1113,
+   "doc_lines": 1117,
    "duplicate_pairs": 0,
    "duplicate_pairs_list": [],
    "files": 33,
@@ -1883,8 +1883,8 @@
   "sdk/ruby": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.203,
-   "comment_lines": 809,
+   "comment_density": 0.204,
+   "comment_lines": 814,
    "credo_warnings": 0,
    "cycles": 0,
    "doc_lines": 0,
@@ -2235,10 +2235,10 @@
    "async_false_share": 0.774,
    "clippy_warnings": 0,
    "comment_density": 0.151,
-   "comment_lines": 4132,
+   "comment_lines": 4134,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 2813,
+   "doc_lines": 2812,
    "duplicate_pairs": 78,
    "duplicate_pairs_list": [
     "lib/flezha/application.ex:158-163 <-> test/flezha/boot/application_children_test.exs:40-45 (52 tokens)",
@@ -2304,12 +2304,12 @@
     "test/system/checkpoint_batched_outputs_e2e_test.exs:49-64 <-> test/system/remote_durability_default_off_test.exs:49-64 (80 tokens)",
     "test/system/checkpoint_batched_outputs_e2e_test.exs:53-79 <-> test/system/effectively_once_postgres_e2e_test.exs:82-106 (101 tokens)",
     "test/system/compaction_e2e_test.exs:50-66 <-> test/system/dynamic_entity_e2e_test.exs:38-58 (44 tokens)",
-    "test/system/compaction_e2e_test.exs:75-85 <-> test/system/state_freshness_e2e_test.exs:63-76 (52 tokens)",
+    "test/system/compaction_e2e_test.exs:75-85 <-> test/system/state_freshness_e2e_test.exs:60-73 (52 tokens)",
     "test/system/control_plane_wedge_e2e_test.exs:50-62 <-> test/system/schema_evolution_e2e_test.exs:48-60 (41 tokens)",
     "test/system/dlq_e2e_test.exs:140-150 <-> test/system/late_input_correction_e2e_test.exs:61-71 (51 tokens)",
     "test/system/dlq_e2e_test.exs:142-153 <-> test/system/late_input_correction_e2e_test.exs:131-143 (43 tokens)",
     "test/system/dlq_e2e_test.exs:57-80 <-> test/system/late_input_correction_e2e_test.exs:44-66 (124 tokens)",
-    "test/system/dynamic_entity_e2e_test.exs:36-58 <-> test/system/state_freshness_e2e_test.exs:36-54 (51 tokens)",
+    "test/system/dynamic_entity_e2e_test.exs:36-58 <-> test/system/state_freshness_e2e_test.exs:33-51 (51 tokens)",
     "test/system/effectively_once_checkpoint_e2e_test.exs:100-109 <-> test/system/effectively_once_e2e_test.exs:84-93 (50 tokens)",
     "test/system/effectively_once_checkpoint_e2e_test.exs:38-47 <-> test/system/remote_durability_e2e_test.exs:141-150 (48 tokens)",
     "test/system/effectively_once_checkpoint_e2e_test.exs:42-67 <-> test/system/effectively_once_e2e_test.exs:41-73 (156 tokens)",
@@ -2350,17 +2350,17 @@
     "test/system/dlq_e2e_test.exs": 1
    },
    "test_files": 195,
-   "test_loc": 38991
+   "test_loc": 38979
   },
   "test/apps": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.17,
-   "comment_lines": 812,
+   "comment_density": 0.172,
+   "comment_lines": 877,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 1013,
-   "duplicate_pairs": 143,
+   "doc_lines": 1041,
+   "duplicate_pairs": 144,
    "duplicate_pairs_list": [
     "lib/mix/tasks/bench/elixir_factories.ex:152-163 <-> test/apps/elixir_runner/lib/factories.ex:501-510 (57 tokens)",
     "lib/mix/tasks/bench/elixir_factories.ex:157-163 <-> test/apps/elixir_runner/lib/factories.ex:56-62 (40 tokens)",
@@ -2377,11 +2377,11 @@
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/DispatchTestBase.java:533-543 <-> test/apps/java_runner/src/main/java/com/flezha/test/EntryIdleProbeProcedure.java:24-35 (53 tokens)",
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StatelessTestProcedure.java:1-16 <-> test/apps/java_runner/src/main/java/com/flezha/test/StatelessStep.java:1-15 (55 tokens)",
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:174-189 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:48-63 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:121-133 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:592-604 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:627-647 (98 tokens)",
-    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:601-606 (45 tokens)",
-    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:251-258 (42 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:127-139 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:554-566 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:592-612 (98 tokens)",
+    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:563-568 (45 tokens)",
+    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:257-264 (42 tokens)",
     "sdk/rust/benches/correctness.rs:268-274 <-> test/apps/rust_runner/src/workflow.rs:74-80 (40 tokens)",
     "sdk/rust/benches/dispatch.rs:188-194 <-> test/apps/rust_runner/src/entity.rs:511-517 (45 tokens)",
     "sdk/rust/benches/dispatch.rs:188-194 <-> test/apps/rust_runner/src/entity.rs:541-547 (56 tokens)",
@@ -2492,6 +2492,7 @@
     "test/apps/java_runner/src/main/java/com/flezha/test/KeyedCollectionsState.java:1-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/WindowedState.java:1-11 (54 tokens)",
     "test/apps/java_runner/src/main/java/com/flezha/test/OptOutCommitBlockWorkflowOperative.java:1-15 <-> test/apps/java_runner/src/main/java/com/flezha/test/OutboxBlockWorkflowOperative.java:1-15 (41 tokens)",
     "test/apps/java_runner/src/main/java/com/flezha/test/OutboxBlockWorkflowOperative.java:19-28 <-> test/apps/java_runner/src/main/java/com/flezha/test/SyncDurableWorkflowOperative.java:23-32 (41 tokens)",
+    "test/apps/php_runner/fixtures.php:83-88 <-> test/apps/php_runner/fixtures_state.php:54-59 (46 tokens)",
     "test/apps/python_runner/fixtures.py:176-179 <-> test/apps/python_runner/fixtures_state.py:69-72 (41 tokens)",
     "test/apps/rust_runner/src/channel.rs:195-202 <-> test/apps/rust_runner/src/entity.rs:252-259 (53 tokens)",
     "test/apps/rust_runner/src/channel.rs:195-203 <-> test/apps/rust_runner/src/state.rs:378-386 (54 tokens)",
@@ -2506,7 +2507,7 @@
     "test/apps/rust_runner/src/workflow.rs:79-91 <-> test/apps/rust_runner/src/workflow_loop.rs:33-45 (91 tokens)",
     "test/apps/rust_runner/src/workflow.rs:84-92 <-> test/apps/rust_runner/src/workflow_loop.rs:346-354 (42 tokens)"
    ],
-   "files": 136,
+   "files": 140,
    "files_over_800": 0,
    "files_over_800_list": [],
    "functions_over_50": 0,
@@ -2532,7 +2533,7 @@
     "test/apps/rust_runner/src/workflow.rs": 1
    },
    "test_files": 0,
-   "test_loc": 8901
+   "test_loc": 9251
   }
  },
  "bench": {
@@ -2615,7 +2616,7 @@
   "governor": "powersave",
   "hostname": "moon"
  },
- "head": "4eed145a",
+ "head": "102ed22d",
  "repo": {
   "clippy_warnings": 0,
   "credo_warnings": 154,

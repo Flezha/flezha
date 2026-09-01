@@ -301,10 +301,11 @@ fn fetch_loop() {
         return;
     }
     if remaining == 0 && !CLOSING.load(Ordering::Acquire) {
-        // Worth a line: this is the runner learning its work is over from the
-        // core rather than from an operator, and it is the only path by which
-        // a healthy-looking process stops fetching.
-        log_line(1, "the last fetcher left without a stop being requested");
+        // Worth a line: the core has stopped handing out work. On a
+        // controller-requested stop this is the only way the runner learns
+        // it; on the host's own stop it is what the fetchers were kept
+        // polling for.
+        log_line(1, "the last fetcher left on the core's word");
         report_drained();
     }
 }
@@ -414,12 +415,13 @@ pub fn start_host(fetchers: Option<u32>) -> Result<()> {
 
 /// Stop fetching, release every dispatch target and drain the blocking pool.
 ///
-/// Asynchronous, because it waits: a fetcher leaves at the end of its current
-/// poll turn, so this takes up to the poll timeout, and the pool still holds
-/// completions the core is waiting on.
+/// Asynchronous, because it waits: a fetcher leaves when its poll reports the
+/// core shutting down, which the core says only once the shutdown `shutdown()`
+/// began has shipped every Entity's state through these same fetchers. So this
+/// takes that sequence plus one poll turn, and the pool still holds completions
+/// the core is waiting on.
 #[napi(ts_return_type = "Promise<void>")]
 pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
-    CLOSING.store(true, Ordering::Release);
     let (deferred, promise) = env.create_deferred::<(), _>()?;
     // Not the blocking pool: this waits for that pool to drain, and a thread
     // waiting for its own pool is one the pool cannot free.
@@ -431,6 +433,9 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
             {
                 std::thread::sleep(Duration::from_millis(10));
             }
+            // Only now: a fetcher leaving early on this flag would take the
+            // last poller the shutdown sequence needs with it.
+            CLOSING.store(true, Ordering::Release);
             // Releasing every target un-refs the loops the host was keeping
             // alive, so a drained runner's process can exit on its own. What
             // a target still held is abandoned rather than left to retire its
@@ -563,12 +568,13 @@ static LOGGER: Mutex<Option<LogFn>> = Mutex::new(None);
 type DrainedFn = ThreadsafeFunction<(), (), (), Status, false>;
 static DRAINED: Mutex<Option<DrainedFn>> = Mutex::new(None);
 
-/// Report that the last fetcher left without the host being told to stop.
+/// Report that the last fetcher left on the core's shutting-down status.
 ///
 /// That is how a controller-requested stop reaches JavaScript: the core
 /// answers every blocked poller with its shutting-down status, the fetchers
 /// end, and nothing else would tell the runner its work is over. A runner that
-/// stayed up would keep its process alive holding a core that has stopped.
+/// stayed up would keep its process alive holding a core that has stopped. On
+/// the host's own stop the same report reaches a stop already running.
 fn report_drained() {
     if let Some(callback) = DRAINED.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         callback.call((), ThreadsafeFunctionCallMode::NonBlocking);

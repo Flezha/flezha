@@ -398,13 +398,16 @@ class _Host:
     def stop(self) -> int:
         """Stop fetching and drain.
 
-        A worker inside a handler finishes it, completes it, and only then
-        observes the shutdown on its next poll. Bounded by
-        :data:`DRAIN_TIMEOUT_S` — a handler that never returns must not keep the
-        runner alive forever.
+        The core says when: a worker leaves on the poll that reports the core
+        shutting down, which the core reports only once the shutdown sequence
+        has shipped every Entity's state through these same workers. A worker
+        inside a handler finishes it, completes it, and only then observes it.
+        Bounded by :data:`DRAIN_TIMEOUT_S` — a handler that never returns must
+        not keep the runner alive forever — and the flag is raised after the
+        join so a worker spawned late still leaves.
         """
-        self._stopping = True
         undrained = self._pool.join(_deadline())
+        self._stopping = True
         _report_undrained(undrained)
         return undrained
 

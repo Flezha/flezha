@@ -25,7 +25,7 @@ public final class StoreInputProcedure
 
     @Override
     public void applyChange(State state, StoreInputChange change) {
-        state.textInputs().add(change.text());
+        state.text_inputs().add(change.text());
     }
 
     @Override
@@ -40,6 +40,6 @@ public final class StoreInputProcedure
         ctx.emit(input);
     }
 
-    public record State(List<byte[]> binaryInputs, List<String> textInputs) {
+    public record State(List<byte[]> binary_inputs, List<String> text_inputs) {
     }
 }

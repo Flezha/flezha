@@ -134,7 +134,8 @@ class Core:
         self._call("start", namespace)
 
     def shutdown(self) -> None:
-        """Wake every blocked poller and stop the runner loop."""
+        """Ship every Entity's state to the controller, then wake every blocked
+        poller and stop the runner loop."""
         self._call("shutdown")
 
     # -- the poll loop -----------------------------------------------------

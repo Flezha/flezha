@@ -666,6 +666,8 @@ re-run by the supervisor before they were written here.**
 
 ## P2 — gates that lie, and time sinks
 
+
+
 ### KI-122 · `checkpoint_ack()` exists in no veneer but Python, and `outputs_at_checkpoint()` does not imply it in any of the four
 
 - **Severity**: P2 · a published spec SHALLs an authoring surface three SDKs cannot spell, and
@@ -1607,6 +1609,131 @@ under load.
   no `lib/flezha/state` and no test; charter §1b files it here.
 
 ## P3 — warts, wording, and measurement notes
+
+### KI-129 · On an erased host with more than one loop, a live Entity read can answer state whose changes are not yet journaled, and its seq stamp cannot say so
+
+- **Severity**: P3 · a wart in what the live read promises, not a data-loss path: the WAL is
+  what restores, and a tier-off class has no input log by design. It bites a TEST that uses
+  the live read as its settle signal before a stop, a writer lookup or a snapshot. · Found
+  2026-09-02 by the R5 S3 worker when `schema_evolution_e2e_test.exs` went red 4 of 6 under
+  ruby the first day it ran there (the supervisor reproduced it 2 of 2).
+- **Where**: `sdk/ruby/lib/flezha/dispatch.rb:158-160` — `invoke` writes the state back in
+  its `ensure` (`registered.set_state`); `run_work` then builds the effects and only when it
+  returns does the executor call `core.complete` with the change bodies, which the core's
+  flusher frames and ships. A `live_state_read` served by another worker thread in that
+  window answers a total whose changes are not yet framed. Python's thread pool, ruby's
+  threads, node with `FLEZHA_NODE_WORKERS > 0` and php under Swoole all have the window;
+  node's single loop closes it; the Rust typed path journals in `apply`.
+- **Evidence**: `FLEZHA_E2E_RUNTIME=ruby mix test --include system test/system/schema_evolution_e2e_test.exs`
+  → `1/2 passed` (twice, supervisor), failing at `:147`/`:170`; worker 4 red of 6 with the red
+  site moving between `:103` (no WalWriter yet), `:139` (`total` never reaches 12 after a
+  stop/restart) and `:170` (no `:restore_refused`) — every site a stop or a lookup taken on
+  the strength of a live read. A probe copy that awaits the persisted seq before each of the
+  three sites (`CreditTestHelper.wait_for_entity/3` + `await_seq(wait_for_writer(...), n)`,
+  the helpers `credit_flow` already uses) is 3 of 3 green under ruby.
+- **The wart proper**: the read's metadata `seq` is the handout `change_seq`, so a reader
+  cannot tell that the state it holds is ahead of the journal; `stop_operative(preserve_state:
+  true)` keeps what has landed. Nothing in the spec promises more, and the timers test already
+  says so of `send_io`.
+- **Verdict (supervisor, 2026-09-02)**: the test race is fixed under §9 in the S3 ruby
+  commit (the three waits, red first by rate); the read semantics are recorded, not changed —
+  a test settles on `await_seq`, never on a live read, before anything that depends on the
+  journal.
+
+
+### KI-128 · `credit_flow_e2e_test.exs` reads the credit flag at a point in time after the burst, so a legitimate re-attach fails it with a message naming the wrong cause — SUSPICION
+
+- **Severity**: P3 · seen once in 20 five-file php arms (supervisor 1/4, worker 0/16 including 14 in the failing arm shape), never alone (php 3/3, rust 1/1). · Found 2026-09-02 by the supervisor's verification arm of R5 S2 batch 3, the first day the scenario ran under php.
+- **Where**: `test/system/credit_flow_e2e_test.exs:133-134` — `active_credit_row(ce_id)`
+  (`test/helpers/credit_test_helper.ex:46-49`) is a point-in-time read of the first
+  `LivenessCounters` row for the runner with `credit_active == 1`, no wait. That flag is set
+  by the `{:credit_ack, session}` handler (`stream_channel.ex:383`) after the SDK acks the
+  `CreditWindowInit` offered on the first state frame of an attach, and cleared in exactly
+  one function, `Records.reset_credit/1` (`records.ex:329-334`), whose only caller is the
+  `{:flz_closed, _, _}` handler (`stream_channel.ex:467`): the state stream's socket closed
+  and the next state frame re-runs the handshake.
+- **Evidence**: `FLEZHA_E2E_RUNTIME=php mix test --include system --include sdk_smoke <sdk_smoke compaction credit_flow state_freshness partitioned_operatives>` →
+  once `22/23 passed`, `no credit-speaking secondary channel row for credit_flow_e2e_8667569809`
+  at `:134`, after a normal ~5 s burst (`await_seq(writer, 300)` at `:127` had passed). Test
+  logging runs at `:error` (`config/test.exs:165`), so the discriminating lines — the
+  `Connection closed for IO socket.` warning at `stream_channel.ex:452`, the credit-session
+  info line, a credit-overrun warning, the runner's own `tracing::warn!` — are all suppressed
+  and the log shows nothing between "runner up" and the assertion.
+- **Mechanism (as far as the box got)**: the row was credit-speaking at `:109`, the burst
+  landed, and between the last state frame and `:133` the secondary stream closed →
+  `reset_credit` → `credit_active` 0; with the burst over no state frame re-ran the handshake,
+  so the read finds no credit-speaking row. Two candidates for the close, unseparated: (A)
+  runner-side, `state_sink.rs:228` `request_reconnect("broken_pipe_flood")` or the control
+  reader's silence verdict (`control_unit.rs:338`); (B) controller-side, the `runner_retiring?`
+  branch at `stream_channel.ex:449` or a gate close. php's cold single-loop tempo (the first
+  runner's mean body 10 ms) widens the window; nothing php-specific in the port touches the
+  path (the six fixtures are folds; node ran the same burst green four times, ruby twice).
+- **The separating experiment**: the arm with the test logger at `:warning` so a close prints,
+  and the failure at `:134` dumping the runner's rows (`credit_active`, `credit_ledger_level`,
+  `credit_overrun_total`, `hb_credit_parked`) — an overrun > 0 at that moment means (B), zero
+  with a close means (A).
+- **A fix should** read the credit verdict from the row captured at `:109` (its counters ref
+  is per attach and holds the burst's numbers whatever happens after) and dump the rows on
+  failure so the message names the real cause; red-first by rate, which this box could not
+  deliver.
+- **Verdict (supervisor, 2026-09-02)**: a suspicion under §1b step 3 — 30-minute box spent,
+  unreproduced; the php `state_persistence` flip lands (the scenario is green 19 of 20 and
+  the failure shape is the harness's, not the port's). The test hardening is owed as a small
+  item of its own.
+
+
+### KI-125 · A Python runner aborts at interpreter exit after a graceful SIGTERM shutdown
+
+- **Severity**: P3 · the drain completes and every notification ships; then the main thread
+  waits exactly 1 s and the process dies with `SIGABRT` (exit 134), which an orchestrator reads
+  as a crash after every graceful stop of a runner whose stdin is a pipe. · Found by the R5 S2
+  worker, 2026-09-01, timing the KI-123 fix under `strace`.
+- **Where**: `sdk/python/src/flezha/runner.py:311-334` `_watch_stdin_eof` — a daemon thread
+  blocked in `sys.stdin.buffer.read(1)`; CPython's finalisation waits one second for that
+  buffer's lock and then aborts with `Fatal Python error: _enter_buffered_busy: could not
+  acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown`.
+- **Evidence** (supervisor's own run, no SDK loaded):
+
+      $ sleep 5 | sdk/python/.venv/bin/python stdin_daemon.py   # a daemon thread in stdin.buffer.read(1), sleep 0.2, normal exit
+      Fatal Python error: _enter_buffered_busy: could not acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown, possibly due to daemon threads
+      exit=134
+
+  Under the runner: after SIGTERM the main thread sits in one timed `FUTEX_WAIT` of 1.000 s
+  (`ETIMEDOUT`) and then `tgkill(SIGABRT)`. An EOF-driven exit does not hit it — the watcher
+  itself returns.
+- **A fix must** stop holding the buffer lock at finalisation: read the descriptor unbuffered
+  (`os.read(sys.stdin.fileno(), 1)`), or end the watcher before exit, or exit through
+  `os._exit` after the drain. Red first: a subprocess test that SIGTERMs a runner with a piped
+  stdin and asserts exit status 0.
+- **Verdict (supervisor, 2026-09-01)**: real, P3, owed to its own python-only change after R5
+  S2; does not pause the row.
+
+
+### KI-124 · Python's `persistence_off_counter` declares the reference's procedures under `stateful_counter`'s names
+
+- **Severity**: P3 · a fixture-fidelity divergence in the porting template; nothing in
+  `test/` or `lib/` reads either spelling, and a persistence-off class writes no WAL that
+  would carry the name to disk. · Found by the R5 S2 worker, 2026-09-01, porting the six
+  `state_persistence` fixtures from Python and checking each against the reference.
+- **Where**: `test/apps/python_runner/fixtures_state.py:116-118` —
+  `.into(counter_entry, "counter_entry_procedure").named("ticks").into(counter, "counter_procedure")`.
+  The reference names them `persistence_off_entry_procedure` /
+  `persistence_off_counter_procedure` (`test/apps/rust_runner/src/state.rs:533-534,557-558`);
+  Java agrees (`PersistenceOffStreamOperative.java:36,44`). Rust and Java write the two
+  classes twice; Python reuses `stateful_counter`'s classes and keeps their names.
+- **Evidence**: `grep -rn 'persistence_off_.*_procedure' test/ lib/` → only the Rust and Java
+  fixtures. The smoke golden pins controller-read declaration keys only
+  (`test/fixtures/declarations/store_input.json` is `{"keyed": "false"}`), so no test can be
+  red on a node name.
+- **A fix must** pass the reference's names through Python's node-name override — the same
+  `into(proc, name)` the node port uses — two string edits. Not done in R5 S2 because §1b's
+  bar for a fix commit is a red-first test, and no test can see a node name; a golden that
+  pinned `persistence_enabled: false` would pin something worth pinning and is the honest
+  vehicle if one is wanted.
+- **Verdict (supervisor, 2026-09-01)**: real, not worth a change of its own; the node, ruby
+  and php ports follow the reference. Owed to whichever change next touches
+  `fixtures_state.py`, or to R5's close-out if nothing does.
+
 
 ### KI-61 · `RecordLog`'s two `@spec`s name `Elixir.Registry.entity_id/0`, a type that does not exist
 
@@ -2578,6 +2705,111 @@ path, so none needs a red-first test.
   note in the same commit** — the note is the reason this looked like a capability.
 
 ## Resolved
+
+### KI-127 · The Java `store_input` twin serialises its state with camelCase keys, and the Node sugar twin does too — RESOLVED
+
+- **Severity**: P3 · `test/apps/java_runner`'s `store_input` writes `{"binaryInputs": [], "textInputs": [...]}` where the reference (`test/apps/rust_runner/src/entity.rs:277-333`) and every other twin write `binary_inputs`/`text_inputs`; hidden until 2026-09-02 because the only scenario that reads the keys, `state_freshness_e2e_test.exs`, hard-spawned the Rust runner on every runtime. · Found by the R5 S2 worker running the java arm after that test was made honest.
+- **Where**: `test/apps/java_runner/src/main/java/com/flezha/test/StoreInputProcedure.java:43` — `record State(List<byte[]> binaryInputs, List<String> textInputs)`; `SugarStoreState.java:10` — `public List<String> textInputs`. Node's `sugarStoreInput` in `test/apps/node_runner/fixtures.mjs` spells the same field `textInputs`; the hand-written node `store_input` (`fixtures_state.mjs`, S2) uses the reference's spelling.
+- **Evidence** (worker, 2026-09-02):
+
+      $ FLEZHA_E2E_RUNTIME=java mix test --include system test/system/state_freshness_e2e_test.exs
+      Result: 0/1 passed   — at :128, the decoded snapshot is
+      %{"binaryInputs" => [], "textInputs" => ["alpha-freshness_e2e_7269", "beta-…", "gamma-…"]}
+
+  The mechanism works (the snapshot arrives with all three inputs); only the keys differ.
+- **A fix must** spell the fields as the reference does through whatever the Java SDK's state serialiser already honours, and align the Node sugar twin in the same spirit; the java arm above is the red-first test.
+- **Verdict (supervisor, 2026-09-02)**: real, P3, fixed at the R5 S2 checkpoint as its own commit because the honest `state_freshness` cannot land while the java arm is red on it.
+- **Resolved**: java half in `35586558` (the two types renamed to the reference's spelling, no annotation, no new dependency; java `state_freshness` 1 passed, smoke tier 23 passed), node sugar twin in the node `state_persistence` port commit.
+
+### KI-126 · Every FFI shutdown tells the coordinator to reconnect, so a stopping runner re-registers with a live controller — RESOLVED
+
+- **Severity**: P2 · after shipping its state a node, python, ruby, php or java runner opens a
+  fresh control connection and fresh data streams to the controller it is leaving, and a live
+  controller can hand it work it will never do; against a dead controller it retries three
+  times. · Found by the R5 S2 worker, 2026-09-01, tracing the KI-123 fix with `strace`.
+- **Where**: `flz_core_ffi/src/lib.rs` `flz_core_shutdown` — after `poll_core.shutdown()` it
+  sends `RunnerMessage::Reconnect("controller_requested")` on the runner channel (the same send
+  the pre-fix entry made). `flz_core/src/coordinator.rs:392` `reconnect` returns only for an
+  already-`Stopped` runner; `:591` `handle_reconnect` sets `Stopped`, calls
+  `control_unit::open_reconnect` and sets `Running` again — for every reason, with nothing
+  gating it on shutdown.
+- **Evidence** (worker, python runner under `strace -D -f -tt`, `$SCRATCH/r5s2/py_strace.txt`
+  lines 11, 42–57): at SIGTERM+8 ms the coordinator thread `connect`s to the still-live control
+  socket and opens fresh primary/secondary stream sockets for the operative, then retries
+  against the dead controller three times. Mechanism verified at the code by the supervisor.
+- **A fix must** establish whether anything needs that send (the coordinator thread is a
+  `recv()` loop over a channel whose sender the coordinator itself holds through `otx_arc`, so
+  dropping the FFI's sender cannot close it, and nothing joins the thread) and, if nothing
+  does, delete it — with an ABI-level assertion that the harness controller accepts no new
+  connection after it acks the notification.
+- **Verdict (supervisor, 2026-09-01)**: real, worth fixing now — fixed in the same change as
+  KI-123 (`ship-shutdown-notification-from-erased-hosts`) as its own commit, 30-minute box on
+  the one question above.
+- **Resolved**: `4e20aeb2`, 2026-09-02 — `flz_core_shutdown` runs the bridge off the caller's thread before the poll core stops; every host (node, python, ruby, php, java) raises its stop flag only after the core's word; the shutdown-time `Reconnect` send, the `runner_tx` field and its take are deleted. Red-first at the ABI (notification awaited; connection count unchanged after the ack) and on the node/python `state_freshness` arms.
+
+
+### KI-123 · The erased hosts never ship `RunnerShutdownNotification` on SIGTERM, so the controller's shutdown snapshot stays empty in four SDKs — RESOLVED
+
+- **Severity**: P2 · a spec'd freshness feature is absent in node, python, ruby and php; the
+  WAL still holds every change, so nothing is lost, but a deployment with
+  `snapshot_interval: 0` sees `Overwatch.state.snapshot == nil` for ever. · Found by the R5 S2
+  worker, 2026-09-01, the moment `state_freshness_e2e_test.exs` stopped spawning Rust on every
+  runtime (it opened `cargo run` by hand and never called `start_runner_port/2`); python had
+  "carried" `state_persistence` with this scenario green only for the reference's reasons.
+- **Where**: `flz_core_ffi/src/lib.rs:412-424` `flz_core_shutdown` — sets
+  `poll_core::global().shutdown()` and drops `runner_tx`, never calls
+  `flz_core::shutdown::run_active_graceful_shutdown`; `flz_core_ffi/src/lib.rs:580`
+  `flz_core_context_free` is a bare `drop(Box)` with no `Drop` impl. The core's own SIGTERM
+  thread (`flz_core/src/shutdown.rs:252` `install_sigterm_handler`, installed by
+  `register_bridge` at `flz_core_start`, `lib.rs:273-274`) is the only path that ships the
+  notification, and every host runtime installs its own sigaction on top of it —
+  `sdk/node/src/runner.ts:277` `process.on('SIGTERM')`, `sdk/python/src/flezha/runner.py:306`
+  `signal.signal`, `runner.rb:98-99` `Signal.trap`, `Runner.php:190-191` `pcntl_signal`.
+- **Evidence** (2026-09-01, supervisor's own runs after the worker's):
+
+      $ FLEZHA_E2E_RUNTIME=node mix test --include system --trace test/system/state_freshness_e2e_test.exs
+      1) test SIGTERM to the runner populates Overwatch.state.snapshot via RunnerShutdownNotification
+         controller's Overwatch.state.snapshot was never populated
+      Result: 0/1 passed        (5172.7ms — the test's whole wait)
+      $ FLEZHA_E2E_RUNTIME=python mix test --include system --trace test/system/state_freshness_e2e_test.exs
+      Result: 0/1 passed        (5201.4ms)
+      $ FLEZHA_E2E_RUNTIME=rust  … → 1 passed (234.1ms), stderr: [flezha] SIGTERM received; running graceful shutdown
+
+  Under node the runner writes nothing to stderr for the whole test. `strace -f -e
+  trace=rt_sigaction` on the node runner: the core's `SA_SIGINFO` handler is installed first
+  (`register_bridge`), then the main thread installs libuv's `SA_RESTART` handler over it
+  (`uv_signal_start`, i.e. `process.on('SIGTERM')`); libuv does not chain.
+- **The mechanism, named to the function.** On SIGTERM only the veneer's `stop()` runs:
+  `native.shutdown()` = `flz_core_shutdown`, then the host stops its loops and frees the
+  context. None of those reaches `run_active_graceful_shutdown`, whose callers are the core's
+  signal thread, `exit_terminally`, and the controller-ordered disconnect
+  (`command/mod.rs:250`). The bridge itself IS wired for the erased host —
+  `coordinator.rs:275` `install_snapshot_fn` over `serialize_operative_state`, `:316`
+  `set_control_stream` — so the gap is the stop path alone. Rust is spared twice: its process
+  has no second sigaction, and `FlezhaRunner::drop` (`runner_handle.rs:564`) runs the bridge.
+- **Why the obvious one-liner is wrong.** Calling `run_active_graceful_shutdown()` inside
+  `flz_core_shutdown` before `poll_core.shutdown()` runs the `migration_serialize` host
+  command synchronously on the thread that called `native.shutdown()` — in node's
+  single-loop configuration that IS the loop that must answer it: a deadlock bounded only by
+  `HOST_COMMAND_TIMEOUT` (30 s, `poll_core/mod.rs:604`).
+- **The spec.** `openspec/specs/runner-controller-connection-healing/spec.md:144` SHALLs the
+  notification for "the Rust/Java SDK" and `:148` lets SDKs that do not send it fall back to
+  periodic snapshots — written before four more SDKs existed. The conformance rule
+  (`sdk-conformance/spec.md:88`, no third state) makes this scenario a `state_persistence`
+  proof, and the programme's standing instruction is that every SDK behaves the same.
+- **A fix must** run the bridge OFF the caller's thread from the one FFI entry all four
+  veneers already call — take `runner_tx` out of the context first, spawn a thread that runs
+  `run_active_graceful_shutdown()` (the bridge latches) and only then
+  `poll_core.shutdown()` — so the host loop stays free to answer `migration_serialize`; no
+  context pointer may cross into that thread. Rebuild every veneer's own `flz_core_ffi`
+  artefact before re-running an arm. Make the spec requirement SDK-agnostic, keeping the
+  fallback for an SDK that defers persistence by name (Elixir).
+- **Verdict (supervisor, 2026-09-01)**: real, worth fixing now — it blocks R5 S2's manifest
+  flip. Fixed first as `ship-shutdown-notification-from-erased-hosts`, its own commit,
+  red-first on the node and python arms above; ruby and php are proved when their S2 batches
+  flip the manifests.
+- **Resolved**: `4e20aeb2`, 2026-09-02 — `flz_core_shutdown` runs the bridge off the caller's thread before the poll core stops; every host (node, python, ruby, php, java) raises its stop flag only after the core's word; the shutdown-time `Reconnect` send, the `runner_tx` field and its take are deleted. Red-first at the ABI (notification awaited; connection count unchanged after the ack) and on the node/python `state_freshness` arms.
+
 
 ### KI-113 · `test/apps/testnet` installs with `npm ci || npm install`, under a comment promising reproducibility — RESOLVED
 

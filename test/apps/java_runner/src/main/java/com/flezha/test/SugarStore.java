@@ -6,7 +6,7 @@ import com.flezha.sdk.authoring.Procedure;
 @Procedure(id = "sugar_store_input", sink = "sugar_store_sink")
 public class SugarStore {
     public String run(String input, SugarStoreStateHandle state) {
-        state.pushTextInputs(input);
+        state.pushText_inputs(input);
         return input;
     }
 }

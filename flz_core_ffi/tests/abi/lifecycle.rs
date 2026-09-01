@@ -62,7 +62,7 @@ fn c_abi_full_scenario() {
     a_live_read_answers_with_the_host_json(ctx, &controller);
     a_keyed_dynamic_route_crosses_for_its_key(ctx, &controller, &stream);
     a_workflow_body_runs_through_the_abi(ctx, &controller);
-    shutdown_wakes_a_blocked_poller(ctx);
+    crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
 }
@@ -692,31 +692,5 @@ fn the_workflow_session_calls_answer(ctx: *mut FlzContext) {
     assert_eq!(
         unsafe { flz_core_workflow_emit(ctx, instance.as_ptr(), b"mid".as_ptr(), 3) },
         FLZ_OK
-    );
-}
-
-fn shutdown_wakes_a_blocked_poller(ctx: *mut FlzContext) {
-    let ctx_addr = ctx as usize;
-    let blocked = thread::spawn(move || {
-        let started = Instant::now();
-        let (status, _) = abi_poll(ctx_addr as *mut FlzContext, 30_000);
-        (status, started.elapsed())
-    });
-    // The poller stays blocked for as long as it is watched; shutdown is what
-    // frees it.
-    let watched = Instant::now();
-    while watched.elapsed() < Duration::from_millis(100) {
-        assert!(
-            !blocked.is_finished(),
-            "the poller returned before shutdown"
-        );
-        thread::yield_now();
-    }
-    unsafe { flz_core_shutdown(ctx) };
-    let (status, waited) = blocked.join().expect("blocked poller returns");
-    assert_eq!(status, FLZ_POLL_SHUTTING_DOWN);
-    assert!(
-        waited < Duration::from_secs(5),
-        "shutdown must wake promptly, waited {waited:?}"
     );
 }

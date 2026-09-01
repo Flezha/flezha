@@ -9,11 +9,10 @@
 
 import { defineOperative, defineProcedure } from '@flezha/sdk';
 
-const text = (bytes) => Buffer.from(bytes).toString('utf8');
-const bytes = (value) => Buffer.from(String(value), 'utf8');
+import { bytes, prefix, text } from './fixture_support.mjs';
 
-/** The key convention every keyed fixture shares: text before the first ':'. */
-const prefix = (input) => String(input).split(':')[0];
+// The persisted-state family is registered from its own module.
+export * from './fixtures_state.mjs';
 
 // -- do_nothing / bench_echo ------------------------------------------------
 
@@ -146,9 +145,9 @@ export const sugarDoNothing = defineOperative({
 
 const SugarStoreInput = defineProcedure({
   name: 'sugar_store_input',
-  initialState: () => ({ textInputs: [] }),
+  initialState: () => ({ text_inputs: [] }),
   applyChange: (state, change) => {
-    state.textInputs.push(change.push);
+    state.text_inputs.push(change.push);
   },
   handle: (input, ctx) => {
     ctx.change({ push: input });
@@ -249,38 +248,6 @@ export const entityStress = defineOperative({
   },
 });
 
-// -- bench_keyed_nopersist --------------------------------------------------
-
-const TierStore = defineProcedure({
-  name: 'tier_store_procedure',
-  initialState: () => ({ values: {} }),
-  applyChange: (state, change) => {
-    state.values[change.key] = change.value;
-  },
-  handle: (input, ctx) => {
-    const [key, ...rest] = String(input).split(':');
-    const value = rest.join(':');
-    if (value === 'poison') throw new Error('poison value');
-    ctx.change({ key, value });
-    ctx.emit(`${key}=${value}`, { key });
-  },
-});
-
-// Per-entity persistence off: this is the heap-only posture the bench isolates
-// against the durable one.
-export const benchKeyedNoPersist = defineOperative({
-  factoryId: 'bench_keyed_nopersist',
-  persistent: false,
-  channels: (c) => {
-    c.input('input', text)
-      .onFull('drop_nothing')
-      .into(TierStore)
-      .named('sink')
-      .keyed()
-      .sink('tier_sink', bytes);
-  },
-});
-
 // -- poison_probe / wedge_probe ---------------------------------------------
 
 let antidoteTaken = false;
@@ -331,6 +298,40 @@ export const wedgeProbe = defineOperative({
   factoryId: 'wedge_probe',
   channels: (c) => {
     c.input('input', text).into(WedgeProbe).named('out').sink('wedge_sink', bytes);
+  },
+});
+
+// -- session_timeout --------------------------------------------------------
+//
+// The worked session-timeout shape: each input pushes the idle deadline out,
+// and the firing closes the session. Single-entity so the e2e's crash-resume
+// half exercises a durable Entity. The timeout is read from
+// `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
+
+const SessionTimeout = defineProcedure({
+  name: 'session_timeout_procedure',
+  initialState: () => ({ touched: [], closed_at: [] }),
+  applyChange: (state, change) => {
+    if ('touched' in change) state.touched.push(change.touched);
+    else state.closed_at.push(change.closed);
+  },
+  handle: (input, ctx) => {
+    ctx.change({ touched: input });
+    // A processing-time timer, because the answer to "nothing has arrived"
+    // cannot be an event-time one: nothing would advance the clock.
+    ctx.timerAfter(Number(process.env.TIMER_TEST_TIMEOUT_MS) || 1000);
+  },
+  onTimer: (firing, ctx) => {
+    const firedAt = Number(firing.scheduledAt);
+    ctx.change({ closed: firedAt });
+    ctx.emit(`closed@${firedAt}`);
+  },
+});
+
+export const sessionTimeout = defineOperative({
+  factoryId: 'session_timeout',
+  channels: (c) => {
+    c.input('input', text).into(SessionTimeout).named('kafka').sink('test_kafka', bytes);
   },
 });
 

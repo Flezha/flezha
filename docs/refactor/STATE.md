@@ -192,6 +192,347 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
+**Session 7, 2026-09-01 22:22 — opened by `/loop /refactor`, two minutes after session 6's
+handover.** Orientation from the files: tree clean at `de8be2c3` bar the two foreign files
+(`M CLAUDE.md`, `?? docs/dev_notes/INDEX.md` — the 15:37 index split, still unattributed,
+still NOT mine); `ListAgents` **no subagents**, peer `flezha-03` interactive/idle plus five
+offline/cloud sessions; machine clean (no `beam.smp`/`cargo`/`mvn`/loops/zombies, load
+1.53/1.21/1.13); `refactor_metrics.py --check --lint` **exit 0, 0 regressions** against the
+`4eed145a` baseline; `openspec list` shows only the parked `sdk-durable-fixture-parity` 10/22.
+**Queue: R5 resumes at S2** (`state_persistence` × node/ruby/php), which needs its own change
+id — ruling (b) under *R5 SURVEY RULED*. Standing baseline approval died with session 6;
+**this session has NOT asked yet** and will only when a number has stopped moving.
+
+**R5 S2 worker spawned 2026-09-01 22:31** — fresh `general-purpose`, two-step. Step 1 writes
+`openspec/changes/port-durable-fixtures-to-veneers/` for S2–S5 plus the close-out (one change
+id for the rest of R5, per ruling (b)) and STOPS; step 2, on my go, implements S2 = node →
+ruby → php `state_persistence`, one e2e arm per batch, checkpoint after php. Brief carries:
+Python `fixtures_state.py` as the template checked against `rust_runner/src/state.rs` knob for
+knob; the spec's "no third state" rule (`sdk-conformance/spec.md:88`), so the proof is every
+`state_persistence`-tagged scenario green per runtime, not registration; the PHP §7-forced
+split (692 lines today); the `duplicate_pairs` expectation with the area-7 twin precedent and
+the rule that only the user re-records; the ruby `PATH` trap; `--check --lint` never bare;
+KI-123 as the next free number and KI-114's unsettled "every run" claim to be evidenced, not
+investigated. No `refactor-baseline` tag: no hot path, nothing modified that a bench drives.
+
+**S2 last seen 22:36 (+10m, step 1).** Reading — no change dir yet, nothing under the
+scratchpad, tree untouched bar my board edit. Machine clean, load 0.54/0.50/0.78 (quieting).
+
+### R5 S2 PROPOSAL VERIFIED AND APPROVED 2026-09-01 22:55 — and it corrected my brief twice
+
+`openspec/changes/port-durable-fixtures-to-veneers/` — proposal, design, tasks (S2–S5 + close,
+42 fixtures = 18 + 9 + 12 + 3), one ADDED spec delta, `--strict` valid, tree untouched. Step 1
+cost 18 min / 360 k tokens. Verified at the REPO, not the report: every item carries a reuse
+clause; no SDK source changes; no hot path; the manifest flip is the ratchet and the spec's
+"no third state" rule makes the five tagged scenarios the proof; the node-name override exists
+in all three builders (`authoring.ts:331`, `builder.rb:205`, `Edge.php:123`); the moved
+`TierStore` blocks sit where cited; PHP's split is §7-forced (692 today).
+
+**The finding that matters — `state_freshness_e2e_test.exs` proves the RUST runner on every
+runtime.** Its private `start_runner/0` (`:146-167`) opens `cargo run --manifest-path=…/rust_runner/Cargo.toml`
+through `PortPilot.open_port/2` and never calls `start_runner_port/2`, so `FLEZHA_E2E_RUNTIME`
+never reaches it; the gate's literal check (`gate_test.exs:437`) matches only `runtime: :\w+`.
+Under python it has been "passing" this way since python carried `state_persistence`. Same
+class as the four bypass tests S0 closed. **RULED (a)**: route it through the shared spawner
+(which `compaction` and `credit_flow` already use — RULE #1 use-as-is), delete the copy, extend
+the gate in place with `test/apps/\w+_runner/`, red-first on the file, as **batch 0 and its own
+commit**. I checked the one other file naming a test-app path: `connect_discovery_e2e_test.exs:108`
+builds it from `spawn_runtime()` and its `run_until` uses the manifest launch line for a runner
+expected NOT to connect — not a bypass, and `\w+` cannot match `#{`; worker told to prove that
+from the gate's output. The validator refused a delta-less change, and the rule it forced into
+writing is exactly this one — a scenario spawns through the harness; `reference_runtime: true`
+is how it asks for the reference, not a bypass.
+
+**Two corrections against my brief, both right**: charter §11d (2026-08-31) makes
+`docs/known_issues.md` supervisor-only — the skill's §3 brief text still says the worker writes
+it and is stale; and `test/apps duplicate_pairs` blocks at **143** (S0's re-record), not the 140
+I quoted from area 7. **Other rulings**: Node/Ruby split now (the template's partition; moving
+the lines again at S4 is the worse diff); `persistence_off_counter` follows the REFERENCE names
+(`state.rs:534,558`) via the override — Python's `counter_*` reuse (`fixtures_state.py:116-118`)
+is a P3 wart I file at the checkpoint, not a fix, because the smoke golden pins only
+controller-read keys and no red-first test exists for a node name. Checkpoint after batch 3.
+
+**S2 last seen 22:58 (+11m into step 2).** 8 boxes ticked: batch 0 done (0.4/0.5 — the
+gate extended, `state_freshness` rerouted), node batch 1.1–1.3 and 1.6 done; diff +206/−182 over
+6 files plus two new (`fixtures_state.mjs` and a `fixture_support.mjs` the design did not name —
+to be checked at the checkpoint: forced by the `fixtures.mjs` ↔ `fixtures_state.mjs` re-export
+cycle for `text`/`bytes`, or a new helper bucket). **The node arm ran RED: `22/23 passed, 5
+skipped`, `state_freshness` fails under node** — the veneer gap ruling (a) was expected to
+expose if it existed. Every `state_persistence` test ran, so the flip works. Worker is finishing
+batch 1's boxes (`--check --lint` running, one `beam.smp` of its own); ruling waits for its
+report. Machine otherwise clean, load 0.22/0.33/0.50.
+
+### KI-123 RULED 2026-09-01 23:25 — real, P2, cross-SDK, and it pauses S2 for a one-seam fix
+
+**The veneers never ship `RunnerShutdownNotification` on SIGTERM.** Worker's mechanism,
+verified by me at the code and by two reproductions of my own: `FLEZHA_E2E_RUNTIME=node` and
+`=python` on `state_freshness_e2e_test.exs` both **`0/1 passed`**, "snapshot was never
+populated", 5.2 s each (the test's whole wait). `flz_core_shutdown` (`flz_core_ffi/src/lib.rs:412`)
+sets `poll_core.shutdown()` and drops `runner_tx` and never calls
+`run_active_graceful_shutdown`; the core's own SIGTERM thread (`shutdown.rs:252`) is installed
+at `flz_core_start` but every host runtime installs its sigaction on top (strace: libuv's
+`uv_signal_start` replaces `signal_hook`'s), so on SIGTERM only the veneer's `stop()` runs. The
+bridge IS wired for the erased host (`coordinator.rs:275` `install_snapshot_fn`, `:316`
+`set_control_stream`) — the gap is the stop path, not the bridge. Python has "carried"
+`state_persistence` with this scenario green only because the scenario spawned Rust (batch 0
+made it honest, which is how it surfaced). Rust is spared twice: no second sigaction, and
+`FlezhaRunner::drop` runs the bridge.
+
+**Why P2 and not P1**: the WAL holds every change; what is missing is the fresh-at-SIGTERM
+snapshot the feature promises (`snapshot_interval: 0` deployments see `nil` until the next
+periodic snapshot — which is never, in that shape). **Why it is not the user's call**: the spec
+(`runner-controller-connection-healing/spec.md:144,148`) names "the Rust/Java SDK" and lets
+other SDKs fall back — written before four more SDKs existed — and the user's standing
+instruction for this programme is that every SDK behaves the same and proves it. The
+conformance rule makes this scenario a `state_persistence` proof, so the S2 flip cannot land
+red. **Shape ruled**: extend `flz_core_shutdown` to run the bridge OFF the caller's thread
+(take `runner_tx` first, spawn, `run_active_graceful_shutdown()` then `poll_core.shutdown()`),
+so the host loop stays free to answer `migration_serialize` — the single-loop deadlock the
+worker named for the obvious one-liner. RULE #1: the bridge and the Rust/Java sequence, reused
+through the one FFI entry all four veneers call; no veneer change unless its stop path stops
+polling early. Rejected: the core owning SIGTERM (a behaviour change wider than the gap),
+`reference_runtime: true` (hides it). Own change `ship-shutdown-notification-from-erased-hosts`,
+MODIFIED spec delta making the requirement SDK-agnostic, ruby/php proof deferred by name to
+their S2 batches. Same worker (its mechanism is in its context). Checkpoint before batch 2;
+three commits owed at it: the fix, batch 0's two test files, then the node port with S2.
+
+**KI-123 fix last seen 23:16 (+11m).** Worker is writing the red-first test at the ABI level
+first (`flz_core_ffi/tests/abi/lifecycle.rs` modified; `lib.rs` untouched so far; change dir not
+yet written). No `cargo`/`beam.smp` at the moment of the sweep, load 0.60/0.47/0.59. KI-123 and
+KI-124 filed by me in `docs/known_issues.md` (supervisor-only file, charter §11d).
+
+**KI-123 fix last seen 23:27 (+22m).** Change dir written. Diff now covers `flz_core_ffi/src/lib.rs`,
+`napi_host/mod.rs`, the ABI lifecycle test, AND stop-path edits in python (`executor.py`,
+`native.py`), ruby (`executor.rb`) and php (`Core.php`, `Runner.php`) — so three veneers did
+stop their loops before the core said so, as the brief told it to verify; node's TypeScript
+untouched so far. Its reasons per veneer are what the checkpoint turns on. 15 files, +491/−232
+including my two doc files. Machine: one python probe of its own, no leak, load 0.88.
+
+### KI-123 FIX VERIFIED 2026-09-01 23:50 — and its checkpoint found two more, one ruled fixable now
+
+**Verified at the repo**: `flz_core_shutdown` is the ruled shape (take `runner_tx`, spawn
+`flz-shutdown`: bridge → `poll_core.shutdown()` → send; spawn failure logs and stops without
+shipping); the ABI scenario's last phase is a real red-first (the host answers
+`migration_serialize` during shutdown and awaits the frame; `timed out waiting for
+RunnerShutdownNotification` before the fix, `2 passed` after); the MODIFIED delta carries all six
+live scenarios and adds the erased-host one (machine-diffed by the worker, read by me). **All
+four veneers stopped their loops on their own flag before the core said so** — harmless while
+the old entry set the core's flag synchronously, a race the moment it does not — so node's
+`CLOSING`, python's `_stopping`, ruby's `@stopping` and php's `stop()` each moved to after the
+core's word. **My own full node arm with the fix: `2005 passed, 44 skipped, 0 failed`, 108.8 s
+wall** against S1's 98.7 s / 1998 passed; 16 `RunnerShutdownAck timeout` lines at harness
+teardown, zero failures. Worker's: node and python `state_freshness` `1 passed` (190/202 ms,
+strace shows the notification at SIGTERM+1 ms and the ack at +7 ms); four veneer suites green
+at S0's invocations; clippy clean.
+
+**Ruled**: (1) `flz_core_ffi prod_loc 3220 → 3230` is a fix's cost — accepted under S0's
+precedent, baseline re-recorded at commit with an audit; (2) the stdin-EOF path now ships too
+— ACCEPTED (every graceful stop ships, bounded 2 s, no production path is EOF, cost measured
+above); (3) **KI-125** — python runners abort at exit after SIGTERM (`_enter_buffered_busy`,
+exit 134: a daemon thread blocked in `stdin.buffer.read(1)` holds the buffer lock at
+finalisation), reproduced by me with no SDK loaded — real, P3, own python-only change owed
+AFTER S2; (4) **KI-126** — every FFI shutdown sends `Reconnect("controller_requested")` and
+`handle_reconnect` (`coordinator.rs:591`) reconnects for EVERY reason with nothing gating it on
+shutdown, so a stopping runner re-registers with a live controller — verified at the code by me,
+**real, P2, fixed NOW** as its own commit (delete the send if a 30-min box shows nothing needs
+it; red-first ABI refute after the ack). (5) **Java shares the entry** (`jni_glue.rs:346`) and
+the JVM owns its signals — the worker verifies Java's stop path and runs the java arm before the
+checkpoint. Four commits owed at it: KI-123, KI-126, batch 0, the node port.
+
+**Last seen 23:50 (+11m after the KI-126/Java message).** `sdk/java/.../PollHost.java` now
+modified — Java's host stopped on its own flag too, the fifth SDK with the race. 16 files,
++599/−246. No `mvn`/`cargo`/`beam.smp` at the sweep, load 0.51/0.68/0.77. KI-125 and KI-126
+filed by me in `known_issues.md`.
+
+**Last seen 2026-09-02 00:01 (+22m).** Ticks 13 → 20; `PollHostTest.java` added beside the
+`PollHost.java` change (Java's red-first at the unit level). 17 files, +627/−249. Nothing leaked
+at the sweep; load 1.67/1.09/0.84 — a build just finished.
+
+### KI-123 + KI-126 ARE DONE — `4e20aeb2`, one commit, archived, spec synced
+
+**Verified by me before staging**: node and python `state_freshness` `1 passed` on my own runs;
+`cargo test -p flz_core_ffi --test abi_scenario` `2 passed`; `--check --lint` **0 regressions**
+with the two node files intent-added — **the KI-126 deletion funded KI-123's +10 to zero, so no
+baseline re-record was needed** and the user's after-the-fact veto is moot. One commit for both
+fixes, ruled: splitting them leaves a red gate at the intermediate commit. Eleven files staged
+one by one after reading every diff; the two new node files stayed intent-to-add. **KI-126's
+30-minute box passed**: the only legitimate `Reconnect` senders are the control reader's
+write-error and silence paths (`control_unit.rs:282,338`), the coordinator holds its own sender
+plus the trigger and timer clones, and the thread is joined nowhere — so the send, the
+`runner_tx` field and its take are gone. Red-first at the ABI: `controller.accepted()` unchanged
+after the ack, a `yield_now` watch (the worker's first cut used `thread::sleep`, the ratchet
+caught it at `sleeps 0 → 1`, rewritten). **Java**: the JVM installs its SIGTERM handling
+first so the core's handler chains — Java never had KI-123 — but it had the flag race;
+`PollHost.close()` joins then raises `closing`; runtime module 120 tests, spotless clean.
+
+**KI-127 found by the java arm** (`0/1` at `:128`): the Java `store_input` twin's state is
+`{"binaryInputs","textInputs"}` where the reference writes snake_case, hidden until the test was
+made honest; Node's `sugar_store_input` twin has the same divergence unasserted. **RULED real,
+P3, fixed now** — it blocks batch 0's commit on the java arm. Worker on it; then I commit KI-127,
+batch 0 and the node port, then ruby.
+
+**The user's instruction at 00:20 (2026-09-02), verbatim in substance**: *do not block on my
+answers; if something blocks, choose the best outcome; tell me later what you did and chose and
+what is important for me to see.* Applied from here: decisions that would have gone under
+*Awaiting the user's decision* are taken, recorded with their reasoning, and listed for the user
+in the session summary instead.
+
+### CHECKPOINT COMMITTED 2026-09-02 00:30 — four commits, every one verified by my own runs
+
+| commit | what | my verification |
+|---|---|---|
+| `4e20aeb2` | **KI-123 + KI-126** — `flz_core_shutdown` ships state off-thread; five hosts raise their stop flag after the core's word; the shutdown-time `Reconnect` send deleted | node/python `state_freshness` 1 passed; ABI scenario 2 passed; `--check --lint` 0 regressions; full node arm 2005/0 |
+| `35586558` | **KI-127** java `store_input` twins spell `binary_inputs`/`text_inputs` | java `state_freshness` 1 passed |
+| `3d299aff` | **batch 0** — `state_freshness` through `start_runner_port/2`; gate refuses `test/apps/\w+_runner/` | gate 20 passed |
+| `2b4fadd7` | **S2 batch 1 — node carries `state_persistence`** (six fixtures in `fixtures_state.mjs`, helpers moved to `fixture_support.mjs`, sugar twin spelled as the reference) | node five-file arm 23 passed / 5 skipped |
+
+KI-123, KI-126, KI-127 → *Resolved* in `known_issues.md`; KI-124 (P3 note) and KI-125 (P3,
+python exit abort, own change owed after S2) stay open. `ship-shutdown-notification-from-erased-hosts`
+archived, spec synced in `4e20aeb2`. **The +10 needed no re-record**: KI-126's deletion funded
+it. Ruby (batch 2) and PHP (batch 3) next, same worker; their `state_freshness` arms are the
+first proof of the fix on those two runtimes.
+
+**Batch 2 (ruby) worker resumed 00:32** on the same worker; tree clean at `2b4fadd7` bar the
+two foreign files. Checkpoint after batch 3 and the S2 close (4.1–4.3).
+
+### S2 CHECKPOINT 2026-09-02 01:05 — ruby COMMITTED, php HELD on a 1-in-4 arm failure
+
+Worker reported batches 2 and 3 plus the S2 close in 11 minutes: three arms `23 passed, 5
+skipped` (node re-run, ruby, php), pre-flip `18/10` each; gate 20; ruby 92 runs + rubocop
+clean; php 141 tests + php-cs-fixer clean; full `mix test` **1962 passed**; five naming gates
+exit 0. **Verified by me**: both new fixture files read faithful (reference names via the
+override, `resume_probe` returns the new total, `KeyedUpsertOperative` carries the one chain
+for both bench postures, unparsable entry → 0); ruby arm `23 passed, 5 skipped` on my run;
+gate 20; `--check --lint` **`test/apps duplicate_pairs 143 → 144`**, the one new pair
+`fixtures.php:83-88 ↔ fixtures_state.php:54-59` (46 tokens: the `input(...)->onFull(DropNothing)`
+prefix `bench_echo` and the keyed upsert share, which the reference writes twice itself).
+**RULED fixture twin, accepted** under area 7's precedent — a helper for a two-line chain is
+the worse code; baseline re-recorded with the php commit, audited. `fixtures.php` 660 +
+`fixtures_state.php` 264: the §7-forced split, both under 800.
+
+**Two things the worker's report did not show and my runs did**: (1) **the format gate was
+red on `flz_core_ffi/tests/abi/lifecycle.rs`** — two reflows the pinned nightly wants in the
+test I committed in `4e20aeb2`; the worker reported it honestly as outside its lane. Fixed with
+`rustfmt +nightly-2026-05-07 --edition 2021` on that ONE file (never `cargo fmt --all`), the
+read-only `--check` now lists 0 diffs → **`0b125f7e`**. (2) **My php arm read `22/23`**:
+`credit_flow_e2e_test.exs:76` failed at `:134`, *"no credit-speaking secondary channel row"*.
+Alone: php 3/3 passed, rust 1/1. An intermittent on a scenario that had never run under php
+before today — §1b + §9: **30-minute box handed to the worker** (mechanism at `:134`, arm-shape
+reproduction with a rate, verdict proposed: test race → its wait is fixed and lands with php;
+SDK gap → pause). **php stays uncommitted until ruled.** Ruby landed as **`3b578e6f`**.
+
+### KI-128 RULED A SUSPICION 01:25 — and the baseline audit caught MY OWN red commit
+
+**KI-128**: the worker's box ran the php five-file arm **14 more times in the failing shape,
+14 of 14 green** (0/16 on its runs, 1/20 across both boxes; alone php 3/3, rust 1/1). Mechanism
+verified by me at the code: `active_credit_row/1` (`credit_test_helper.ex:46-49`) is a
+point-in-time read of `credit_active == 1`; that flag is cleared in ONE function,
+`Records.reset_credit/1`, whose only caller is the `{:flz_closed, …}` handler
+(`stream_channel.ex:467`) — so a legitimate secondary-stream re-attach after the burst leaves
+`:133` nothing to read and `:134` names the wrong cause. Which side closed the stream is
+unseparated (the test logger sits at `:error`, so every discriminating line is suppressed);
+the separating experiment is written into the entry. **Ruled a suspicion under §1b step 3**:
+php lands; the test hardening (read the verdict from the row captured at `:109`, dump the
+rows on failure) is owed as its own small item.
+
+**The breach was mine.** `0b125f7e` (the rustfmt of `lifecycle.rs`) added six lines and put
+the file at **804** — over the §7 ceiling that binds tests, in a blocking area — and I ran
+`--check --lint` BEFORE that commit, not after. `--write-baseline` for the php commit would have
+recorded `flz_core_ffi files_over_800 0 → 1` as the new floor; the audit I had promised the
+user is what caught it, and the write is REVERTED (baseline byte-identical to HEAD). So
+**`0b125f7e` is a red commit on `dev`** until the next one: the worker is bringing the file
+under 800 (an import tidy if it leaves headroom, else the shutdown phase into its own module),
+zero behaviour, its own commit. Then the re-record (audit expected: `test/apps duplicate_pairs
+143 → 144` ruled, `sdk/php prod_loc 4165 → 4163` tightened, nothing else ratcheted moves), then
+php. **Lesson for the handover: run the gate AFTER the last edit, including a format-only one
+— a reflow is lines.** php files staged, held; naming gates all exit 0.
+
+### S2 IS DONE — six commits this checkpoint, and one of mine had to be re-cut
+
+The worker split the shutdown phase out (`lifecycle.rs` 804 → 696, `shutdown.rs` 123, the
+scenario declares it beside its siblings; ABI 2 passed and fmt 0 diffs on my runs) →
+**`102ed22d`**. **My first cut of that commit swept in the five php files I had staged and
+held** — `git commit` takes the whole index, and "stage and hold" is not a state the index
+has. Caught on the commit's own stat line (8 files, not 3); the commit was local, so
+`reset --soft HEAD~1` + unstaging the five by path (tree untouched) and re-committing the
+three gave the split its own commit. **Rule for the handover: never hold anything staged
+across another commit; stage at the moment of committing, from a clean index.**
+
+Baseline re-recorded at `102ed22d` with the php companion intent-added, audited: 36 areas in
+and out; ratcheted rows moved exactly as ruled — `test/apps duplicate_pairs 143 → 144`
+(fixture twin, accepted), `sdk/php prod_loc 4165 → 4163` (tightened); every other move is
+`test_loc`/`files`, not ratcheted (`test/apps` 8901 → 9251 / 136 → 140, `flz_core_ffi`
+1775 → 1853 / 20 → 21, `sdk/java` 5214 → 5227, `test` 38991 → 38979). `--check --lint`
+**0 regressions** at that baseline. The php port landed as **`2899399c`** with the baseline
+and `known_issues.md` (KI-128 filed as a suspicion). **S3 worker resumed 01:50** (same worker).
+**S3 last seen 00:48 (+10m).** All three apps' `schema_evolution`/`entity_timers` fixtures
+written, three manifests flipped, two docs edited: 12 files, +526/−139; ticks 27. No leak,
+load 0.76/0.96/1.30.
+
+### S3 CHECKPOINT 01:10 — node and php green, ruby red on a test race, RULED
+
+Worker: red half `0 tests, 4 skipped` per runtime; after the flips node **22 passed / 5
+skipped**, php **22 / 5**, ruby **20/22** — `entity_timers` 2/2 including the re-seat from disk,
+both `schema_evolution` scenarios red. `--check --lint` 0 regressions, no new pair; every file
+under 800 (`fixtures.php` 716 is the tightest). **The finding, reproduced by me**: ruby `1/2
+passed` twice at `:147`/`:170`, rust `2/2`. Mechanism at `dispatch.rb:158-160`: the host writes
+state back in `ensure` and completes the changes later, so a live read from another of the
+eight threads answers state ahead of the journal; every red site is a stop or writer lookup
+taken on the strength of a live read. The worker SEPARATED it: a probe copy with `await_seq`
+before the three sites (the `credit_flow` helpers, RULE #1 use-as-is) is 3/3 green. **RULED a
+TEST race (§9)**: the three waits go into the real file, red-first by rate, landing before the
+ruby commit; the seq-stamp wart filed as **KI-129** (P3, recorded, not changed). Commit order
+at the checkpoint: node → test fix → ruby → php, each green alone.
+
+### S3 IS DONE — four commits, every one verified by my own runs
+
+Worker applied the three waits (+10 lines, the `credit_flow` helpers imported as-is): ruby
+×3 + a formatted fourth all `2 passed`; rust, node, php `2 passed`. **My runs**: both S3 e2e
+files `4 passed` under ruby (twice), node, php and rust; gate 20; `--check --lint` 0
+regressions with the `test` area's `sleep 2 / refute 16 / async_f 0.774` unmoved. Fixtures
+read against `fixtures_state.py:196-269` and `fixtures.py:368-403`: same names, versions,
+migrations (each SDK's own codec), `TIMER_TEST_TIMEOUT_MS` read at run time,
+`closed@<scheduled_at>` emitted explicitly. Every file under 800 (`fixtures.php` 716).
+
+| commit | what |
+|---|---|
+| `8ef6dac6` | node carries `schema_evolution` + `entity_timers` |
+| `32cfc562` | the test fix — `schema_evolution` awaits the persisted seq (KI-129 recorded) |
+| `67c4e6ac` | ruby carries both |
+| this commit | php carries both; KI-129 filed in `known_issues.md` |
+
+R5 stands at S0–S3 done: 27 of 42 fixture implementations landed. **Next: S4**
+(`effectively_once` ×3, 12 fixtures — the first end-to-end proof of S0's seam), same worker.
+
+### S4 IS DONE — S0's seam proven end to end on three runtimes
+
+Worker: red half `19 passed, 14 skipped` per runtime; after the flips node/ruby/php each
+**`29 passed, 4 skipped`** with the postgres sink brought up by name for the two
+postgres-gated modules (and stopped by name after); **both smoke goldens matched on every
+runtime** — `checkpoint_batched_store.json`'s `ack_granularity: checkpoint` with no
+`checkpoint_every` is the declaration KI-122 said three SDKs could not produce; `dlq`
+tier-on passed without interleaving. **My runs**: the eight files `26 passed, 7 skipped`
+on all three without the container; gate 20; `--check --lint` 0 regressions, no new pair;
+`fixtures_state.php` 490, `fixtures.php` 720. Read against `fixtures_state.py:272-343`:
+every knob present, and the existing `TierStore` moved onto a shared keyed-upsert base
+in all three apps (RULE #1: extend, not copy).
+
+| commit | what |
+|---|---|
+| `9056f86a` | node carries `effectively_once` |
+| `f3dc1ea0` | ruby carries it |
+| this commit | php carries it |
+
+R5 stands at S0–S4 done: 39 of 42 fixture implementations landed. **Next: S5** —
+`candle` ×3 (`correction_window`), then the close-out (7.2–7.6).
+
+**S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
+`state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
+three arms run by me too), full `mix test` 1962 passed, five naming gates exit 0, format gate
+0 diffs. Found and handled on the way: KI-123 (fixed), KI-126 (fixed), KI-127 (fixed), KI-124,
+KI-125 (open, P3), KI-128 (suspicion). **Next: S3** (`schema_evolution` + `entity_timers` ×3),
+same worker, checkpoint after 5.4.
+
 **Session 6, 2026-09-01 15:41 — opened by `/loop /refactor`.** Orientation from the files:
 board rows 0a–8 all `done`; live queue is **R1–R12** (*Next steps* → REMAINING WORK);
 `openspec list` shows only `sdk-durable-fixture-parity` **10/22** — phase A done and phases

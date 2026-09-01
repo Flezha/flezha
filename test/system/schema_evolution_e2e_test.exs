@@ -35,6 +35,9 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
+  import FlezhaTest.Helper.CreditTestHelper,
+    only: [await_seq: 3, wait_for_entity: 3, wait_for_writer: 2]
+
   @procedure "evolving_cart"
   @v1 "schema_evolution_v1"
   @v2 "schema_evolution_v2"
@@ -99,6 +102,10 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # deploy, and a long-lived Entity always has one. Without it the restore
     # would exercise only the change-log half of the migration.
     entity_id = {operative_id, @procedure, ""}
+    # The live read is not a persisted-seq signal: an erased host publishes its
+    # state before the core frames the changes, so the WAL is awaited by seq.
+    wait_for_entity(operative_id, @procedure, 30_000)
+    await_seq(wait_for_writer(entity_id, 10_000), 1, 30_000)
     Application.put_env(:flezha, :compact_after_age_ms, 1)
     {:ok, writer} = Flezha.State.Supervisor.lookup(entity_id)
     TestHelpers.age_writer(writer, 50)
@@ -134,6 +141,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     assert CA.wait_for_snapshot_file(entity_id, 15_000),
            "the post-migration compaction must leave a snapshot at the running version"
 
+    await_seq(wait_for_writer(entity_id, 10_000), 2, 30_000)
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
     assert {:ok, _} = start(namespace, operative_id, @v2)
     assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 12 end, 10_000)
@@ -153,6 +161,8 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     assert {:ok, _} = start(namespace, operative_id, @v2)
     send(namespace, operative_id, "9")
     assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 9 end, 10_000)
+    wait_for_entity(operative_id, @procedure, 30_000)
+    await_seq(wait_for_writer({operative_id, @procedure, ""}, 10_000), 0, 30_000)
 
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
 

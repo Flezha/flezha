@@ -7,5 +7,5 @@ import java.util.List;
 /** Derives {@code SugarStoreStateChange} (set/push variants + apply + kryoTypes). */
 @State
 public class SugarStoreState {
-    public List<String> textInputs = new ArrayList<>();
+    public List<String> text_inputs = new ArrayList<>();
 }

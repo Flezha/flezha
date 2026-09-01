@@ -42,7 +42,7 @@ class SugarTwinTest {
         var h = ProcedureTestHarness.of(new SugarStoreProcedure());
         h.applyInputs(List.of("one", "two"));
         h.expectEmits(String.class, List.of("one", "two"));
-        assertThat(h.state().textInputs).containsExactly("one", "two");
+        assertThat(h.state().text_inputs).containsExactly("one", "two");
         assertThat(h.replayEquals()).isEmpty();
     }
 

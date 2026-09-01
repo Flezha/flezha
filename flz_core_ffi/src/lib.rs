@@ -33,7 +33,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use crossbeam::channel::Sender;
 use dashmap::DashMap;
 pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
@@ -69,7 +68,6 @@ pub struct FlzContext {
     outstanding: DashMap<u64, EngineActivation>,
     last_error: Mutex<Option<CString>>,
     started: AtomicBool,
-    runner_tx: Mutex<Option<Sender<RunnerMessage>>>,
     declared: Arc<RwLock<Vec<String>>>,
 }
 
@@ -180,7 +178,6 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
         outstanding: DashMap::new(),
         last_error: Mutex::new(None),
         started: AtomicBool::new(false),
-        runner_tx: Mutex::new(None),
         declared: Arc::new(RwLock::new(Vec::new())),
     }))
 }
@@ -275,11 +272,10 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
     let _runner = flz_core::runner::start(
         namespace.to_string(),
         Arc::clone(&ctx.declared),
-        (otx.clone(), orx),
+        (otx, orx),
         confirm_tx,
         bridge,
     );
-    *ctx.runner_tx.lock().unwrap_or_else(|p| p.into_inner()) = Some(otx);
     match confirm_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(_) => FLZ_OK,
         Err(_) => ctx.fail(Error::ConnectUnconfirmed),
@@ -402,24 +398,36 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
     }
 }
 
-/// Wake every blocked poller with [`FLZ_POLL_SHUTTING_DOWN`] and stop the
+/// Ship every live operative's state as a `RunnerShutdownNotification`, then
+/// wake every blocked poller with [`FLZ_POLL_SHUTTING_DOWN`] and stop the
 /// runner loop. Unpolled work follows the existing durability rules (it is
 /// journaled controller-side and re-forwarded on the next bind).
+///
+/// Returns at once. The notification serializes each Entity through the host,
+/// which needs the caller's loops still polling, so the sequence runs on its
+/// own thread and the core reports shutting down only once it is done. That
+/// thread reads nothing of `ctx`, so freeing the context cannot race it. The
+/// runner loop is not told anything: a stopping runner that reconnected would
+/// be handed work it will never do, and the loop ends with the process.
 ///
 /// # Safety
 /// `ctx` must be live.
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
-    let Some(ctx) = ctx.as_mut() else { return };
-    flz_core::poll_core::global().shutdown();
-    if let Some(tx) = ctx
-        .runner_tx
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .take()
+    if ctx.is_null() {
+        return;
+    }
+    let sequence = || {
+        flz_core::shutdown::run_active_graceful_shutdown();
+        flz_core::poll_core::global().shutdown();
+    };
+    if std::thread::Builder::new()
+        .name("flz-shutdown".into())
+        .spawn(sequence)
+        .is_err()
     {
-        let _ = tx.send(RunnerMessage::Reconnect("controller_requested"));
-        drop(tx);
+        eprintln!("[flezha] could not start the shutdown thread; stopping without shipping state");
+        flz_core::poll_core::global().shutdown();
     }
 }
 

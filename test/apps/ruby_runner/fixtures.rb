@@ -11,6 +11,9 @@
 
 require "flezha"
 
+# The persisted-state family is registered from its own file.
+require_relative "fixtures_state"
+
 module Fixtures
   TEXT = ->(bytes) { bytes.dup.force_encoding(Encoding::UTF_8) }
   BYTES = ->(value) { value.to_s.b }
@@ -265,35 +268,6 @@ module Fixtures
     end
   end
 
-  # -- bench_keyed_nopersist -----------------------------------------------
-
-  class TierStore < Flezha::Procedure
-    procedure_name "tier_store_procedure"
-    def initial_state(_entity_key) = { values: {} }
-    def apply_change(state, change) = state[:values][change[:key]] = change[:value]
-
-    def process(input, ctx)
-      key, value = input.to_s.split(":", 2)
-      raise "poison value" if value == "poison"
-
-      ctx.change({ key: key, value: value })
-      ctx.emit("#{key}=#{value}", key: key)
-      nil
-    end
-  end
-
-  # Per-entity persistence off: this is the heap-only posture the bench
-  # isolates against the durable one.
-  class BenchKeyedNoPersistOperative < Flezha::StreamOperative
-    factory_id "bench_keyed_nopersist"
-    persistent false
-    channels do |c|
-      c.input("input", decode: TEXT).on_full(:drop_nothing)
-       .into(TierStore).named("sink").keyed
-       .sink("tier_sink", encode: BYTES)
-    end
-  end
-
   # -- poison_probe / wedge_probe ------------------------------------------
 
   class PoisonProbe < Flezha::Procedure
@@ -349,6 +323,49 @@ module Fixtures
     channels do |c|
       c.input("input", decode: TEXT).into(WedgeProbe).named("out")
        .sink("wedge_sink", encode: BYTES)
+    end
+  end
+
+  # -- session_timeout ------------------------------------------------------
+  #
+  # The worked session-timeout shape: each input pushes the idle deadline out,
+  # and the firing closes the session. Single-entity so the e2e's crash-resume
+  # half exercises a durable Entity. The timeout is read from
+  # `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
+
+  class SessionTimeout < Flezha::Procedure
+    procedure_name "session_timeout_procedure"
+    def initial_state(_entity_key) = { touched: [], closed_at: [] }
+
+    def apply_change(state, change)
+      if change.key?(:touched)
+        state[:touched] << change[:touched]
+      else
+        state[:closed_at] << change[:closed]
+      end
+    end
+
+    def process(input, ctx)
+      ctx.change({ touched: input })
+      # A processing-time timer, because the answer to "nothing has arrived"
+      # cannot be an event-time one: nothing would advance the clock.
+      timeout = ENV.fetch("TIMER_TEST_TIMEOUT_MS", "").to_i
+      ctx.timer_after(timeout.positive? ? timeout : 1000)
+      nil
+    end
+
+    def on_timer(firing, ctx)
+      fired_at = firing[:scheduled_at]
+      ctx.change({ closed: fired_at })
+      ctx.emit("closed@#{fired_at}")
+    end
+  end
+
+  class SessionTimeoutOperative < Flezha::StreamOperative
+    factory_id "session_timeout"
+    channels do |c|
+      c.input("input", decode: TEXT).into(SessionTimeout).named("kafka")
+       .sink("test_kafka", encode: BYTES)
     end
   end
 
@@ -443,8 +460,8 @@ module Fixtures
     DoNothingOperative, BenchEchoOperative, CompareFilterOperative,
     StaticEntityOperative, SugarStaticEntityOperative, MixedOperative,
     SugarDoNothingOperative, SugarStoreInputOperative, HybridChannelOperative,
-    EntityStressOperative, BenchKeyedNoPersistOperative, PoisonProbeOperative,
-    WedgeProbeOperative, *BOUNDED_MAILBOX, PartitionRelayOperative,
+    EntityStressOperative, *STATE, PoisonProbeOperative,
+    WedgeProbeOperative, SessionTimeoutOperative, *BOUNDED_MAILBOX, PartitionRelayOperative,
     DynamicEntityOperative
   ].freeze
 end

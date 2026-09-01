@@ -229,9 +229,8 @@ bare mutable global holds any of it.
 
 ## Deferred fixtures
 
-The manifest defers seven capabilities' end-to-end fixture sets —
-`state_persistence`, `effectively_once`, `entity_timers`, `correction_window`,
-`workflow`, `entry_idle` and `schema_evolution` — to
+The manifest defers three capabilities' end-to-end fixture sets —
+`correction_window`, `workflow` and `entry_idle` — to
 **`sdk-durable-fixture-parity`**, the shared follow-up that also owes them for
 the Node and Elixir apps. The Elixir app defers two more, `keyed_channels` and
 `dynamic_entity`, because its SDK is its own core: it mints no identity stamps
@@ -246,7 +245,10 @@ both directions.
 
 `keyed_channels` left that list when the gem began minting the output identity
 stamps (`Flezha::Ctx#stamp_identity`): the capability is carried with the
-reference's `partition_relay` fixture and proved end to end.
+reference's `partition_relay` fixture and proved end to end. `state_persistence`,
+`schema_evolution` and `effectively_once` left it with the reference's
+fixtures, in `test/apps/ruby_runner/fixtures_state.rb`, and `entity_timers`
+with `session_timeout` in `fixtures.rb`.
 
 ## The runner image
 

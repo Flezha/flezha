@@ -2,15 +2,14 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   @moduledoc """
   End-to-end SIGTERM verification for `ship-fresh-state-on-sdk-shutdown`.
 
-  Spins up a real Rust runner subprocess, registers a operative
-  with `snapshot_interval: 0` (so the controller has no periodic capture and
+  Spins up a real runner subprocess for the run's selected runtime, registers
+  an operative with `snapshot_interval: 0` (so the controller has no periodic capture and
   the only path to populate `Overwatch.state.snapshot` is the SDK's
   shutdown notification), then sends SIGTERM to the OS pid and asserts
   the controller's snapshot is populated within the 2 s ack window.
 
   Tagged `:system` so it stays out of the default `mix test` budget —
-  it boots `cargo run` and a real subprocess, which can be slow on cold
-  caches. Run via:
+  it boots a real SDK subprocess, which can be slow on cold caches. Run via:
 
       mix test --only state_freshness_e2e
       mix test --include system test/system/state_freshness_e2e_test.exs
@@ -24,9 +23,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
 
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.EventManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "state_freshness_e2e"
@@ -52,8 +49,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   end
 
   @tag :state_freshness_e2e
-  test "SIGTERM to the rust SDK populates Overwatch.state.snapshot via RunnerShutdownNotification" do
-    {port, ce_id} = start_runner()
+  test "SIGTERM to the runner populates Overwatch.state.snapshot via RunnerShutdownNotification" do
+    {port, ce_id} = NodeTestHelper.start_runner_port(@namespace, transport: :uds)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
@@ -141,29 +138,6 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
            "graceful-shutdown snapshot did not include all sent inputs.\n" <>
              "  sent:     #{inspect(inputs_sent)}\n" <>
              "  received: #{inspect(received_inputs)}"
-  end
-
-  defp start_runner() do
-    {:ok, current_path} = :file.get_cwd()
-
-    command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
-        "--target-dir=./target -- " <> @namespace
-
-    EventManager.add_handler(:runner_connected_event)
-    {port, _command} = PortPilot.open_port(command, transport: :uds)
-
-    ce_id =
-      receive do
-        {:runner_connected_event, {@namespace, ce_id}} -> ce_id
-      after
-        # Cold cargo cache warmup can blow past the usual 2 s — match the
-        # existing healing test's 120 s budget for the first run.
-        120_000 -> raise "compute engine never connected"
-      end
-
-    EventManager.rem_handler(:runner_connected_event)
-    {port, ce_id}
   end
 
   defp wait_for_snapshot(overwatch_pid, timeout_ms) do

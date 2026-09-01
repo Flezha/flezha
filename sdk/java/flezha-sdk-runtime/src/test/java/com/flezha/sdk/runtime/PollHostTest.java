@@ -48,9 +48,17 @@ class PollHostTest {
         private final CountDownLatch quiet = new CountDownLatch(1);
         /** The thread the supervisor loop runs on, as this core sees it. */
         private volatile Thread supervisor;
+        /** What {@code FlzCore.shutdown} leaves behind: every poll and wait answers shutting down. */
+        private volatile boolean shuttingDown = false;
 
         void handOut(Activation activation) {
             handouts.add(ActivationCodec.encodeActivation(activation));
+        }
+
+        void shutDown() {
+            shuttingDown = true;
+            handouts.add(new byte[0]);
+            quiet.countDown();
         }
 
         @Override
@@ -61,6 +69,9 @@ class PollHostTest {
             // replacement has to cover.
             if (pollErrors.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw new StackOverflowError("fetcher died");
+            }
+            if (shuttingDown) {
+                return new byte[0];
             }
             try {
                 return handouts.poll(timeoutMs, TimeUnit.MILLISECONDS);
@@ -95,7 +106,7 @@ class PollHostTest {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            return FlzCore.STARVATION_TIMEOUT;
+            return shuttingDown ? FlzCore.STARVATION_SHUTTING_DOWN : FlzCore.STARVATION_TIMEOUT;
         }
 
         @Override
@@ -135,6 +146,12 @@ class PollHostTest {
         PollHost host = new PollHost(core, dispatch, fetchers, max, onFetchersDrained);
         host.start();
         return host;
+    }
+
+    /** What {@code FlezhaImpl.close()} does: the core is told first, and the host follows its word. */
+    private static void close(FakeCore core, PollHost host) {
+        core.shutDown();
+        host.close();
     }
 
     @Test
@@ -340,7 +357,7 @@ class PollHostTest {
         FakeCore core = new FakeCore();
         PollHost host = start(core, PollHostTest::ok, 1, 4);
         awaitTrue(() -> core.starvationWaits.get() > 0, "the supervisor parked at least once");
-        host.close();
+        close(core, host);
         Thread supervisor = core.supervisor;
         supervisor.join(TimeUnit.SECONDS.toMillis(10));
         assertThat(supervisor.isAlive())
@@ -377,7 +394,7 @@ class PollHostTest {
         core.handOut(activation(1, "in-flight"));
         assertThat(dispatching.await(10, TimeUnit.SECONDS)).isTrue();
 
-        host.close();
+        close(core, host);
         assertThat(core.completed.get())
                 .as("close() returned before the in-flight activation completed")
                 .isEqualTo(1);

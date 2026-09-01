@@ -1,9 +1,10 @@
 //! The C-ABI scenario suite (spec `sdk-core-abi`): every capability the crate
 //! API has must be reachable through `flz_core_ffi` itself.
 //!
-//! `lifecycle` drives the capabilities; `harness` is the fake controller and
-//! the poll/complete pair it drives them with; `shape` proves the mapping
-//! every binding shares, once, against a recording pair.
+//! `lifecycle` drives the capabilities and `shutdown` ends the runner;
+//! `harness` is the fake controller and the poll/complete pair they drive
+//! them with; `shape` proves the mapping every binding shares, once, against
+//! a recording pair.
 //!
 //! Each veneer arm hangs off that same shape and proves only what its own
 //! language contributes — how it builds and reads a value — so a veneer is
@@ -18,6 +19,8 @@ mod harness;
 mod lifecycle;
 #[path = "abi/shape.rs"]
 mod shape;
+#[path = "abi/shutdown.rs"]
+mod shutdown;
 
 #[cfg(feature = "napi")]
 #[path = "abi/veneer_napi.rs"]

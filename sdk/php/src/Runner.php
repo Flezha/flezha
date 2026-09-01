@@ -64,7 +64,6 @@ final class Runner
     private ?Executor $executor = null;
     private ?Dispatcher $dispatcher = null;
     private ?int $maxActivations = null;
-    private bool $stopRequested = false;
     private Shutdown $shutdown;
 
     public function __construct(public readonly string $namespace)
@@ -214,8 +213,11 @@ final class Runner
     /** Stop fetching. What is in flight finishes; nothing new is polled. */
     public function stop(): void
     {
-        $this->stopRequested = true;
-        $this->executor?->stop();
+        // The core says when: every loop keeps polling until its poll reports
+        // the core shutting down, which the core reports only once the
+        // shutdown sequence has shipped every Entity's state through these
+        // same loops. The executor's own stop is the bound `drain` applies.
+        $this->core?->shutdown();
     }
 
     /**
@@ -338,10 +340,10 @@ final class Runner
     {
         Logger::current()->info('draining');
 
-        // Order is the contract: every loop leaves user code first, and only
-        // then is the core told to stop. `flz_core_shutdown` wakes every
-        // blocked poller, so calling it while a loop is still inside a
-        // procedure body would race the completion that body is about to make.
+        // By now every loop has left on the core's word, or is inside a body
+        // that never returned — the executor's stop bounds the latter. A loop
+        // that left on its own activation budget never asked the core, so it
+        // is asked here.
         $this->executor?->stop();
         $this->core?->shutdown();
 

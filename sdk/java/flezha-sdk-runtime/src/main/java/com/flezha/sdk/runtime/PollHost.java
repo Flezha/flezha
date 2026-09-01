@@ -277,9 +277,10 @@ final class PollHost implements AutoCloseable {
     }
 
     private void fetchTurns() {
-        // Either end stops a fetcher: the core's shutdown (a zero-length poll
-        // result) or close() here. Depending on the core alone would make
-        // close() wait out a full poll timeout per fetcher for nothing.
+        // The core says when: a zero-length poll result is the core shutting
+        // down, which it reports only once the shutdown sequence has shipped
+        // every Entity's state through these same fetchers. The flag is what a
+        // fetcher spawned late reads.
         while (!closing.get()) {
             byte[] bytes;
             try {
@@ -374,14 +375,16 @@ final class PollHost implements AutoCloseable {
      */
     @Override
     public void close() {
-        closing.set(true);
         // The supervisor first: it is parked in a bounded wait, and joining it
         // before the fetchers means it cannot grow the pool behind the join
-        // that is meant to drain it.
+        // that is meant to drain it. Both leave on the core's word; the flag
+        // is raised only after, so no fetcher leaves before the shutdown
+        // sequence has been served.
         joinQuietly(supervisor);
         for (Thread fetcher : List.copyOf(live)) {
             joinQuietly(fetcher);
         }
+        closing.set(true);
         activations.shutdown();
         try {
             if (!activations.awaitTermination(DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {

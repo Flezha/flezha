@@ -25,6 +25,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../../sdk/php/vendor/autoload.php';
 require __DIR__ . '/fixtures.php';
+require __DIR__ . '/fixtures_state.php';
 
 use Flezha\Flezha;
 use Flezha\Logger;
