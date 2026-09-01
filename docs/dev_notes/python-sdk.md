@@ -177,11 +177,12 @@ the one thing `scripts/build-python-sdk.sh` has already done.
 
 ## The test app and the conformance manifest
 
-**Python defers one capability where every other veneer SDK defers nine.**
+**Python defers two capabilities where every other veneer SDK defers nine.**
 Node, Ruby, PHP and Elixir all defer the persistence family, the tier, timers,
 correction windows, keyed channels, workflow, dynamic-entity eviction, entry
-idle and schema evolution. Python carries all of them but `workflow`, each
-proved by the live suite:
+idle and schema evolution. Python carries all of them but `workflow` and
+`entry_idle`, and each of the seven it carries is proved by the live
+suite:
 
 | capability | what it took |
 | --- | --- |
@@ -190,7 +191,19 @@ proved by the live suite:
 | `effectively_once` | four fixtures, plus `Channels.checkpoint_ack()`, which Rust and Java have and no veneer SDK had |
 | `correction_window` | the `candle` fixture, on an event-time clock |
 | `schema_evolution` | two fixtures declaring one procedure name either side of a version bump |
-| `entity_timers`, `dynamic_entity`, `entry_idle` | fixtures the app already had, or none |
+| `entity_timers`, `dynamic_entity` | fixtures the app already had |
+
+**`entry_idle` is deferred too, and the reason is the opposite of `workflow`'s.**
+The capability is two layers: the delivery stamp lives in `flz_core`
+(`entry_input.rs`, written on the shared dispatch path), so Python has it for
+free like every FFI veneer, and `Core.entry_last_delivery_nanos` plumbs the ABI
+read. The policy half — `last_entry_delivery` and `on_entry_idle` on the runner
+handle, the `IdleObserver`, the episode latch and the tick — is per-SDK host
+code and exists in Rust and Java only. A manifest entry with an empty fixture
+list is not evidence of a capability: this one claimed a surface the SDK does
+not expose, and the claim is what made a zero-fixture capability look free.
+Owed, with the four veneers' remaining host-layer work, to the follow-up that
+carries it.
 
 **`workflow` stays deferred, by name**, to `sdk-durable-fixture-parity`. Its 19
 reference fixtures need two authoring-surface additions Python does not have —

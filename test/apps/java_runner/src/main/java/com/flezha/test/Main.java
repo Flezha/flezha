@@ -18,7 +18,9 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
         spawnStdinEofExit();
-        define(Flezha.createRunner(namespace)).run();
+        FlezhaRunner runner = Flezha.createRunner(namespace);
+        EntryIdleProbeStreamOperative.arm(runner);
+        define(runner).run();
     }
 
     /**
@@ -56,6 +58,7 @@ public final class Main {
                 .defineStream(PoisonProbeStreamOperative.class)
                 .defineStream(WedgeProbeStreamOperative.class)
                 .defineStream(CandleStreamOperative.class)
+                .defineStream(EntryIdleProbeStreamOperative.class)
                 .defineWorkflow(EchoWorkflowOperative.class)
                 .defineWorkflow(CommitBlockWorkflowOperative.class)
                 .defineWorkflow(SyncDurableWorkflowOperative.class)

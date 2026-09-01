@@ -341,7 +341,11 @@ with it. It also drives `async def` handlers, so a test needs no event loop.
   declaration — only the in-process Rust host, which owns the runner channel
   directly, can notify a live controller. Java carries the same gap; owed to
   `sdk-abi-factory-resync`.
-- The capabilities `test/apps/python_runner/conformance.json` lists under
-  `deferred`, owed to `sdk-durable-fixture-parity` alongside the Node, Ruby, PHP
-  and Elixir apps that defer the same set. The mechanism is present in the SDK;
-  what is deferred is the fixture set that proves it end to end.
+- `workflow`, owed to `sdk-durable-fixture-parity` alongside the Node, Ruby, PHP
+  and Elixir apps that defer it. The mechanism is present in the SDK; what is
+  deferred is the fixture set that proves it end to end.
+- `entry_idle`, where that is **not** true and the manifest says so by name. The
+  shared core stamps every entry delivery and `Core.entry_last_delivery_nanos`
+  reads it, but the runner handle carries neither `last_entry_delivery` nor
+  `on_entry_idle`, and the SDK has no idle observer, episode latch or tick — the
+  policy half is per-SDK host code that exists in Rust and Java only.

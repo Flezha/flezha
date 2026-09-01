@@ -3,8 +3,15 @@
 For operative authors who need to notice that an entry channel has gone
 quiet, and for SDK implementers: the two runner-handle calls —
 `last_entry_delivery` / `lastEntryDelivery` and `on_entry_idle` /
-`onEntryIdle` — their semantics, their scope, and where the code lives. The
-Elixir SDK defers the observer ([`elixir_sdk.md`](elixir_sdk.md)).
+`onEntryIdle` — their semantics, their scope, and where the code lives.
+
+**Rust and Java carry them; the other five SDKs defer `entry_idle` by name.**
+The capability is two layers. The delivery *stamp* is in the shared core, so
+every SDK hosted on `flz_core` — Node, Ruby, PHP and Python as well — records
+it and can read it across the C ABI. The *policy* half on this page (the two
+runner-handle calls, the observer, the episode latch, the tick) is per-SDK host
+code that only Rust and Java have. Elixir has neither layer: its SDK is its own
+core ([`elixir_sdk.md`](elixir_sdk.md)).
 
 When input goes silent a runner does nothing visible: procedures stop being
 called, output freezes, the process and its sockets stay up. Only the SDK,
@@ -81,8 +88,17 @@ runner.run();
   caught and logged (the `flezha::entry_idle` tracing target in Rust, the
   `EntryIdleWatcher` logger in Java); delivery and the tick are unaffected,
   and later episodes still reach the observer.
+- **One channel name is one observed input.** The stamp is interned by the
+  channel's bare name, so every class declaring an entry channel called `input`
+  shares its cell and `last_entry_delivery("input")` answers for all of them at
+  once. Watch a name that means one feed. Registering before the class is
+  declared is safe for the same reason: the registration and the later topology
+  resolve the same cell.
 - **Registration is legal before and after `start()`**, and several observers
-  may watch one channel. The Rust tick thread ends with its runner; the Java
+  may watch one channel. Note the asymmetry with declaring an operative:
+  declaring is passive until traffic arrives, whereas the first `on_entry_idle`
+  **spawns the tick thread immediately** and it runs for the process's life. An
+  always-on registration is a running thread, not a dormant declaration. The Rust tick thread ends with its runner; the Java
   runner's `close()` resets the JVM-wide watcher so a second runner inherits
   nothing.
 
@@ -107,7 +123,10 @@ workflow's steady state — it parks.
 Threshold, latch and tick are per-SDK because they are host-layer policy; the
 stamp lives once in the shared core so both SDKs observe one fact. Tests:
 `sdk/rust/tests/entry_idle.rs`, Java `EntryIdleWatcherTest`,
-`flz_core_ffi/tests/abi_scenario.rs`.
+`flz_core_ffi/tests/abi_scenario.rs`, and end to end against a live controller
+`test/system/entry_idle_e2e_test.exs` over the `entry_idle_probe` fixture —
+which the Rust and Java test apps carry and the other five defer, because the
+policy half above exists in those two SDKs alone.
 
 ## See also
 

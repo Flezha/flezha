@@ -284,7 +284,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :schema_evolution
   ]
 
-  # The surface every SDK carries; a manifest cannot defer these.
+  # The surface every SDK carries; a manifest cannot defer these, and every
+  # capability no manifest defers belongs here — the gate refuses drift in both
+  # directions. The list is written, never derived: an SDK that genuinely cannot
+  # carry one defers it by name in its own manifest and leaves this list in the
+  # same change, so a mandate is never dropped as a side effect of a manifest
+  # edit.
   #
   # `pool_wedge` is required because a host that cannot be wedged on demand
   # cannot prove it recovers: its fixtures are what exercise the abandon path,
@@ -292,6 +297,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # on the reference alone.
   @required_capabilities [
     :runner_lifecycle,
+    :connect_discovery,
     :graph_builder,
     :liveness,
     :retry_ladder,

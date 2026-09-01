@@ -118,13 +118,20 @@ The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 `runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
 `entity_timers`, `correction_window`, `keyed_channels`, `workflow`,
-`dynamic_entity`, `entry_idle`, `partitioned`.
+`dynamic_entity`, `entry_idle`, `partitioned`, `schema_evolution`.
 
-A capability can carry no fixtures at all — `pool_wedge` and `entry_idle` are
-`[]` everywhere. `pool_wedge` is the wedged-dispatch signature the convergence
-classifier reads: a host whose dispatch is a shared pool can be wedged by user
-code, and a host that runs a process per Entity cannot produce the signature by
-construction. It is optional for exactly that reason.
+A capability can carry no fixtures at all, where the scenarios that prove it
+need none of their own. Carrying fixtures and being required are independent:
+`pool_wedge` does both — its `wedge_probe` fixture is what exercises the abandon
+path, the worker replacement and the classifier's verdict on that SDK rather
+than on the reference alone, so no manifest may defer it.
+
+**No capability is claimed without being proved.** Every vocabulary entry is
+tagged by at least one module or test under `test/system/`, and the gate fails
+otherwise — so a capability a manifest lists under `fixtures` is one a scenario
+exercises, and a capability nothing exercises must be deferred by every
+manifest. An SDK that carries a mechanism proves it here rather than resting on
+its own unit tests.
 
 Every module under `test/system/` declares one:
 `use FlezhaTest.SystemCase, capability: :<atom>`. A module whose scenarios span
@@ -132,8 +139,17 @@ two carries the second per test, with its own skip:
 `@tag capability: :effectively_once, skip: FlezhaTest.SystemCase.deferral(:effectively_once)`. Every capability appears in every
 manifest exactly once — under `deferred` or as a `fixtures` key — so one can be
 neither forgotten nor claimed twice. The **required set**
-(`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`,
-`partitioned`) can never be deferred.
+(`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
+`retry_ladder`, `partitioned`, `pool_wedge`) can never be deferred, and it holds
+**every capability no manifest defers**: a capability every SDK carries is one
+none of them may drop. The gate refuses drift in both directions, with a
+different message for each — a manifest deferring a required capability names
+that manifest, a universally carried capability missing from the list names the
+capability and the declaration it belongs in
+(`FlezhaTest.Helper.NodeTestHelper.required_capabilities/0`). The list is
+written, never derived: an SDK that genuinely cannot carry one defers it by name
+and leaves the list in the same change, so a mandate is never dropped as a side
+effect of a manifest edit.
 
 A deferred capability is **skipped by name**, not filtered out:
 `FlezhaTest.SystemCase` sets `:skip` on the module, because `--include system`
@@ -197,7 +213,7 @@ on every pull request with no runner. It asserts every rule above, plus: no
 `runtime:` literal under `test/system/` outside an `interop: true` scenario;
 every fixture id a file drives belongs to a capability that file declares; every manifest runtime is a `workflow_dispatch` option of
 `nightly-e2e.yml`; every `docs` page exists and names its manifest. A
-vocabulary entry with no tagged module is printed, not failed.
+vocabulary entry no module or test is tagged for fails the gate by name.
 
 It also pins the half a fixture cannot express. `test/fixtures/runner_connect_env.txt`
 holds the environment contract every SDK's connect path reads — the
@@ -211,11 +227,21 @@ walks the rungs in the pinned order, and that no SDK and no test app honours a
 retired name. The one file allowed to name a retired variable is the one that
 refuses it.
 
-`connect_discovery` is in the vocabulary but not in the required set: an SDK
-whose transport is not the shared `flz_transport` may defer it by name. Every
-other SDK — Rust, Java, Node, Ruby, PHP and Python through `flz_core`, Elixir through
-`flz_nif` — carries it, and `test/system/connect_discovery_e2e_test.exs` drives it under
-whichever runtime the run selects.
+`connect_discovery` is in the required set, because every SDK carries it — Rust,
+Java, Node, Ruby, PHP and Python through `flz_core`, Elixir through `flz_nif` —
+and `test/system/connect_discovery_e2e_test.exs` drives it under whichever
+runtime the run selects.
+
+An SDK whose transport is not the shared `flz_transport` is the one case that
+cannot honour this contract, and it says so **in its own manifest** rather than
+through a standing exemption: it lists `connect_discovery` under `deferred`, the
+gate fails naming that manifest and the required set, and the same change removes
+the capability from the required set. Both halves land in one reviewed diff. The
+live example is the Elixir SDK's in-node `:native` mode
+(`docs/sdk/elixir_sdk.md`), which passes BEAM messages inside the controller's own
+node and walks no socket ladder; it does not arise here because
+`test/apps/elixir_runner/conformance.json` declares `transports: ["uds", "quic"]`,
+so the conformance app runs the standalone binary protocol like the other six.
 
 ## Golden declaration snapshots
 
@@ -278,7 +304,8 @@ What the gate enforces, in the order it checks — a pull request adding
 3. The manifest declares an `sdk_lang`, distinct from every other manifest's, and
    equal to the value the SDK actually compiles in.
 4. Every capability is accounted for — deferred or carried, exactly once.
-5. No required capability is deferred.
+5. No required capability is deferred, and no capability that every manifest
+   carries is missing from the required set.
 6. Every carried capability's fixture ids equal the Rust reference's.
 7. The runtime is a `workflow_dispatch` option of `.github/workflows/nightly-e2e.yml`.
 8. The `docs` page exists and references the manifest by path.

@@ -40,6 +40,144 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-120 · The veneers' `sink()` silently discards `.named()`, so a plugin channel takes the sink's name instead of the channel's
+
+- **Severity**: P1 · a **cross-SDK authoring-surface divergence** that makes a forwarded
+  frame unroutable. Found by `stamp-identity-in-erased-veneers` once KI-119 stopped masking it.
+- **Where**: `sdk/node/src/authoring.ts:350`, `sdk/ruby/lib/flezha/builder.rb:216`,
+  `sdk/php/src/Graph/Edge.php:150`.
+- **Evidence** — `partitioned_operatives_e2e_test.exs:221` after the KI-119 fix:
+
+  | runtime | result |
+  |---|---|
+  | rust | **1 passed** |
+  | node / ruby / php | `0/1` — `[flezha] operative <id> has no channel 'relay_out'`, then `SOL-USD was not forwarded` |
+
+- **Mechanism, named to the function.** Rust's `Stream::sink_with`
+  (`sdk/rust/src/channel/builder/stream.rs:378-388`) **attaches** a plugin sink to the
+  existing channel — `entry.plugin_sink = Some(...)` — so
+  `.named("input").keyed().sink("relay_out")` leaves the CHANNEL named `input` and
+  `relay_out` names only the plugin. The wire's `channel` metadata is therefore `input`,
+  which selects the downstream fixture's `input` entry channel. All three veneers instead
+  call `addChannel({name, kind: "plugin"})` — a **new** channel named after the sink — and
+  **never read `pending.channelName`**, so `.named()` is silently discarded and the wire
+  carries `relay_out`, which the receiving operative does not have.
+- **This is a one-site omission, not a model difference, and the file proves it.**
+  `.named(name)` stores `pending.channelName` (`authoring.ts:265`), and the **edge** paths
+  already honour it at `:308` and `:334` — both `this.pending.channelName ?? <default>`.
+  Only the plugin path forgot. The three fixtures' own comments assert Rust's model against
+  their own SDKs: *"The plugin channel is named `input` because a forwarded frame keeps its
+  producing channel's name."*
+- **Not the stamps.** KI-119's fix and this row's stamps both work: the frame reached the
+  forward, the forward resolved a target member from `flz.key`, and it was delivered. The
+  failure is the RECEIVING operative rejecting the channel name.
+- **A fix must** apply the file's existing pattern to the one call site that omitted it —
+  the channel name becomes `pending.channelName ?? <sink name>`, the sink name stays the
+  plugin's. **That is backward-compatible**: with no `.named()`, `?? name` reproduces
+  today's behaviour exactly, so only the currently-broken combination changes.
+  **Renaming the fixtures' sink to `input` is refused**: it would make the veneer fixtures
+  stop being twins of Rust's and hide a divergence the conformance suite exists to find, and
+  it would leave `.named()` silently discarded for every user.
+
+### KI-119 · `operative_forward` refuses the partition options the platform always injects — a REGRESSION introduced by `close-provider-value-validation`
+
+- **Severity**: P1 · every partitioned operative whose group fans out to an
+  `operative_forward` plugin **fails to start**. · **Introduced 2026-09-01 by `eb938c8b`
+  (R1), verified by the supervisor. The reporting worker dated it to `b9504074` (2026-08-16)
+  and that dating is WRONG** — see below, because the correction is the whole point.
+- **Where**: `lib/flezha/plugin/provider/operative_forward.ex:76` (`with :ok <-
+  validate_opts(opts)`, added by `eb938c8b`) against
+  `lib/flezha/plugin/spec_decoder.ex:22-26`.
+- **Evidence** — `FLEZHA_E2E_RUNTIME=<rt> mix test --include system
+  test/system/partitioned_operatives_e2e_test.exs:221`, run for **rust, node, ruby and php**;
+  all four give `0/1 passed` with byte-identical text:
+
+  ```
+  {:error, "partition 0 of group pup323 failed to start (pup323#p0:
+    %{reason: \"unknown option(s) for operative_forward: key_group_from,
+                key_group_to, partition_count, partition_index\"})"}
+  ```
+
+  It fails at `PartitionGroup.start`, **before any emit**, so no SDK code is reached — which
+  is why it is red under the Rust reference too and is not an SDK defect.
+- **Mechanism, named to the function.** `Flezha.Plugin.SpecDecoder.decode/4` merges
+  `partition_index`/`partition_count`/`key_group_from`/`key_group_to` into **every** plugin's
+  opts for a partition member (its own `@doc` says so). The refusal text is emitted by the
+  **generated `validate_opts/1`** (`provider_behaviour.ex:359`, allowed set built at
+  `:613-616` from `@known_opts ++ @internal_opts ++ host_opts()`). `OperativeForward` lists
+  the four keys in none of the three.
+- **WHY THE DATING MATTERS, and why "it has never passed" is the wrong reading.**
+  `@known_opts` strictness is indeed old — but **`init_provider/1` never CALLED
+  `validate_opts/1` until `eb938c8b`**. Verified:
+  `git show eb938c8b~1:lib/flezha/plugin/provider/operative_forward.ex` has no
+  `validate_opts` reference at all; HEAD calls it at `:76`. That call was **KI-116's site 5**,
+  fixed deliberately. So the injected keys flowed through silently before R1 and are refused
+  after it. **This is four hours old, not two weeks.**
+- **How it escaped R1's verification, which is the reusable lesson.** R1 ran the full
+  `mix test` (1960 passed) and its area slice — and `partitioned_operatives_e2e_test.exs` is
+  `@moduletag :system`, **excluded from `mix test` by default** and run only by
+  `nightly-e2e.yml`. **A change to plugin option strictness cannot be verified by `mix test`
+  alone**; the partition fan-out path is reachable only under `--include system`. R1's worker
+  did reason about injected opts — it added `@injected_opts`/`@internal_opts` for
+  `:worker_pid` and `:routes` precisely to avoid refusing plugin heals — but neither it nor
+  the supervisor considered `SpecDecoder`'s four partition keys.
+- **A fix must** declare the four keys on `operative_forward`. The two providers that can
+  also be partition members already do, with an explanatory comment —
+  `websocket.ex:86-91` and `http_poll.ex:68-72`, both reading *"Injected by a partition
+  group's plugin fan-out, not written by hand."* Prefer `@internal_opts`/`@injected_opts`
+  over `@known_opts` on semantic grounds (these are platform-injected, not author-written,
+  which is exactly what that attribute was created for four hours earlier) — **but check the
+  `defstruct` consequence at `:55`, which derives from `@injected_opts`**, and check whether
+  anything reads the keys before adding struct fields nothing populates. Regression test must
+  cover the partition path, and a `mix test`-only green does not prove it.
+
+### KI-118 · The erased hosts accept a procedure topology the Rust SDK refuses as unroutable
+
+- **Severity**: P2 · a **cross-SDK authoring-surface divergence**, which `CLAUDE.md`'s
+  Cross-SDK rule names as the surface that must not differ. Found by R4's survey as an
+  ordinal question; **the reproduction refuted that framing and produced this one.**
+- **How it was found, and why the first diagnosis was wrong.** Reading three functions side
+  by side shows Rust incrementing `emit_ordinal` **inside** `if self.keyed`
+  (`sdk/rust/src/operative/dispatcher/emit_sink.rs:105` wrapping the `+= 1` at `:374`) while
+  Java (`EmitContext.java:287`) and Python (`ctx.py:253-255`) increment on **every** plugin
+  output. That reads as an ordinal divergence: dense versus gapped `flz.seq` values. **It is
+  not, because the topology that would expose it cannot be built in Rust.**
+- **Evidence** — a probe written to exhibit the ordinal gap, which instead refused to build:
+
+  ```
+  $ cargo test -p flezha_runner --features bench-internals,testing --test ki118_probe
+  KI-118 probe: Rust REFUSED with: operative topology validation failed:
+    [DuplicatePluginSink { channel: "keyed_out" }]
+  ```
+
+- **Mechanism, named to the function.** Two Rust rules compose: a channel takes one plugin
+  sink (`sdk/rust/src/channel/builder/stream.rs:382`, *"the first call wins"*), and a
+  procedure produces one output channel (`sdk/rust/src/workflow/spec.rs`
+  `refuse_multiple_outputs`, whose own comment reads *"A procedure producing two channels is
+  unroutable (the topology keeps one `output_channel_id`, so the second would be silently
+  orphaned). Structurally impossible on the stream-handle builder; kept as
+  defense-in-depth."*). Together they allow one plugin sink per procedure, so a keyed and a
+  non-keyed plugin emit can never coexist in one Rust invocation — **Rust's `if self.keyed`
+  guard is unobservable, and for every topology Rust can express, Rust, Java and Python
+  agree.**
+- **The actual divergence**: node, ruby and php (and Java via `emitTo`) **accept** one
+  procedure declaring several plugin channels — their graph validators passed fixtures
+  declaring two, and php three — while Rust refuses that shape as structurally unroutable.
+  The ordinal gap is a symptom that exists only on the side permitting the topology.
+- **Neither ordinal rule is wrong, and that is recorded so nobody "fixes" one.** The spec is
+  silent: `docs/architecture/kernel.md:489` gives `<change_seq>.<emit ordinal>` without
+  saying what advances it. `flz.seq` is consumed as a **dedup key**
+  (`plugin/provider/postgres/sink_worker.ex`, the `(epoch, seq)` guard;
+  `kafka/producer_worker/wire.ex`), which needs uniqueness, not density. Both schemes give
+  uniqueness and both are replay-stable.
+- **A fix must** answer the authoring question first — **may one procedure produce several
+  plugin channels?** — because the ordinal rule follows from that and not the other way
+  round. If yes, Rust's refusal is over-restrictive and the ordinal rule must be written
+  down. If no, four SDKs accept a graph the reference calls unroutable and their validators
+  owe the same refusal. **Do not change an ordinal increment before that is decided**:
+  `stamp-identity-in-erased-veneers` deliberately matched Java/Python, the only defined
+  answer on a topology Rust has no opinion about.
+
 ### KI-117 · A 1 ms wall-clock budget asserted on the Kafka enqueue path, 30 000x tighter than the property it defends
 
 - **Severity**: P3 · test hygiene. **Reproduced by the supervisor 2026-09-01**, on a

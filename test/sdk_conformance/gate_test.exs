@@ -261,17 +261,29 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
     end
 
-    test "no required capability is deferred" do
+    test "the required set is exactly the capabilities no manifest defers" do
       required = MapSet.new(NodeTestHelper.required_capabilities())
+      deferred = Map.new(runtimes(), &{&1, NodeTestHelper.deferred(&1)})
 
-      for runtime <- runtimes() do
-        for deferred <-
-              MapSet.intersection(MapSet.new(NodeTestHelper.deferred(runtime)), required) do
-          fail(
-            "#{PortPilot.manifest_path(runtime)} defers #{deferred}, which every SDK carries " <>
-              "(the required set is #{inspect(MapSet.to_list(required))})"
-          )
-        end
+      for {runtime, capabilities} <- deferred,
+          capability <- capabilities,
+          MapSet.member?(required, capability) do
+        fail(
+          "#{PortPilot.manifest_path(runtime)} defers #{capability}, which every SDK carries " <>
+            "(the required set is #{inspect(MapSet.to_list(required))})"
+        )
+      end
+
+      deferred_somewhere = deferred |> Map.values() |> List.flatten() |> MapSet.new()
+
+      for capability <- NodeTestHelper.capabilities(),
+          not MapSet.member?(deferred_somewhere, capability),
+          not MapSet.member?(required, capability) do
+        fail(
+          "no manifest defers #{capability}, so every SDK carries it: add it to " <>
+            "@required_capabilities in test/helpers/node_test_helper.ex, or defer it by name " <>
+            "in the manifest of the SDK that does not carry it"
+        )
       end
     end
 
@@ -431,19 +443,18 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
     end
 
-    test "a capability with no tagged module is reported, not failed" do
+    test "a capability no module is tagged for fails" do
       tagged =
         for {_file, source} <- system_sources(),
             capability <- capabilities_in(source),
             into: MapSet.new(),
             do: String.to_atom(capability)
 
-      untested = Enum.reject(NodeTestHelper.capabilities(), &MapSet.member?(tagged, &1))
-
-      if untested != [] do
-        IO.puts(
-          "[conformance] no test/system module is tagged for: " <>
-            Enum.map_join(untested, ", ", &inspect/1)
+      for capability <- NodeTestHelper.capabilities(),
+          not MapSet.member?(tagged, capability) do
+        fail(
+          "no test/system module is tagged for #{inspect(capability)}, which every manifest " <>
+            "must therefore defer — a capability carried under `fixtures` is one a scenario proves"
         )
       end
     end

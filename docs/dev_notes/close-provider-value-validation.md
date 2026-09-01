@@ -1,8 +1,20 @@
 # `close-provider-value-validation` — the table refuses, and a crash is a refusal
 
 KI-116's two mechanisms, fixed as mechanisms rather than as its eight sites.
-`prod_loc` **7515 → 7515, exactly flat**; `duplicate_pairs` 13 → 12;
-`lib/flezha` duplicate pairs 1 → 0; full suite 1960 passed.
+`prod_loc` **7515 → 7515, exactly flat**; full suite 1960 passed;
+`refactor_metrics.py --check --lint` exit 0.
+
+**CORRECTION, recorded the same day.** This note and the commit message originally
+claimed `duplicate_pairs` 13 → 12 and `lib/flezha` 1 → 0. **Both numbers were
+incomparable to the baseline they were stated against**, and the trap is the one
+`small-mechanical-fixes` already documented: *`duplicate_pairs` is a pair count over
+whatever the run scanned*. A scoped `--area lib/flezha/plugin` run and a full-repo run
+disagree on the same tree at the same moment — measured here as **11 scoped against 13
+full**, because a scoped run cannot see a cross-area pair such as
+`provider/kafka/producer_worker.ex:171` ↔ `test/helpers/kafka_producer_fakes.ex:46`.
+The area's real full-scan figure did not move. **Quote a scoped number only against a
+scoped baseline**; the supervisor repeated the worker's scoped delta into the commit
+message one row after reading the note that documents this.
 
 ## The two mechanisms
 

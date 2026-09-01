@@ -464,9 +464,11 @@ the reference every other is checked against. The Elixir, Node, Ruby, PHP and Py
 all defer the persistence family, the effectively-once tier, timers, correction windows, keyed
 channels, the workflow kind, dynamic-Entity eviction, the entry-idle observer and schema
 evolution, for different reasons: Elixir has no per-Entity persistence at all, while the Node,
-Ruby, PHP and Python SDKs implement every one of them and have not yet proved them fixture by
-fixture against the reference. Those four owe their fixture sets to the shared follow-up
-`sdk-durable-fixture-parity`.
+Ruby, PHP and Python SDKs implement all of them but `entry_idle` and have not yet proved them
+fixture by fixture against the reference. Those four owe their fixture sets to the shared
+follow-up `sdk-durable-fixture-parity`. `entry_idle` is the exception because it is the one
+capability whose mechanism those four also lack: they carry the shared core's delivery stamp
+and not the observer built on it, which is per-SDK host code Rust and Java alone have.
 
 ---
 

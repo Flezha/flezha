@@ -457,6 +457,296 @@ claims Node/Ruby/PHP/Python *"implement every one of them"*. This change falsifi
 `entry_idle`; the paragraph is **separately** already wrong about Python's deferred set,
 which is pre-existing and stays for whoever owns that page. Recorded here so it is not lost.
 
+**R2 last seen 17:33 (+10m implementing).** Fixture files exist — three
+`EntryIdle*.java` procedures, `rust_runner/src/probe.rs`, and
+`test/system/entry_idle_e2e_test.exs`; manifests edited in the rust, java and python
+runners; `python-sdk.md` and `python_sdk.md` both touched (the sentence that made the free
+claim look earned). Running `mix test --include sdk_smoke` under a **590 s** timeout, inside
+the 600 s cap. 0 ticks is expected — it ticks at batch end. Not stalled: files are moving.
+Load 2.54/1.18/1.23, the 1-minute above the 15-minute because its own suite started.
+
+**R2 last seen 17:49 (section 5).** 32 boxes. **The gate flip has landed as ruled**:
+`gate_test.exs`'s `"a capability with no tagged module is reported, not failed"` is now
+`"a capability no module is tagged for fails"`, with the `IO.puts` escape path DELETED —
+the silence that hid `entry_idle` for the whole programme is gone. Five docs touched
+(`runner.md`, `conformance.md`, `entry_input_idle.md`, `python-sdk.md`, `python_sdk.md`)
+and `docs/dev_notes/make-entry-idle-claims-honest.md` written unprompted. Full `mix test`
+running under a **595 s** timeout. Machine: that suite is the load, nothing leaked.
+
+### R2 IS DONE — archived, and the gate that hid it can no longer stay quiet
+
+`make-entry-idle-claims-honest`, 36 boxes, archived as
+`2026-09-01-make-entry-idle-claims-honest`. **`entry_idle` is now 2 claim-and-prove /
+5 defer-by-name, and every one of the sixteen capabilities has a tagged module** — the
+`[conformance] no test/system module is tagged for:` line is gone for the first time.
+
+Verified by me: manifests correct, `entry_idle_e2e_test.exs:25` tagged, gate **20 passed**,
+three naming gates exit 0, `--check --lint` **exit 0**, full suite **1960 passed**.
+**The flip was shown failing first** — re-tagging `connect_discovery_e2e_test.exs` reddened
+exactly one test (19/20), then restored. Both `MODIFIED` blocks machine-diffed: 3→5 with
+none missing, and 5→5 with the one rewrite being the flip itself.
+
+**THE RATCHET RULING — the baseline was re-recorded, WITH THE USER'S EXPLICIT APPROVAL.**
+Three `duplicate_pairs` regressions survived, and all three are classifier artefacts I read
+myself: the Rust pair is the `impl Procedure` **mandatory associated types** at **41 tokens
+against a 40 threshold** (there is no other way to spell a stateless `String → String`
+procedure), and the 94-token Java pair is `package` plus nine `import` lines — the file
+header. §11f forbids shaving tokens to slip under a threshold you know is measuring the
+wrong thing. No exemption mechanism exists (`jscpd`, no allowlist), and a SCOPED
+`--write-baseline` would record a 3-area scan a later full `--check` refuses as foreign — so
+the full re-record was the only honest instrument. **Audited before use**: 36 areas in and
+36 out, none lost; the ONLY ratcheted metrics loosened are those three
+(`sdk/rust` 215→216, `sdk/java` 92→93, `test/apps` 140→143); everything else that moved is a
+descriptive counter (`comment_lines`, `doc_lines`, `test_loc`, `files`), and one ratchet got
+STRICTER (`test.async_false_share` 0.777 → 0.774).
+
+### A CORRECTION AGAINST MYSELF — I repeated a scoped number into R1's commit message
+
+**R1's commit says `duplicate_pairs 13 → 12` and `lib/flezha` dups `1 → 0`. Both are
+incomparable to the baseline they are stated against.** `duplicate_pairs` is a pair count
+**over whatever the run scanned** — the trap `small-mechanical-fixes` already wrote down —
+so a scoped `--area lib/flezha/plugin` run and a full-repo run disagree on the same tree at
+the same moment. Measured here: **11 scoped against 13 full**, because a scoped run cannot
+see a cross-area pair like `producer_worker.ex:171` ↔ `test/helpers/kafka_producer_fakes.ex:46`.
+
+R1's substance is untouched — `prod_loc 7515` flat and `--check --lint` exit 0 are both
+full-scan and both hold. But **I verified the full-scan gate and then repeated the worker's
+scoped delta into the message**, one row after reading the note that documents exactly this.
+Corrected in `docs/dev_notes/close-provider-value-validation.md` rather than by rewriting
+history. **Rule for every future row: quote a scoped number only against a scoped baseline.**
+
+### NEXT: R3 — `connect_discovery` into `@required_capabilities`
+
+One line (`test/helpers/node_test_helper.ex:293`); all seven SDKs already carry it. Note
+that R2's flip makes the gate stricter, so R3 lands into a gate that now bites.
+
+### R3 RULED 2026-09-01 — approved as R3 **plus the mechanism**, and it retires R8
+
+**The row is not the one line the queue described, and the worker found why.** Adding
+`connect_discovery` to `@required_capabilities` **falsifies a published `SHALL NOT`**:
+`openspec/specs/sdk-conformance/spec.md:310` — *"It SHALL NOT be added to the required set:
+an SDK whose transport is not the shared `flz_transport` may defer it by name."* So R3
+touches five files whatever I rule, and the spec sentence is rewritten either way.
+
+**I checked whether that carve-out's reason is live, because the worker called it a
+hypothetical and that is the half its recommendation rested on. It is NOT hypothetical.**
+The Elixir SDK genuinely carries an in-node `:native` BEAM-message-passing mode that uses no
+`flz_transport` at all (`elixir-sdk-native-transport`: one core, two deployment modes). What
+makes it moot *today* is narrower: `test/apps/elixir_runner/conformance.json` declares
+`transports: ["uds","quic"]` — the conformance app runs the STANDALONE binary protocol, so it
+carries `connect_discovery: ["do_nothing"]` like the other six.
+
+**RULED (b) — the mechanism goes in, and the carve-out's INTENT survives in a new form.**
+The distinction that decides it: the author's *reason* is legitimate, the *mechanism* is not.
+A permanent hole in a live ratchet, bought for a case no manifest currently has, is exactly
+the shape this programme keeps paying for. Under the paired checks the same need is met
+loudly instead: a future non-`flz_transport` SDK **defers it in its own manifest**, the
+existing `required ∩ deferred = ∅` test goes red naming that manifest, and the PR pays one
+line to drop it from required. Same freedom, no standing hole, and a gate that says so.
+
+**Conditions on the spec rewrite**: do NOT merely delete the `SHALL NOT`. The replacement
+text must state the successor policy and **name the real case** — an SDK whose transport is
+not the shared `flz_transport`, the in-node BEAM mode being the live example — so the reason
+the original author wrote that sentence survives its rewrite. A deleted rationale is how the
+next person re-derives the same carve-out from scratch.
+
+**The measured picture, which is why this lands green:** universal (no manifest defers) =
+`runner_lifecycle, connect_discovery, graph_builder, liveness, pool_wedge, retry_ladder,
+partitioned`; required today is those minus `connect_discovery`. **The new check flags
+exactly one capability and nothing else**, and the existing opposite direction is already
+clean. Deferral counts for the rest: `workflow` and `entry_idle` 5 each, the other seven 4
+each — so the check stays green until R5/R6/R7 retire the last deferrer of something.
+
+**Two things I am accepting with eyes open, both raised by the worker rather than found by
+me:**
+
+1. **The check ratchets whatever the manifests CLAIM, and R2 just proved a manifest can
+   lie** — Python carried `entry_idle` with no mechanism. Had all seven lied, this check
+   would have promoted the lie to a mandate. The mitigation is not in this check: it is R2's
+   tagged-scenario flip plus reference-equal fixtures. Recorded, not hand-waved.
+2. **No exemption list.** The worker refused to build `@universal_not_required` with a
+   per-entry reason, on §2 grounds: a parallel mechanism that re-creates R8's
+   "somebody notices" weakness in a smaller box, and which would have **zero members** after
+   this change. Correct refusal — speculative machinery is still machinery.
+
+**Reuse decision, and it is the whole design**: extend `gate_test.exs:264` *in place* — the
+test that already enforces the opposite direction over the same two data structures, walking
+`runtimes()` × `deferred/1`. Not a new test, not a script, not a second list. `@required_capabilities` **stays a literal in the source**; nothing computes it, so a
+deferral can never silently unlatch a mandate.
+
+**R8 is retired by construction** — the row's own stated point. `pool_wedge` shows the manual
+path works only when someone remembers: it was moved in by `close-runner-dispatch-wedges`,
+and `connect_discovery` has sat universal-but-unrequired ever since with nobody noticing.
+
+### R3 IS DONE — `require-universal-capabilities`, archived. **R8 IS RETIRED BY CONSTRUCTION.**
+
+Verified by me at the repo: required set now carries `:connect_discovery` (7 entries);
+`gate_test.exs` **20 passed**; three naming gates exit 0; `--check --lint` **exit 0**;
+full suite **1960 passed** (same count as R2's close — this change adds and removes no test);
+manifests **byte-clean** after the drill (`git diff --name-only test/apps/` empty, restored
+from the object store rather than by `git checkout`). Scenario diff: requirement A **9 → 10**
+(one added), requirement B **3 → 3**, none lost — the third consecutive change to clear that
+trap.
+
+**The spec rewrite met the condition, and exceeded it.** It does not delete the `SHALL NOT`;
+it replaces it with the general rule and then keeps the reason alive in its new form: *"The
+freedom the required set once reserved for it survives as a deferral rather than as a
+standing exemption"* — naming the live case (the Elixir in-node `:native` mode, which "walks
+no socket ladder"), why it does not arise today (`transports: ["uds","quic"]`), and the
+successor procedure (defer by name AND leave the required set in the same change, with the
+gate naming the line to edit).
+
+**The invariant is stated at the point of use**, which is where it will actually be read —
+the comment above `@required_capabilities`: *"The list is written, never derived: an SDK that
+genuinely cannot carry one defers it by name in its own manifest and leaves this list in the
+same change, so a mandate is never dropped as a side effect of a manifest edit."*
+
+**Red-first in BOTH directions, each on a real defect rather than a synthetic one:**
+
+- the new check, added before the list was touched, named `connect_discovery` and told the
+  reader the exact edit — 19/20;
+- the existing direction, with `node_runner` made to defer it — 19/20 naming the manifest AND
+  printing the required set.
+
+Exactly one test reddened each time, 20 passed either side.
+
+**Accepted, not filed**: `scripts/format-check.sh` exits **2** on this box because `rubocop`
+is absent — all seven formatters that ran found 0 files, and this change touches no Ruby.
+That is the gate telling the truth about itself, which is what `format-gate-tells-the-truth`
+built it to do; the same exit was ruled correct in session 5's row 3.5.
+
+### NEXT: R4 — identity stamps in node, ruby, php
+
+`flz.entity`/`flz.seq`/`flz.key` on a non-tier keyed plugin emit. References already written:
+**`sdk/rust/src/operative/dispatcher/emit_sink.rs:362` `apply_identity_stamps`** — the
+queue's `emit_sink.rs:357-378` is a PRE-REFACTOR path and resolves to nothing today; area 3
+moved it under `operative/dispatcher/`. Java `EmitContext.java`, Python `ctx.py:36-37`
+(`ENTITY_STAMP`/`SEQ_STAMP`); ~15 lines
+each, then the `keyed_channels` fixtures. **Note what R3 changed under it**: the required set
+now refuses drift in both directions, so any capability R4 makes universal must be added to
+the list in the same change — the gate will say so by name.
+
+**R4 premise verified before briefing.** Python and Java carry the stamps; **node, ruby and
+php carry none** (`grep flz.entity` over all three source trees: empty). `keyed_channels` is
+claimed by rust/java/python (`["partition_relay"]`) and **deferred by node, ruby, php AND
+elixir**. So R4 removes three of those four deferrals; **elixir still defers it, so the
+capability does NOT become universal and R3's new gate requires no required-set edit** — but
+it will say so by name the day R6 lands the fourth.
+
+**The reference semantics, read rather than assumed** (`emit_sink.rs:362`): `flz.entity` is
+the entity label; **`flz.seq` is `"{change_seq}.{emit_ordinal}"` with the ordinal
+incrementing per emit**, not the bare sequence — Java's own test pins `"5.0"`; `flz.key` is
+written only when the emit is keyed. The per-emit ordinal is the part a port is most likely
+to get wrong, because a single-emit test passes either way.
+
+### R4 SURVEY RULED 2026-09-01 — three rulings, and the shared core is refused on a checked argument
+
+**F1 IS REAL — verified by me at the control flow, not taken from the report.** Rust's
+increment sits **inside** `if self.keyed` (`emit_sink.rs:105` wrapping the `*emit_ordinal += 1`
+at `:374`); Python's sits inside `if is_plugin` with **no keyed check** (`ctx.py:253-255`),
+and Java is the same (`EmitContext.java:287`). So on a class with one keyed and one non-keyed
+plugin channel, **Rust produces dense ordinals on stamped outputs and Java/Python leave gaps**
+— the same emit sequence ships `"<seq>.0"` under one and `"<seq>.1"` under the other.
+`docs/architecture/kernel.md:489` documents the value as `<change_seq>.<emit ordinal>` and
+**never says which events advance it**, so the spec is silent and two implementations differ.
+Neither is obviously "correct": both are unique and replay-stable, and `flz.seq` is consumed
+as a dedup key (`postgres/sink_worker.ex:348`, `kafka/producer_worker/wire.ex:106`, the
+`(epoch, seq)` guard), which needs uniqueness, not density.
+
+**RULING on F1**: the three new SDKs **match Java/Python**. Not by majority but because they
+are erased hosts of identical shape, and it leaves **Rust's typed path as the single
+outlier** rather than a 3–3 split — a far cleaner target for the change that settles it.
+**F1 is NOT fixed in R4**: fixing it changes a shipped wire value in the REFERENCE SDK and
+earns its own change with its own red-first proof. Filed as **KI-118**, reproduced inside
+R4's B0 (nearly free — B0 already writes multi-emit tests; the mixed-channel case is one
+more), and the worker CONTINUES rather than waiting, because this ruling is the verdict §1b
+asks for.
+
+**RULING on the shared core — REFUSED for this row, and I checked the argument that kills
+it.** `flz_core::host::activation::ship_plugin_outputs` is a genuine seam that would replace
+**five** host implementations with one. The worker recommended against it on three grounds
+and the decisive one is structural: `settle_into_buffer` runs at `activation.rs:412` and
+`ship_plugin_outputs` at `:415`, so a core-side stamp reads `change_seq` at a **different
+point in the invocation** than the erased hosts do (which read it at handout). Adopting it
+would move the `flz.seq` values Java and Python already ship — a behaviour change to two
+CONFORMANT SDKs inside a row scoped to three broken ones. Its second ground is as good: the
+only proof of stamp VALUES that exists is Java's and Python's in-process tests, and moving
+the mechanism below the FFI boundary leaves them nothing to assert. **Recorded as a
+candidate for a later row, not filed as a defect.**
+
+**RULING on F2 — scoped IN, and it is MY drift to own.** `docs/sdk/php_sdk.md:391` still says
+the required set is **six**; R3 made it seven and `1e66d81e` did not touch that page. I
+verified and committed R3, so I let it through. It is one line in a file R4 already edits for
+the deferred-count change, so a second visit to the same paragraph would be waste, not
+discipline. The other half of F2 — all three SDKs' `.keyed()` doc comments promising stamps
+the code does not write — is **repaired by this row** and needs no separate action.
+
+**What the e2e flip does NOT prove, and it changes the test plan**: `sdk_smoke_e2e_test.exs:243`
+golden-checks the `flz.*` key NAMES only, never the values. **Nothing e2e pins `flz.seq`'s
+value for a non-Rust SDK.** So the conformance flip alone would pass on a broken ordinal, and
+the value correctness must be proved by per-SDK unit tests — which is exactly why B0's tests
+are multi-emit.
+
+**R4 last seen 19:18 (+10m, in B0).** Three dispatch suites modified
+(`node/test/dispatch.test.mjs`, `ruby/test/dispatch_test.rb`, `php/tests/DispatchTest.php`
+plus its `Fixture.php`) and a new **`sdk/rust/tests/ki118_probe.rs`** — the divergence
+reproduction, written BEFORE the KI entry is filed, which is the right order: an entry with
+a probe behind it beats an entry with a code-read behind it. No production source touched
+yet, correct for a red-first batch. Machine clean; the only long-lived process is this
+session's `playwright-mcp`, which §11b names as not-a-leak.
+
+### R4 B0–B2 VERIFIED — and the probe REFUTED HALF MY OWN RULING
+
+**I ruled that Rust was the ordinal outlier. It is not, and the worker proved it by building
+the reproduction instead of trusting the code-read two of us had already agreed on.**
+
+```
+$ cargo test -p flezha_runner --features bench-internals,testing --test ki118_probe
+KI-118 probe: Rust REFUSED with: operative topology validation failed:
+  [DuplicatePluginSink { channel: "keyed_out" }]
+```
+
+Verified at the source by me: `refuse_multiple_outputs` (`sdk/rust/src/workflow/spec.rs`)
+says *"A procedure producing two channels is unroutable (the topology keeps one
+`output_channel_id`, so the second would be silently orphaned)"*, and `stream.rs:382` carries
+`DuplicatePluginSink` — "the first call wins". **So Rust's `if self.keyed` guard is
+unobservable, and on every topology Rust can express, Rust/Java/Python already agree.**
+**The divergence is the TOPOLOGY RULE**: four SDKs accept one procedure declaring several
+plugin channels; the reference refuses that shape. Filed as **KI-118** (`e18d36e2`) with the
+open question stated as *"may one procedure produce several plugin channels?"* — the ordinal
+rule follows from that, not the reverse.
+
+**The lesson, stated plainly because it cost nothing this time and will not always**: a
+code-read agreed by two readers is still a hypothesis. The probe was ~free and it overturned
+a supervisor ruling. **Reproduce before ruling, not after.**
+
+**Verified at this checkpoint**: red-first three ways (node 15/19 → 19/19 then 104/104; ruby
+3 failures → 0 then 86; php 3 failures + 1 error → 25/25 then 134), manifests flipped and
+`gate_test.exs` **20 passed**, and the worker **ran my R3 premise rather than trusting it** —
+making `elixir_runner` carry `keyed_channels` reddened exactly one test with the named remedy,
+then restored. Spec delta: 1 ADDED, **zero `## MODIFIED` blocks**, scenarios 12 → 17, so
+nothing can be silently dropped.
+
+**Two pieces of worker judgement worth keeping as precedent**: it restructured the fixtures so
+the primary multi-emit proof runs on a **single keyed channel** — the topology every SDK can
+express — leaving only the divergence test on the two-channel shape, so its value proof
+survives whichever way KI-118 is ruled; and it **flagged that two spoof tests were green
+before the change**, rather than letting them pad a red-first table.
+
+**`prod_loc` +52 — THE USER APPROVED A BASELINE RE-RECORD (2026-09-01).** `sdk/node`
+2985→3004, `sdk/php` 4134→4153, `sdk/ruby` 1921→1935. Charter-legitimate under §1: **+39 is
+§7-ceiling-forced** (inlining `stampIdentity` put node's `outputFor` at 52 lines against a
+50-line ceiling) and the remaining +13 is the mechanism closing a capability gap. All other
+ceilings stay 0 in all four areas; `test_loc` is not ratcheted so the tests are free.
+**The re-record happens AFTER B3/B4**, not now — an e2e failure would move the number again.
+
+**rubocop — recorded as unconfirmed, deliberately.** The worker reports it available under
+rbenv 3.4.10 and clean over 27 files. **I could not confirm it**: `which rubocop`, the rbenv
+shim path and `bundle` are all unreachable from my shell, so the difference is shell
+initialisation. The worker owes the exact command and environment it used. Until then
+STATE.md's "rubocop gap accepted" stands — a gate is not fixed on a memory of a green run.
+
+
 
 
 
