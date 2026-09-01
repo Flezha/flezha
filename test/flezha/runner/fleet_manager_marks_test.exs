@@ -1,9 +1,9 @@
 defmodule FlezhaTest.Runner.FleetManagerMarksTest do
   @moduledoc """
   A close the controller itself asked for is reported differently from one it
-  did not — and only reported differently. The teardown a bench or a
-  `stop_namespace` performs used to enter the convergence loop as a divergence
-  to heal, because the channel could not tell the two apart.
+  did not — and only reported differently. Without the mark the channel cannot
+  tell the two apart, and the teardown a bench or a `stop_namespace` performs
+  enters the convergence loop as a divergence to heal.
 
   The load-bearing assertion is the pairing: the marked and unmarked closes
   must leave identical state, or the mark has started deciding something it
@@ -16,9 +16,9 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamChannel
   alias FlezhaTest.Helper.FleetStateHelper
 
   setup do

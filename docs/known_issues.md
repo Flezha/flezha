@@ -1363,6 +1363,24 @@ until 2026-08-30. Dates are when each was last established, not when it started.
 
 ## Notes — true, and not work owed
 
+### Two test-coverage gaps whose `TODO` tags were removed by `refactor-7-tests`
+
+Batch 6 deleted six `TagTODO` credo offences. Four named no work and went with the dead
+code around them. **Two described real gaps**, and removing the tag would otherwise have
+erased the only record of them, so they are written down here rather than lost:
+
+- **`test/flezha_test.exs:129`** — the websocket-plugin enable test asserts only the
+  success path. Nothing exercises a failed enable at that seam.
+- **`test/flezha_test.exs:268`** — nothing on the Elixir side drives an over-long control
+  or stream frame. `grep -rn max_frame_bytes lib/ test/` is empty: the limit is enforced
+  in `flz_transport` and tested there, so this is arguably where it belongs. Recorded so
+  the next reader knows the Elixir tier's silence is deliberate rather than an oversight.
+
+**Neither is a defect and neither is work owed.** They are coverage observations, and a
+coverage gap is only worth closing when someone can say what a new test would catch that
+the existing tier does not.
+
+
 Each of these was triaged and found correct. None is a defect: they are
 deliberate trade-offs, environment facts, or measurements. They sit here so
 the open list above contains only open work.

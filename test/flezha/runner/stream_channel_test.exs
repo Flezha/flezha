@@ -377,18 +377,17 @@ end
 
 defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
   @moduledoc """
-  Reproduction of the flezha-market prod incident (2026-06-05): the IO data
-  stream silently severs and NEVER self-heals — WS ingest keeps flowing, the
-  runner goes idle, all procedure WALs/topics freeze, and only a operative recreate
-  (`start-asset.sh`) restores it.
+  Reproduction of a production incident: the IO data stream silently severs and
+  NEVER self-heals — WS ingest keeps flowing, the runner goes idle, all
+  procedure WALs/topics freeze, and only a operative recreate restores it.
 
   Root cause under test: the IO `StreamChannel` can hold a STALE non-nil
   `stream_ref` after its NIF stream dies WITHOUT emitting `{:flz_closed, ...}`.
   Because `{:bind}` only binds a `nil` ref, a reconnecting live stream is
   rejected with `:already_bound`, and there is NO liveness watchdog to reset
-  the ref. This is the IO-side twin of the stale-handle bug that was fixed for
-  the CONTROL channel on 2026-06-01 (`ControlChannel.reset_stream_ref/1`) but
-  never ported to the IO channel.
+  the ref. This is the IO-side twin of the stale handle the CONTROL channel
+  resets in `ControlChannel.reset_stream_ref/1`, which the IO channel does
+  not do.
 
   Fails when: a dead-but-unsignalled IO stream can be recovered without a
   process restart (i.e. if a watchdog/reset is ever added, step 3 changes).

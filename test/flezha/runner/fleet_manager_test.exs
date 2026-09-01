@@ -230,8 +230,8 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.State.Paths
   alias Flezha.State.Restore
-  alias FlezhaTest.Helper.FleetStateHelper
   alias Flezha.State.TestHelpers, as: StateTestHelpers
+  alias FlezhaTest.Helper.FleetStateHelper
 
   # async: false: writes Application env; replaces the FleetManager's state.
 

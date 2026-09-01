@@ -9,7 +9,7 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   class tree across before it restores — otherwise it cold-starts on top of
   state that exists, just not here. Only a FOREIGN node means anything: a local
   value is already where the ordinary restore looks, and pulling from a node
-  that no longer exists on every bind would be noise.
+  that has since gone, on every bind, would be noise.
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
   use ExUnit.Case, async: false
@@ -536,8 +536,8 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
   use ExUnit.Case, async: true
   use Mimic
 
-  alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.Overwatch
   alias FlezhaTest.Helper.NodeTestHelper
 
   test "kick_restore does not block the Overwatch on a slow restore disk scan" do

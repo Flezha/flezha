@@ -1,14 +1,14 @@
 defmodule FlezhaQuicTest do
+  alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
-  alias Flezha.Payloader
+  alias Flezha.Service.OperativeManager
   alias Flezha.Service.PortPilot
   alias Flezha.State.Paths
   alias FlezhaTest.Fixtures.OperativeFixture
-  alias Flezha.Service.OperativeManager
-  alias FlezhaTest.Helper.OperativeTestHelper
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.OperativeTestHelper
 
   use ExUnit.Case
   use Flezha.Constant

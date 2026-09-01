@@ -239,10 +239,9 @@ defmodule BuildFixtures do
     base = [{"manifest.exs", manifest}] ++ src_entries
 
     base
-    |> Enum.map(fn {path, body} ->
+    |> Enum.map_join("\n", fn {path, body} ->
       "#{sha256(body)}  #{path}"
     end)
-    |> Enum.join("\n")
     |> Kernel.<>("\n")
   end
 

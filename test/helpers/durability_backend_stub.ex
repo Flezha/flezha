@@ -93,32 +93,33 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
     owner = ensure_owner()
 
     Agent.update(owner, fn state ->
-      for table <- [@table, @control] do
-        case :ets.whereis(table) do
-          :undefined -> :ets.new(table, [:set, :public, :named_table])
-          _ -> :ets.delete_all_objects(table)
-        end
-      end
-
+      for table <- [@table, @control], do: reset_table(table)
       state
     end)
+  end
+
+  defp reset_table(table) do
+    case :ets.whereis(table) do
+      :undefined -> :ets.new(table, [:set, :public, :named_table])
+      _ -> :ets.delete_all_objects(table)
+    end
   end
 
   # The tables are created inside the agent so the AGENT owns them. Created from
   # a test process instead, they would vanish the moment that process exits —
   # and a shipper started with `GenServer.start` outlives it, so its next drain
-  # would hit a table that no longer exists rather than a store that is merely
-  # empty.
+  # would hit a missing table rather than a store that is merely empty.
   defp ensure_owner() do
     case Process.whereis(@owner) do
-      nil ->
-        case Agent.start(fn -> :ok end, name: @owner) do
-          {:ok, pid} -> pid
-          {:error, {:already_started, pid}} -> pid
-        end
+      nil -> start_owner()
+      pid -> pid
+    end
+  end
 
-      pid ->
-        pid
+  defp start_owner() do
+    case Agent.start(fn -> :ok end, name: @owner) do
+      {:ok, pid} -> pid
+      {:error, {:already_started, pid}} -> pid
     end
   end
 
@@ -241,17 +242,19 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
         {:error, {:claim_held, control_get(:fence, nil)}}
 
       true ->
-        case :ets.lookup(@table, key) do
-          [{^key, _blob, stored, _written_at}] ->
-            if Backend.guard_passes?(guard, stored) do
-              write(key, blob, claim)
-            else
-              {:error, {:claim_held, stored}}
-            end
+        write_if_guard_passes(key, blob, claim, guard)
+    end
+  end
 
-          [] ->
-            write(key, blob, claim)
-        end
+  defp write_if_guard_passes(key, blob, claim, guard) do
+    case :ets.lookup(@table, key) do
+      [{^key, _blob, stored, _written_at}] ->
+        if Backend.guard_passes?(guard, stored),
+          do: write(key, blob, claim),
+          else: {:error, {:claim_held, stored}}
+
+      [] ->
+        write(key, blob, claim)
     end
   end
 

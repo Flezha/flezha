@@ -29,23 +29,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
 
       ns_factories =
         Enum.reduce(runner_factories, %{}, fn {runner, factories}, acc ->
-          Enum.reduce(factories, acc, fn factory, acc ->
-            {id, lang} = split(factory)
-            # An unspecified language establishes nothing — the same rule
-            # `establish_lang/4` applies to a real advertisement.
-            if lang > 0 and is_nil(ClassRegistry.sdk_lang(namespace, id)) do
-              ClassRegistry.put_sdk_lang(namespace, id, lang)
-            end
-
-            existing =
-              Map.get(acc, id, %{description: nil, ce_ids: MapSet.new(), langs: %{}})
-
-            Map.put(acc, id, %{
-              existing
-              | ce_ids: MapSet.put(existing.ce_ids, runner),
-                langs: Map.put(existing.langs, runner, lang)
-            })
-          end)
+          Enum.reduce(factories, acc, &record_factory(&2, &1, runner, namespace))
         end)
 
       state
@@ -75,6 +59,26 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   @doc "Forget every factory's established language — `on_exit` for a seeding test."
   def forget_langs(namespace, factory_ids),
     do: Enum.each(factory_ids, &ClassRegistry.delete_sdk_lang(namespace, &1))
+
+  # Fold one advertised factory into the namespace's factory map, establishing
+  # its language the first time a runner names one.
+  defp record_factory(acc, factory, runner, namespace) do
+    {id, lang} = split(factory)
+
+    # An unspecified language establishes nothing — the same rule
+    # `establish_lang/4` applies to a real advertisement.
+    if lang > 0 and is_nil(ClassRegistry.sdk_lang(namespace, id)) do
+      ClassRegistry.put_sdk_lang(namespace, id, lang)
+    end
+
+    existing = Map.get(acc, id, %{description: nil, ce_ids: MapSet.new(), langs: %{}})
+
+    Map.put(acc, id, %{
+      existing
+      | ce_ids: MapSet.put(existing.ce_ids, runner),
+        langs: Map.put(existing.langs, runner, lang)
+    })
+  end
 
   defp split({id, lang}), do: {id, lang}
   defp split(id), do: {id, @default_lang}

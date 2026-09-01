@@ -13,7 +13,7 @@ defmodule Flezha.Transport.Local.StreamTest do
     {sdk, ctrl} = Stream.open()
     take_owner(ctrl, self())
 
-    # message is any term, never assumed a binary (D4 constraint)
+    # message is any term, never assumed a binary
     msg = %{not: "a binary", n: 7}
     :ok = TStream.send_frame(sdk, "op-1", msg, %{"channel" => "in"})
 

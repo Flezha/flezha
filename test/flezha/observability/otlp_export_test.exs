@@ -176,8 +176,8 @@ defmodule Flezha.Observability.OtlpExportTest do
       # through Bus, sidestepping unrelated signal traffic that would
       # also enter the :any/:any sink in this process.
       # The metadata carries the two shapes the Logger bridge attaches to every
-      # log signal: encoding them used to raise inside `flush/1` and kill the
-      # sink before it could drain anything.
+      # log signal; encoding either must not raise inside `flush/1`, which would
+      # kill the sink before it could drain anything.
       :ok =
         GenServer.call(
           sink,

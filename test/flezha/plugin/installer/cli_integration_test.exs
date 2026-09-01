@@ -7,8 +7,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
   would drive.
 
   Shelling out to the release binary would also require `mix release` +
-  a live node — that harness is noted in `openspec/changes/add-installable-plugins/tasks.md`
-  as future work. Exercising the CliManager functions here catches every
+  a live node. Exercising the CliManager functions here catches every
   wiring bug a shell harness would have caught while keeping the test
   hermetic.
   """

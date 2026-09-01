@@ -407,7 +407,7 @@ defmodule Flezha.Observability.PrometheusExportTest do
         TestSinks.settle(PrometheusRegistry)
       end
 
-      refute_receive {:DOWN, ^ref, :process, ^sup, _reason}, 200
+      refute_receive {:DOWN, ^ref, :process, ^sup, _reason}, 100
 
       ids =
         sup

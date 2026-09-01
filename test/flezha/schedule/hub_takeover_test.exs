@@ -55,16 +55,17 @@ defmodule Flezha.Schedule.HubTakeoverTest do
     Helper.wait_until!(timeout_ms, describe, fn ->
       current = placements()
 
-      settled? =
-        Enum.all?(@names, fn name ->
-          case Map.get(current, name) do
-            [{^node, pid}] -> Process.alive?(pid)
-            _ -> false
-          end
-        end)
+      settled? = Enum.all?(@names, fn name -> alive_on?(current, name, node) end)
 
       if settled?, do: {:ok, :ok}, else: :retry
     end)
+  end
+
+  defp alive_on?(current, name, node) do
+    case Map.get(current, name) do
+      [{^node, pid}] -> Process.alive?(pid)
+      _ -> false
+    end
   end
 
   test "exactly one process per schedule across two nodes, and the survivor takes over" do

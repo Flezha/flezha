@@ -1,11 +1,10 @@
 defmodule Flezha.Service.HubManagerRegistryTest do
   @moduledoc """
-  Multi-node-safe registry access (self-healing-control-plane, Phase 3 / D9).
+  Multi-node-safe registry access.
 
-  `get_all_operatives/1` and `FleetManager.runner_reroute/4`
-  historically pattern-matched a single-element `[{_node, pid}]` registry entry,
-  raising `FunctionClauseError` the moment a operative was registered on more than
-  one node (the `flz operative list` crash). These tests exercise the shared
+  Pattern-matching a single-element `[{_node, pid}]` registry entry raises
+  `FunctionClauseError` the moment a operative is registered on more than one
+  node, which is the `flz operative list` crash. These tests exercise the shared
   `HubManager.live_pid/1` resolver and inject a synthetic two-node registry entry
   to assert the consumers select the live/local pid instead of crashing.
   """
@@ -118,9 +117,9 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     end
 
     test "reflects the Convergence Loop's classified health, not the absent metadata key" do
-      # Regression: operative_rows/1 used to read `metadata[:health]`, a key nothing
-      # ever writes, so every operative reported `:unknown` forever even while
-      # producing. It must instead read the loop's published per-operative health.
+      # `metadata[:health]` is a key nothing ever writes, so reading it reports
+      # `:unknown` forever even for a producing operative. `operative_rows/1`
+      # must read the loop's published per-operative health instead.
       inject_operative(@health_ns, "operative_health", [{node(), self()}])
 
       Snapshot.publish(%{operative_health: %{{@health_ns, "operative_health"} => :healthy}})

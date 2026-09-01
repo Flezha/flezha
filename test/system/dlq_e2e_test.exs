@@ -159,7 +159,8 @@ defmodule FlezhaTest.System.DlqE2ETest do
     send_inputs(operative_id, namespace, ["kp:poison", "k2:b"])
 
     # Frozen: while the poison payload retries, nothing past offset 0 can
-    # durably consume.
+    # durably consume. A window, not a settle: "the watermark did not move" has
+    # no positive signal to wait on.
     Process.sleep(200)
 
     assert InputLog.watermark(operative_id) == 0,

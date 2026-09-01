@@ -19,8 +19,8 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
-  alias Flezha.Runner.ControlUnit
   alias Flezha.Operative.Builder
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager

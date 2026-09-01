@@ -24,7 +24,9 @@ defmodule Flezha.TestHelpers.Plugins do
   @spec build_all_fixtures!(Path.t()) :: :ok
   def build_all_fixtures!(out_dir) do
     _ = Code.require_file(@fixtures_script)
-    apply(:"Elixir.BuildFixtures", :build_all!, [out_dir])
+    # Resolved at run time: the script above is what defines the module.
+    builder = Module.concat([:BuildFixtures])
+    builder.build_all!(out_dir)
     :ok
   end
 

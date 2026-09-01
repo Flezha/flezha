@@ -111,16 +111,14 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       signals = RingBufferSink.query(:host, 0)
 
-      cond do
-        Enum.any?(signals, fn s -> s.name == :host_source_degraded end) ->
-          # Non-Linux — degraded path emits exactly one event and
-          # nothing more.
-          assert Enum.count(signals, fn s -> s.kind == :metric end) == 0
-
-        true ->
-          assert Enum.any?(signals, fn s -> s.name == :rss_bytes end)
-          assert Enum.any?(signals, fn s -> s.name == :cpu_user_us end)
-          assert Enum.any?(signals, fn s -> s.name == :load_avg_1m end)
+      if Enum.any?(signals, fn s -> s.name == :host_source_degraded end) do
+        # Non-Linux — degraded path emits exactly one event and
+        # nothing more.
+        refute Enum.any?(signals, fn s -> s.kind == :metric end)
+      else
+        assert Enum.any?(signals, fn s -> s.name == :rss_bytes end)
+        assert Enum.any?(signals, fn s -> s.name == :cpu_user_us end)
+        assert Enum.any?(signals, fn s -> s.name == :load_avg_1m end)
       end
 
       GenServer.stop(pid)
@@ -277,7 +275,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       poll(pid, 1)
 
       signals = RingBufferSink.query(:beam_vm, 0)
-      assert length(signals) > 0
+      assert signals != []
       assert Enum.all?(signals, fn %Signal{source: :beam_vm} -> true end)
 
       _ = Bus

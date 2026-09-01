@@ -48,8 +48,8 @@ defmodule Flezha.AuthZ.RebootstrapTest do
 
     assert log =~ "REBOOTSTRAP marker consumed"
 
-    # The previous admin no longer authorizes: binding gone, token revoked,
-    # claimed flag reset.
+    # The admin the marker replaced authorizes nothing: binding gone, token
+    # revoked, claimed flag reset.
     refute RoleStore.admin_system_exists?()
     assert :error = RoleStore.lookup(principal)
     assert {:error, :token_revoked} = TokenStore.verify(minted_admin_token)

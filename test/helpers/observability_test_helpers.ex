@@ -145,7 +145,7 @@ end
 
 defmodule Flezha.Observability.TestSinks.Blocking do
   @moduledoc false
-  # Used to verify the `:block` overflow policy. Handles
+  # Verifies the `:block` overflow policy. Handles
   # `{:signal, signal}` via GenServer.call.
 
   use GenServer

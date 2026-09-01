@@ -1,13 +1,12 @@
 defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   @moduledoc """
-  End-to-end drill for `close-control-plane-silent-wedges`: the chain of
-  custody from a real wedged runner to a real remedy.
+  End-to-end drill: the chain of custody from a real wedged runner to a real
+  remedy.
 
   A live Rust runner processes one input, then wedges inside user code — its
   socket stays open and its heartbeat thread keeps reporting, while its
-  dispatch counter freezes. That is the 2026-06-10 production freeze, and
-  before this change nothing in the control plane acted on it: the classifier
-  computed the verdict every tick and no one read it.
+  dispatch counter freezes. That is the production freeze signature, and a
+  classifier whose verdict nobody reads leaves it unremedied.
 
   The drill asserts the whole path with real components — real runner, real
   liveness counters, real `Convergence.Loop`:

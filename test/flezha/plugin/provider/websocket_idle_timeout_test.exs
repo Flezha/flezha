@@ -3,10 +3,9 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   Watchdog contract tests for the WebSocket plugin's application-level
   idle-timeout reconnect.
 
-  Failure mode this protects against: Kraken (or any) WS goes silent for
-  >30 s without a TCP error, leaving the chart frozen on stale prices —
-  the 2026-04-30 hibernation incident's two silent-WS windows (38 h
-  pre-hibernation, 16 min post-hibernation).
+  Failure mode this protects against: a WS goes silent for >30 s without a TCP
+  error, leaving the consumer frozen on stale data — the shape a hibernating
+  host produces, whose observed windows ran to 38 hours.
   """
 
   use ExUnit.Case, async: true

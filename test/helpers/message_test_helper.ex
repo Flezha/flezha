@@ -1,4 +1,9 @@
 defmodule FlezhaTest.Helper.MessageTestHelper do
+  @moduledoc """
+  Turns a telemetry event into an ordinary message in the calling process, so a
+  signal can be awaited with `assert_receive`.
+  """
+
   @doc """
   Forward every occurrence of `event` to the calling process as
   `{tag, measurements, metadata}` for the duration of the test, so a telemetry

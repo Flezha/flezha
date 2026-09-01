@@ -9,11 +9,11 @@ defmodule Flezha.SDK.InNodeE2ETest do
   # async: false: the live controller and its fleet; registered singletons.
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Ctx
-  alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Service.OperativeManager
-  alias Flezha.Operative.Builder
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @probe :sdk_in_node_probe
 
@@ -113,13 +113,13 @@ defmodule Flezha.SDK.SocketRoundtripTest do
   # async: false: the live controller and its fleet; registered singletons; OS environment variables.
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Ctx
+  alias Flezha.Service.OperativeManager
   alias Flezha.Socket.Support
   alias Flezha.Transport.Native
   alias FlezhaTest.Helper.NodeTestHelper
-  alias Flezha.Service.OperativeManager
-  alias Flezha.Operative.Builder
 
   @probe :sdk_socket_probe
 
@@ -241,12 +241,12 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   # async: false: the live controller and its fleet; global telemetry handlers; OS environment variables.
   use ExUnit.Case, async: false
 
+  alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.RunnerServer
-  alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Service.OperativeManager
-  alias Flezha.Operative.Builder
+  alias FlezhaTest.Helper.NodeTestHelper
 
   defmodule EchoProc do
     @behaviour Flezha.SDK.Procedure

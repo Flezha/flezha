@@ -7,6 +7,8 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   """
   use ExUnit.Case, async: true
 
+  alias Flezha.Service.CliManager
+
   # `cli/src` also calls through helpers that take the function name as a
   # parameter. Each one fixes the arity by construction; the second element is
   # the index of the name argument, the third a prefix the helper adds.
@@ -30,7 +32,7 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
       |> Map.new(&{&1, File.read!(&1)})
 
     assert map_size(files) > 0, "cli/src carries no Rust source; the gate would pass vacuously"
-    %{files: files, exports: MapSet.new(Flezha.Service.CliManager.__info__(:functions))}
+    %{files: files, exports: MapSet.new(CliManager.__info__(:functions))}
   end
 
   test "every RPC name cli/src spells resolves to an exported CliManager function", ctx do

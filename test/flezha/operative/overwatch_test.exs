@@ -1,9 +1,9 @@
 defmodule FlezhaTest.Operative.OverwatchInitStateTest do
+  alias Flezha.Operative.Builder
+  alias Flezha.Payloader
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
-  alias Flezha.Payloader
   alias Flezha.State.TestHelpers
 
   use ExUnit.Case
@@ -242,10 +242,10 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.Runner.StreamChannel
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Runner.StreamChannel
 
   defmodule ProbeProvider do
     def init_provider(opts), do: {:ok, opts}
@@ -400,9 +400,9 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
   silence — Kafka topics stayed empty because no `activate/1` ever fired.
   """
 
+  alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Operative.Overwatch
 
   # async: false: the primary Logger; node-global tables.
 
@@ -572,7 +572,7 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
 
       # `Heal.plugin_call/3` matches `{:ok, :ok} -> :ok` and everything else to
       # `:error`, so this reply is recorded as a FAILED heal with no change to
-      # `Heal` — the remedy can no longer hide the fault it failed to fix.
+      # `Heal` — a remedy cannot hide the fault it failed to fix.
       refute match?(:ok, reply)
     end
 

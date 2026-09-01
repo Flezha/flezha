@@ -15,9 +15,9 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   import Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Service.CliManager
-  alias Flezha.Operative.PartitionGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
 

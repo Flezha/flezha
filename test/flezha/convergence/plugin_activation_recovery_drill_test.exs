@@ -1,8 +1,8 @@
 defmodule Flezha.Convergence.PluginActivationRecoveryDrillTest do
   @moduledoc """
-  The end-to-end case the unit tests cannot cover (`close-silent-plugin-wedges`
-  task 5.3): an operative with a declared source whose upstream is DOWN at bind
-  time recovers on its own once upstream returns, with no operator action.
+  The end-to-end case the unit tests cannot cover: an operative with a declared
+  source whose upstream is DOWN at bind time recovers on its own once upstream
+  returns, with no operator action.
 
   Everything here is real except the hub lookup: a real `%Overwatch{}` served by
   a real GenServer through `Overwatch.handle_call/3`, a real `Extension.Table`,
@@ -10,10 +10,10 @@ defmodule Flezha.Convergence.PluginActivationRecoveryDrillTest do
   `Diff` → `Planner` → `Heal.execute/1` round. "Upstream down" is a port with
   nothing listening; "upstream up" is a listener on that same port.
 
-  Before this change the drill was impossible to write: the failed activation
-  left the plugin `:prepared`, `:prepared` reads healthy, the Probe counted a
-  subscribed plugin as running, and so the Diff was empty on this tick and
-  every later one. Nothing healed and nothing was raised.
+  What makes the drill writable at all is that the phase is the authority on
+  "running": a failed activation leaves the plugin `:prepared`, and `:prepared`
+  reads healthy, so a Probe counting every subscribed plugin as running would
+  make the Diff empty on this tick and every later one.
   """
 
   # async: false: Mimic global mode; Mimic stubs; the primary Logger.

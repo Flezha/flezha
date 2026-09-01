@@ -1,4 +1,9 @@
 defmodule FlezhaTest.Helper.OperativeTestHelper do
+  @moduledoc """
+  Input delivery a test can wait on: `send_io` is fire-and-forget, so these
+  retry until the operative is bound and the ingest is accepted.
+  """
+
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
 

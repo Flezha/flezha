@@ -15,10 +15,10 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   Application-env hooks the Overwatch consults during a startup attempt.
   """
 
+  alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Operative.Builder
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
@@ -373,7 +373,8 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
     ref = attach([:flezha, :correction, :retention_derived])
 
     # Default config: no hold window at all, and an age floor shorter than the
-    # window. This combination used to REFUSE the operative at start.
+    # window. This combination raises both floors instead of refusing the
+    # operative at start.
     Application.put_env(:flezha, :input_log_hold_window_ms, 0)
     Application.put_env(:flezha, :compact_after_age_ms, 60_000)
     :ok = ClassRegistry.put_correction_window(class, 300_000)

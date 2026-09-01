@@ -1,4 +1,9 @@
 defmodule Flezha.Testnet do
+  @moduledoc """
+  Supervises the Node.js testnet daemon the `:testnet`-tagged scenarios drive.
+  Compiled outside `:prod` only.
+  """
+
   require Logger
 
   use GenServer

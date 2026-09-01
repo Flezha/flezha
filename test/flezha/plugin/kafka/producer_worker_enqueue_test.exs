@@ -369,7 +369,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
 
       pre = :sys.get_state(pid)
       in_flight_records = Enum.flat_map(pre.in_flight, & &1.records)
-      assert length(in_flight_records) >= 1
+      assert in_flight_records != []
 
       {registry_ref, _new_worker_pid} = Fakes.expect_worker_swap(pid)
 

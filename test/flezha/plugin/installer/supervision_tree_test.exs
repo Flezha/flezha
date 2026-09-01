@@ -71,10 +71,8 @@ defmodule Flezha.Plugin.Installer.SupervisionTreeTest do
   end
 
   defp stop_quiet(pid) do
-    try do
-      GenServer.stop(pid, :normal, 1_000)
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.stop(pid, :normal, 1_000)
+  catch
+    :exit, _ -> :ok
   end
 end

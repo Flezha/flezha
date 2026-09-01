@@ -18,8 +18,8 @@ defmodule Flezha.Service.HubManagerTest do
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Plugin
   alias Flezha.Operative.Builder
+  alias Flezha.Plugin
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
   alias ProcessHub.Storage.RemoteManifest

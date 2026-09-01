@@ -50,11 +50,11 @@ defmodule Flezha.Load.CreditSoakTest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Plugin
-  alias Flezha.Service.PluginManager
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PluginManager
   alias Flezha.State.Metrics
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.NodeTestHelper

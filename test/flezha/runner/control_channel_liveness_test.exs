@@ -1,10 +1,10 @@
 defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
   @moduledoc """
-  Control-plane liveness watchdog (runner-controller-connection-healing, D1).
+  Control-plane liveness watchdog.
 
   `Flezha.Runner.ControlChannel` stamps a monotonic `last_seen` on every
-  inbound control frame — including the SDK keepalive ping it formerly echoed
-  and discarded — and a jittered watchdog treats sustained silence past the
+  inbound control frame — the SDK keepalive ping included — and a jittered
+  watchdog treats sustained silence past the
   window as a connection close, routing through the SAME
   `handle_connection_closed/1` a real `{:flz_closed}` uses. This closes the UDS
   wedged-but-connected blind spot.

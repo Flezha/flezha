@@ -432,16 +432,20 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
         acc = acc <> chunk
 
         if String.contains?(acc, "\r\n\r\n") do
-          case Regex.run(~r/sec-websocket-key:\s*(\S+)/i, acc) do
-            [_, key] -> {:ok, key}
-            _ -> :error
-          end
+          handshake_key(acc)
         else
           read_handshake(socket, acc)
         end
 
       {:error, _} ->
         :error
+    end
+  end
+
+  defp handshake_key(headers) do
+    case Regex.run(~r/sec-websocket-key:\s*(\S+)/i, headers) do
+      [_, key] -> {:ok, key}
+      _ -> :error
     end
   end
 

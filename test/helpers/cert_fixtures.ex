@@ -74,7 +74,7 @@ defmodule Flezha.Test.CertFixtures do
   defp signing_key do
     case :persistent_term.get({__MODULE__, :signing_key}, nil) do
       nil ->
-        key = :public_key.generate_key({:rsa, 2048, 65537})
+        key = :public_key.generate_key({:rsa, 2048, 65_537})
         :persistent_term.put({__MODULE__, :signing_key}, key)
         key
 

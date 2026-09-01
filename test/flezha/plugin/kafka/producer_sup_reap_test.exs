@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   @moduledoc """
-  `ProducerSup.ensure_worker/1` dead/parked-pid reaping (self-healing-control-plane,
-  Phase 7.3). A recovered operative must start a fresh, healthy producer rather than
-  re-attach to a worker that can no longer drain.
+  `ProducerSup.ensure_worker/1` dead/parked-pid reaping. A recovered operative
+  must start a fresh, healthy producer rather than re-attach to a worker that
+  cannot drain.
   """
   # async: false: registered singletons.
   use ExUnit.Case, async: false

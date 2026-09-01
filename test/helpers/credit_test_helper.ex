@@ -108,17 +108,16 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
       pid ->
         GenServer.stop(pid)
 
-        NodeTestHelper.wait_until(
-          fn ->
-            case GenServer.whereis(Flezha.State.FsyncBatcher) do
-              new_pid when is_pid(new_pid) -> new_pid != pid
-              _ -> false
-            end
-          end,
-          5_000
-        )
+        NodeTestHelper.wait_until(fn -> replaced?(pid) end, 5_000)
 
         :ok
+    end
+  end
+
+  defp replaced?(pid) do
+    case GenServer.whereis(Flezha.State.FsyncBatcher) do
+      new_pid when is_pid(new_pid) -> new_pid != pid
+      _ -> false
     end
   end
 end

@@ -8,8 +8,8 @@ defmodule Flezha.SDK.DispatchTest do
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.SDK.Ctx
   alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup, Operative, Topology}
+  alias Flezha.SDK.Ctx
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
   alias Flezha.Transport.Local
@@ -289,7 +289,7 @@ defmodule Flezha.SDK.DispatchTest do
     # the two accounts add up to the burst once it is through.
     runs = release_runs_until(fn runs -> runs + Counters.drops_newest(counters) == 10 end)
     outputs = collect_outputs(runs)
-    assert length(outputs) >= 1
+    assert outputs != []
     assert length(outputs) < 10
 
     # A shed input has to be countable from OUTSIDE the runner: the counter is

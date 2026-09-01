@@ -13,11 +13,11 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias FlezhaTest.Helper.NodeTestHelper
-  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "task_kind_e2e"
   @factory "echo_workflow"

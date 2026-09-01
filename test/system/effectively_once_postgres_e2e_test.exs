@@ -26,9 +26,9 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   import FlezhaTest.Helper.PostgresSink
   import FlezhaTest.Helper.TierE2EHarness
 
+  alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager
-  alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
 

@@ -22,11 +22,11 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
 
   use FlezhaTest.SystemCase, capability: :state_persistence
 
-  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
-  alias Flezha.Service.PortPilot
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "state_freshness_e2e"

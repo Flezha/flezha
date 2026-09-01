@@ -1,4 +1,10 @@
 defmodule FlezhaTest.Helper.NodeTestHelper do
+  @moduledoc """
+  The suite's one polling primitive (`wait_until/3`) and the machinery a test
+  needs around a live fleet: spawning runner ports and peer BEAMs, resolving
+  the SDK runtime under test, and tearing both down.
+  """
+
   use Flezha.Constant
 
   alias Flezha.Runner.FleetManager
@@ -6,22 +12,6 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
   alias Flezha.Socket.Support
-
-  # TODO: remove or refactor.
-  # def test_operative(operative_id) do
-  #   operative =
-  #     FlezhaTest.Fixtures.OperativeFixture.get(
-  #       operative_id,
-  #       @factory_increment_state
-  #     )
-  #     |> FlezhaTest.Fixtures.OperativeFixture.start()
-
-  #   on_exit(fn ->
-  #     FlezhaTest.Fixtures.OperativeFixture.stop(operative.id)
-  #   end)
-
-  #   operative
-  # end
 
   def node_name() do
     :"test_agent_node1@127.0.0.1"
@@ -65,11 +55,13 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
     # already checks liveness, so an explicit stop makes this a no-op.
-    ExUnit.Callbacks.on_exit(fn ->
-      if Process.alive?(peer_pid), do: tolerate(fn -> :peer.stop(peer_pid) end)
-    end)
+    ExUnit.Callbacks.on_exit(fn -> stop_bare_peer(peer_pid) end)
 
     {peer_pid, node_name}
+  end
+
+  defp stop_bare_peer(peer_pid) do
+    if Process.alive?(peer_pid), do: tolerate(fn -> :peer.stop(peer_pid) end)
   end
 
   def start_peer_node(name, opts \\ []) do
@@ -78,20 +70,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Adjust the environment for the peer node.
     :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])
 
-    # Set the same flezha application configuration for the peer node.
-    Enum.each(Application.get_all_env(:flezha), fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
-    end)
-
-    # Set the same kafka_ex application configuration for the peer node.
-    Enum.each(Application.get_all_env(:kafka_ex), fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:kafka_ex, key, value])
-    end)
-
-    # Set the same logger application configuration for the peer node.
-    Enum.each(Application.get_all_env(:logger), fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [:logger, key, value])
-    end)
+    # The peer runs on the host's configuration for each of these.
+    for app <- [:flezha, :kafka_ex, :logger], do: copy_env(node_name, app)
 
     # Disable the testnet for the peer node.
     :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])
@@ -137,6 +117,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   # The socket directory stays beside this node's, so both stay under the one
   # short runtime base `config/test.exs` chose (a UDS path must fit `SUN_LEN`).
+  defp copy_env(node_name, app) do
+    Enum.each(Application.get_all_env(app), fn {key, value} ->
+      :erpc.call(node_name, Application, :put_env, [app, key, value])
+    end)
+  end
+
   defp own_resource(:socket_files_path, node_name),
     do: Path.join(Path.dirname(Support.socket_dir()), "#{node_name}")
 

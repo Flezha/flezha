@@ -23,9 +23,9 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
 
-  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
 

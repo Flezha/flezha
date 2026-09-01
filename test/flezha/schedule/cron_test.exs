@@ -81,7 +81,7 @@ defmodule Flezha.Schedule.CronTest do
     test "vixie rule: restricted day-of-month OR day-of-week" do
       {:ok, cron} = Cron.parse("0 0 14 * 5")
 
-      # 2026-02-13 is a Friday — fires before the 14th.
+      # 13 Feb 2026 is a Friday — fires before the 14th.
       assert {:ok, ~U[2026-02-13 00:00:00Z]} =
                Cron.next_fire(cron, "Etc/UTC", ~U[2026-02-09 00:00:00Z])
 
@@ -92,7 +92,7 @@ defmodule Flezha.Schedule.CronTest do
     test "a spring-forward gap slot is skipped" do
       {:ok, cron} = Cron.parse("30 3 * * *")
 
-      # Europe/Tallinn 2026-03-29: 03:00-04:00 local does not exist, so the
+      # Europe/Tallinn, 29 Mar 2026: 03:00-04:00 local does not exist, so the
       # 29th's slot skips to the 30th (03:30 EEST = 00:30 UTC).
       assert {:ok, ~U[2026-03-30 00:30:00Z]} =
                Cron.next_fire(cron, "Europe/Tallinn", ~U[2026-03-29 00:00:00Z])
@@ -101,7 +101,7 @@ defmodule Flezha.Schedule.CronTest do
     test "an ambiguous fall-back slot fires once, at the first occurrence" do
       {:ok, cron} = Cron.parse("30 3 * * *")
 
-      # Europe/Tallinn 2026-10-25: 03:00-04:00 local occurs twice; the slot is
+      # Europe/Tallinn, 25 Oct 2026: 03:00-04:00 local occurs twice; the slot is
       # the first pass (EEST, UTC+3) and the second pass never fires.
       assert {:ok, ~U[2026-10-25 00:30:00Z] = first} =
                Cron.next_fire(cron, "Europe/Tallinn", ~U[2026-10-25 00:00:00Z])

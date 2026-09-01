@@ -20,12 +20,12 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
-  alias Flezha.Payloader
-  alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
+  alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Paths
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "dynamic_entity_e2e"
   @factory "dynamic_entity"
@@ -155,7 +155,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     assert info.runner_id == ce_id
     # An input for a never-seen key: the edge's key function names the Entity,
     # the SDK lazily creates it, runs it, and ships the Change. The controller
-    # writes a WAL file — at the identity the trait hook used to produce.
+    # writes a WAL file — at the identity the trait hook names.
     OperativeManager.send_io(operative_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
 
     assert wait_until(fn -> File.exists?(Paths.wal_path(entity_id)) end, 15_000),

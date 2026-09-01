@@ -1,19 +1,13 @@
 defmodule Flezha.Convergence.OutputStallDrillTest do
   @moduledoc """
-  Induced-wedge drill for `close-control-plane-silent-wedges` D1: a real
-  stalled Entity, a real Watchdog sweep, a real `Convergence.Loop`, measuring
-  how long the remedy decision takes now that the Watchdog no longer fires one
-  itself.
+  Induced-wedge drill: a real stalled Entity, a real Watchdog sweep, a real
+  `Convergence.Loop`, measuring what the hop from the sweep to the remedy
+  decision costs — the Watchdog detects and the Loop decides.
 
-  What the deletion changed is exactly one hop. Detection is unchanged — both
-  the old direct resync and the new ladder start from the same sweep — so the
-  question the drill answers is what that hop costs. It measures
-  sweep-completed → the Loop's tick, and asserts the tick is triggered BY the
-  event rather than waiting out `tick_ms` (the tick interval here is set far
-  above the measurement window, so a passing measurement can only come from
-  the event path).
-
-  The numbers this run produces are recorded in the change's `design.md`.
+  It measures sweep-completed → the Loop's tick, and asserts the tick is
+  triggered BY the event rather than waiting out `tick_ms` (the tick interval
+  here is set far above the measurement window, so a passing measurement can
+  only come from the event path).
   """
 
   # The Loop and the Watchdog are registered singletons; the state root is an env key.

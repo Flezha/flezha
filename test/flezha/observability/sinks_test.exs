@@ -369,7 +369,7 @@ defmodule Flezha.Observability.RingBufferSinkTest do
 
     results = Task.await(task)
     assert is_list(results)
-    assert length(results) >= 1
+    assert results != []
   end
 end
 

@@ -125,17 +125,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     # remove-before-terminate ordering the real stop path gives — and answer
     # the StopResult `stop_via_hub` reads.
     stub(ProcessHub, :stop_children, fn _hub, ids, _opts ->
-      stopped =
-        Enum.map(ids, fn id ->
-          pid = pid_of(registry, id)
-          :ets.delete(registry, id)
-
-          with {:ok, pid} <- pid do
-            GenServer.stop(pid, :normal, 1_000)
-          end
-
-          {id, [node()]}
-        end)
+      stopped = Enum.map(ids, fn id -> stop_and_forget(registry, id) end)
 
       %ProcessHub.StopResult{status: :ok, stopped: stopped, errors: []}
     end)
@@ -204,6 +194,15 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
         node: node()
       }
     end)
+  end
+
+  # Stop the process a child id names and drop its registry row, reporting the
+  # `{id, nodes}` pair a `StopResult` carries.
+  defp stop_and_forget(registry, id) do
+    pid = pid_of(registry, id)
+    :ets.delete(registry, id)
+    with {:ok, pid} <- pid, do: GenServer.stop(pid, :normal, 1_000)
+    {id, [node()]}
   end
 
   defp insert_new(registry, owner, builder) do

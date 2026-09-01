@@ -220,7 +220,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
   end
 
   test "runner_pool_wedged: fed and heartbeating but dispatch counter frozen" do
-    # The 2026-06-10 prod signature: controller sends ~100 frames/s, the
+    # The production freeze signature: controller sends ~100 frames/s, the
     # runner's heartbeat thread stays alive, but its dispatch pool is
     # deadlocked so the self-reported counter never moves.
     prev =

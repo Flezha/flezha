@@ -3,8 +3,8 @@ defmodule Flezha.Transport.NativeTransportTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Runner.RunnerSupervisor
-  alias Flezha.Transport.Server
   alias Flezha.Transport.Local.Stream
+  alias Flezha.Transport.Server
   alias FlezhaTest.Helper.NodeTestHelper
 
   defp stop_native do

@@ -210,6 +210,63 @@ NOT to rename anything to dodge it.
 exactly that pipe and reported it honestly; the failure block prints long before the
 summary. Redirect and read the file.
 
+**AREA 7 SEGMENT D worker running 2026-09-01 — the FINAL segment**, batches 7–8, fresh
+`general-purpose`. `test/apps` today: `test_loc` 8717, `files_over_800` **2**,
+`duplicate_pairs` **75**, `sleeps` **8**, `narrative_markers` **4** — recorded but NOT
+blocking (35 areas are; this becomes the 36th).
+
+**Three things make batch 7 unlike every batch before it, and all three are in the brief:**
+(1) **`test/apps/rust_runner` IS the area's one §8 exposure** — `mix bench.roundtrip
+--runtime rust` spawns that binary, so "an unchanged binary is not re-measured" does not
+apply; the row is `direction` and NOT run, with both arms' `sha256sum` plus one
+`--include sdk_smoke` run recorded in its place, exactly as the survey promised. Told
+explicitly NOT to run a benchmark that cannot resolve an effect smaller than its own floor.
+(2) **`duplicate_pairs` here is PEER-DRIVEN** — the survey measured 61 of 127 with their
+other half in `sdk/rust`/`sdk/java`/`sdk/php`/`lib/mix`, all blocking, so a later edit
+THERE moves this number in an area nobody touched. Told to RE-DERIVE the split, because
+without it the next session reads a peer's edit as a regression here.
+(3) **The worker does NOT arm it.** `--write-baseline` rewrites all 36 areas and needs
+`--lint`; that is mine, and `baseline.json` is mine.
+
+**SEGMENT C IS COMMITTED — `3d61b2a9`. VERIFIED. Batches 1–6 all ticked; only batch 7 (`test/apps`) and batch 8
+(close-out) remain.** Every ceiling row for `test` is **ZERO** — `files_over_800` 6 → 0,
+`narrative_markers` 36 → 0, credo 81 → 0 — with `sleeps` 3 → 2 and the share 0.777 under
+its 0.788 ceiling. `--check --lint` **exit 0**. **2016 test macros at
+`refactor-baseline-7`, 2016 now, across 203 → 193 files** (verified by me with an
+identical filter on both sides). Fence clean, zero exceptions this segment.
+
+**The `duplicate_pairs` +1 is recorded rather than traded, and that is the right call.**
+Sorting one file's aliases for credo `AliasOrder` made its 50-token prologue converge with
+a sibling's. Unsorting is what the credo gate forbids — **one blocking rule may not be
+broken for another in silence**, so the cost is named instead of hidden.
+
+**`ScheduleTestHelper.wait_until!/3` STAYS, and the measurement is better than the
+question.** Two of its four behaviours cannot be expressed through the shared
+`wait_until/3` at all: it renders its failure message AT THE DEADLINE from a 0-arity
+`describe` (an `assert wait_until(...), "msg"` builds the message at the CALL SITE, before
+the wait, so it can only report the pre-wait state), and its `ok_value/1` accepts only
+`{:ok, _}` or `:retry`, so a poll may legitimately return a falsy value where `wait_until/3`
+would read `nil`/`false` as "not yet". Moving it beside `wait_until/3` was refused for the
+right reason: offering a second polling entry point to 190 files is exactly what produced
+the twelve wrappers batch 2 just deleted.
+
+**Five deletions, verified by me independently** — every module the four `.exs.todo` files
+and one `.example` named is ABSENT from `lib/` (0 definitions each), `elixirc_paths(:test)`
+does not include `test/services`, and neither extension matches ExUnit's `*_test.exs`.
+
+**Design §2.3 refuted by an order of magnitude**: it predicted ONE shared private in the
+crash-resume file ("`wait_until/2`, deleted"); eleven helpers and ~145 lines were measured.
+Design §5's "copy the module constants verbatim" is UNBUILDABLE as written — an unread
+module attribute warns and `--warnings-as-errors` is part of done — and it omits that
+`doctest Flezha` must NOT be copied or every doctest runs twice.
+
+**Two `TagTODO`s named real gaps and were recorded to `known_issues.md` → Notes** before
+their tags were deleted, because removing the tag is what would have erased them. `files_over_800`
+**3 → 0** (all six of the area's original over-800 files are split), `narrative_markers`
+**36 → 0**, `sleeps` 3 → 2, `test_files` 193, share **0.777** still under the 0.788
+ceiling. 5 added, 5 deleted, 36 modified — batch 6 well under way. Earlier at +11 min:
+24 ticked, `files_over_800` 3 → 1, share 0.776.
+
 ### SEGMENT B IS COMMITTED — `0a9943dd`
 
 **Verified, and I caught my own bad measurement doing it.** My first macro comparison read

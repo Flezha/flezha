@@ -62,7 +62,7 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
              )
 
     # The caller reached this line, so it survived the timeout; the channel is
-    # still alive and merely slow, which is the case that used to kill the unit.
+    # still alive and merely slow, which must not kill the unit.
     assert_received :writing
     assert Process.alive?(pid)
 
@@ -76,7 +76,7 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
 
     write_fun = fn _ref, _payload_id, _message, _metadata ->
       send(test_pid, :writing)
-      Process.sleep(:infinity)
+      receive do: (:never -> :ok)
     end
 
     ControlChannel.start_link({"ns_" <> runner_id, runner_id, :stuck_stream, write_fun})

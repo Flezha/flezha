@@ -15,8 +15,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   alias Flezha.Plugin.Provider.Filter
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.Provider.Kafka
-  alias Flezha.Plugin.Provider.Postgres
   alias Flezha.Plugin.Provider.OperativeForward
+  alias Flezha.Plugin.Provider.Postgres
   alias Flezha.Plugin.Provider.StdOut
   alias Flezha.Plugin.Provider.Websocket
 

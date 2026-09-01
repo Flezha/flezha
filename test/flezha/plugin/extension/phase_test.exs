@@ -231,9 +231,9 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       assert Table.subscribed_ids(table) == ["p1"]
       assert Table.running_ids(table) == []
 
-      # The `:prepared`-is-healthy rule is unchanged on purpose — the plugin
-      # holds no upstream resources, so it has nothing to be unhealthy about.
-      # What changed is that this verdict is no longer read as "it is running".
+      # `:prepared` reads healthy on purpose — the plugin holds no upstream
+      # resources, so it has nothing to be unhealthy about. That verdict is not
+      # read as "it is running": the phase decides that.
       assert Table.health(table) == %{"p1" => :healthy}
     end
   end

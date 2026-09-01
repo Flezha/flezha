@@ -1,12 +1,16 @@
 defmodule FlezhaTest.Fixtures.OperativeFixture do
+  @moduledoc """
+  Builds, starts, stops and plugs an operative for a test: a `Builder` with the
+  suite's default namespace, and the output-forward plugin most scenarios
+  attach to watch what it emits.
+  """
+
   alias Flezha.Identificator
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias ProcessHub.Constant.Hook
 
   use Flezha.Constant
-
-  # TODO: refactor based on new plugin system.
 
   def get(id, factory_id) do
     %Flezha.Operative.Builder{
@@ -73,68 +77,4 @@ defmodule FlezhaTest.Fixtures.OperativeFixture do
 
     start_res
   end
-
-  # TODO: refactor.
-  # def attach_input(operative, handler, opts \\ []) do
-  #   {:ok, __id} =
-  #     Flezha.add_io(
-  #       @default_namespace,
-  #       operative.id,
-  #       get_io_handler(handler, :input),
-  #       :input,
-  #       handling_type: Keyword.get(opts, :handling_type, :workflow)
-  #     )
-
-  #   operative
-  # end
-
-  # def attach_output(operative, handler) do
-  #   {:ok, _id} =
-  #     Flezha.add_io(
-  #       @default_namespace,
-  #       operative.id,
-  #       get_io_handler(handler, :output),
-  #       :output,
-  #       []
-  #     )
-
-  #   operative
-  # end
-
-  # defp get_io_handler(handler, type) do
-  #   default_handler =
-  #     case type do
-  #       :input -> default_input_handler()
-  #       :output -> default_output_handler()
-  #     end
-
-  #   cond do
-  #     is_struct(handler) -> handler
-  #     handler === nil -> default_handler
-  #   end
-  # end
-
-  # defp default_input_handler() do
-  #   %Flezha.IO.Handler.Websocket{
-  #     uri: @testnet_ws_uri,
-  #     post_connect: %{
-  #       payload: {
-  #         :text,
-  #         ~s(
-  #             {
-  #               "event_type": "subscribe",
-  #               "event_data": {
-  #                 "default_message": "hello world",
-  #                 "interval": 1000
-  #               }
-  #             }
-  #           )
-  #       }
-  #     }
-  #   }
-  # end
-
-  # defp default_output_handler() do
-  #   %Flezha.IO.Handler.StdIO{}
-  # end
 end

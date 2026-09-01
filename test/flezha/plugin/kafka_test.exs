@@ -150,7 +150,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
   describe "build/1 conversion" do
     test "parses integer params from binary CLI input" do
-      assert {:ok, %Kafka.Producer{queue_max: 20000, retries: 7, linger_ms: 25}} =
+      assert {:ok, %Kafka.Producer{queue_max: 20_000, retries: 7, linger_ms: 25}} =
                Kafka.Producer.build(%{
                  "hosts" => "kafka:9092",
                  "topic" => "x",

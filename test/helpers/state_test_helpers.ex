@@ -267,15 +267,17 @@ defmodule Flezha.State.TestHelpers do
   def age_writer(writer, ms) do
     :sys.replace_state(writer, fn state ->
       [:last_advance_at, :last_change_seen_at, :oldest_unsnapshotted_at, :last_resync_at]
-      |> Enum.reduce(state, fn key, acc ->
-        case Map.get(acc, key) do
-          at when is_integer(at) -> Map.put(acc, key, at - ms)
-          _ -> acc
-        end
-      end)
+      |> Enum.reduce(state, fn key, acc -> age_field(acc, key, ms) end)
     end)
 
     :ok
+  end
+
+  defp age_field(state, key, ms) do
+    case Map.get(state, key) do
+      at when is_integer(at) -> Map.put(state, key, at - ms)
+      _ -> state
+    end
   end
 
   @doc """

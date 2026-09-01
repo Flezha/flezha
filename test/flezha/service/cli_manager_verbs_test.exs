@@ -21,7 +21,7 @@ defmodule Flezha.Service.CliManager.MemTopTest do
       top = snapshot.top_processes
       assert is_list(top)
       assert length(top) <= 20
-      assert length(top) > 0, "expected ≥ 1 BEAM process in the snapshot"
+      assert top != [], "expected ≥ 1 BEAM process in the snapshot"
 
       # Descending order by :memory.
       memories = Enum.map(top, & &1.memory)

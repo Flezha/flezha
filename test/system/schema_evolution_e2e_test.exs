@@ -221,13 +221,15 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # materializes on the runner a moment later, and an input sent into that
     # gap has nothing to reach. A live state read is the readiness signal —
     # it answers only once the Entity exists — and every send below follows it.
-    with {:ok, _} <- result do
-      unless NodeTestHelper.wait_until(fn -> state_of(namespace, operative_id) != nil end, 10_000) do
-        raise "operative #{operative_id} never became resident on its runner"
-      end
-    end
+    with {:ok, _} <- result, do: await_resident(namespace, operative_id)
 
     result
+  end
+
+  defp await_resident(namespace, operative_id) do
+    unless NodeTestHelper.wait_until(fn -> state_of(namespace, operative_id) != nil end, 10_000) do
+      raise "operative #{operative_id} never became resident on its runner"
+    end
   end
 
   defp send(namespace, operative_id, input),

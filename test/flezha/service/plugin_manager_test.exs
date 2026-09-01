@@ -20,10 +20,10 @@ defmodule Flezha.Service.PluginManagerTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Plugin
   alias Flezha.Operative.PartitionGroup
-  alias Flezha.Service.PluginManager
+  alias Flezha.Plugin
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PluginManager
   alias ProcessHub.Service.ProcessRegistry
 
   setup :verify_on_exit!
@@ -41,28 +41,24 @@ defmodule Flezha.Service.PluginManagerTest do
 
     ProcessRegistry
     |> Mimic.stub(:update, fn _hub_id, operative_id, fun, _opts ->
-      cond do
-        operative_id != @operative_id ->
-          {:error, :not_found}
+      if operative_id == @operative_id do
+        Agent.update(store, fn cspec ->
+          {new_cspec, _, _} = fun.(cspec, [], %{})
+          new_cspec
+        end)
 
-        true ->
-          Agent.update(store, fn cspec ->
-            {new_cspec, _, _} = fun.(cspec, [], %{})
-            new_cspec
-          end)
-
-          :ok
+        :ok
+      else
+        {:error, :not_found}
       end
     end)
 
     OperativeManager
     |> Mimic.stub(:get_operative_pid, fn ns, pid_id ->
-      cond do
-        ns != @namespace or pid_id != @operative_id ->
-          {:error, "operative not found"}
-
-        true ->
-          {:ok, overwatch}
+      if ns == @namespace and pid_id == @operative_id do
+        {:ok, overwatch}
+      else
+        {:error, "operative not found"}
       end
     end)
 

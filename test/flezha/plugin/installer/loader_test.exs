@@ -50,7 +50,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
 
     assert File.exists?(Path.join(ebin, "#{mod}.beam"))
     assert Loader.modules_of("basic") == [mod]
-    assert apply(mod, :hello, []) == :from_load
+    assert mod.hello() == :from_load
   end
 
   test "purge_modules drops modules and registry row", %{tmp: tmp} do
@@ -143,7 +143,7 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     # Now purge and re-hydrate.
     :ok = Loader.purge_modules("hydrate")
     assert :ok = Loader.hydrate_from_store()
-    assert apply(mod, :h, []) == :hydrated
+    assert mod.h() == :hydrated
     assert Loader.modules_of("hydrate") == [mod]
   end
 

@@ -6,9 +6,9 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   handler invocation.
   """
 
+  alias Flezha.Operative.Builder
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
 

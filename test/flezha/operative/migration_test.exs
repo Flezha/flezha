@@ -443,7 +443,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
         {:error, :not_deferred}
       end)
 
-      # A stale debounce timer for an entity no longer pending: the pop leaves
+      # A stale debounce timer for an entity that is not pending: the pop leaves
       # `corrections` empty, which is the completion condition.
       st = state(inst, durable_workflow: false, corrections: %{})
       {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "proc", "k"}}, st)

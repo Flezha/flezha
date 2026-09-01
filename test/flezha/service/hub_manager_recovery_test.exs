@@ -175,9 +175,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     end
   end
 
-  # fails when: one persisted row whose start args no longer match a known shape
-  # raises inside the alter hook and kills the start request, so every sibling in
-  # the batch loses its registry update and stays on a dead pid.
+  # fails when: one persisted row whose start args match no known shape raises
+  # inside the alter hook and kills the start request, so every sibling in the
+  # batch loses its registry update and stays on a dead pid.
   test "a persisted row with unrecognised start args does not strand its batch" do
     hub_id = Identificator.hub(@namespace)
     good = "batch_good_op"

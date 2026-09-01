@@ -1,7 +1,7 @@
 defmodule Flezha.SDK.UnitTest do
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Topology, Ctx, Codec, KeyGroup, PersistentId, Channels}
+  alias Flezha.SDK.{Channels, Codec, Ctx, KeyGroup, PersistentId, Topology}
 
   # --- fixtures ---
 

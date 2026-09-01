@@ -101,6 +101,9 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
 
     test "wakes the held sender with an error when the stream closes under it", ctx do
       spawn_sender(ctx.name)
+
+      # The window is the assertion: nothing signals "the sender reached its
+      # gate", so there is no earlier moment to settle on.
       refute_receive {:sender_done, _}, 500
       assert held(ctx.name) > 0
 
@@ -119,6 +122,9 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
 
     test "the hold is reported as held while nothing reads as dropped", ctx do
       spawn_sender(ctx.name)
+
+      # The window is the assertion: nothing signals "the sender reached its
+      # gate", so there is no earlier moment to settle on.
       refute_receive {:sender_done, _}, 500
 
       counters = channel_counters(ctx.name)

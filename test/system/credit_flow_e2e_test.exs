@@ -20,8 +20,8 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
-  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Metrics
   alias FlezhaTest.Helper.NodeTestHelper

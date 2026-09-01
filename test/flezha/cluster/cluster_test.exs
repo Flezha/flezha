@@ -125,8 +125,8 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
   alias Flezha.Cluster.Directory
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Fixtures.OperativeFixture
+  alias FlezhaTest.Helper.NodeTestHelper
 
   use Flezha.Constant
 
@@ -171,7 +171,7 @@ end
 
 defmodule Flezha.Cluster.OrchestratorTest do
   @moduledoc """
-  Cluster-formation gate (self-healing-control-plane, Phase 4 / D3).
+  Cluster-formation gate.
 
   `cluster_ready?/0` is the lock-free gate the on-demand `start_hub` path consults
   so a namespace hub is never created on a not-yet-clustered node. These tests

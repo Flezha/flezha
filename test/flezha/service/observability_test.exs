@@ -3,9 +3,9 @@ defmodule Flezha.Service.ObservabilityTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Observability.Bus
+  alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
   alias Flezha.Service.{CliManager, Observability}
-  alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
 
   setup do
     src = :"obs_svc_test_src_#{:erlang.unique_integer([:positive])}"

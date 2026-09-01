@@ -64,8 +64,8 @@ defmodule Flezha.Load.MemoryDriftTest do
   alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Plugin
   alias Flezha.Service.CliManager
-  alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PluginManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @artifact_dir Path.expand("artifacts", __DIR__)

@@ -1,12 +1,9 @@
 defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
   @moduledoc """
-  Regression test for the post-hibernation outage shipped 2026-05-01.
-
-  Asserts that `Flezha.Plugin.Extension.Table.attempt_restart/3` invokes
-  `init_provider/1` for Provider-kind plugins so a fresh owned pid is
-  always spawned after the watchdog kills the previous one. Before the
-  fix, `attempt_restart` only reshuffled the subscription tables and the
-  WS stayed dead until the container was restarted manually.
+  `Flezha.Plugin.Extension.Table.attempt_restart/3` invokes `init_provider/1`
+  for Provider-kind plugins, so a fresh owned pid is always spawned after the
+  watchdog kills the one before it. Reshuffling the subscription tables alone
+  leaves the socket dead until the container is restarted by hand.
   """
 
   # fails when: provider plugin stays dead after watchdog kill (no new owned pid spawned)
