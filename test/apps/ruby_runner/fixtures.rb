@@ -326,6 +326,44 @@ module Fixtures
     end
   end
 
+  # -- candle ---------------------------------------------------------------
+  #
+  # Late-input correction is about fold ORDER, and the only way to prove that
+  # is to look at the order. Send 100, 300, then the late 200. Without
+  # correction the fold order is [100, 300, 200] and the candle is permanently
+  # wrong. With it, the engine rewinds behind 200, replays the retained input
+  # log sorted by event time, and the fold order becomes [100, 200, 300].
+
+  class Candle < Flezha::Procedure
+    procedure_name "candle_procedure"
+    clock :event_time
+    # Event times in fold order: the assertion surface.
+    def initial_state(_entity_key) = { folded: [] }
+    def apply_change(state, change) = state[:folded] << change[:fold]
+    def event_time(input) = AS_INT.call(input.to_s.split(":", 2).first)
+
+    def process(input, ctx)
+      # `ctx.now` IS the extracted event time under an event-time clock.
+      event_time = ctx.now
+      ctx.change({ fold: event_time })
+      # One row per candle bucket, so a corrected replay overwrites by key
+      # rather than appending a second row.
+      bucket = event_time / 1_000
+      ctx.emit("#{bucket}=#{input}", key: "candle/#{bucket}")
+      nil
+    end
+  end
+
+  class CandleOperative < Flezha::StreamOperative
+    factory_id "candle"
+    channels do |c|
+      c.effectively_once
+      c.correction_window(600_000)
+      c.input("input", decode: TEXT).into(Candle).named("sink").keyed
+       .sink("tier_sink", encode: BYTES)
+    end
+  end
+
   # -- session_timeout ------------------------------------------------------
   #
   # The worked session-timeout shape: each input pushes the idle deadline out,
@@ -460,7 +498,7 @@ module Fixtures
     DoNothingOperative, BenchEchoOperative, CompareFilterOperative,
     StaticEntityOperative, SugarStaticEntityOperative, MixedOperative,
     SugarDoNothingOperative, SugarStoreInputOperative, HybridChannelOperative,
-    EntityStressOperative, *STATE, PoisonProbeOperative,
+    EntityStressOperative, *STATE, CandleOperative, PoisonProbeOperative,
     WedgeProbeOperative, SessionTimeoutOperative, *BOUNDED_MAILBOX, PartitionRelayOperative,
     DynamicEntityOperative
   ].freeze

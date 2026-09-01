@@ -301,6 +301,42 @@ export const wedgeProbe = defineOperative({
   },
 });
 
+// -- candle -----------------------------------------------------------------
+//
+// Late-input correction is about fold ORDER, and the only way to prove that is
+// to look at the order. Send 100, 300, then the late 200. Without correction
+// the fold order is [100, 300, 200] and the candle is permanently wrong. With
+// it, the engine rewinds behind 200, replays the retained input log sorted by
+// event time, and the fold order becomes [100, 200, 300].
+
+const Candle = defineProcedure({
+  name: 'candle_procedure',
+  clock: 'event_time',
+  eventTime: (input) => Number(String(input).split(':')[0]) || 0,
+  // Event times in fold order: the assertion surface.
+  initialState: () => ({ folded: [] }),
+  applyChange: (state, change) => {
+    state.folded.push(change.fold);
+  },
+  handle: (input, ctx) => {
+    // `ctx.now()` IS the extracted event time under an event-time clock.
+    const eventTime = Number(ctx.now());
+    ctx.change({ fold: eventTime });
+    // One row per candle bucket, so a corrected replay overwrites by key
+    // rather than appending a second row.
+    const bucket = Math.floor(eventTime / 1000);
+    ctx.emit(`${bucket}=${input}`, { key: `candle/${bucket}` });
+  },
+});
+
+export const candle = defineOperative({
+  factoryId: 'candle',
+  channels: (c) => {
+    c.effectivelyOnce().correctionWindow(600_000);
+    c.input('input', text).into(Candle).named('sink').keyed().sink('tier_sink', bytes);
+  },
+});
+
 // -- session_timeout --------------------------------------------------------
 //
 // The worked session-timeout shape: each input pushes the idle deadline out,

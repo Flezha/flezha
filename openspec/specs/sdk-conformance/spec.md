@@ -341,3 +341,15 @@ every other.
 - **WHEN** an SDK resolves the ladder candidates in an order other than the pinned one
 - **THEN** the gate fails naming the SDK and the expected order
 
+### Requirement: A scenario obtains its runner through the harness
+
+A test under `test/system/` SHALL spawn every runner it drives through the harness's runtime-selecting spawner (`start_runner/2` or `start_runner_port/2` on `NodeTestHelper`), never by opening a port on a hand-written command. A scenario that proves controller mechanics rather than the runner SHALL say so with `reference_runtime: true` and a reason, which is how it asks the harness for the reference; it is not a reason to bypass the harness. The static gate SHALL fail a `test/system/` module that names a test-app path (`test/apps/<sdk>_runner/`) outside an `interop: true` scenario, naming the file — because a hard-coded command is invisible to the runtime-literal check and makes a capability-tagged scenario green on every runtime for the reference's reasons.
+
+#### Scenario: A capability-tagged scenario proves the selected runtime
+- **WHEN** `state_freshness_e2e_test.exs` runs under `FLEZHA_E2E_RUNTIME=node` with `state_persistence` carried by the Node manifest
+- **THEN** the runner it SIGTERMs is the Node runner, or the module is tagged `reference_runtime: true` with a stated reason and the runner is the reference — and in neither case is a `cargo run` command written in the test
+
+#### Scenario: A hard-coded runner command fails the gate
+- **WHEN** a `test/system/` module not tagged `interop: true` contains the literal `test/apps/rust_runner/`
+- **THEN** `mix test test/sdk_conformance/gate_test.exs` fails naming that file, in the same test that refuses a `runtime:` literal
+

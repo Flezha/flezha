@@ -32,7 +32,6 @@
   },
   "toolchain": "php --version",
   "deferred": [
-    "correction_window",
     "workflow",
     "entry_idle"
   ],
@@ -80,6 +79,9 @@
     ],
     "entity_timers": [
       "session_timeout"
+    ],
+    "correction_window": [
+      "candle"
     ],
     "keyed_channels": [
       "partition_relay"

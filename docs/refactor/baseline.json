@@ -1731,12 +1731,12 @@
     "sdk/php/examples/E05_WorkflowSaga.php:33-39 <-> sdk/php/tests/Fixture.php:211-217 (46 tokens)",
     "sdk/php/src/Operative.php:87-96 <-> sdk/php/tests/AuthoringTest.php:313-322 (68 tokens)",
     "sdk/php/tests/AuthoringTest.php:370-381 <-> sdk/php/tests/DeclKeysTest.php:147-158 (41 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:127-139 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:554-566 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:592-612 (98 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:129-141 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:661-673 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:699-719 (98 tokens)",
     "sdk/php/tests/ExecutorTest.php:133-137 <-> sdk/php/tests/SwooleExecutorTest.php:70-74 (46 tokens)",
-    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:563-568 (45 tokens)",
-    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:257-264 (42 tokens)"
+    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:670-675 (45 tokens)",
+    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:259-266 (42 tokens)"
    ],
    "files": 87,
    "files_over_800": 0,
@@ -2235,7 +2235,7 @@
    "async_false_share": 0.774,
    "clippy_warnings": 0,
    "comment_density": 0.151,
-   "comment_lines": 4134,
+   "comment_lines": 4136,
    "credo_warnings": 0,
    "cycles": 0,
    "doc_lines": 2812,
@@ -2305,7 +2305,7 @@
     "test/system/checkpoint_batched_outputs_e2e_test.exs:53-79 <-> test/system/effectively_once_postgres_e2e_test.exs:82-106 (101 tokens)",
     "test/system/compaction_e2e_test.exs:50-66 <-> test/system/dynamic_entity_e2e_test.exs:38-58 (44 tokens)",
     "test/system/compaction_e2e_test.exs:75-85 <-> test/system/state_freshness_e2e_test.exs:60-73 (52 tokens)",
-    "test/system/control_plane_wedge_e2e_test.exs:50-62 <-> test/system/schema_evolution_e2e_test.exs:48-60 (41 tokens)",
+    "test/system/control_plane_wedge_e2e_test.exs:50-62 <-> test/system/schema_evolution_e2e_test.exs:51-63 (41 tokens)",
     "test/system/dlq_e2e_test.exs:140-150 <-> test/system/late_input_correction_e2e_test.exs:61-71 (51 tokens)",
     "test/system/dlq_e2e_test.exs:142-153 <-> test/system/late_input_correction_e2e_test.exs:131-143 (43 tokens)",
     "test/system/dlq_e2e_test.exs:57-80 <-> test/system/late_input_correction_e2e_test.exs:44-66 (124 tokens)",
@@ -2318,7 +2318,7 @@
     "test/system/effectively_once_e2e_test.exs:77-92 <-> test/system/effectively_once_postgres_e2e_test.exs:106-121 (79 tokens)",
     "test/system/effectively_once_e2e_test.exs:93-109 <-> test/system/effectively_once_postgres_e2e_test.exs:121-131 (65 tokens)",
     "test/system/effectively_once_postgres_e2e_test.exs:18-26 <-> test/system/remote_durability_e2e_test.exs:32-40 (58 tokens)",
-    "test/system/entity_timers_e2e_test.exs:160-173 <-> test/system/schema_evolution_e2e_test.exs:238-251 (57 tokens)"
+    "test/system/entity_timers_e2e_test.exs:160-173 <-> test/system/schema_evolution_e2e_test.exs:248-261 (57 tokens)"
    ],
    "files": 227,
    "files_over_800": 0,
@@ -2350,17 +2350,17 @@
     "test/system/dlq_e2e_test.exs": 1
    },
    "test_files": 195,
-   "test_loc": 38979
+   "test_loc": 38986
   },
   "test/apps": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.172,
-   "comment_lines": 877,
+   "comment_density": 0.177,
+   "comment_lines": 1033,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 1041,
-   "duplicate_pairs": 144,
+   "doc_lines": 1069,
+   "duplicate_pairs": 145,
    "duplicate_pairs_list": [
     "lib/mix/tasks/bench/elixir_factories.ex:152-163 <-> test/apps/elixir_runner/lib/factories.ex:501-510 (57 tokens)",
     "lib/mix/tasks/bench/elixir_factories.ex:157-163 <-> test/apps/elixir_runner/lib/factories.ex:56-62 (40 tokens)",
@@ -2377,11 +2377,11 @@
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/DispatchTestBase.java:533-543 <-> test/apps/java_runner/src/main/java/com/flezha/test/EntryIdleProbeProcedure.java:24-35 (53 tokens)",
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StatelessTestProcedure.java:1-16 <-> test/apps/java_runner/src/main/java/com/flezha/test/StatelessStep.java:1-15 (55 tokens)",
     "sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:174-189 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:48-63 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:127-139 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:554-566 (58 tokens)",
-    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:592-612 (98 tokens)",
-    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:563-568 (45 tokens)",
-    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:257-264 (42 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:129-141 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:661-673 (58 tokens)",
+    "sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:699-719 (98 tokens)",
+    "sdk/php/tests/Fixture.php:43-48 <-> test/apps/php_runner/fixtures.php:670-675 (45 tokens)",
+    "sdk/php/tests/Fixture.php:43-50 <-> test/apps/php_runner/fixtures.php:259-266 (42 tokens)",
     "sdk/rust/benches/correctness.rs:268-274 <-> test/apps/rust_runner/src/workflow.rs:74-80 (40 tokens)",
     "sdk/rust/benches/dispatch.rs:188-194 <-> test/apps/rust_runner/src/entity.rs:511-517 (45 tokens)",
     "sdk/rust/benches/dispatch.rs:188-194 <-> test/apps/rust_runner/src/entity.rs:541-547 (56 tokens)",
@@ -2492,7 +2492,8 @@
     "test/apps/java_runner/src/main/java/com/flezha/test/KeyedCollectionsState.java:1-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/WindowedState.java:1-11 (54 tokens)",
     "test/apps/java_runner/src/main/java/com/flezha/test/OptOutCommitBlockWorkflowOperative.java:1-15 <-> test/apps/java_runner/src/main/java/com/flezha/test/OutboxBlockWorkflowOperative.java:1-15 (41 tokens)",
     "test/apps/java_runner/src/main/java/com/flezha/test/OutboxBlockWorkflowOperative.java:19-28 <-> test/apps/java_runner/src/main/java/com/flezha/test/SyncDurableWorkflowOperative.java:23-32 (41 tokens)",
-    "test/apps/php_runner/fixtures.php:83-88 <-> test/apps/php_runner/fixtures_state.php:54-59 (46 tokens)",
+    "test/apps/php_runner/fixtures.php:523-535 <-> test/apps/php_runner/fixtures_state.php:199-207 (40 tokens)",
+    "test/apps/php_runner/fixtures.php:85-90 <-> test/apps/php_runner/fixtures_state.php:108-113 (46 tokens)",
     "test/apps/python_runner/fixtures.py:176-179 <-> test/apps/python_runner/fixtures_state.py:69-72 (41 tokens)",
     "test/apps/rust_runner/src/channel.rs:195-202 <-> test/apps/rust_runner/src/entity.rs:252-259 (53 tokens)",
     "test/apps/rust_runner/src/channel.rs:195-203 <-> test/apps/rust_runner/src/state.rs:378-386 (54 tokens)",
@@ -2533,7 +2534,7 @@
     "test/apps/rust_runner/src/workflow.rs": 1
    },
    "test_files": 0,
-   "test_loc": 9251
+   "test_loc": 9792
   }
  },
  "bench": {
@@ -2616,7 +2617,7 @@
   "governor": "powersave",
   "hostname": "moon"
  },
- "head": "102ed22d",
+ "head": "0ba5c9fe",
  "repo": {
   "clippy_warnings": 0,
   "credo_warnings": 154,

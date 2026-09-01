@@ -17,6 +17,7 @@ namespace Flezha\TestApp;
 
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Exception\NonRetryableException;
 use Flezha\Graph\Builder;
@@ -471,6 +472,59 @@ final class WedgeProbeOperative extends StreamOperative
     }
 }
 
+// -- candle ------------------------------------------------------------------
+//
+// Late-input correction is about fold ORDER, and the only way to prove that is
+// to look at the order. Send 100, 300, then the late 200. Without correction the
+// fold order is [100, 300, 200] and the candle is permanently wrong. With it,
+// the engine rewinds behind 200, replays the retained input log sorted by event
+// time, and the fold order becomes [100, 200, 300].
+
+#[Proc(name: 'candle_procedure', clock: Clock::EventTime)]
+final class Candle extends Procedure
+{
+    /** Event times in fold order: the assertion surface. */
+    public function state(?string $entityKey): mixed
+    {
+        return ['folded' => []];
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state['folded'][] = $change['fold'];
+    }
+
+    public function eventTime(mixed $input): int
+    {
+        return Wire::int(explode(':', (string) $input, 2)[0]);
+    }
+
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        // `$ctx->now()` IS the extracted event time under an event-time clock.
+        $eventTime = $ctx->now();
+        $ctx->change(['fold' => $eventTime]);
+        // One row per candle bucket, so a corrected replay overwrites by key
+        // rather than appending a second row.
+        $bucket = intdiv($eventTime, 1000);
+        $ctx->emitKeyed("candle/$bucket", "$bucket=$input");
+
+        return null;
+    }
+}
+
+#[Operative(factoryId: 'candle')]
+final class CandleOperative extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce()->correctionWindow(600_000);
+        $c->input('input', Wire::text(...))
+            ->into(Candle::class)->named('sink')->keyed()
+            ->sink('tier_sink', Wire::bytes(...));
+    }
+}
+
 // -- session_timeout ---------------------------------------------------------
 //
 // The worked session-timeout shape: each input pushes the idle deadline out,
@@ -707,6 +761,7 @@ final class Fixtures
             CheckpointStoreOperative::class,
             CheckpointBatchedOperative::class,
             BenchCheckpointOperative::class,
+            CandleOperative::class,
             PoisonProbeOperative::class,
             WedgeProbeOperative::class,
             SessionTimeoutOperative::class,

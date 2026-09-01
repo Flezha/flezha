@@ -1128,6 +1128,8 @@ amending it to match the code would ratify a silence the spec deliberately forba
   next run.
 
 
+- **Evidence against "every run" (supervisor, 2026-09-02)**: of three full `--include system` arms run one at a time at `0ba5c9fe`+S5 — node, ruby, php — only the ruby arm produced the `1 invalid` (`daemon did not become ready within 60000ms` at `release_cli_system_test.exs:77`, 183 s arm); node and php did not. With session 6's clean baseline arm that is 1 of 4 measured, so the entry's "fails on every run" is refuted; the failure is real and intermittent.
+
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
 Recorded so a future red run is not mistaken for a regression. **Green in
@@ -1609,6 +1611,46 @@ under load.
   no `lib/flezha/state` and no test; charter §1b files it here.
 
 ## P3 — warts, wording, and measurement notes
+
+### KI-130 · A wedged PHP runner cannot die: evicted and ordered to exit, it stays up, reconnects under a fresh identity and wins the rebind
+
+- **Severity**: P2 · the convergence ladder's last rung (`runner_pool_wedged` → evict → terminal
+  disconnect → the orchestrator restarts a failed process) does not end the process it targets
+  on a single-loop erased host, and the controller re-identifies the returning process as a
+  new runner and places work on it. Pre-existing on every count; visible on 2026-09-02
+  because the full php system arm ran with `control_plane_wedge_e2e_test.exs` for the first
+  time (R5 S5 close-out).
+- **Where**: `sdk/php/src/Runner.php` — SIGTERM (`pcntl_signal`) and stdin EOF are polled
+  between polls, so a `sync` loop inside a body (`sleep(3600)` in the `wedge_probe` fixture)
+  observes neither; `flz_core/src/shutdown.rs:228` `exit_terminally` runs
+  `run_active_graceful_shutdown()` before `process::exit(70)`, and the bridge's snapshot
+  function serialises every Entity under `with_entity_exclusive`, which waits on the wedged
+  Entity's gate without bound; the controller side (`FleetManager.evict_runner` with
+  `proved_wedged`) clears the binding and nothing in the handshake refuses that process's
+  return.
+- **Evidence** (worker, `$SCRATCH/r5s2/s5/probe/`): `FLEZHA_E2E_RUNTIME=php mix test --include system test/system/control_plane_wedge_e2e_test.exs`
+  → `3 passed` (5.9 s), `2/3 passed` (124.5 s), then the probe copy `3 passed` (7.7 s), `2/3
+  passed` (124.6 s) — 3 red of 5, always `:71`, the phase-2 rebind wait expiring. The
+  extended failure message shows the operative rebound onto a runner id that is neither A
+  nor B, listed in `active_runners` beside B, with only two `runner up` lines in the namespace
+  — runner A back under a fresh identity after `[flezha] controller ordered a terminal
+  disconnect (reason=convergence:runner_pool_wedged); exiting 70`. Supervisor's own run:
+  `3 passed`, and one `php … runner.php wedge_e2e_…` process left alive after it (killed by
+  pid). Node's drill is green because `watchStdinEof` terminates its wedged runner after the
+  5 s grace, so the zombie is dead before it can re-register.
+- **A fix must** decide which half owns it, and probably take two: `exit_terminally` must
+  not wait unboundedly on a wedged Entity for any SDK (the rung exists precisely for a
+  runner that cannot finish its work — a bounded wait, or skipping the wedged Entity's
+  serialise, keeps the ship for the others); and the controller should refuse or at least
+  not place on a runner it has evicted as wedged until the orchestrator's restart is
+  evidenced (a fresh process, not a fresh id). The PHP host's own inability to observe a
+  signal inside a body is the SDK's documented single-loop posture and is the smallest
+  part. Red first: the php drill above, 3 in 5.
+- **Verdict (supervisor, 2026-09-02)**: real, P2, not R5's — none of the row's commits
+  touches these paths — and larger than a close-out. Own change, queued as the next work
+  item after R5 closes; the drill leaves one wedged php process per run until then, so a php
+  full arm is followed by a kill by pid.
+
 
 ### KI-129 · On an erased host with more than one loop, a live Entity read can answer state whose changes are not yet journaled, and its seq stamp cannot say so
 

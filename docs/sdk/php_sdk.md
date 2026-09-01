@@ -392,11 +392,11 @@ The manifest at `test/apps/php_runner/conformance.json` carries the seven
 capabilities every SDK must (`runner_lifecycle`, `connect_discovery`,
 `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge`),
 carries `keyed_channels`, `dynamic_entity`, `state_persistence`,
-`entity_timers`, `schema_evolution` and `effectively_once` besides, and
-defers three.
+`entity_timers`, `schema_evolution`, `effectively_once` and
+`correction_window` besides, and defers two.
 
-The deferral is about **fixtures, not mechanism**: correction windows, the
-workflow kind and the entry-idle observer are all implemented here and reached
+The deferral is about **fixtures, not mechanism**: the workflow kind and the
+entry-idle observer are both implemented here and reached
 through the same core the Rust and Java arms prove them on. What is missing is
 the fixture-by-fixture proof against the reference, which the PHP SDK owes to
 the shared follow-up `sdk-durable-fixture-parity` alongside the Node and Ruby
@@ -406,8 +406,8 @@ Keyed channels are not on that list, and were not implemented here until
 `Ctx::stampIdentity` minted `flz.entity` / `flz.seq` / `flz.key`: the capability
 now carries the reference's `partition_relay` fixture. Per-entity persistence,
 schema evolution and the effectively-once tier left it with the reference's
-fixtures, in `test/apps/php_runner/fixtures_state.php`, and timers with
-`session_timeout` in `fixtures.php`.
+fixtures, in `test/apps/php_runner/fixtures_state.php`, and timers and
+correction windows with `session_timeout` and `candle` in `fixtures.php`.
 
 ## Diagnostics
 

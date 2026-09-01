@@ -526,6 +526,58 @@ in all three apps (RULE #1: extend, not copy).
 R5 stands at S0–S4 done: 39 of 42 fixture implementations landed. **Next: S5** —
 `candle` ×3 (`correction_window`), then the close-out (7.2–7.6).
 
+**S5 last seen 01:19 (+10m).** `candle` in all three main files, three manifests flipped,
+two docs edited (+267/−127 over 8 files); ticks 34; a `beam.smp` + two `rust_runner`s 28 s
+old — its run, not a leak. Load 2.19/1.75/1.54. **01:29 (+20m)**: a full arm running (BEAM 1:48 old with two reference
+runners — 7.4's per-runtime `--include system`); ticks 34, diff +271; load 0.86.
+
+### R5 IS DONE — S5 and the close-out verified 2026-09-02 01:55; 42 of 42 fixtures landed
+
+**S5**: `candle` ×3 read against `fixtures.py:288-315` / `probe.rs:20-93` (event-time clock,
+extractor on the `ts:` prefix, `correction_window(600_000)`, keyed bucket rows on `tier_sink`);
+`late_input_correction` + the smoke tier **`23 passed, 2 skipped`** under node, ruby and php on
+the worker's runs AND mine; gate 20; the `candle.json` golden green on all three. Docs say two
+deferred (`workflow`, `entry_idle`). **The close-out**: `sdk-durable-fixture-parity`'s ledger
+amended (every phase names the change that did it), both changes `--strict` valid with 0 open
+boxes and **both archived by me** (`openspec list`: no active changes; the audit's two ADDED
+requirements and R5's one synced into `sdk-conformance/spec.md`, +70). **7.3 by measurement**:
+none of the nine joins `@required_capabilities` — seven are deferred by Elixir ALONE
+(`state_persistence`, `effectively_once`, `entity_timers`, `correction_window`,
+`keyed_channels`, `dynamic_entity`, `schema_evolution`), two by five manifests (`workflow`,
+`entry_idle`); the gate's own message names each the day R6 lands it. **7.4, three full arms**:
+node `2019 passed, 30 skipped, 35 excluded` (107.6 s); ruby `2018 passed, 1 invalid` (183 s —
+the invalid is KI-114, now evidenced as 1 of 4 measured arms, refuting "every run"); php
+`2017/2019` (221 s) — one red is `flezha_handover_test:97`, the recorded load-flake
+population (8/8 alone), the other is **KI-130** below. Dev note written
+(`docs/dev_notes/port-durable-fixtures-to-veneers.md`, read: present tense, the traps, the
+live-read rule). `--check --lint`: `test/apps duplicate_pairs 144 → 145`, the pair
+`fixtures.php:523-535 ↔ fixtures_state.php:199-207` — `candle`'s and `bench_checkpoint`'s
+identical keyed `tier_sink` tails, which the reference ends the same way (`probe.rs:88-92`,
+`state.rs:301-305`) — **RULED fixture twin, accepted, baseline re-recorded** (audit below).
+
+**KI-130 — RULED real, P2, NOT R5's, own change next.** A wedged php `sync` loop cannot observe
+SIGTERM or stdin EOF (both polled between polls), `exit_terminally`'s graceful sequence waits
+on the wedged Entity's gate without bound, so the evicted runner never dies, reconnects under a
+fresh id and wins the rebind over B: `control_plane_wedge_e2e_test.exs:71` **3 red of 5** under
+php (worker), `3 passed` on my one run — which left one `runner.php wedge_e2e_…` alive, killed
+by pid. Node is spared by `watchStdinEof`'s 5 s grace. None of today's commits touches those
+paths; the fix (bound `exit_terminally`'s wait for every SDK, and the controller not placing on a
+runner it evicted as wedged) is its own change, queued first below.
+
+**The two index lines are OWED, not landed**: `CLAUDE.md` carries another session's uncommitted
+index split and `docs/dev_notes/INDEX.md` is that session's untracked file — a line added there
+cannot be committed without committing their work under my name. Both lines are recorded
+verbatim under *Owed* in Next steps; whoever commits the split adds them.
+
+**Baseline re-record audit (R5 close)**: see the commit body — the only ratcheted move is
+`test/apps duplicate_pairs 144 → 145`; `test_loc`/`files` rows are not ratcheted.
+
+**R5 in total, this session**: S2–S5 = 39 fixture implementations over 3 apps (S0/S1 = 3 more
+from session 6), 14 commits, six defects found on the way — KI-123, KI-126, KI-127 fixed;
+KI-124, KI-125, KI-128, KI-129, KI-130 filed. Every capability flipped is proved by its tagged
+scenarios on the runtime, red half recorded first, all three arms re-run by the supervisor at
+every segment.
+
 **S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
 `state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
 three arms run by me too), full `mix test` 1962 passed, five naming gates exit 0, format gate
@@ -4988,7 +5040,10 @@ verifies and commits, §4 checkpoint each time.
 | **R2b** | **`entry_idle` host layer — node, ruby, php (accessor + observer + latch + tick), and BOTH layers in elixir.** Displaced from R2 by the measurement above. **Do not lose this**: R2 was the only row carrying `entry_idle` for node/ruby/php — R5 covers six other capabilities and R7 covers `workflow` | Real feature work, priced separately from R2's doc-and-fixture size |
 | **R3** | **`connect_discovery` into `@required_capabilities`** (`test/helpers/node_test_helper.ex:293`). All seven already carry it. | One line, zero SDK work, makes one capability un-regressable today |
 | **R4** | **Identity stamps in node/ruby/php** — `flz.entity`/`flz.seq`/`flz.key` on a non-tier keyed plugin emit. Reference: `emit_sink.rs:357-378`, Java `EmitContext.java:283-285`, Python `ctx.py:267-280`, ~15 lines each. Then `keyed_channels` fixtures. | Mechanism gap, small, proof already written in two SDKs |
-| **R5** | **Veneer fixture port — node, ruby, php.** `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`, `dynamic_entity`, `schema_evolution`. Python is the template. **Do `state_persistence` FIRST — it gates four of the others.** | 18 fixture cells; the SDKs can already do this |
+| **R5** | **DONE 2026-09-02** — 42 fixture implementations over six segments (S0 `95b6590c` … S5 close), both changes archived; see *R5 IS DONE*. The row's true size was 42, not 18 | — |
+| **R5.1** | **KI-130 — a wedged php runner cannot die, reconnects under a fresh id and wins the rebind.** Bound `exit_terminally`'s graceful wait for a wedged Entity (core, every SDK) and stop the controller placing on a runner it evicted as wedged. Red-first: `control_plane_wedge_e2e_test.exs` under php, 3 in 5 | Found by R5's close-out; the convergence ladder's last rung does not end the process it targets |
+| **R5.2** | **KI-125 — a python runner aborts (exit 134) at interpreter exit after SIGTERM** (a daemon thread on stdin holds the buffer lock at finalisation). Python-only, ~3 lines, red-first: a subprocess test asserting exit 0 | Found by R5 S2; an orchestrator reads a crash after every graceful stop |
+| **R5.3** | **KI-128 — `credit_flow_e2e_test` reads the credit flag at a point in time**: read the verdict from the row captured at `:109`, dump rows on failure. Small, test-only | 1 in 20 php arms; the failure names the wrong cause |
 | **R6** | **Elixir SDK — build the nine.** Its SDK is its own core and inherits nothing from `flz_core`: it defers the SURFACE, raising `UndefinedFunctionError`. This is feature work (WAL fold, restore, timers, clock/window, keyed stamps, dynamic entity, schema version, workflow), not a fixture port. **Budget it separately from R5.** | The user's instruction includes Elixir; it is the largest row |
 | **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
@@ -4996,6 +5051,15 @@ verifies and commits, §4 checkpoint each time.
 | **R10** | `add-publish-readiness-checklist` — KI-52 and the one-way-door items | Agreed 2026-09-01, seed only |
 | **R11** | **KI-115** — two published specs mandate behaviour the code lacks. One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
 | **R12** | **The docs-citation gate** (~120 lines). Would have caught 27 of area 8's 76 findings automatically. **Build it AFTER the docs are clean so it lands green** — a gate that lands red is KI-94 all over again | Ruling 3, approved in principle |
+
+**OWED — two index lines for `port-durable-fixtures-to-veneers`**, blocked on another session's
+uncommitted `CLAUDE.md` index split and untracked `docs/dev_notes/INDEX.md` (a line added there
+cannot be committed without committing their work). Whoever commits the split adds:
+
+`CLAUDE.md` hook (one line, under the per-change index, newest first):
+`- [The veneer fixture port — R5, 42 fixture implementations](docs/dev_notes/port-durable-fixtures-to-veneers.md) — an ERASED HOST'S LIVE READ IS NOT A PERSISTED-SEQ SIGNAL: state is written back before the changes reach the core, so a stop after a live read must await the seq`
+
+`INDEX.md` abstract: **port-durable-fixtures-to-veneers** (R5 S2–S5, 2026-09-02) — `state_persistence`, `schema_evolution`, `entity_timers`, `effectively_once` and `correction_window` fixture twins for Node, Ruby and PHP: 42 implementations, each capability flipped from `deferred` to the reference's exact id set with its tagged scenarios shown skipped before and green after on all three runtimes. The persisted-state family lives in a `fixtures_state` companion per app (`fixtures_state.py`'s partition, §7-forced by PHP; Node needs a `fixture_support` third file because `defineOperative` builds the graph eagerly and an ESM cycle would hit the TDZ). Found on the way: the erased hosts never shipped state on shutdown (KI-123, fixed first), the same entry re-registered a stopping runner (KI-126), Java's `store_input` spelled its state camelCase (KI-127), Python aborts at exit after SIGTERM (KI-125), the live read's seq stamp is silent about un-journaled state (KI-129), a wedged php runner cannot die (KI-130), and `schema_evolution_e2e_test` used a live read as a persisted-seq signal. The tier goldens were the first end-to-end proof of S0's checkpoint seam. Seven of the nine remain deferred by Elixir alone; none can join the required set until R6.
 
 **NOT the programme's to start: the `dev` → `main` merge.** ~307 commits behind and this
 session added 28+. Raised with the user; they did not address it. **Do not initiate it.**
