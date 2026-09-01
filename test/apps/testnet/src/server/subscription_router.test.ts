@@ -111,7 +111,7 @@ test('per-symbol config from the server config reaches the generator', () => {
 });
 
 // fails when: a per-symbol interval override is ignored — the back-pressure
-// bench could no longer reach its load target from server config alone.
+// bench cannot reach its load target from server config alone.
 test('a per-symbol interval overrides the channel cadence', () => {
   const { router: r, timers } = router();
   r.handle(

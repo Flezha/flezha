@@ -24,7 +24,8 @@ The prod controller image runs on `debian:bookworm-slim` with a bundled-ERTS
 Mix release (see [`docker/prod/README.md`](docker/prod/README.md)) under
 a **300 MiB** budget enforced by the `docker-size-gate` job in
 [`.github/workflows/docker.yml`](.github/workflows/docker.yml). Supported
-platforms: `linux/amd64` and `linux/arm64` (`make docker-build-multiarch`).
+platforms: `linux/amd64` and `linux/arm64`; the manifest list is assembled by
+`make docker-publish`, run once on a host of each architecture.
 The `protoc` install layer rejects any other `uname -m` with
 `Unsupported architecture: <arch>`.
 
@@ -89,15 +90,10 @@ scripts/ci-local.sh java           # only the Java SDK CI jobs
 scripts/ci-local.sh elixir java    # any combination, any order
 ```
 
-What each section runs (each line below is the literal command):
-
-- **`elixir`** — mirrors `.github/workflows/elixir.yml`:
-  - `mix deps.get`
-  - `mix compile --warnings-as-errors`
-  - `mix test` (excludes `:system`; includes the SDK conformance gate)
-- **`java`** — mirrors `.github/workflows/java-sdk.yml` (both jobs):
-  - `mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify` (Java unit tests + JaCoCo)
-  - `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` (the shared smoke tier against the test runner jar)
+The `elixir` section mirrors `.github/workflows/elixir.yml`; the `java` section
+mirrors both jobs of `.github/workflows/java-sdk.yml`. What each one runs, in
+order, is listed in the script's own header — one list, one owner, so the two
+cannot drift.
 
 The `java` section builds the host triple and both jars first, exactly as the
 workflow does — nothing it needs is tracked in git. The script uses an isolated
@@ -110,41 +106,18 @@ ends with `ALL CI CHECKS PASSED`.
 ## Graceful shutdown
 
 The controller runs a three-phase orderly shutdown (quiesce → drain →
-finalise) on SIGTERM, SIGINT, `Application.prep_stop/1`, and
-`flz controller stop` — works in release, `mix run --no-halt`, and
-`iex -S mix` modes. Bounded by `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`
-(default 60 s); pair the orchestrator's grace period
-(`terminationGracePeriodSeconds` / `stop_grace_period`) at
-`timeout_ms / 1000 + 15s`. Default-on; set
-`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` to fall back to today's
-direct-stop behaviour.
-
-| Env var                                | Default | Description                           |
-| -------------------------------------- | ------- | ------------------------------------- |
-| `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED`     | `true`  | Kill-switch (truthy: 1/true/yes/on)   |
-| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`  | `60000` | Coordinator drain timeout             |
-
-Full operator playbook (run modes, telemetry, exit-code semantics,
-the third-SIGTERM escape hatch): [`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
+finalise) on SIGTERM, `Application.prep_stop/1` and `flz controller stop`, in
+release, `mix run --no-halt` and `iex -S mix` modes. Triggers per run mode, the
+two env knobs and their defaults, the orchestrator grace-period pairing rule,
+telemetry, exit-code semantics and the third-SIGTERM escape hatch:
+[`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
 
 ## Wiping runtime data
 
-`flz reset` clears the Controller's durable on-disk state
-(`app_data/state/`, `app_data/process_hub/`; optionally
-`app_data/certs/` and `app_data/sockets/`) so the next boot starts
-from a clean slate. It refuses to run while the Controller is up —
-pair with `flz controller stop` first:
-
-```bash
-flz controller stop
-flz reset --yes
-```
-
-`--yes` is required for any destructive action; bare `flz reset`
-prints the plan and exits non-zero, `flz reset --dry-run` prints the
-plan and exits 0. `--include-certs` / `--include-sockets` / `--all`
-extend the default scope; `--json` produces machine-readable output.
-Full reference and operator recipes (docker-compose, k8s, CI):
+`flz reset` clears the Controller's durable on-disk state so the next boot
+starts from a clean slate, and refuses to run while the Controller is up. Which
+directories are in scope (the socket directory is resolved, not fixed), the
+flags, the exit codes and the operator recipes for docker-compose, k8s and CI:
 [`docs/operations/reset.md`](docs/operations/reset.md).
 
 ## Code style
@@ -267,40 +240,15 @@ Full reference (flags, shapes, CI gates, floors, triage):
 
 ### Restart survival
 
-Flezha auto-restores after any restart — single-controller crash,
-rolling deploy, or full cluster cold boot. Two persistence layers
-back this:
-
-1. **ProcessHub durable registry** (`app_data/process_hub/<hub_id>/registry.dets`)
-   — every operative child-spec, including `opts[:plugins]`, is persisted
-   to disk through ProcessHub's `registry_backend: {:dets, ...}`. On
-   boot, ProcessHub's coordinator gates the `:recovery_pending →
-   :recovering | :normal` state machine on the `cluster.healthy` marker
-   beside the DETS file: marker present → straight to `:normal`; marker
-   absent → replay the persisted registry under
-   `:flezha, :process_hub_recovery_timeout_ms` (default 30 s).
-2. **Per-Entity WAL/snapshot** (`app_data/state/<operative_class>/<procedure_id>/`)
-   — change-by-change progress for every Entity. When an operative's
-   first Entity stream reattaches after restart, the controller
-   ships the assembled WAL+snapshot via `RestoreInitState` so the SDK
-   resumes at the exact pre-shutdown sequence.
-
-The path layout drops `runner_id`, so runner pod restarts that
-rotate `runner_id` do not orphan state.
-
-Operator surface:
-
-```bash
-flz boot status                              # per-namespace recovery_state + registry rows
-flz boot await --timeout 60                  # block until every hub reports :normal
-```
-
-Disable the auto-replay state machine (registry mutations still
-persist) with `FLEZHA_AUTO_RESTORE_ENABLED=false`. The single tolerated
-data-loss case: cluster shut down, then only a strict subset of nodes
-returns — rows held only on the missing nodes are lost. See
-[`docs/operations/auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md)
-for the full safety table.
+Flezha auto-restores after any restart — single-controller crash, rolling
+deploy, or full cluster cold boot. Two persistence layers back it: the
+ProcessHub durable registry, which holds every operative's child-spec including
+`opts[:plugins]`, and the per-Entity WAL/snapshot, which holds change-by-change
+progress and is shipped back to the SDK when the Entity's stream reattaches.
+What is written where, the boot reconcile, the `flz boot status` and
+`flz boot await` surface, the `FLEZHA_AUTO_RESTORE_ENABLED` kill-switch and the
+safety matrix per scenario — including the one tolerated data-loss case:
+[`docs/operations/auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md).
 
 ### Development
 Run the application inside the docker containers.

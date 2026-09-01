@@ -99,7 +99,7 @@ workflow's steady state — it parks.
 | Piece | Location |
 | --- | --- |
 | The delivery stamp (`EntryObservation`, `last_delivery`), one cell shared by both poll hosts | `flz_core/src/entry_input.rs` |
-| The one write, `ChannelDescriptor::observe_delivery`, on the entry-delivery seam | `flz_core/src/channel.rs`; callers in `flz_core/src/fast.rs` (`dispatch`) and `flz_core/src/host.rs` |
+| The one write, `ChannelDescriptor::observe_delivery`, on the entry-delivery seam | `flz_core/src/channel.rs`; called from `OperativeDispatchHandle::dispatch` in `flz_core/src/routing.rs` |
 | C ABI reads (`flz_core_entry_last_delivery_nanos`, `flz_core_monotonic_nanos`) | `flz_core_ffi/src/lib.rs`, JNI glue in `flz_core_ffi/src/jni_glue.rs` |
 | Rust policy: `IdleObserver`, the episode latch, the tick; the runner methods | `sdk/rust/src/entry_idle.rs`, `sdk/rust/src/lib.rs` |
 | Java policy | `flezha-sdk-api/.../IdleObserver.java`, `FlezhaRunner.java`; `flezha-sdk-runtime/.../EntryIdleWatcher.java` |

@@ -12,8 +12,8 @@ Everything on the [kernel](kernel.md), [stream](stream_profile.md) and
 [workflow](workflow_profile.md) pages is the same regardless of which host SDK is running, and
 that is precisely because those mechanisms sit below this seam.
 
-Mechanism-level detail: [`../sdk_poll_core.md`](../sdk/poll_core.md). The authoring surface
-itself: [`../operative_architecture.md`](../sdk/rust_operative_architecture.md).
+Mechanism-level detail: [`poll_core.md`](../sdk/poll_core.md). The authoring surface
+itself: [`rust_operative_architecture.md`](../sdk/rust_operative_architecture.md).
 
 ---
 
@@ -476,5 +476,5 @@ fixture against the reference. Those four owe their fixture sets to the shared f
 - Authoring an operative → [`../sdk/rust_operative_architecture.md`](../sdk/rust_operative_architecture.md)
 - Proving an SDK still works → [`../sdk/conformance.md`](../sdk/conformance.md)
 - What the runner ships to the controller → [`kernel.md`](kernel.md)
-- The wire protocol → [`../sdk_protocol_spec.md`](../sdk/protocol_spec.md)
-- Naming rules for a new SDK → [`../sdk_naming_conventions.md`](../sdk/naming_conventions.md)
+- The wire protocol → [`protocol_spec.md`](../sdk/protocol_spec.md)
+- Naming rules for a new SDK → [`naming_conventions.md`](../sdk/naming_conventions.md)

@@ -11,10 +11,15 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | [`operations/`](#operations) | operators | Deploying, configuring, securing, observing and recovering a controller |
 | [`resilience/`](#resilience) | everyone | What survives what — the guarantee-level docs |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
+| [`runbooks/`](#runbooks) | operators, contributors | Step-by-step procedures for one-off operations |
 | [`dev_notes/`](#dev-notes) | contributors | Per-change gotchas, indexed in the repo `CLAUDE.md` |
 
 Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) and
 [`configuration.md`](configuration.md) (every knob, by layer).
+
+[`known_issues.md`](known_issues.md) is the open-defect register rather than a reference:
+defects found but not fixed where they were found, each carrying a command that
+reproduces it and the output that command gave.
 
 ## sdk
 
@@ -26,6 +31,10 @@ Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) a
 | [`state_persistence.md`](sdk/state_persistence.md) | Per-Entity state, Change, snapshot/WAL restore and compaction — Rust and Java surfaces |
 | [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK: in-node native mode and the standalone runner |
 | [`java_sdk.md`](sdk/java_sdk.md) | The Java SDK: scope, how its artifacts are built, how it is tested |
+| [`node_sdk.md`](sdk/node_sdk.md) | The Node SDK (`@flezha/sdk`): supported versions, dispatch configuration, what must never block the event loop |
+| [`python_sdk.md`](sdk/python_sdk.md) | The Python SDK (`flezha` on PyPI): supported versions, encoding, concurrency, startup order |
+| [`ruby_sdk.md`](sdk/ruby_sdk.md) | The Ruby SDK (the `flezha` gem): supported versions, the threading host, parallelism, the runner image |
+| [`php_sdk.md`](sdk/php_sdk.md) | The PHP SDK over `ext-ffi`: supported versions, sizing, the executor seam, accepted limits |
 | [`conformance.md`](sdk/conformance.md) | The cross-SDK conformance suite: manifests, capabilities, the gate, adding an SDK |
 | [`stream_transforms.md`](sdk/stream_transforms.md) | Edge transforms and `key_by` keying |
 | [`multi_input_procedures.md`](sdk/multi_input_procedures.md) | Merged subscriptions: what a merge promises |
@@ -78,11 +87,18 @@ Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) a
 | Doc | Covers |
 | --- | --- |
 | [`process_hub.md`](internals/process_hub.md) | ProcessHub as the source of truth: hubs per namespace, recovery as reconcile, handover |
+| [`overwatch_lifecycle.md`](internals/overwatch_lifecycle.md) | The per-operative Overwatch: boot sequence, ping before `AddOperative`, the retry ladder and parked-error state, ingest entry points |
 | [`state_persistence.md`](internals/state_persistence.md) | The controller's WAL/snapshot store, flow control, `flz state` |
 | [`convergence_loop.md`](internals/convergence_loop.md) | The self-heal loop: tick pipeline, heal primitives, /healthz |
 | [`transport_liveness.md`](internals/transport_liveness.md) | Session liveness and data-plane stall localisation |
 | [`runner_identity.md`](internals/runner_identity.md) | Runner identity, binding swap on reconnect, WAL owner fence |
 | [`nif_transport.md`](internals/nif_transport.md) | The `flz_nif` UDS/QUIC drivers and their Elixir integration |
+
+## runbooks
+
+| Doc | Covers |
+| --- | --- |
+| [`purge-build-artifacts.md`](runbooks/purge-build-artifacts.md) | One-time removal of build output from git history: what it removes, the rewrite, verifying by measurement, publishing |
 
 ## dev notes
 

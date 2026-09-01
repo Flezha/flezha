@@ -133,6 +133,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_CONVERGENCE_TICK_MS` | `5000` | `:convergence_tick_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `60000` | `:convergence_output_stall_grace_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `120000` | `:convergence_unmet_intent_grace_ms` (not in test) |
+| `FLEZHA_CONVERGENCE_ENTITY_STALL_MS` | `300000` | `:convergence_entity_stall_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD` | `2` | `:convergence_plugin_strike_threshold` — set by `runtime.exs`, read by nothing in `lib/`; inert |
 | `FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS` | `1000` | `:convergence_tick_latency_threshold_ms` — set by `runtime.exs`, read by nothing in `lib/`; inert |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | `:convergence_fabric_503_polls` (not in test); consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503 |
@@ -357,7 +358,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:quic_client_ca_path` | `"app_data/certs/ca.pem"` | `lib/flezha/transport/server.ex` |
 | `:socket_files_path` | — | `lib/flezha/service/port_pilot.ex`, `lib/flezha/socket/support.ex` |
 | `:external_processes` | — | `lib/flezha/service/port_pilot.ex` |
-| `:concurrent_channel_count` | `0` | `lib/flezha/service/config_manager.ex` |
+| `:concurrent_channel_count` | `0` | `lib/flezha/config.ex` |
 | `:send_gate_hold_ms` | `5_000` | `lib/flezha/runner/stream_channel.ex` — how long a sender held on a stream's raised send gate waits for the driver to report the buffer drained. **The gate's own lost-wake fallback**, the counterpart of `FLEZHA_CREDIT_PARK_INTERVAL_MS` above: the release arrives on the crossing, and this bounds only a drain report that never came. Running out returns `{:error, :send_buffer_full}` to the caller with the frame still unsent — nothing was discarded on the way, so it is the caller's decision, not a loss |
 
 ### Cluster and nodes
@@ -378,7 +379,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 
 | Key | Default | Read in |
 |---|---|---|
-| `:state_root` | `FLEZHA_STATE_DIR`, else `"app_data/state"` (derived) | `lib/flezha/state/registry.ex` |
+| `:state_root` | `FLEZHA_STATE_DIR`, else `"app_data/state"` (derived) | `lib/flezha/state/paths.ex` |
 | `:default_compact_after_bytes` | `8 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` |
 | `:compact_after_age_ms` | `300_000` | `lib/flezha/state/persistence_resolver.ex` |
 | `:compaction_timeout_ms` | `30_000` | `lib/flezha/state/persistence_resolver.ex`; `0` disables the compaction-timeout sweep |
@@ -412,7 +413,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 |---|---|---|
 | `:runner_keepalive` | `"30000"` (string or integer accepted) | `lib/flezha/runner/fleet_manager.ex` |
 | `:auto_restore_enabled` | `true` | `lib/flezha/boot/recovery_hooks.ex`, `lib/flezha/service/hub_manager.ex` |
-| `:boot_replay_timeout_ms` | `60_000` | `lib/flezha/boot_loader.ex`, `lib/flezha/runner/fleet_manager.ex` |
+| `:boot_replay_timeout_ms` | `60_000` | `lib/flezha/boot/loader.ex`, `lib/flezha/runner/fleet_manager.ex` |
 | `:process_hub_registry_root` | `"app_data/process_hub"` | `lib/flezha/service/hub_manager.ex`, `lib/flezha/state/durability_tier/artifact.ex` |
 | `:process_hub_reconcile_grace_ms` / `:process_hub_reconcile_interval_ms` | `45_000` / `30_000` | `lib/flezha/service/hub_manager.ex` |
 | `:hub_runner_assign_wait_ms` | `2_000` | `lib/flezha/service/hub_manager.ex` |
@@ -426,6 +427,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
 | `:plugin_retry_base_delay_ms` | `4_000` | `lib/flezha/plugin/extension/table.ex` |
 | `:correction_debounce_ms` | `200` | `lib/flezha/operative/replay.ex` |
+| `:bind_restore_concurrency` | `16` | `lib/flezha/operative/replay.ex` — how many of a class's Entities a bind restores at once |
 | `:control_unit_heartbeat_interval_ms` | `15_000` | `lib/flezha/runner/control_unit.ex` |
 | `:control_unit_pending_reply_timeout_ms` | `90_000` | `lib/flezha/runner/control_unit.ex` |
 
@@ -442,6 +444,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
 | `:convergence_unmet_intent_grace_ms` | `120_000` | `lib/flezha/healthz/server.ex` |
 | `:convergence_fabric_503_polls` | `3` | `lib/flezha/healthz/server.ex` |
+| `:convergence_entity_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operative classifier calls that Entity stalled; a non-positive value leaves the default in place |
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |
 | `:healthz_port` / `:healthz_bind` | `9569` / `"127.0.0.1"` (`runtime.exs` sets `"0.0.0.0"`) | `lib/flezha/healthz/server.ex` |
 | `:output_watchdog_interval_ms` | `10_000` | `lib/flezha/state/watchdog.ex` |
@@ -483,7 +486,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 
 | Key | Default | Read in |
 |---|---|---|
-| `:enabled_plugins` | the provider map in `config/config.exs` | `lib/flezha/service/config_manager.ex` |
+| `:enabled_plugins` | the provider map in `config/config.exs` | `lib/flezha/config.ex` |
 | `:plugin_installer_enabled` | `false` | `lib/flezha/application.ex` |
 | `:plugin_installer[:plugin_root]` | `"app_data/plugins"` | `lib/flezha/plugin/installer/store.ex`, `lib/flezha/plugin/installer.ex` |
 | `:plugin_installer[:trusted_keys]` / `[:require_signature]` / `[:allow_unsigned]` | `[]` / `false` / `true` | `lib/flezha/plugin/installer.ex`, `lib/flezha/plugin/installer/loader.ex` |
@@ -500,7 +503,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | Key | Default | Read in |
 |---|---|---|
 | `:env` | `Mix.env()` (`config/config.exs`) | `lib/flezha/operative/handover.ex`, `lib/flezha/runner/control_unit.ex` |
-| `:pre_hooks` / `:post_hooks` | `[]` | `lib/flezha/boot_loader.ex` |
+| `:pre_hooks` / `:post_hooks` | `[]` | `lib/flezha/boot/loader.ex` |
 | `:testnet_enabled` | `true` in dev/test, `false` in prod (`config/<env>.exs`) | `lib/flezha/application.ex` |
 
 ## Layer 3: operative declarations (SDK)

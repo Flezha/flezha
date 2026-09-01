@@ -169,7 +169,7 @@ connected, which is exactly why nothing else can dislodge it.
 ## Producing-liveness (progress markers)
 
 `StallClassifier.classify_producing/3` is the per-operative producing-liveness classifier the Loop
-runs at tick cadence. `Convergence.Loop.progress_markers/0` builds the markers from
+runs at tick cadence. `Convergence.Loop.Progress.progress_markers/0` builds the markers from
 `Flezha.State.Watchdog.entity_statuses/0` (`last_change_seen_at` / `last_advance_at`, the
 `out_pending_seq` / `outbox_flushed_seq` outbox cursors — `out_pending_seq` counts only output-bearing
 records, so a state-only Entity never reads as a frozen outbox — and `outbox_unconfirmed_ms`) joined

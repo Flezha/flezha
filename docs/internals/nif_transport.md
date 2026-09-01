@@ -223,7 +223,7 @@ that exact handle and dispatched to `FleetManager.connect_handler/4`, which star
 the stream and emits `[:flezha, :transport, :connect_rejected]` with `stage: :authorization`.
 For QUIC the server keeps `quic_conn_runners` (`conn_id -> runner_id`, dropped when the
 ControlChannel goes down) and routes each `{:flz_stream, ...}` to that runner's channels via
-`StreamSup.bind_stream_to_first_nil/2`.
+`StreamPool.bind_stream_to_first_nil/2`.
 
 **`Flezha.Runner.RunnerSupervisor`** starts `ControlUnit`, `ControlChannel.Commits`,
 `ControlChannel` and the `:primary` / `:secondary` `StreamSup`s for every transport; for UDS it

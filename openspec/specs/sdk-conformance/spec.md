@@ -119,7 +119,9 @@ An untagged ExUnit module SHALL run under plain `mix test` — on every pull req
 
 ### Requirement: Rolling out a new SDK is enforced by the gate, not remembered
 
-The first pull request that adds a directory `test/apps/<sdk>_runner/` SHALL NOT pass `mix test` until, in that same pull request: the directory carries a manifest that accounts for every vocabulary capability and defers none of the required set; the manifest's non-deferred fixture sets equal the reference's; the manifest's `runtime` is a `workflow_dispatch` option of `nightly-e2e.yml`; and the manifest's `docs` page exists and points at the manifest. The suite SHALL then admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs`, the formatter or the gate. The reverse direction SHALL hold with the same mechanism: a change that adds a vocabulary capability, a reference fixture, a required capability or a declaration snapshot SHALL fail the gate or the smoke tier for every existing SDK that neither carries the addition nor defers it by name in its manifest, so a lockstep omission is a red PR, not a backlog item. The documentation section "Adding an SDK to the conformance suite" SHALL list exactly the items the gate enforces, followed by the items it cannot (the SDK's own unit-test workflow, `docs/sdk_naming_conventions.md` compliance, the dev note and its `CLAUDE.md` index line), and SHALL be the path every gate failure names.
+The first pull request that adds a directory `test/apps/<sdk>_runner/` SHALL NOT pass `mix test` until, in that same pull request: the directory carries a manifest that accounts for every vocabulary capability and defers none of the required set; the manifest's non-deferred fixture sets equal the reference's; the manifest's `runtime` is a `workflow_dispatch` option of `nightly-e2e.yml`; and the manifest's `docs` page exists and points at the manifest. The suite SHALL then admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs`, the formatter or the gate. The reverse direction SHALL hold with the same mechanism: a change that adds a vocabulary capability, a reference fixture, a required capability or a declaration snapshot SHALL fail the gate or the smoke tier for every existing SDK that neither carries the addition nor defers it by name in its manifest, so a lockstep omission is a red PR, not a backlog item. The documentation section "Adding an SDK to the conformance suite" SHALL list exactly the items the gate enforces, followed by the items it cannot (the SDK's own unit-test workflow, `docs/sdk/naming_conventions.md` compliance, the dev note and its `CLAUDE.md` index line), and SHALL be the path every gate failure names.
+
+Where this requirement names a document, it SHALL name the path that document occupies. A specification naming a file the repository does not carry is read and acted on by whoever is following it, and cannot be caught by compilation, by the suite, or by the naming gates, which police retired identifiers rather than paths.
 
 #### Scenario: A new SDK directory without a manifest is a red PR
 - **WHEN** `test/apps/ruby_runner/` is added with a test app and no `conformance.json`
@@ -136,6 +138,10 @@ The first pull request that adds a directory `test/apps/<sdk>_runner/` SHALL NOT
 #### Scenario: A new declaration key cannot skip an existing SDK silently
 - **WHEN** the reference gains a declaration key, its golden is regenerated, and the Java builder does not emit it
 - **THEN** the next `FLEZHA_E2E_RUNTIME=java` smoke run fails the snapshot naming the key
+
+#### Scenario: The requirement's own documentation path resolves
+- **WHEN** the paths this requirement names are resolved against the repository
+- **THEN** each SHALL exist, and the naming-conventions page SHALL be the one `docs/sdk/conformance.md`'s "Adding an SDK to the conformance suite" section links
 
 ### Requirement: The live factory set matches the manifest
 

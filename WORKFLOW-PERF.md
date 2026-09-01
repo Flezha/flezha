@@ -1,10 +1,9 @@
 # Flezha workflow operative performance — 2026-08-22
 
-Companion to `PERF-TEST.md` (stream operatives). A stream pays per record
-through one long-lived operative; a workflow pays per **instance lifecycle**
-and per **durable barrier**. This campaign built a bench for those paths —
-spawn → chain → completion, the `ProcCommit` barrier, the chat turn
-(`IterCommit`), suspension and the wake paths — measured them, found thirteen
+A stream pays per record through one long-lived operative; a workflow pays per
+**instance lifecycle** and per **durable barrier**. This campaign built a bench
+for those paths — spawn → chain → completion, the `ProcCommit` barrier, the
+chat turn (`IterCommit`), suspension and the wake paths — measured them, found thirteen
 defects (plus one found on the boot re-take), fixed eleven in this tree (one of them in the `process_hub` checkout),
 re-measured, and wrote the remaining architectural item up as the OpenSpec
 change `workflow-durable-path-throughput`. One 8-core developer box; numbers

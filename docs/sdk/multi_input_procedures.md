@@ -111,7 +111,7 @@ the operative's procedures instead.
 
 | Piece | Rust | Java |
 | --- | --- | --- |
-| `ChannelBuilder::merge`, `Merge`, `MergeSource`, the `TopologyIssue` variants; `attach_consumer` is the one place an edge is recorded and a second declaration on a mapped edge is refused | `sdk/rust/src/channel/builder.rs` | `flezha-sdk-api/.../channel/Merge.java`; `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java` (`MergeImpl`, `wireConsumer`) |
+| `ChannelBuilder::merge`, `Merge`, `MergeSource`, the `TopologyIssue` variants; `attach_consumer` is the one place an edge is recorded and a second declaration on a mapped edge is refused | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/Merge.java`; `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java` (`MergeImpl`, `wireConsumer`) |
 | `ConsumerEdge` (`procedure` + composed `transform` + optional `key`); `consumer_ids()` is the id-only view the graph walk and the workflow DAG use | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operative/ConsumerEdge.java` |
 | The one mapping site on the routing path | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` |
 | `ChainCtx::edge` + `extend_mapped` at the accumulate and re-seed sites; the entry-source refusal | `flz_core/src/workflow/{driver,spec}.rs` | shared core; refusal in `flezha-sdk-runtime/.../workflow/WorkflowSpec.java` |

@@ -7,6 +7,8 @@ TBD - created by archiving change refactor-0-baseline. Update Purpose after arch
 
 The repository SHALL carry one measuring script, `scripts/refactor_metrics.py`, that reports per area: production and test line counts, comment density split into doc and plain comments, the count of history-narrating comment markers, files over 800 lines, functions over 50 lines, production names over 32 characters, duplicate-code clusters, Elixir dependency cycles, the share of `async: false` ExUnit files, sleep and `refute_receive` counts in tests, lint warning counts, and suite wall-clock when a log is supplied. It SHALL write a baseline (`docs/refactor/baseline.json`), render a target list (`docs/refactor/targets.md`), and check the current tree against the baseline.
 
+The rendered target list SHALL name, in its own text, the commit it was measured at, and that commit SHALL be the commit the baseline records or a descendant of it. Whenever the baseline is re-recorded, the target list SHALL be re-rendered from the same measurement, so that both artefacts of one measurement name the same commit. A target list whose recorded commit is neither the baseline's nor a descendant of it was measured against a tree that is not this one — an earlier tree, or one this branch's history no longer carries — and SHALL NOT be quoted as the current residual work.
+
 #### Scenario: A ratcheted metric regresses in a blocking area
 
 - **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where an area listed as `blocking` in the baseline has a higher value for any ratcheted metric than the baseline records
@@ -21,6 +23,17 @@ The repository SHALL carry one measuring script, `scripts/refactor_metrics.py`, 
 
 - **WHEN** `--write-baseline` runs
 - **THEN** the baseline SHALL carry the hostname, CPU model and governor beside every timing or bench number, and a later `--check` SHALL compare timings only against a baseline from the same hostname
+
+#### Scenario: A stale target list is detectable by reading it
+
+- **GIVEN** a target list whose recorded commit is neither the commit the baseline records nor a descendant of it
+- **WHEN** the two files' recorded commits are compared
+- **THEN** the target list SHALL be treated as stale rather than as the current residual work, and the comparison SHALL reach that verdict whether the recorded commit is an earlier one or one this branch's history no longer carries
+
+#### Scenario: Re-recording the baseline re-renders the target list
+
+- **WHEN** the baseline is re-recorded at the close of an area
+- **THEN** the target list SHALL be re-rendered from that same measurement, and both files SHALL name the same commit
 
 ### Requirement: Tests wait for signals, not for time
 
@@ -295,4 +308,33 @@ Once `refactor-5d-observability` lands, the areas `lib/flezha/observability` and
 
 - **WHEN** a batch of this change splits or folds test files in the `test` area
 - **THEN** the resulting `async_false_share` SHALL be no worse than the baseline value, and any split that adds an `async: false` file SHALL be funded by a file that is `async: true` because it names no global state, not by relabelling one that does
+
+### Requirement: The test areas ratchet as blocking and a shared test setup has one implementation
+
+Once `refactor-7-tests` lands, the areas `test` and `test/apps` SHALL both be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree over the full scan set, so that any later rise in a ratcheted metric for either area fails `scripts/refactor_metrics.py --check`. No file under `test/**` SHALL exceed 800 lines. A setup block shared by three or more test modules SHALL exist once, as an `ExUnit.CaseTemplate` under `test/helpers/`, and a test module SHALL NOT carry a private copy of a helper that a module in `test/helpers/` already exports. The recording SHALL state, for each of the two areas, which ratcheted rows are derived from files outside that area, so that a later change to a different blocking area is not read as a regression here.
+
+#### Scenario: A test metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `test` or `test/apps` has more files over 800 lines, more narrative markers, more duplicate pairs, more sleeps, more `refute_receive` calls, a higher `async_false_share`, or more credo warnings than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: A shared setup is copied rather than reused
+
+- **WHEN** a test module declares a setup block that another test module already reaches through a case template under `test/helpers/`
+- **THEN** that SHALL be treated as a regression of this requirement, because two copies of one setup are two places a test can silently stop checking anything
+
+#### Scenario: A fold preserves every test it folds
+
+- **WHEN** a batch of this change concatenates two or more test modules into one file
+- **THEN** the per-module test count SHALL be recorded before and after and SHALL be equal, each source module SHALL keep its own `setup` and its own module tags, and a module tag that was module-wide on a source SHALL become a per-test tag when its siblings do not share it
+
+#### Scenario: A split is not paid for by the concurrency ratchet
+
+- **WHEN** a batch of this change splits a test file into two or more files
+- **THEN** the change SHALL hold `async_false_share` no worse than its baseline, and SHALL do so by folding files that are not `async: true` or by converting a file to `async: true` while naming the global state that test does not need — never by ordering a fold so that an `async: true` module is the first one in the file
+
+#### Scenario: A row that cannot resolve its claim is not run
+
+- **WHEN** this change reports the effect of splitting a test-app binary that a benchmark drives
+- **THEN** the row SHALL be declared `direction` with its measured floor, and the checksum of each arm's binary SHALL be recorded as the evidence in place of running it
 

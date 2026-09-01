@@ -1,11 +1,21 @@
 # Refactor board
 
-**Last updated**: 2026-08-31 — session 4. **Phase 1 complete (8 rows); areas 0a, 0b, 1s,
-1, 2, 3, 4, 5a, 5b, 5c, 5d, 5e-a, 5e-b and 6 are ALL DONE.** **35 areas are blocking
-ratchets and 100 % of `lib/` production lines are ratcheted** — the controller is
-finished. `refactor_metrics.py --check` **exit 0** at `887bf308`. **Next: area 7**
-(tests, helpers, test apps — 38 737 test_loc over 203 files, the last production-shaped
-row), then area 8 (docs reconcile). Awaiting the user: KI-52, KI-80, KI-81, KI-100.
+**Last updated**: 2026-09-01 — session 5. **EVERY REFACTOR AREA IS DONE EXCEPT AREA 8
+(docs reconcile).** Areas 0a, 0b, 1s, 1, 2, 3, 4, 5a–5e, 6 **and 7** are all closed;
+**36 areas are blocking ratchets** — `test/apps` was armed by area 7 as the 36th, so
+100 % of `lib/` production lines AND the whole test tree are now ratcheted.
+`refactor_metrics.py --check` **exit 0** at `f74a3c25`.
+
+**Session 5 landed 17 commits.** Work-queue rows 1, 2, 3, 3.5, 4.5 and 4.6 closed; rows 4
+and 5 closed by measurement with no worker needed; area 7 closed across four segments.
+**All five naming gates and the Format workflow are green on `dev` for the first time in
+the programme's life** — before this session `check-kind-naming` had been red for its
+entire duration and `check-module-naming` and Format were red too, which nobody had
+noticed because everyone read the first one and stopped.
+
+**Next: queue row 7 = AREA 8 (docs reconcile)**, then queue rows 8–10.
+**Awaiting the user: the Kafka overflow exposure was described wrongly when it was
+priced** — see that section; it is the only open item.
 
 **The board table's rows 4 and 6 read `pending` until session 4 corrected them** — both
 areas had been committed and armed hours earlier. Session 3's own header said so and the
@@ -109,8 +119,8 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 5e-a | `runner` + `operative` | `refactor-5e-a-runtime` | — | **done** | `2b1355f4` | **every ceiling 0/0, credo 25+2→0, 11 edges cut**, area −33 |
 | 5e-b | `convergence`, `sdk`, `authz`, root, rest | `refactor-5e-b-platform` | — | **done** | `2b1355f4` | **every ceiling row 0 across 15 areas, credo 80→39, 9 edges cut, repo cycles 2→1** |
 | 6 | `cli` | `refactor-6-cli` | 1 | **done** | `b73c940c`, `b5b0b1d8` | **every ceiling 0** (files>800, fn>50, long_names, markers); prod_loc 2831, duplicate_pairs 3; **−438 honest** (raw −513, 75 lines a classifier artefact); 31 help screens golden-pinned; both A/B rows `direction`, sha256 recorded in their place |
-| 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | **proposed** (approved 2026-09-01) | | |
-| 8 | Docs reconcile (`CLAUDE.md` index, dev_notes names) | `refactor-8-docs` | 7 | pending | | |
+| 7 | Tests, helpers, test apps | `refactor-7-tests` | 2,3,4,5e,6 | **done** | `5e3b32c6`, `0a9943dd`, `3d61b2a9`, `08edc609` | **`test` every ceiling 0** (files>800 6→0, markers 36→0, credo 81→0, sleeps 3→2), dup 108→78, 203→193 files, async budget spent NOTHING (0.788→0.777 under a 0.788 ceiling); **`test/apps` every ceiling 0**, armed as the **36th** blocking area at dup **140** (61 peer-driven); **2016 test macros before and after** |
+| 8 | Docs reconcile (`CLAUDE.md` index, dev_notes names) | `refactor-8-docs` | 7 | **done** | `962cf0a2`, `613d9fe4` + close | index bijection **110 = 110**; 27 dead symbol citations → 0; 18 link texts; 8 false README claims (survey said 4); `targets.md` regenerated (files>800 **52 → 1**, fn>50 **147 → 7**); 307 md files **0 broken links**; **4 proposal items REFUTED and left alone** |
 
 Status values: `pending` → `surveying` → `proposed` → `implementing` →
 `checkpoint` → `done`; `blocked` names the blocker below.
@@ -227,6 +237,68 @@ THERE moves this number in an area nobody touched. Told to RE-DERIVE the split, 
 without it the next session reads a peer's edit as a regression here.
 (3) **The worker does NOT arm it.** `--write-baseline` rewrites all 36 areas and needs
 `--lint`; that is mine, and `baseline.json` is mine.
+
+**SEGMENT D VERIFIED — and the stall check was a FALSE ALARM, correctly handled.** The
+worker was not stalled; it was deep in a large close-out and answered by finishing. The
+signals were real (nothing written in 10 min, ticks static, no process) and §6 obliges a
+message — but a message, not a kill, is what that rule prescribes, and that is exactly why
+it prescribes it.
+
+**`test/apps` ceilings all ZERO** — `files_over_800` 2 → 0, `narrative_markers` 4 → 0,
+`long_names`/`functions_over_50`/`prod_loc` already 0. `test` area byte-identical on every
+row. 2016 test macros at every point.
+
+**The `duplicate_pairs` question, settled by my own measurement.** Full scan **127 → 140**.
+I derived the split independently: **79 both-halves-inside, 61 PEER-DRIVEN** — `sdk/rust`
+**42**, `sdk/java` 12, `sdk/php` 5, `lib/mix` 2 — and **the peer count is 61 before AND
+after**, so the entire +13 is intra-area. The worker's correction to the survey holds:
+`sdk/rust` is **42, not the survey's 36** (its total of 61 was right, so one row was
+mis-added).
+
+**RULED: the +13 is accepted, not ratified carelessly.** It bought a hard ceiling
+(`files_over_800` 2 → 0), the arrangement space was MEASURED (10 modules → 107 narrow, 7 →
+102, and 7 is the packing floor for family-atomic units under an 800-line ceiling), and
+every one of the 12 new rust pairs is the SDK's mandatory `Procedure` surface — **two of
+them matching inside `durable_step!`/`stateless_step!` macro bodies, i.e. jscpd matching a
+macro against the code that macro exists to replace.** `sugar.rs`'s twins exist precisely
+to assert macro-generated == hand-written, so removing that duplication would destroy the
+assertion. Precedent is settled: area 3 recorded 5 → 65 pairs for one source, area 4
+refused 66 java import runs.
+
+**NARROW vs FULL is not a detail here.** Narrow `--area test/apps` reads 102 with **all**
+halves inside; the full scan reads 140 with 61 outside. jscpd's corpus determines what it
+can match, so the two are different questions and **`--check` compares the FULL scan** —
+that is the number to record.
+
+**The 8 sleeps stay, each read**: 6 are wedge-probe handlers that park for ever by contract
+(one per SDK, the `runner_pool_wedged` fixture), 2 are a 20 ms poll in the crash-resume
+release gate. None stands in for a settle.
+
+**+33 min — STALL CHECK SENT.** Three signals held simultaneously: **nothing written
+under `test/` in 10 minutes, ticks unchanged at 36 (12 open), no `beam.smp`/`cargo`/`jscpd`
+process, load fallen to 0.59.** Charter §6 says message AT ONCE rather than wait a second
+heartbeat "to be sure", so I did — a `SendMessage` is non-destructive and if the worker is
+composing its close-out report it simply says so. **Did NOT kill**: §1 records that a
+survey killed one minute before it wrote its files cost a full re-derivation, and this
+worker's output under `openspec/changes/` is gitignored, so a kill destroys work that
+appears in no diff. Asked it to settle the two numbers that are mine to record —
+`duplicate_pairs` at 102 (27 above the 75 that would be frozen) and `sleeps` unmoved at 8
+since it started — or to say if either exceeds what batch 7 can carry, which is a scope
+ruling I would rather make than have it grind.
+
+**Last seen +22 min**: `test/apps` `files_over_800` **1 → 0** and `narrative_markers`
+**4 → 0**; `duplicate_pairs` coming down **107 → 102** (the collapse is under way and the
+note landed) but still **27 above the 75 baseline**; `sleeps` still 8. Ticks unchanged at
+36 — deep in the collapse. **This is the number the checkpoint turns on.**
+
+Earlier at +11 min: 36 ticked / 12 left, `files_over_800` 2 → 1 — but
+**`duplicate_pairs` is up 75 → 107 mid-split**. That is the documented split shape (area 3
+recorded 5 → 65 for one source; segment B here read +7 then recovered), so not yet a
+problem. **Sent one note anyway**, because this batch is different: `test/apps` is NOT
+blocking, so `--check` stays silent on a rise, and **whatever it reads when the worker
+stops is what I freeze as the baseline forever**. Arming at 107 would not ratchet the area,
+it would ratify a regression and make it the floor. Told to finish the collapse, and to
+label any residual pairs whose other half sits in a peer blocking area.
 
 **SEGMENT C IS COMMITTED — `3d61b2a9`. VERIFIED. Batches 1–6 all ticked; only batch 7 (`test/apps`) and batch 8
 (close-out) remain.** Every ceiling row for `test` is **ZERO** — `files_over_800` 6 → 0,
@@ -3167,7 +3239,28 @@ can act on decays into a red CI nobody reads.
 
 ## Awaiting the user's decision
 
-### The Kafka overflow exposure was described wrongly when you priced it (2026-09-01)
+### RULED BY THE USER 2026-09-01: validate the policy at `init_provider/1`
+
+**Decided.** The user was re-shown the corrected failure mode and approved the first
+option: **validate the `queue_overflow` policy in `init_provider/1`**. Queued as row 4.7,
+to run after area 8 closes.
+
+This is NOT the coercion clause they declined earlier and their reasoning against that
+still stands — a `"block" -> {:ok, :drop_nothing}` read-side shim closes one name and
+leaves every typo silent. Validation closes the whole hole: `coerce_atom/1` validates
+**nothing** today, so ANY stored policy string that happens to be an existing atom enables
+silently and kills the producer worker at saturation. It is input validation, which
+`CLAUDE.md` mandates.
+
+**Also approved in the same turn**: finish area 8, then row 4.7, then **row 10 phase A —
+the SDK capability AUDIT only**, not the porting. Phase A answers, for each of the 9 × 4
+deferred capabilities, whether it is a missing fixture or a missing mechanism. Do not
+commit to phases B–D until that table exists.
+
+**NOT approved and NOT asked for: the `dev` → `main` merge.** I raised that `main` is ~307
+commits behind and the user did not address it. It stays theirs. Do not initiate it.
+
+### The original escalation, kept for the record — the exposure was described wrongly when it was priced
 
 **You decided row 2 on a description that measurement has now refuted.** You were told a
 stored cspec row carrying `queue_overflow: :block` means *"that plugin fails to enable on
@@ -3653,15 +3746,313 @@ was decided with the user; the detail blocks follow further down this section.
 | 4.5 | `pin-ruby-test-dependency` — KI-110, +KI-111 (classifier) and KI-112 | **DONE**. minitest/rake/async declared and pinned; CI reads the pins | 2026-09-01 |
 | 4.6 | `pin-sdk-test-toolchains` — the cross-SDK requirement, +KI-113 | **DONE**, archived. python/php/node fixed; the rule now written down in `code-quality-baseline` | 2026-09-01 |
 | 5 | **CI cause D′** — Ruby `cross-gem` | **CLOSED — external.** Ruled on the recorded evidence, no spend | 2026-08-31 |
-| 6 | **Area 7** (`refactor-7-tests`) — proposal written and `--strict` valid, **awaiting supervisor verification** before implementation | in flight | — |
-| 7 | **Area 8** (docs reconcile) — depends on 7 | pending | — |
+| 6 | **Area 7** (`refactor-7-tests`) | **DONE** — four segments, `5e3b32c6`/`0a9943dd`/`3d61b2a9`/`08edc609`, closed `f74a3c25` | — |
+| 7 | **Area 8** (docs reconcile) — depends on 7, now unblocked | **queued, NEXT**. Session 5 generated real drift for it: see *Area 8's inbox* below | — |
+| 4.7 | **DONE**, archived. Ratchet funded 7515→7515; KI-116 filed (P1, 8 sites). `validate-kafka-queue-overflow` — **RULED BY THE USER 2026-09-01**: validate the policy in `init_provider/1`. `coerce_atom/1` validates nothing, so any stored string that is an existing atom enables silently and kills the worker at saturation. NOT the coercion shim they declined | queued, after area 8 | 2026-09-01 |
 | 8 | `unify-cli-output-flag` — KI-80: **`--output <fmt>` wins**; `--json` becomes its alias or is dropped. Today `cluster status --json` ignores `--output json` and `audit list --output json` ignores `--json` | queued | 2026-09-01 |
 | 9 | `add-publish-readiness-checklist` — the pre-publish gate the user asked for; see below | queued | 2026-09-01 |
-| 10 | `sdk-durable-fixture-parity` — **every SDK carries every capability, and proves it with a test.** The user's instruction 2026-09-01. Large; phased; see below | queued | 2026-09-01 |
+| 10 | **PHASE A ONLY approved 2026-09-01** — the audit: for each of the 9 × 4 deferred capabilities, missing FIXTURE or missing MECHANISM? Phases B–D wait on that table. `sdk-durable-fixture-parity` — **every SDK carries every capability, and proves it with a test.** The user's instruction 2026-09-01. Large; phased; see below | queued | 2026-09-01 |
 
 **`## Awaiting the user's decision` is now EMPTY of open items for the first time since
 the section was created.** KI-52 is deferred into row 9's checklist; KI-80, KI-100,
 KI-81 and the Kafka rename are all decided and queued above.
+
+### Area 8 survey — VERIFIED and APPROVED 2026-09-01, with four rulings
+
+`openspec/changes/refactor-8-docs/`, `--strict` valid, tree untouched. 13 items, ~11.5 h,
+8 batches + a gated 1b. **Passes §2**: batch 6 carries a real MERGE — `README.md`'s
+"Wiping runtime data" collapses into the existing `docs/operations/reset.md`, because it
+duplicates that document AND is wrong — deletion-funded −55/+10. No operator follow-up, no
+prose-style rewrites, no code changes.
+
+**IT CORRECTED ME, and this is the third correction against me this session.** My inbox
+item 6 said the `--timing` dev note is WRONG. It is not: the note was **true when
+written**, and commit `a58f8144` (area 6 batch 0, KI-83 — *"recording one measurement stops
+deleting the others"*) later made recording MERGE. I verified the commit. What is false is
+its **`CLAUDE.md` index line**, which loads into every session and still asserts the old
+behaviour as present fact. That is the survey's own rule discriminating correctly, and it
+is a better rule than mine was.
+
+**Its history-vs-present rule is the survey's most valuable output.** A sentence is
+HISTORY when anchored to the change that wrote it (a commit, a date, a measurement taken
+then, past tense) and is never edited — editing it destroys the evidence the note exists to
+carry. It is a PRESENT-TENSE CLAIM when a reader would act on it today, in four kinds: a
+coordinate offered as a pointer, a rule for the next worker, a claim about an instrument or
+gate (**instruments outlive the change**), or a prediction. Plus the asymmetry that decides
+cases: **the same sentence is history in the dev note and standing guidance in its
+`CLAUDE.md` index line**, because the index loads every session. The rule reaches THREE
+DIFFERENT verdicts on my three items, which is the test of a real rule.
+
+**Valuable negatives, recorded so nobody pays twice**: 134 Elixir module names, 181
+`FLEZHA_*` vars both directions, 68 telemetry events, every markdown link repo-wide — **0
+stale in each**. `baseline.json` is clean, so inbox item 5 is already discharged by area 7's
+re-baseline.
+
+**RULING 1 — `WORKFLOW-PERF.md` stays at root.** This repo has an established root-reports
+convention (it sits beside `incident_log.md`). Fix its false "companion to `PERF-TEST.md`"
+line; do not move the file.
+
+**RULING 2 — the `openspec/specs/**` path row is REFUSED, at the survey's own price.** ~62
+unresolved tokens, ~10 real, each needing a `## MODIFIED Requirements` block carrying every
+surviving scenario — **~8 large deltas for prose no gate reads, every one risking a silent
+scenario deletion**. Only R13 is taken, and only because there a spec's NORMATIVE sentence
+contradicts a document that same sentence governs.
+
+**RULING 3 — the docs-citation gate is APPROVED IN PRINCIPLE and QUEUED AFTER area 8.**
+~120 lines; it would have caught **27 of the 76** findings automatically. It is code, so not
+this area's. **The order is load-bearing**: build it against a FIXED tree so it lands green.
+A gate that lands red is KI-94 exactly — red for its whole life, and nobody can merge past
+it.
+
+**RULING 4 — batch 1b: write only what the evidence supports.** Ten changes owe dev notes
+and the material is the archived change dir, untracked and on this machine only. **Never
+fabricate**: a note that acquires claims nobody measured is worse than a missing one. Write
+the notes the commit message and diff can support; for any that cannot, leave BOTH note and
+index line absent and list them here as owed. The `CHANGELOG` gap belongs to queue row 9,
+not here.
+
+### ROW 10 PHASE A running — the SDK capability audit (the user's ruling: phase A ONLY)
+
+Spawned at `bf6cfae9`. Last seen +10 min: `proposal.md` written, tree CLEAN — correct, an
+audit edits nothing.
+
+**This is the last thing the user authorised.** Their turn approved: finish area 8 → row
+4.7 → row 10 **phase A only**, with phases B–D explicitly gated on the table phase A
+produces. So when this returns and is committed, **the authorised work is complete** and
+the right move is to report and STOP the loop rather than roll into phase B — the gate is
+theirs, not mine.
+
+**Still queued and NOT authorised to start**: rows 8 and 9, phases B–D, the docs-citation
+gate (ruling 3), **KI-115** (two specs mandating behaviour the code lacks) and **KI-116**
+(P1 — the injected `convert_value/2` catch-all plus `subscribe/3`'s throw-only catch, 8
+sites). KI-116 is the most serious thing on the list and was found AFTER the user set the
+order; they have been told and can reorder.
+
+### ROW 4.7 DONE — `validate-kafka-queue-overflow`, the user's ruling, verified
+
+**My brief's premise was wrong on TWO counts and the worker corrected both, at the code.**
+(1) `convert_value/2` is NOT the validating function it appears to be:
+`ProviderBehaviour.__before_compile__` injects `defp convert_value(_field, value), do:
+{:ok, value}` at **`provider_behaviour.ex:529`**, so it answered `{:ok, :drop_odlest}` —
+"reuse the existing validator" alone would have left the atom face of the defect open. The
+table had to be made TOTAL first. (2) The defect has **two faces**: a non-policy string that
+IS an existing atom (`"block"`) was accepted silently, while one that is NOT
+(`"drop_odlest"`) **raised `ArgumentError`** — and `Extension.Table.subscribe/3`
+(`table.ex:93`–`:97`) catches **`:throw` only**, so that raise ESCAPED the enable instead of
+refusing it. I verified both at the source.
+
+**The ratchet moved and was FUNDED, not waived.** First cut measured `lib/flezha/plugin
+prod_loc` 7515 → 7518. The three policies were enumerated **twice already** (strings in the
+`case`, atoms in the guard) and the new clause would have been a third; one
+`@queue_overflow_policies` attribute now feeds all three. Final: **7515 → 7515**, 0
+regressions, `baseline.json` untouched.
+
+**No `## MODIFIED Requirements` block, and the reasoning is right**: the spec ALREADY says
+the retired spelling *"SHALL NOT be accepted on this option, on any path: no alias, no
+coercion, no deprecation window"* — that text was correct and the code simply did not honour
+it. Modifying a requirement to restate what it says risks dropping a scenario for no gain.
+The ADDED requirement states the GENERAL case, and the retired spelling becomes one
+instance of it.
+
+**KI-116 filed from the sibling survey** — and it is P1, because two facts compose: the
+injected permissive `convert_value/2` catch-all makes an apparent validator inert, and
+`subscribe/3` catching `:throw` only means a raise escapes the enable. Eight sites,
+including the SAME FILE's `auth_mechanism/1` with a **wider blast radius** (captured into
+`auth_fun:` and re-invoked by `WorkerRegistry` on every client restart, so the raise kills
+the SHARED registry) and `postgres.ex:112`, where a bad `:unhealthy_after_ms` is swallowed
+into `{:fail_open, …}` and **silently disables that plugin's health verdict for ever**. A
+fix must treat the mechanism, not the sites.
+
+Spawned at `8197cfc0`. Last seen +10 min: OpenSpec change written; `kafka.ex`,
+`kafka_test.exs` and the plugin doc in flight.
+
+**Note for the close: the worker spawned its own `Explore` sub-agent** for the
+sibling-provider survey. That is read-only (no Edit/Write in its tool set), so it does not
+break the one-writer invariant — **but §1 forbids ending a session with ANY subagent
+alive**, and `ListAgents` is the check, not memory. Confirm BOTH are gone before declaring
+anything finished.
+
+## THE REFACTOR PROGRAMME IS COMPLETE — 2026-09-01
+
+**Every area 0a → 8 is done.** 36 blocking ratchets; 100 % of `lib/` production lines, the
+whole test tree and `test/apps` are ratcheted. All five naming gates, the gate self-test,
+the Format workflow and `refactor_metrics.py --check` are green on `dev`.
+
+**What remains is the work QUEUE, not the areas**: row 4.7 (`validate-kafka-queue-overflow`,
+ruled by the user), then row 10 phase A (the SDK capability audit, phase A only), then rows
+8 and 9. Plus the docs-citation gate (ruling 3) and KI-115.
+
+### Area 8 segment C — VERIFIED and CLOSED. The last segment of the last area.
+
+**It refuted a fifth proposal item and doubled a count.** The survey priced README at 4
+false claims; it carried **8**. The four extra sit in the two sections the survey treated
+as MERE DUPLICATION — which turns those from a dedup into truth fixes: README claimed
+**SIGINT** is a shutdown trigger (`signal_handler.ex:31` says it is *not* claimed, ERTS
+reserves it), named a `{:dets, …}` registry backend (it is `{:durable_ets, …}`), gated the
+coordinator on a `cluster.healthy` marker (upstream says *"There is no marker any more"*),
+and cited `:process_hub_recovery_timeout_ms`, **a key that occurs nowhere in the tree but
+that README line**. I verified the SIGINT one at the source.
+
+**The merge landed on truth, not tidiness**: three README sections collapsed into
+`reset.md`, `graceful_shutdown.md` and `auto_restore_on_boot.md`, and **the wrong copy is
+the one that went** — README −72/+19.
+
+**`d40ccdc9` IS NOT IN THIS BRANCH'S HISTORY.** `targets.md` was rendered at a commit that
+is a real object dated 2026-08-29 but an **orphan of the 2026-08-30 `filter-repo`
+rewrite** — neither ancestor nor descendant of HEAD. That killed design §5's freshness
+rule twice over: equality would flag a conformant file stale on the very commit
+introducing the rule (KI-94's shape), and an ancestry test alone would not have caught the
+actual stale file either. The delta now says the render's commit SHALL be the baseline's
+**or a descendant of it**, naming both failure modes. **A measurement beat a design, again.**
+
+`targets.md` regenerated: files>800 **52 → 1**, production fn>50 **147 → 7**, long names
+**38 → 1**, duplicate pairs 712 → 623; 0 missing paths (was 71 of 439).
+
+**Both spec deltas machine-verified**, scenario bodies compared byte-for-byte: 3 carried
+verbatim + 2 new; 4 carried verbatim + 1 new, the requirement body differing by exactly one
+token. Titles unchanged, so no `## RENAMED` block.
+
+**KI-115 filed — two published specs mandate behaviour the code does not have**, and area 8
+was right to leave both: a spec is normative, so correcting it is a requirement change, not
+a doc fix. One is plainly a stale spec (`make docker-build-multiarch`, deliberately removed
+by `463e9f40`). **The other is NOT established and I refused to guess**: a spec MUSTs a
+`[:flezha, :recovery, :orphaned_plugin]` event that `lib/` emits **0** times, and the entry
+says so — either the skip behaviour exists without its observability (a defect of the class
+this session closed repeatedly) or the design was superseded. **Amending the spec to match
+the code would ratify a silence the spec deliberately forbade.**
+
+Spawned at `613d9fe4`. Last seen +11 min: **49 of 57 boxes ticked** (catching up segments
+A and B's, which both workers left to me — a misreading corrected in the brief), 8 open;
+`README.md`, `WORKFLOW-PERF.md` and `targets.md` in flight.
+
+### Area 8 segment B — VERIFIED and COMMITTED `613d9fe4`
+
+27 dead symbol citations corrected, each located at its `def` first. **Its most valuable
+act was REFUSING an edit**: the survey said `flz operative io_listen` does not exist. It
+does — dispatch entry (`operative.rs:17`), handler (`:329`), usage string (`:330`), help
+line (`help.rs:285`) — and `docker/dev/README.md:170` matches it argument for argument.
+**I verified that myself.** Correcting a true line is worse than leaving a false one:
+the next reader has no reason to doubt a fresh correction.
+
+**That is the FOURTH proposal error in this area** (a false verb; a `/2` that is also
+`/1`; "the same three Rust paths" where `fast.rs` has TWO successors and the coordinator's
+own moduledoc disclaims the data plane; a `config_manager.ex` that does not exist).
+Segment C is briefed that **refuting a task is a success, not a failure**.
+
+**One citation was NARROWED, not re-pointed** — it named a private `journal_input/3`, and
+both public entries are the door for EVERY input rather than the durable branch the
+sentence describes, so naming either would have been a new false claim. The pointer is now
+the module, which a reader can act on.
+
+**`configuration.md` claims to document every knob** and carried five of six
+`FLEZHA_CONVERGENCE_*` variables — including two it marks INERT — while omitting the only
+one `lib/` actually reads.
+
+### AREA 8 SEGMENT A — VERIFIED, four rulings back for segment B
+
+Batches 1, 1b and 2 done. **Verified by me**: all six gates exit 0; **307 markdown files,
+0 broken links** (the survey's clean reading preserved); the `CLAUDE.md` ↔ `dev_notes`
+bijection is **exact at 110, empty in BOTH directions**; scope is `docs/` + `CLAUDE.md`
+only. Every new note opens with a **Provenance** paragraph saying it was reconstructed from
+named commits and that nothing in it is a measurement the note took — which is the honest
+form and exactly what Ruling 4 asked for.
+
+**The rule worked in its hardest case.** `refactor-4-java-sdk.md`'s `--timing` sentence was
+ANNOTATED, not edited (it is anchored history and explains a workaround its author actually
+took); its **index line was corrected**, because that line asserts the claim as present fact
+to every session. Same discrimination on `test/support/` (a discharged prediction, one
+clause appended) and on `await_stream_bound/2` (anchored history, NOT edited — only the
+index line gained a pointer).
+
+**Batch 1b: SIX written, FOUR not — and not-written was the right answer.** The four are
+refused because their substance is already at the point of use: `known-issues-housekeeping`
+is written into `known_issues.md`'s own header, `correct-runtime-and-conformance-docs` is
+enforced by a gate proved red first, and two more live in the KI register and the specs.
+**A note that restates a document at its point of use is worse than no note**, and the
+worker also found `check-module-naming` red on its OWN new note and fixed it with record
+blocks rather than rewording — after `git add -N`, because §11e cuts in the flattering
+direction here too.
+
+**RULING A — keep both extra notes.** `fix-opaque-module-names` (created a permanent gate,
+carries the `:erpc.call` value-position trap) and `pin-ruby-test-dependency` (no archive dir
+survives, but `ebec40aa`'s body is a complete design record, and the note SAYS SO in its
+first paragraph). Both clear Ruling 4's bar.
+
+**RULING B — `unmask-java-resume-test` stays unwritten, but its lesson does not.** A whole
+note for one sentence is the ceremony this programme avoids; the sentence is real. I
+appended it to **KI-33** myself: *a runtime-swapping tag can make a test never run the
+runtime it exists to exercise* — the `@tag skip:` meant the java arm of a java defect went
+unrun, so a wrong diagnosis survived on evidence nobody could contradict.
+
+**RULING C — `charter.md` §11's `--timing` line IS work, and goes to segment B.** The
+worker judged it past-tense and left it, then flagged that the paragraph beneath names two
+other silences and never names this one, so a reader comes away thinking the `--timing`
+silence is outstanding. **The charter is a RULE document — read for present guidance — so
+the same asymmetry that governs `CLAUDE.md` governs it.** One clause naming `a58f8144`.
+
+**RULING D — KI-103 stays filed; the worker was right to leave it.** A dev note calls
+`FleetManager.rebind_data_streams/1` the convergence Loop's remedy while the Loop mints no
+such op. That is false today — but the correction is bound to a CODE decision (delete the
+function or wire it), and area 8 writes no code. It is a §1b defect, already filed.
+
+### NOTED FOR A FUTURE SESSION — this board is now its own cost
+
+`STATE.md` is **~3 700 lines / 220 KB** and the skill's first instruction is to read it.
+That is a real tax on every session, and it grows every tick. It is NOT area 8's row (area
+8 reconciles docs against CODE, and this file is neither stale nor false — it is just
+large). But someone should eventually split the closed areas' detail into an archive file
+and leave the board as board. **Dropping a line does not delete the history** — the same
+rule the memory index uses.
+
+### AREA 8 SURVEY RUNNING (2026-09-01) — and its stall rule is different
+
+Fresh `general-purpose`, spawned at `dcab25cb`. Last seen +22 min: writing — `proposal.md`
+210 lines, `design.md` 304, specs dir present, `tasks.md` still to come. At +11 min it had
+written nothing, which was CORRECT — a survey reads and greps long before it writes.
+
+**For a SURVEY, "nothing written in 10 minutes" is NOT a stall signal.** §1 records that a
+survey killed one minute before it wrote its files cost a full re-derivation of a 267-row
+table, and its output lives under gitignored `openspec/changes/`, so it appears in no diff
+and no `git status`. Judge a survey by `ListAgents` elapsed/spend, not by the tree.
+
+**Briefed that its value is NOT restating the eight items below** — it is the systematic
+sweep for drift nobody has noticed, since doc drift is invisible until someone looks. Told
+I will reject any item without a §2 reuse decision (for docs: does this text belong here,
+move to an existing document, or should two near-duplicate documents become one — a docs
+area that only edits words and never merges two documents saying the same thing has not
+done the work), any prose-style rewrite (the bar is TRUE or FALSE, not better or worse),
+and anything needing a code change — a doc false because the CODE is wrong is a §1b defect
+and my ruling, not a docs fix.
+
+### Area 8's inbox — drift this session created or found, ready for its survey
+
+Everything below is measured, not suspected. Area 8 should verify each and fix it.
+
+1. **`CLAUDE.md`'s per-change index owes ~8 new lines** — one per change landed today:
+   `close-kind-naming-gate-red`, `rename-kafka-queue-overflow`, `fix-record-block-latch`,
+   `collapse-observability-source-behaviours`, `pin-ruby-test-dependency`,
+   `pin-sdk-test-toolchains`, `refactor-7-tests`. The maintenance rule in `CLAUDE.md`
+   requires exactly one line each, newest first.
+2. **`docs/refactor/targets.md` is stale for the seventh area running** and area 7's survey
+   found it **names four paths that do not exist**. Regenerating is `--targets`.
+3. **`docs/dev_notes/` still says `test/support/`** in `refactor-5b-plugin.md:140`–`:142`
+   (which also predicts "area 7 owns `test/support/` and can build the case module" — now
+   false in its path, true in its substance) and `elixir-sdk-native-transport.md:76`.
+4. **`docs/dev_notes/refactor-0-tests.md` cites `NodeTestHelper.await_stream_bound/2`**,
+   which no longer exists — found by area 7's survey, still unfixed.
+5. **`docs/refactor/baseline.json`'s `duplicate_pairs_list` still names
+   `test/support/...`** in three entries. Cosmetic: they are recordings, and the next
+   `--write-baseline` refreshes them.
+6. **A dev note is WRONG and cost me a near-miss**: `refactor-4-java-sdk.md` says
+   *"`--timing` REPLACES the whole timings map instead of merging into it"*. The tool's own
+   docstring says it **merges** — "recording one number never retires another and never
+   re-stamps a measurement it did not take" — and I verified it: `mvn_test_sdk_java`
+   survived at its own `aa9465f1`. Following the note would have made me either lose that
+   timing or falsely re-stamp it. **Fix the note.**
+7. **KI-107's origin was wrong** and is corrected in the entry: `git log -S` names
+   `716061cf` (area 5c's `cli_manager` split), not `retire-cluster-snapshot-remnants`.
+8. **The area 7 survey's `sdk/rust` peer-pair row said 36; it is 42.** Its total of 61 was
+   right, so one of its four rows was mis-added. Recorded in the area 7 close.
 
 ### Area 7 survey — VERIFIED and APPROVED 2026-09-01
 

@@ -87,6 +87,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       topic = Map.fetch!(opts, :topic)
       partition = coerce_int(Map.get(opts, :partition, 0))
       plugin_id = Map.get(opts, :plugin_id, "default-#{System.unique_integer([:positive])}")
+      overflow = Map.get(opts, :queue_overflow) || :drop_nothing
 
       # SASL credentials ride a closure into the client start (mirroring the
       # Postgres provider): they never land in worker state, child args, or
@@ -111,9 +112,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
         lane: rem(partition, System.schedulers_online())
       }
 
-      worker_opts = producer_opts(opts, identity, topic, partition, plugin_id)
-
-      with :ok <- validate_window(worker_opts),
+      with {:ok, policy} <- convert_value(:queue_overflow, overflow),
+           worker_opts = producer_opts(opts, identity, topic, partition, plugin_id, policy),
+           :ok <- validate_window(worker_opts),
            {:ok, producer_pid} <- ProducerSup.ensure_worker(worker_opts) do
         opts =
           opts
@@ -229,7 +230,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       {:ok, ctx}
     end
 
-    defp producer_opts(opts, identity, topic, partition, plugin_id) do
+    defp producer_opts(opts, identity, topic, partition, plugin_id, queue_overflow) do
       idempotent = coerce_bool(Map.get(opts, :idempotent, false))
 
       [
@@ -240,7 +241,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
         linger_ms: coerce_int(Map.get(opts, :linger_ms, 10)),
         max_batch_bytes: coerce_int(Map.get(opts, :max_batch_bytes, 1_048_576)),
         queue_max: coerce_int(Map.get(opts, :queue_max, 10_000)),
-        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow, :drop_nothing)),
+        queue_overflow: queue_overflow,
         queue_block_timeout_ms: coerce_int(Map.get(opts, :queue_block_timeout_ms, 5_000)),
         retries: coerce_int(Map.get(opts, :retries, 5)),
         retry_backoff_ms: coerce_int(Map.get(opts, :retry_backoff_ms, 100)),
@@ -386,21 +387,23 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defp convert_value(:idempotent, value), do: parse_bool(value, "idempotent")
     defp convert_value(:auto_create_topic, value), do: parse_bool(value, "auto_create_topic")
 
+    @queue_overflow_policies [:drop_nothing, :drop_oldest, :drop_newest]
+
+    defp convert_value(:queue_overflow, value) when value in @queue_overflow_policies,
+      do: {:ok, value}
+
     defp convert_value(:queue_overflow, value) when is_binary(value) do
-      case value do
-        "drop_oldest" -> {:ok, :drop_oldest}
-        "drop_newest" -> {:ok, :drop_newest}
-        "drop_nothing" -> {:ok, :drop_nothing}
-        other -> {:error, "Invalid value for queue_overflow: #{other}"}
+      case Enum.find(@queue_overflow_policies, &(Atom.to_string(&1) == value)) do
+        nil -> {:error, "Invalid value for queue_overflow: #{value}"}
+        policy -> {:ok, policy}
       end
     end
 
-    defp convert_value(:queue_overflow, value)
-         when value in [:drop_oldest, :drop_newest, :drop_nothing],
-         do: {:ok, value}
-
-    defp coerce_atom(v) when is_atom(v), do: v
-    defp coerce_atom(v) when is_binary(v), do: String.to_existing_atom(v)
+    # Total, because `init_provider/1` reads the stored option through this
+    # table: a value that is not a policy is refused at enable time rather than
+    # reaching `overflow/4` and killing the worker when the queue first fills.
+    defp convert_value(:queue_overflow, value),
+      do: {:error, "Invalid value for queue_overflow: #{inspect(value)}"}
 
     defp parse_hosts(hosts) when is_binary(hosts) do
       hosts

@@ -575,3 +575,40 @@ The option remains operator configuration on a controller-side plugin provider. 
 - **WHEN** a source, document or specification line names `:queue_overflow` and the retired policy spelling, with no sibling policy value beside it
 - **THEN** `scripts/check-overflow-naming.sh` SHALL exit non-zero naming the file and line
 
+### Requirement: The queue-overflow policy is validated where it is read
+
+`init_provider/1` SHALL refuse a `:queue_overflow` value that is not one of the three policies, in either its atom or its CLI-string spelling, and SHALL do so before any producer worker is started. The refusal SHALL name the option and the offered value, and SHALL be returned as `{:error, binary()}` — the arm the plugin host already handles — never raised.
+
+An absent option, and an option explicitly set to `nil`, SHALL take the default policy: the option is optional, and only a value that was supplied and is not a policy is an error.
+
+Validation SHALL live on the path an operator's stored configuration travels. A check reachable only from the CLI string-map builder does not satisfy this requirement, because a plugin spec and a stored capability row reach `init_provider/1` without ever constructing the provider struct.
+
+A non-policy value SHALL NOT be coerced, defaulted or carried into the worker. Carrying it there makes an invalid configuration indistinguishable from a valid one until the queue reaches `:queue_max`, at which point the worker exits and the records it held are lost.
+
+#### Scenario: A misspelled policy is refused at enable time
+
+- **GIVEN** a plugin configured with `queue_overflow` set to `:drop_odlest`
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}` where the message names `queue_overflow` and the offered value
+- **AND** no producer worker SHALL be registered for that `(plugin, topic, partition)`
+
+#### Scenario: A misspelled policy in its string form is refused the same way
+
+- **GIVEN** a plugin configured with `queue_overflow` set to the string `drop_odlest`
+- **WHEN** the plugin is enabled
+- **THEN** `init_provider/1` SHALL return `{:error, message}` naming the option and the offered value
+- **AND** it SHALL NOT raise, whether or not the string happens to name an atom already loaded in the VM
+
+#### Scenario: Every policy is accepted in both spellings
+
+- **GIVEN** a plugin configured with `queue_overflow` set to any of `:drop_nothing`, `:drop_oldest`, `:drop_newest` or their string forms
+- **WHEN** the plugin is enabled
+- **THEN** the producer worker SHALL be started with that policy in force
+- **AND** the options returned to the host SHALL be unchanged by the validation
+
+#### Scenario: An unset policy takes the default
+
+- **GIVEN** a plugin whose configuration omits `queue_overflow`, or sets it to `nil`
+- **WHEN** the plugin is enabled
+- **THEN** the producer worker SHALL be started with `:drop_nothing` in force
+

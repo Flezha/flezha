@@ -127,7 +127,7 @@ alone — an entry channel has no producer.
 
 | Piece | Rust | Java |
 | --- | --- | --- |
-| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`), `TopologyIssue` | `sdk/rust/src/channel/builder.rs` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java`, refusals in `flezha-sdk-api/.../operative/StreamOperativeConfigurationException.java` |
+| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`), `TopologyIssue` | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java`, refusals in `flezha-sdk-api/.../operative/StreamOperativeConfigurationException.java` |
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operative/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` |
 | Workflow containment (`extend_mapped`) and refusals | `flz_core/src/workflow/{driver,spec}.rs` | shared core |

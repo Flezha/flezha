@@ -40,6 +40,74 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-116 · Plugin providers coerce operator-supplied values without validating them, and a raise escapes the enable
+
+Found by the sibling survey `validate-kafka-queue-overflow` was required to run, 2026-09-01.
+**Reported, not fixed** — scope beyond Kafka's `:queue_overflow` was the supervisor's call.
+
+**The shared mechanism, and why it is P1 rather than a wart.** Two facts compose:
+
+1. `ProviderBehaviour.__before_compile__` injects `defp convert_value(_field, value), do:
+   {:ok, value}` (`provider_behaviour.ex:529`) at the end of **every** provider, so a
+   `convert_value/2` table that looks like a validator answers `{:ok, anything}` for any
+   shape its explicit clauses do not match.
+2. `Extension.Table.subscribe/3` (`extension/table.ex:93`–`:97`) catches **`:throw` only**:
+
+       catch
+         :throw, {:init_provider_failed, reason} -> {:error, reason}
+
+   So a `FunctionClauseError` or `ArgumentError` raised inside `init_provider/1` **escapes
+   the enable** rather than refusing it.
+
+Together: a bad operator value is either accepted silently or blows past the one place
+designed to turn it into a refusal.
+
+**Sites, each verified at the code:**
+
+- **`kafka.ex:183`–`:184` `auth_mechanism/1`** — byte-for-byte the `coerce_atom/1` just
+  deleted, and partial. Reached from `init_provider/1:97` → `resolve_auth/1:164`, with a
+  documented closed set (`kafka_producer.md:90`) delivered as a string. No
+  `convert_value(:auth, …)` clause exists. Terminal check is in the dependency and
+  **raises**. **Wider blast radius than the defect just fixed**: the same function is
+  captured into `auth_fun:` (`kafka.ex:108`) and re-invoked by `WorkerRegistry` on every
+  client restart, so the raise kills the **shared** registry.
+- **`kafka.ex:180`–`:181` `auth_key_atom/1`** — same shape; unknown-but-existing keys are
+  then dropped by `Map.take` in the dep, so `%{"user" => "svc"}` silently means *no
+  username*.
+- **`ProviderBehaviour.coerce_bool/1` (`:143`–`:145`) and `coerce_int/1` (`:140`–`:141`)
+  validate nothing and are partial.** Their own docstring says *"for `init_provider/1`,
+  where opts are pre-validated"* — **that premise is false**: the only pre-validation on
+  that path is the generated `validate_opts/1`, which checks key NAMES and never a value.
+  Live callers: `postgres.ex:59`/`:142` (`:auto_create`, `:ssl`), `kafka.ex:235`/`:256`.
+  `ssl: "yes"` is a `FunctionClauseError` that escapes the enable. Total counterparts
+  (`parse_bool/2`, `parse_int/2`) exist and are wired only into `build/1`, which KI-93
+  records has no production caller.
+- **`postgres.ex:112`** reads `:unhealthy_after_ms` with `coerce_int/1` on **every health
+  probe**; the raise is swallowed by `worker_health/3`'s `safe_verdict/2` into
+  `{:fail_open, …}`, so a bad value **silently disables that plugin's health verdict for
+  ever**.
+- **`operative_forward.ex:59`** declares `@known_opts` (`:54`) so `validate_opts/1` is
+  generated — and `init_provider/1` **never calls it**, unlike `websocket.ex:166` and
+  `http_poll.ex:84`. The key-level twin: an unknown option is silently ignored.
+- **`websocket/subscription.ex:303`–`:312`** — `type = if pcp["type"] == "binary", do:
+  :binary, else: :text`, a two-value enum with no check, so `"Binary"` silently sends a
+  text frame.
+- **`monitored_io_forward.ex:55`** reads `:heartbeat_interval` raw into
+  `Process.send_after/3`; its `convert_value/2` clause is `build/1`-only.
+- **`postgres.ex:12`** moduledoc claims *"the `@known_opts` table below"* — the attribute
+  does not exist; the module is strict on neither path.
+
+**Clean, recorded so nobody re-checks**: `Websocket.:subscription_ack_mode` (total
+`Subscription.ack_mode/1` on the init path, downstream matcher has a catch-all) and
+`HttpPoll` (every tunable bounded on the init path, `validate_opts/1` called first).
+
+**A fix must** treat the two composing facts, not only the sites: make the provider
+`convert_value/2` table **total** where it is used as a validator (an injected permissive
+catch-all is what makes an apparent validator inert), and decide whether `subscribe/3`
+should turn a raise into a refusal rather than letting it escape. Fixing sites one at a
+time leaves the mechanism that generates them.
+
+
 ### KI-72 · The QUIC driver reports no driver stats at all, so nothing above it can see the transport
 
 - **Severity**: P2 · **established**, and it is why KI-56's own reproduction
@@ -374,6 +442,49 @@ below is all that survives — which is enough to write it again.
 
 ## P2 — gates that lie, and time sinks
 
+### KI-115 · Two published specs mandate behaviour the code does not have
+
+Found by area 8's docs sweep, 2026-09-01. **Both are spec-vs-code gaps, not doc drift**, so
+area 8 correctly left them alone — a spec is normative, and correcting it is a requirement
+change, not a documentation fix.
+
+**A · `openspec/specs/controller-packaging/spec.md:43` SHALL-mandates a removed Make
+target.** The requirement opens *"`make docker-build-multiarch` SHALL produce manifests for
+exactly `linux/amd64` and `linux/arm64`"*. That target does not exist:
+
+    $ grep -n 'docker-build-multiarch' Makefile
+    (no output)
+
+`463e9f40` *"build: publish multi-arch controller image via a native per-arch script"*
+removed it deliberately; the manifest list is now `make docker-publish` →
+`scripts/publish-image.sh:88`–`:106`, run once per architecture host. **This one is a stale
+SPEC** — the mechanism was replaced and the requirement was not carried across. A fix must
+be a `## MODIFIED Requirements` block naming the current mechanism, carrying every
+surviving scenario verbatim.
+
+**B · `openspec/specs/plugin-installation/spec.md:409` MUST-mandates a telemetry event that
+is emitted nowhere.** The requirement says `Recovery.Coordinator` *"MUST emit a
+`[:flezha, :recovery, :orphaned_plugin]` telemetry event with the plugin id"*:
+
+    $ grep -rn 'orphaned_plugin' lib/ | wc -l
+    0
+    $ grep -rn ':flezha, :recovery' lib/ | wc -l
+    0
+
+**Which side is wrong is NOT established and must not be guessed.** `lib/flezha/boot/
+recovery_hooks.ex` emits a different event about ProcessHub's orphan *reconcile*
+(`candidates`/`orphans`/`started`/`duplicates`/`elapsed_ms`) — a different mechanism about
+a different thing. So either the skip-and-report behaviour exists without its observability
+(**a defect of the class this programme has closed repeatedly today: something silent that
+a spec says should be loud**), or the requirement describes a superseded design.
+
+**A fix must** first answer which: does `Recovery.Coordinator` skip an orphaned plugin row
+at all today, and if so does anything report it? If the behaviour exists and only the event
+is missing, that is a code defect and the spec is right. If the whole mechanism was
+replaced, the spec is stale like A. **Do not amend the spec until that is measured** —
+amending it to match the code would ratify a silence the spec deliberately forbade.
+
+
 ### KI-6 · `ruff check` is red, and is deliberately not gated
 
 - **Where**: `sdk/python`; `scripts/format-apply.sh` runs `ruff format` only.
@@ -680,6 +791,46 @@ below is all that survives — which is enough to write it again.
 
 ## P2 — tests that lie or leak
 
+### KI-114 · `release_cli_system_test` cannot pass from inside `mix test`, and a failed setup leaks a live daemon
+
+- **Severity**: P2 · `mix test --include system` reports `1 invalid` on every run, and a
+  failed run poisons later ones. Pre-existing — `FLEZHA_STATE_DIR` appears **0** times in
+  that file at `refactor-baseline-7`, so it predates the test refactor; the state-root
+  claim it trips over landed with `support-multi-controller-colocation`.
+- **Where**: `test/flezha/plugin/installer/release_cli_system_test.exs:61`–`:73` (the `env`
+  list) and `:74`–`:84` (the `on_exit` ordering).
+- **Evidence** — the daemon's own log, reproduced by hand outside the test and again after
+  `mix release --overwrite`, deterministic 3 of 3:
+
+      ** (exit) {:bad_return, {{Flezha.Application, :start, ...},
+        {:EXIT, {%RuntimeError{message: "state root .../app_data/state is already claimed
+        (held by pid 3361080): two controllers writing one entity WAL tree corrupt it, so
+        this one will not start. Set FLEZHA_STATE_DIR to a state root of this controller's
+        own ..."},
+        [{Flezha.Boot.StateRootLock, :claim!, 1, ...},
+         {Flezha.Application, :start_controller, 0, ...}
+
+      Result: 0 tests, 1 invalid
+      daemon did not become ready within 60000ms
+
+- **Mechanism, named to the function**: the `env` list sets `FLEZHA_DATA_DIR`,
+  `FLEZHA_PLUGIN_ROOT` and `FLEZHA_SOCKET_FILES_PATH` but **not `FLEZHA_STATE_DIR`**, and
+  `Paths.state_root/0` (`lib/flezha/state/paths.ex:90`) falls back to `app_data/state` —
+  which the running `mix test` BEAM already holds. **The refusal message names the exact
+  fix and the test does not take it.**
+- **The second half is worse than the first.** The flunk happens at `:77` and the `on_exit`
+  that runs `flzvm stop` is registered at `:79`, so a failed `setup_all` **leaks a live
+  release daemon holding `flezha@127.0.0.1`**. Every later attempt in that release
+  directory then dies with `Protocol 'inet_tcp': the name flezha@127.0.0.1 seems to be in
+  use`, while `flzvm pid` still answers (it is node-name agnostic) so `ready?/1`'s first
+  clause passes against the **wrong node**. That cascade was observed and the leaked daemon
+  cleaned up by hand.
+- **A fix must** add `{"FLEZHA_STATE_DIR", Path.join(tmp, "state")}` to the env list — what
+  the refusal instructs — **and** register the `on_exit` **before** `wait_until_ready!/1`,
+  so a failed setup cannot leak the daemon. Both halves, or the next failure poisons the
+  next run.
+
+
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
 Recorded so a future red run is not mistaken for a regression. **Green in
@@ -782,6 +933,12 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   tests, `reset_recovery_states/0` on a process-global cache, the singleton
   convergence `Loop` on a 1 s tick while `:663` also drives `Loop.tick_now/0` — and
   **none of them is *the* mechanism.** A fix with no mechanism is a guess.
+- **MOVED 2026-09-01 by `refactor-7-tests` segment C**: this test now lives at
+  **`test/flezha_handover_test.exs:81`** in `FlezhaTest.Handover`. A **fourth sighting**
+  was observed there in a full `mix test` (`assert m.migrated >= 1` / `left: 0`), green
+  alone (8 passed) and green in the `--include multi_node` superset (1932 passed) — the
+  recorded load-sensitive signature exactly. The coordinates below are the pre-move ones
+  and are kept because the evidence was gathered against them.
 - **`test/flezha_test.exs:389`** — *"graceful shutdown drains an operative to a
   peer through live handover"*. Mechanism established and **the fix is not
   test-side.** `:408` asserts `ow_state.arrived_via_hotswap?`, which is
@@ -4583,7 +4740,7 @@ output. That is the same argument `AuditLog.Codec.stringify_value/1` carries.
 
 | Issue | Closed by |
 |---|---|
-| KI-33 · Java workflow resume re-runs committed producers | `java-diamond-resume` (`4de341b5`) — **and its diagnosis was wrong in both halves: nothing was re-run, and the defect is not in resume.** The mechanism is one line of the emit funnel: `ActivationDispatcher.EmitContext.collectEdgeOutputs` added one `Edge` output **per consumer** of the producing channel. That is the correct *stream* shape — `flz_core`'s `host/activation.rs:509` destructures `Edge { channel, consumer }` and routes on it — and the wrong *workflow* one: `host/workflow.rs:70` matches `Edge { channel, .. }`, **discards the consumer**, collects every output as one released value, and the driver then fans that batch out to each child itself (`driver.rs::run_iteration` → `Children::accumulate`). `DiamA`'s `dfan` has two consumers, so every downstream node's work doubled. The fix is the arm the Rust SDK already has (`WorkflowCollectAdapter::emit`, one `sink.collect(value)`): on a structured workflow class one emitted value becomes exactly ONE edge output on the producing channel, untransformed and unkeyed, and each consumer evaluates its own edge at delivery in `valuesForEntity` — the seam a live run and a journal re-seed both cross. **Two probes refuted the filed diagnosis**, both on a `java_runner.jar` rebuilt from HEAD. (1) The journal holds exactly **one** `proc_committed` per `proc_idx` 0…4, every one at `iter=0`, on both runtimes — no procedure was re-run and no journal gate failed. What it shows instead is proc 0 releasing **two** byte-identical values on one channel (`handoff_n=2`, `outbox_n=1`, bytes `[17,17]`) where rust writes `handoff_n=1`; procs 1–3 `handoff_n=2` and the join `outbox_n=4` against rust's `2` all follow from that. (2) **The same 9 payloads arrive with no crash at all** — one runner, `FLEZHA_WORKFLOW_E2E_RELEASE` set, no SIGKILL, no rebind, no resume — `[a, c, c, b, b, j:c, j:c, j:b, j:b]` with the same `handoff_n=2` at proc 0. So the entry's *"the resume re-runs producers whose handoff was already journaled"* and its *"a fix must journal-gate the Java resume"* are both refuted; the resume-skip contract was working the whole time. The `@tag skip:` that hid this is deleted, not narrowed, and a **no-crash** diamond scenario now runs beside the crash one in `test/system/workflow_crash_resume_e2e_test.exs` so the next reader cannot re-acquire the resume reading. Red-then-green, measured: that file on java was **17/21** before the fix (both diamond cells and both no-crash cells failing, uds and quic) and **21/21** after, with rust **21/21** either way; the narrowest proof is `WorkflowDispatchTest.workflowStageReleasesOneEdgeOutputPerValue`, red on HEAD with `Expected size: 1 but was: 2` over `Edge[channel=1, consumer=1]` and `Edge[channel=1, consumer=2]`. The shared contract was what was wrong — `sdk-poll-core`'s producer-side rule stated the stream shape unconditionally — so it is amended for every SDK, and `workflow-branching` gains the scenario that a channel's consumer count SHALL NOT multiply the released batch. One defect found on the way and deliberately not fixed: KI-55 |
+| KI-33 · Java workflow resume re-runs committed producers | `java-diamond-resume` (`4de341b5`) — **and its diagnosis was wrong in both halves: nothing was re-run, and the defect is not in resume.** The mechanism is one line of the emit funnel: `ActivationDispatcher.EmitContext.collectEdgeOutputs` added one `Edge` output **per consumer** of the producing channel. That is the correct *stream* shape — `flz_core`'s `host/activation.rs:509` destructures `Edge { channel, consumer }` and routes on it — and the wrong *workflow* one: `host/workflow.rs:70` matches `Edge { channel, .. }`, **discards the consumer**, collects every output as one released value, and the driver then fans that batch out to each child itself (`driver.rs::run_iteration` → `Children::accumulate`). `DiamA`'s `dfan` has two consumers, so every downstream node's work doubled. The fix is the arm the Rust SDK already has (`WorkflowCollectAdapter::emit`, one `sink.collect(value)`): on a structured workflow class one emitted value becomes exactly ONE edge output on the producing channel, untransformed and unkeyed, and each consumer evaluates its own edge at delivery in `valuesForEntity` — the seam a live run and a journal re-seed both cross. **Two probes refuted the filed diagnosis**, both on a `java_runner.jar` rebuilt from HEAD. (1) The journal holds exactly **one** `proc_committed` per `proc_idx` 0…4, every one at `iter=0`, on both runtimes — no procedure was re-run and no journal gate failed. What it shows instead is proc 0 releasing **two** byte-identical values on one channel (`handoff_n=2`, `outbox_n=1`, bytes `[17,17]`) where rust writes `handoff_n=1`; procs 1–3 `handoff_n=2` and the join `outbox_n=4` against rust's `2` all follow from that. (2) **The same 9 payloads arrive with no crash at all** — one runner, `FLEZHA_WORKFLOW_E2E_RELEASE` set, no SIGKILL, no rebind, no resume — `[a, c, c, b, b, j:c, j:c, j:b, j:b]` with the same `handoff_n=2` at proc 0. So the entry's *"the resume re-runs producers whose handoff was already journaled"* and its *"a fix must journal-gate the Java resume"* are both refuted; the resume-skip contract was working the whole time. The `@tag skip:` that hid this is deleted, not narrowed, and a **no-crash** diamond scenario now runs beside the crash one in `test/system/workflow_crash_resume_e2e_test.exs` so the next reader cannot re-acquire the resume reading. Red-then-green, measured: that file on java was **17/21** before the fix (both diamond cells and both no-crash cells failing, uds and quic) and **21/21** after, with rust **21/21** either way; the narrowest proof is `WorkflowDispatchTest.workflowStageReleasesOneEdgeOutputPerValue`, red on HEAD with `Expected size: 1 but was: 2` over `Edge[channel=1, consumer=1]` and `Edge[channel=1, consumer=2]`. The shared contract was what was wrong — `sdk-poll-core`'s producer-side rule stated the stream shape unconditionally — so it is amended for every SDK, and `workflow-branching` gains the scenario that a channel's consumer count SHALL NOT multiply the released batch. One defect found on the way and deliberately not fixed: KI-55. **The generalisable lesson, recorded here because `unmask-java-resume-test` was judged not to warrant a dev note of its own (area 8, 2026-09-01): a runtime-swapping tag can make a test never run the runtime it exists to exercise.** The `@tag skip:` did not merely hide a failure — it meant the java arm of a java defect went unrun, so the filed diagnosis survived on evidence nobody could contradict. Check what a skip actually stops running before trusting what a test reports. |
 | KI-48 · `ControlUnit` exits abnormally whenever a runner tree comes down | `finish-the-suite-log-gate` — `ControlChannel.send_control/3` now wraps its `GenServer.call` in the two-clause `catch` `ControlUnit.ping_runner/2` already used one layer up: `:exit, {:timeout, _} -> {:error, :timeout}` and `:exit, reason -> {:error, {:control_channel_exit, reason}}`. Design D1's Shape B, in the single funnel all six `ControlUnit` `handle_call`s cross; no caller changed (nine sites read, each already carrying an `{:error, reason}` arm) and the child list was **not** reordered — starting `ControlChannel` first would open a window in which `handle_info`'s `GenServer.cast` to an unregistered `ControlUnit` returns `:ok` and drops an SDK reply, trading an `[error]` line for a silent drop. **Two corrections to this entry, both measured.** (1) Its premise was **inverted**: `runner_supervisor.ex:18`–`:39` lists `ControlUnit` **first** and `ControlChannel` third, and the reverse-order terminate sweep is what stops the channel first — so its own fix wording ("stop `ControlUnit` before `ControlChannel` in the child list") reads as *list it earlier*, which is already the case and would change nothing; to stop it first you must move it **later**. (2) Its reproduction claim did not hold: `test/flezha_test.exs` alone printed the line in **0 of 2** runs with the guard removed, against the "2 of 2" recorded when it was filed. The evidence is the full run instead — one hit at baseline, **zero** across four post-fix full runs including two on fixed seeds. Both new cases were run **red first** (`1/3 passed`: the caller *exits* rather than being answered) and are green after |
 | KI-49 · `overwatch_suspension_test` leaks a retrying task onto the next test's stub | `finish-the-suite-log-gate` — the six tests that spawn a real bind task now `await_migrate_task/1`, which reads the `%{pid: pid}` handle they already hold and asserts `{:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}`. That is strictly stronger than the `assert migrate_task != nil` it follows, and the `^inst` pin is untouched — the entry forbids loosening it and nothing did. **Two corrections.** (1) **Six tests leak, not one**: `:116`, `:155` (the one filed), `:185`, `:275`, `:320` and `:330`; the last two spawned through `stub_rebind/0` and **discarded the state** as `{:reply, :ok, _}`, so their leak was invisible to anyone grepping for `migrate_task != nil`. (2) The `startup attempt 1 failed … — retrying` line the entry quotes is **unreachable while the test is running**: the module's `setup` overrides `:overwatch_retry_backoff_ms` to `[1]`, so `rest == []` on the first attempt and there is no ladder. It appears because the orphan reaches `resolve_runner/4` only after its test's `on_exit` has **restored the production backoff** — which is the mechanism by which the task survives long enough to reach the next test at all. Measured: **3 of 10** seeds red at HEAD (777, 432113, 5150 — each `20 passed`, exit 0, two `[error]` lines), **0 of 10** on the same ten seeds after, at an unchanged 1.6 s. The await is proved load-bearing: expecting a wrong reason turns exactly those six red |
 | KI-50 · `Extension.PhaseTest` "uncertain health probe" fails about 1 run in 3, in-suite only | `finish-the-suite-log-gate` — the structural defect is fixed and **the rate was never reproduced at this HEAD**; both halves are stated because the second one matters. The module's hand-rolled `:telemetry.attach` is replaced by `MessageTestHelper.forward_telemetry/3`, which gained an optional metadata predicate, and each test now mints its own `plugin_id` and forwards only events carrying it — so a foreign `fail_open` is never delivered rather than merely waited past (no settle, no `async: false`, both of which this entry forbids). **Not reproduced in 15 runs** at this HEAD: `phase_test.exs` alone 5/5 green, the plugin tree 8/8 and then 5/5 green, and two full `mix test` runs green — so the ~1-in-3 claim stands neither confirmed nor refuted here. **The census explains why the window is narrow.** A scratch telemetry recorder plus an `ExUnit` formatter on one monotonic clock, over two full runs: **exactly four `fail_open` emits per run**, identical population both times — three from `phase_test` itself and **one** from `table_health_test.exs` (`plugin_id: "r"`) — and the two `async: true` emitters **never overlapped** in either run. Design D3's second named candidate, `Convergence.Probe`'s Loop tick, emitted **zero** times in both runs and is removed from suspicion. What replaces the missing race as proof is a **deterministic** one: with only the filter argument removed, the change's new scoping case fails with `Unexpectedly received message {:fail_open, …, %{plugin_id: "foreign_fail_open_1380"}}` — the entry's mechanism, on demand |

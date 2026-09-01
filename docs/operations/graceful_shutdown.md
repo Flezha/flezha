@@ -62,7 +62,7 @@ Every ProcessHub redistribution (node join, convergence rebind, the drain above)
 Overwatch for consent (`ProcessHub.Strategy.Migration.MigrationConsent`); it answers `:defer`
 while a move would tear mid-critical work:
 
-| Busy signal                         | Safe barrier (Overwatch calls `Migration.migration_ready/2`) |
+| Busy signal                         | Safe barrier (Overwatch calls `Migration.signal_migration_ready/1`) |
 | ----------------------------------- | ------------------------------------------------------------ |
 | Late-input correction pending       | The correction transaction completes                         |
 | Durable workflow not suspended      | Suspension at a committed iteration boundary                 |

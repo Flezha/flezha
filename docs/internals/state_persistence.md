@@ -38,16 +38,16 @@ a claims ETS table (`:flezha_state_namespaces`, keyed `{state_root, class}`) →
 → `_system`. An Operative records the claim when it binds; a class owned by another namespace
 refuses with `{:namespace_conflict, class, owner}`, which makes cross-namespace state hijack
 impossible at the path seam; a class found under `_system` is adopted (one atomic rename) by the
-first real claimant; `Registry.delete_files/1` releases the claim once the class directory is
+first real claimant; `Paths.delete_files/1` releases the claim once the class directory is
 gone. `Flezha.Boot.StatePathMigrator` runs at `Application.start/2` and lifts an older tree under
 `_system/`; the `.layout` marker, not the tree shape, makes re-runs no-ops. The `runner_id` is
 never part of the layout: a restarted runner's state ships to it on attach via `RestoreInitState`.
 
 `entity_key` is URL-safe base64 with a leading `_` when it contains characters outside
-`[A-Za-z0-9_.-]` (`Registry.encode_entity_key/1` / `decode_entity_key/1`). A workflow instance's
+`[A-Za-z0-9_.-]` (`Paths.encode_entity_key/1` / `decode_entity_key/1`). A workflow instance's
 `proc.journal` and `inbox.wal` ride the same `WalWriter` + `FsyncBatcher` substrate under two
-reserved keys (`_proc_journal`, `_proc_inbox`; `Registry.journal_id/1` / `inbox_id/1`), write no
-dedup side-file, and are skipped by `Registry.scan_dir/1` along with `.tmp`, `.rewriting` and
+reserved keys (`_proc_journal`, `_proc_inbox`; `Paths.journal_id/1` / `inbox_id/1`), write no
+dedup side-file, and are skipped by `Paths.scan_dir/1` along with `.tmp`, `.rewriting` and
 unknown suffixes, so nothing surfaces as a phantom Entity.
 
 ## Module map
@@ -84,9 +84,9 @@ its last runner for a namespace) ships an empty payload. The handover stamps `so
 empty payload the destination runs `WalTransfer.pull_operative/3` against that node before the
 ordinary replay. The transfer is destination-driven — the source only answers reads
 (`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails
-the pull instead of stranding a partial file. Each file lands through `Registry.atomic_install/2`
+the pull instead of stranding a partial file. Each file lands through `Paths.atomic_install/2`
 (a `.transferring` sibling, fsynced, renamed; any failure discards it and leaves that Entity
-cold). A requested name is resolved against `Registry.entity_files/1`, never joined onto the state
+cold). A requested name is resolved against `Paths.entity_files/1`, never joined onto the state
 directory, so a peer cannot read arbitrary paths. Telemetry `[:flezha, :state, :wal_pulled]` /
 `[:flezha, :state, :wal_pull_failed]`. Source files stay; the Retention sweeper reaps orphans.
 
@@ -255,15 +255,15 @@ resets the strike.
 `Flezha.State.Retention` ticks every `:time_travel_retention_check_interval_ms` (default
 60 000 ms) and sweeps three things:
 
-- **Entities** — per `Registry.all_entities/0`, `PersistenceResolver.retention_hours/1` (default
+- **Entities** — per `Paths.all_entities/0`, `PersistenceResolver.retention_hours/1` (default
   6). `0`: keep only the latest snapshot and truncate the WAL to its seq. Otherwise the oldest
   snapshot with mtime `≤ now - retention_hours * 3600` is kept, older ones reaped, and the WAL
   keeps `seq > kept_seq`. The rewrite is `entity.wal.rewriting → rename`, so a mid-rewrite crash
   leaves the original intact; a writer with nothing below the cut answers at once.
 - **Finished workflows** — a class whose `completion.record` is older than
-  `PersistenceResolver.workflow_completed_retention_hours/1` (default 72 h) loses its retained
+  `PersistenceResolver.completed_retention_hours/1` (default 72 h) loses its retained
   state and record.
-- **Input logs** — `InputLog.sweep/1` per class: a cast that truncates below
+- **Input logs** — `InputLog.Sweep.run/1` per class: a cast that truncates below
   `min(watermark, now - hold_window)` and emits `[:flezha, :state, :input_log_frozen_watermark]`
   when the log grows while the watermark stays put.
 
@@ -423,7 +423,7 @@ body the bare `entity_id`) on the secondary stream. `StreamChannel` honours it o
 with the `:dynamic_entities?` capability — any other kind gets a warning and is ignored, so a
 durable workflow's state is never dropped out from under it — and routes it to
 `Flezha.State.Supervisor.delete_entity/1`, which closes the writer, drops the `FsyncBatcher` dirty
-mark, unlinks every path in `Registry.entity_files/1` (`Registry.delete_files/1`) and drops the
+mark, unlinks every path in `Paths.entity_files/1` (`Paths.delete_files/1`) and drops the
 Entity's input-log watermark entry (`InputLog.forget_entity/2`). The delete is idempotent. A later
 input for the same key cold-starts a fresh Entity from seq 0; there is no restore-from-disk on
 recreate. `flz state delete` calls the same function and prints a confirmation.
@@ -433,7 +433,7 @@ recreate. `flz state delete` calls the same function and prints a confirmation.
 | Crash window | Recovery at next boot |
 |---|---|
 | WAL append, before fsync | The last record may be lost; `scan_for_last_valid_seq/2` truncates the partial tail. The SDK re-ships records with `seq <= last_persisted_seq`, which the writer drops as duplicates. |
-| Snapshot `.tmp` write | Ignored by `Registry.scan_dir/1`; overwritten on the next compaction. |
+| Snapshot `.tmp` write | Ignored by `Paths.scan_dir/1`; overwritten on the next compaction. |
 | Snapshot renamed, WAL not yet truncated | Snapshot durable, WAL still holds covered records; restore applies the snapshot then folds them — idempotent. |
 | `.rewriting` from retention or truncation | Filtered by `scan_dir/1`; the original WAL is intact and the rewrite re-runs on the next sweep. |
 
@@ -498,7 +498,7 @@ writer realigns — truncates the WAL, removes the snapshots, adopts `seq - 1` a
 only from the Entity's current owner binding: a newest-wins takeover unbinds the superseded
 session before binding the new one ([`runner_identity.md`](runner_identity.md) "The WAL binds to
 the owner") — fenced `StreamChannel`s refuse durable-write forwards, and the writer refuses frames
-from a session `FleetManager.superseded_session?/1` marks superseded with `{:error, :stale_writer}`,
+from a session `FleetManager.Marks.superseded_session?/1` marks superseded with `{:error, :stale_writer}`,
 consulted only when the frame's session differs from the epoch owner so the owner's append path
 pays nothing. Refusals emit `[:flezha, :state, :stale_writer_refused]` once per (Entity, session)
 episode, count into `stale_writer_refused_total`, release any credit debit immediately and never
@@ -569,7 +569,7 @@ time. Run it by hand after touching
 green gap in this file's history means nobody ran it, not that it passes.
 
 Note that `flz state at` takes the DECODED entity key: `_.wal` on disk is
-`Registry.encode_entity_key/1`'s rendering of the empty key, not a path
+`Paths.encode_entity_key/1`'s rendering of the empty key, not a path
 fragment.
 
 ## See also

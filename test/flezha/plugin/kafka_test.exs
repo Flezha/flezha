@@ -148,6 +148,58 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
   end
 
+  describe ":queue_overflow validation" do
+    test "a value that is not a policy is refused at preparation" do
+      for value <- [:drop_odlest, "drop_odlest", "DROP_OLDEST", 5] do
+        plugin_id = "overflow-bad-#{System.unique_integer([:positive])}"
+
+        assert {:error, "Invalid value for queue_overflow: " <> _} =
+                 Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{queue_overflow: value})),
+               "expected #{inspect(value)} to be refused"
+
+        assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+      end
+    end
+
+    test "the retired policy spelling is refused on the enable path too" do
+      plugin_id = "overflow-retired-#{System.unique_integer([:positive])}"
+
+      assert {:error, "Invalid value for queue_overflow: block"} =
+               Kafka.Producer.init_provider(
+                 build_opts(plugin_id, 0, %{
+                   # overflow-naming-record:begin
+                   queue_overflow: "block"
+                   # overflow-naming-record:end
+                 })
+               )
+
+      assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+    end
+
+    test "every policy is accepted, as an atom and as its CLI string" do
+      cases = [
+        {:drop_nothing, :drop_nothing},
+        {:drop_oldest, :drop_oldest},
+        {:drop_newest, :drop_newest},
+        {"drop_nothing", :drop_nothing},
+        {"drop_oldest", :drop_oldest},
+        {"drop_newest", :drop_newest},
+        {nil, :drop_nothing}
+      ]
+
+      for {value, expected} <- cases do
+        plugin_id = "overflow-ok-#{System.unique_integer([:positive])}"
+
+        assert {:ok, _opts, pid} =
+                 Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{queue_overflow: value})),
+               "expected #{inspect(value)} to be accepted"
+
+        assert :sys.get_state(pid).queue_overflow == expected
+        ProducerSup.stop_worker(plugin_id, @topic, 0)
+      end
+    end
+  end
+
   describe "build/1 conversion" do
     test "parses integer params from binary CLI input" do
       assert {:ok, %Kafka.Producer{queue_max: 20_000, retries: 7, linger_ms: 25}} =

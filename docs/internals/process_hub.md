@@ -195,7 +195,7 @@ snap-back. A move goes through `child_data_alter` on the rejoining node.
   timestamp; the cleanup tick (`FLEZHA_RUNNER_KEEPALIVE` + 10 s) reaps it once
   `FLEZHA_RUNNER_KEEPALIVE` (default 30 000 ms) has elapsed and reclaims the hub if vacant.
 
-On reconnect `FleetManager.runner_connect/3` starts the hub if needed (after
+On reconnect `FleetManager.Session.runner_connect/3` starts the hub if needed (after
 `Orchestrator.await_cluster_ready/0`), registers the runner's `child_registered` handler, starts
 its `RunnerSupervisor`, transfers the control stream and sends `AssignRunnerId` then
 `ConnectSocket`. Orphaned operatives are rebound by the convergence loop, not by FleetManager;
@@ -207,7 +207,7 @@ session continuity is covered in [runner identity](runner_identity.md).
    inside its close handler; `StreamChannel.io_in/3` answers `{:error, :no_stream}` (emitted as
    `[:flezha, :stream, :drop]`) while unbound. The next data stream for the runner is bound by
    `StreamAcceptor` (UDS) or `Transport.Server` (QUIC) through
-   `StreamSup.bind_stream_to_first_nil/2`: an atomic `{:bind, ref}` call that a live channel
+   `StreamPool.bind_stream_to_first_nil/2`: an atomic `{:bind, ref}` call that a live channel
    answers with `:already_bound`, so an in-flight binding is never overwritten.
 2. **`AddOperative` is idempotent.** The shared `flz_core` handler (Rust and Java) answers a
    duplicate `operative_id` with the existing instance's metadata when `runner.has_operative`
@@ -249,7 +249,7 @@ migrate the child back, and the loop re-applies.
 - **Same-node rebind** (`{:runner_migrate, runner_id}`) — the binding commits only once the new
   runner has answered; `Heal.rebind/2` then runs `State.Recovery.resync_for_overwatch/2`, which
   replays the per-Entity WAL into the new binding. A parked or suspended operative un-parks
-  through the same call (`Lifecycle.spawn_migrate_task/1`).
+  through the same call (`Operative.Migration.spawn_migrate_task/1`).
 - **Cold boot** — the durable registry plus the per-Entity WAL and snapshots under
   `app_data/state/...` ([state persistence](state_persistence.md)). There is no periodic
   in-memory snapshot loop and no cluster-wide snapshot CLI.

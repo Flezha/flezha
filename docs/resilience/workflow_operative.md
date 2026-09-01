@@ -64,7 +64,7 @@ The journal is cut only for a class whose `compensable_procs` is `[]` (a saga or
 replans from the committed history); a cuttable loop can only be rewound to its current
 iteration.
 
-**The durable inbox.** `Ingest.journal_input/2` is the one append-before-forward seam: post-start
+**The durable inbox.** `Ingest` holds the one append-before-forward seam: post-start
 input goes to `<state_root>/<ns>/<inst>/<inst>/inbox.wal` before it is forwarded, stamped
 `flz.inbox_offset` (WAL seq + 1; offset 0 means nothing consumed); a failed append is not
 forwarded. The record header is the first 16 bytes of `sha256(dedup_id)` — `flz.msg_id` when the
@@ -76,7 +76,7 @@ lowers), so a re-sent consumed message is absorbed rather than re-delivered.
 **Suspension.** A `PerInput` loop whose inbox stays empty past `FLEZHA_WORKFLOW_PARK_IDLE_MS`
 (default 5 000; read in the shared core, so Rust and Java agree) at a committed boundary tears
 its run down without a completion and ships `IterPark`. The controller journals
-`parked(iter[, wake_deadline_ms])` **before** `Lifecycle.suspend/3` evicts the instance
+`parked(iter[, wake_deadline_ms])` **before** `Migration.suspend/3` evicts the instance
 (`RemOperative`, runner tag `nil`); a park whose append fails leaves the instance bound and
 logged. The Overwatch and the registry entry stay, and the Overwatch **hibernates**
 (`:hibernate` on both suspension entries, releasing its bind-time heap).
@@ -103,7 +103,7 @@ the pending tail wakes it again).
 re-armed with `Process.send_after` from the journal at boot, so it survives a controller
 redeploy. It fires by appending a synthetic empty inbox item (`flz.wake = timer`), so a racing
 message and timer collapse into one rehydration. At boot an instance whose journal ends in
-`parked` with nothing undelivered (`Lifecycle.suspended_on_disk?/1`) enters suspended without
+`parked` with nothing undelivered (`Migration.suspended_on_disk?/1`) enters suspended without
 binding; undelivered input outranks the park. Inspect with `flz state journal <operative/instance>`
 (entries tagged with their iteration, `iter_committed` with its consumed offset, the final
 `parked`) and `flz state inbox <operative/instance>` (offsets, and which are still undelivered).
@@ -144,7 +144,7 @@ where a stream operative would [park the payload](data_durability.md#dead-letter
 flz operative rewind <instance> --to-iteration N
 ```
 
-`Lifecycle.rewind_to/2` runs, in order:
+`Migration.rewind_to/2` runs, in order:
 
 1. **The guard**, before anything durable changes. `N` must be a committed iteration (the refusal
    names the committed range), and every procedure above `N` that staged plugin output must be in

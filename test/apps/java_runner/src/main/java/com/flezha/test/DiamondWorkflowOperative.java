@@ -9,7 +9,7 @@ import com.flezha.sdk.state.StateHandle;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The fan-in diamond for the crash-resume e2e (`workflow-branching` D4), the
+ * The fan-in diamond for the crash-resume e2e, the
  * Java mirror of the Rust test app's {@code diamond_workflow}:
  *
  * <pre>

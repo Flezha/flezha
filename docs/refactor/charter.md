@@ -606,7 +606,7 @@ the truth and says nothing.**
 | silence | what it did | found by |
 |---|---|---|
 | `--lint` omitted | wrote `null` into every `credo_warnings`/`clippy_warnings`, and `--check` **skips a null on either side** — disarming 72 ratchets | area 4 segment A, in the diff |
-| `--timing` given | **replaced** the timings map rather than merging, so recording one deleted the rest | area 4 segment F, recording one |
+| `--timing` given | **replaced** the timings map rather than merging, so recording one deleted the rest — `a58f8144` made a recording merge | area 4 segment F, recording one |
 | **untracked files** | invisible to every metric, and since refactors *add* files the error is **one-directional** — a phantom −599 on `cli` | area 6 batch 1 |
 
 **The operational rule, until [[KI-87]] lands**: the supervisor runs

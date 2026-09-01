@@ -141,6 +141,10 @@ shape), and one worker pair. Each priced and refused rather than merged.
   pair to a ratcheted metric. Held, not forced — and **owed to area 7**, which
   owns `test/support/` and can build the case module all three need. `test`
   `files_over_800` holds at its baseline 7, so nothing regressed by waiting.
+  **Discharged**: area 7 moved `test/support/` into `test/helpers/` (`5e3b32c6`)
+  and built the case modules — `http_poll_case.ex`, `outbox_case.ex`,
+  `installer_case.ex`, `state_case.ex`, `system_case.ex` — so the prediction's
+  path is stale and its substance is met.
 - **24 credo `Refactor.Nesting` extractions in one batch, and two were wrong** —
   a `&verify_entry(&1, dir)` capture is arity-1 where `reduce_while` needs 2,
   and that first version read the file TWICE where the original read once; and

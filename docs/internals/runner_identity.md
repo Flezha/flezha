@@ -39,7 +39,7 @@ a re-placement (`replace_operative` in [`convergence_loop.md`](convergence_loop.
 ## Reconnect = binding swap
 
 On any connect the controller mints a fresh session token and brings up its supervision tree, then
-`FleetManager.resolve_stable_identity/4`:
+`FleetManager.Session.resolve_stable_identity/4`:
 
 1. looks up the presented `stable_id`'s prior session token in `stable_sessions`; a first connect just records the mapping;
 2. if found (a reconnect or a live-session takeover), `fence_superseded_session/1` unbinds the old session from every Entity write path **before** the new session is bound (below);
@@ -67,7 +67,7 @@ flight — queued in its `StreamChannel`s or in a `WalWriter` mailbox — when t
 Without a fence such a frame presenting a divergent seq base would realign the WAL away from the
 rightful owner's lineage. The fence is ordered unbind-old **before** bind-new, in two halves:
 
-- **Superseded mark** — `FleetManager.mark_session_superseded/1` records the old token in a public ETS set (`superseded_session?/1`) first. `WalWriter` consults the mark only when a frame's session differs from the epoch owner (the owning session's append path gains no per-record check) and refuses with `{:error, :stale_writer}` instead of realigning or appending — this covers frames a wedged channel flushes only after the swap. Marks are pruned after 10 minutes on the periodic runner-cleanup tick.
+- **Superseded mark** — `FleetManager.Marks.mark_session_superseded/1` records the old token in a public ETS set (`superseded_session?/1`) first. `WalWriter` consults the mark only when a frame's session differs from the epoch owner (the owning session's append path gains no per-record check) and refuses with `{:error, :stale_writer}` instead of realigning or appending — this covers frames a wedged channel flushes only after the swap. Marks are pruned after 10 minutes on the periodic runner-cleanup tick.
 - **Channel flip** — `fence_superseded_session/1` then calls `:fence_write_path` (bounded, 1 s) on each of the old session's `StreamChannel`s; a fenced channel refuses every durable-write forward (`entity_state_change`, `entity_state_snapshot`, `delete_entity_state`, compensation markers) at the binding.
 
 Refusals are loud but per episode: the first refusal per (Entity, superseded session) emits

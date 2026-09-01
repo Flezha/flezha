@@ -213,6 +213,11 @@ is recorded at **30.0 s**, the wall clock of
   command line drops the keys that were already there. `mvn_test_sdk_java` was
   therefore written into the recorded file directly, leaving `mix_test_exunit`
   and `mix_test_wall` on the stamps they were measured under.
+  **Superseded by `a58f8144`** (area 6 batch 0, [[KI-83]]): recording now MERGES
+  — `baseline_payload` adds to the record, never retires a measurement it was
+  not asked about and never re-stamps one it did not take, so a stale entry is
+  retired by deleting its key from the file. The workaround above is no longer
+  needed; the observation is kept as the record of why it was.
 - **Never `-P native-build`** for a test-path rebuild: it needs the network and
   it can rewrite the tracked `THIRD_PARTY_NOTICES.md`. The conformance
   manifest's own `native-verify` is the right profile, and

@@ -169,13 +169,13 @@ wedged, not an idle Operative.
 | Piece | Rust | Java |
 | --- | --- | --- |
 | Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/entity/timer.rs`, which adds `timer_policy_for::<S>()`) | `flezha-sdk-runtime/.../state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`, `.../entity/TimerCounters.java` |
-| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core.rs` | shared core |
+| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core |
 | The surface and the hook | `sdk/rust/src/procedure/{ctx,mod}.rs` | `flezha-sdk-api/.../procedure/{ProcedureCtx,Procedure}.java`, `.../state/TimerKind.java` |
 | The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/operative/dispatcher.rs`, `sdk/rust/src/entity/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) |
 | Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core |
 | Controller: `Flezha.State.Wire` decodes the effect record's `timers` field; nothing else changes | `lib/flezha/state/wire.ex` | — |
 
-Tests: `sdk/rust/tests/entity_timers.rs`, Java `ActivationDispatcherTest`,
+Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`, Java `ActivationDispatcherTest`,
 and `test/system/entity_timers_e2e_test.exs`, which drives a session-timeout
 fixture on both runtimes, including a re-seat from disk that proves the
 pending timer survived it. Examples: `sdk/rust/examples/session_timeout.rs`,

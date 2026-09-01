@@ -77,7 +77,7 @@ the flap the rung exists to end; every restart is logged and emitted as
 process itself.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
 
-**Handout liveness** — `flz_core/src/poll_core.rs`, `lib/flezha/sdk/counters.ex`. Every SDK
+**Handout liveness** — `flz_core/src/poll_core/`, `lib/flezha/sdk/counters.ex`. Every SDK
 reports how many activations are underway (`inflight`) and how long the oldest has been out
 (`inflight_oldest_ms`) in the data heartbeat's metadata. One wedged Entity is invisible to the
 runner-wide dispatch counter — it keeps climbing on every other Entity — so these two are what

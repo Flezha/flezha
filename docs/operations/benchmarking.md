@@ -314,7 +314,7 @@ lowering the floor.
    `cargo bench --bench dispatch -- regression_100x1x1x10k` to the failing
    `mix bench` number. Criterion green + mix red → transport/controller.
 3. **SDK dispatch changes?** If the PR touches
-   `sdk/rust/src/operative/dispatcher.rs`, `flz_core/src/fast.rs` or
+   `sdk/rust/src/operative/dispatcher.rs`, `flz_core/src/routing.rs` or
    `flz_core/src/entity.rs`, run `throughput_single_entity` against
    `SINGLE_ENTITY_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot
    path itself.
