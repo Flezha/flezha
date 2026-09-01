@@ -439,3 +439,39 @@ test('a declared state that cannot be encoded is refused at definition', () => {
     (error) => /unencodable\.state\.pending/.test(error.message),
   );
 });
+
+test('a named edge terminating on a sink names the channel too, and the sink name is its default', () => {
+  // `.named()` is honoured on the inter-proc path and was dropped on the
+  // plugin path, so `.named('input').sink('relay_out')` produced a channel
+  // called `relay_out` — and the channel name is what a forwarded frame
+  // carries and what selects the receiving operative's entry channel.
+  const spec = defineOperative({
+    factoryId: 'named_sink',
+    channels: (c) => {
+      c.input('in').into(echo('relay')).named('input').sink('relay_out');
+    },
+  });
+  validate(spec);
+  assert.deepEqual(
+    toHostClassDecl(spec).channels.map((channel) => channel.name),
+    ['in', 'input'],
+  );
+});
+
+// Compatibility, not conformance: `sdk-graph-authoring` says an underived name
+// comes from the PRODUCER NODE, and these veneers use the sink's. That second
+// divergence is open and is not what this change moves — this test pins that it
+// moves nothing but the named case.
+test('an unnamed edge terminating on a sink keeps the name it has today', () => {
+  const spec = defineOperative({
+    factoryId: 'unnamed_sink',
+    channels: (c) => {
+      c.input('in').into(echo('plain')).sink('relay_out');
+    },
+  });
+  validate(spec);
+  assert.deepEqual(
+    toHostClassDecl(spec).channels.map((channel) => channel.name),
+    ['in', 'relay_out'],
+  );
+});

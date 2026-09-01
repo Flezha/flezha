@@ -35,6 +35,7 @@ module Flezha
       @timers = []
       @checkpointed = false
       @ordinal = 0
+      @emit_ordinal = 0
       @identity = nil
     end
 
@@ -168,17 +169,36 @@ module Flezha
       event_time = definition&.event_time? ? definition.event_time_of(transformed) : nil
 
       payload = channel.encode ? channel.encode.call(transformed) : Codec.encode(transformed)
+      plugin = channel.kind == :plugin
+      pairs = meta_list(metadata)
+      stamp_identity(pairs, channel, resolved) if plugin
 
       {
-        target: channel.kind == :plugin ? "plugin" : "edge",
-        channel: channel.kind == :plugin ? nil : channel.index,
-        consumer: channel.kind == :plugin ? nil : consumer,
-        plugin_channel: channel.kind == :plugin ? channel.name : nil,
+        target: plugin ? "plugin" : "edge",
+        channel: plugin ? nil : channel.index,
+        consumer: plugin ? nil : consumer,
+        plugin_channel: plugin ? channel.name : nil,
         key: resolved,
         event_time: event_time,
-        metadata: meta_list(metadata),
+        metadata: pairs,
         payload: payload.b
       }
+    end
+
+    # Output identity for one plugin frame, appended after the user's metadata.
+    # Written only off the tier: under it the controller derives the identity
+    # from the durable effect record, and a second answer here would contradict
+    # it. The ordinal advances on every plugin output, stamped or not, so hosts
+    # of one topology agree on the sequence.
+    def stamp_identity(pairs, channel, key)
+      if channel.keyed && !@spec.effectively_once
+        pairs.push(
+          ["flz.entity", "#{@operative}/#{@node.name}/#{@entity_key}"],
+          ["flz.seq", "#{@change_seq}.#{@emit_ordinal}"],
+          ["flz.key", key.to_s]
+        )
+      end
+      @emit_ordinal += 1
     end
 
     def meta_list(metadata)

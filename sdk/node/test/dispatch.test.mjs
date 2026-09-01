@@ -372,3 +372,143 @@ test('a duplicate factory id fails at the second declaration, naming it', () => 
     (error) => error.message.includes('duplicate factory id') && error.message.includes('counters'),
   );
 });
+
+// --- output identity stamps -------------------------------------------------
+//
+// One invocation, several emits: the per-emit ordinal is the half a single-emit
+// assertion cannot see, and the e2e golden checks stamp NAMES only.
+
+const StampEmitter = defineProcedure({
+  name: 'stamp_emitter',
+  handle: (input, ctx) => {
+    if (input === 'twice') {
+      ctx.emitTo('keyed_out', 'a');
+      ctx.emitTo('keyed_out', 'b');
+    } else {
+      ctx.emitTo('plain_out', 'p');
+      ctx.emitTo('keyed_out', 'k');
+    }
+  },
+});
+
+// One keyed plugin channel: the topology every SDK can express, and where the
+// per-emit ordinal has to be right.
+const StampSpec = defineOperative({
+  factoryId: 'stamps',
+  channels: (c) => {
+    c.input('in')
+      .keyBy(() => 'ek')
+      .into(StampEmitter)
+      .keyed()
+      .sink('keyed_out');
+  },
+});
+
+// A keyed and a non-keyed plugin channel off one procedure. The Rust SDK
+// refuses this shape (`TopologyIssue::DuplicatePluginSink`); the erased hosts
+// accept it, and it is the only place the ordinal's advance is visible apart
+// from the emits it stamps.
+const MixedSpec = defineOperative({
+  factoryId: 'stamps_mixed',
+  channels: (c) => {
+    c.input('in')
+      .keyBy(() => 'ek')
+      .into(StampEmitter)
+      .branch([(edge) => edge.sink('plain_out'), (edge) => edge.keyed().sink('keyed_out')]);
+  },
+});
+
+const stampActivation = activationFor('stamps');
+const mixedActivation = activationFor('stamps_mixed');
+const metaOf = (output) => Object.fromEntries(output.metadata.map((m) => [m.key, m.value]));
+
+test('a keyed plugin emit carries the identity stamps, and the ordinal advances per emit', async () => {
+  const result = await answer(
+    stampActivation({ entityKey: 'ek', changeSeq: 5n, items: [inputItem('twice')] }),
+    depsFor(StampSpec),
+  );
+  assert.equal(result.outcome, 'work');
+  const outputs = result.effects[0].outputs;
+  assert.equal(outputs.length, 2);
+  assert.deepEqual(metaOf(outputs[0]), {
+    'flz.entity': 'op-1/stamp_emitter/ek',
+    'flz.seq': '5.0',
+    'flz.key': 'ek',
+  });
+  assert.deepEqual(metaOf(outputs[1]), {
+    'flz.entity': 'op-1/stamp_emitter/ek',
+    'flz.seq': '5.1',
+    'flz.key': 'ek',
+  });
+});
+
+test('a non-keyed plugin emit carries no stamps and still advances the ordinal', async () => {
+  const result = await answer(
+    mixedActivation({ entityKey: 'ek', changeSeq: 5n, items: [inputItem('mixed')] }),
+    depsFor(MixedSpec),
+  );
+  const [plain, keyed] = result.effects[0].outputs;
+  assert.equal(plain.pluginChannel, 'plain_out');
+  assert.deepEqual(plain.metadata, []);
+  assert.equal(keyed.pluginChannel, 'keyed_out');
+  assert.equal(metaOf(keyed)['flz.seq'], '5.1');
+});
+
+test('a fresh work item restarts the emit ordinal', async () => {
+  const result = await answer(
+    stampActivation({
+      entityKey: 'ek',
+      changeSeq: 5n,
+      items: [inputItem('twice'), inputItem('twice')],
+    }),
+    depsFor(StampSpec),
+  );
+  assert.deepEqual(
+    result.effects.map((effect) => effect.outputs.map((o) => metaOf(o)['flz.seq'])),
+    [
+      ['5.0', '5.1'],
+      ['5.0', '5.1'],
+    ],
+  );
+});
+
+test('user metadata survives beside the stamps and cannot spoof one', async () => {
+  const UserMeta = defineProcedure({
+    name: 'stamp_user_meta',
+    handle: (input, ctx) => {
+      if (input === 'spoof') {
+        ctx.emit('v', { metadata: { 'flz.seq': '999.0' } });
+        return;
+      }
+      ctx.emit('v', { metadata: { user: 'meta' } });
+    },
+  });
+  const spec = defineOperative({
+    factoryId: 'stamps_user',
+    channels: (c) => {
+      c.input('in')
+        .keyBy(() => 'ek')
+        .into(UserMeta)
+        .keyed()
+        .sink('keyed_out');
+    },
+  });
+  const activation = activationFor('stamps_user');
+
+  const ok = await answer(
+    activation({ entityKey: 'ek', changeSeq: 2n, items: [inputItem('plain')] }),
+    depsFor(spec),
+  );
+  assert.deepEqual(metaOf(ok.effects[0].outputs[0]), {
+    user: 'meta',
+    'flz.entity': 'op-1/stamp_user_meta/ek',
+    'flz.seq': '2.0',
+    'flz.key': 'ek',
+  });
+
+  const spoofed = await answer(
+    activation({ entityKey: 'ek', changeSeq: 2n, items: [inputItem('spoof')] }),
+    depsFor(spec),
+  );
+  assert.equal(spoofed.effects[0].verdict, 'retryable');
+});

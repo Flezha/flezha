@@ -326,14 +326,23 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :source_operative_id,
     :source_plugin_id,
     :effectively_once,
-    :owned_pid
+    :owned_pid,
+    # A partition group's fan-out merges these into EVERY plugin of every
+    # member (`Plugin.for_partition/3` over `Partition.provider_opts/1`), so a
+    # provider that does not allow them refuses every enable on a partitioned
+    # operative. A provider that USES one still declares it as its own field.
+    :partition_index,
+    :partition_count,
+    :key_group_from,
+    :key_group_to
   ]
 
   @doc """
   The options the HOST injects into a provider's opts, never settable by
   config: the identity `Extension.Table.with_host_identity/2` merges, the
-  operative facts `bulk_activate/2` merges, and the tracked pid `health/1`
-  injects.
+  operative facts `bulk_activate/2` merges, the tracked pid `health/1` injects,
+  and the partition identity `Plugin.for_partition/3` merges into a group
+  member's plugins.
 
   They live in one list because every provider that calls `reject_unknown/3`
   must allow all of them — a key added to the host side and missed in one

@@ -68,6 +68,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
   checkpointed = false;
 
   private ordinal = 0;
+  private emitOrdinal = 0;
   private identityBytes: Uint8Array | null = null;
   private live: unknown;
 
@@ -175,17 +176,43 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
     const eventTime = extractor ? BigInt(extractor(transformed)) : undefined;
 
     const payload = channel.encode ? channel.encode(transformed) : encodeValue(transformed);
+    const isPlugin = channel.kind === 'plugin';
+    const metadata = metaList(options?.metadata, this.input.node.name);
+    if (isPlugin) this.stampIdentity(metadata, channel, key);
 
     return {
-      target: channel.kind === 'plugin' ? 'plugin' : 'edge',
-      channel: channel.kind === 'plugin' ? undefined : channel.index,
-      consumer: channel.kind === 'plugin' ? undefined : consumer,
-      pluginChannel: channel.kind === 'plugin' ? channel.name : undefined,
+      target: isPlugin ? 'plugin' : 'edge',
+      channel: isPlugin ? undefined : channel.index,
+      consumer: isPlugin ? undefined : consumer,
+      pluginChannel: isPlugin ? channel.name : undefined,
       key,
       eventTime,
-      metadata: metaList(options?.metadata, this.input.node.name),
+      metadata,
       payload: Buffer.from(payload),
     };
+  }
+
+  /**
+   * Output identity for one plugin frame, appended after the user's metadata.
+   * Written only off the tier: under it the controller derives the identity
+   * from the durable effect record, and a second answer here would contradict
+   * it. The ordinal advances on every plugin output, stamped or not, so hosts
+   * of one topology agree on the sequence.
+   */
+  private stampIdentity(
+    metadata: NativeMeta[],
+    channel: ChannelSpec,
+    key: string | undefined,
+  ): void {
+    if (channel.keyed && !this.input.spec.effectivelyOnce) {
+      const entity = `${this.input.operative}/${this.input.node.name}/${this.input.entityKey ?? ''}`;
+      metadata.push(
+        { key: 'flz.entity', value: entity },
+        { key: 'flz.seq', value: `${this.input.changeSeq}.${this.emitOrdinal}` },
+        { key: 'flz.key', value: key ?? '' },
+      );
+    }
+    this.emitOrdinal += 1;
   }
 
   timerAfter(ms: number | bigint): bigint {

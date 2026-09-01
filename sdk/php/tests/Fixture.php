@@ -9,6 +9,7 @@ use Flezha\Attribute\Proc;
 use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Graph\Builder;
+use Flezha\Graph\Edge;
 use Flezha\Overflow;
 use Flezha\Procedure;
 use Flezha\StreamOperative;
@@ -108,6 +109,75 @@ final class KeyedOperative extends StreamOperative
             ->named('out')
             ->keyed()
             ->sink('keyed_sink');
+    }
+}
+
+/**
+ * Two plugin channels, one keyed and one not, and a `flatMap` on the keyed arm.
+ *
+ * The fan-out matters: PHP produces several outputs from one emit where the
+ * other veneers produce one, so the emit ordinal advances per OUTPUT here.
+ */
+#[Proc(name: 'stamp_emitter', dynamicEntities: true)]
+final class StampEmitter extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        if ($input === 'twice') {
+            $ctx->emit('a', channel: 'keyed_out');
+            $ctx->emit('b', channel: 'keyed_out');
+        } elseif ($input === 'spoof') {
+            $ctx->emit('v', channel: 'keyed_out', metadata: ['flz.seq' => '999.0']);
+        } elseif ($input === 'fanned') {
+            $ctx->emit('x', channel: 'fanned_out');
+        } else {
+            $ctx->emit('p', channel: 'plain_out');
+            $ctx->emit('k', channel: 'keyed_out', metadata: ['user' => 'meta']);
+        }
+
+        return null;
+    }
+}
+
+/**
+ * One keyed plugin channel: the topology every SDK can express, and where the
+ * per-emit ordinal has to be right.
+ */
+#[Operative(factoryId: 'stamp_operative')]
+final class StampOperative extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('input')
+            ->keyBy(static fn (mixed $v): string => 'ek')
+            ->into(StampEmitter::class)
+            ->named('keyed_out')
+            ->keyed()
+            ->sink('keyed_out');
+    }
+}
+
+/**
+ * A keyed and a non-keyed plugin channel off one procedure, plus a `flatMap`
+ * arm. The Rust SDK refuses this shape (`TopologyIssue::DuplicatePluginSink`);
+ * the erased hosts accept it.
+ */
+#[Operative(factoryId: 'mixed_stamp_operative')]
+final class MixedStampOperative extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('input')
+            ->keyBy(static fn (mixed $v): string => 'ek')
+            ->into(StampEmitter::class)
+            ->branch(
+                static fn (Edge $e) => $e->sink('plain_out'),
+                static fn (Edge $e) => $e->keyed()->sink('keyed_out'),
+                static fn (Edge $e) => $e
+                    ->flatMap(static fn (mixed $v): array => [$v . '1', $v . '2'])
+                    ->keyed()
+                    ->sink('fanned_out'),
+            );
     }
 }
 

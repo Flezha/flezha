@@ -229,19 +229,23 @@ bare mutable global holds any of it.
 
 ## Deferred fixtures
 
-The manifest defers nine capabilities' end-to-end fixture sets —
+The manifest defers eight capabilities' end-to-end fixture sets —
 `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`,
-`keyed_channels`, `workflow`, `dynamic_entity`, `entry_idle` and
-`schema_evolution` — to **`sdk-durable-fixture-parity`**, the shared follow-up
-that also owes them for the Node and Elixir apps, which defer the identical
-nine.
+`workflow`, `dynamic_entity`, `entry_idle` and `schema_evolution` — to
+**`sdk-durable-fixture-parity`**, the shared follow-up that also owes them for
+the Node and Elixir apps. The Elixir app defers a ninth, `keyed_channels`,
+because its SDK is its own core and mints no identity stamps yet.
 
 This is a deferral of **fixtures, not mechanism**: the dispatcher answers every
 activation kind the boundary defines — work, restore fold, snapshot, live state
 read, apply state, migration serialize, key request, workflow run and
-compensate run — and the gem's unit suite sweeps all nine. What is owed is the
-end-to-end coverage, and the conformance gate holds the deferral honest in both
-directions.
+compensate run — and the gem's unit suite sweeps all of them. What is owed is
+the end-to-end coverage, and the conformance gate holds the deferral honest in
+both directions.
+
+`keyed_channels` left that list when the gem began minting the output identity
+stamps (`Flezha::Ctx#stamp_identity`): the capability is carried with the
+reference's `partition_relay` fixture and proved end to end.
 
 ## The runner image
 

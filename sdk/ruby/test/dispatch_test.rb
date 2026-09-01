@@ -217,4 +217,102 @@ class DispatchTest < Minitest::Test
   ensure
     Flezha.log = previous
   end
+  # --- output identity stamps -----------------------------------------------
+  #
+  # One invocation, several emits: the per-emit ordinal is the half a
+  # single-emit assertion cannot see, and the e2e golden checks stamp NAMES only.
+
+  class StampEmitter < Flezha::Procedure
+    procedure_name "stamp_emitter"
+
+    def process(input, ctx)
+      if input == "twice"
+        ctx.emit_to("keyed_out", "a")
+        ctx.emit_to("keyed_out", "b")
+      elsif input == "spoof"
+        ctx.emit_to("keyed_out", "v", metadata: { "flz.seq" => "999.0" })
+      else
+        ctx.emit_to("plain_out", "p")
+        ctx.emit_to("keyed_out", "k", metadata: { "user" => "meta" })
+      end
+      nil
+    end
+  end
+
+  # One keyed plugin channel: the topology every SDK can express, and where the
+  # per-emit ordinal has to be right.
+  class StampOperative < Flezha::StreamOperative
+    factory_id "stamp_op"
+    channels do |c|
+      c.input("input", decode: ->(b) { b.dup.force_encoding("UTF-8") })
+       .key_by { |_v| "ek" }
+       .into(StampEmitter)
+       .named("keyed_out")
+       .keyed
+       .sink("keyed_out", encode: ->(v) { v.to_s.b })
+    end
+  end
+
+  # A keyed and a non-keyed plugin channel off one procedure. The Rust SDK
+  # refuses this shape (`TopologyIssue::DuplicatePluginSink`); the erased hosts
+  # accept it, and it is the only place the ordinal's advance is visible apart
+  # from the emits it stamps.
+  class MixedStampOperative < Flezha::StreamOperative
+    factory_id "mixed_stamp_op"
+    channels do |c|
+      c.input("input", decode: ->(b) { b.dup.force_encoding("UTF-8") })
+       .key_by { |_v| "ek" }
+       .into(StampEmitter)
+       .branch(
+         ->(edge) { edge.sink("plain_out", encode: ->(v) { v.to_s.b }) },
+         ->(edge) { edge.keyed.sink("keyed_out", encode: ->(v) { v.to_s.b }) }
+       )
+    end
+  end
+
+  def stamp_answer(payload, operative: StampOperative, factory: "stamp_op", items: nil)
+    deps = Flezha::TestSupport.deps(operative, @core)
+    activation = Flezha::TestSupport.activation(
+      factory: factory, kind: :work, entity_key: "ek", change_seq: 5,
+      items: items || [input_item(payload)]
+    )
+    Flezha::Dispatch.answer(activation, deps)
+  end
+
+  def meta_of(output) = output[:metadata].to_h
+
+  def test_a_keyed_plugin_emit_carries_the_stamps_and_the_ordinal_advances_per_emit
+    outputs = stamp_answer("twice")[:effects][0][:outputs]
+
+    assert_equal 2, outputs.size
+    assert_equal({ "flz.entity" => "op-1/stamp_emitter/ek", "flz.seq" => "5.0",
+                   "flz.key" => "ek" }, meta_of(outputs[0]))
+    assert_equal({ "flz.entity" => "op-1/stamp_emitter/ek", "flz.seq" => "5.1",
+                   "flz.key" => "ek" }, meta_of(outputs[1]))
+  end
+
+  def test_a_non_keyed_plugin_emit_carries_no_stamps_and_still_advances_the_ordinal
+    plain, keyed = stamp_answer("mixed", operative: MixedStampOperative,
+                                         factory: "mixed_stamp_op")[:effects][0][:outputs]
+
+    assert_equal "plain_out", plain[:plugin_channel]
+    assert_empty plain[:metadata]
+    assert_equal "keyed_out", keyed[:plugin_channel]
+    assert_equal({ "user" => "meta", "flz.entity" => "op-1/stamp_emitter/ek",
+                   "flz.seq" => "5.1", "flz.key" => "ek" }, meta_of(keyed))
+  end
+
+  def test_a_fresh_work_item_restarts_the_emit_ordinal
+    result = stamp_answer(nil, items: [input_item("twice"), input_item("twice")])
+
+    assert_equal [%w[5.0 5.1], %w[5.0 5.1]],
+                 result[:effects].map { |e| e[:outputs].map { |o| meta_of(o)["flz.seq"] } }
+  end
+
+  def test_a_spoofed_stamp_is_refused_before_any_output
+    result = stamp_answer("spoof")
+
+    assert_equal "retryable", result[:effects][0][:verdict]
+    refute result[:effects][0].key?(:outputs), "a refused emit must leave no outputs behind"
+  end
 end

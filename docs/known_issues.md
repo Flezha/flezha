@@ -40,6 +40,33 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-121 · An UNNAMED plugin sink takes the sink's name in the veneers and the producer node's in Rust
+
+- **Severity**: P2 · the second divergence on the same spec requirement as [[KI-120]], left
+  open deliberately when that one was closed. · Found by
+  `honour-named-on-plugin-channels` while writing its spec delta.
+- **Where**: `sdk/node/src/authoring.ts`, `sdk/ruby/lib/flezha/builder.rb`,
+  `sdk/php/src/Graph/Edge.php` — the same `sink()` methods KI-120 fixed, in the branch
+  where no `.named()` was called.
+- **The rule they miss**: `openspec/specs/sdk-graph-authoring/spec.md:59-62` says a sink with
+  **no** `.named(...)` takes the **producer node's** identity. Rust does exactly that —
+  `sdk/rust/src/channel/builder/state.rs:236`, `let name = self.procedures[node].name`. All
+  three veneers use the **sink's** name instead.
+- **Why it was NOT closed with KI-120, and this is the right call.** KI-120's fix is
+  backward-compatible precisely because the no-`.named()` path keeps today's behaviour — and
+  for this case today's behaviour is itself wrong. Closing it renames every unnamed plugin
+  channel across three SDKs' fixtures at once: **16 sink calls in the node test app alone**.
+  That is its own change with its own blast radius, not a rider.
+- **The divergence is NOT recorded as settled by the suites.** The compatibility test added
+  in each SDK is deliberately named *"keeps the name it has today"* and commented as
+  **compatibility, not conformance**, citing the spec line — so a future reader cannot
+  mistake a green suite for agreement with the spec. The proposal's Non-goals and the dev
+  note both name it.
+- **A fix must** decide whether the spec or the veneers are right before renaming anything,
+  and must count the fixture churn first — the conformance apps' channel names appear in
+  goldens and e2e assertions, so this is a rename with reach, not a one-expression change
+  like KI-120.
+
 ### KI-120 · The veneers' `sink()` silently discards `.named()`, so a plugin channel takes the sink's name instead of the channel's
 
 - **Severity**: P1 · a **cross-SDK authoring-surface divergence** that makes a forwarded

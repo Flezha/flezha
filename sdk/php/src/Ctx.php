@@ -32,6 +32,7 @@ final class Ctx
 
     private bool $checkpointed = false;
     private int $ordinal = 0;
+    private int $emitOrdinal = 0;
     private ?string $identity = null;
 
     /** @param list<ChannelSpec> $outgoing */
@@ -246,6 +247,10 @@ final class Ctx
             $consumerNode = $consumer === null ? null : $this->spec->procedures[$consumer];
             $definition = $consumerNode?->definition;
             $isPlugin = $channel->kind === 'plugin';
+            $pairs = $this->metadata($metadata);
+            if ($isPlugin) {
+                $this->stampIdentity($pairs, $channel, $resolved);
+            }
 
             $outputs[] = [
                 'target' => $isPlugin ? 'plugin' : 'edge',
@@ -256,7 +261,7 @@ final class Ctx
                 'event_time' => $definition?->declares('eventTime') === true
                     ? $definition->eventTimeOf($transformed)
                     : null,
-                'metadata' => $this->metadata($metadata),
+                'metadata' => $pairs,
                 'payload' => $channel->encode !== null
                     ? ($channel->encode)($transformed)
                     : Json::guard($channel->name, static fn (): string => Json::encode($transformed)),
@@ -264,6 +269,32 @@ final class Ctx
         }
 
         return $outputs;
+    }
+
+    /**
+     * Output identity for one plugin frame, appended after the user's metadata.
+     *
+     * Written only off the tier: under it the controller derives the identity
+     * from the durable effect record, and a second answer here would contradict
+     * it. The ordinal advances on every plugin output, stamped or not, so hosts
+     * of one topology agree on the sequence — and a `flatMap` fan-out produces
+     * several outputs from one emit, which is why this runs per output.
+     *
+     * @param array<string, string> $pairs
+     */
+    private function stampIdentity(array &$pairs, ChannelSpec $channel, ?string $key): void
+    {
+        if ($channel->keyed && !$this->spec->effectivelyOnce) {
+            $pairs['flz.entity'] = sprintf(
+                '%s/%s/%s',
+                $this->operative,
+                $this->node->name,
+                (string) $this->entityKey,
+            );
+            $pairs['flz.seq'] = $this->changeSeq . '.' . $this->emitOrdinal;
+            $pairs['flz.key'] = (string) $key;
+        }
+        $this->emitOrdinal++;
     }
 
     /**

@@ -54,7 +54,8 @@ Using one stream handle to wire more than one consumer SHALL declare fan-out: ev
 - **THEN** registration SHALL fail with an error stating branch requires at least two arms
 
 ### Requirement: Channel names auto-derive from the producer node's identity
-A channel created by wiring out of a node SHALL be named by that node's identity string (the procedure's `name()`, or the explicit node name per the node-identity requirement) unless `.named("...")` overrides it. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
+
+A channel created by wiring out of a node SHALL be named by that node's identity string (the procedure's `name()`, or the explicit node name per the node-identity requirement) unless `.named("...")` overrides it. The override SHALL be honoured on every terminator the edge can take, the plugin `sink(...)` included: a sink names the plugin attachment point, never the channel, so an SDK whose `sink(name)` replaces the channel name discards a declaration the author wrote. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
 
 #### Scenario: Derived name ships on the wire
 
@@ -65,6 +66,11 @@ A channel created by wiring out of a node SHALL be named by that node's identity
 
 - **WHEN** the declaration chains `.named("orders.validated")` on Validate's output stream
 - **THEN** the channel SHALL be recorded and stamped as `"orders.validated"` everywhere the channel name appears (wire metadata, journals, errors)
+
+#### Scenario: named() survives a plugin terminator
+
+- **WHEN** the declaration chains `.named("input")` and then `.sink("relay_out")` on one edge
+- **THEN** the channel SHALL be named `"input"` and the frame SHALL carry `channel = "input"`, so a forward target resolves its entry channel by the name the author declared
 
 #### Scenario: Name collision is refused
 

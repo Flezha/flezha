@@ -39,7 +39,10 @@ final class DispatchTest extends TestCase
     protected function setUp(): void
     {
         $this->registry = new Registry();
-        foreach ([EchoOperative::class, CounterOperative::class, KeyedOperative::class] as $class) {
+        foreach (
+            [EchoOperative::class, CounterOperative::class, KeyedOperative::class, StampOperative::class,
+                MixedStampOperative::class] as $class
+        ) {
             $spec = $class::spec();
             Validate::spec($spec);
             $this->registry->add($spec);
@@ -55,7 +58,9 @@ final class DispatchTest extends TestCase
         self::assertSame('ok', $result['effects'][0]['verdict']);
         self::assertSame('"hello"', $result['effects'][0]['outputs'][0]['payload']);
         self::assertSame('plugin', $result['effects'][0]['outputs'][0]['target']);
-        self::assertSame('echo_sink', $result['effects'][0]['outputs'][0]['plugin_channel']);
+        // The CHANNEL's name, which the fixture sets with `named('out')`, not
+        // the sink's — it is what rides the frame as `channel` metadata.
+        self::assertSame('out', $result['effects'][0]['outputs'][0]['plugin_channel']);
     }
 
     public function testARecordedChangeIsJournaledAndFoldedLive(): void
@@ -347,16 +352,109 @@ final class DispatchTest extends TestCase
         self::assertStringContainsString('abandoning activation 42 failed', implode("\n", $said));
     }
 
-    /** @param list<array<string, mixed>> $items @return array<string, mixed> */
-    private function work(string $factory, int $procedure, array $items): array
+    // --- output identity stamps ---------------------------------------------
+    //
+    // One invocation, several emits: the per-emit ordinal is the half a
+    // single-emit assertion cannot see, and the e2e golden checks stamp NAMES
+    // only.
+
+    public function testAKeyedPluginEmitCarriesTheStampsAndTheOrdinalAdvancesPerEmit(): void
     {
+        $outputs = $this->stamped('"twice"')['effects'][0]['outputs'];
+
+        self::assertCount(2, $outputs);
+        self::assertSame(
+            ['flz.entity' => 'op/stamp_emitter/ek', 'flz.seq' => '5.0', 'flz.key' => 'ek'],
+            $outputs[0]['metadata'],
+        );
+        self::assertSame(
+            ['flz.entity' => 'op/stamp_emitter/ek', 'flz.seq' => '5.1', 'flz.key' => 'ek'],
+            $outputs[1]['metadata'],
+        );
+    }
+
+    public function testANonKeyedPluginEmitCarriesNoStampsAndStillAdvancesTheOrdinal(): void
+    {
+        [$plain, $keyed] = $this->mixed('"mixed"')['effects'][0]['outputs'];
+
+        self::assertSame('plain_out', $plain['plugin_channel']);
+        self::assertSame([], $plain['metadata']);
+        self::assertSame('keyed_out', $keyed['plugin_channel']);
+        self::assertSame(
+            [
+                'user' => 'meta',
+                'flz.entity' => 'op/stamp_emitter/ek',
+                'flz.seq' => '5.1',
+                'flz.key' => 'ek',
+            ],
+            $keyed['metadata'],
+        );
+    }
+
+    public function testAFannedEmitAdvancesTheOrdinalOncePerProducedOutput(): void
+    {
+        $outputs = $this->mixed('"fanned"')['effects'][0]['outputs'];
+
+        self::assertCount(2, $outputs);
+        self::assertSame('5.0', $outputs[0]['metadata']['flz.seq']);
+        self::assertSame('5.1', $outputs[1]['metadata']['flz.seq']);
+    }
+
+    public function testAFreshWorkItemRestartsTheEmitOrdinal(): void
+    {
+        $result = $this->work(
+            'stamp_operative',
+            0,
+            [self::input('"twice"'), self::input('"twice"')],
+            'ek',
+            5,
+        );
+
+        $seqs = array_map(
+            static fn (array $effect): array => array_map(
+                static fn (array $output): string => $output['metadata']['flz.seq'],
+                $effect['outputs'],
+            ),
+            $result['effects'],
+        );
+        self::assertSame([['5.0', '5.1'], ['5.0', '5.1']], $seqs);
+    }
+
+    public function testASpoofedStampIsRefusedBeforeAnyOutput(): void
+    {
+        $effect = $this->stamped('"spoof"')['effects'][0];
+
+        self::assertSame('retryable', $effect['verdict']);
+        self::assertArrayNotHasKey('outputs', $effect);
+    }
+
+    /** @return array<string, mixed> */
+    private function stamped(string $payload): array
+    {
+        return $this->work('stamp_operative', 0, [self::input($payload)], 'ek', 5);
+    }
+
+    /** @return array<string, mixed> */
+    private function mixed(string $payload): array
+    {
+        return $this->work('mixed_stamp_operative', 0, [self::input($payload)], 'ek', 5);
+    }
+
+    /** @param list<array<string, mixed>> $items @return array<string, mixed> */
+    private function work(
+        string $factory,
+        int $procedure,
+        array $items,
+        ?string $entityKey = null,
+        int $changeSeq = 0,
+    ): array {
         return $this->dispatcher->answer([
             'token' => 1,
             'factory' => $factory,
             'procedure' => $procedure,
             'operative' => 'op',
-            'entity_key' => null,
-            'change_seq' => 0,
+            'entity_key' => $entityKey,
+            'change_seq' => $changeSeq,
             'kind' => 'work',
             'items' => $items,
         ]);

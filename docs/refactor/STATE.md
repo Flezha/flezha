@@ -746,6 +746,65 @@ shim path and `bundle` are all unreachable from my shell, so the difference is s
 initialisation. The worker owes the exact command and environment it used. Until then
 STATE.md's "rubocop gap accepted" stands — a gate is not fixed on a memory of a green run.
 
+**R4 last seen 19:49 (+18m).** B3 is DONE — no e2e process left alive and B4's docs are
+landing (`runner.md`, `php_sdk.md`, `ruby_sdk.md` — the F2 six→seven and nine→eight fixes)
+plus `docs/dev_notes/stamp-identity-in-erased-veneers.md`. Report imminent; the baseline
+re-record and the commit follow it.
+
+**KI-119 last seen 20:03.** Red-first in the right order: `provider_behaviour_test.exs`
+modified, `operative_forward.ex` still untouched — the regression test precedes the fix.
+Machine clean, load 0.64/1.21/1.14 (falling after the e2e batch).
+
+**KI-120 last seen 20:18.** The fix landed in all three veneers as the narrow shape ruled —
+each spelling the file's OWN existing pattern in its language: node
+`this.pending.channelName ?? name`, php `$this->pending['channelName'] ?? $name`, ruby
+`@pending[:channel_name] || name.to_s`. **15 insertions, 5 deletions across three files** —
+which is what "a one-site omission, not a model difference" looks like when it is true. Full
+suite running in background under a 590 s timeout. Load 2.49/1.53/1.35, that suite.
+
+### R4 IS DONE — three commits, and the row found TWO cross-SDK defects plus one of my own
+
+`57ed438e` (KI-119) → `0842fece` (KI-120) → R4 itself. Baseline re-recorded on the first,
+with the user's approval, sized to the whole sequence so **every commit in the series is
+green rather than only the last**. Audited: 36 areas in, 36 out, none lost, the ONLY
+ratcheted metrics loosened are four `prod_loc` rows (+57 total), **nothing tightened,
+nothing else moved**.
+
+**`partitioned_operatives_e2e_test.exs:221` now passes under rust, node, ruby AND php. It
+previously passed under NONE of the four**, and had never passed since the day it was
+written — because it is `@moduletag :system` and excluded from `mix test`.
+
+**Three defects, and the ordering of the discoveries is the lesson.** R4's manifest flip was
+blocked by KI-119, whose fix unblocked KI-120, whose fix unblocked the test. Each was
+invisible behind the one in front of it, and none was findable without running the expensive
+batch. **A row whose cheap gates are green can still be sitting on three defects.**
+
+**KI-119 was MINE, from R1, four commits earlier.** R1 gave `operative_forward.init_provider/1`
+the `validate_opts/1` call it had never made — correctly, closing KI-116's site 5 — and the
+partition fan-out's four injected keys had been flowing through on the silence. **R1's
+verification could not have caught it**: I ran the full suite at 1960 passed and the area
+slice, and the only coverage is system-tagged. **A change to plugin option strictness is not
+verifiable by `mix test` alone.** The worker dated it to a commit from two weeks earlier; I
+checked `git show eb938c8b~1` and the call is not there.
+
+**Two workers' judgements beat mine on the same row.** The `@host_opts` placement (I offered
+two options; it found a third that its own doc already justified) and the KI-120 diagnosis
+(I framed it as a three-SDK authoring change; the file's edge paths already had the pattern,
+making it fifteen lines). **Both times the worker checked the code and I had reasoned from
+the shape of the problem.**
+
+**KI-121 filed and deliberately left open** — the unnamed-sink half of the same spec line.
+Its compatibility tests are named *"keeps the name it has today"* and commented as
+compatibility rather than conformance, so a green suite cannot be mistaken for agreement
+with the spec.
+
+### NEXT: R5 — the veneer fixture port, node/ruby/php
+
+18 fixture cells across six capabilities; **`state_persistence` FIRST — it gates four of the
+others**. Python is the template. Note what this session changed under it: the conformance
+gate now refuses drift in both directions (R3), so any capability R5 makes universal must
+join `@required_capabilities` in the same change, and the gate will name it.
+
 
 
 

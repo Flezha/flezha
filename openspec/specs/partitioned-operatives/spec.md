@@ -93,11 +93,18 @@ A class with no keyed procedure (neither `key_by` nor declared entity keys on an
 - **THEN** the start succeeds and each member serves only the declared keys whose groups fall in its range
 
 ### Requirement: Group plugin configs SHALL fan out per member with partition opts injected
-A `--plugins` config given at group start SHALL be decoded once per member with that member's operative id, and `partition_index`/`partition_count`/`key_group_from`/`key_group_to` SHALL be merged into each plugin's opts as integers. Providers consuming these opts SHALL declare them as known opts. Fanned-out configs SHALL leave `plugin_id` unset so the per-source default keeps worker registry keys unique across members.
+
+A `--plugins` config given at group start SHALL be decoded once per member with that member's operative id, and `partition_index`/`partition_count`/`key_group_from`/`key_group_to` SHALL be merged into each plugin's opts as integers. Because that merge is unconditional and provider-independent — every plugin of every member receives all four, whether or not it reads one — the four keys SHALL be allowed by every provider's strict option check, declared once in the host-injected list rather than in per-provider copies. A provider that CONSUMES one SHALL additionally declare it as its own field; a provider that merely receives them SHALL NOT be required to declare anything, and SHALL NOT gain a struct field it never populates. Fanned-out configs SHALL leave `plugin_id` unset so the per-source default keeps worker registry keys unique across members.
 
 #### Scenario: Each member's plugin knows its partition
+
 - **WHEN** a group of 3 starts with a websocket plugin config
 - **THEN** each member's plugin instance receives its own `partition_index` (0, 1, 2) and `partition_count: 3` in opts, persisted in that member's cspec
+
+#### Scenario: A provider that reads none of them still enables
+
+- **WHEN** a group starts with a plugin whose provider is strict about unknown options and consumes no partition opt
+- **THEN** the member's plugin enables, and the injected four are neither refused nor materialised as struct fields
 
 ### Requirement: Runtime plugin enable and disable SHALL fan out over the group
 

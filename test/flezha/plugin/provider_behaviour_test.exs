@@ -221,6 +221,48 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
   end
 
+  describe "a partition member's injected opts reach every strict provider" do
+    # `Plugin.for_partition/3` merges `Partition.provider_opts/1` into EVERY
+    # plugin's opts of a group member, so a strict allow-list that omits them
+    # refuses every enable on a partitioned operative rather than one bad
+    # config. This is the failure `host_opts/0`'s own doc names — "a key added
+    # to the host side and missed in one provider's private copy turns that
+    # provider's every enable into a refusal" — for a second set of keys, and
+    # the reason they belong in that one list rather than in per-provider
+    # copies.
+    #
+    # `mix test` alone cannot see the consequence: the only end-to-end coverage
+    # is `partitioned_operatives_e2e_test.exs`, which is `@moduletag :system`
+    # and excluded by default. These two run in the default suite.
+    @partition_opts Flezha.Partition.provider_opts(%{index: 1, count: 3, range: {85, 169}})
+
+    test "every strict provider accepts them, because every one of them receives them" do
+      for {id, module} <- Flezha.Config.get_enabled_plugins(),
+          Code.ensure_loaded?(module),
+          function_exported?(module, :validate_opts, 1) do
+        assert :ok == module.validate_opts(@partition_opts),
+               "provider `#{id}` refuses a partition member's own injected opts, so every " <>
+                 "plugin on a partitioned operative fails to enable"
+      end
+    end
+
+    test "operative_forward gets past the option check on the path a group start uses" do
+      opts =
+        Map.merge(@partition_opts, %{
+          target_operative_id: "a",
+          source_operative_id: "a",
+          source_namespace: :default
+        })
+
+      assert {:error, message} = OperativeForward.init_provider(opts)
+
+      # The target check, one step AFTER the option check — reached only
+      # because the injected keys were accepted.
+      assert message =~ "is the operative itself"
+      refute message =~ "unknown option"
+    end
+  end
+
   describe "the postgres sink refuses at preparation, before it starts anything" do
     # Every case here returns before `SinkSup.ensure_worker/1`, so none of them
     # needs a database. The sweep is what keeps the unfixed code honest: on the

@@ -204,6 +204,40 @@ final class AuthoringTest extends TestCase
     }
 
     /**
+     * `named()` is honoured on the inter-proc path and was dropped on the
+     * plugin path, so `named('input')->sink('relay_out')` produced a channel
+     * called `relay_out` — and the channel name is what a forwarded frame
+     * carries and what selects the receiving operative's entry channel.
+     */
+    public function testANamedEdgeTerminatingOnASinkNamesTheChannelToo(): void
+    {
+        $spec = NamedSink::spec();
+        Validate::spec($spec);
+
+        self::assertSame(['in', 'input'], array_map(
+            static fn ($channel): string => $channel->name,
+            $spec->channels,
+        ));
+    }
+
+    /**
+     * Compatibility, not conformance: `sdk-graph-authoring` says an underived
+     * name comes from the PRODUCER NODE, and these veneers use the sink's. That
+     * second divergence is open and is not what this change moves — this test
+     * pins that it moves nothing but the named case.
+     */
+    public function testAnUnnamedEdgeTerminatingOnASinkKeepsTheNameItHasToday(): void
+    {
+        $spec = UnnamedSink::spec();
+        Validate::spec($spec);
+
+        self::assertSame(['in', 'relay_out'], array_map(
+            static fn ($channel): string => $channel->name,
+            $spec->channels,
+        ));
+    }
+
+    /**
      * Validate a graph declared inline.
      *
      * `$tierOff` is how the checkpoint refusal is reached at all: the builder's
@@ -286,6 +320,24 @@ final class Unattributed extends StreamOperative
 #[Operative(factoryId: 'empty_workflow')]
 final class EmptyWorkflow extends WorkflowOperative
 {
+}
+
+#[Operative(factoryId: 'named_sink')]
+final class NamedSink extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Echoer::class)->named('input')->sink('relay_out');
+    }
+}
+
+#[Operative(factoryId: 'unnamed_sink')]
+final class UnnamedSink extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Counter::class)->sink('relay_out');
+    }
 }
 
 #[Operative(factoryId: 'diamond')]

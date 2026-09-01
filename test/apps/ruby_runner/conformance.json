@@ -37,7 +37,6 @@
     "effectively_once",
     "entity_timers",
     "correction_window",
-    "keyed_channels",
     "workflow",
     "dynamic_entity",
     "entry_idle",
@@ -70,6 +69,9 @@
       "bounded_mailbox_drop_nothing",
       "bounded_mailbox_drop_newest",
       "bounded_mailbox_drop_oldest"
+    ],
+    "keyed_channels": [
+      "partition_relay"
     ],
     "partitioned": [
       "partition_relay",

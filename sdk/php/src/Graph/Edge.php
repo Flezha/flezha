@@ -82,7 +82,7 @@ final class Edge
         return $this->with(['retryBackoffMs' => $milliseconds]);
     }
 
-    /** Stamp identity and `flz.key` onto emitted plugin frames. */
+    /** Stamp `flz.entity` / `flz.seq` / `flz.key` onto this channel's plugin frames. */
     public function keyed(): self
     {
         return $this->with(['keyed' => true]);
@@ -157,7 +157,10 @@ final class Edge
             );
         }
 
-        $this->channel('plugin', $name, [], $encode);
+        // The channel keeps its `named()` name; `$name` is the sink's, which is
+        // the default when the edge was not named. The channel name is what a
+        // frame carries and what selects a forward target's entry channel.
+        $this->channel('plugin', $this->pending['channelName'] ?? $name, [], $encode);
     }
 
     /**

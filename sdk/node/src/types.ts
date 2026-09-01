@@ -190,7 +190,7 @@ export interface Stream<T> {
   onFull(policy: OverflowPolicy): Stream<T>;
   retryMax(attempts: number): Stream<T>;
   retryBackoffMs(ms: number): Stream<T>;
-  /** Stamp identity and `flz.key` onto emitted plugin frames. */
+  /** Stamp `flz.entity` / `flz.seq` / `flz.key` onto this channel's plugin frames. */
   keyed(): Stream<T>;
   /**
    * Wire this edge into a procedure whose declared input accepts `T`.

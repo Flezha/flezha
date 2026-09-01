@@ -171,4 +171,28 @@ class AuthoringTest < Minitest::Test
     assert_nil registry.get("never_registered")
     refute_nil defined_but_unregistered.definition
   end
+
+  # `named` is honoured on the inter-proc path and was dropped on the plugin
+  # path, so `named("input").sink("relay_out")` produced a channel called
+  # `relay_out` — and the channel name is what a forwarded frame carries and
+  # what selects the receiving operative's entry channel.
+  def test_a_named_edge_terminating_on_a_sink_names_the_channel_too
+    klass = operative("named_sink") do |c|
+      c.input("input").into(pass_through("relay")).named("in").sink("relay_out")
+    end
+
+    assert_equal %w[input in], klass.spec.channels.map(&:name)
+  end
+
+  # Compatibility, not conformance: `sdk-graph-authoring` says an underived name
+  # comes from the PRODUCER NODE, and these veneers use the sink's. That second
+  # divergence is open and is not what this change moves — this test pins that
+  # it moves nothing but the named case.
+  def test_an_unnamed_edge_terminating_on_a_sink_keeps_the_name_it_has_today
+    klass = operative("unnamed_sink") do |c|
+      c.input("input").into(pass_through("plain")).sink("relay_out")
+    end
+
+    assert_equal %w[input relay_out], klass.spec.channels.map(&:name)
+  end
 end

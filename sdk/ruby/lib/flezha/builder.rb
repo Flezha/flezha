@@ -171,7 +171,7 @@ module Flezha
     def retry_max(attempts) = with(retry_max: attempts)
     def retry_backoff_ms(milliseconds) = with(retry_backoff_ms: milliseconds)
 
-    # Stamp identity and `flz.key` onto emitted plugin frames.
+    # Stamp `flz.entity` / `flz.seq` / `flz.key` onto this channel's plugin frames.
     def keyed = with(keyed: true)
 
     # Fan out: each arm receives this same edge, so `branch` builds exactly the
@@ -221,8 +221,12 @@ module Flezha
         )
       end
 
+      # The channel keeps its `named` name; `name` is the sink's, which is the
+      # default when the edge was not named. The channel name is what a frame
+      # carries and what selects a forward target's entry channel.
       @builder.add_channel(
-        name: name.to_s, kind: :plugin, producer: @from[1].index, consumers: [],
+        name: @pending[:channel_name] || name.to_s,
+        kind: :plugin, producer: @from[1].index, consumers: [],
         overflow: @pending[:overflow] || :drop_nothing,
         retry_max: @pending[:retry_max], retry_backoff_ms: @pending[:retry_backoff_ms],
         keyed: @pending[:keyed] || false, transforms: transforms,

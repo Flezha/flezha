@@ -356,7 +356,10 @@ class EdgeStream<T> implements Stream<T> {
       );
     }
     this.builder.addChannel({
-      name,
+      // The channel keeps its `.named()` name; `name` is the sink's, which is
+      // the default when the edge was not named. The channel name is what a
+      // frame carries and what selects a forward target's entry channel.
+      name: this.pending.channelName ?? name,
       kind: 'plugin',
       producer: this.from.node.index,
       consumers: [],

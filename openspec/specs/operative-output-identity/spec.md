@@ -129,3 +129,34 @@ SHALL show no regression on non-keyed emit paths.
 - **THEN** throughput is within the established regression tolerance of the
   pre-change baseline
 
+### Requirement: Every host mints the identity stamps, and the ordinal rule is one rule
+
+An SDK whose procedures run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class does not declare effectively-once; under the tier the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.entity` SHALL be spelled `<operative>/<procedure>/<entity_key or empty>`, matching the label the core derives for the same Entity, and `flz.seq` SHALL read the change sequence the activation carried at handout.
+
+An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK defers it here: it is not a poll host and inherits nothing from `flz_core`, so the stamps are feature work in its own core rather than a port, and queue row R6 owes them.
+
+#### Scenario: The ordinal advances across emits within one invocation
+
+- **WHEN** one invocation emits twice on a keyed plugin channel at change sequence 5
+- **THEN** the first output carries `flz.seq` `"5.0"` and the second `"5.1"`
+
+#### Scenario: A fresh work item restarts the ordinal
+
+- **WHEN** a second work item of the same activation emits once on the same keyed plugin channel
+- **THEN** its output's `flz.seq` ordinal is `0`, not a continuation of the previous item's
+
+#### Scenario: A non-keyed plugin emit advances the ordinal without being stamped
+
+- **WHEN** an invocation emits once on a non-keyed plugin channel and then once on a keyed one
+- **THEN** the first output carries no `flz.` metadata and the second carries `flz.seq` with ordinal `1`
+
+#### Scenario: A host writes no stamps under the effectively-once tier
+
+- **WHEN** a class declaring effectively-once emits on its keyed plugin channel
+- **THEN** the output the host hands the core carries no `flz.entity`, `flz.seq` or `flz.key`
+
+#### Scenario: An SDK that defers the capability says so in its manifest
+
+- **WHEN** an SDK does not mint the stamps
+- **THEN** its `conformance.json` lists `keyed_channels` under `deferred`, and the conformance gate refuses a manifest that carries the capability without the reference's fixture set
+
