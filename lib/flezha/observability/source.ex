@@ -9,17 +9,13 @@ defmodule Flezha.Observability.Source do
   `Flezha.Observability.Registry.register_source/1`; registration is
   what makes a source visible, disable-able and budgeted.
 
-  The foundation never calls a source back: a poller arms its own tick
-  and emits from it, so this behaviour documents the shape rather than
-  driving it. `Flezha.Observability.OtpBackend.Source` is the macro
-  that writes that shape for the five sources this foundation ships.
+  The foundation never calls a source back — a poller arms its own tick,
+  and a process-backed source's `init/1` is GenServer's — so the sole
+  callback is the registration schema, declared for every polled source
+  by `Flezha.Observability.OtpBackend.Poller`.
 
   Worked examples: `docs/operations/observability.md` → Extending.
   """
-
-  @type config :: map()
-
-  @callback init(config()) :: {:ok, state :: term()} | {:error, term()}
 
   @callback config_schema() :: map()
 end

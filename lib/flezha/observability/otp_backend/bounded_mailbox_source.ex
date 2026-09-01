@@ -13,7 +13,7 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
   anything larger.
   """
 
-  use Flezha.Observability.OtpBackend.Source,
+  use Flezha.Observability.OtpBackend.Poller,
     source: :flezha_bounded_mailbox,
     kinds: [:metric, :event],
     cardinality_budget: 5_000,
@@ -21,10 +21,10 @@ defmodule Flezha.Observability.OtpBackend.BoundedMailboxSource do
 
   alias Flezha.Observability.{Bus, Signal}
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def init_state(_opts), do: %{announced?: false}
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def poll(%{announced?: false} = state) do
     Bus.emit(
       Signal.new(%{

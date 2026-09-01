@@ -190,10 +190,12 @@ defmodule Flezha.Observability.OtpBackendTest do
     end
   end
 
-  # `use Flezha.Observability.OtpBackend.Source` writes every source's
-  # registration and its first state. Read both back — from the registry and
-  # from `init/1` itself — so a change to the macro that moves either fails
-  # here rather than producing a quietly different source.
+  # `use Flezha.Observability.OtpBackend.Poller` writes every source's
+  # registration, its first state and the `Flezha.Observability.Source`
+  # contract it registers under. Read them back — from the registry, from
+  # `init/1` itself and from the declared behaviours — so a change to the
+  # macro that moves any of them fails here rather than producing a quietly
+  # different source.
   @lifecycle [
     {BeamVmSource, :beam_vm, [:metric], 50, 1_000, [:last_scheduler_sample]},
     {HostSource, :host, [:metric, :event], 50, 5_000, [:prev_cpu_jiffies, :status]},
@@ -223,6 +225,9 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       for {mod, source, kinds, budget, interval, extra} <- @lifecycle do
         Registry.unregister_source(source)
+
+        assert Flezha.Observability.Source in declared_behaviours(mod)
+        assert mod.config_schema() == %{}
 
         assert {:ok, state} = mod.init([])
         assert {:ok, row} = Registry.lookup_source(source)
@@ -290,5 +295,9 @@ defmodule Flezha.Observability.OtpBackendTest do
     end
 
     TestSinks.settle(RingBufferSink)
+  end
+
+  defp declared_behaviours(mod) do
+    mod.module_info(:attributes) |> Keyword.get_values(:behaviour) |> List.flatten()
   end
 end

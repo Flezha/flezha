@@ -253,14 +253,15 @@ Registration is what makes a source visible, disable-able and budgeted — an un
 still fans out, unchecked. A `kind` outside the registered `kinds` is dropped and reported as a
 `:source_kind_violation` event on `:observability_registry` (`metadata: %{source, attempted_kind}`).
 
-The shipped pollers are GenServers built with `use Flezha.Observability.OtpBackend.Source,
+The shipped pollers are GenServers built with `use Flezha.Observability.OtpBackend.Poller,
 source: :name, default_poll_ms: n` (injects `start_link/1` and `poll_interval_ms/0`
 honouring `:otp_backend` → `:poll_intervals`); each registers itself in `init/1` and schedules its own
 `:poll`. The built-in list is `@sources` in `OtpBackend.Supervisor`; a third-party poller runs under its
 own supervisor or via `DynamicSupervisor.start_child/2` on `Flezha.Observability.SourceSupervisor`.
-The `Flezha.Observability.Source` behaviour declares `init/1` and `config_schema/0`. No foundation
-driver calls a source back at all — a poller drives itself — so the behaviour is documentation of the
-shape, not a dispatch contract.
+The macro also declares `@behaviour Flezha.Observability.Source` and supplies an overridable
+`config_schema/0`, so every shipped poller implements the registration contract. That behaviour
+declares `config_schema/0` and nothing else: no foundation driver calls a source back — a poller
+drives itself, and a process-backed source's `init/1` is GenServer's.
 
 A process-backed source in full — it registers itself, arms its own tick, and emits from it:
 

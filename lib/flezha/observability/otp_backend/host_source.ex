@@ -12,7 +12,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :host`.
   """
 
-  use Flezha.Observability.OtpBackend.Source,
+  use Flezha.Observability.OtpBackend.Poller,
     source: :host,
     kinds: [:metric, :event],
     cardinality_budget: 50,
@@ -26,10 +26,10 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   @loadavg_path "/proc/loadavg"
   @fd_dir "/proc/self/fd"
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def init_state(_opts), do: %{status: :probing, prev_cpu_jiffies: nil}
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def poll(%{status: :degraded} = state), do: state
 
   def poll(state) do

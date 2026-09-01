@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+# `Process.stub` is `Object#stub`, which lives in minitest's `mock` and is not
+# loaded by `minitest/autorun` in every version of it.
+require "minitest/mock"
 
 # The entry point's contract: declare, warm up, then serve — and the JIT
 # decision the operator can always take back.

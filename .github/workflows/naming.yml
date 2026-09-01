@@ -4,7 +4,7 @@ name: Naming
 # `workflow`; check-kind-naming fails a PR that reintroduces `bounded`/`unbounded`
 # as a kind name. The three overflow policies are `DropNothing`/`DropNewest`/
 # `DropOldest`; check-overflow-naming fails a PR that reintroduces `Block` as a
-# policy name. check-module-naming fails a PR that reintroduces one of the seven
+# policy name. check-module-naming fails a PR that reintroduces one of the eight
 # module paths retired for naming the wrong thing (the script lists them with
 # their replacements). check-sdk-boundary keeps lib/flezha/sdk/ touching the
 # controller only through the named packaging seams (prepares

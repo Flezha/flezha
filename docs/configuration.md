@@ -458,7 +458,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:observability[:pubsub_sink_enabled]` | `true` (`false` in test) | `lib/flezha/observability/default_sinks.ex`, `lib/flezha/service/observability.ex` |
 | `:observability[:data_plane_liveness]` | `true` | `lib/flezha/transport/liveness_counters.ex` |
 | `:observability[:otp_backend_enabled]` | `true` (`false` in test) | `lib/flezha/observability/otp_backend/supervisor.ex` |
-| `:observability[:otp_backend][:poll_intervals]` | `beam_vm: 1_000, host: 5_000, processhub: 1_000, flezha_transport: 1_000, flezha_bounded_mailbox: 1_000` | `lib/flezha/observability/otp_backend/source.ex` |
+| `:observability[:otp_backend][:poll_intervals]` | `beam_vm: 1_000, host: 5_000, processhub: 1_000, flezha_transport: 1_000, flezha_bounded_mailbox: 1_000` | `lib/flezha/observability/otp_backend/poller.ex` |
 | `:observability_export[:prometheus_enabled]` / `[:prometheus_port]` / `[:prometheus_bind]` | `false` / `9568` / `"127.0.0.1"` | `lib/flezha/observability/export/supervisor.ex`, `lib/flezha/observability/export/prometheus_http.ex` |
 | `:observability_export[:otlp_enabled]` / `[:otlp_endpoint]` / `[:otlp_headers]` | `false` / `nil` / `%{}` | `lib/flezha/observability/export/supervisor.ex`, `lib/flezha/observability/export/otlp_client.ex` |
 | `:observability_export[:otlp_flush_interval_ms]` / `[:otlp_batch_max]` | `10_000` / `512` | `lib/flezha/observability/export/otlp_sink.ex` |

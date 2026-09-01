@@ -136,7 +136,173 @@ because the gate reports OK for two different reasons — nothing wrong, or not 
 and those are currently indistinguishable. Brief carries that measurement so the worker
 cannot claim it caught a hidden violation.
 
-**KI-108 IS DONE. NO WORKER IS ALIVE.** `fix-record-block-latch`, archived. An inline
+**ROW 3 worker spawned 2026-09-01** — `collapse-observability-source-behaviours`, fresh
+`general-purpose`. Brief carries the binding decision (collapse, not delete — refused on
+the measurement that three registrations are `flavour: :declarative`), the eighth
+`RETIRED` entry as RED-FIRST, and ONE judgement the decision does not make: whether the
+five `*_source.ex` siblings rename too. Told to state the reasoning, not toss a coin.
+Also told that `67c762c2` changed the record-block rules under it — unclosed blocks now
+FAIL — because this rename will redden the module gate on historical prose by design.
+
+**ROW 3.5 worker spawned 2026-09-01** — the Format red on `dev`. Brief names BOTH false
+recorded facts (the 1.19 CI pin; the "exits 0" measurement taken through a pipe) so it
+cannot re-derive either, and states that the success condition ON THIS BOX is
+`format-apply.sh --check` exit **2**, not 0 — `rubocop` is genuinely absent and
+`gate_lib.sh` ranks unformatted(1) above missing-tool(2). Told to verify that reasoning
+against the script rather than take it from me, and to STOP rather than sweep if another
+file turns out unformatted.
+
+**ROW 4.5 IS DONE. NO WORKER IS ALIVE.** All eleven checks exit 0; Ruby suite re-run
+independently at 82 runs / 277 assertions / 0 failures. `async` declared as a DEVELOPMENT
+dependency with the reason beside it, and CI installs all three pinned versions through
+one `pin()` helper that greps the gemspec — the same shape `format.yml` already uses for
+rubocop, so the pin is READ rather than decorative.
+
+**The most useful thing this row produced is the worker's own diagnosis of its wrong
+claim**, and it belongs on this board: it had grepped for `gem .async` while the doc says
+*"add the `async` gem"* — **the one line that refuted the claim was the one line the
+pattern could not match.** *A negative grep is not a reading.* That is the same failure
+mode as this session's other two instrument lies (an exit code read through a pipe; a
+regex sweep used as a measurement of what a gate reads), and all three were caught only by
+going and looking at the thing itself.
+
+**Checkpoint 2 verified; one ruling back, and it CORRECTS the worker.** Classifier fix
+confirmed at the code — gemspec now `None`, `Rakefile` still `ruby` by basename, `.rb`
+untouched, `--check` **exit 0**, `sdk/ruby prod_loc` 1921 against a stale-high 1955
+baseline (mine to re-record; `baseline.json` untouched, correctly).
+
+**KI-112's user-facing half is REFUTED.** The worker reported `:fibers` as a documented
+feature that fails on a fresh install because no doc names the `async` gem. The paragraph
+DIRECTLY BENEATH the table it cited reads *"It needs a `Fiber::Scheduler`: add the `async`
+gem, or pass `executor(:fibers, scheduler: …)"* — which names the gem, names the
+alternative, and matches the guarded `Flezha::Error` the worker's own shim drill produced.
+A lazy require + a guarded error + a doc line stating the requirement is a correctly
+designed OPTIONAL dependency, not a defect. Told to correct the entry in place rather than
+soften or delete it — an entry that overstated its severity is worth keeping accurate for
+the same reason a defect is. **What survives is real and in scope**: the suite cannot run
+the fiber arm without `async`, so it is an undeclared DEV dependency — one line, same as
+`rake`. Refused as a runtime dependency (would force `async` on every `:threads` consumer
+and contradict the deliberate lazy require — the worker argued that correctly).
+
+**ROW 4.5 checkpoint 1 verified; worker sent back with four rulings.** Pin, require and
+the 2×2 proof all hold. **The worker's mechanism correction against KI-110 (my own entry)
+is right and I verified it**: minitest **6.0 ships no `mock.rb` at all** (extracted to a
+separate gem), so the require ALONE cannot fix it — the PIN is what makes the suite run;
+the require makes the failure name a library instead of a missing method. Its 2×2 is the
+proof that matters: with the require deleted the suite is STILL GREEN on this box, which
+is exactly why the recorded green run proved nothing.
+
+**KI-111 — RULED: fix the classifier, and it is a CORRECTION not an exemption.**
+`LANG_EXTS["ruby"] = "rb gemspec"` makes `flezha.gemspec` count as production code while
+`language()` returns `None` for `package.json`, `pyproject.toml`, `composer.json`,
+`pom.xml` AND `Cargo.toml` — verified by calling it on all six. **Declaring a dependency
+costs a blocking production line in Ruby and nothing in the other five SDKs**, so the
+metric taxes the dependency hygiene `CLAUDE.md` mandates. Precedent is settled (area 4's
+batch 0 WAS a classifier fix; area 6 recorded 75 lines as a classifier artefact; §11e
+exists because the instrument misreports). Drop `gemspec`; scope verified contained —
+`LANG_EXTS` feeds only `LANG_BY_EXT`.
+
+**Also ruled**: `rake` fixed in this row (same file, same defect class, and free once the
+classifier is right); `async` INVESTIGATED AND FILED, not fixed — the fiber executor uses
+`Async::Scheduler`, so it may be a RUNTIME dependency, and declaring that as a dev one
+would be worse than the defect. The orphaned KI-76 verdict block gets moved verbatim.
+**OpenSpec ruling accepted — no change for this row**, because a Ruby-only requirement is
+the wrong shape when the worker's own survey shows THREE other SDKs would fail a properly
+worded one. Queued `pin-sdk-test-toolchains` instead, with that survey as its evidence.
+
+Last seen +10 min: `flezha.gemspec` +5, `runner_test.rb` +3 (the
+require), `.github/workflows/ruby-sdk.yml` +8 — the workflow edit suggests it built the
+proof arm in CI rather than only locally, which is the right instinct. Brief told it a
+green suite proves NOTHING here (it was already green) and the proof must be an arm where
+`autorun` does not supply `mock`. Also asked for a per-SDK survey of the same shape, to
+report and NOT fix — scope is mine.
+
+**ROWS 4 AND 5 CLOSED BY THE SUPERVISOR — no worker needed, and one of them turned up a
+real defect anyway.**
+
+**Row 4 (cause D) does NOT reproduce on `dev`.** I ran it rather than briefing it, because
+the row's own instruction was "reproduce first" and a run is cheaper than a worker:
+
+    $ cd sdk/ruby && PATH=~/.rbenv/versions/3.4.10/bin:$PATH rake test
+    82 runs, 277 assertions, 0 failures, 0 errors, 0 skips
+
+**But "does not reproduce" was the wrong place to stop.** The reason it passes is that
+this box's minitest 5.25.4 happens to have `autorun` load `mock`, so `Process.stub`
+resolves. **`minitest` is declared NOWHERE** — `flezha.gemspec` pins `rubocop` to an exact
+version and names no test dependency at all — there is **no `Gemfile.lock`**, and no file
+requires `minitest/mock`. Nothing is version-gated in our favour: the same image refresh
+that reddened `main` reaches `dev` the same way. Filed **KI-110** and queued as row 4.5.
+A green suite that is green by accident is the thing this programme exists to stop.
+
+**Row 5 (cause D′) ruled EXTERNAL on the recorded evidence, no spend.** The action exits 1
+with no error of its own and the only diagnostics are a missing git credential and a
+**402 Payment Required from `warehouse-clerk-tmp.vercel.app`** — a third-party binary
+cache, not ours. The row asked for "one look to decide external-vs-ours"; that is the
+look, and the answer does not need a reproduction we cannot perform locally anyway.
+
+**ROW 3.5 IS DONE — `9a0e0534`.** The Format workflow is green on `dev`.
+
+**MY OWN HEARTBEAT NOTE WAS WRONG AND IS CORRECTED HERE.** I wrote that php-cs-fixer's
+crash meant *"row 3.5 alone does NOT green the Format workflow"*. It does. The parse
+error is a LOCAL-BOX artefact: `format.yml:80`–`:82` installs **PHP 8.4** and `:126` runs
+`composer install`, while this box's `/usr/bin/php` is 8.3.6 reading a vendor tree
+installed for 8.4 — so CI never hits it. Verified in the workflow file. Under 8.4 the
+fixer reports `Found 0 of 89 files that can be fixed`.
+
+**The CI-equivalent arm was MEASURED, not argued** — rbenv 3.4.10 rubocop plus
+`FLEZHA_PHP`, both sides, by reverting the edit and re-applying it: **before 1** (with
+`mix format` the single failure in the whole gate), **after 0**. All seven formatters ran
+together and the gate exited 0. Nothing else in the repository is unformatted.
+
+**What IS still true from that note**: `gate_run` files a php-cs-fixer *crash* (exit 255)
+under UNFORMATTED, because `command -v php` succeeds so it never reaches
+`gate_unavailable`. The gate still cannot say "the tool died on someone else's file".
+That is cosmetic on CI and misleading locally — left standing as KI-76.
+
+**KI-107's blamed origin was wrong too**: `git log -S` names `716061cf` (area 5c's
+`cli_manager` split), not `retire-cluster-snapshot-remnants`, which only deleted a
+function fifty lines above. Corrected in the entry.
+
+**No OpenSpec change, and the reason is checked rather than assumed**:
+`openspec/specs/code-formatting/spec.md` ALREADY carries both requirements (CI enforces
+the formatter; the pass is purely mechanical). The gate behaved exactly as specified —
+the file was wrong. A delta would restate a written requirement, which is ceremony.
+
+### KI-109 — RULED: real, and it is AREA 7's, not a change of its own
+
+`test/flezha/state/fsync_batcher_test.exs:99` asserts **strict equality** —
+`MapSet.new([a, b]) == FsyncBatcher.dirty_set()` — against a set that
+`fsync_batcher.ex:93` seeds from `WriterRegistry.registered_ids()`, i.e. **every live
+writer in the BEAM**. Verified at both sites. Any foreign writer breaks it; two were
+named (`il_59202`, `cursors-quiet-24067`, both `input_log_test.exs`), and since
+`WriterRegistry` is a `keys: :unique` Registry their presence means leaked-but-alive
+`InputLog` processes. 1 of 2 full runs, and the re-run at the IDENTICAL seed passed, so
+it is not seed-deterministic; it does not reproduce narrowly (file alone 5/5, directory
+318/318, the pair 38/38 over four seeds).
+
+**Both halves are test-side** — an assertion that cannot hold against node-global state,
+and a module that leaks processes — so this is area 7's subject exactly. Added to the
+list owed to area 7 by name rather than spun up as its own change.
+
+**ROW 3 IS DONE — `787acf3f`, archived.** All six naming checks exit 0, metrics 0
+regressions, observability suites 116 passed, compile `--warnings-as-errors` clean.
+
+**KI-100's DIAGNOSIS WAS WRONG, and the worker corrected it with a compiler refusal.** The
+entry said the behaviour had no implementers because the macro never declared it.
+Declaring it as specified DOES NOT BUILD: `Flezha.Observability.Source` declared `init/1`,
+every process-backed source is a GenServer, which declares `init/1` too, and
+`mix compile --warnings-as-errors` fails all five with *conflicting behaviours*. The
+behaviour was **undeclarable by the flavour it described**, not merely undeclared. `init/1`
+is deleted from it; `config_schema/0` is the sole callback, which is also right for the
+declarative half that owns no process. Verified: `init/1` present at HEAD, absent now.
+
+**Sibling ruling accepted — reasoned, not tossed.** The five `*_source.ex` keep their
+names because they ARE sources (each registers, appears in `flz observe sources`, and now
+declares the behaviour); the template is not one. Renaming them would recreate the exact
+collision this change removes, in the other direction, for ~25 sites and zero metric
+movement inside a blocking area.
+
+**KI-108 IS DONE — `67c762c2`, archived.** `fix-record-block-latch`, archived. An inline
 marker pair now exempts its own line only, and an UNCLOSED block is refused — the same
 whole-file blinding reached by a different route. `naming_gate.py --self-test` runs the
 real `walk` over a throwaway git tree and is wired as a **sixth step** of the Naming job,
@@ -313,7 +479,7 @@ fixed in `close-kind-naming-gate-red`.
    recorded baseline of `0.797` with 202 files: required **41**, held 43. **Read
    `async_true` from the instrument** — a `grep -rl 'async: true' test/` sweeps
    directories `test_files` does not count and over-reads by four.
-2. **Owed to area 7 by name**: area 5b's three test files over 800 need a shared case
+2. **Owed to area 7 by name**: **KI-109** — `fsync_batcher_test.exs:99` asserts strict equality against a node-global set, and `input_log_test.exs` leaks live `InputLog` processes into it. Both halves are test-side. Also: area 5b's three test files over 800 need a shared case
    module under `test/support/`, which only area 7 owns. `test files_over_800` is 6.
 3. **A fold is a concatenation, not a semantic merge** — the sources carry different
    module-level `setup` blocks, and a `setup` that silently stops running is a test that
@@ -343,12 +509,35 @@ remedy, where the Loop mints no such op — decide which claim is true and fix t
 the same commit), **KI-94** (`check-kind-naming` red on 23 prose hits, none in code),
 **KI-90** (`narrative_markers` cannot see `task 2.7` or `§5`).
 
-### One discrepancy left unresolved
+### That discrepancy is RESOLVED 2026-09-01 — and my earlier measurement was the wrong one
 
-5e-b reported `scripts/format-check.sh` red at HEAD on `lib/flezha/service/cli_manager.ex`.
-**I measured `mix format --check-formatted` on that file twice and it exits 0 both
-times.** Either the script's per-file loop differs from the direct invocation, or the
-condition was transient. Worth one minute before anyone trusts either reading.
+5e-b reported `scripts/format-check.sh` red at HEAD on `lib/flezha/service/cli_manager.ex`,
+and a previous session recorded *"I measured `mix format --check-formatted` on that file
+twice and it exits 0 both times."* **That reading was wrong. It exits 1.**
+
+    $ mix format --check-formatted lib/flezha/service/cli_manager.ex >/dev/null 2>&1; echo $?
+    1
+    $ ./scripts/format-apply.sh --check >/dev/null 2>&1; echo $?
+    1
+
+**The likely cause of the false green is worth more than the fact**: `$?` after a PIPE is
+the exit code of the last stage, so `mix format --check-formatted <file> | tail -5` reports
+`tail`'s 0 no matter what the formatter said. I nearly published the same false reading
+this session for the same reason, and caught it only by re-running without the pipe.
+5e-b was right all along.
+
+**KI-107's stated blocker is also false**, found by the row 3 worker and verified here:
+the entry says the fix must wait because *"this box runs Elixir 1.20 and CI runs 1.19"*.
+Every workflow pins **1.20.2** — `bench.yml`, `rust-sdk-bench-cron.yml`, `elixir.yml`,
+`java-sdk.yml`, `nightly-e2e.yml` and `format.yml:53`, which is the pin the Format gate
+itself uses — and this box is 1.20.2. There is no version question.
+
+**So the Format workflow is RED ON `dev`, on one file, for a two-line re-wrap.** That is
+the same shape as row 1: a merge gate red on the working branch that nobody can pass.
+**Queued as row 3.5.** The standing memory note *"NEVER run bare `mix format` (local 1.20
+vs CI 1.19)"* is STALE and should not stop the fix — though `mix format` on the whole tree
+is still wrong for a different and still-valid reason: it would sweep files this change
+does not own.
 
 ### Area 5e-a survey — VERIFIED and APPROVED 2026-08-31
 
@@ -3200,9 +3389,12 @@ was decided with the user; the detail blocks follow further down this section.
 | 0 | `retire-cluster-snapshot-remnants` | **DONE** `f3c30502`, archived | 2026-08-31 |
 | 1 | **CI cause C** — `check-kind-naming` red on `dev`. Widened at checkpoint: the Naming workflow gates FIVE checks in one job and `check-module-naming` was red too | **DONE** `close-kind-naming-gate-red`, archived | 2026-08-31 |
 | 2 | `rename-kafka-queue-overflow` — `:block` → `:drop_nothing`, plain rename + gate widening | **DONE**, archived. **The exposure's description was WRONG — see *Awaiting the user's decision*** | 2026-08-31 |
-| 3 | `collapse-observability-source-behaviours` — KI-100: rename `OtpBackend.Source` → `Poller`, macro declares the real behaviour | queued | 2026-09-01 |
-| 4 | **CI cause D** — Ruby SDK `NoMethodError: undefined method 'stub' for module Process` on 3.3 and 3.4. **Reproduce on `dev` first** (`cd sdk/ruby && rake test`); it has only been seen on `main` | queued | 2026-08-31 |
-| 5 | **CI cause D′** — Ruby `cross-gem` fails on all three triples with no error of its own. One look to decide external-vs-ours before spending | queued | 2026-08-31 |
+| 3 | `collapse-observability-source-behaviours` — KI-100 | **DONE**, archived. KI-100's own diagnosis was WRONG: the behaviour was UNDECLARABLE, not merely undeclared | 2026-09-01 |
+| 3.5 | **CI cause E** — the **Format** workflow red on `dev` (`cli_manager.ex`) | **DONE**. CI-equivalent arm measured 1 → 0 with all seven formatters | 2026-09-01 |
+| 4 | **CI cause D** — Ruby SDK `Process.stub` NoMethodError | **CLOSED — does NOT reproduce on `dev`** (82 runs, 0 failures, ruby 3.4.10). But the mechanism IS live here → **KI-110**, queued as row 4.5 | 2026-08-31 |
+| 4.5 | `pin-ruby-test-dependency` — KI-110, +KI-111 (classifier) and KI-112 | **DONE**. minitest/rake/async declared and pinned; CI reads the pins | 2026-09-01 |
+| 4.6 | `pin-sdk-test-toolchains` — the CROSS-SDK requirement KI-110 exposed: an SDK's test toolchain is declared in its own manifest, pinned, and CI installs the version the manifest names. **Three SDKs fail it today** — Python's declared dep-group is bypassed by `pip install pytest pyright`, PHP's `composer.lock` is gitignored, Node's test path uses `npm install` not `npm ci`. Stated in NO spec | queued | 2026-09-01 |
+| 5 | **CI cause D′** — Ruby `cross-gem` | **CLOSED — external.** Ruled on the recorded evidence, no spend | 2026-08-31 |
 | 6 | **Area 7** (`refactor-7-tests`) — proposal written and `--strict` valid, **awaiting supervisor verification** before implementation | in flight | — |
 | 7 | **Area 8** (docs reconcile) — depends on 7 | pending | — |
 | 8 | `unify-cli-output-flag` — KI-80: **`--output <fmt>` wins**; `--json` becomes its alias or is dropped. Today `cluster status --json` ignores `--output json` and `audit list --output json` ignores `--json` | queued | 2026-09-01 |

@@ -33,6 +33,17 @@ Gem::Specification.new do |spec|
   spec.extensions = ["ext/flz_core_ffi/extconf.rb"]
 
   spec.add_dependency "msgpack", "~> 1.7"
+  # Exact versions, because CI installs what these lines name and nothing else
+  # constrains the resolution. minitest must stay on 5.x: 6.0 moved
+  # `minitest/mock` out into its own gem, and the suite's `Object#stub` is from
+  # there.
+  # `async` is a DEVELOPMENT dependency on purpose: the fiber executor requires it
+  # lazily and refuses with a named error when it is absent, so a `:threads`
+  # consumer must not be made to install it. The suite drives the fiber arm for
+  # real, so the suite does need it.
+  spec.add_development_dependency "async", "2.45.0"
+  spec.add_development_dependency "minitest", "5.25.4"
+  spec.add_development_dependency "rake", "13.2.1"
   spec.add_development_dependency "rubocop", "1.90.0"
 
   spec.metadata = {

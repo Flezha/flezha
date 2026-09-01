@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fails when a retired module path is still named anywhere in the tree.
 #
-# Seven modules were renamed or folded into their parent because the last
+# Eight modules were renamed or folded into their parent because the last
 # segment named the wrong thing:
 #
 #   Flezha.State.Registry                         -> Flezha.State.Paths
@@ -12,6 +12,8 @@
 #   Flezha.Plugin.Provider.Kafka.Telemetry        -> Flezha.Plugin.Provider.Kafka
 #   Flezha.Plugin.Provider.OperativeForward.Telemetry
 #                                                 -> Flezha.Plugin.Provider.OperativeForward
+#   Flezha.Observability.OtpBackend.Source
+#                                                 -> Flezha.Observability.OtpBackend.Poller
 #
 # `mix compile` catches a stale CODE reference; nothing catches one in a
 # moduledoc, a spec, a runbook or a config comment, and a plugin whose provider
@@ -48,6 +50,7 @@ RETIRED = (
     "Flezha.Plugin.Provider.Metrics",
     "Flezha.Plugin.Provider.Kafka.Telemetry",
     "Flezha.Plugin.Provider.OperativeForward.Telemetry",
+    "Flezha.Observability.OtpBackend.Source",
 )
 
 PATTERNS = [re.compile(re.escape(path) + r"\b") for path in RETIRED]
@@ -59,7 +62,7 @@ sys.exit(naming_gate.walk(
     self_files={"scripts/check-module-naming.sh", ".github/workflows/naming.yml"},
     record_tag="module-naming-record",
     headline="retired module path still named "
-             "(see scripts/check-module-naming.sh for the seven and their replacements):",
+             "(see scripts/check-module-naming.sh for the eight and their replacements):",
     hint="A live reference takes the new name. A document citing the old name as "
          "history wraps it in a `module-naming-record` block.",
     ok_message="module naming OK",

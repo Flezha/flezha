@@ -57,8 +57,8 @@ defmodule Flezha.Observability.Registry do
   end
 
   @doc """
-  Register a source. Accepts the keys documented in
-  `Flezha.Observability.Source` plus `:flavour`.
+  Register a source: `name`, `kinds`, `flavour` and an optional
+  `cardinality_budget`. Contract: `Flezha.Observability.Source`.
   """
   @spec register_source(map()) :: :ok | {:error, term()}
   def register_source(%{name: _, kinds: _, flavour: _} = entry) do

@@ -12,7 +12,7 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :beam_vm`.
   """
 
-  use Flezha.Observability.OtpBackend.Source,
+  use Flezha.Observability.OtpBackend.Poller,
     source: :beam_vm,
     kinds: [:metric],
     cardinality_budget: 50,
@@ -22,7 +22,7 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
 
   @memory_buckets [:total, :processes, :atom, :binary, :ets]
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def init_state(_opts) do
     # Scheduler-wall-time sampling must be on before the first delta.
     _ = :erlang.system_flag(:scheduler_wall_time, true)
@@ -35,7 +35,7 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
     :ok
   end
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def poll(state) do
     emit_memory()
     emit_run_queues()

@@ -88,7 +88,8 @@ defmodule Flezha.Service.CliManager do
                 arg6 \\ "",
                 arg7 \\ "workflow",
                 arg8 \\ ""
-              ), to: Cli.Schedule
+              ),
+              to: Cli.Schedule
 
   defdelegate schedule_list(), to: Cli.Schedule
   defdelegate schedule_remove(arg1), to: Cli.Schedule

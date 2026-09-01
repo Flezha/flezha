@@ -16,7 +16,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   `docs/operations/observability.md` → Shipped sources.
   """
 
-  use Flezha.Observability.OtpBackend.Source,
+  use Flezha.Observability.OtpBackend.Poller,
     source: :flezha_transport,
     kinds: [:metric],
     cardinality_budget: 40,
@@ -26,7 +26,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Server, as: TransportServer
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def poll(state) do
     poll_transports()
     if LivenessCounters.poll_enabled?(), do: poll_beam_counters()

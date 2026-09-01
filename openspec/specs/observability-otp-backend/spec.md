@@ -2,10 +2,8 @@
 
 ## Purpose
 
-The observability-otp-backend capability provides the content side of the observability contract by shipping a library of built-in process-backed `Source` implementations registered through the foundation's `Flezha.Observability.Source` behaviour. It covers the BEAM VM (`:beam_vm`), the OS process via Linux `/proc` (`:host`), every active ProcessHub instance (`:processhub`), each configured transport (`:flezha_transport`), and the bounded-mailbox subsystem (`:flezha_bounded_mailbox`). The sources run under a dedicated `Flezha.Observability.OtpBackend.Supervisor` (`:one_for_one`) inserted into the foundation supervision tree after `DefaultSinks`, each honouring per-source cardinality budgets and an `:otp_backend_enabled` runtime flag for wholesale opt-out. The capability also ships the `flz observe` CLI verb family (`sources`, `sinks`, `tail`, `enable`, `disable`) that exposes the observability service API to operators with text and `--json` output modes, every verb routing through `Flezha.Service.CliManager.observability_*` wrappers with a `caller_context` of `source: :cli`.
-
+The observability-otp-backend capability provides the content side of the observability contract by shipping a library of built-in process-backed sources, each built on `Flezha.Observability.OtpBackend.Poller` — the macro that declares the foundation's `Flezha.Observability.Source` behaviour and registers the source through `Flezha.Observability.Registry.register_source/1`. It covers the BEAM VM (`:beam_vm`), the OS process via Linux `/proc` (`:host`), every active ProcessHub instance (`:processhub`), each configured transport (`:flezha_transport`), and the bounded-mailbox subsystem (`:flezha_bounded_mailbox`). The sources run under a dedicated `Flezha.Observability.OtpBackend.Supervisor` (`:one_for_one`) inserted into the foundation supervision tree after `DefaultSinks`, each honouring per-source cardinality budgets and an `:otp_backend_enabled` runtime flag for wholesale opt-out. The capability also ships the `flz observe` CLI verb family (`sources`, `sinks`, `tail`, `enable`, `disable`) that exposes the observability service API to operators with text and `--json` output modes, every verb routing through `Flezha.Service.CliManager.observability_*` wrappers with a `caller_context` of `source: :cli`.
 ## Requirements
-
 ### Requirement: Built-in BEAM VM source
 
 The system SHALL provide a built-in process-backed source named `:beam_vm` that polls the running Erlang VM and emits `:metric` signals covering memory, schedulers, run queues, and garbage collection. The source SHALL register with the foundation Registry at supervisor start and SHALL be visible in `Flezha.Observability.Registry.list_sources/0`. The source SHALL respect a per-source cardinality budget appropriate to a single-node BEAM (a small constant — no per-process or per-scheduler labels at value granularity).
@@ -129,3 +127,19 @@ The system SHALL provide a `flz observe` CLI command tree exposing the observabi
 #### Scenario: `flz observe tail` when PubSub sink is disabled
 - **WHEN** the operator runs `flz observe tail beam_vm` against a Controller whose `:pubsub_sink_enabled` is `false`
 - **THEN** the command SHALL exit with a non-zero status and a clear error message indicating the PubSub sink must be enabled, and SHALL NOT block
+
+### Requirement: Built-in sources share one poller template that declares the source contract
+
+Every built-in process-backed source SHALL be built with `Flezha.Observability.OtpBackend.Poller`, which SHALL inject the whole poll lifecycle — `start_link/1`, an `init/1` that registers the source and arms the first tick, `handle_info(:poll, …)` with a catch-all, and `poll_interval_ms/0` — and SHALL declare `@behaviour Flezha.Observability.Source` on every module it builds, supplying an overridable `config_schema/0`. A source SHALL supply only what varies: `init_state/1`, `poll/1`, and `config_schema/0` when it has configuration to describe.
+
+The template SHALL be named for what it is. It is poll plumbing, not a source: the modules it builds are the sources, and naming the template `Source` too leaves the subsystem with two different contracts under one name, which is what left the foundation's own `Source` behaviour with no declared implementers.
+
+#### Scenario: Every built-in source declares the foundation's source contract
+- **WHEN** each module in `Flezha.Observability.OtpBackend.Supervisor.source_modules/0` is loaded
+- **THEN** its declared behaviours SHALL include `Flezha.Observability.Source`
+- **AND** `config_schema/0` SHALL be exported and SHALL answer `%{}` where the source declares no configuration
+
+#### Scenario: A source overrides only what varies
+- **WHEN** a source is built with the template and defines neither `init_state/1` nor `poll/1`
+- **THEN** it SHALL still compile, register at `init/1`, arm its tick at its configured interval, and answer each `:poll` without emitting
+

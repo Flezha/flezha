@@ -65,7 +65,7 @@ LANG_EXTS = {
     "java": "java",
     "ts": "ts mts js mjs cjs",
     "python": "py",
-    "ruby": "rb gemspec",
+    "ruby": "rb",
     "php": "php",
 }
 LANG_BY_EXT = {f".{e}": lang for lang, exts in LANG_EXTS.items() for e in exts.split()}

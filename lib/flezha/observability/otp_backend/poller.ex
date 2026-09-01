@@ -1,19 +1,20 @@
-defmodule Flezha.Observability.OtpBackend.Source do
+defmodule Flezha.Observability.OtpBackend.Poller do
   @moduledoc """
   Shared GenServer plumbing for the periodic observability sources
   (`:beam_vm`, `:host`, `:processhub`, `:flezha_transport`,
   `:flezha_bounded_mailbox`).
 
-  `use Flezha.Observability.OtpBackend.Source, source: :name, kinds: [...],
+  `use Flezha.Observability.OtpBackend.Poller, source: :name, kinds: [...],
   cardinality_budget: N, default_poll_ms: N` injects the whole lifecycle:
   `start_link/1`, `init/1` (registers the source and arms the first tick),
-  `handle_info(:poll, …)` with its catch-all, and `poll_interval_ms/0`
+  `handle_info(:poll, …)` with its catch-all, `poll_interval_ms/0`
   (per-source override under `:flezha, :observability, :otp_backend,
-  :poll_intervals`, else the default).
+  :poll_intervals`, else the default), and the
+  `Flezha.Observability.Source` contract the module registers under.
 
   A source supplies only what varies: `init_state/1` for state beyond
-  `:interval`, and `poll/1`, which does the work and returns the new state.
-  Both are overridable, so a source that needs neither writes neither.
+  `:interval`, `poll/1`, which does the work and returns the new state,
+  and `config_schema/0`. All three are overridable.
   """
 
   @doc "State the source needs beyond `:interval`, built at `init/1`."
@@ -26,7 +27,8 @@ defmodule Flezha.Observability.OtpBackend.Source do
     quote do
       use GenServer
 
-      @behaviour Flezha.Observability.OtpBackend.Source
+      @behaviour Flezha.Observability.OtpBackend.Poller
+      @behaviour Flezha.Observability.Source
 
       @source unquote(Keyword.fetch!(opts, :source))
       @kinds unquote(Keyword.fetch!(opts, :kinds))
@@ -42,9 +44,7 @@ defmodule Flezha.Observability.OtpBackend.Source do
   # re-arming it. A source never writes any of this.
   defp driven_half() do
     quote do
-      def start_link(opts \\ []) do
-        GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-      end
+      def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
       @impl GenServer
       def init(opts) do
@@ -71,14 +71,17 @@ defmodule Flezha.Observability.OtpBackend.Source do
     end
   end
 
-  # What a source may supply, with the answer for one that supplies neither.
+  # What a source may supply, with the answer for one that supplies none.
   defp source_half() do
     quote do
-      @impl Flezha.Observability.OtpBackend.Source
+      @impl Flezha.Observability.OtpBackend.Poller
       def init_state(_opts), do: %{}
 
-      @impl Flezha.Observability.OtpBackend.Source
+      @impl Flezha.Observability.OtpBackend.Poller
       def poll(state), do: state
+
+      @impl Flezha.Observability.Source
+      def config_schema(), do: %{}
 
       defp poll_interval_ms() do
         Application.get_env(:flezha, :observability, [])
@@ -87,7 +90,7 @@ defmodule Flezha.Observability.OtpBackend.Source do
         |> Map.get(@source, @default_poll_ms)
       end
 
-      defoverridable init: 1, handle_info: 2, init_state: 1, poll: 1
+      defoverridable init: 1, handle_info: 2, init_state: 1, poll: 1, config_schema: 0
     end
   end
 end

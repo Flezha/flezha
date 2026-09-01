@@ -71,7 +71,15 @@ jobs:
         run: scripts/build-ruby-sdk.sh
 
       - name: Install the gem's dependencies
-        run: gem install --no-document msgpack async rake minitest
+        # The test toolchain at the versions the gemspec pins, the way format.yml
+        # installs rubocop. Unpinned, `gem install minitest` resolves 6.x, which
+        # ships no `minitest/mock` and so no `Object#stub`.
+        run: |
+          pin() { grep -oP "\"$1\", \"\K[^\"]+" sdk/ruby/flezha.gemspec; }
+          gem install --no-document msgpack
+          gem install --no-document async -v "$(pin async)"
+          gem install --no-document rake -v "$(pin rake)"
+          gem install --no-document minitest -v "$(pin minitest)"
 
       # The concurrency requirements are behaviour here, not prose: pool growth
       # under blocked handlers, retirement afterwards, the GVL released around

@@ -16,7 +16,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   `:flezha, :observability, :otp_backend, :poll_intervals, :processhub`.
   """
 
-  use Flezha.Observability.OtpBackend.Source,
+  use Flezha.Observability.OtpBackend.Poller,
     source: :processhub,
     kinds: [:metric],
     cardinality_budget: 200,
@@ -27,7 +27,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
-  @impl Flezha.Observability.OtpBackend.Source
+  @impl Flezha.Observability.OtpBackend.Poller
   def poll(state) do
     namespaces =
       try do

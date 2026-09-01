@@ -22,7 +22,9 @@ The observability subsystem SHALL define exactly one signal envelope structure u
 
 ### Requirement: Source contract
 
-The observability subsystem SHALL define a `Source` contract under which any producer of signals can register itself. The contract SHALL support two registration flavours: a **declarative** flavour in which the producer calls a public emit function directly, and a **process-backed** flavour in which the producer implements a behaviour and is started under the source supervisor. Every registered source SHALL declare its name, the set of signal kinds it emits, and a per-source cardinality budget.
+The observability subsystem SHALL define a `Source` contract under which any producer of signals can register itself. The contract SHALL support two registration flavours: a **declarative** flavour in which the producer calls a public emit function directly, and a **process-backed** flavour in which the producer is a GenServer started under the source supervisor. Every registered source SHALL declare its name, the set of signal kinds it emits, and a per-source cardinality budget.
+
+The `Flezha.Observability.Source` behaviour SHALL declare `config_schema/0` and no other callback. It SHALL NOT declare `init/1`: a declarative source owns no process and has no `init/1` to offer, and a process-backed source is a GenServer whose `init/1` is GenServer's — a module declaring both behaviours would name that callback twice, which the compiler refuses as conflicting behaviours. A behaviour a whole flavour cannot declare is not a contract that flavour can be held to.
 
 #### Scenario: Declarative source registration
 - **WHEN** code registers a declarative source with name `:my_source`, kinds `[:metric, :event]`, and cardinality budget `1_000`
@@ -35,6 +37,10 @@ The observability subsystem SHALL define a `Source` contract under which any pro
 #### Scenario: Source emits a signal kind it did not declare
 - **WHEN** a source registered with kinds `[:metric]` attempts to emit a `:log` signal
 - **THEN** the emit SHALL be dropped, a `:source_kind_violation` event SHALL be emitted on the bus with the source name, and a per-source violation counter SHALL increment
+
+#### Scenario: The contract is declarable beside GenServer
+- **WHEN** a process-backed source declares both `GenServer` and `Flezha.Observability.Source`
+- **THEN** the module SHALL compile with no warning, and `mix compile --warnings-as-errors` SHALL succeed
 
 ### Requirement: Sink contract
 

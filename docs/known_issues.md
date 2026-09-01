@@ -606,6 +606,24 @@ below is all that survives — which is enough to write it again.
   `sdk/php`'s manifest and docs — and, separately, keep "the tool errored" out of
   the `UNFORMATTED` list, since a wrong cause costs more than a missing one.
 
+- **Supervisor verdict 2026-08-31 — real, P2, and split.** The **gate half** —
+  `format-check.sh` reporting `UNFORMATTED — php-cs-fixer` for a tool that *crashed* —
+  is a defect on its own terms and fixable by whoever next owns the format gate. It is
+  the same class as `docs/dev_notes/format-gate-tells-the-truth.md`: a gate that names
+  the wrong cause sends the next person to fix something that is already correct, which
+  is worse than a gate that is simply red.
+- **The floor half is the repository owner's, not a supervisor's**: whether the PHP SDK
+  supports **8.1** (add `config.platform.php` so composer resolves inside the declared
+  floor) or **8.4+** (raise the declared floor to match the lock) is a support-matrix
+  decision. Recorded under *Awaiting the user's decision* on the refactor board.
+- **Not area 4's work** and deliberately not folded into it: it is `sdk/php` plus the
+  format gate, and an area whose contract is zero behaviour change is the wrong place
+  for it.
+- **It explains two earlier dismissals.** Rows 5+6 and 6.5 both hit this parse error and
+  recorded it as *"environment, pre-existing"* — accurate, and without a mechanism.
+  This entry supplies the mechanism, which is why the dismissals were not wrong so much
+  as unfinished.
+
 
 ---
 
@@ -661,24 +679,6 @@ below is all that survives — which is enough to write it again.
   from a structural regression.
 
 ## P2 — tests that lie or leak
-
-- **Supervisor verdict 2026-08-31 — real, P2, and split.** The **gate half** —
-  `format-check.sh` reporting `UNFORMATTED — php-cs-fixer` for a tool that *crashed* —
-  is a defect on its own terms and fixable by whoever next owns the format gate. It is
-  the same class as `docs/dev_notes/format-gate-tells-the-truth.md`: a gate that names
-  the wrong cause sends the next person to fix something that is already correct, which
-  is worse than a gate that is simply red.
-- **The floor half is the repository owner's, not a supervisor's**: whether the PHP SDK
-  supports **8.1** (add `config.platform.php` so composer resolves inside the declared
-  floor) or **8.4+** (raise the declared floor to match the lock) is a support-matrix
-  decision. Recorded under *Awaiting the user's decision* on the refactor board.
-- **Not area 4's work** and deliberately not folded into it: it is `sdk/php` plus the
-  format gate, and an area whose contract is zero behaviour change is the wrong place
-  for it.
-- **It explains two earlier dismissals.** Rows 5+6 and 6.5 both hit this parse error and
-  recorded it as *"environment, pre-existing"* — accurate, and without a mechanism.
-  This entry supplies the mechanism, which is why the dismissals were not wrong so much
-  as unfinished.
 
 ### KI-18 · Load-sensitive tests, each seen once and green alone
 
@@ -1080,6 +1080,61 @@ under load.
   module, 3/3 alone) with the mechanism named to the millisecond — raising only the
   test budget to 90 s yields `deregistered=true after 59994 ms`. That is a better
   starting point than most entries in this file ever had.
+
+### KI-109 · `FsyncBatcher`'s dirty set is node-global and seeded from every live writer; one test compares it with `==`
+
+- **Severity**: P2 · a merge-gating suite that goes red once in two full runs on a
+  test that passes alone, in a module nobody touched.
+- **Where**: `test/flezha/state/fsync_batcher_test.exs:99` —
+  `assert MapSet.new([a, b]) == FsyncBatcher.dirty_set()` — against
+  `lib/flezha/state/fsync_batcher.ex:93`, whose `init/1` seeds
+  `dirty_set: MapSet.new(WriterRegistry.registered_ids())`, i.e. **every writer
+  registered in the node**, not this module's two.
+- **Evidence**, a full `mix test` at seed 192799 on an otherwise green tree
+  (the only working-tree change was a whitespace re-wrap in
+  `lib/flezha/service/cli_manager.ex`):
+
+  ```
+  1) test mark_dirty + tick tick coalesces dirty set (Flezha.State.FsyncBatcherTest)
+     test/flezha/state/fsync_batcher_test.exs:89
+     code:  assert MapSet.new([a, b]) == FsyncBatcher.dirty_set()
+     left:  MapSet.new([{"TestOperative", "TestProcedure", "a"},
+                        {"TestOperative", "TestProcedure", "b"}])
+     right: MapSet.new([{"cursors-quiet-24067", :input_log},
+                        {"il_59202", :input_log},
+                        {"TestOperative", "TestProcedure", "a"},
+                        {"TestOperative", "TestProcedure", "b"}])
+
+  Result: 1922/1923 passed, 121 excluded
+  ```
+
+  Both foreign members are **another module's**: `il_59202` is minted at
+  `test/flezha/state/input_log_test.exs:25` and `cursors-quiet-24067` at
+  `:442`, and `InputLog` registers as `{operative_class, :input_log}`
+  (`lib/flezha/state/input_log.ex:624` marks that key dirty on every append).
+- **Rate, and what it is not**: 1 of 2 full runs. The re-run at the **identical**
+  `--seed 192799` passed 1923/1923, so this is not seed-deterministic — module
+  order alone does not decide it. It does not reproduce narrowly either:
+  `fsync_batcher_test.exs` alone is 5/5, `test/flezha/state/` at that seed is
+  318/318, and the two files paired are 38/38 at seeds 192799, 1, 2 and 3.
+- **Mechanism**: `WriterRegistry` is a `keys: :unique` `Elixir.Registry`, so a
+  registered id implies a **live** process — the foreign members are leaked
+  `InputLog` processes still alive when this module's `setup` calls
+  `start_supervised(Supervisor)` and a fresh `FsyncBatcher` seeds itself from
+  the whole node. The drain would clear them, but the tick interval is 5 ms
+  (`@default_interval_ms`) and this module runs five tests in 0.08 s, so the
+  assertion lands inside the first tick. Both halves are needed: a leak in
+  `input_log_test`, and an equality assertion on a set the leaker can populate.
+- **A fix must** stop asserting node-global state — assert that the two ids are
+  **members** of the dirty set and that a flush removes them, or give the module
+  its own `FsyncBatcher` under its own `WriterRegistry` name rather than the
+  application's — and, separately, find why `input_log_test` leaves registered
+  `InputLog` processes behind its module, because the leak is the half that will
+  surface somewhere else next. A `refute` on the foreign keys is not a fix: it
+  pins the leak instead of removing it.
+- **Not fixed on the spot**: found by row 3.5's final full-suite run, which is a
+  two-line formatter re-wrap in `lib/flezha/service/cli_manager.ex`. It touches
+  no `lib/flezha/state` and no test; charter §1b files it here.
 
 ## P3 — warts, wording, and measurement notes
 
@@ -2034,7 +2089,289 @@ path, so none needs a red-first test.
   `Heal` with a drill that proves it fires, or delete the function **and correct the dev
   note in the same commit** — the note is the reason this looked like a capability.
 
-### KI-107 · `scripts/format-check.sh` is red at HEAD on `cli_manager.ex`
+## Resolved
+
+### KI-112 · `async` is an undeclared dependency of both the shipped fiber executor and the suite — RESOLVED, and the consumer-facing half of it is REFUTED
+
+- **Severity**: P2 · a documented, advertised executor does not work on a fresh
+  `gem install flezha`, and the suite has a hard dependency named in no manifest.
+  Found by KI-110's fix; filed rather than fixed because whether it is a runtime or a
+  development dependency is a support-matrix call.
+- **Where**: `sdk/ruby/flezha.gemspec` names `async` nowhere.
+  `sdk/ruby/lib/flezha/executor.rb:312` requires it lazily inside
+  `FiberExecutor#build_scheduler`; `sdk/ruby/lib/flezha/runner.rb:166` reaches that
+  from `Runner#executor(:fibers)`, and `:39` from `FLEZHA_RUBY_EXECUTOR=fibers`.
+  `docs/sdk/ruby_sdk.md:202` advertises `:fibers` for I/O-heavy handlers and does not
+  say the gem is needed; `test/apps/ruby_runner/conformance.json:31` advertises the
+  variable too. The suite's `test/concurrency_test.rb:120`–`:142` builds a
+  `FiberExecutor` with no `scheduler:`, so it needs the real gem.
+- **Evidence** — driven on rbenv 3.4.10 with a shim making `require "async"` raise
+  `LoadError`, which is what its absence looks like to the rescue:
+
+      # the shipped library path
+      Flezha::Error -> the fiber executor needs a Fiber::Scheduler. Add the `async`
+      gem, or pass `scheduler:` a callable answering one.
+      # the scheduler: override, which never reaches async
+      scheduler: -> :a_scheduler
+
+      # the suite
+      $ rake test
+      [flezha] the fiber dispatcher ended on Flezha::Error: the fiber executor needs …
+      82 runs, 276 assertions, 1 failures, 0 errors, 0 skips
+
+  The one failure is
+  `test_both_executors_complete_every_activation_and_keep_item_order`, at
+  `assert wait_until { core.completed.size == 8 }, "fibers completed everything"`.
+- **Mechanism, and what it is NOT**: `async` is reachable from shipped code, so it is a
+  **runtime** dependency in the strict sense — but an optional and guarded one. The
+  default executor is `:threads` (`runner.rb:39`), the require is lazy, the failure is
+  a named `Flezha::Error` carrying its own remedy, and `FiberExecutor.new(…,
+  scheduler:)` bypasses `async` entirely. So a consumer is never silently broken; a
+  consumer who takes a documented option is told, at boot, to install a gem the
+  documentation never mentioned. It is simultaneously a **hard development**
+  dependency, because the suite exercises the fiber arm for real.
+- **A fix must** choose, and say which. A gemspec has no optional-dependency
+  mechanism — no composer `suggest`, no Python extra — so the two honest shapes are:
+  declare it as a **development** dependency pinned like `minitest` and `rake`, and add
+  the install line to `docs/sdk/ruby_sdk.md`'s executor table so the advertised option
+  is not advertised bare; or make it a **runtime** dependency, which forces `async` on
+  every `:threads` consumer and contradicts the deliberate lazy require. The first is
+  recommended. It must NOT be left as it is on the grounds that the error message is
+  good: a documented feature that needs an undocumented gem is a documentation defect
+  even when the runtime behaves well.
+
+- **CORRECTED 2026-09-01 — the consumer-facing half is REFUTED by reading the page.**
+  This entry claimed that `docs/sdk/ruby_sdk.md:202` advertises `:fibers` and that
+  "neither says a gem is needed — a documented feature that does not work on a fresh
+  `gem install flezha`". That is wrong. The paragraph **directly beneath that table**
+  states the requirement:
+
+  > The fiber executor keeps a real thread fetching … and hands activations to fibers
+  > through a `Thread::Queue`, which is scheduler-aware. It needs a `Fiber::Scheduler`:
+  > add the `async` gem, or pass `executor(:fibers, scheduler: -> { MyScheduler.new })`.
+
+  It names the gem, names the alternative, and matches the `Flezha::Error` the shim
+  drill above produced almost word for word. **A lazy require, plus a guarded error
+  carrying its own remedy, plus a doc line stating the requirement, is a correctly
+  designed optional dependency and not a defect.** The `conformance.json:31` half of
+  the claim does not survive either: a capability manifest advertises a variable to the
+  conformance harness and carries no install-documentation burden.
+  **The error was mine and it was a search error** — the grep behind the claim looked
+  for `gem .async` and the page reads "add the `async` gem", with the words the other
+  way round, so the one line that refutes the claim is the one line the sweep could not
+  match. A negative grep is not a reading.
+- **What survives is the development-dependency half, and it is real**: the suite
+  cannot run without `async` (`82 runs, 276 assertions, 1 failures` above), and the
+  manifest named it nowhere. That is the same defect as `rake` and one line from it.
+- **RESOLVED 2026-09-01** by `spec.add_development_dependency "async", "2.45.0"`, with
+  `.github/workflows/ruby-sdk.yml` installing it through the same `pin` helper that
+  reads the `rake` and `minitest` pins. **Development, not runtime, deliberately**: a
+  runtime declaration would force `async` on every `:threads` consumer and contradict
+  the lazy require the SDK designed on purpose. The gemspec says so beside the line,
+  because promoting it to a runtime dependency is the obvious wrong fix.
+
+
+### KI-111 · Only the Ruby SDK's dependency manifest is inside a `prod_loc` ratchet — RESOLVED
+
+- **Severity**: P2 · declaring a dependency costs a blocking production line in
+  `sdk/ruby` and costs nothing in the other five SDKs, so the gate charges one
+  language for a hygiene fix it charges no one else for. Found by KI-110's fix,
+  which it blocks.
+- **Where**: `scripts/refactor_metrics.py:68`, `"ruby": "rb gemspec"`, and `:101`,
+  which maps a bare `Rakefile` to Ruby as well. Every other SDK writes its manifest
+  in JSON, TOML or XML, none of which has an entry in `LANG_EXTS`, so `language()`
+  answers `None` and the file is never counted.
+- **Evidence**, at `5e5f4404` plus KI-110's one added `add_development_dependency`
+  line:
+
+      $ python3 scripts/refactor_metrics.py --check
+      BLOCKING sdk/ruby prod_loc: 1955 -> 1956  [sdk/ruby/flezha.gemspec (+1)]
+      1 regression(s) against 4cd41f5e; exit 1
+
+      $ python3 -c 'import sys; sys.path.insert(0, "scripts"); import refactor_metrics as m
+      for f in ["sdk/ruby/flezha.gemspec", "sdk/node/package.json",
+                "sdk/python/pyproject.toml", "sdk/php/composer.json",
+                "sdk/java/pom.xml", "sdk/rust/Cargo.toml"]:
+          print(f, m.language(f))'
+      sdk/ruby/flezha.gemspec    ruby
+      sdk/node/package.json      None
+      sdk/python/pyproject.toml  None
+      sdk/php/composer.json      None
+      sdk/java/pom.xml           None
+      sdk/rust/Cargo.toml        None
+
+- **Mechanism**: `prod_loc` is summed over the area's own tracked files and the
+  classifier reads a file's language from its extension. `.gemspec` is Ruby by
+  extension and is counted; a manifest in a data format is invisible. Nothing here
+  is wrong for `lib/**` — the asymmetry is only that one of the six SDKs writes its
+  manifest in the language the metric measures.
+- **Charter §11 gives no exemption.** The one accepted rise is code arriving from a
+  higher layer against a larger deletion elsewhere, and the section closes "nothing
+  else exempts a blocking area". So the gate blocks a one-line dependency
+  declaration that changes no behaviour and cannot be funded: a `.gemspec` cannot
+  declare a dependency in zero lines.
+- **A fix must** choose between two, and say which: exclude a dependency manifest
+  from `prod_loc` — `flezha.gemspec` and `Rakefile` are packaging rather than the
+  SDK's production surface, which moves `sdk/ruby`'s number and so needs a
+  re-baseline — or accept the row and re-baseline `sdk/ruby prod_loc` at the close.
+  It must NOT be answered by deleting production Ruby to fund a dependency line.
+
+- **RESOLVED 2026-09-01 by supervisor ruling: the instrument was wrong, so it is a
+  correction and not an exemption.** `scripts/refactor_metrics.py:68` now reads
+  `"ruby": "rb"`. The other five SDKs' manifests were already outside the metric, so
+  the intended convention was unambiguous and Ruby was the outlier; this is the call
+  the programme already made for area 4's batch 0 and for area 6's 75 lines of
+  classifier artefact, and charter §11e exists because the instrument can be wrong.
+  Here it did not flatter, it penalised.
+- **Red first, then green.**
+
+      before   LANG_EXTS["ruby"] == "rb gemspec"
+               language("sdk/ruby/flezha.gemspec") -> "ruby"
+      $ python3 scripts/refactor_metrics.py --check
+      BLOCKING sdk/ruby prod_loc: 1955 -> 1956  [sdk/ruby/flezha.gemspec (+1)]
+      1 regression(s) against 4cd41f5e; exit 1
+
+      after    LANG_EXTS["ruby"] == "rb"
+               language("sdk/ruby/flezha.gemspec") -> None
+               language("sdk/ruby/Rakefile")       -> "ruby"   (unchanged: :101 maps it by basename)
+      $ python3 scripts/refactor_metrics.py --check
+      0 regression(s) against 4cd41f5e; exit 0
+
+  `sdk/ruby prod_loc` reads **1921** against the recorded 1955 — the gemspec's 34
+  counted lines leave, and the two declarations added beside them cost nothing. A
+  decrease is not a regression, so `--check` passes with the baseline left stale-high;
+  re-recording it belongs to the close, and `baseline.json` is untouched.
+- **Scope, checked**: `LANG_EXTS` feeds only `LANG_BY_EXT` in the same file, the two
+  other `gemspec` mentions under `scripts/` are a comment and a path string in
+  `format-apply.sh`, and exactly one `.gemspec` exists in the tree.
+
+### KI-110 · The Ruby SDK's test suite depends on minitest without declaring or pinning it — RESOLVED
+
+- **Severity**: P2 · the suite passes here by accident of which minitest the ambient
+  Ruby ships. It has already failed on `main` for exactly this reason, and nothing
+  stops the same resolution reaching `dev`.
+- **Where**: `sdk/ruby/flezha.gemspec` declares `msgpack` and pins
+  `rubocop` to an exact `1.90.0` — and declares **no test dependency at all**.
+  There is **no `Gemfile.lock`**. `sdk/ruby/test/runner_test.rb:21` and `:51` call
+  `Process.stub(...)`, which is `Object#stub` from `minitest/mock`, and no file in
+  `sdk/ruby/` requires `minitest/mock`.
+- **Evidence** — it passes here only because this minitest's `autorun` happens to
+  load `mock`:
+
+      $ cd sdk/ruby && PATH=~/.rbenv/versions/3.4.10/bin:$PATH rake test
+      82 runs, 277 assertions, 0 failures, 0 errors, 0 skips
+
+      $ ruby -e 'require "minitest"; puts Minitest::VERSION'
+      5.25.4
+      $ ruby -e 'require "minitest/autorun"; puts Process.respond_to?(:stub)'
+      true
+
+      $ grep -rn 'minitest/mock' sdk/ruby/          # no output
+      $ grep -n 'dependency' sdk/ruby/flezha.gemspec
+      35:  spec.add_dependency "msgpack", "~> 1.7"
+      36:  spec.add_development_dependency "rubocop", "1.90.0"
+
+  The recorded `main` failure is the same code meeting a resolution where `autorun`
+  does not pull in `mock`:
+  `NoMethodError: undefined method 'stub' for module Process`.
+- **Why this is not a `main`-only problem**: nothing here is version-gated in our
+  favour. The suite works on whatever minitest the runner's Ruby happens to install,
+  and neither the gemspec nor a lockfile constrains it. A CI image refresh reaches
+  `dev` the same way it reached `main`.
+- **A fix must** declare minitest as a development dependency and pin it the way
+  `rubocop` already is, AND add the explicit `require "minitest/mock"` where `stub`
+  is used — the require is what makes the code honest about what it needs, and the
+  pin is what stops the resolution drifting. Prove it by resolving against a
+  minitest whose `autorun` does not load `mock` and showing the suite still green.
+
+- **RESOLVED 2026-09-01.** `sdk/ruby/flezha.gemspec` declares
+  `spec.add_development_dependency "minitest", "5.25.4"` — exact, like the `rubocop`
+  line beside it, because nothing else constrains the resolution — and
+  `.github/workflows/ruby-sdk.yml` installs the version that line names, via the
+  `grep -oP '"minitest", "\K[^"]+'` extraction `format.yml` already uses for rubocop.
+  `sdk/ruby/test/runner_test.rb:6` requires `minitest/mock` explicitly.
+- **The entry understates the mechanism, and the pin is the load-bearing half.**
+  minitest **6.0** does not merely stop loading `mock` from `autorun`: it ships no
+  `lib/minitest/mock.rb` at all, mock having been extracted into a separate
+  `minitest-mock` gem (published at 5.27.0).
+
+      $ gem unpack minitest-6.0.6.gem && cat minitest-6.0.6/lib/minitest/autorun.rb
+      require_relative "../minitest"
+      require_relative "spec"
+      require_relative "hell" if ENV["MT_HELL"]
+      Minitest.autorun
+      $ ls minitest-6.0.6/lib/minitest/mock.rb
+      ls: cannot access ...: No such file or directory
+
+  On the resolution that broke `main`, therefore, the explicit require alone cannot
+  help. Driven for real — minitest 6.0.6 installed into an isolated `GEM_HOME` and
+  `rake test` run against it — the suite stops at load with
+  `cannot load such file -- minitest/mock (LoadError)` from `test/runner_test.rb:6`,
+  and installing the separate `minitest-mock` gem does not lift it either unless the
+  gem is also activated explicitly, because the resolved `minitest` gem already owns
+  the `minitest/` namespace. So what the require buys is a failure that names the
+  missing library instead of a missing method on `Process`, plus correctness on any
+  5.x whose `autorun` drops the line; what the pin buys is that the suite runs at all.
+- **Proof — the ambient convenience removed.** `minitest/autorun` was replaced on
+  `$LOAD_PATH` by minitest 6's own autorun shape (`require "minitest"; require
+  "minitest/spec"; Minitest.autorun`), first verified to leave
+  `Process.respond_to?(:stub)` **false**. Full `rake test` on rbenv 3.4.10, four cells:
+
+  | | `require "minitest/mock"` present | removed |
+  | --- | --- | --- |
+  | this box's real `autorun`, which loads mock | 82 runs, 277 assertions, 0 failures | **82 runs, 277 assertions, 0 failures** |
+  | an `autorun` that does not load mock | **82 runs, 277 assertions, 0 failures** | 3 × `NoMethodError: undefined method 'stub' for module Process` |
+
+  The bottom-left cell is the fix. The **top-right** cell is why a green run on this
+  box proved nothing — the defect is invisible here. The bottom-right reproduces the
+  recorded `main` error verbatim.
+- **`--check` is red by one line on the fix itself** — `sdk/ruby prod_loc 1955 → 1956`,
+  the added `add_development_dependency` — because `flezha.gemspec` is the only SDK
+  dependency manifest inside a `prod_loc` ratchet. Filed as KI-111; not answered here,
+  because charter §11 offers no exemption and the only funding available would be
+  deleting production Ruby.
+- **`rake` was the same defect in the same file and is fixed here too**:
+  `spec.add_development_dependency "rake", "13.2.1"`, and the workflow reads both pins
+  through one `pin()` helper rather than repeating the grep. Once KI-111's classifier
+  correction landed, the second declaration cost zero production lines.
+- **`async` was the third one, and is fixed here too — KI-112.** It is reachable from
+  the shipped library and not only from tests, but it is guarded and documented, so it
+  is declared as a *development* dependency and deliberately not a runtime one.
+- **The cross-SDK survey this row was also asked for**, recorded here because the row
+  writes no dev note (no OpenSpec change: see the ruling below). Manifest, pin style,
+  lockfile, and whether any test calls an API from a library it never requires:
+
+  | SDK | framework declared | pinned or ranged | lockfile committed | undeclared API in a test | CI install |
+  | --- | --- | --- | --- | --- | --- |
+  | `sdk/node` | n/a, stdlib `node:test` | jscpd/prettier exact; `typescript`, `@types/node` caret | yes, `package-lock.json` | no | `build-node-sdk.sh` runs `npm install`, **not `npm ci`**, so the lock is bypassed on the test path |
+  | `sdk/python` | yes, `pytest>=8.0` in `[dependency-groups] dev` | **ranged**; only `ruff==0.16.5` exact | **none** | no | **`pip install --quiet pytest pyright` — unpinned, and it never reads the declared group** |
+  | `sdk/php` | yes, `phpunit/phpunit ^10.5` in `require-dev` | **ranged**; php-cs-fixer exact | **`composer.lock` is gitignored** | `Swoole\Thread` is in `suggest`, not `require-dev` — guarded, asserted on purpose in `PackagingTest`, covered by a ZTS job; not a defect | `composer install` with no lock is effectively `composer update` |
+  | `sdk/java` | yes, JUnit/AssertJ/Mockito/slf4j, `scope=test` in the parent's `dependencyManagement` | **exact** (5.10.3 / 3.26.3 / 5.12.0 / 2.0.13) | n/a for Maven; every version pinned in the parent | no — zero hamcrest in the tree, so no transitive reliance | `mvn -B … verify` |
+  | `sdk/rust` | yes, criterion/trybuild/loom in `[dev-dependencies]` | caret | yes, root `Cargo.lock` | no | pinned toolchain, cache keyed on `Cargo.lock` |
+  | `sdk/ruby` | **was: none at all** | now exact for minitest, rake, rubocop | **none**, and correctly so for a gem | **yes — this entry** | reads the gemspec's pins |
+
+  **No other SDK repeats the exact shape** (a test calling an API from a library named
+  in no manifest anywhere). Node, Java and Rust are clean. Python is the closest
+  relative: its declared dev group is PEP 735, which only `uv` and pip ≥ 25.1 read, and
+  **nothing installs it** — `build-python-sdk.sh` installs only `msgpack` and the
+  workflow installs `pytest pyright` unpinned, so as in Ruby the CI line is the
+  effective manifest; `tests/test_typing.py:26` also tells the reader to run
+  `pip install -e .[dev]`, which fails, because no `[project.optional-dependencies] dev`
+  exists. Two inverse findings, free: `mockito-core` is declared in
+  `flezha-sdk-runtime/pom.xml` and used by **zero** test classes, and `sdk/rust`, `cli`
+  and `test/apps/rust_runner` each commit a `Cargo.lock` that cargo ignores because they
+  are workspace members — three dead lockfiles beside the live root one.
+- **No OpenSpec change, and the absence is the finding.** No spec states that an SDK
+  declares and pins its own test toolchain: `ruby-sdk`, `ruby-sdk-packaging` and
+  `ruby-sdk-testing` say nothing about dependencies, and across all spec directories
+  only `controller-packaging` and `code-formatting` mention pinning at all —
+  `code-formatting` stating the identical principle for the Rust formatter
+  ("the same pinned version SHALL be the one the local format script invokes"). A
+  correctly worded requirement is **cross-SDK** and three SDKs would fail it today per
+  the table above, so it is queued as `pin-sdk-test-toolchains` with this row as the
+  reference implementation, rather than written Ruby-shaped here.
+
+### KI-107 · `scripts/format-check.sh` is red at HEAD on `cli_manager.ex` — RESOLVED
 
 - **Severity**: P3 · a merge-gating formatter check that fails on a file no
   in-flight change touches, which trains people to ignore its output.
@@ -2085,8 +2422,91 @@ path, so none needs a red-first test.
   agrees. It is three lines in `lib/`, so it is a behaviour-neutral edit inside a
   finished area and belongs to whoever owns that lane, not to a naming-gate
   change.
+- **CORRECTED 2026-09-01 (`collapse-observability-source-behaviours`): there is no
+  version question. CI does not run 1.19.** Every workflow pins the same toolchain
+  this box runs:
 
-## Resolved
+  ```
+  $ grep -rn "elixir-version" .github/workflows/
+  bench.yml:42,190  rust-sdk-bench-cron.yml:32  elixir.yml:62
+  java-sdk.yml:109  format.yml:53  nightly-e2e.yml:129
+  → all "1.20.2"
+
+  $ elixir --version
+  Elixir 1.20.2 (compiled with Erlang/OTP 29)
+  ```
+
+  `format.yml:53` is the pin the Format gate itself uses, so the verdict this
+  entry defers to has already been given: the file is unformatted under the
+  authoritative formatter and the Format workflow is red on `dev`. The blocker
+  named in **A fix must** is therefore discharged — the remedy is the two-line
+  re-wrap the formatter prints, and what remains is only whose lane it is.
+
+- **Resolved 2026-09-01 by row 3.5's format fix.** `mix format
+  lib/flezha/service/cli_manager.ex` — that file and no other; a bare `mix
+  format` over the tree is still forbidden here. The diff is the two lines the
+  formatter printed above and nothing else, proved twice: with every whitespace
+  character stripped the file's sha256 is identical on both sides
+  (`1e8928d4aab1fe25193b03df52bb765e6d805921ee32839c729813b3971741eb`), and the
+  metadata-stripped `Code.string_to_quoted!` ASTs compare equal.
+- **Exit codes, captured directly.** `$?` after a pipeline is the *last stage's*
+  status, so `mix format --check-formatted … | tail -5` reports `tail`'s 0
+  whatever the formatter said. That is how the earlier "it exits 0" reading was
+  produced; measure it without a pipe:
+
+  ```
+  $ mix format --check-formatted lib/flezha/service/cli_manager.ex >/dev/null 2>&1; echo $?
+  1        # at 787acf3f
+  0        # after the re-wrap
+  ```
+
+  And the gate itself with all seven formatters present — rubocop 1.90.0 from
+  `~/.rbenv/versions/3.4.10/bin`, PHP through the `flezha-php` image, which is
+  the arm CI reproduces:
+
+  ```
+  $ PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH" \
+    FLEZHA_PHP="docker run --rm -u $(id -u):$(id -g) -v $PWD:/work -w /work flezha-php php" \
+    scripts/format-apply.sh --check; echo $?
+
+  # before                          # after
+  UNFORMATTED — run …:              every check ran and had nothing to report
+    mix format
+  1                                 0
+  ```
+
+- **The origin named under *Mechanism* above is wrong.** The re-wrap did not
+  come from `retire-cluster-snapshot-remnants`. `git log -S '), to: Cli.Schedule'
+  -- lib/flezha/service/cli_manager.ex` names exactly one commit, `716061cf`
+  *refactor(5c): cli_manager 4294 lines becomes fifteen modules and a facade*,
+  which wrote the `defdelegate` in that shape. What
+  `retire-cluster-snapshot-remnants` did was delete `boot_import_legacy_snapshot`
+  fifty lines above it, which is why the two looked related.
+- **The version blocker in *A fix must* was false**, as the correction above
+  records, and nothing was waiting on CI: `format.yml:53` pins 1.20.2, this box
+  runs 1.20.2, and the local formatter *is* the authoritative one.
+- **The other half of the local red is KI-76, and it is a tool error rather than
+  an unformatted file** — settled here rather than assumed. Under the host `php`
+  8.3.6 `php-cs-fixer` exits **255** on
+  `sdk/php/vendor/symfony/console/Command/Command.php:681`, and `gate_run` files
+  a non-zero exit under `UNFORMATTED`; under the 8.4.25 interpreter the vendor
+  tree was installed for, the same run reports `Found 0 of 89 files that can be
+  fixed`. `format.yml` installs PHP 8.4 and runs `composer install`, so this
+  never reaches CI and the gate can reach 0 there.
+- **Nothing else in the tree is unformatted.** All seven formatters ran in
+  `--check` on the fixed tree: cargo fmt, mix format and mvn spotless silent,
+  prettier `All matched files use Prettier code style!`, ruff `37 files already
+  formatted`, rubocop `32 files inspected, no offenses detected`, php-cs-fixer
+  `0 of 89`.
+- **The blocking ratchet is unmoved.** `lib/flezha/service` is a blocking area;
+  the re-wrap takes `cli_manager.ex` from 94 to 95 production lines and the area
+  from 5778 to 5779 against a baseline of 5828, so
+  `scripts/refactor_metrics.py --check` exits 0 with 49 lines of slack.
+- **No OpenSpec change.** `openspec/specs/code-formatting/spec.md` already
+  carries the rule this restores — *Requirement: Project SHALL enforce `mix
+  format` in CI*, whose scenario is that an unformatted `*.ex` blocks merge.
+  The gate behaved exactly as specified; what was wrong was the file. A delta
+  would have restated a requirement that is already written down.
 
 ### KI-108 · A one-line migration-record pair blinds a naming gate to the rest of the file — RESOLVED
 
@@ -2624,7 +3044,7 @@ path, so none needs a red-first test.
   click. Note the consumer names things the tree has no module for at all, so the check
   must report unknown-and-unresolved separately from known-and-moved.
 
-### KI-100 · The `Source` behaviour has no implementers, and two moduledocs said it did
+### KI-100 · The `Source` behaviour has no implementers, and two moduledocs said it did — RESOLVED
 
 - **Severity**: P3 · a published extension point that is a false statement about the
   system. Found by area 5d while closing KI-99.
@@ -2632,7 +3052,7 @@ path, so none needs a red-first test.
 - **Evidence** (reproduced by the supervisor at `374a4031`):
   `grep -rn "@behaviour Flezha.Observability.Source" lib/ test/` → **no output**. The
   single hit before the fix was **inside `source.ex`'s own moduledoc heredoc**.
-- **Mechanism**: the five real sources `use Flezha.Observability.OtpBackend.Source` — a
+- **Mechanism**: the five real sources <!-- module-naming-record:begin -->`use Flezha.Observability.OtpBackend.Source`<!-- module-naming-record:end --> — a
   *different* module, a macro that never declares the behaviour — and **none defines
   `config_schema/0`**. `do_register_source/1` inserts a plain ETS row from a map: it
   never names a module and never calls `function_exported?`, so nothing enforces the
@@ -2655,7 +3075,7 @@ path, so none needs a red-first test.
   delete.** The root defect is a NAME COLLISION, found by the user asking why two
   modules share a name. They are not two versions of one idea — they declare different
   callbacks: `Flezha.Observability.Source` is `init/1` + `config_schema/0` (the
-  registration contract), while `Flezha.Observability.OtpBackend.Source` is
+  registration contract), while <!-- module-naming-record:begin -->`Flezha.Observability.OtpBackend.Source`<!-- module-naming-record:end --> is
   `init_state/1` + `poll/1` and its own moduledoc calls it *"shared GenServer plumbing
   for the periodic observability sources"*. **That second module is a poller template,
   not a source**, and naming it `Source` is what made the real contract look redundant
@@ -2668,6 +3088,24 @@ path, so none needs a red-first test.
   describe them because it is `use GenServer` — so deleting removes the only written
   contract for the half that is actually in use. Collapse also matches the direction
   the user set in [[KI-104]]: the platform should offer a public surface, not internals.
+- **RESOLVED 2026-09-01**, `collapse-observability-source-behaviours`. The template is
+  `Flezha.Observability.OtpBackend.Poller` (`lib/flezha/observability/otp_backend/poller.ex`)
+  and its macro declares `@behaviour Flezha.Observability.Source` on every source it
+  builds, with an overridable `config_schema/0` returning `%{}`. The behaviour now has
+  five implementers, read back from `module_info(:attributes)` by the lifecycle test in
+  `test/flezha/observability/otp_backend_test.exs`.
+- **The entry's mechanism is half right, and the missing half is why the behaviour was
+  never declared.** `Source` declared `init/1`, and a process-backed source is a
+  GenServer, which declares `init/1` too, so `@behaviour Flezha.Observability.Source` on
+  such a module makes Elixir emit *"conflicting behaviours found. Callback function
+  init/1 is defined by both GenServer and Flezha.Observability.Source"* — five warnings,
+  one per source, which `--warnings-as-errors` refuses. The behaviour was not merely
+  unimplemented, it was **undeclarable by the flavour it described**. `init/1` is
+  therefore deleted from it, along with the `@type config` only it used, leaving
+  `config_schema/0` as the sole callback; that is also the right shape for the
+  declarative half, which owns no process and never had an `init/1` to offer.
+- **The eighth entry in `check-module-naming.sh`'s `RETIRED` tuple** is <!-- module-naming-record:begin -->`Flezha.Observability.OtpBackend.Source`<!-- module-naming-record:end -->, so a stale
+  reference in a moduledoc, a spec or a runbook is caught where `mix compile` cannot look.
 
 ### KI-98 · The cycle metrics silently drop every annotated cycle member
 
