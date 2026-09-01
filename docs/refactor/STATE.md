@@ -771,10 +771,11 @@ see below) and `retire-cluster-snapshot-remnants` (`f3c30502`, archived).
 
 **Do these three things in order:**
 
-1. **Read *Next steps* → THE WORK QUEUE.** Ten rows, each with status and the date the
-   user decided it. Row 0 is done; row 1 was in flight when session 4 ended (see *Current
-   worker* above for how to tell where it got to). Rows 1–5 and 8–10 are small-to-medium
-   and independent of the areas.
+1. **Read *Next steps* → REMAINING WORK — the live queue.** Rows **R1–R12**. **None is
+   blocked. Work it top to bottom.** That table supersedes the historical one beneath it
+   (rows 0–10, all DONE or CLOSED, kept for the record). Every refactor AREA is finished —
+   the live work is **SDK parity**, per the user's standing instruction that all SDKs
+   provide the same functionality and test everything they claim.
 2. **Check for a live worker.** `ListAgents` — **a fresh session has no subagents no
    matter what this file says.** If *Current worker* names one and none is running, the
    tree holds whatever it finished; resume from there.
@@ -3730,7 +3731,34 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-### THE WORK QUEUE — everything agreed with the user, in order (2026-09-01)
+### REMAINING WORK — the live queue (2026-09-01, session 5). START HERE.
+
+**The user's standing instruction, verbatim in substance:** *ALL SDKs provide the exact
+same functionality, have tests that COVER ALL of the features and functionality they claim,
+and behave similarly.* That is the programme now. Rows R2–R6 below exist to satisfy it.
+
+**Nothing below is blocked. Work it top to bottom.** One fresh worker per row, supervisor
+verifies and commits, §4 checkpoint each time.
+
+| # | Work | Why now |
+|---|---|---|
+| **R1** | **KI-116 — the two mechanisms** (P1). Make provider `convert_value/2` refuse by default instead of the injected catch-all accepting anything; make `Extension.Table.subscribe/3` turn a crash into a refusal, not only a `:throw`. Then the 8 sites follow. | Only item where today's code can lose data. Fix the mechanism, not the sites |
+| **R2** | **`entry_idle` — honest in all seven.** rust/java/python claim it with **0 fixtures**; node/ruby/php/elixir defer it. Either write the fixture in all seven or stop claiming it. **The user's rule says tests must cover what is claimed, so a fixture is the answer unless the mechanism is absent.** | Smallest parity row; unblocks nothing but makes the matrix true |
+| **R3** | **`connect_discovery` into `@required_capabilities`** (`test/helpers/node_test_helper.ex:293`). All seven already carry it. | One line, zero SDK work, makes one capability un-regressable today |
+| **R4** | **Identity stamps in node/ruby/php** — `flz.entity`/`flz.seq`/`flz.key` on a non-tier keyed plugin emit. Reference: `emit_sink.rs:357-378`, Java `EmitContext.java:283-285`, Python `ctx.py:267-280`, ~15 lines each. Then `keyed_channels` fixtures. | Mechanism gap, small, proof already written in two SDKs |
+| **R5** | **Veneer fixture port — node, ruby, php.** `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`, `dynamic_entity`, `schema_evolution`. Python is the template. **Do `state_persistence` FIRST — it gates four of the others.** | 18 fixture cells; the SDKs can already do this |
+| **R6** | **Elixir SDK — build the nine.** Its SDK is its own core and inherits nothing from `flz_core`: it defers the SURFACE, raising `UndefinedFunctionError`. This is feature work (WAL fold, restore, timers, clock/window, keyed stamps, dynamic entity, schema version, workflow), not a fixture port. **Budget it separately from R5.** | The user's instruction includes Elixir; it is the largest row |
+| **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
+| **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
+| **R9** | `unify-cli-output-flag` — KI-80. `cluster status --json` ignores `--output json`; `audit list --output json` ignores `--json` | Agreed 2026-09-01, small |
+| **R10** | `add-publish-readiness-checklist` — KI-52 and the one-way-door items | Agreed 2026-09-01, seed only |
+| **R11** | **KI-115** — two published specs mandate behaviour the code lacks. One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
+| **R12** | **The docs-citation gate** (~120 lines). Would have caught 27 of area 8's 76 findings automatically. **Build it AFTER the docs are clean so it lands green** — a gate that lands red is KI-94 all over again | Ruling 3, approved in principle |
+
+**NOT the programme's to start: the `dev` → `main` merge.** ~307 commits behind and this
+session added 28+. Raised with the user; they did not address it. **Do not initiate it.**
+
+### The completed queue — session 5 and before (kept for the record)
 
 Nothing agreed in conversation is allowed to live only in a transcript. Every row below
 was decided with the user; the detail blocks follow further down this section.
@@ -3747,7 +3775,7 @@ was decided with the user; the detail blocks follow further down this section.
 | 4.6 | `pin-sdk-test-toolchains` — the cross-SDK requirement, +KI-113 | **DONE**, archived. python/php/node fixed; the rule now written down in `code-quality-baseline` | 2026-09-01 |
 | 5 | **CI cause D′** — Ruby `cross-gem` | **CLOSED — external.** Ruled on the recorded evidence, no spend | 2026-08-31 |
 | 6 | **Area 7** (`refactor-7-tests`) | **DONE** — four segments, `5e3b32c6`/`0a9943dd`/`3d61b2a9`/`08edc609`, closed `f74a3c25` | — |
-| 7 | **Area 8** (docs reconcile) — depends on 7, now unblocked | **queued, NEXT**. Session 5 generated real drift for it: see *Area 8's inbox* below | — |
+| 7 | **Area 8** (docs reconcile) | **DONE**, archived — `962cf0a2`, `613d9fe4`, closed `8197cfc0`. Index bijection 110=110; 27 dead symbol citations → 0; 0 broken links across 307 files; **5 proposal items refuted and left alone** | — |
 | 4.7 | **DONE**, archived. Ratchet funded 7515→7515; KI-116 filed (P1, 8 sites). `validate-kafka-queue-overflow` — **RULED BY THE USER 2026-09-01**: validate the policy in `init_provider/1`. `coerce_atom/1` validates nothing, so any stored string that is an existing atom enables silently and kills the worker at saturation. NOT the coercion shim they declined | queued, after area 8 | 2026-09-01 |
 | 8 | `unify-cli-output-flag` — KI-80: **`--output <fmt>` wins**; `--json` becomes its alias or is dropped. Today `cluster status --json` ignores `--output json` and `audit list --output json` ignores `--json` | queued | 2026-09-01 |
 | 9 | `add-publish-readiness-checklist` — the pre-publish gate the user asked for; see below | queued | 2026-09-01 |
