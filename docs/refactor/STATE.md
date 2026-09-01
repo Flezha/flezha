@@ -805,6 +805,119 @@ others**. Python is the template. Note what this session changed under it: the c
 gate now refuses drift in both directions (R3), so any capability R5 makes universal must
 join `@required_capabilities` in the same change, and the gate will name it.
 
+**R5 last seen 20:50 (+10m, surveying).** Already filed **KI-122** — and it is the answer to
+the survey question that decides the row's shape: `checkpoint_ack()` exists in **no veneer
+but Python**, and `outputs_at_checkpoint()` implies it in **none of the four**, while
+`effectively-once-checkpoint-granularity/spec.md:15-17` SHALLs the surface without naming an
+SDK (so the Cross-SDK rule applies it to all seven) and `docs/configuration.md:522` documents
+the implication. Rust and Java route all three options through ONE seam that turns granularity
+on first (`channel/builder/mod.rs:195` `checkpoint_policy`; Java `amendCheckpoint`); the
+veneers keep three independent fields and only `checkpoint_every` writes `ack_granularity`.
+**So `effectively_once` is NOT a fixture port for the veneers — the authoring surface is
+missing first.** Ruling deferred to the survey report. Machine: one `beam.smp` running a
+system test, which is the survey measuring what the flip turns on.
+
+### R5 SURVEY RULED 2026-09-01 — the row is ~2x its billed size, and one capability is feature work
+
+**The queue calls R5 "18 fixture cells". Measured: 42 fixture implementations, ~9–10 h over
+six segments, and one of the six capabilities is NOT a port at all.** That is the third row
+this session resized on evidence, and the second where an audit's mechanism/fixture verdict
+was wrong in the same direction as R2's.
+
+**KI-122 VERIFIED BY ME, on all three claims:** `checkpointAck`/`checkpoint_ack` greps to
+**nothing** in `sdk/node/src`, `sdk/ruby/lib`, `sdk/php/src`, while Rust has it at
+`channel/builder/mod.rs:155` and Python at `builder.py:147`; the core refusal is real at
+`flz_core/src/host/register.rs:160` (`ack_granularity != Checkpoint && (checkpoint_every ||
+checkpoint_outputs == AtCheckpoint || …)` → `Error::Declaration`); and **Python carries half
+B too** — `checkpoint_every` calls `checkpoint_ack()` at `:160`, `outputs_at_checkpoint` at
+`:164` does not. So `outputs_at_checkpoint()` alone yields `per_input` + `at_checkpoint`,
+which the core refuses by name — naming a knob three SDKs cannot spell.
+
+**Why nothing caught it**: node/ruby/php carry no `effectively_once` fixture, and Python's
+own fixtures call `checkpoint_every`, which implies the granularity. The gap is exactly the
+cell the audit ruled **F** ("the SDK can already do this") by checking three methods that are
+present and not the fourth that is absent. **Three dev notes say the deferral is "fixtures,
+not mechanism" and are wrong for this capability in all three SDKs.**
+
+**RULING (a) — KI-122 is real and is S0**, its own commit, red-first, before any fixture.
+The `amend_checkpoint` seam is approved: adopt Rust's/Java's shape (`checkpoint_policy`,
+`amendCheckpoint`) — one private helper that sets the granularity then amends the policy,
+with all three options routed through it. That is §2's reuse order taking an existing design
+rather than inventing a fourth. **Python is in scope for half B**, which I verified.
+
+**RULING (b) — a NEW change id for R5, and `sdk-durable-fixture-parity` stays OPEN.**
+The worker proposed extending it as Phase C. Reasonable, and refused: its `tasks.md` was
+written before this session re-scoped everything, R2/R3/R4 did its B3/D1/B2 as their own
+changes, and its phase text is now a stale plan. **It cannot be archived either** — 12
+unticked boxes, and the global rule forbids archiving with unchecked tasks. So it stays open,
+and **R7's worker owes its close-out**: amend each phase to name the change that did it
+(B2 → `stamp-identity-in-erased-veneers`, B3 → `make-entry-idle-claims-honest`,
+D1 → `require-universal-capabilities`, C → R5's change), then archive. Recorded here so the
+debt is not lost.
+
+**RULING (c) — the batching is approved exactly as proposed.** S0 KI-122 · S1
+`dynamic_entity` ×3 · S2 `state_persistence` ×3 · S3 `schema_evolution` + `entity_timers` ·
+S4 `effectively_once` · S5 `correction_window` + close. **S1 is the best idea in the survey**:
+`dynamic_entity` is a one-line manifest move for node and ruby, so it proves the entire
+harness end — manifest → gate → e2e → three arms — **before a single fixture is written**.
+The cheapest possible failure, bought first. R4 spent its whole cost discovering three
+stacked defects at the END of the row; S1 inverts that.
+
+**Two measurements worth keeping.** The arm cost is **98.7 s wall for 1998 passed / 51
+skipped** — *running* the e2e is cheap, **writing** the fixtures is the cost, which inverts
+the assumption R4 left behind. And **php breaches the 800-line ceiling** without a
+`FixturesState.php` companion (projected ~770 + ~500 against 689 today), so the file split is
+**§7-forced, not chosen** — the same charter-sanctioned reason R4's helper had.
+
+**A permission block to watch**: the classifier refused the worker's manifest-flip probe. It
+is told to report a second block rather than work around it — I can run the probe myself, as
+I did for the baseline re-record.
+
+### S0 RULED — Option A: the seam sets the granularity ONLY, as Rust and Java do
+
+**The survey found a third thing, and it is what decides this.** Rust's `checkpoint_policy`
+and Java's `amendCheckpoint` set the granularity and **not** the tier. All four veneers set
+both. The consequence: the spec's own scenario *"Opt-in without the tier is refused"*
+(`effectively-once-checkpoint-granularity/spec.md:32-35`) is **unreachable through the
+authoring surface in all four**, and every veneer test that claims to prove it **reaches
+around the builder** — `authoring.test.mjs:235` and `test_authoring.py:219` assign
+`ack_granularity` directly, `AuthoringTest.php:149` passes a `tierOff` escape hatch, and
+**Ruby has no such test at all**. PHP's helper documents the bypass as though it were a
+property of the design.
+
+**Four tests that look like proof and test nothing through the API.** That is the pattern
+this programme keeps closing — a `setup` that stops running, a gate that prints instead of
+failing, a pin nothing reads. Under Option B they all stay, still looking like proof.
+
+**Blast radius measured, and I verified the decisive half.** Exactly **one** caller relies on
+the implication: `sdk/php/examples/E03_EffectivelyOnce.php:60` declares
+`$c->checkpointEvery(4);` alone — while its **Java twin already declares both**,
+`E03_EffectivelyOnce.java:130-131` `c.effectivelyOnce(); c.checkpointAck();`. So the example
+diverges from its own twin today, and Option A costs it **one added line**. Every fixture and
+decl-keys test in all seven SDKs already declares `effectivelyOnce()` first.
+
+**Why not B.** It half-adopts the seam — takes Rust's helper while keeping the behaviour that
+made the veneers need three independent flags — which is RULE #1's named failure, a new layer
+over an extendable seam. And it leaves a published SHALL untestable through the API in four
+SDKs while four tests continue to assert it by bypass.
+
+### Awaiting the user's decision — `openspec/changes/archive` is NOT tracked, and the ignore rule looks like it meant to be
+
+`.gitignore:55-56` reads `/openspec/changes` then `!/openspec/changes/archive` — but **git
+cannot re-include a path inside an excluded directory**, so the negation is **inert**.
+Measured: `git ls-files openspec/changes` -> **0**, `openspec/specs` -> **101**. The board
+already records the consequence ("archived changes live on this machine's disk only"), but
+the negation's presence suggests someone intended the archive to be tracked and it never has
+been. **The durable record today is `docs/dev_notes/` + `STATE.md`, both tracked** — every
+proposal and `design.md` is machine-local and dies with this box.
+**Options**: (1) leave it — dev notes are the intended durable record and the archive is
+bulky; (2) make the negation work (`/openspec/changes/*` + `!/openspec/changes/archive/`),
+which starts tracking every archived proposal from now on; (3) delete the dead negation so it
+stops implying a guarantee that does not hold. **Recommendation: (3) now, and (2) only if the
+user wants design records to survive the machine** — a rule that looks like it does something
+and does not is the same failure class as a pin nothing reads.
+
+
 
 
 

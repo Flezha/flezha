@@ -666,6 +666,77 @@ re-run by the supervisor before they were written here.**
 
 ## P2 — gates that lie, and time sinks
 
+### KI-122 · `checkpoint_ack()` exists in no veneer but Python, and `outputs_at_checkpoint()` does not imply it in any of the four
+
+- **Severity**: P2 · a published spec SHALLs an authoring surface three SDKs cannot spell, and
+  the workaround an author would reach for produces a class the core refuses. · Found by the
+  R5 survey, 2026-09-01, checking the `sdk-durable-fixture-parity` audit's `effectively_once`
+  verdict against the code.
+- **Where**: `sdk/node/src/authoring.ts:177-181`, `sdk/ruby/lib/flezha/builder.rb:79-83`,
+  `sdk/php/src/Graph/Builder.php:63-71` — `outputsAtCheckpoint` / `outputs_at_checkpoint`,
+  and the `checkpointAck` / `checkpoint_ack` method that is absent beside them.
+  `sdk/python/src/flezha/builder.py:164-168` has the method and the same missing implication.
+- **The rule they miss**:
+  `openspec/specs/effectively-once-checkpoint-granularity/spec.md:15-17` — *"An operative with
+  the effectively-once tier enabled SHALL be able to opt into `checkpoint` ack-granularity
+  (`ChannelBuilder::checkpoint_ack()`)"*. The requirement names no SDK, so the Cross-SDK rule
+  applies it to all seven. `docs/configuration.md:522-524` documents `checkpoint_ack()`
+  (`checkpointAck`) as a knob and states that `checkpoint_every(n)` **and**
+  `outputs_at_checkpoint(max_delay_ms)` each *"Implies `checkpoint_ack()`"*.
+- **What Rust and Java do, and the veneers do not.** Both route all three options through one
+  seam that turns the granularity on first: `sdk/rust/src/channel/builder/mod.rs:195-205`
+  `checkpoint_policy`, and Java `StreamOperativeTopologyBuilder.java:239-242`
+  `amendCheckpoint`. The four veneers instead keep three independent fields, and only
+  `checkpoint_every` writes `ack_granularity`.
+- **Two halves, one seam.**
+  - **A — no `checkpoint_ack()` at all** in node, ruby and php. A class that wants the
+    checkpoint acknowledgement with **no** declared cadence — `checkpoint_store` and
+    `checkpoint_batched_store` in the reference — is inexpressible.
+  - **B — `outputs_at_checkpoint()` does not imply it**, in all four veneers including Python.
+    Python's fixture masks this by calling `.checkpoint_ack().outputs_at_checkpoint(1_500)`.
+- **Reproduced** (2026-09-01). Declaration side, one script per SDK against the checked-in
+  builder, `effectively_once()` + `outputs_at_checkpoint(1500)` and nothing else:
+
+      node: ack_granularity = "per_input"   checkpoint_outputs = "at_checkpoint"
+            ChannelBuilder.checkpointAck === undefined
+      ruby: ack_granularity = "per_input"   checkpoint_outputs = "at_checkpoint"
+      php:  ackGranularity  = per_input     checkpointOutputs  = at_checkpoint
+            method_exists($b, 'checkpointAck') = NO
+
+  Registration side, the same Node declaration through `native/flz_core_ffi.node`:
+
+      $ node ack2.mjs
+      declareClass REFUSED: checkpoint_every / checkpoint_outputs /
+      checkpoint_max_delay_ms require ack_granularity checkpoint
+
+- **The mechanism, named to the function.** `flz_core/src/host/register.rs:160-170` refuses a
+  declaration whose `checkpoint_outputs` is `AtCheckpoint` while `ack_granularity` is not
+  `Checkpoint`. In Rust and Java that combination is unreachable because
+  `checkpoint_policy` / `amendCheckpoint` sets `AckGranularity::Checkpoint` before amending
+  the policy. In the veneers it is the **only** thing `outputs_at_checkpoint` can produce, and
+  the refusal names a knob three of them have no method for. The failure is loud, not silent:
+  the class does not register.
+- **Blast radius**: no shipped fixture hits it — Python's calls both, and node/ruby/php carry
+  no `effectively_once` fixture at all, which is why nothing has caught it. It blocks two of
+  the four `effectively_once` fixtures R5 must port, and the
+  `test/fixtures/declarations/checkpoint_batched_store.json` golden
+  (`"ack_granularity": "checkpoint"` with no `checkpoint_every`) cannot be produced by any of
+  the three veneers today.
+- **This corrects three published claims.**
+  `openspec/changes/sdk-durable-fixture-parity/design.md:80-87` rules `effectively_once` **F**
+  ("missing fixture — the SDK can already do this") for node, ruby and php, citing the three
+  methods that are present without noticing the fourth is absent. `docs/dev_notes/node-sdk.md:203-207`,
+  `ruby-sdk.md:112-114` and `php-sdk.md:136-141` each say the deferral is *"fixtures, not
+  mechanism"*. For `effectively_once` that is not true in any of the three.
+- **A fix should** give each veneer the Rust/Java seam rather than a fourth flag: one private
+  `amend_checkpoint` that sets the granularity and amends the policy, with `checkpointAck`,
+  `checkpointEvery` and `outputsAtCheckpoint` all going through it. ~15 lines per SDK,
+  deletion-funded against the three independent assignments each has today. Python takes the
+  same seam for half B. Whether the *implication* is right, or the veneers should refuse the
+  combination at build time the way `flz_core` refuses it at registration, is the one open
+  question — `docs/configuration.md:523-524` says imply, and Rust and Java do.
+
+
 ### KI-115 · Two published specs mandate behaviour the code does not have
 
 Found by area 8's docs sweep, 2026-09-01. **Both are spec-vs-code gaps, not doc drift**, so
