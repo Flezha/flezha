@@ -364,11 +364,6 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     base = TestHelpers.tmp_app_data_dir()
     parent = self()
 
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
-
     # Three live members, each owning a third of the key space.
     seed =
       for {range, index} <- Enum.with_index(Partition.ranges(3)) do

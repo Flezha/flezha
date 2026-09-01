@@ -174,7 +174,7 @@ defmodule Flezha.Application do
     ]
   end
 
-  # Flezha.Testnet only compiles in :test (test/support/); ensure_loaded?
+  # Flezha.Testnet only compiles in :test (test/helpers/); ensure_loaded?
   # gates the child spec so prod boots without the module. Prepended, never
   # appended: the harness must be listening before anything connects.
   defp prepend_testnet(children) do

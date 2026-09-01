@@ -58,10 +58,18 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
 
     OperativeManager.send_io(operative_id, namespace, "hello", %{"input_type" => "2"})
 
-    assert wait_until(fn -> touched(namespace, operative_id) == ["hello"] end, 15_000),
+    assert NodeTestHelper.wait_until(
+             fn -> touched(namespace, operative_id) == ["hello"] end,
+             15_000,
+             100
+           ),
            "the input must reach the Entity before the deadline is asserted on"
 
-    assert wait_until(fn -> closed_at(namespace, operative_id) != [] end, 15_000),
+    assert NodeTestHelper.wait_until(
+             fn -> closed_at(namespace, operative_id) != [] end,
+             15_000,
+             100
+           ),
            "the idle timer must fire with no further input, got #{inspect(state_of(namespace, operative_id))}"
 
     [fired_at] = closed_at(namespace, operative_id)
@@ -86,15 +94,27 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
 
     OperativeManager.send_io(operative_id, namespace, "hello", %{"input_type" => "2"})
 
-    assert wait_until(fn -> touched(namespace, operative_id) == ["hello"] end, 15_000),
+    assert NodeTestHelper.wait_until(
+             fn -> touched(namespace, operative_id) == ["hello"] end,
+             15_000,
+             100
+           ),
            "the registration must be durable before the Entity is re-seated; state=#{inspect(state_of(namespace, operative_id))}"
 
     TierE2EHarness.force_fresh_rebind(namespace, operative_id)
 
-    assert wait_until(fn -> touched(namespace, operative_id) == ["hello"] end, 30_000),
+    assert NodeTestHelper.wait_until(
+             fn -> touched(namespace, operative_id) == ["hello"] end,
+             30_000,
+             100
+           ),
            "the restore must rebuild the Entity before its timer is asserted on"
 
-    assert wait_until(fn -> closed_at(namespace, operative_id) != [] end, 30_000),
+    assert NodeTestHelper.wait_until(
+             fn -> closed_at(namespace, operative_id) != [] end,
+             30_000,
+             100
+           ),
            "the restored Entity still owes the timer, and firing it needs no new input"
   end
 
@@ -102,7 +122,11 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   # simply gone (this class has no input log and no durable inbox), and the
   # timer that input would have armed with it.
   defp await_readable(namespace, operative_id) do
-    assert wait_until(fn -> state_of(namespace, operative_id) != nil end, 30_000),
+    assert NodeTestHelper.wait_until(
+             fn -> state_of(namespace, operative_id) != nil end,
+             30_000,
+             100
+           ),
            "the Entity must be live before an input is sent at it"
   end
 
@@ -160,7 +184,4 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
       _ -> []
     end
   end
-
-  defp wait_until(fun, timeout_ms),
-    do: NodeTestHelper.wait_until(fun, timeout_ms, 100)
 end

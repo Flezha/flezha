@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriterTest do
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.StateCase, async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
@@ -9,17 +9,7 @@ defmodule Flezha.State.WalWriterTest do
   alias Flezha.State.WalWriter.State, as: WriterState
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
-
-    # Bring up the registry + dyn-supervisor that `WalWriter` uses for naming.
-    TestHelpers.start_state_tree()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
-
-    %{base: base, entity_id: TestHelpers.sample_entity_id("p_" <> uniq())}
+    %{entity_id: TestHelpers.sample_entity_id("p_" <> uniq())}
   end
 
   describe "encode/decode round-trip" do
@@ -478,8 +468,6 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   defp ok!({:ok, x}), do: {:ok, x}
-
-  defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 
   describe "close_writers/1" do
     test "stops every live writer of the class and leaves its files", %{entity_id: entity_id} do

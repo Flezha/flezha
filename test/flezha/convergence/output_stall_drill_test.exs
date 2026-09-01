@@ -33,7 +33,7 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
   @budget_ms 500
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
+    TestHelpers.tmp_app_data_dir()
 
     for spec <- [
           {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
@@ -48,11 +48,6 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
     end
 
     on_exit(TestHelpers.override_env(:default_output_stall_timeout_ms, @stall_ms))
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
 
     # Listening BEFORE the Loop starts: `Loop.init/1` schedules its first tick
     # immediately, and a synchronous call cannot drain a timer message that has

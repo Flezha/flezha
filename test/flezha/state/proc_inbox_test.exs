@@ -13,14 +13,9 @@ defmodule FlezhaTest.State.ProcInboxTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
-    root = TestHelpers.tmp_app_data_dir()
+    TestHelpers.tmp_app_data_dir()
     # Every release rewrites the file at once, so the cases can read it.
     on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(root)
-    end)
 
     :ok
   end

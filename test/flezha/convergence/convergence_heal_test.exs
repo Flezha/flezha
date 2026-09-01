@@ -1,0 +1,473 @@
+defmodule Flezha.Convergence.HealTest do
+  @moduledoc """
+  Healing: the data-plane verdicts that become heal operations, the
+  `SafeCall` wrapper that bounds one, the `Snapshot` publish point, `Heal`
+  itself, and the output-stall and reconcile-round ladders above them.
+  """
+
+  # async: false: writes Application env; Mimic stubs; a shared on-disk root.
+
+  use ExUnit.Case, async: false
+  use Mimic
+
+  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Snapshot}
+  alias Flezha.SafeCall
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  describe "data-plane verdict → heal op (D3)" do
+    # One healthy operative bound to the runner every verdict below names, so
+    # the resolution is exercised against the same probed reality the other
+    # invariants are classified from.
+    defp wedge_reality() do
+      %{
+        active_runners: %{ns: MapSet.new(["e_live", "e_second"])},
+        operatives: %{
+          {:ns, "rc_a"} => %{bound_runner: "e_live"},
+          {:ns, "rc_b"} => %{bound_runner: "e_live"},
+          {:ns, "rc_other"} => %{bound_runner: "e_second"}
+        }
+      }
+    end
+
+    defp wedge_intent() do
+      %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "rc_a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "rc_b", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "rc_other", factory_id: nil, plugins: []}
+        ]
+      }
+    end
+
+    defp plan_for(verdict) do
+      wedge_intent()
+      |> Diff.compute(wedge_reality(), %{verdict: verdict})
+      |> Planner.plan(Backoff.new())
+    end
+
+    test "a wedged runner pool is evicted" do
+      assert [%{primitive: :evict_runner, target: "e_live", args: args}] =
+               plan_for({:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}})
+
+      assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
+    end
+
+    test "a runner that stopped consuming is evicted, resolved through its data transport" do
+      verdict =
+        {:runner_not_consuming, %{transport: {:uds_data, "e_live", :primary}, stream_id: 1}}
+
+      assert [%{primitive: :evict_runner, target: "e_live"}] = plan_for(verdict)
+    end
+
+    test "a wedged channel resyncs every operative on that runner, in place" do
+      verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
+
+      assert [
+               %{primitive: :resync_runner, namespace: :ns, target: "rc_a"},
+               %{primitive: :resync_runner, namespace: :ns, target: "rc_b"}
+             ] = plan_for(verdict)
+    end
+
+    test "a wedged operative is rebound, named by the verdict" do
+      assert [%{primitive: :rebind_operative, namespace: :ns, target: "rc_other", args: args}] =
+               plan_for({:operative_not_forwarding, %{operative_id: "rc_other"}})
+
+      assert args.reason == :data_plane_wedge
+    end
+
+    test "a fabric verdict plans nothing — no BEAM-level heal reaches it" do
+      for layer <- [:driver_loop_frozen, :nif_queue_backing_up] do
+        assert plan_for({layer, %{transport: {:uds_data, "e_live", :primary}}}) == []
+      end
+    end
+
+    test "a verdict naming nothing the probe observed plans nothing" do
+      assert plan_for({:runner_pool_wedged, %{runner_id: "e_never_seen"}}) == []
+      assert plan_for({:operative_not_forwarding, %{operative_id: "rc_never_seen"}}) == []
+      assert plan_for({:channel_not_sending, %{runner_id: "e_never_seen", channel: "c"}}) == []
+    end
+
+    test "an :ok verdict clears the recorded wedge" do
+      delta = Diff.compute(wedge_intent(), wedge_reality(), %{verdict: :ok})
+      assert delta.data_plane_wedge == nil
+      assert delta.data_plane_layer == nil
+      assert Diff.empty?(delta)
+    end
+
+    test "wedge ops ride the standard per-target backoff" do
+      verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
+      now = System.monotonic_time(:millisecond)
+
+      backoff =
+        Backoff.update(Backoff.new(), Planner.ladder_key(:data_plane_wedge, "rc_a"), :error, now)
+        |> Backoff.update(Planner.ladder_key(:data_plane_wedge, "rc_b"), :error, now)
+
+      assert wedge_intent()
+             |> Diff.compute(wedge_reality(), %{verdict: verdict})
+             |> Planner.plan(backoff) == []
+    end
+
+    # Eviction moves a wedged runner's operatives but leaves the process
+    # connected and placeable, so it takes work and wedges again. Only the
+    # process going away clears it — and only after eviction has been tried.
+    test "a runner still proved wedged after eviction is restarted terminally" do
+      verdict = {:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}}
+      now = System.monotonic_time(:millisecond)
+
+      assert [%{primitive: :evict_runner, target: "e_live"}] = plan_for(verdict)
+
+      # The rung is read off the wedge ladder's own cooldown attempt count, so
+      # the tick that applied the eviction is what reaches the restart.
+      backoff =
+        Backoff.update(
+          Backoff.new(),
+          Planner.ladder_key(:data_plane_wedge, "e_live"),
+          :error,
+          now - 60_000
+        )
+
+      assert [%{primitive: :restart_runner, namespace: :ns, target: "e_live", args: args}] =
+               wedge_intent()
+               |> Diff.compute(wedge_reality(), %{verdict: verdict})
+               |> Planner.plan(backoff)
+
+      assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
+      assert Planner.proved_wedged?(%{args: args}), "the restart rung is gated on proved evidence"
+    end
+
+    test "a runner with no wedge verdict is never restarted" do
+      for verdict <- [:ok, {:operative_not_forwarding, %{operative_id: "rc_other"}}] do
+        refute Enum.any?(plan_for(verdict), &(&1.primitive == :restart_runner))
+      end
+    end
+  end
+
+  describe "SafeCall.bounded/3" do
+    test "returns {:ok, reply} for a healthy call" do
+      {:ok, pid} = Agent.start_link(fn -> :state end)
+      assert {:ok, :state} = SafeCall.bounded(pid, {:get, & &1}, 1_000)
+      Agent.stop(pid)
+    end
+
+    test "returns {:error, :noproc} for a dead process" do
+      {:ok, pid} = Agent.start_link(fn -> :state end)
+      Agent.stop(pid)
+      assert {:error, :noproc} = SafeCall.bounded(pid, {:get, & &1}, 100)
+    end
+
+    test "on timeout, probes the wedged target's mailbox depth and current function" do
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      {:ok, pid} = GenServer.start_link(__MODULE__.WedgeServer, nil)
+
+      # Wedge it: a blocking call leaves the server stuck inside handle_call.
+      spawn(fn -> catch_exit(GenServer.call(pid, :block, :infinity)) end)
+
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 Process.info(pid, :current_function) ==
+                   {:current_function, {__MODULE__.WedgeServer, :handle_call, 3}}
+               end,
+               1_000
+             )
+
+      # Pile messages behind the blocked call so the probe sees a backlog.
+      for _ <- 1..5, do: GenServer.cast(pid, :noop)
+
+      handler_ids =
+        :telemetry_test.attach_event_handlers(self(), [[:flezha, :convergence, :safe_call]])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :timeout} = SafeCall.bounded(pid, :ping, 50)
+        end)
+
+      assert log =~ "target_queue_len="
+      assert log =~ "target_current_function="
+
+      assert_receive {[:flezha, :convergence, :safe_call], _ref, %{count: 1},
+                      %{result: :timeout, target_queue_len: qlen, target_current_function: cf}}
+
+      assert qlen >= 5
+      assert is_tuple(cf)
+
+      handler_ids |> List.wrap() |> Enum.each(&:telemetry.detach/1)
+      Process.exit(pid, :kill)
+    end
+
+    test "on timeout against a remote pid, reports :remote instead of crashing the caller" do
+      # Regression: `Process.info/2` raises `ArgumentError` on a remote pid.
+      # That raise is an :error, not an :exit, so the catch in workflow/3 never
+      # covered it — it propagated out of Convergence.Loop and took the node down.
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
+
+      {:ok, peer, peer_node} =
+        :peer.start_link(%{host: ~c"127.0.0.1", name: :safecall_remote_probe, args: [args]})
+
+      on_exit(fn ->
+        if Process.alive?(peer), do: catch_exit(:peer.stop(peer))
+      end)
+
+      # A bare remote process that never answers, so the call times out and the
+      # timeout branch probes a genuinely remote pid.
+      remote_pid = Node.spawn(peer_node, :timer, :sleep, [:infinity])
+      assert node(remote_pid) == peer_node
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :timeout} = SafeCall.bounded(remote_pid, :ping, 50)
+        end)
+
+      assert log =~ "target_status: :remote"
+    end
+  end
+
+  describe "Snapshot" do
+    test "publish/current round-trips" do
+      Snapshot.publish(%{
+        last_tick_at: 42,
+        stalled_operatives: ["x"],
+        bound_operatives: 1,
+        producing_operatives: 1
+      })
+
+      assert Snapshot.current().last_tick_at == 42
+      assert Snapshot.current().stalled_operatives == ["x"]
+      # reset for other suites
+      Snapshot.publish(%{
+        last_tick_at: nil,
+        stalled_operatives: [],
+        bound_operatives: 0,
+        producing_operatives: 0
+      })
+    end
+
+    test "observe_recovery caches per-hub state" do
+      hub = :"conv_snap_#{System.unique_integer([:positive])}"
+      assert Snapshot.recovery_state(hub) == :unknown
+      Snapshot.observe_recovery(hub, :normal)
+      assert Snapshot.recovery_state(hub) == :normal
+      assert Map.get(Snapshot.recovery_states(), hub) == :normal
+    end
+  end
+
+  describe "Heal" do
+    test "the heal surface is exactly the eight reachable primitives" do
+      assert Enum.sort(Heal.primitives()) ==
+               Enum.sort([
+                 :rebind_operative,
+                 :replace_operative,
+                 :resync_runner,
+                 :start_plugin,
+                 :stop_plugin,
+                 :restart_plugin,
+                 :evict_runner,
+                 :restart_runner
+               ])
+    end
+
+    test "replace_operative against an unknown operative is a failed heal, not a crash" do
+      op = %{
+        primitive: :replace_operative,
+        namespace: "ghost_ns",
+        target: "ghost_operative",
+        args: %{}
+      }
+
+      assert Heal.execute(op) == :error
+    end
+
+    test "resync_runner against an unknown operative is a failed heal, not a crash" do
+      op = %{
+        primitive: :resync_runner,
+        namespace: "ghost_ns",
+        target: "ghost_operative",
+        args: %{reason: :output_stall}
+      }
+
+      assert Heal.execute(op) == :error
+    end
+
+    test "evict_runner on an unknown id is an idempotent :ok" do
+      op = %{primitive: :evict_runner, namespace: nil, target: "ghost_runner", args: %{}}
+      assert Heal.execute(op) == :ok
+    end
+
+    test "a deleted/unknown primitive is no longer dispatchable" do
+      # `start_operative`, `replay_state`, `compact_wal` were never planned and
+      # did nothing — they are gone, not silent no-ops.
+      for primitive <- [:start_operative, :replay_state, :compact_wal] do
+        op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
+        assert Heal.execute(op) == :error
+      end
+    end
+
+    test "a malformed restart_plugin op (no args) is a failed heal, not a crash" do
+      op = %{primitive: :restart_plugin, namespace: nil, target: :noop}
+      assert Heal.execute(op) == :error
+    end
+  end
+
+  describe "output-stall ladder (D1)" do
+    @stall_ns :stall_ns
+
+    defp stalled_diff(operative_id, extra \\ []) do
+      intent = %Intent{
+        operatives: [
+          %{namespace: @stall_ns, operative_id: operative_id, factory_id: nil, plugins: []}
+        ]
+      }
+
+      reality = %{
+        active_runners: %{@stall_ns => MapSet.new(["e_live"])},
+        operatives: %{{@stall_ns, operative_id} => Enum.into(extra, %{bound_runner: "e_live"})}
+      }
+
+      Diff.compute(intent, reality, %{stalled: [operative_id]})
+    end
+
+    test "a flagged instance resolves to a stalled divergence carrying its namespace" do
+      assert %Diff{stalled_operatives: [{@stall_ns, "op_a"}]} = stalled_diff("op_a")
+    end
+
+    test "a flag for an operative this tick is not healing resolves to nothing" do
+      # Not declared, or declared in a namespace still mid-recovery — the
+      # caller passes only the recovery-ready operatives.
+      delta = Diff.compute(%Intent{operatives: []}, %{}, %{stalled: ["ghost"]})
+      assert delta.stalled_operatives == []
+      assert Diff.empty?(delta)
+    end
+
+    test "the first eligible attempt resyncs the existing binding, not a migration" do
+      assert [%{primitive: :resync_runner, target: "op_a", args: %{reason: :output_stall}}] =
+               Planner.plan(stalled_diff("op_a"), Backoff.new())
+    end
+
+    test "a stall that survived the resync escalates to rebind_operative" do
+      now = System.monotonic_time(:millisecond)
+
+      # One ladder attempt recorded and its cooldown already elapsed: the same
+      # stall is still flagged, so the next rung is the migration.
+      backoff =
+        Backoff.update(Backoff.new(), Planner.ladder_key("op_a"), :error, now - 10_000)
+
+      assert [%{primitive: :rebind_operative, target: "op_a", args: %{reason: :output_stall}}] =
+               Planner.plan(stalled_diff("op_a"), backoff)
+    end
+
+    test "both rungs share one cooldown key, so escalating does not restart the throttle" do
+      for primitive <- [:resync_runner, :rebind_operative] do
+        assert Planner.key(%{primitive: primitive, target: "r", args: %{reason: :output_stall}}) ==
+                 Planner.ladder_key("r")
+      end
+    end
+
+    test "a stalled operative already covered by the plan is not laddered too" do
+      # Also unbound, so the structural bind op already names it.
+      delta = stalled_diff("op_dup", bound_runner: nil)
+
+      assert [%{primitive: :rebind_operative, target: "op_dup", args: args}] =
+               Planner.plan(delta, Backoff.new())
+
+      refute Map.has_key?(args, :reason)
+    end
+
+    test "a stalled operative in backoff cooldown is filtered out" do
+      now = System.monotonic_time(:millisecond)
+      backoff = Backoff.update(Backoff.new(), Planner.ladder_key("op_cool"), :error, now)
+
+      assert Planner.plan(stalled_diff("op_cool"), backoff) == []
+    end
+
+    test "the ladder is not starved by a plan that filled the per-tick budget" do
+      delta = %Diff{stalled_diff("op_a") | stalled_operatives: [{@stall_ns, "op_a"}]}
+
+      assert [%{primitive: :resync_runner, target: "op_a"}] =
+               Planner.plan(delta, Backoff.new(), max_ops: 0)
+    end
+
+    test "a ladder rung is recognisable as one; a structural op is not" do
+      assert Planner.ladder?(%{
+               primitive: :resync_runner,
+               target: "r",
+               args: %{reason: :output_stall}
+             })
+
+      refute Planner.ladder?(%{primitive: :rebind_operative, target: "r", args: %{}})
+    end
+  end
+
+  describe "reconcile-round cooperation (D7)" do
+    alias Flezha.Convergence.Loop
+
+    test "a round that started orphans triggers one immediate tick" do
+      assert :ok =
+               Loop.handle_telemetry(
+                 [:flezha, :boot, :reconcile_round],
+                 %{started: 2, duplicates: 0, elapsed_ms: 4},
+                 %{first_round: false},
+                 self()
+               )
+
+      assert_receive :reconcile_started, 500
+    end
+
+    test "a quiet round triggers nothing — the Loop's cadence is unchanged" do
+      assert :ok =
+               Loop.handle_telemetry(
+                 [:flezha, :boot, :reconcile_round],
+                 %{started: 0, duplicates: 0, elapsed_ms: 1},
+                 %{first_round: false},
+                 self()
+               )
+
+      refute_received :reconcile_started
+    end
+
+    test "the post-round plan adopts what the round started rather than fighting it" do
+      # The reconcile started two operatives; by the time the completion event
+      # reaches the Loop they probe as bound to a live runner, so the Diff sees
+      # no divergence and the plan names neither of them.
+      intent = %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "adopted_a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "adopted_b", factory_id: nil, plugins: []}
+        ]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{
+          {:ns, "adopted_a"} => %{bound_runner: "e_live"},
+          {:ns, "adopted_b"} => %{bound_runner: "e_live"}
+        }
+      }
+
+      assert Planner.plan(Diff.compute(intent, reality), Backoff.new()) == []
+    end
+  end
+
+  # A GenServer that wedges inside `handle_call(:block, ...)` so the SafeCall
+  # probe has a live-but-stuck target to introspect.
+  defmodule WedgeServer do
+    @moduledoc false
+    use GenServer
+
+    @impl true
+    def init(_), do: {:ok, nil}
+
+    @impl true
+    def handle_call(:block, _from, state) do
+      receive do
+        :never -> {:reply, :ok, state}
+      end
+    end
+
+    def handle_call(_other, _from, state), do: {:reply, :ok, state}
+
+    @impl true
+    def handle_cast(_msg, state), do: {:noreply, state}
+  end
+end

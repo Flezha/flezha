@@ -13,6 +13,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   use ExUnit.Case, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
+  import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1]
 
   alias Flezha.Config
   alias Flezha.Operative.Overwatch
@@ -33,7 +34,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     # sweep repeats because `WorkerSup.ensure_worker/4` drops a key before it
     # re-registers the replacement.
     on_exit(fn ->
-      wait_until(fn ->
+      wait_until!(fn ->
         Enum.each(forward_worker_keys(), &ForwardSup.stop_worker/1)
         forward_worker_keys() == []
       end)
@@ -50,8 +51,6 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   defp forward_worker_keys,
     do: Registry.select(ForwardSup.registry_name(), [{{:"$1", :_, :_}, [], [:"$1"]}])
-
-  defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
   # A stand-in target Overwatch: answers `{:ingest, _, _}` with whatever
   # `script.(message)` returns and reports every attempt to the test.
@@ -86,7 +85,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
           target_operative_id: target,
           source_namespace: "default",
           source_operative_id: source,
-          plugin_id: uniq("plug")
+          plugin_id: unique("plug")
         },
         extra
       )
@@ -193,7 +192,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   end
 
   test "the target's confirming ingest answers the outbox hold" do
-    entity_id = {uniq("of"), "proc", "k1"}
+    entity_id = {unique("of"), "proc", "k1"}
     :ok = TestHelpers.stub_outbox_owner(entity_id)
 
     # Refused once, then accepted: the hold survives the retry and is answered
@@ -225,10 +224,10 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   test "terminal verdicts are not retried" do
     for verdict <- [:ok, {:ok, :absorbed}, {:ok, :suspended}] do
       target = fake_target(fn _ -> verdict end)
-      id = uniq("term")
+      id = unique("term")
       resolve_to(%{id => target})
 
-      {:ok, opts, worker} = prepare(uniq("src"), id)
+      {:ok, opts, worker} = prepare(unique("src"), id)
       emit(opts, "once")
 
       assert_receive {:target_got, "once", _}, 1_000
@@ -239,7 +238,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   end
 
   test "a parked target is retried until it recovers, and nothing is dropped" do
-    id = uniq("parked")
+    id = unique("parked")
     counter = :counters.new(1, [])
 
     target =
@@ -250,38 +249,38 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
     resolve_to(%{id => target})
 
-    {:ok, opts, worker} = prepare(uniq("src"), id, %{retry_backoff_ms: 10})
+    {:ok, opts, worker} = prepare(unique("src"), id, %{retry_backoff_ms: 10})
     emit(opts, "held")
 
     assert_receive {:target_got, "held", _}, 1_000
     assert_receive {:target_got, "held", _}, 1_000
     assert_receive {:target_got, "held", _}, 1_000
 
-    wait_until(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
+    wait_until!(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
     assert %{attempts: 0} = ForwardWorker.stats(worker)
   end
 
   test "an unresolvable target is retried, then delivered once it resolves" do
-    id = uniq("late")
+    id = unique("late")
     resolve_to(%{})
 
-    {:ok, opts, worker} = prepare(uniq("src"), id, %{retry_backoff_ms: 10})
+    {:ok, opts, worker} = prepare(unique("src"), id, %{retry_backoff_ms: 10})
     emit(opts, "waiting")
 
     # Held, not dropped, while the target does not exist.
-    wait_until(fn -> ForwardWorker.stats(worker).buffer_len == 1 end)
+    wait_until!(fn -> ForwardWorker.stats(worker).buffer_len == 1 end)
 
     resolve_to(%{id => fake_target(fn _ -> :ok end)})
 
     assert_receive {:target_got, "waiting", _}, 2_000
-    wait_until(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
+    wait_until!(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
   end
 
   test "a saturated queue parks the enqueueing caller" do
-    id = uniq("stuck")
+    id = unique("stuck")
     resolve_to(%{id => spawn_link(&NodeTestHelper.park/0)})
 
-    {:ok, opts, worker} = prepare(uniq("src"), id, %{queue_max: 2, call_timeout_ms: 50})
+    {:ok, opts, worker} = prepare(unique("src"), id, %{queue_max: 2, call_timeout_ms: 50})
 
     emit(opts, "one")
     parked = Task.async(fn -> emit(opts, "two") end)
@@ -293,11 +292,11 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   end
 
   test "a re-prepared plugin reuses its live worker and keeps queued items" do
-    id = uniq("reuse")
+    id = unique("reuse")
     resolve_to(%{id => spawn_link(&NodeTestHelper.park/0)})
 
-    plugin_id = uniq("plug")
-    source = uniq("src")
+    plugin_id = unique("plug")
+    source = unique("src")
 
     {:ok, opts, worker} = prepare(source, id, %{plugin_id: plugin_id, call_timeout_ms: 50})
     emit(opts, "queued")
@@ -309,15 +308,15 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   end
 
   test "two operatives forwarding to each other neither deadlock nor lose a message" do
-    a_id = uniq("a")
-    b_id = uniq("b")
+    a_id = unique("a")
+    b_id = unique("b")
     test_pid = self()
 
     # Each stand-in Overwatch does what a real one does on `:on_output`: it
     # enqueues into its own forward worker from inside its own callback. If the
     # worker blocked on delivery, this is the four-way cycle that would wedge.
-    {:ok, a_opts, _} = prepare(a_id, b_id, %{plugin_id: uniq("pa")})
-    {:ok, b_opts, _} = prepare(b_id, a_id, %{plugin_id: uniq("pb")})
+    {:ok, a_opts, _} = prepare(a_id, b_id, %{plugin_id: unique("pa")})
+    {:ok, b_opts, _} = prepare(b_id, a_id, %{plugin_id: unique("pb")})
 
     a = spawn_link(fn -> peer_loop(test_pid, a_id, a_opts, 1) end)
     b = spawn_link(fn -> peer_loop(test_pid, b_id, b_opts, 1) end)
@@ -360,10 +359,10 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   ## ---------- plugin lifecycle (task 2.5) ----------
 
   test "disabling the plugin stops its worker for good" do
-    id = uniq("bye")
+    id = unique("bye")
     resolve_to(%{id => fake_target(fn _ -> :ok end)})
 
-    source = uniq("src")
+    source = unique("src")
 
     plugin =
       Flezha.Plugin.new(
@@ -383,7 +382,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
     {_table, _dropped} = Table.unsubscribe(table, "fwd")
 
-    wait_until(fn -> not Process.alive?(worker) end)
+    wait_until!(fn -> not Process.alive?(worker) end)
     # The supervisor has handled the exit (a call queues behind it): a
     # permanent child would be back by now, a transient one stays down.
     _ = :sys.get_state(ForwardSup)
@@ -395,7 +394,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   ## ---------- telemetry (task 4.2) ----------
 
   test "delivery, retry and queue-depth events reach the observability bus" do
-    id = uniq("obs")
+    id = unique("obs")
     counter = :counters.new(1, [])
 
     target =
@@ -424,7 +423,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
     on_exit(fn -> :telemetry.detach(handler) end)
 
-    source = uniq("src")
+    source = unique("src")
     {:ok, opts, _worker} = prepare(source, id, %{retry_backoff_ms: 10})
     emit(opts, "observed")
 
@@ -436,7 +435,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
   ## ---------- effectively-once across the hop (task 5.4) ----------
 
   test "a retry after the target journaled the payload is absorbed, not duplicated" do
-    id = uniq("eo")
+    id = unique("eo")
     journaled = :counters.new(1, [])
     attempts = :counters.new(1, [])
 
@@ -459,7 +458,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
     resolve_to(%{id => target})
 
-    {:ok, opts, worker} = prepare(uniq("src"), id, %{retry_backoff_ms: 10})
+    {:ok, opts, worker} = prepare(unique("src"), id, %{retry_backoff_ms: 10})
 
     stamps = %{"flz.seq" => "4.0", "flz.key" => "k", "flz.epoch" => "0"}
     emit(opts, "once-only", stamps)
@@ -469,7 +468,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     assert_receive {:target_got, "once-only", ^stamps}, 1_000
     assert_receive {:target_got, "once-only", ^stamps}, 1_000
 
-    wait_until(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
+    wait_until!(fn -> ForwardWorker.stats(worker).buffer_len == 0 end)
     assert :counters.get(journaled, 1) == 1
   end
 
@@ -519,10 +518,10 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "one worker per member, and the same key always takes the same one" do
-      base = uniq("grp")
+      base = unique("grp")
       {members, _targets} = partitioned_target(base, 2)
 
-      {:ok, opts, _worker} = prepare(uniq("src"), base)
+      {:ok, opts, _worker} = prepare(unique("src"), base)
       assert length(opts.routes) == 2
       assert Enum.map(opts.routes, & &1.id) == Enum.map(members, & &1.id)
 
@@ -536,9 +535,9 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "keys land on the member whose range owns them" do
-      base = uniq("grp")
+      base = unique("grp")
       {_members, _targets} = partitioned_target(base, 2)
-      {:ok, opts, _worker} = prepare(uniq("src"), base)
+      {:ok, opts, _worker} = prepare(unique("src"), base)
 
       p0 = Flezha.Partition.member_id(base, 0)
       p1 = Flezha.Partition.member_id(base, 1)
@@ -551,7 +550,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "one unreachable member does not hold up its siblings" do
-      base = uniq("grp")
+      base = unique("grp")
       members = group(base, 2)
       reachable = Flezha.Partition.member_id(base, 0)
       target = labelled_target(reachable)
@@ -563,7 +562,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       # Only p0 resolves; p1's worker retries against a target that is not there.
       resolve_to(%{reachable => target})
 
-      {:ok, opts, _worker} = prepare(uniq("src"), base, %{retry_backoff_ms: 10})
+      {:ok, opts, _worker} = prepare(unique("src"), base, %{retry_backoff_ms: 10})
 
       emit(opts, "stuck", %{"flz.key" => "BTC-USD"})
       emit(opts, "flows", %{"flz.key" => "SOL-USD"})
@@ -572,9 +571,9 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "an unkeyed message is parked with the contract it violated, never guessed" do
-      base = uniq("grp")
+      base = unique("grp")
       {_members, _targets} = partitioned_target(base, 2)
-      source = uniq("src")
+      source = unique("src")
       {:ok, opts, _worker} = prepare(source, base)
 
       parent = self()
@@ -598,12 +597,12 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "an unkeyed message to a single-member target still flows" do
-      id = uniq("plain")
+      id = unique("plain")
       target = fake_target(fn _ -> :ok end)
       stub(Flezha.Operative.PartitionGroup, :members, fn _ns, _id -> [] end)
       resolve_to(%{id => target})
 
-      {:ok, opts, _worker} = prepare(uniq("src"), id)
+      {:ok, opts, _worker} = prepare(unique("src"), id)
       assert length(opts.routes) == 1
 
       emit(opts, "unkeyed", %{})
@@ -611,9 +610,9 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "disabling the plugin stops every member's worker" do
-      base = uniq("grp")
+      base = unique("grp")
       {_members, _targets} = partitioned_target(base, 3)
-      source = uniq("src")
+      source = unique("src")
 
       plugin =
         Flezha.Plugin.new(
@@ -634,12 +633,12 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
       {_table, _dropped} = Table.unsubscribe(table, "fwd_grp")
 
-      wait_until(fn -> Enum.all?(workers, &(not Process.alive?(&1))) end)
+      wait_until!(fn -> Enum.all?(workers, &(not Process.alive?(&1))) end)
     end
 
     test "a re-resolve re-points the routes and hands the vanished member's queue over" do
-      base = uniq("grp")
-      source = uniq("src")
+      base = unique("grp")
+      source = unique("src")
 
       # Three members, but only p0 and p1 answer: p2's target is unreachable, so
       # its worker accumulates exactly the way it does while a rescale has the
@@ -661,7 +660,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       # deliver, so the payload sits in the queue.
       emit(opts, "eth-1", %{"flz.key" => "ETH-USD"})
       emit(opts, "eth-2", %{"flz.key" => "ETH-USD"})
-      wait_until(fn -> ForwardWorker.stats(p2.pid).buffer_len == 2 end)
+      wait_until!(fn -> ForwardWorker.stats(p2.pid).buffer_len == 2 end)
 
       # The group rescales to two: p2 is gone and 213 now belongs to p1.
       two = group(base, 2)
@@ -676,7 +675,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
       # The orphaned worker is gone, and what it owed arrived at the new owner —
       # in the order it was queued, before anything emitted afterwards.
-      wait_until(fn -> not Process.alive?(p2.pid) end)
+      wait_until!(fn -> not Process.alive?(p2.pid) end)
       assert_receive {:member_got, ^new_owner, "eth-1"}, 1_000
       assert_receive {:member_got, ^new_owner, "eth-2"}, 1_000
 
@@ -685,7 +684,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "a surviving member keeps its own worker, and its queue with it" do
-      base = uniq("grp")
+      base = unique("grp")
       three = group(base, 3)
 
       stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
@@ -695,11 +694,11 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       # Nothing answers, so every worker holds its payload.
       resolve_to(%{})
 
-      {:ok, opts, _worker} = prepare(uniq("src"), base, %{retry_backoff_ms: 10_000})
+      {:ok, opts, _worker} = prepare(unique("src"), base, %{retry_backoff_ms: 10_000})
       [p0, _p1, _p2] = opts.routes
 
       emit(opts, "sol-1", %{"flz.key" => "SOL-USD"})
-      wait_until(fn -> ForwardWorker.stats(p0.pid).buffer_len == 1 end)
+      wait_until!(fn -> ForwardWorker.stats(p0.pid).buffer_len == 1 end)
 
       two = group(base, 2)
 
@@ -718,8 +717,8 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "a drained payload that belongs nowhere is parked, never dropped" do
-      base = uniq("grp")
-      source = uniq("src")
+      base = unique("grp")
+      source = unique("src")
       three = group(base, 3)
 
       stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
@@ -732,7 +731,7 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       [_p0, _p1, p2] = opts.routes
 
       emit(opts, "stranded", %{"flz.key" => "ETH-USD"})
-      wait_until(fn -> ForwardWorker.stats(p2.pid).buffer_len == 1 end)
+      wait_until!(fn -> ForwardWorker.stats(p2.pid).buffer_len == 1 end)
 
       # The target collapses to a single member owning only the low groups, so
       # ETH-USD's group has no owner at all.
@@ -766,9 +765,9 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     end
 
     test "health reports the sickest worker, not the healthy majority" do
-      base = uniq("grp")
+      base = unique("grp")
       {_members, _targets} = partitioned_target(base, 3)
-      {:ok, opts, _worker} = prepare(uniq("src"), base)
+      {:ok, opts, _worker} = prepare(unique("src"), base)
 
       assert OperativeForward.health(opts) == :healthy
 
@@ -777,14 +776,16 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       # The kill is the point of the test; its supervisor report is not.
       ExUnit.CaptureLog.capture_log(fn ->
         Process.exit(p1.pid, :kill)
-        wait_until(fn -> not Process.alive?(p1.pid) end)
+        wait_until!(fn -> not Process.alive?(p1.pid) end)
       end)
 
       assert OperativeForward.health(opts) == {:unhealthy, :worker_dead}
     end
   end
 
-  defp wait_until(fun) do
+  # `!` because it raises: a condition that never holds fails the test where a
+  # bare poll would return a falsy value nobody asserts on.
+  defp wait_until!(fun) do
     if NodeTestHelper.wait_until(fun, 1_000, 10),
       do: :ok,
       else: flunk("condition never held")

@@ -28,6 +28,8 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   use ExUnit.Case, async: false
 
+  import Flezha.State.TestHelpers, only: [uniq: 0]
+
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.{Metrics, Snapshot, Supervisor, TestHelpers, WalWriter, Wire}
@@ -298,6 +300,4 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     :telemetry.attach(id, event, fn _e, meas, meta, _ -> send(parent, {tag, meas, meta}) end, nil)
     id
   end
-
-  defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

@@ -11,7 +11,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.StateCase, async: false
 
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.Restore
@@ -19,11 +19,7 @@ defmodule Flezha.State.GapRecoveryTest do
   alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Wire}
   alias FlezhaTest.Helper.NodeTestHelper
 
-  setup do
-    base = TestHelpers.tmp_app_data_dir()
-
-    TestHelpers.start_state_tree()
-
+  setup %{base: base} do
     entity_id = TestHelpers.sample_entity_id("gap_" <> uniq())
     {:ok, _} = Supervisor.find_or_start(entity_id)
     {:ok, writer} = Supervisor.lookup(entity_id)
@@ -171,11 +167,21 @@ defmodule Flezha.State.GapRecoveryTest do
     # The pulled full-state snapshot lands via the real data-plane handler
     # and becomes the Entity's baseline.
     deliver.("entity_state_snapshot", 5005, "full")
-    assert eventually(fn -> WalWriter.last_persisted_seq(writer) == 5005 end)
+
+    assert NodeTestHelper.wait_until(
+             fn -> WalWriter.last_persisted_seq(writer) == 5005 end,
+             500,
+             10
+           )
 
     # The runner's next delta appends contiguously past the baseline.
     deliver.("entity_state_change", 5006, "d3")
-    assert eventually(fn -> WalWriter.last_persisted_seq(writer) == 5006 end)
+
+    assert NodeTestHelper.wait_until(
+             fn -> WalWriter.last_persisted_seq(writer) == 5006 end,
+             500,
+             10
+           )
 
     # A controller restart restores the complete state — snapshot baseline
     # plus the post-takeover delta, not just the deltas. `assemble_payload`
@@ -196,10 +202,10 @@ defmodule Flezha.State.GapRecoveryTest do
     )
 
     # The snapshot write runs in a spawned process; poll until it lands.
-    assert eventually(fn -> StateSnapshot.latest_snapshot(ctx.entity_id) != nil end)
+    assert NodeTestHelper.wait_until(
+             fn -> StateSnapshot.latest_snapshot(ctx.entity_id) != nil end,
+             500,
+             10
+           )
   end
-
-  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 500, 10)
-
-  defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

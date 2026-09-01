@@ -69,7 +69,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     assert session2 in FleetManager.active_runners(@namespace)
 
     # The operative now belongs to the new session, and the old session is gone.
-    assert eventually(fn -> bound_to?(session2, operative.id) end),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session2, operative.id) end, 1_000, 25),
            "operative must follow the runner onto its new session token"
 
     refute session1 in FleetManager.active_runners(@namespace)
@@ -100,10 +100,14 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     # Linked, so it is torn down with the test process.
     {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, operative})
 
-    assert eventually(fn -> bound_to?(session, operative.id) end, 400),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 10_000, 25),
            "the registry tag still names the dead runner, so nothing can reconcile the binding"
 
-    assert eventually(fn -> mapped?(session, operative.id, overwatch) end, 400),
+    assert NodeTestHelper.wait_until(
+             fn -> mapped?(session, operative.id, overwatch) end,
+             10_000,
+             25
+           ),
            "the live runner's StreamChannels never learned the operative pid, so every output frame hits the `[] -> :ok` drop"
   end
 
@@ -132,10 +136,14 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, operative})
     assert :sys.get_state(overwatch).runner_id == session
 
-    assert eventually(fn -> bound_to?(session, operative.id) end, 400),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 10_000, 25),
            "the tag names the awaited runner, not the one the operative started on"
 
-    assert eventually(fn -> mapped?(session, operative.id, overwatch) end, 400),
+    assert NodeTestHelper.wait_until(
+             fn -> mapped?(session, operative.id, overwatch) end,
+             10_000,
+             25
+           ),
            "the route was seeded into the awaited runner's channels, not the live one's"
   end
 
@@ -147,7 +155,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     session = NodeTestHelper.start_runner(@namespace)
     operative = %Builder{id: "reassert_tag_op", factory_id: @factory}
     {:ok, _} = OperativeManager.start_operative(@namespace, operative)
-    assert eventually(fn -> bound_to?(session, operative.id) end)
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 1_000, 25)
 
     hub_id = Identificator.hub(@namespace)
     hub = ProcessHub.Coordinator.get_hub(hub_id)
@@ -161,7 +169,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
         hook_storage: hub.storage.hook
       )
 
-    assert eventually(fn -> bound_to?(session, operative.id) end, 400),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 10_000, 25),
            "the late registry write left the tag on the dead runner, where no reconciler can see it"
   end
 
@@ -185,7 +193,4 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     HubManager.runner_operatives(@namespace, session_token)
     |> Enum.any?(fn {oid, _node_pids} -> oid == operative_id end)
   end
-
-  defp eventually(fun, attempts \\ 40),
-    do: NodeTestHelper.wait_until(fun, attempts * 25, 25)
 end

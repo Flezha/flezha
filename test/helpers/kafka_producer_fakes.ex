@@ -1,6 +1,7 @@
 defmodule FlezhaTest.Kafka.ProducerFakes do
   @moduledoc """
-  A scripted stand-in for the `KafkaEx.Client` a `ProducerWorker` sends through.
+  A `ProducerWorker` under test: how it is started, how its accounting is
+  awaited, and a scripted stand-in for the `KafkaEx.Client` it sends through.
 
   The real client answers by message, so these do too: a send returns a dispatch
   handle at once and the outcome reaches the worker's own mailbox later.
@@ -12,6 +13,162 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
   `{:dispatched, ref, request}` instead, so a test can answer any batch in any
   order with `answer/3`.
   """
+
+  alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @topic "p_topic"
+  @partition 0
+
+  @doc "The topic and partition `start_worker/1` produces to."
+  def topic, do: @topic
+  def partition, do: @partition
+
+  @doc """
+  A `ProducerWorker` linked to the caller, plus the Agent holding its send
+  script. Every knob the worker takes has a default here; `opts` overrides one
+  by name, and `:extra` appends raw init options.
+  """
+  def start_worker(opts) do
+    test_pid = self()
+
+    {:ok, script_pid} = Agent.start_link(fn -> Keyword.get(opts, :script, []) end)
+
+    base = [
+      worker_pid: spawn(&NodeTestHelper.park/0),
+      topic: @topic,
+      partition: @partition,
+      plugin_id: "test-#{System.unique_integer([:positive])}",
+      linger_ms: Keyword.get(opts, :linger_ms, 5),
+      max_batch_bytes: Keyword.get(opts, :max_batch_bytes, 1_048_576),
+      queue_max: Keyword.get(opts, :queue_max, 1_000),
+      queue_overflow: Keyword.get(opts, :queue_overflow, :drop_oldest),
+      queue_block_timeout_ms: Keyword.get(opts, :queue_block_timeout_ms, 5_000),
+      retries: Keyword.get(opts, :retries, 5),
+      retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 5),
+      retry_max_backoff_ms: Keyword.get(opts, :retry_max_backoff_ms, 50),
+      delivery_timeout_ms: Keyword.get(opts, :delivery_timeout_ms, 1_000),
+      idempotent: Keyword.get(opts, :idempotent, true),
+      max_in_flight: Keyword.get(opts, :max_in_flight, 1),
+      auto_create_topic: Keyword.get(opts, :auto_create_topic, true),
+      metadata_refresh_timeout_ms: 100,
+      send_fn: Keyword.get(opts, :send_fn) || script_send_fn(test_pid, script_pid),
+      init_producer_id_fn: Keyword.get(opts, :init_producer_id_fn, init_producer_id_ok()),
+      metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, metadata_refresh_ok()),
+      create_topic_fn: Keyword.get(opts, :create_topic_fn, create_topic_ok()),
+      jitter_fn: fn _ -> 0 end,
+      now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
+      name: nil
+    ]
+
+    {:ok, pid} = GenServer.start_link(ProducerWorker, base ++ Keyword.get(opts, :extra, []))
+
+    {pid, script_pid}
+  end
+
+  @doc """
+  A worker whose broker refuses every send, retrying until its delivery
+  deadline: the shape every give-up scenario starts from.
+  """
+  def start_exhausting_worker do
+    start_worker(
+      retry_backoff_ms: 1,
+      retry_max_backoff_ms: 5,
+      delivery_timeout_ms: 30,
+      retries: 100,
+      script: List.duplicate({:return, {:error, :no_broker}}, 200)
+    )
+  end
+
+  @doc "Replace the worker's broker-registry reference in place."
+  def seed_registry_ref(pid, ref) do
+    :sys.replace_state(pid, fn state -> %{state | registry_ref: ref} end)
+  end
+
+  @doc """
+  Point the worker at a fresh registry reference and stand a replacement worker
+  behind it, then script the one `swap` a `{:kafka_worker_dead, ref, _}` makes:
+  `:swapped` hands over the replacement, `{:refused, reason}` does not.
+  """
+  def expect_worker_swap(pid, swap \\ :swapped) do
+    registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+    seed_registry_ref(pid, registry_ref)
+    new_worker_pid = spawn(&NodeTestHelper.park/0)
+
+    case swap do
+      :swapped ->
+        Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
+          {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+        end)
+
+      {:refused, reason} ->
+        Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref -> {:error, reason} end)
+    end
+
+    {registry_ref, new_worker_pid}
+  end
+
+  @doc """
+  Answer the first dispatch after `delay_ms` and the next `follow_ups` at once:
+  a worker whose queue backs up behind one slow batch.
+  """
+  def script_slow_first(script_pid, delay_ms \\ 150, follow_ups \\ 10) do
+    Agent.update(script_pid, fn _ ->
+      [
+        {:return, {:delayed, ok_response(@topic, @partition), delay_ms}}
+        | List.duplicate({:return, ok_response(@topic, @partition)}, follow_ups)
+      ]
+    end)
+  end
+
+  @doc "Records across every batch the worker still has in flight."
+  def window_records(state) do
+    Enum.reduce(state.in_flight, 0, fn batch, n -> n + length(batch.records) end)
+  end
+
+  # The worker's own accounting is the settle signal for a caller that
+  # enqueues from another process.
+  def in_flight?(pid, n),
+    do: NodeTestHelper.wait_until(fn -> ProducerWorker.stats(pid).in_flight == n end, 1_000, 5)
+
+  def queued?(pid, n),
+    do: NodeTestHelper.wait_until(fn -> ProducerWorker.stats(pid).queue_depth == n end, 1_000, 5)
+
+  def dispatched?(pid),
+    do: NodeTestHelper.wait_until(fn -> ProducerWorker.stats(pid).in_flight >= 1 end, 1_000, 5)
+
+  @doc """
+  Forward one of the producer's telemetry events to the calling process as
+  `{:telemetry, event, measurements, metadata}` until the test exits.
+  """
+  def attach(tag) do
+    event =
+      case tag do
+        :produce_ok -> [:flezha, :plugin, :kafka, :produce, :ok]
+        :produce_retry -> [:flezha, :plugin, :kafka, :produce, :retry]
+        :produce_failed -> [:flezha, :plugin, :kafka, :produce, :failed]
+        :dropped -> [:flezha, :plugin, :kafka, :produce, :dropped]
+        :metadata_refresh -> [:flezha, :plugin, :kafka, :metadata, :refresh]
+        :topic_created -> [:flezha, :plugin, :kafka, :topic, :created]
+        :worker_swapped -> [:flezha, :plugin, :kafka, :worker, :swapped]
+      end
+
+    handler_id = "test-#{System.unique_integer([:positive])}"
+    test_pid = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event,
+        fn name, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, name, measurements, metadata})
+        end,
+        nil
+      )
+
+    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
 
   def script_send_fn(test_pid, script_pid) do
     fn worker, request, node_selector ->

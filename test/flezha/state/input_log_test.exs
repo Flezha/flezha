@@ -6,7 +6,7 @@ defmodule Flezha.State.InputLogTest do
   cost-free default (no journaling work, no file).
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.StateCase, async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -20,11 +20,8 @@ defmodule Flezha.State.InputLogTest do
   alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers}
   alias Flezha.State.InputLog.Sweep
 
-  setup do
-    base = TestHelpers.tmp_app_data_dir()
-    class = "il_" <> Integer.to_string(System.unique_integer([:positive]))
-
-    TestHelpers.start_state_tree()
+  setup %{base: base} do
+    class = "il_" <> uniq()
 
     on_exit(fn ->
       # The log lives in the shared state tree and truncates in its own turn
@@ -35,7 +32,7 @@ defmodule Flezha.State.InputLogTest do
       File.rm_rf!(base)
     end)
 
-    %{base: base, class: class}
+    %{class: class}
   end
 
   test "offsets are strictly monotonic and payloads round-trip in order", %{class: class} do

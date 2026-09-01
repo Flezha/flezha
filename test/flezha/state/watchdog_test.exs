@@ -11,6 +11,7 @@ defmodule Flezha.State.WatchdogTest do
 
   use ExUnit.Case, async: false
 
+  import Flezha.State.TestHelpers, only: [uniq: 0]
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
@@ -477,6 +478,4 @@ defmodule Flezha.State.WatchdogTest do
       end)
     end)
   end
-
-  defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

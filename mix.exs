@@ -151,6 +151,6 @@ defmodule Flezha.MixProject do
   # test/apps/ — e.g. test/apps/elixir_runner — is never compiled into the
   # controller and cannot collide with the app's own compile.
   defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(:test), do: ["lib", "test/fixtures", "test/helpers", "test/support"]
-  defp elixirc_paths(_), do: ["lib", "test/fixtures", "test/helpers", "test/support"]
+  defp elixirc_paths(:test), do: ["lib", "test/fixtures", "test/helpers"]
+  defp elixirc_paths(_), do: ["lib", "test/fixtures", "test/helpers"]
 end

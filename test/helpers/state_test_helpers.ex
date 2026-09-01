@@ -51,10 +51,10 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Allocates a per-test temporary directory under `System.tmp_dir!/0` and
-  registers it as the controller's `:state_root`. Callers should
-  `on_exit(fn -> Application.delete_env(:flezha, :state_root) end)` to
-  reset the value between tests.
+  Allocates a per-test temporary directory under `System.tmp_dir!/0`, registers
+  it as the controller's `:state_root`, and registers the `on_exit` that drops
+  both again — the call that creates the root is the one that removes it, so a
+  caller writes a cleanup of its own only when it has extra work to do.
 
   The directory is one this call created (`NodeTestHelper.claim_tmp_dir/1`):
   sharing a re-minted one would hand a test a WAL a previous run wrote, and
@@ -64,6 +64,17 @@ defmodule Flezha.State.TestHelpers do
   def tmp_app_data_dir() do
     base = NodeTestHelper.claim_tmp_dir("flezha_state_test")
     Application.put_env(:flezha, :state_root, base)
+
+    # The claim is also driven from a bare BEAM with no ExUnit running, where
+    # there is no test process to register against and the root is the
+    # caller's to remove.
+    if Process.whereis(ExUnit.Server) do
+      ExUnit.Callbacks.on_exit(fn ->
+        Application.delete_env(:flezha, :state_root)
+        File.rm_rf!(base)
+      end)
+    end
+
     base
   end
 
@@ -336,6 +347,18 @@ defmodule Flezha.State.TestHelpers do
   def wipe_entity(entity_id) do
     Enum.each(Paths.entity_files(entity_id), &File.rm/1)
   end
+
+  @doc """
+  A short decimal string no other caller in this BEAM has been handed, for the
+  entity- and class-name prefixes a per-test fixture needs.
+
+  The stream is node-global and per-scheduler striped, and it restarts low in
+  every BEAM, so a name built from it is unique within a run and not across
+  runs — a fixture that has to survive a restart claims its name instead
+  (`NodeTestHelper.claim_tmp_dir/1`).
+  """
+  @spec uniq() :: binary()
+  def uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 
   @doc """
   Construct a deterministic `entity_id` tuple usable as a fixture.

@@ -32,7 +32,7 @@ defmodule Flezha.Schedule.HubTakeoverTest do
   # instant both are up. Asserting before they join would place every child
   # locally and make the takeover vacuous.
   defp await_hub_cluster(peer_node, timeout_ms) do
-    Helper.await_until(
+    Helper.wait_until!(
       timeout_ms,
       fn -> "#{inspect(peer_node)} to join the schedule hub" end,
       fn ->
@@ -52,7 +52,7 @@ defmodule Flezha.Schedule.HubTakeoverTest do
   defp await_all_on(node, timeout_ms) do
     describe = fn -> "every schedule on #{inspect(node)}: #{inspect(placements())}" end
 
-    Helper.await_until(timeout_ms, describe, fn ->
+    Helper.wait_until!(timeout_ms, describe, fn ->
       current = placements()
 
       settled? =

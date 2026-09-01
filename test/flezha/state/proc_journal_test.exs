@@ -18,13 +18,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     only: [next_output: 0, refute_dispatched: 0, refute_dispatched: 1]
 
   setup do
-    root = TestHelpers.tmp_app_data_dir()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(root)
-    end)
-
+    TestHelpers.tmp_app_data_dir()
     :ok
   end
 

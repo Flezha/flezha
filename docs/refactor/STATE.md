@@ -163,7 +163,137 @@ do NOT fix the two inverse findings (dead `mockito-core`, three cargo-ignored
 `Cargo.lock`s) since one sits in a blocking area; and stop rather than paper over any
 metrics movement.
 
-**ROW 4.6 IS DONE. NO WORKER IS ALIVE.** The published `controller-packaging` spec merged
+**AREA 7 SEGMENT A worker running 2026-09-01** — batches 1–2 of 8 (§6's two-batch
+segment), fresh `general-purpose`. Baseline tagged **`refactor-baseline-7` at
+`152c0afd`**. Survey survives on this box (1052 lines, 47 tasks, 0 ticked).
+
+**Measured before briefing, and it confirms the board's warning exactly**: `test` area
+`async_false_share` **0.788 against a recorded baseline of 0.788 — ZERO headroom**, 203
+test files, 6 over 800. One added `async: false` file reds the merge gate. That is why
+`tasks.md`'s order is load-bearing: the batch-3 folds REDUCE the file count and create the
+slack batches 4–5 spend, and segment A sits BEFORE the folds with none. Worker told to stop
+and report rather than spend slack that does not exist, and to read `async_true` from the
+instrument because a `grep -rl` over-reads by seven.
+
+**AREA 7 SEGMENT B worker running 2026-09-01** — batches 3–4 (the five folds, then three
+splits), fresh `general-purpose`. Budget measured at `5e3b32c6` and handed over:
+`async_false_share` **0.788** (zero headroom), `test_files` **203**, `async_true` **43**,
+`files_over_800` **6**, `duplicate_pairs` **78**.
+
+**The segment's order is load-bearing and the brief says why**: batch 3's folds REDUCE
+`test_files` while every source is `async: false`, so `async_true` holds at 43 and the
+ratchet IMPROVES — that is the slack; batch 4's splits then SPEND it. Told to measure
+after batch 3 and treat that as batch 4's budget, and to STOP rather than buy room by
+converting a file to `async: true` (refused by the proposal, and not the worker's call).
+
+**Segment A's §11e warning carried into the brief verbatim**, because for a FOLD it is
+actively misleading rather than merely wrong: an unstaged fold target makes `test_files`
+fall while `async_true` does not, so the number moves the RIGHT way for the WRONG reason
+and reds the moment it becomes visible.
+
+**AREA 7 SEGMENT C worker running 2026-09-01** — batches 5–6, fresh `general-purpose`.
+Budget handed over: share **0.774** (ceiling 0.788), `test_files` 190, `async_true` 43,
+`files_over_800` **3**, `narrative_markers` 36, `sleeps` 3 — **12 files of slack**.
+
+**Four carry-forwards in the brief, all from segment B's report:** (1) the proposal's batch-5
+line numbers HAVE MOVED — `workflow_crash_resume_e2e_test.exs` is **1321, not 1296**,
+because segment A's `wait_until` inlining grew it, so task 5.3's `:581` cut must be
+re-derived FROM CONTENT; (2) task 1.4's box is unticked though implemented, with a
+deviation I already accepted; (3) batch 6 owns the 7 credo issues segment B carried in
+verbatim from fold sources; (4) the `wait_until!` question — **ruled NOT a synonym
+defect** (both `!` forms raise, so the convention is honoured), but the narrower question
+stands and is batch 6's: should `ScheduleTestHelper.wait_until!/3` exist at all, or should
+its callers use the shared `NodeTestHelper.wait_until/3`? Told to answer by measurement and
+NOT to rename anything to dodge it.
+
+**Also told: never `mix test | tail`.** Segment B's worker lost a failure's identity to
+exactly that pipe and reported it honestly; the failure block prints long before the
+summary. Redirect and read the file.
+
+### SEGMENT B IS COMMITTED — `0a9943dd`
+
+**Verified, and I caught my own bad measurement doing it.** My first macro comparison read
+2028 vs 2016 and looked like a 12-test loss; the pathspec differed between the two sides.
+Redone with an IDENTICAL filter: **2016 at `refactor-baseline-7`, 2016 now, delta 0.**
+Worth the extra minute rather than reporting a phantom regression — the third instrument
+misreading this session, and the third caught by re-measuring instead of trusting the
+first number.
+
+Folds took `test_files` 203 → 185 with `async_true` held at 43, so the share FELL to 0.768
+and the ratchet improved; the splits spent 5 of the 18 files that bought, landing at 190 /
+0.774. `files_over_800` **6 → 3**, `duplicate_pairs` 85 → 77 (full scan).
+
+**Two planned helpers REFUSED on measurement**: the convergence fixtures were predicted to
+have 3 callers after the split and have **1**, all in one child; the three folded transport
+modules were said to share a procedure fixture and carry **three different ones**. One
+helper was added that the plan did not name, because both http_poll children drive the same
+190-line `gen_tcp` origin fixture.
+
+Earlier at +21 min: splits under way — `files_over_800` **4 → 3**, `test_files` 189 →
+190, share 0.774 against the 0.788 ceiling, so ~13 files of headroom remain. 13 new files
+intent-added by the worker (it followed the §11e instruction), 25 folded away, 3 modified.
+Load 2.36, tests running.
+
+Earlier at +10 min: 18 boxes ticked, 37 files, and **the folds did exactly what
+the design predicted** — `test_files` **203 → 189**, `files_over_800` **6 → 4**, and
+`async_false_share` **0.788 → 0.772**, so the ratchet IMPROVED and the slack is real.
+Computed the headroom that creates: with `async_true` held at 43, **batch 4 may add up to
+14 files** before `round(1 − 43/n, 3)` exceeds 0.788. The three splits should fit
+comfortably. No §11e exposure this time — every fold target was an EXISTING TRACKED file,
+so the instrument sees the whole picture and both reads agree.
+
+**SEGMENT A IS COMMITTED — `5e3b32c6`.** Checkpoint verified; two rulings applied. With the six paths intent-added,
+`--check` exits **0**; fence clean (nothing outside `test/` and `mix.exs`); and I
+re-derived the safety claim myself rather than reading it — **2016 test macros at
+`refactor-baseline-7`, 2016 in the working tree.** Nothing stopped running. `test`
+`duplicate_pairs` 108 → 85, credo 81 → 74, `test/` −372 lines, `async_false_share` held at
+0.788 with `test_files` 203 and `async_true` 43 — the zero-headroom budget spent NOTHING.
+
+**Four unticked boxes, all accepted, and three beat the plan**: `wait_until!` for the
+raising variant (two `wait_until`s with different failure semantics is the synonym §4
+forbids); refusing to template `ingest_test`/`recovery_test` because their setups are
+DESCRIBE-SCOPED, which is the "a setup that silently stops running" hazard the board
+warned about; and deleting `use ExUnit.Case` outright rather than swapping in an unused
+import. Design §3.1's "single call site" REFUTED at 12 and 7.
+
+**RULING 1 — task 1.1 falsifies `controller-packaging/spec.md:91`; the MOVE STANDS and
+the SPEC is amended.** The proposal's own §4.6 justifies it: `test/support/` and
+`test/helpers/` are one directory wearing two names with identical `elixirc_paths`
+semantics — a parallel mechanism RULE #1 forbids. The spec pinned an implementation PATH
+when its intent is *compiled only in test, never in a release*, and that intent still
+holds (`elixirc_paths(:prod) == ["lib"]`). Over-specifying a directory is what let a
+legitimate consolidation break a requirement. `MODIFIED` block owed, proved
+scenario-by-scenario the way row 4.6 did.
+
+**RULING 2 — `lib/flezha/application.ex:177` is an AUTHORISED §8 FENCE EXCEPTION**, one
+parenthetical (`test/support/` → `test/helpers/`), zero behaviour. Recorded deliberately:
+the fence exists to stop production edits sneaking in under a test refactor, not to
+require shipping a comment naming a deleted directory.
+
+**Carried to segment B**: the worker's §7.6 warning that batch 3's folds will red `--check`
+for the same `git ls-files` reason unless fold TARGETS are intent-added before a number is
+read — the fold sources are `async: false`, so an unstaged target makes `test_files` fall
+while `async_true` does not. That would have cost the next worker an hour chasing a
+phantom regression.
+
+Earlier at +21 min: 52 files, net −950. At +10 min: batch 1 in flight — `test/support/*` → `test/helpers/*` (33 files),
+`state_case.ex` created (area 5b's owed shared case module), and
+`tier_e2e_harness_test.exs` relocated to `test/flezha/helpers/` so helper MODULES and
+their TESTS separate. **Checked the zero-headroom risk directly rather than waiting**:
+`is_test_path` is True on both sides of every move and the relocated test is a MOVE, not a
+new file, so `test_files` is neutral so far. The ratchet is measured properly at the
+checkpoint.
+
+### OWED at the close of area 7 — re-record the baseline
+
+`sdk/ruby prod_loc` reads **1921** against a recorded **1955** since row 4.5's classifier
+fix, so that ratchet is 34 lines looser than reality. **Deliberately NOT re-recorded now**:
+`--write-baseline` has no per-area form, it rewrites all 36 areas and needs `--lint`
+(slow), so it would bake in whatever every other area happens to read. A stale-HIGH
+baseline is a looser ratchet, not a broken one — safe to carry. Area 7's close is when a
+re-record is due anyway, because batch 7 arms `test/apps` as the 36th blocking area.
+
+**ROW 4.6 IS DONE — `152c0afd`, archived.** The published `controller-packaging` spec merged
 correctly: `:145` now reads `npm ci --omit=dev` and **all three scenarios survived the
 `MODIFIED`** — verified by me after the archive, not just in the delta. The worker proved
 its own block by extracting the body programmatically and comparing per-scenario SHA-256,

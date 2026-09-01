@@ -8,14 +8,15 @@ defmodule Flezha.State.RecoveryTest do
   use ExUnit.Case, async: false
   use Mimic
 
+  import Flezha.State.TestHelpers, only: [uniq: 0]
+
   alias Flezha.Operative.Builder
   alias Flezha.Service.HubManager
   alias Flezha.State.{Recovery, Restore, Supervisor, TestHelpers, WalWriter}
 
   describe "resync/2" do
     setup do
-      base = TestHelpers.tmp_app_data_dir()
-
+      TestHelpers.tmp_app_data_dir()
       TestHelpers.start_state_tree()
 
       parent = self()
@@ -23,11 +24,6 @@ defmodule Flezha.State.RecoveryTest do
       stub(Flezha.Runner.ControlChannel, :send_control, fn runner_id, {tag, _cmd} ->
         send(parent, {:control_sent, runner_id, tag})
         {:ok, make_ref()}
-      end)
-
-      on_exit(fn ->
-        Application.delete_env(:flezha, :state_root)
-        File.rm_rf!(base)
       end)
 
       %{header: TestHelpers.stub_header()}
@@ -158,6 +154,4 @@ defmodule Flezha.State.RecoveryTest do
   defp entry(operative, tag) do
     {cspec(operative), [{node(), self()}], %{tag: tag, health: :healthy}}
   end
-
-  defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

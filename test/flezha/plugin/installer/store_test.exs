@@ -7,40 +7,17 @@ defmodule Flezha.Plugin.Installer.StoreTest do
 
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.InstallerCase, async: false
 
   import ExUnit.CaptureLog, only: [capture_log: 1]
 
   alias Flezha.Plugin.Installer.Store
-  alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
-    tmp =
-      Path.join(
-        System.tmp_dir!(),
-        "flz_installer_store_test_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp)
-
-    prev_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
-
     stop_if_running(Store)
+    on_exit(fn -> stop_if_running(Store) end)
 
-    on_exit(fn ->
-      stop_if_running(Store)
-
-      if prev_dir do
-        Application.put_env(:flezha, :plugin_installer_data_dir, prev_dir)
-      else
-        Application.delete_env(:flezha, :plugin_installer_data_dir)
-      end
-
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+    :ok
   end
 
   test "opens its own DETS file", %{tmp: tmp} do
@@ -191,26 +168,5 @@ defmodule Flezha.Plugin.Installer.StoreTest do
       provides: [],
       dependencies: []
     }
-  end
-
-  defp stop_if_running(mod) do
-    try do
-      case Process.whereis(mod) do
-        nil -> :ok
-        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      end
-    catch
-      :exit, _ -> :ok
-    end
-  end
-
-  defp on_exit_stop(pid) do
-    on_exit(fn ->
-      try do
-        NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      catch
-        :exit, _ -> :ok
-      end
-    end)
   end
 end

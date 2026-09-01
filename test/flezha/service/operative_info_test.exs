@@ -25,13 +25,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   setup do
     # Isolate the state root `operative_info` scans for finished-job records.
-    base = TestHelpers.tmp_app_data_dir()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
-
+    TestHelpers.tmp_app_data_dir()
     :ok
   end
 

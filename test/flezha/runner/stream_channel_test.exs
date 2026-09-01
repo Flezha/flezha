@@ -267,13 +267,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
   describe "output_stall / delete gating (kind-aware)" do
     setup do
-      base = TestHelpers.tmp_app_data_dir()
+      TestHelpers.tmp_app_data_dir()
       ClassRegistry.ensure_table()
-
-      on_exit(fn ->
-        Application.delete_env(:flezha, :state_root)
-        File.rm_rf!(base)
-      end)
 
       :ok
     end

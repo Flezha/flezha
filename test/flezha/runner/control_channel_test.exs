@@ -188,18 +188,20 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
     refute_received {:test_writer_called, _, _}
 
     # The cast crosses a process boundary, so poll for the applied set.
-    assert eventually(fn ->
-             {:ok, factories} = FleetManager.list_factories(@namespace)
+    assert NodeTestHelper.wait_until(
+             fn ->
+               {:ok, factories} = FleetManager.list_factories(@namespace)
 
-             factories == [
-               %{id: "alpha", description: "the alpha factory"},
-               %{id: "beta", description: nil}
-             ]
-           end),
+               factories == [
+                 %{id: "alpha", description: "the alpha factory"},
+                 %{id: "beta", description: nil}
+               ]
+             end,
+             500,
+             10
+           ),
            "FleetManager must store the full factory set (empty description as nil)"
 
     assert FleetManager.runners_for_factory(@namespace, "alpha") == []
   end
-
-  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 500, 10)
 end

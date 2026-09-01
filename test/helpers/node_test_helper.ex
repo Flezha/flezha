@@ -1,6 +1,5 @@
 defmodule FlezhaTest.Helper.NodeTestHelper do
   use Flezha.Constant
-  use ExUnit.Case
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
@@ -66,7 +65,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
     # already checks liveness, so an explicit stop makes this a no-op.
-    on_exit(fn -> if Process.alive?(peer_pid), do: tolerate(fn -> :peer.stop(peer_pid) end) end)
+    ExUnit.Callbacks.on_exit(fn ->
+      if Process.alive?(peer_pid), do: tolerate(fn -> :peer.stop(peer_pid) end)
+    end)
 
     {peer_pid, node_name}
   end
@@ -165,7 +166,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # carries no per-BEAM counter to re-mint.
   defp peer_dir(node_name, purpose) do
     dir = Path.join(System.tmp_dir!(), "flezha_peer_#{purpose}_#{node_name}")
-    on_exit(fn -> File.rm_rf(dir) end)
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
     dir
   end
 

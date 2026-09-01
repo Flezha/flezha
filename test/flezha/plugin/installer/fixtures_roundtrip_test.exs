@@ -13,67 +13,21 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.InstallerCase, async: false
 
   alias Flezha.Plugin.Installer
-  alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Installer.Package
-  alias Flezha.Plugin.Installer.Store
   alias Flezha.TestHelpers.Plugins, as: TH
-  alias FlezhaTest.Helper.NodeTestHelper
 
-  setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_fixroundtrip_#{System.unique_integer([:positive])}")
+  setup %{tmp: tmp} do
     fixtures_dir = Path.join(tmp, "fixtures")
-    plugin_root = Path.join(tmp, "plugins")
     File.mkdir_p!(fixtures_dir)
-    File.mkdir_p!(plugin_root)
+    File.mkdir_p!(Path.join(tmp, "plugins"))
 
-    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    prev_pi = Application.get_env(:flezha, :plugin_installer)
-
-    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
-
-    Application.put_env(:flezha, :plugin_installer,
-      plugin_root: plugin_root,
-      trusted_keys: [],
-      require_signature: false,
-      allow_unsigned: true,
-      max_package_bytes: 50_000_000,
-      max_source_files: 200
-    )
-
-    stop_if_running(Installer)
-    stop_if_running(Loader)
-    stop_if_running(Store)
-
-    {:ok, _} = Store.start_link([])
-    {:ok, _} = Loader.start_link([])
-    {:ok, _} = Installer.start_link([])
-
+    start_installer_tree(tmp)
     TH.build_all_fixtures!(fixtures_dir)
 
-    on_exit(fn ->
-      stop_if_running(Installer)
-      stop_if_running(Loader)
-      stop_if_running(Store)
-
-      if prev_data_dir do
-        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
-      else
-        Application.delete_env(:flezha, :plugin_installer_data_dir)
-      end
-
-      if prev_pi do
-        Application.put_env(:flezha, :plugin_installer, prev_pi)
-      else
-        Application.delete_env(:flezha, :plugin_installer)
-      end
-
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp, fixtures_dir: fixtures_dir}
+    %{fixtures_dir: fixtures_dir}
   end
 
   test "valid_one.fpz installs cleanly", %{fixtures_dir: f} do
@@ -208,16 +162,5 @@ defmodule Flezha.Plugin.Installer.FixturesRoundtripTest do
              )
 
     assert File.exists?(Path.join(staging, "manifest.exs"))
-  end
-
-  defp stop_if_running(mod) do
-    try do
-      case Process.whereis(mod) do
-        nil -> :ok
-        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      end
-    catch
-      :exit, _ -> :ok
-    end
   end
 end

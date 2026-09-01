@@ -33,13 +33,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   setup do
     # Isolate the on-disk state dir the teardown deletes-or-retains.
-    base = TestHelpers.tmp_app_data_dir()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
-
+    TestHelpers.tmp_app_data_dir()
     :ok
   end
 

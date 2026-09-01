@@ -90,7 +90,7 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
   Every schedule wait goes through this — `start_child`/`stop_child` and
   cross-node hub discovery are all asynchronous, so a bare assert races.
   """
-  def await_until(timeout_ms, describe, fun) when is_function(fun, 0) do
+  def wait_until!(timeout_ms, describe, fun) when is_function(fun, 0) do
     case NodeTestHelper.wait_until(fn -> ok_value(fun.()) end, timeout_ms) do
       {:ok, value} -> value
       _ -> flunk("timed out waiting for #{describe.()}")
@@ -111,7 +111,7 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
   end
 
   defp await_pids(name, timeout_ms, describe, done?) do
-    await_until(timeout_ms, fn -> "#{describe}; got #{inspect(schedule_pids(name))}" end, fn ->
+    wait_until!(timeout_ms, fn -> "#{describe}; got #{inspect(schedule_pids(name))}" end, fn ->
       pids = schedule_pids(name)
       if done?.(pids), do: {:ok, pids}, else: :retry
     end)

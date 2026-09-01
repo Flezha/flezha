@@ -18,13 +18,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   setup :verify_on_exit!
 
   setup do
-    root = TestHelpers.tmp_app_data_dir()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(root)
-    end)
-
+    TestHelpers.tmp_app_data_dir()
     :ok
   end
 
@@ -35,8 +29,6 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     sid = Wire.encode_entity_id(rc, sh, pk)
     <<byte_size(sid)::16-big, sid::binary, 0::64-big, 0::128, 0::32-big, 0::32-big>>
   end
-
-  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 500, 5)
 
   test "compensation_markers/1 reflects the persisted marker files" do
     seg = {"rc", "proc", "seg"}
@@ -64,11 +56,15 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
     send(pid, {:flz_data, 0, "compensation_intent", frame, %{}})
     intent_path = Paths.compensation_marker_path(seg, :intent)
-    assert eventually(fn -> File.exists?(intent_path) end), "intent marker persisted"
+
+    assert NodeTestHelper.wait_until(fn -> File.exists?(intent_path) end, 500, 5),
+           "intent marker persisted"
 
     send(pid, {:flz_data, 0, "compensation_done", frame, %{}})
     done_path = Paths.compensation_marker_path(seg, :done)
-    assert eventually(fn -> File.exists?(done_path) end), "done marker persisted"
+
+    assert NodeTestHelper.wait_until(fn -> File.exists?(done_path) end, 500, 5),
+           "done marker persisted"
   end
 
   test "bind-time restore ships the compensation markers back on RestoreInitState" do

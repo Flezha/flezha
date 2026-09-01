@@ -88,7 +88,7 @@ Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at 
 
 ### Requirement: `Flezha.Testnet` and the testnet TS app SHALL be test-only
 
-The Elixir module `Flezha.Testnet` SHALL be moved out of `lib/` into a path compiled only in the test environment (`test/support/testnet.ex`). `mix.exs`'s `elixirc_paths(:test)` SHALL be updated to include `test/support`. The runtime gate `:testnet_enabled` SHALL remain (defaulting `false` in prod).
+The Elixir module `Flezha.Testnet` SHALL live in a path `mix.exs` compiles only outside `:prod` — `test/helpers/testnet.ex`, reached by the `elixirc_paths(:test)` entry `test/helpers` — and SHALL NOT be reachable from `elixirc_paths(:prod)`. The runtime gate `:testnet_enabled` SHALL remain (defaulting `false` in prod).
 
 The TypeScript source under `test/apps/testnet/` SHALL NOT be copied into the prod Docker image (enforced by `.dockerignore`).
 

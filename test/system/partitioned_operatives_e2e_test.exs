@@ -74,8 +74,6 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     end
   end
 
-  defp wait_until(fun, timeout_ms \\ 20_000), do: NodeTestHelper.wait_until(fun, timeout_ms)
-
   # Durable per-member state is what proves the split, so this scenario needs
   # persistence on top of partitioning.
   @tag capability: :state_persistence,
@@ -109,9 +107,12 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
       OperativeManager.send_io(member, namespace, "#{key}:one", %{"input_type" => "2"})
 
-      assert wait_until(fn ->
-               File.exists?(Paths.wal_path({member, @relay_procedure, key}))
-             end),
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 File.exists?(Paths.wal_path({member, @relay_procedure, key}))
+               end,
+               20_000
+             ),
              "#{key} never produced durable state under its owner #{member}"
     end
 
@@ -127,7 +128,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
     OperativeManager.send_io(victim, namespace, "BTC-USD:mis", %{"input_type" => "2"})
 
-    assert wait_until(fn -> DlqStore.list(victim) != [] end),
+    assert NodeTestHelper.wait_until(fn -> DlqStore.list(victim) != [] end, 20_000),
            "a key #{victim} does not own must be parked, not folded into its state"
 
     parked = DlqStore.list(victim) |> hd()
@@ -171,9 +172,12 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     for key <- @keys do
       new_owner = owner(group, 2, key)
 
-      assert wait_until(fn ->
-               File.exists?(Paths.wal_path({new_owner, @relay_procedure, key}))
-             end),
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 File.exists?(Paths.wal_path({new_owner, @relay_procedure, key}))
+               end,
+               20_000
+             ),
              "#{key} lost its durable state across the rescale (expected under #{new_owner})"
     end
 
@@ -188,19 +192,25 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     moved_key = "ETH-USD"
     new_owner = owner(group, 2, moved_key)
 
-    assert wait_until(fn ->
-             live_state(namespace, new_owner, moved_key) =~ "#{moved_key}:one"
-           end),
+    assert NodeTestHelper.wait_until(
+             fn ->
+               live_state(namespace, new_owner, moved_key) =~ "#{moved_key}:one"
+             end,
+             20_000
+           ),
            "the new owner never restored the Entity it inherited: " <>
              inspect(live_state(namespace, new_owner, moved_key))
 
     # And it still serves: a fresh input folds onto the restored state.
     OperativeManager.send_io(new_owner, namespace, "#{moved_key}:two", %{"input_type" => "2"})
 
-    assert wait_until(fn ->
-             state = live_state(namespace, new_owner, moved_key)
-             state =~ "#{moved_key}:one" and state =~ "#{moved_key}:two"
-           end),
+    assert NodeTestHelper.wait_until(
+             fn ->
+               state = live_state(namespace, new_owner, moved_key)
+               state =~ "#{moved_key}:one" and state =~ "#{moved_key}:two"
+             end,
+             20_000
+           ),
            "the moved Entity must continue from its pre-rescale state, not restart empty"
   end
 
@@ -251,9 +261,12 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     for key <- @keys do
       target = owner(downstream, 2, key)
 
-      assert wait_until(fn ->
-               File.exists?(Paths.wal_path({target, @dynamic_procedure, key}))
-             end),
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 File.exists?(Paths.wal_path({target, @dynamic_procedure, key}))
+               end,
+               20_000
+             ),
              "#{key} was not forwarded to #{target}, the downstream member owning its key group"
     end
 
@@ -284,9 +297,12 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
       "input_type" => "2"
     })
 
-    assert wait_until(fn ->
-             File.exists?(Paths.wal_path({new_target, @dynamic_procedure, moved_key}))
-           end),
+    assert NodeTestHelper.wait_until(
+             fn ->
+               File.exists?(Paths.wal_path({new_target, @dynamic_procedure, moved_key}))
+             end,
+             20_000
+           ),
            "#{moved_key} never reached #{new_target}, its owner after the rescale — " <>
              "the upstream forward is still routing by the old member set"
   end

@@ -27,11 +27,6 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   setup do
     root = TestHelpers.tmp_app_data_dir()
 
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(root)
-    end)
-
     :ok
   end
 
@@ -147,11 +142,6 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
 
     :ok
   end

@@ -25,18 +25,12 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    root = TestHelpers.tmp_app_data_dir()
-
+    TestHelpers.tmp_app_data_dir()
     # The rehydrate drives the real (un-park) bind task, which has no runner to
     # reach in a unit test: bound its wait + retry budget so the assertions about
     # the state machine do not pay the production backoff.
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 50))
     on_exit(TestHelpers.override_env(:overwatch_retry_backoff_ms, [1]))
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(root)
-    end)
 
     :ok
   end
@@ -543,9 +537,13 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     end)
 
     # Wait for the operative to park.
-    assert eventually(fn ->
-             GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
-           end)
+    assert NodeTestHelper.wait_until(
+             fn ->
+               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+             end,
+             2_000,
+             25
+           )
 
     # Replace ping with one that blocks until released, so the un-park retry
     # task is in flight for as long as the test needs.
@@ -591,9 +589,13 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
       end
     end)
 
-    assert eventually(fn ->
-             GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
-           end)
+    assert NodeTestHelper.wait_until(
+             fn ->
+               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+             end,
+             2_000,
+             25
+           )
 
     # First un-park migrate: a ping that blocks until released.
     Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
@@ -668,8 +670,6 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
       extensions: Table.new(Overwatch.__extensions_catalog__())
     }
   end
-
-  defp eventually(fun), do: NodeTestHelper.wait_until(fun, 2_000, 25)
 
   # A ping that blocks inside the migrate task until the test releases it (or
   # the task is killed) — the "several seconds into the backoff schedule"

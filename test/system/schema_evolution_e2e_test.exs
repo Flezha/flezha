@@ -91,7 +91,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     send(namespace, operative_id, "3")
     send(namespace, operative_id, "4")
 
-    assert wait_until(fn -> total(namespace, operative_id) == 7 end),
+    assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 7 end, 10_000),
            "precondition: v1 must accumulate its state before the deploy; read " <>
              inspect(state_of(namespace, operative_id))
 
@@ -113,7 +113,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
     assert {:ok, _} = start(namespace, operative_id, @v2)
 
-    assert wait_until(fn -> total(namespace, operative_id) == 7 end),
+    assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 7 end, 10_000),
            "v2 restored #{inspect(state_of(namespace, operative_id))} — a cold start reads 0, " <>
              "which is the loss this change closes"
 
@@ -126,7 +126,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
 
     # And the migrated Entity keeps accumulating on the new shape.
     send(namespace, operative_id, "5")
-    assert wait_until(fn -> total(namespace, operative_id) == 12 end)
+    assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 12 end, 10_000)
 
     # The migration is paid once: the compaction the controller drove on the
     # back of it rewrote the baseline at the running version, so the NEXT
@@ -136,7 +136,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
 
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
     assert {:ok, _} = start(namespace, operative_id, @v2)
-    assert wait_until(fn -> total(namespace, operative_id) == 12 end)
+    assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 12 end, 10_000)
 
     refute_receive {:migrated, %{operative: ^operative_id}},
                    100,
@@ -152,7 +152,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
 
     assert {:ok, _} = start(namespace, operative_id, @v2)
     send(namespace, operative_id, "9")
-    assert wait_until(fn -> total(namespace, operative_id) == 9 end)
+    assert NodeTestHelper.wait_until(fn -> total(namespace, operative_id) == 9 end, 10_000)
 
     :ok = OperativeManager.stop_operative(namespace, operative_id, preserve_state: true)
 
@@ -183,7 +183,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # verdict off-process, so `{:restore_refused, _}` and the
     # `:registry_runner_set` call `finalize_init_operative/3` makes reach the
     # Overwatch in either order. The park is the outcome, and it is not a race.
-    assert wait_until(fn -> not serving?(namespace, operative_id) end),
+    assert NodeTestHelper.wait_until(fn -> not serving?(namespace, operative_id) end, 10_000),
            "a refused restore must leave the operative unbound, never serving"
 
     refute total(namespace, operative_id) == 9,
@@ -222,7 +222,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # gap has nothing to reach. A live state read is the readiness signal —
     # it answers only once the Entity exists — and every send below follows it.
     with {:ok, _} <- result do
-      unless wait_until(fn -> state_of(namespace, operative_id) != nil end) do
+      unless NodeTestHelper.wait_until(fn -> state_of(namespace, operative_id) != nil end, 10_000) do
         raise "operative #{operative_id} never became resident on its runner"
       end
     end
@@ -245,8 +245,6 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
         nil
     end
   end
-
-  defp wait_until(fun), do: NodeTestHelper.wait_until(fun, 10_000) || false
 
   defp total(namespace, operative_id) do
     case state_of(namespace, operative_id) do

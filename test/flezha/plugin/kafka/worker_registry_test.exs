@@ -194,7 +194,7 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
 
       Process.exit(pid1, :kill)
 
-      assert eventually(fn -> WorkerRegistry.inspect_state(reg) == %{} end, 500)
+      assert NodeTestHelper.wait_until(fn -> WorkerRegistry.inspect_state(reg) == %{} end, 500, 5)
 
       assert {:ok, pid2, _ref2} = WorkerRegistry.acquire(identity, reg)
       assert_receive {:starter_called, _, _}
@@ -437,19 +437,17 @@ defmodule FlezhaTest.Plugin.Kafka.WorkerRegistryTest do
       Process.exit(worker_pid, :kill)
       # The death is handled (its monitor gone) and the pending refs it
       # snapshotted are dropped once the linger lapses.
-      assert eventually(
+      assert NodeTestHelper.wait_until(
                fn ->
                  state = :sys.get_state(reg)
                  state.worker_monitors == %{} and state.pending_refs == %{}
                end,
-               1_000
+               1_000,
+               5
              )
 
       send(caller, :swap_now)
       assert_receive {:swap_result, {:error, :no_pending_swap}}
     end
   end
-
-  defp eventually(check_fn, timeout),
-    do: NodeTestHelper.wait_until(check_fn, timeout, 5)
 end

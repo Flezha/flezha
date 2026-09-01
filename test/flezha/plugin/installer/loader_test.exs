@@ -8,25 +8,18 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.InstallerCase, async: false
 
   alias Flezha.Plugin.Installer.Loader
   alias Flezha.Plugin.Installer.Store
-  alias FlezhaTest.Helper.NodeTestHelper
 
-  setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_loader_test_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(tmp)
-
-    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    prev_pi = Application.get_env(:flezha, :plugin_installer)
-
-    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
-
+  setup %{tmp: tmp} do
     Application.put_env(
       :flezha,
       :plugin_installer,
-      Keyword.merge(prev_pi || [], plugin_root: Path.join(tmp, "plugins"))
+      Keyword.merge(Application.get_env(:flezha, :plugin_installer) || [],
+        plugin_root: Path.join(tmp, "plugins")
+      )
     )
 
     stop_if_running(Loader)
@@ -35,23 +28,9 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     on_exit(fn ->
       stop_if_running(Loader)
       stop_if_running(Store)
-
-      if prev_data_dir do
-        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
-      else
-        Application.delete_env(:flezha, :plugin_installer_data_dir)
-      end
-
-      if prev_pi do
-        Application.put_env(:flezha, :plugin_installer, prev_pi)
-      else
-        Application.delete_env(:flezha, :plugin_installer)
-      end
-
-      File.rm_rf!(tmp)
     end)
 
-    {:ok, tmp: tmp}
+    :ok
   end
 
   test "load_beams writes files, loads modules, records ownership", %{tmp: tmp} do
@@ -221,26 +200,5 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     _ = :code.purge(mod)
     _ = :code.delete(mod)
     {:module, mod_name, bin, nil}
-  end
-
-  defp stop_if_running(mod) do
-    try do
-      case Process.whereis(mod) do
-        nil -> :ok
-        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      end
-    catch
-      :exit, _ -> :ok
-    end
-  end
-
-  defp on_exit_stop(pid) do
-    on_exit(fn ->
-      try do
-        NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      catch
-        :exit, _ -> :ok
-      end
-    end)
   end
 end

@@ -14,13 +14,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   alias Flezha.State.{Paths, TestHelpers}
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
+    TestHelpers.tmp_app_data_dir()
     ClassRegistry.ensure_table()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
 
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
   end

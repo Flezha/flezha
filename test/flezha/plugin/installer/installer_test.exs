@@ -11,76 +11,19 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.InstallerCase, async: false
 
   alias Flezha.Plugin.Installer
-  alias Flezha.Plugin.Installer.Loader
-  alias Flezha.Plugin.Installer.Store
-  alias FlezhaTest.Helper.NodeTestHelper
+  alias Flezha.TestHelpers.Plugins
 
-  setup do
-    tmp =
-      Path.join(System.tmp_dir!(), "flz_installer_svc_test_#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp)
-
-    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    prev_pi = Application.get_env(:flezha, :plugin_installer)
-
-    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
-
-    Application.put_env(
-      :flezha,
-      :plugin_installer,
-      Keyword.merge(prev_pi || [],
-        plugin_root: Path.join(tmp, "plugins"),
-        trusted_keys: [],
-        require_signature: false,
-        allow_unsigned: true,
-        max_package_bytes: 50_000_000,
-        max_source_files: 200
-      )
-    )
-
-    stop_if_running(Installer)
-    stop_if_running(Loader)
-    stop_if_running(Store)
-
-    on_exit(fn ->
-      stop_if_running(Installer)
-      stop_if_running(Loader)
-      stop_if_running(Store)
-
-      if prev_data_dir do
-        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
-      else
-        Application.delete_env(:flezha, :plugin_installer_data_dir)
-      end
-
-      if prev_pi do
-        Application.put_env(:flezha, :plugin_installer, prev_pi)
-      else
-        Application.delete_env(:flezha, :plugin_installer)
-      end
-
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, store} = Store.start_link([])
-    {:ok, loader} = Loader.start_link([])
-    {:ok, installer} = Installer.start_link([])
-
-    on_exit_stop(store)
-    on_exit_stop(loader)
-    on_exit_stop(installer)
-
-    {:ok, tmp: tmp}
+  setup %{tmp: tmp} do
+    start_installer_tree(tmp)
   end
 
   test "install / list / info / uninstall round-trip", %{tmp: tmp} do
     unique = System.unique_integer([:positive])
     mod_name = "FlzInstallTest.Valid#{unique}"
-    fpz = build_fixture!(tmp, "valid", "1.0.0", [mod_name])
+    fpz = Plugins.build_fixture!(tmp, "valid", "1.0.0", [mod_name])
 
     assert {:ok, installed} = Installer.install(fpz)
     assert installed.id == "valid"
@@ -109,7 +52,7 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
   test "install rejects already-installed id", %{tmp: tmp} do
     unique = System.unique_integer([:positive])
     mod_name = "FlzInstallTest.Again#{unique}"
-    fpz = build_fixture!(tmp, "again", "1.0.0", [mod_name])
+    fpz = Plugins.build_fixture!(tmp, "again", "1.0.0", [mod_name])
 
     assert {:ok, _} = Installer.install(fpz)
     assert {:error, {:already_installed, "again"}} = Installer.install(fpz)
@@ -120,56 +63,15 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
   test "install rejects missing dependency", %{tmp: tmp} do
     unique = System.unique_integer([:positive])
     mod_name = "FlzInstallTest.WithDep#{unique}"
-    fpz = build_fixture!(tmp, "dep_user", "1.0.0", [mod_name], deps: [{"common", ">= 1.0.0"}])
+
+    fpz =
+      Plugins.build_fixture!(tmp, "dep_user", "1.0.0", [mod_name], deps: [{"common", ">= 1.0.0"}])
 
     assert {:error, {:dependency_missing, "common", ">= 1.0.0"}} =
              Installer.install(fpz)
   end
 
   ## Helpers
-
-  defp build_fixture!(tmp, id, version, mods, opts \\ []) do
-    deps = Keyword.get(opts, :deps, [])
-    fpz = Path.join(tmp, "#{id}-#{version}.fpz")
-
-    [first_mod | _] = mods
-    src_filename = Macro.underscore(first_mod) <> ".ex"
-
-    src_body = Enum.map_join(mods, "\n", fn m -> "defmodule #{m} do\n  def hi, do: :ok\nend" end)
-
-    manifest = """
-    %{
-      id: "#{id}",
-      version: "#{version}",
-      description: "test",
-      author: "tester",
-      modules: [#{Enum.join(mods, ", ")}],
-      provides: [
-        %{
-          id: "main",
-          provider: #{first_mod},
-          subscriptions: [{:on_input, []}],
-          default_opts: %{},
-          scope: :operative
-        }
-      ],
-      dependencies: #{inspect(deps)}
-    }
-    """
-
-    manifest_hash = sha256(manifest)
-    src_hash = sha256(src_body)
-
-    checksums = "#{manifest_hash}  manifest.exs\n#{src_hash}  src/#{src_filename}\n"
-
-    write_fpz!(fpz, [
-      {"manifest.exs", manifest},
-      {"src/#{src_filename}", src_body},
-      {"CHECKSUMS.sha256", checksums}
-    ])
-
-    fpz
-  end
 
   defp write_fpz!(fpz_path, entries) do
     :ok = File.mkdir_p!(Path.dirname(fpz_path))
@@ -185,29 +87,6 @@ defmodule Flezha.Plugin.Installer.InstallerTest do
         tar_entries,
         [:compressed]
       )
-  end
-
-  defp sha256(binary), do: :crypto.hash(:sha256, binary) |> Base.encode16(case: :lower)
-
-  defp stop_if_running(mod) do
-    try do
-      case Process.whereis(mod) do
-        nil -> :ok
-        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      end
-    catch
-      :exit, _ -> :ok
-    end
-  end
-
-  defp on_exit_stop(pid) do
-    on_exit(fn ->
-      try do
-        NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      catch
-        :exit, _ -> :ok
-      end
-    end)
   end
 end
 
@@ -226,62 +105,14 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.InstallerCase, async: false
 
   alias Flezha.Plugin.Installer
-  alias Flezha.Plugin.Installer.Loader
-  alias Flezha.Plugin.Installer.Store
-  alias FlezhaTest.Helper.NodeTestHelper
 
   @example_dir Path.expand("../../../../examples/plugins/hello_world", __DIR__)
 
-  setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_hello_example_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(tmp)
-
-    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    prev_pi = Application.get_env(:flezha, :plugin_installer)
-
-    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
-
-    Application.put_env(:flezha, :plugin_installer,
-      plugin_root: Path.join(tmp, "plugins"),
-      trusted_keys: [],
-      require_signature: false,
-      allow_unsigned: true,
-      max_package_bytes: 50_000_000,
-      max_source_files: 200
-    )
-
-    stop_if_running(Installer)
-    stop_if_running(Loader)
-    stop_if_running(Store)
-
-    {:ok, _} = Store.start_link([])
-    {:ok, _} = Loader.start_link([])
-    {:ok, _} = Installer.start_link([])
-
-    on_exit(fn ->
-      stop_if_running(Installer)
-      stop_if_running(Loader)
-      stop_if_running(Store)
-
-      if prev_data_dir do
-        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
-      else
-        Application.delete_env(:flezha, :plugin_installer_data_dir)
-      end
-
-      if prev_pi do
-        Application.put_env(:flezha, :plugin_installer, prev_pi)
-      else
-        Application.delete_env(:flezha, :plugin_installer)
-      end
-
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+  setup %{tmp: tmp} do
+    start_installer_tree(tmp)
   end
 
   test "examples/plugins/hello_world tars into a working .fpz", %{tmp: tmp} do
@@ -329,17 +160,6 @@ defmodule Flezha.Plugin.Installer.ExampleHelloWorldTest do
     assert installed.status == :disabled
     assert Flezha.Examples.HelloWorld in installed.modules
   end
-
-  defp stop_if_running(mod) do
-    try do
-      case Process.whereis(mod) do
-        nil -> :ok
-        pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-      end
-    catch
-      :exit, _ -> :ok
-    end
-  end
 end
 
 defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
@@ -350,76 +170,12 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
 
   # async: false: writes Application env; a shared on-disk root; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.InstallerCase, async: false
 
   alias Flezha.Plugin.Installer
-  alias Flezha.Plugin.Installer.Loader
-  alias Flezha.Plugin.Installer.Store
-  alias FlezhaTest.Helper.NodeTestHelper
 
-  setup do
-    tmp =
-      Path.join(System.tmp_dir!(), "flz_svc_api_test_#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp)
-
-    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    prev_pi = Application.get_env(:flezha, :plugin_installer)
-
-    Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
-
-    Application.put_env(:flezha, :plugin_installer,
-      plugin_root: Path.join(tmp, "plugins"),
-      trusted_keys: [],
-      require_signature: false,
-      allow_unsigned: true,
-      max_package_bytes: 50_000_000,
-      max_source_files: 200
-    )
-
-    for mod <- [Installer, Loader, Store] do
-      try do
-        case Process.whereis(mod) do
-          nil -> :ok
-          pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-        end
-      catch
-        :exit, _ -> :ok
-      end
-    end
-
-    {:ok, _} = Store.start_link([])
-    {:ok, _} = Loader.start_link([])
-    {:ok, _} = Installer.start_link([])
-
-    on_exit(fn ->
-      for mod <- [Installer, Loader, Store] do
-        try do
-          case Process.whereis(mod) do
-            nil -> :ok
-            pid -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
-          end
-        catch
-          :exit, _ -> :ok
-        end
-      end
-
-      if prev_data_dir do
-        Application.put_env(:flezha, :plugin_installer_data_dir, prev_data_dir)
-      else
-        Application.delete_env(:flezha, :plugin_installer_data_dir)
-      end
-
-      if prev_pi do
-        Application.put_env(:flezha, :plugin_installer, prev_pi)
-      else
-        Application.delete_env(:flezha, :plugin_installer)
-      end
-
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+  setup %{tmp: tmp} do
+    start_installer_tree(tmp)
   end
 
   test "info/1 for unknown plugin returns :not_found" do

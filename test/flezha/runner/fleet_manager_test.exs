@@ -390,11 +390,6 @@ defmodule FlezhaTest.Runner.FleetManagerSdkLangTest do
          %{namespace: ns} do
       base = StateTestHelpers.tmp_app_data_dir()
 
-      on_exit(fn ->
-        Application.delete_env(:flezha, :state_root)
-        File.rm_rf!(base)
-      end)
-
       id = factory("stateful")
       forget(ns, [id])
       operative = "#{id}-0"

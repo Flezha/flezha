@@ -549,7 +549,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # fails the exact-count assertions, because it lands before the journal is
   # settled.
   defp await_outputs(collector, count, operative_id) do
-    wait_until(fn -> length(collected(collector)) >= count end, 30_000)
+    NodeTestHelper.wait_until(fn -> length(collected(collector)) >= count end, 30_000)
     assert journal_settled?(operative_id), "the proc journal still owes output"
     collected_with_meta(collector)
   end
@@ -563,7 +563,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       if length(outputs) >= count do
         outputs
       else
-        wait_until(
+        NodeTestHelper.wait_until(
           fn -> match?({:messages, [_ | _]}, Process.info(self(), :messages)) end,
           30_000
         )
@@ -576,7 +576,8 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   end
 
   defp journal_settled?(operative_id),
-    do: wait_until(fn -> ProcJournal.pending_entries(operative_id) == [] end, 30_000)
+    do:
+      NodeTestHelper.wait_until(fn -> ProcJournal.pending_entries(operative_id) == [] end, 30_000)
 
   describe "durable loop + suspension (reference/uds)" do
     @describetag transport: :uds, cell: :uds_loop, reference_runtime: true
@@ -618,7 +619,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       send_turn(namespace, operative_id, "hello")
       send_turn(namespace, operative_id, "again")
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 30_000),
+      assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 30_000),
              "the loop did not commit one iteration per turn: " <>
                inspect(committed_iters(operative_id))
 
@@ -632,16 +633,22 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # The iteration boundary compacts every Entity of the instance: the
       # controller's CompactEntity must resolve a WORKFLOW Entity (not only a
       # stream one), so a snapshot lands beside the turn WAL.
-      assert wait_until(fn -> snapshot_count(operative_id, "chat_turn") > 0 end, 20_000),
+      assert NodeTestHelper.wait_until(
+               fn -> snapshot_count(operative_id, "chat_turn") > 0 end,
+               20_000
+             ),
              "no boundary snapshot for chat_turn after two committed iterations; dir holds " <>
                inspect(File.ls(Path.join(Paths.class_dir(operative_id), "chat_turn")))
 
-      assert wait_until(fn -> ProcJournal.restore_state(operative_id).parked end, 20_000),
+      assert NodeTestHelper.wait_until(
+               fn -> ProcJournal.restore_state(operative_id).parked end,
+               20_000
+             ),
              "the idle loop never parked at its committed boundary"
 
       # Evicted from the runner, but still registered and addressable — that IS
       # suspension (zero live RUNNER resources, not zero resources).
-      assert wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
              "the parked instance was never suspended controller-side"
 
       assert registered?(namespace, operative_id)
@@ -649,7 +656,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # --- 2. a message while suspended rehydrates it ---
       send_turn(namespace, operative_id, "wake-up")
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0, 1, 2] end, 60_000),
+      assert NodeTestHelper.wait_until(
+               fn -> committed_iters(operative_id) == [0, 1, 2] end,
+               60_000
+             ),
              "the suspended instance did not rehydrate and run the new turn as iteration 2"
 
       assert replies(collector, 3, operative_id) == [
@@ -665,7 +675,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # so this turn hangs mid-iteration with iterations 0-2 durable.
       send_turn(namespace, operative_id, "mid-crash")
 
-      assert wait_until(fn -> ProcInbox.last_offset(operative_id) >= 4 end, 20_000),
+      assert NodeTestHelper.wait_until(
+               fn -> ProcInbox.last_offset(operative_id) >= 4 end,
+               20_000
+             ),
              "the crashing turn never reached the durable inbox"
 
       # Operator surface, while the turn is still in flight: it is durable and
@@ -689,12 +702,18 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       assert exec_b != exec_a
 
-      assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end),
+      assert NodeTestHelper.wait_until(
+               fn -> exec_a not in FleetManager.active_runners(namespace) end,
+               15_000
+             ),
              "dead runner was never evicted after the replacement connected"
 
       force_fresh_rebind(namespace, operative_id)
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0, 1, 2, 3] end, 90_000),
+      assert NodeTestHelper.wait_until(
+               fn -> committed_iters(operative_id) == [0, 1, 2, 3] end,
+               90_000
+             ),
              "the resumed loop never committed the in-flight iteration 3"
 
       assert replies(collector, 4, operative_id) == [
@@ -754,20 +773,20 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       send_turn(namespace, operative_id, "one")
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0] end, 30_000)
-      assert wait_until(fn -> suspended?(namespace, operative_id) end, 20_000)
+      assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0] end, 30_000)
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 20_000)
 
       # Restart the instance's controller-side supervisor while it is suspended.
       # It must come back from durable state as suspended — NOT bind a runner.
       force_fresh_rebind(namespace, operative_id)
 
-      assert wait_until(fn -> suspended?(namespace, operative_id) end, 30_000),
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 30_000),
              "a suspended instance was not rediscovered from durable state on restart"
 
       # And it still wakes on input.
       send_turn(namespace, operative_id, "two")
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
+      assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
              "the rediscovered suspended instance did not rehydrate on a new message"
 
       assert replies(collector, 2, operative_id) == ["reply:one", "reply:two"]
@@ -798,10 +817,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       )
 
       send_turn(namespace, operative_id, "one")
-      assert wait_until(fn -> committed_iters(operative_id) == [0] end, 30_000)
+      assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0] end, 30_000)
 
       # The park is what makes the next turn a fresh bind.
-      assert wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
+      assert NodeTestHelper.wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
              "the idle stateless loop never parked"
 
       # Nothing on disk to restore — the journal is the only thing carried over.
@@ -809,7 +828,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       send_turn(namespace, operative_id, "two")
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
+      assert NodeTestHelper.wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
              "the rehydrated turn did not commit as iteration 1: " <>
                inspect(committed_iters(operative_id))
 
@@ -849,7 +868,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # --- three turns → three committed iterations ---
       for turn <- ~w(alpha beta gamma), do: send_turn(namespace, operative_id, turn)
 
-      assert wait_until(fn -> committed_iters(operative_id) == [0, 1, 2] end, 60_000),
+      assert NodeTestHelper.wait_until(
+               fn -> committed_iters(operative_id) == [0, 1, 2] end,
+               60_000
+             ),
              "the loop did not commit one iteration per turn: " <>
                inspect(committed_iters(operative_id))
 
@@ -867,23 +889,26 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
       # The journal folded back: only iteration 0 is committed, and the epoch is
       # bumped so everything from here on supersedes what the unwound turns wrote.
-      assert wait_until(fn -> ProcJournal.current_epoch(operative_id) == 1 end, 20_000)
+      assert NodeTestHelper.wait_until(
+               fn -> ProcJournal.current_epoch(operative_id) == 1 end,
+               20_000
+             )
 
       # --- the loop unwinds the two turns above the target ---
       # Only iteration 0 remains committed; iterations 2 and 1 are undone.
-      assert wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> ProcJournal.committed_iterations(operative_id) == [0] end,
                60_000
              ),
              "the journal did not fold back to the rewound-to iteration"
 
-      assert wait_until(fn -> length(collected(collector)) >= 5 end, 90_000),
+      assert NodeTestHelper.wait_until(fn -> length(collected(collector)) >= 5 end, 90_000),
              "the rewound iterations were never compensated"
 
       # --- the next message is processed as iteration 1 ---
       send_turn(namespace, operative_id, "delta")
 
-      assert wait_until(
+      assert NodeTestHelper.wait_until(
                fn -> ProcJournal.committed_iterations(operative_id) == [0, 1] end,
                90_000
              ),
@@ -1144,7 +1169,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     info = start_workflow(namespace, operative_id, factory_id, builder_opts)
     assert info.runner_id == exec_a
 
-    assert wait_until(fn -> mid_run?.(operative_id) end, 30_000),
+    assert NodeTestHelper.wait_until(fn -> mid_run?.(operative_id) end, 30_000),
            "operative never reached its durable mid-run point on the first runner"
 
     refute Completion.exists?(operative_id),
@@ -1158,7 +1183,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
     assert exec_b != exec_a, "replacement must mint a fresh session token"
 
-    assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end),
+    assert NodeTestHelper.wait_until(
+             fn -> exec_a not in FleetManager.active_runners(namespace) end,
+             15_000
+           ),
            "dead runner was never evicted after the replacement connected"
 
     # Scenario hook on the durable state the crash left, before the rebind
@@ -1170,7 +1198,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     # The resumed operative completes with the expected terminal status.
     await_status(operative_id, terminal_status, 60_000)
 
-    assert wait_until(fn -> not registered?(namespace, operative_id) end),
+    assert NodeTestHelper.wait_until(fn -> not registered?(namespace, operative_id) end, 15_000),
            "completed operative was never deregistered"
 
     operative_id
@@ -1196,7 +1224,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   # Wait for the run's terminal completion record to carry `status`.
   defp await_status(operative_id, status, timeout_ms) do
-    assert wait_until(
+    assert NodeTestHelper.wait_until(
              fn -> match?({:ok, %{status: ^status}}, Completion.read(operative_id)) end,
              timeout_ms
            ),
@@ -1290,7 +1318,4 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
        do: count_wal_records(rest, acc + 1)
 
   defp count_wal_records(_, acc), do: acc
-
-  defp wait_until(fun, timeout_ms \\ 15_000),
-    do: NodeTestHelper.wait_until(fun, timeout_ms)
 end

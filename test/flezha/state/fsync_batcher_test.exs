@@ -19,11 +19,6 @@ defmodule Flezha.State.FsyncBatcherTest do
       {:error, {:already_started, _}} -> :ok
     end
 
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
-
     %{base: base}
   end
 

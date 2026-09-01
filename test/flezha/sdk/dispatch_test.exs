@@ -384,7 +384,12 @@ defmodule Flezha.SDK.DispatchTest do
 
       send(entity, :release)
       assert_receive {:flz_data, _id, "op-1", "slow", _}, 2_000
-      assert wait_until(fn -> Counters.handout_liveness(counters) == {0, 0} end)
+
+      assert NodeTestHelper.wait_until(
+               fn -> Counters.handout_liveness(counters) == {0, 0} end,
+               2_000,
+               10
+             )
     end
 
     # `after` cannot run for an untrappable kill, so the Operative releases the
@@ -401,7 +406,11 @@ defmodule Flezha.SDK.DispatchTest do
       # Entity is gone, which is what the slot release hangs off.
       assert_receive {:DOWN, ^ref, :process, ^entity, _reason}, 1_000
 
-      assert wait_until(fn -> Counters.handout_liveness(counters) == {0, 0} end),
+      assert NodeTestHelper.wait_until(
+               fn -> Counters.handout_liveness(counters) == {0, 0} end,
+               2_000,
+               10
+             ),
              "a killed Entity left its in-flight slot claimed"
 
       assert Process.alive?(op), "a crashed Entity must not take its Operative down"
@@ -443,9 +452,6 @@ defmodule Flezha.SDK.DispatchTest do
     assert_receive {:flz_data, _id, "op-1", "second", _}, 2_000
     assert Process.alive?(op), "a dead Entity took its Operative down"
   end
-
-  defp wait_until(done, timeout \\ 2_000),
-    do: NodeTestHelper.wait_until(done, timeout, 10)
 
   # This process is where a gated Procedure reports in.
   defp probe!() do
