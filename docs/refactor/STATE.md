@@ -1,5 +1,70 @@
 # Refactor board
 
+## HANDOVER — session 6 ended 2026-09-01 22:20. READ THIS FIRST.
+
+**Tree is CLEAN at `e15bbb1b`** apart from two files a DIFFERENT session owns and which are
+NOT mine to commit: `M CLAUDE.md` and `?? docs/dev_notes/INDEX.md` (the 15:37 index split —
+see the session-6 orientation block below for what it is and the one flaw in it).
+**No worker is alive.** I stopped S1's worker deliberately at the user's request to end the
+session; `ListAgents` shows no subagents.
+
+### What the killed worker leaves — the trace it cannot give you itself
+
+It was **mid-investigation on KI-114** when stopped, and its last words were:
+*"KI-114 confirmed — same message, same `setup_all`, filed as pre-existing P2. But KI-114
+claims it fails on EVERY run, and my pre-S1 baseline arm had no invalid. Let me check the
+other arms, then settle it."* **That thread is lost.** If KI-114 matters to you, the open
+question is whether its "fails on every run" claim is true — one measured arm says no.
+Nothing of its S1 work was lost: I verified, gated and committed it as `e15bbb1b`.
+
+### Queue standing — R1, R2, R3, R4, R8 CLOSED; R5 is 2 of 6 segments in
+
+Session 6 landed **13 commits**. Rows closed: **R1** (KI-116, `eb938c8b`), **R2**
+(`6ea6f87c`), **R3** (`1e66d81e`, which **retired R8 by construction**), **R4** (three
+commits `57ed438e` / `0842fece` / `26e6fa98`), and R5's **S0** (`95b6590c`) and **S1**
+(`e15bbb1b`).
+
+**R5 resumes at S2.** Its six segments were surveyed and ruled — see *R5 SURVEY RULED* below
+for the batching, and note **the row is 42 fixture implementations, not the "18 cells" the
+queue says**. S2 is `state_persistence` × 3 and is the biggest single segment.
+**R5 has no OpenSpec change id yet** — S0 got its own (`imply-checkpoint-granularity-in-veneers`,
+archived) and S1 was small enough to commit directly. S2 onward needs one.
+
+### Five defects filed this session, none of them fixed by the row that found them
+
+**KI-117** (a 1 ms wall-clock assertion), **KI-118** (the erased hosts accept a procedure
+topology Rust refuses), **KI-119** (**a P1 regression from R1, mine, fixed in `57ed438e`**),
+**KI-120** (fixed in `0842fece`), **KI-121** (the unnamed-sink half, left open on purpose),
+**KI-122** (fixed in `95b6590c`). Highest number in use: **KI-122**.
+
+### Three things that will cost you time if you do not know them
+
+1. **`refactor_metrics.py --check` measures NEITHER `credo_warnings` NOR `clippy_warnings`
+   and still exits 0.** Always `--check --lint`. It caught a live `0 -> 2` credo regression
+   this session that a bare `--check` would have shipped green.
+2. **A green `mix test` proves nothing about a `@moduletag :system` test.** That is exactly
+   how KI-119 shipped: R1 ran 1960 tests green and the only covering test was excluded.
+3. **The ruby e2e needs `PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH"`.** Without it the
+   runner cannot load `msgpack`, never boots, and the test **times out at 60 s looking like a
+   hang rather than a missing toolchain**. This cost two sessions time. The same prefix is
+   what makes `rubocop` reachable (32 files, no offenses, exit 0).
+
+### Standing permissions and open user decisions
+
+**The user granted STANDING APPROVAL for `baseline.json` re-records for the rest of the
+session that asked** — that approval died with session 6; **a fresh session must ask again**.
+The condition attached to it is worth keeping: audit every write (36 areas in/out, which
+ratchets moved, what tightened) and report it. `--write-baseline` is blocked by the
+permission classifier, so it needs the user either way.
+
+**Open under *Awaiting the user's decision*: the `openspec/changes/archive` ignore rule is
+inert** — `git ls-files openspec/changes` returns **0**, so every archived proposal and
+`design.md` is machine-local and dies with this box. Three options and a recommendation are
+recorded in that section below.
+
+---
+
+
 **Last updated**: 2026-09-01 — session 5. **EVERY REFACTOR AREA IS DONE EXCEPT AREA 8
 (docs reconcile).** Areas 0a, 0b, 1s, 1, 2, 3, 4, 5a–5e, 6 **and 7** are all closed;
 **36 areas are blocking ratchets** — `test/apps` was armed by area 7 as the 36th, so
@@ -916,6 +981,45 @@ which starts tracking every archived proposal from now on; (3) delete the dead n
 stops implying a guarantee that does not hold. **Recommendation: (3) now, and (2) only if the
 user wants design records to survive the machine** — a rule that looks like it does something
 and does not is the same failure class as a pin nothing reads.
+
+**S0 last seen 21:29.** Option A's substance VERIFIED at the repo — `tierOff` gone, both
+direct `ack_granularity` assignments rewritten to go through the builder, Ruby's missing test
+present at `authoring_test.rb:133`. **But its report claimed "every other ratcheted metric
+flat" WITHOUT running the instrument** — `--check --lint` shows **six** rows, not four:
+`sdk/node duplicate_pairs 2→3` and `sdk/python duplicate_pairs 0→2`, the new ABI round-trip
+tests cloning existing test setup. Sent back to reduce (test-side clones are usually
+reducible, unlike R4's language-mandated trait block) and to MEASURE rather than assert.
+**I am holding the baseline question until the number stops moving** — I will not ask the
+user to approve a figure that is about to change.
+
+### S0 IS DONE — and the worker corrected itself cleanly on the claim I caught
+
+**The duplication was reducible, and both clones were ONE mistake in two languages**: the
+declaration tests declared a *stateful* procedure — `initialState`/`applyChange` plus a
+change-recording handler — that they never invoked, a shape already spelled in
+`dispatch.test.mjs` and `conftest.py`. **A declaration test needs a procedure that
+type-checks, not one that folds.** Python's fix is the RULE #1 answer it should have reached
+for first: `from conftest import echo`, a helper that already existed and which the sibling
+suite already imports. **No exemption requested, no site needed one** — and PHP's parallel
+simplification removed a PRE-EXISTING clone too (`duplicate_pairs` 19 → 18, a ratchet
+TIGHTENED by a change that was adding lines).
+
+**Its own words on the miss, which is the standard to hold:** *"I wrote 'every other ratcheted
+metric flat' without running `--check --lint` — a claim inferred from the shape of my diff
+while the measurement sat in my own 'did NOT do' list."* Everything in the follow-up report
+carried the command behind it.
+
+**R4's rubocop debt is CLOSED.** The invocation R4's worker owed and could not defend:
+`PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH" rubocop sdk/ruby test/apps/ruby_runner` →
+rubocop 1.90.0, **32 files, no offenses, exit 0**. `format-check.sh` resolves the system ruby
+(3.2.3) and reports the tool missing; that is the gate telling the truth about itself, and
+the fix belongs to whoever owns that script, not to a row.
+
+**THE USER GRANTED STANDING APPROVAL for baseline re-records for the rest of this session**
+(2026-09-01), on the condition I audit every write and report what moved. Audit for this one:
+36 areas in, 36 out, none lost; loosened = exactly the four `prod_loc` rows (+31); tightened =
+`sdk/php duplicate_pairs 19 → 18`. **The audit is the price of the approval — every future
+re-record in this session carries one.**
 
 
 

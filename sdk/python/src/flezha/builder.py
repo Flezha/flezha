@@ -149,22 +149,30 @@ class Channels:
 
         The interval closes only on an explicit ``ctx.checkpoint()``;
         :meth:`checkpoint_every` is the same acknowledgement on a declared
-        cadence. Both imply the tier, which is where the durable offset the
-        checkpoint holds back actually lives.
+        cadence. All three require :meth:`effectively_once`, which is where the
+        durable offset the checkpoint holds back actually lives.
         """
-        self.effectively_once_flag = True
-        self.ack_granularity = "checkpoint"
-        return self
+        return self._amend_checkpoint(lambda: None)
 
     def checkpoint_every(self, count: int) -> Channels:
-        self.checkpoint_ack()
-        self.checkpoint_every_value = count
-        return self
+        def amend() -> None:
+            self.checkpoint_every_value = count
+
+        return self._amend_checkpoint(amend)
 
     def outputs_at_checkpoint(self, max_delay_ms: int | None = None) -> Channels:
-        self.checkpoint_outputs_value = "at_checkpoint"
-        if max_delay_ms is not None:
-            self.checkpoint_max_delay_ms_value = max_delay_ms
+        def amend() -> None:
+            self.checkpoint_outputs_value = "at_checkpoint"
+            if max_delay_ms is not None:
+                self.checkpoint_max_delay_ms_value = max_delay_ms
+
+        return self._amend_checkpoint(amend)
+
+    def _amend_checkpoint(self, amend: Callable[[], None]) -> Channels:
+        """Turn the granularity on (idempotent) and amend its policy, so each
+        option is one call that preserves the others."""
+        self.ack_granularity = "checkpoint"
+        amend()
         return self
 
     def correction_window(self, milliseconds: int) -> Channels:

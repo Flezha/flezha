@@ -8,7 +8,14 @@ import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { ACTIVATION_SCHEMA_VERSION, loadNative, nativePackageName } from '../dist/esm/index.js';
+import {
+  ACTIVATION_SCHEMA_VERSION,
+  defineOperative,
+  defineProcedure,
+  loadNative,
+  nativePackageName,
+  toHostClassDecl,
+} from '../dist/esm/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const native = loadNative();
@@ -98,6 +105,52 @@ test('a core refusal carries the engine detail', () => {
       (error) => error.message.includes('sdk_lang'),
     );
     assert.match(native.lastError(), /sdk_lang/);
+  } finally {
+    native.contextFree();
+  }
+});
+
+// The checkpoint options the core will accept together. Asserted here rather
+// than on the builder's fields because the core is what refuses: a declaration
+// holding outputs at a checkpoint it never acknowledges at is rejected at
+// registration, so a builder that can express it hands its author a class that
+// cannot start.
+const checkpointClass = (factoryId, declare) =>
+  defineOperative({
+    factoryId,
+    channels: (c) => {
+      c.effectivelyOnce();
+      declare(c);
+      c.input('input')
+        .into(defineProcedure({ name: `${factoryId}_procedure`, handle: (input) => input }))
+        .named('sink')
+        .keyed()
+        .sink('tier_sink');
+    },
+  });
+
+const declaresTo = (native, spec) =>
+  native.declareClass(Buffer.from(JSON.stringify(toHostClassDecl(spec))));
+
+test('holding outputs at the checkpoint acknowledges at the checkpoint', () => {
+  native.contextNew(ACTIVATION_SCHEMA_VERSION);
+  try {
+    const spec = checkpointClass('outputs_only', (c) => c.outputsAtCheckpoint(1500));
+    assert.equal(toHostClassDecl(spec).ack_granularity, 'checkpoint');
+    declaresTo(native, spec);
+  } finally {
+    native.contextFree();
+  }
+});
+
+test('the bare checkpoint opt-in registers with no cadence', () => {
+  native.contextNew(ACTIVATION_SCHEMA_VERSION);
+  try {
+    const spec = checkpointClass('ack_only', (c) => c.checkpointAck());
+    const decl = toHostClassDecl(spec);
+    assert.equal(decl.ack_granularity, 'checkpoint');
+    assert.equal(decl.checkpoint_every, undefined, 'the bare opt-in declares no cadence');
+    declaresTo(native, spec);
   } finally {
     native.contextFree();
   }

@@ -130,6 +130,40 @@ class AuthoringTest < Minitest::Test
     assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "durable state"
   end
 
+  def test_a_checkpoint_option_without_the_tier_is_refused
+    {
+      "checkpoint_ack" => ->(c) { c.checkpoint_ack },
+      "checkpoint_every" => ->(c) { c.checkpoint_every(4) },
+      "outputs_at_checkpoint" => ->(c) { c.outputs_at_checkpoint(250) }
+    }.each do |option, declare|
+      klass = operative("ckpt_#{option}") do |c|
+        declare.call(c)
+        c.input("in").into(pass_through("p_#{option}")).keyed.sink("out")
+      end
+
+      assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
+                      "checkpoint acknowledgement without effectively_once",
+                      "#{option} must require the tier"
+    end
+  end
+
+  def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another
+    klass = operative("compose") do |c|
+      c.effectively_once
+      c.outputs_at_checkpoint(250)
+      c.checkpoint_ack
+      c.checkpoint_every(4)
+      c.input("in").into(pass_through("p")).keyed.sink("out")
+    end
+    Flezha::Graph.validate(klass.spec)
+    decl = Flezha::Graph.to_host_class_decl(klass.spec)
+
+    assert_equal "checkpoint", decl["ack_granularity"]
+    assert_equal 4, decl["checkpoint_every"]
+    assert_equal "at_checkpoint", decl["checkpoint_outputs"]
+    assert_equal 250, decl["checkpoint_max_delay_ms"]
+  end
+
   def test_a_workflow_cannot_declare_both_a_run_body_and_channels
     klass = Class.new(Flezha::WorkflowOperative)
     klass.factory_id "both_shapes"

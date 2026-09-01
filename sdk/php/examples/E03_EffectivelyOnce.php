@@ -57,6 +57,7 @@ final class LedgerOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
+        $c->effectivelyOnce();
         $c->checkpointEvery(4);
         $c->input('entries')
             ->keyBy(static fn (array $e): string => (string) $e['account'])

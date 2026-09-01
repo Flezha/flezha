@@ -520,8 +520,8 @@ delivery-tier or workflow declarations.
 |---|---|---|
 | `effectively_once()` (`effectivelyOnce`) | off — at-least-once | Every emit rides an atomic effect record through the WAL, and the outbox cursor advances only on a sink's confirmation. Registration refuses it unless every plugin-bound channel is `.keyed()`. |
 | `checkpoint_ack()` (`checkpointAck`) | off — acknowledge per input | Hold the consumed offset until the interval closes, so state and offset advance together. Requires `effectively_once()`. |
-| `checkpoint_every(n)` (`checkpointEvery`) | absent — only `ctx.checkpoint()` closes the interval | Close the interval after `n` inputs; an explicit checkpoint still closes it early. Implies `checkpoint_ack()`. |
-| `outputs_at_checkpoint(max_delay_ms)` (`outputsAtCheckpoint`) | absent — outputs flush as produced | Hold the interval's outputs and ship them inside its checkpoint record as one batch. `max_delay_ms` is required and bounds how long a quiet Entity holds an output. Implies `checkpoint_ack()`. |
+| `checkpoint_every(n)` (`checkpointEvery`) | absent — only `ctx.checkpoint()` closes the interval | Close the interval after `n` inputs; an explicit checkpoint still closes it early. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
+| `outputs_at_checkpoint(max_delay_ms)` (`outputsAtCheckpoint`) | absent — outputs flush as produced | Hold the interval's outputs and ship them inside its checkpoint record as one batch. `max_delay_ms` is required and bounds how long a quiet Entity holds an output. Implies `checkpoint_ack()`, and so requires `effectively_once()` too. |
 | `correction_window(window_ms)` (`correctionWindow`) | absent — a late input is just an input | A late input inside the window rewinds the Entity to a baseline and replays the affected slice in event-time order. Needs an `EventTimeFrom` clock. |
 | `beyond_window_policy(policy)` (`beyondWindowPolicy`) | `ProcessAsArrival` | Fate of an input later than the window: process it as an arrival, or `Drop` it. |
 

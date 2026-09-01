@@ -224,18 +224,42 @@ test('a tier class with an unkeyed sink is refused', () => {
   assert.match(message, /effectively-once tier deduplicates by output identity/);
 });
 
-test('checkpoint acknowledgement without the tier is refused', () => {
-  const message = refusal(() => {
-    const spec = defineOperative({
-      factoryId: 'ckpt',
-      channels: (c) => {
-        c.input('in').into(echo('p')).keyed().sink('out');
-      },
-    });
-    spec.ackGranularity = 'checkpoint';
-    return spec;
+for (const [option, declare] of [
+  ['checkpointAck', (c) => c.checkpointAck()],
+  ['checkpointEvery', (c) => c.checkpointEvery(4)],
+  ['outputsAtCheckpoint', (c) => c.outputsAtCheckpoint(250)],
+]) {
+  test(`${option}() without the tier is refused`, () => {
+    const message = refusal(() =>
+      defineOperative({
+        factoryId: `ckpt_${option}`,
+        channels: (c) => {
+          declare(c);
+          c.input('in').into(echo('p')).keyed().sink('out');
+        },
+      }),
+    );
+    assert.match(message, /checkpoint acknowledgement without effectivelyOnce/);
   });
-  assert.match(message, /checkpoint acknowledgement without effectivelyOnce/);
+}
+
+test('the checkpoint options compose in any order, and none clears another', () => {
+  const spec = defineOperative({
+    factoryId: 'compose',
+    channels: (c) => {
+      c.effectivelyOnce();
+      c.outputsAtCheckpoint(250);
+      c.checkpointAck();
+      c.checkpointEvery(4);
+      c.input('in').into(echo('p')).keyed().sink('out');
+    },
+  });
+  validate(spec);
+  const decl = toHostClassDecl(spec);
+  assert.equal(decl.ack_granularity, 'checkpoint');
+  assert.equal(decl.checkpoint_every, 4);
+  assert.equal(decl.checkpoint_outputs, 'at_checkpoint');
+  assert.equal(decl.checkpoint_max_delay_ms, 250);
 });
 
 test('a correction window without the tier is refused', () => {

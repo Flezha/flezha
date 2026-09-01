@@ -229,12 +229,13 @@ bare mutable global holds any of it.
 
 ## Deferred fixtures
 
-The manifest defers eight capabilities' end-to-end fixture sets —
+The manifest defers seven capabilities' end-to-end fixture sets —
 `state_persistence`, `effectively_once`, `entity_timers`, `correction_window`,
-`workflow`, `dynamic_entity`, `entry_idle` and `schema_evolution` — to
+`workflow`, `entry_idle` and `schema_evolution` — to
 **`sdk-durable-fixture-parity`**, the shared follow-up that also owes them for
-the Node and Elixir apps. The Elixir app defers a ninth, `keyed_channels`,
-because its SDK is its own core and mints no identity stamps yet.
+the Node and Elixir apps. The Elixir app defers two more, `keyed_channels` and
+`dynamic_entity`, because its SDK is its own core: it mints no identity stamps
+and has no fold to evict against.
 
 This is a deferral of **fixtures, not mechanism**: the dispatcher answers every
 activation kind the boundary defines — work, restore fold, snapshot, live state

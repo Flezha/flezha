@@ -623,6 +623,9 @@ final class PartitionRelayOperative extends StreamOperative
 
 // -- dynamic_entity ----------------------------------------------------------
 
+// Rust reads the eviction TTL from `DYN_TEST_TTL_MS`; an attribute argument
+// must be a constant expression, so this fixture declares none. Only the
+// reference-runtime scenario arms a TTL, so nothing here reads one.
 #[Proc(name: 'dynamic_entity_procedure', dynamicEntities: true)]
 final class DynamicEntity extends Procedure
 {

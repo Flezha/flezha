@@ -215,9 +215,17 @@ export interface Stream<T> {
 export interface ChannelBuilder {
   /** Effectively-once delivery tier. */
   effectivelyOnce(): ChannelBuilder;
-  /** Close a checkpoint interval every `n` inputs. Implies the tier. */
+  /**
+   * Acknowledge at the checkpoint rather than per input; the interval closes
+   * only on an explicit `ctx.checkpoint()`. Requires `effectivelyOnce()`.
+   */
+  checkpointAck(): ChannelBuilder;
+  /** Close a checkpoint interval every `n` inputs. Implies `checkpointAck()`. */
   checkpointEvery(n: number): ChannelBuilder;
-  /** Hold outputs until the interval closes, with an optional deadline. */
+  /**
+   * Hold outputs until the interval closes, with an optional deadline.
+   * Implies `checkpointAck()`.
+   */
   outputsAtCheckpoint(maxDelayMs?: number): ChannelBuilder;
   /** Late-input correction window, in milliseconds. Event-time classes. */
   correctionWindow(ms: number): ChannelBuilder;

@@ -69,17 +69,19 @@ module Flezha
       self
     end
 
+    def checkpoint_ack
+      amend_checkpoint {}
+    end
+
     def checkpoint_every(count)
-      @effectively_once_flag = true
-      @ack_granularity = :checkpoint
-      @checkpoint_every_value = count
-      self
+      amend_checkpoint { @checkpoint_every_value = count }
     end
 
     def outputs_at_checkpoint(max_delay_ms = nil)
-      @checkpoint_outputs_value = :at_checkpoint
-      @checkpoint_max_delay_ms_value = max_delay_ms unless max_delay_ms.nil?
-      self
+      amend_checkpoint do
+        @checkpoint_outputs_value = :at_checkpoint
+        @checkpoint_max_delay_ms_value = max_delay_ms unless max_delay_ms.nil?
+      end
     end
 
     def correction_window(milliseconds)
@@ -139,6 +141,16 @@ module Flezha
       channel = ChannelSpec.new(index: @channels.size, **spec)
       @channels << channel
       channel
+    end
+
+    private
+
+    # Turn the checkpoint granularity on (idempotent) and amend its policy, so
+    # each option is one call that preserves the others.
+    def amend_checkpoint
+      @ack_granularity = :checkpoint
+      yield
+      self
     end
   end
 

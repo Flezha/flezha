@@ -391,15 +391,15 @@ both rules against the parsed source rather than the prose.
 The manifest at `test/apps/php_runner/conformance.json` carries the seven
 capabilities every SDK must (`runner_lifecycle`, `connect_discovery`,
 `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge`),
-carries `keyed_channels` besides, and defers eight.
+carries `keyed_channels` and `dynamic_entity` besides, and defers seven.
 
 The deferral is about **fixtures, not mechanism**: per-entity persistence,
-the effectively-once tier, timers, correction windows, the workflow kind,
-dynamic-Entity eviction, the entry-idle observer and schema evolution are all
-implemented here and reached through the same core the Rust and Java arms prove
-them on. What is missing is the fixture-by-fixture proof against the reference,
-which the PHP SDK owes to the shared follow-up `sdk-durable-fixture-parity`
-alongside the Node and Ruby SDKs.
+the effectively-once tier, timers, correction windows, the workflow kind, the
+entry-idle observer and schema evolution are all implemented here and reached
+through the same core the Rust and Java arms prove them on. What is missing is
+the fixture-by-fixture proof against the reference, which the PHP SDK owes to
+the shared follow-up `sdk-durable-fixture-parity` alongside the Node and Ruby
+SDKs.
 
 Keyed channels are not on that list, and were not implemented here until
 `Ctx::stampIdentity` minted `flz.entity` / `flz.seq` / `flz.key`: the capability

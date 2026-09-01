@@ -36,7 +36,6 @@
     "entity_timers",
     "correction_window",
     "workflow",
-    "dynamic_entity",
     "entry_idle",
     "schema_evolution"
   ],
@@ -73,6 +72,9 @@
     ],
     "partitioned": [
       "partition_relay",
+      "dynamic_entity"
+    ],
+    "dynamic_entity": [
       "dynamic_entity"
     ],
     "pool_wedge": [

@@ -176,3 +176,34 @@ interval. Silence between checkpoints is the mode's steady state.
   nothing durable for longer than the dataflow-stop timeout
 - **THEN** no `catastrophic_dataflow_stop` is reported for it
 
+### Requirement: The checkpoint opt-in is one seam every SDK exposes, and each option turns the granularity on itself
+
+Every SDK that carries the effectively-once tier SHALL expose the bare checkpoint opt-in on its channel builder, spelled in that language's casing (`checkpoint_ack()` / `checkpointAck()`), so a class whose interval is closed only by an explicit `ctx.checkpoint()` is expressible without declaring a cadence it does not want. Each option that presumes the checkpoint interval — the bare opt-in, the declared cadence, and holding outputs until the interval closes — SHALL set the checkpoint granularity itself rather than requiring a second call, and setting it SHALL be idempotent, so the options compose in any order and any combination and each preserves the others' policy. An SDK SHALL NOT be able to produce a declaration that holds outputs at the checkpoint, or closes the interval on a cadence, while acknowledging per input: the core refuses that declaration at registration, and a builder that can express it hands its author a class that cannot start.
+
+An SDK that carries the tier SHALL prove the opt-in through its own authoring surface rather than by writing the declaration by hand, so the refusal a wrong declaration earns is one an author can actually reach. An SDK that cannot yet carry the tier SHALL defer `effectively_once` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK defers it here: none of the tier's builder methods exists in its core, and the seam is feature work rather than a port, which queue row R6 owes.
+
+#### Scenario: Holding outputs at the checkpoint acknowledges at the checkpoint
+
+- **WHEN** a tier-enabled class declares only that its outputs are held until the interval closes, with a maximum delay
+- **THEN** its declaration carries `checkpoint` ack-granularity, and the core registers the class
+
+#### Scenario: The bare opt-in needs no cadence
+
+- **WHEN** a tier-enabled class declares the checkpoint opt-in and no cadence
+- **THEN** its declaration carries `checkpoint` ack-granularity and no `checkpoint_every`, and the interval closes only on an explicit `ctx.checkpoint()`
+
+#### Scenario: The options compose in any order
+
+- **WHEN** a class declares the bare opt-in, a cadence, and outputs held at the checkpoint, in any order
+- **THEN** the declaration carries all three, and no later call clears an earlier one's policy
+
+#### Scenario: The opt-in does not imply the tier
+
+- **WHEN** a class declares any of the three checkpoint options without declaring effectively-once
+- **THEN** the build is refused before the operative starts, naming the missing tier
+
+#### Scenario: An SDK that defers the tier says so in its manifest
+
+- **WHEN** an SDK's channel builder does not carry the checkpoint options
+- **THEN** its `conformance.json` lists `effectively_once` under `deferred`, and the conformance gate refuses a manifest that carries the capability without the reference's fixture set
+

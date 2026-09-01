@@ -135,6 +135,49 @@ class NativeTest < Minitest::Test
     Flezha::Native.context_free
   end
 
+  # The checkpoint options the core will accept together. Asserted against the
+  # core rather than against the builder's fields because the core is what
+  # refuses: a declaration holding outputs at a checkpoint it never
+  # acknowledges at is rejected at registration, so a builder that can express
+  # it hands its author a class that cannot start.
+  def checkpoint_class(factory_id)
+    procedure = Class.new(Flezha::Procedure) do
+      procedure_name "#{factory_id}_procedure"
+      def process(input, _ctx) = input
+    end
+    operative = Class.new(Flezha::StreamOperative)
+    operative.factory_id factory_id
+    operative.channels do |c|
+      c.effectively_once
+      yield c
+      c.input("input").into(procedure).named("sink").keyed.sink("tier_sink")
+    end
+    Flezha::Graph.to_host_class_decl(operative.spec)
+  end
+
+  def test_holding_outputs_at_the_checkpoint_acknowledges_at_the_checkpoint
+    Flezha::Native.context_new(Flezha::ACTIVATION_SCHEMA_VERSION)
+
+    decl = checkpoint_class("outputs_only") { |c| c.outputs_at_checkpoint(1500) }
+
+    assert_equal "checkpoint", decl["ack_granularity"]
+    Flezha::Native.declare_class(JSON.generate(decl))
+  ensure
+    Flezha::Native.context_free
+  end
+
+  def test_the_bare_checkpoint_opt_in_registers_with_no_cadence
+    Flezha::Native.context_new(Flezha::ACTIVATION_SCHEMA_VERSION)
+
+    decl = checkpoint_class("ack_only", &:checkpoint_ack)
+
+    assert_equal "checkpoint", decl["ack_granularity"]
+    assert_nil decl["checkpoint_every"], "the bare opt-in declares no cadence"
+    Flezha::Native.declare_class(JSON.generate(decl))
+  ensure
+    Flezha::Native.context_free
+  end
+
   def test_a_ruby_declaration_is_accepted_and_carries_the_allocated_language_byte
     Flezha::Native.context_new(Flezha::ACTIVATION_SCHEMA_VERSION)
 

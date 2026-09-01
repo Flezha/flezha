@@ -9,6 +9,7 @@ contract.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -100,6 +101,42 @@ def test_a_context_is_created_used_and_freed_through_the_object() -> None:
         assert isinstance(caught.value, FlezhaError)
         assert caught.value.__cause__ is not None
         assert core.last_error() is not None
+    finally:
+        core.free()
+
+
+def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
+    """A tier class under one checkpoint declaration, as the core reads it.
+
+    Asserted against the core rather than against the builder's fields because
+    the core is what refuses: a declaration holding outputs at a checkpoint it
+    never acknowledges at is rejected at registration, so a builder that can
+    express it hands its author a class that cannot start.
+    """
+    import flezha
+    from flezha import graph
+
+    from conftest import echo
+
+    @flezha.stream_operative(factory_id)
+    def operative(c: Any) -> None:
+        c.effectively_once()
+        declare(c)
+        c.input("input").into(echo, f"{factory_id}_procedure").named("sink").keyed().sink(
+            "tier_sink"
+        )
+
+    graph.validate(operative.spec)
+    return graph.to_host_class_decl(operative.spec)
+
+
+def test_holding_outputs_at_the_checkpoint_acknowledges_at_the_checkpoint() -> None:
+    decl = _checkpoint_class("outputs_only", lambda c: c.outputs_at_checkpoint(1500))
+    assert decl["ack_granularity"] == "checkpoint"
+
+    core = native.Core.create()
+    try:
+        core.declare_class(json.dumps(decl).encode())
     finally:
         core.free()
 

@@ -49,23 +49,43 @@ final class Builder
         return $this;
     }
 
+    /**
+     * Acknowledge at the checkpoint rather than per input; the interval closes
+     * only on an explicit `ctx.checkpoint()`. Requires `effectivelyOnce()`.
+     */
+    public function checkpointAck(): self
+    {
+        return $this->amendCheckpoint(static function (): void {
+        });
+    }
+
     /** Close the checkpoint interval every `$count` inputs, and on demand. */
     public function checkpointEvery(int $count): self
     {
-        $this->effectivelyOnce = true;
-        $this->ackGranularity = AckGranularity::Checkpoint;
-        $this->checkpointEvery = $count;
-
-        return $this;
+        return $this->amendCheckpoint(function () use ($count): void {
+            $this->checkpointEvery = $count;
+        });
     }
 
     /** Hold outputs until the interval closes, for at most `$maxDelayMs`. */
     public function outputsAtCheckpoint(?int $maxDelayMs = null): self
     {
-        $this->checkpointOutputs = CheckpointOutputs::AtCheckpoint;
-        if ($maxDelayMs !== null) {
-            $this->checkpointMaxDelayMs = $maxDelayMs;
-        }
+        return $this->amendCheckpoint(function () use ($maxDelayMs): void {
+            $this->checkpointOutputs = CheckpointOutputs::AtCheckpoint;
+            if ($maxDelayMs !== null) {
+                $this->checkpointMaxDelayMs = $maxDelayMs;
+            }
+        });
+    }
+
+    /**
+     * Turn the checkpoint granularity on (idempotent) and amend its policy, so
+     * each option is one call that preserves the others.
+     */
+    private function amendCheckpoint(callable $amend): self
+    {
+        $this->ackGranularity = AckGranularity::Checkpoint;
+        $amend();
 
         return $this;
     }

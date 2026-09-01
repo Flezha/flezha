@@ -208,18 +208,49 @@ def test_a_tier_channel_that_is_not_keyed_is_refused() -> None:
         declare(tiered)
 
 
-def test_checkpoint_ack_without_the_tier_is_refused() -> None:
+@pytest.mark.parametrize(
+    "option",
+    [
+        lambda c: c.checkpoint_ack(),
+        lambda c: c.checkpoint_every(4),
+        lambda c: c.outputs_at_checkpoint(250),
+    ],
+    ids=["checkpoint_ack", "checkpoint_every", "outputs_at_checkpoint"],
+)
+def test_a_checkpoint_option_without_the_tier_is_refused(option) -> None:
     @flezha.procedure
     def one(value: str) -> str:
         return value
 
     @flezha.stream_operative("ack")
     def ack(c: flezha.Channels) -> None:
+        option(c)
         c.input("in").into(one).keyed().sink("out")
-        c.ack_granularity = "checkpoint"
 
     with pytest.raises(DeclarationError, match="checkpoint acknowledgement"):
         declare(ack)
+
+
+def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -> None:
+    @flezha.procedure
+    def one(value: str) -> str:
+        return value
+
+    @flezha.stream_operative("compose")
+    def compose(c: flezha.Channels) -> None:
+        c.effectively_once()
+        c.outputs_at_checkpoint(250)
+        c.checkpoint_ack()
+        c.checkpoint_every(4)
+        c.input("in").into(one).keyed().sink("out")
+
+    declare(compose)
+    decl = graph.to_host_class_decl(compose.spec)
+
+    assert decl["ack_granularity"] == "checkpoint"
+    assert decl["checkpoint_every"] == 4
+    assert decl["checkpoint_outputs"] == "at_checkpoint"
+    assert decl["checkpoint_max_delay_ms"] == 250
 
 
 def test_a_correction_window_without_its_preconditions_is_refused() -> None:

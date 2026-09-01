@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Flezha\Tests;
 
+use Flezha\AckGranularity;
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
+use Flezha\CheckpointOutputs;
 use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Definition;
@@ -137,18 +139,25 @@ final class AuthoringTest extends TestCase
         ];
         yield 'held outputs with no maximum delay' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
+                $c->effectivelyOnce();
                 $c->outputsAtCheckpoint();
-                $c->input('in')->into(Echoer::class)->sink('out');
+                $c->input('in')->into(Echoer::class)->keyed()->sink('out');
             }),
             'declares outputsAtCheckpoint with no maximum delay',
         ];
-        yield 'checkpoint acknowledgement without the tier' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->checkpointEvery(4);
-                $c->input('in')->into(Echoer::class)->keyed()->sink('out');
-            }, tierOff: true),
-            'declares checkpoint acknowledgement without effectivelyOnce',
-        ];
+        foreach ([
+            'checkpointAck' => static fn (Builder $c): mixed => $c->checkpointAck(),
+            'checkpointEvery' => static fn (Builder $c): mixed => $c->checkpointEvery(4),
+            'outputsAtCheckpoint' => static fn (Builder $c): mixed => $c->outputsAtCheckpoint(250),
+        ] as $option => $declare) {
+            yield "$option without the tier" => [
+                static fn (): mixed => self::validate(static function (Builder $c) use ($declare): void {
+                    $declare($c);
+                    $c->input('in')->into(Echoer::class)->keyed()->sink('out');
+                }),
+                'declares checkpoint acknowledgement without effectivelyOnce',
+            ];
+        }
         yield 'a branch with one arm' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
                 $c->input('in')->into(Echoer::class)->branch(static fn ($e) => $e->sink('out'));
@@ -237,15 +246,7 @@ final class AuthoringTest extends TestCase
         ));
     }
 
-    /**
-     * Validate a graph declared inline.
-     *
-     * `$tierOff` is how the checkpoint refusal is reached at all: the builder's
-     * `checkpointEvery` turns the tier on with it, so the only way to declare
-     * checkpoint acknowledgement without the tier is a hand-written
-     * declaration reaching the ABI — which is exactly what this refusal exists
-     * to catch.
-     */
+    /** Validate a graph declared inline. */
     /**
      * PHP does not inherit attributes, and taking that literally would make
      * `class Sub extends Base {}` silently single-entity with the default
@@ -287,7 +288,21 @@ final class AuthoringTest extends TestCase
         self::assertSame(3, $definition->decl->schemaVersion);
     }
 
-    private static function validate(callable $channels, bool $tierOff = false): mixed
+    public function testTheCheckpointOptionsComposeInAnyOrderAndNoneClearsAnother(): void
+    {
+        $builder = new Builder('compose');
+        $builder->effectivelyOnce();
+        $builder->outputsAtCheckpoint(250);
+        $builder->checkpointAck();
+        $builder->checkpointEvery(4);
+
+        self::assertSame(AckGranularity::Checkpoint, $builder->ackGranularity);
+        self::assertSame(4, $builder->checkpointEvery);
+        self::assertSame(CheckpointOutputs::AtCheckpoint, $builder->checkpointOutputs);
+        self::assertSame(250, $builder->checkpointMaxDelayMs);
+    }
+
+    private static function validate(callable $channels): mixed
     {
         $builder = new Builder('under_test');
         $channels($builder);
@@ -296,7 +311,7 @@ final class AuthoringTest extends TestCase
             factoryId: 'under_test',
             kind: 'stream',
             persistent: true,
-            effectivelyOnce: !$tierOff && $builder->effectivelyOnce,
+            effectivelyOnce: $builder->effectivelyOnce,
             ackGranularity: $builder->ackGranularity,
             checkpointEvery: $builder->checkpointEvery,
             checkpointOutputs: $builder->checkpointOutputs,

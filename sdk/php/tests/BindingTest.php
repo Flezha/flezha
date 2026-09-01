@@ -4,9 +4,16 @@ declare(strict_types=1);
 
 namespace Flezha\Tests;
 
+use Flezha\Attribute\Operative;
+use Flezha\Attribute\Proc;
+use Flezha\Ctx;
 use Flezha\Exception\FlezhaException;
 use Flezha\Ffi\Binding;
 use Flezha\Ffi\Core;
+use Flezha\Graph\Builder;
+use Flezha\Graph\HostClassDecl;
+use Flezha\Procedure;
+use Flezha\StreamOperative;
 use PHPUnit\Framework\TestCase;
 
 /** The FFI binding, against a live core. */
@@ -103,6 +110,43 @@ final class BindingTest extends TestCase
         }
     }
 
+    /**
+     * The checkpoint options the core will accept together.
+     *
+     * Asserted against the core rather than against the builder's fields
+     * because the core is what refuses: a declaration holding outputs at a
+     * checkpoint it never acknowledges at is rejected at registration, so a
+     * builder that can express it hands its author a class that cannot start.
+     */
+    public function testHoldingOutputsAtTheCheckpointAcknowledgesAtTheCheckpoint(): void
+    {
+        $decl = HostClassDecl::of(CheckpointOutputsOnly::spec());
+        self::assertSame('checkpoint', $decl['ack_granularity']);
+
+        $core = Core::create();
+
+        try {
+            $core->declareClass((string) json_encode($decl));
+        } finally {
+            $core->free();
+        }
+    }
+
+    public function testTheBareCheckpointOptInRegistersWithNoCadence(): void
+    {
+        $decl = HostClassDecl::of(CheckpointAckOnly::spec());
+        self::assertSame('checkpoint', $decl['ack_granularity']);
+        self::assertArrayNotHasKey('checkpoint_every', $decl);
+
+        $core = Core::create();
+
+        try {
+            $core->declareClass((string) json_encode($decl));
+        } finally {
+            $core->free();
+        }
+    }
+
     public function testTheMonotonicClockAdvances(): void
     {
         $core = Core::create();
@@ -145,5 +189,36 @@ final class BindingTest extends TestCase
         Binding::assertAvailable();
 
         self::assertTrue(class_exists(\FFI::class));
+    }
+}
+
+#[Proc(name: 'checkpoint_procedure')]
+final class CheckpointProcedure extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return $input;
+    }
+}
+
+#[Operative(factoryId: 'checkpoint_outputs_only')]
+final class CheckpointOutputsOnly extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce();
+        $c->outputsAtCheckpoint(1500);
+        $c->input('input')->into(CheckpointProcedure::class)->named('sink')->keyed()->sink('tier_sink');
+    }
+}
+
+#[Operative(factoryId: 'checkpoint_ack_only')]
+final class CheckpointAckOnly extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce();
+        $c->checkpointAck();
+        $c->input('input')->into(CheckpointProcedure::class)->named('sink')->keyed()->sink('tier_sink');
     }
 }

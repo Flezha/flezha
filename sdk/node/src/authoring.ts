@@ -167,16 +167,30 @@ class Builder implements ChannelBuilder {
     return this;
   }
 
+  checkpointAck(): ChannelBuilder {
+    return this.amendCheckpoint(() => {});
+  }
+
   checkpointEvery(n: number): ChannelBuilder {
-    this.effectivelyOnceFlag = true;
-    this.ackGranularity = 'checkpoint';
-    this.checkpointEveryValue = n;
-    return this;
+    return this.amendCheckpoint(() => {
+      this.checkpointEveryValue = n;
+    });
   }
 
   outputsAtCheckpoint(maxDelayMs?: number): ChannelBuilder {
-    this.checkpointOutputsValue = 'at_checkpoint';
-    if (maxDelayMs !== undefined) this.checkpointMaxDelayMsValue = maxDelayMs;
+    return this.amendCheckpoint(() => {
+      this.checkpointOutputsValue = 'at_checkpoint';
+      if (maxDelayMs !== undefined) this.checkpointMaxDelayMsValue = maxDelayMs;
+    });
+  }
+
+  /**
+   * Turn the checkpoint granularity on (idempotent) and amend its policy, so
+   * each option is one call that preserves the others.
+   */
+  private amendCheckpoint(amend: () => void): ChannelBuilder {
+    this.ackGranularity = 'checkpoint';
+    amend();
     return this;
   }
 
