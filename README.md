@@ -30,7 +30,7 @@ The `protoc` install layer rejects any other `uname -m` with
 
 ## Building
 - Copy `.env.example` and rename to `.env`
-- Install testnet dependencies: `cd test/apps/testnet && npm install`
+- Install testnet dependencies: `cd test/apps/testnet && npm ci`
 - Build the testnet: `npm run build` (from `test/apps/testnet`)
 - Build the `rust_runner` application.
 - Build the controller `mix compile`

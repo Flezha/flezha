@@ -153,9 +153,11 @@ jobs:
         # `npm start --prefix test/apps/testnet` at boot, which runs
         # `node dist/index.js`. dist/ is gitignored, so it has to be
         # built before mix test boots the application.
+        # `npm ci` alone honours the committed lockfile and fails when it has
+        # drifted; `|| npm install` turned that report into a silent re-resolve.
         working-directory: test/apps/testnet
         run: |
-          npm ci || npm install
+          npm ci
           npm run build
 
       - name: Elixir dependencies

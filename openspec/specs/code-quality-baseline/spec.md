@@ -709,3 +709,112 @@ further metric.
 - **WHEN** the area reports its result
 - **THEN** it SHALL name the edges it cut, with the count reported beside them
 
+### Requirement: An SDK's test toolchain SHALL be declared, pinned, and installed from its own manifest
+
+Every library an SDK's test suite loads SHALL be declared as a development
+dependency in that SDK's own dependency manifest, SHALL be pinned there to an
+exact version, and continuous integration SHALL install the version the manifest
+names rather than a version the workflow names for itself.
+
+The three clauses fail independently and each is a defect on its own. An
+undeclared library makes a suite pass by accident of what the machine happens to
+carry. An unpinned one lets the resolution drift under a green tree, across a
+major release the declared range does not bound. A workflow that names its own
+version makes the manifest a document nothing acts on, so the effective manifest
+is a line in continuous integration where no reader looks for it.
+
+The install command SHALL read the version out of the manifest. Where the
+ecosystem's installer already resolves the manifest — a Composer `install`, a
+Maven build, a `cargo` build — that is satisfied by pinning in the manifest and
+nothing further is required. Where the installer takes a version on its command
+line, the workflow SHALL derive that version from the manifest rather than
+repeating it, so the two cannot diverge.
+
+An extraction that derives a version from a manifest SHALL be anchored to the
+exact-pin spelling, so that relaxing a pin to a range fails the install step
+rather than silently resolving whatever is newest.
+
+A lockfile SHALL be committed where the ecosystem's convention is to commit one
+and where the project's own artefact shape calls for it, and the install command
+SHALL be the one that honours it. An install command that MAY resolve past a
+committed lockfile leaves the tree under test recorded nowhere, so the presence
+of a lockfile alone does not satisfy this requirement.
+
+Where a lockfile is committed, the installer SHALL honour it and SHALL NOT fall
+back to a resolving install when the honouring one fails. A lockfile-honouring
+install fails precisely when the lockfile and the manifest disagree, and that
+failure is the report the lockfile exists to produce; a fallback converts it
+into a silent fresh resolution whose rewritten lockfile continuous integration
+then discards. This clause covers every directory that commits a lockfile,
+including a test application or worked example that is not itself an SDK.
+
+An SDK's own runtime dependencies are NOT covered by the exact-pin clause and
+SHALL keep the version range they declare to consumers, because a suite must meet
+the resolution a consumer gets rather than one the manifest invented for testing.
+
+This requirement covers the libraries an SDK declares. Their transitive
+dependencies are resolved by the ecosystem's resolver and are out of scope.
+
+#### Scenario: A test suite loads a library named in no manifest
+
+- **WHEN** an SDK's test suite calls an API from a library that SDK's dependency manifest does not declare
+- **THEN** it SHALL be a defect, whether or not the suite is currently green
+- **AND** the remedy SHALL be to declare the library, not to rely on it being present
+
+#### Scenario: A declared test dependency carries a range
+
+- **WHEN** an SDK's dependency manifest is read
+- **THEN** every test-toolchain entry SHALL name an exact version
+- **AND** an entry naming a lower bound with no upper bound SHALL be a defect, because the next major release satisfies it
+
+#### Scenario: Continuous integration names its own version
+
+- **WHEN** a workflow step installs an SDK's test toolchain
+- **THEN** the version SHALL come from that SDK's manifest
+- **AND** a step that spells a version, or spells none and takes the newest, SHALL be a defect even where the manifest declares the pin correctly
+
+#### Scenario: A pin is relaxed to a range
+
+- **GIVEN** a workflow that derives a test dependency's version from the manifest
+- **WHEN** that dependency's pin is relaxed to a range
+- **THEN** the install step SHALL fail
+- **AND** it SHALL NOT resolve the newest available version
+
+#### Scenario: The installer already reads the manifest
+
+- **GIVEN** an SDK whose ecosystem installer resolves the manifest directly
+- **WHEN** the test toolchain is pinned in that manifest
+- **THEN** the requirement is satisfied with no change to the workflow
+
+#### Scenario: A committed lockfile is bypassed on the test path
+
+- **GIVEN** an SDK or example application that commits a lockfile
+- **WHEN** continuous integration installs its dependencies
+- **THEN** it SHALL use the install command that installs exactly what the lockfile records and fails when it cannot
+- **AND** an install command free to resolve past the lockfile SHALL be a defect
+
+#### Scenario: A lockfile-honouring install has a resolving fallback behind it
+
+- **GIVEN** a directory that commits a lockfile
+- **WHEN** its install command is read
+- **THEN** it SHALL NOT fall back to a resolving install when the lockfile-honouring one fails
+- **AND** a drifted lockfile SHALL fail the step, rather than being re-resolved in silence
+
+#### Scenario: An application has no lockfile
+
+- **GIVEN** a directory that is an application rather than a published package — a worked example, a test app
+- **WHEN** its dependencies are installed
+- **THEN** a lockfile SHALL be committed for it and the install SHALL honour it
+
+#### Scenario: A runtime dependency keeps its range
+
+- **WHEN** an SDK's own runtime dependency appears in a development dependency group
+- **THEN** it SHALL keep the range the package declares to consumers
+- **AND** pinning it exactly for the suite SHALL be a defect, because the suite would then test a resolution no consumer gets
+
+#### Scenario: Every SDK's row is checkable
+
+- **WHEN** the SDKs are audited against this requirement
+- **THEN** each SDK SHALL have an answer for all three clauses — what it declares, whether it is pinned, and what continuous integration installs
+- **AND** an SDK that fails any clause SHALL be recorded as failing, rather than reported as clean because its suite is green
+

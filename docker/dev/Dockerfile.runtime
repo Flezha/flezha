@@ -27,9 +27,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Bundle the testnet WS server. typescript is a runtime "dependency" in
 # its package.json so `--omit=dev` keeps it; the local tsc is then used
 # by `npm run build`.
+#
+# `npm ci` and not `npm install`: the tree carries a committed lockfile, and a
+# resolving install may go past it and rewrite it — a rewrite this build then
+# discards with the layer, leaving what shipped in the image recorded nowhere.
 COPY --chown=flezha:flezha test/apps/testnet /flezha/testnet
 RUN cd /flezha/testnet \
-    && npm install --omit=dev \
+    && npm ci --omit=dev \
     && npm run build \
     && chown -R flezha:flezha /flezha/testnet
 

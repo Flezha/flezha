@@ -21,9 +21,14 @@ fi
 echo "==> building flz_core_ffi ($profile) with the napi feature"
 cargo build -p flz_core_ffi --features napi "${cargo_args[@]}"
 
+# `npm ci` and not `npm install`: the lockfile is the pin, and only `ci`
+# installs what it records — `install` is free to resolve something newer and
+# rewrite the lock, which in CI is thrown away, so the tree under test is one
+# nothing recorded. It is also what .github/workflows/format.yml already runs
+# here to get the pinned prettier.
 echo "==> installing @flezha/sdk dependencies"
 cd "$sdk"
-npm install --no-audit --no-fund --silent
+npm ci --no-audit --no-fund --silent
 
 echo "==> installing the $profile addon"
 if [[ "$profile" == "release" ]]; then
@@ -37,6 +42,6 @@ node scripts/build.mjs
 
 echo "==> linking the test app"
 cd "$app"
-npm install --no-audit --no-fund --silent
+npm ci --no-audit --no-fund --silent
 
 echo "==> node SDK ready"

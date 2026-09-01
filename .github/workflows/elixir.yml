@@ -109,9 +109,14 @@ jobs:
         # for reproducible CI installs. Without the bundle the WS-dependent
         # ExUnit cases are auto-skipped at compile time; the inline build
         # keeps them in scope for CI.
+        #
+        # A bare `npm ci`, with no `|| npm install` behind it: the fallback
+        # fired exactly when the lockfile disagreed with package.json, which is
+        # the one time the disagreement needs reporting, and replaced it with a
+        # fresh resolve whose rewritten lock CI then discards.
         working-directory: test/apps/testnet
         run: |
-          npm ci || npm install
+          npm ci
           npm run build
 
       - name: Fetch Elixir deps

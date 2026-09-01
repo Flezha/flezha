@@ -121,8 +121,10 @@ run_java() {
   # Flezha.Testnet is a child of Flezha.Application in :test env and runs
   # `npm start --prefix test/apps/testnet`, which expects dist/index.js
   # (gitignored, so it must be built).
-  bold ">>> npm ci || npm install + npm run build (testnet)"
-  ( cd test/apps/testnet && (npm ci || npm install) && npm run build )
+  # `npm ci` and no fallback: it installs the committed lockfile or fails, and
+  # a lockfile that has drifted from package.json is a finding, not a nuisance.
+  bold ">>> npm ci + npm run build (testnet)"
+  ( cd test/apps/testnet && npm ci && npm run build )
 
   bold ">>> mix deps.get"
   mix deps.get

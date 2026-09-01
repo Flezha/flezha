@@ -75,7 +75,16 @@ jobs:
         run: scripts/build-python-sdk.sh
 
       - name: Install the test dependencies
-        run: sdk/python/.venv/bin/pip install --quiet pytest pyright
+        # The versions the dev group of sdk/python/pyproject.toml names, the way
+        # format.yml already installs ruff out of that same file. Matching on
+        # `==` is what keeps the pin load-bearing: a range in the group leaves
+        # the substitution empty and fails this step, instead of quietly
+        # resolving whatever is newest — which is how every run so far has been
+        # on pytest 9 against a group that says 8.
+        run: |
+          pin() { grep -oP "\"$1==\\K[^\"]+" sdk/python/pyproject.toml; }
+          sdk/python/.venv/bin/pip install --quiet \
+            "pytest==$(pin pytest)" "pyright==$(pin pyright)"
 
       # The activation codec, the declaration refusals, the durable codec, the
       # GIL-release discipline, the pool's growth and retirement, and the
@@ -122,7 +131,12 @@ jobs:
         run: scripts/build-python-sdk.sh
 
       - name: Install pyright
-        run: sdk/python/.venv/bin/pip install --quiet pyright
+        # The version the dev group names, as in the package job above. A type
+        # checker that resolves to whatever shipped this week turns a green
+        # gate red on a tree nobody touched.
+        run: |
+          pin() { grep -oP "\"$1==\\K[^\"]+" sdk/python/pyproject.toml; }
+          sdk/python/.venv/bin/pip install --quiet "pyright==$(pin pyright)"
 
       - name: Type-check the public surface
         working-directory: sdk/python

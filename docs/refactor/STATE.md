@@ -152,7 +152,78 @@ cannot re-derive either, and states that the success condition ON THIS BOX is
 against the script rather than take it from me, and to STOP rather than sweep if another
 file turns out unformatted.
 
-**ROW 4.5 IS DONE. NO WORKER IS ALIVE.** All eleven checks exit 0; Ruby suite re-run
+**ROW 4.6 worker running 2026-09-01** — `pin-sdk-test-toolchains`, fresh
+`general-purpose`. **This row is MY insertion, not one of the user's ten**, derived from a
+defect found inside agreed row 4 and ruled real under charter §1b; the user may reorder it
+against area 7 and should be told it exists. Brief: fix python/php/node, per-ecosystem
+mechanism chosen and JUSTIFIED rather than forcing Ruby's shape on three ecosystems; ask
+the lockfile question separately per SDK because library-vs-application changes the
+answer; verify every survey cell by READING (the previous worker's own lesson); report but
+do NOT fix the two inverse findings (dead `mockito-core`, three cargo-ignored
+`Cargo.lock`s) since one sits in a blocking area; and stop rather than paper over any
+metrics movement.
+
+**ROW 4.6 IS DONE. NO WORKER IS ALIVE.** The published `controller-packaging` spec merged
+correctly: `:145` now reads `npm ci --omit=dev` and **all three scenarios survived the
+`MODIFIED`** — verified by me after the archive, not just in the delta. The worker proved
+its own block by extracting the body programmatically and comparing per-scenario SHA-256,
+which is the right way to defeat that trap.
+
+**Checkpoint 3 — the worker's closing-sweep line was worth more than it knew, and MY OWN
+SWEEP OFF IT FOUND THREE MORE.** It reported `docker/dev/README.md:138` and stopped as
+told. Sweeping that shape across the repo found the root `README.md:33`,
+`test/apps/testnet/README.md:5` — both instructing a human to run a resolving install in a
+lockfile-carrying tree — and the one that matters:
+
+**`openspec/specs/controller-packaging/spec.md:145` HAS GONE STALE BECAUSE OF THIS
+CHANGE.** It states the image is built with `npm install --omit=dev`; the change makes
+that `npm ci --omit=dev`. **A change that falsifies a published spec and leaves it standing
+is worse than the defect it fixed** — the next reader trusts the spec. It sits INSIDE a
+requirement body (`:139`), not a Purpose paragraph, so it cannot be edited directly the way
+area 3 legitimately edited one: it needs a `## MODIFIED Requirements` block. I counted the
+THREE scenarios that must survive it and named them in the brief, because `MODIFIED`
+replaces the whole requirement and silently deletes anything not carried across.
+
+I fixed `docker/dev/README.md` myself (a doc line, and cheaper than a round); the other
+three went back.
+
+**Checkpoint 2: KI-113 fixed, all three fallbacks gone, and I sent back ONE WORD.**
+`docker/dev/Dockerfile.runtime:32` runs `npm install --omit=dev` in `test/apps/testnet`,
+which **commits a lockfile** — so under the clause the worker had just written (*"Where a
+lockfile is committed, the installer SHALL honour it"*) that site VIOLATES the requirement
+this change is landing. The worker named it in KI-113 and left it standing, which is
+honest but ships the rule and its own counter-example together. **A change must not land a
+rule its repository breaks at a site the change's own KI entry names** — that is the shape
+this session has spent the day removing (a gate red on its own prose; a format gate red on
+the branch it gates). Checked before asking: `npm ci --dry-run` exits 0 there, `--omit=dev`
+is supported by `ci`, and a container build starts with no `node_modules`. Told it to say
+so rather than silently take an exemption if it disagrees.
+
+**Checkpoint 1 verified; one ruling back.** Everything holds — I re-ran the worker's own
+negative control and `pip install "pytest=="` does exit **1**, which is what makes the
+grep-the-pin mechanism better than `pip --group`: a relaxed pin empties the substitution
+and fails the step, where `--group` installs a range as willingly as a pin, silently, in
+the exact cell this change closes. All six naming checks, `--check` 0 regressions with the
+new lockfile intent-added, `--strict` valid.
+
+**Per-ecosystem reasoning accepted as written**, including BOTH lockfile refusals (php and
+python are libraries; a library's lock describes only the maintainer's box) and the
+`examples/node` INVERSION (an application, so it gets one) — the question was asked
+separately per SDK, which is what the brief demanded. It also recorded the floating
+`sebastian/*` transitives rather than hiding them, and wrote the requirement to the bar
+Java and Ruby already meet instead of one three SDKs would fail.
+
+**KI-113 — RULED real, fix now, and it is a WORSE shape than the three just fixed.**
+`test/apps/testnet` HAS a committed lock and three sites run `npm ci || npm install` —
+a lock plus a SILENT BYPASS, which looks correct and falls back to a fresh resolve exactly
+when `ci` fails, i.e. when you most want to know. **I checked the deciding fact before
+ruling**, because two of the three sites are merge gates (`elixir.yml:114`,
+`java-sdk.yml:158`, `ci-local.sh:124`): `npm ci --dry-run` there exits **0**, so removing
+the fallback cannot redden anything. Also told to WIDEN the requirement — as written it
+says "an SDK's test toolchain" and a test app is not an SDK, so the rule would not catch
+the defect I am asking it to fix.
+
+**ROW 4.5 IS DONE — `ebec40aa`.** All eleven checks exit 0; Ruby suite re-run
 independently at 82 runs / 277 assertions / 0 failures. `async` declared as a DEVELOPMENT
 dependency with the reason beside it, and CI installs all three pinned versions through
 one `pin()` helper that greps the gemspec — the same shape `format.yml` already uses for
@@ -3393,7 +3464,7 @@ was decided with the user; the detail blocks follow further down this section.
 | 3.5 | **CI cause E** — the **Format** workflow red on `dev` (`cli_manager.ex`) | **DONE**. CI-equivalent arm measured 1 → 0 with all seven formatters | 2026-09-01 |
 | 4 | **CI cause D** — Ruby SDK `Process.stub` NoMethodError | **CLOSED — does NOT reproduce on `dev`** (82 runs, 0 failures, ruby 3.4.10). But the mechanism IS live here → **KI-110**, queued as row 4.5 | 2026-08-31 |
 | 4.5 | `pin-ruby-test-dependency` — KI-110, +KI-111 (classifier) and KI-112 | **DONE**. minitest/rake/async declared and pinned; CI reads the pins | 2026-09-01 |
-| 4.6 | `pin-sdk-test-toolchains` — the CROSS-SDK requirement KI-110 exposed: an SDK's test toolchain is declared in its own manifest, pinned, and CI installs the version the manifest names. **Three SDKs fail it today** — Python's declared dep-group is bypassed by `pip install pytest pyright`, PHP's `composer.lock` is gitignored, Node's test path uses `npm install` not `npm ci`. Stated in NO spec | queued | 2026-09-01 |
+| 4.6 | `pin-sdk-test-toolchains` — the cross-SDK requirement, +KI-113 | **DONE**, archived. python/php/node fixed; the rule now written down in `code-quality-baseline` | 2026-09-01 |
 | 5 | **CI cause D′** — Ruby `cross-gem` | **CLOSED — external.** Ruled on the recorded evidence, no spend | 2026-08-31 |
 | 6 | **Area 7** (`refactor-7-tests`) — proposal written and `--strict` valid, **awaiting supervisor verification** before implementation | in flight | — |
 | 7 | **Area 8** (docs reconcile) — depends on 7 | pending | — |

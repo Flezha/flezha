@@ -41,7 +41,12 @@ Homepage = "https://github.com/alfetahe/flezha"
 Documentation = "https://github.com/alfetahe/flezha/blob/main/docs/sdk/python_sdk.md"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pyright>=1.1.390", "msgpack>=1.0", "ruff==0.16.5"]
+# Exact versions for the tools, because CI installs what these lines name and
+# nothing else constrains the resolution. `pytest>=8.0` bounded nothing: pytest
+# 9 shipped, and every run since has been on it. `msgpack` deliberately keeps
+# the package's own range — it is a runtime dependency, and the suite has to
+# meet the resolution a consumer gets rather than one this file invented.
+dev = ["pytest==9.1.1", "pyright==1.1.411", "msgpack>=1.0", "ruff==0.16.5"]
 
 [tool.maturin]
 # The veneer is a feature of the shared ABI crate, never a crate of its own —

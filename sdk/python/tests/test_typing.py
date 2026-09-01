@@ -23,7 +23,8 @@ _SRC = _HERE.parent / "src"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("pyright") is None,
-    reason="pyright is not installed; `pip install -e .[dev]` or the CI type-check job supplies it",
+    reason="pyright is not installed; the dev group of pyproject.toml pins it "
+    "(`pip install --group dev`, pip 25.1+) and the CI type-check job supplies it",
 )
 
 

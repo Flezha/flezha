@@ -135,7 +135,7 @@ cargo run --target-dir=./target
 
 - Build the testnet TS app inside the container (one-time setup):
 ```bash
-docker exec -it flezha_controller_dev bash -c "cd test/apps/testnet && npm install && npm run build"
+docker exec -it flezha_controller_dev bash -c "cd test/apps/testnet && npm ci && npm run build"
 ```
 
 

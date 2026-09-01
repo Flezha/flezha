@@ -2091,6 +2091,87 @@ path, so none needs a red-first test.
 
 ## Resolved
 
+### KI-113 · `test/apps/testnet` installs with `npm ci || npm install`, under a comment promising reproducibility — RESOLVED
+
+- **Severity**: P3 · the fallback fires exactly when the lockfile has drifted,
+  which is the one case the lockfile exists for. Found by
+  `pin-sdk-test-toolchains`'s survey, which covers the SDKs and not this tree.
+- **Where**: three sites on one tree, **two of them merge gates** —
+  `.github/workflows/elixir.yml:114`, `.github/workflows/java-sdk.yml:158` and
+  `scripts/ci-local.sh:125`. The first carries a comment reading *"Equivalent to
+  `mix test.setup` (mix.exs alias) but with `npm ci` for reproducible CI
+  installs"*, and the command under it was:
+
+  ```
+      working-directory: test/apps/testnet
+      run: |
+        npm ci || npm install
+        npm run build
+  ```
+
+  A fourth site on the same tree, in the same family:
+  `docker/dev/Dockerfile.runtime:32` ran `npm install --omit=dev`, reading no
+  lockfile at all.
+- **Evidence**: the lockfile is tracked (`git ls-files` lists
+  `test/apps/testnet/package-lock.json`) and `package.json` declares
+  `typescript ^5.7.2`, `ws ^8.18.0` and `@types/ws ^8.5.13` — three carets whose
+  resolution the lock is the only thing pinning.
+- **Mechanism**: `npm ci` fails when the lockfile disagrees with `package.json`,
+  and that failure is the signal. `|| npm install` converts it into a silent
+  fresh resolution that rewrites the lock, which CI then discards — so the tree
+  that was built is recorded nowhere, and the comment above it says the opposite.
+  It is the same defect class `pin-sdk-test-toolchains` fixes in
+  `scripts/build-node-sdk.sh`, and the worse half of it: there the pin was read
+  by nothing, here the lockfile is read and then bypassed by a fallback that
+  reads as correct.
+- **A fix must** drop the `|| npm install` at every site so a stale lockfile
+  fails loudly, and make the Dockerfile's install honour the same lockfile. If
+  the fallback exists because the lock is known to drift, then the lock is what
+  needs fixing and the comment is what needs deleting — a fallback that hides
+  drift is not a remedy for it.
+- **RESOLVED 2026-09-01** by `pin-sdk-test-toolchains`. All three fallback
+  sites are a bare `npm ci` and `docker/dev/Dockerfile.runtime:32` is
+  `npm ci --omit=dev`; each carries the reason beside it, and the Dockerfile's
+  existing note on why `--omit=dev` keeps typescript is still true and stays.
+  **Two of the three are merge gates, so the fix was driven before it was made
+  rather than reasoned about** — `npm ci --dry-run` in `test/apps/testnet`:
+
+  ```
+  $ pwd
+  /home/moon/Code/flezha/test/apps/testnet
+  $ npm ci --dry-run
+  up to date in 221ms
+  $ echo $?
+  0
+  ```
+
+  The committed lockfile is current, so removing the fallback cannot redden a
+  gate: every run that reached `npm install` through the `||` would have been a
+  run `npm ci` was about to serve anyway.
+- **The spec now covers it, and did not before.** The requirement
+  `pin-sdk-test-toolchains` adds to `code-quality-baseline` was written about
+  *an SDK's* test toolchain, and `test/apps/testnet` is a test application, so
+  the rule as first drafted would not have caught the defect it was filed
+  beside. It carries an explicit clause instead — *where a lockfile is
+  committed, the installer SHALL honour it and SHALL NOT fall back to a
+  resolving install* — scoped to every directory that commits a lockfile,
+  including a test application or worked example that is not itself an SDK.
+- **The Dockerfile site was very nearly left standing, and that would have been
+  the wrong call.** It was first reported as adjacent-but-not-this-defect, on
+  the grounds that it builds a runtime image and has no fallback to remove. The
+  supervisor refused the distinction and was right to: the clause this change
+  lands reads *"where a lockfile is committed, the installer SHALL honour it"*,
+  `test/apps/testnet` commits one, and `npm install` is a resolving install — so
+  the site violated the requirement the same commit was introducing. **A change
+  must not land a rule its own repository breaks at a site the change's own
+  entry already names.** In a container the discarded rewrite is the harm the
+  clause names, exactly: what shipped in the image is recorded nowhere.
+- **This is a worse shape than the three defects the change was opened for, not
+  a lesser one.** Those had a pin nothing read. This had a lockfile *and* a
+  silent bypass: `npm ci || npm install` reads as correct, and re-resolves
+  exactly when `ci` fails — which is exactly when the failure was worth
+  hearing.
+
 ### KI-112 · `async` is an undeclared dependency of both the shipped fiber executor and the suite — RESOLVED, and the consumer-facing half of it is REFUTED
 
 - **Severity**: P2 · a documented, advertised executor does not work on a fresh

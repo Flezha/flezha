@@ -2,7 +2,7 @@
 
 # Install dependencies
 ```bash
-npm install
+npm ci
 ```
 
 ## Build the testnet

@@ -82,8 +82,11 @@ jobs:
 
       - name: The worked example's own test
         working-directory: examples/node
+        # `npm ci` against the example's own committed lock. The example is an
+        # application, not a published package, so the lock is the pin and this
+        # is the only install command that honours it.
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm test
 
   # The veneer, from the Rust side. `--features napi` must stay additive: the
