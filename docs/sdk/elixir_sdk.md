@@ -71,12 +71,21 @@ end
 `run/3` returns `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`;
 emits flush only on `{:ok, _}`. Optional `Procedure` callbacks: `entity_keys/0` (static
 keyset), `entities_for/1`, `mailbox_capacity/0` (1024; env `FLEZHA_MAILBOX_CAPACITY`, range
-`1..1_048_576`), `max_entities/0` (100_000), and the persistence three — `apply_change/2`
-(declares a changeful, persisted procedure; see [Persistence](#persistence)),
-`compact_after_bytes/0` (8 MiB) and `state_from_json/1`. `StreamOperative` takes an optional
-`persistence_enabled/0` (default `true`). `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3`
-(a reserved `flz.` key answers `{:error, {:reserved_metadata_key, k}}`), `apply/3` (fold a
-change and record it), `now/1` (wall ms, once per invocation), `entity_key/1`.
+`1..1_048_576`), `max_entities/0` (100_000 — the cap on a dynamic node's live Entities: at it
+a new key's input is dropped and counted, an existing key's is served),
+`entity_idle_ttl_ms/0` (nil; see [Dynamic entities](#dynamic-entities)), the persistence
+three — `apply_change/2` (declares a changeful, persisted procedure; see
+[Persistence](#persistence)), `compact_after_bytes/0` (8 MiB) and `state_from_json/1` — and
+the schema four — `schema_version/0` (1), `min_readable_schema_version/0` (the version),
+`migrate_state/2`, `migrate_change/2` (see [Schema evolution](#schema-evolution)).
+`StreamOperative` takes an optional `persistence_enabled/0` (default `true`).
+`Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers
+`{:error, {:reserved_metadata_key, k}}`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
+output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
+`{:error, {:key_not_allowed_on_non_keyed_channel, channel}}`, and a keyless emit from a
+Single Entity on a keyed sink answers `{:error, {:key_required_on_keyed_channel, channel}}`),
+`apply/3` (fold a change and record it), `now/1` (wall ms, once per invocation),
+`entity_key/1`.
 
 Entry-input idle rides the handle: `Flezha.SDK.last_entry_delivery(handle, channel)` answers
 when an entry channel last received a frame (`nil` before its first — the handle is free, so
@@ -90,13 +99,30 @@ latch and the tick. Contract: [`entry_input_idle.md`](entry_input_idle.md).
 
 ## Graph builder (v1 subset)
 
-`input`/`input_with` → `into`/`into_named` → `sink`/`sink_with`/`sealed`, with
+`input`/`input_with` → `into`/`into_named` → `keyed` → `sink`/`sink_with`/`sealed`, with
 `map`/`filter`/`flat_map`/`key_by` as edge transforms (fused into one closure per consumer
 edge), plus `named`, `on_full`, `retry_max`, `retry_backoff_ms`. Fan-out is handle reuse;
-unnamed mentions of one module unify (fan-in). Entity mode is derived: non-empty
-`entity_keys/0` → static; a keyed edge into a keyless procedure → dynamic; else single.
-Refusals accumulate into one `{:error, {:invalid_topology, issues}}` — e.g.
-`TransformAfterKeyBy`, `RetryMaxZero`, `DeferredBuilderSurface` (names the operative module).
+unnamed mentions of one module unify (fan-in). A sink frame is named by its producing node —
+`named/2`'s name, else the procedure's `name/0`, never the plugin — so `named("input") |>
+sink("relay_out")` reaches a forward target's `input` entry; the user's metadata rides the
+frame. Entity mode is derived: non-empty `entity_keys/0` → static; a keyed edge into a
+keyless procedure → dynamic; else single. Refusals accumulate into one
+`{:error, {:invalid_topology, issues}}` — e.g. `TransformAfterKeyBy`, `RetryMaxZero`,
+`KeyedInterProcedureChannel` (`keyed/1` reaching a procedure before any sink),
+`DeferredBuilderSurface` (names the operative module).
+
+## Keyed channels
+
+`keyed/1` on the handle before `sink/2` declares output identity on that sink — the
+reference's `.keyed()`. Every frame it produces carries `flz.entity`
+(`<operative id>/<procedure name>/<entity key or empty>`), `flz.seq`
+(`<change_seq at handout>.<emit ordinal>` — the seq the invocation started at, before its own
+records advanced it, and the ordinal counting the invocation's plugin outputs from zero,
+stamped or not) and `flz.key`, appended after the user's metadata so a stamp cannot be
+clobbered. The key is the emit's own (`emit_keyed/3`), else the sink route's `key_by`, else
+the emitting Entity's; a Single Entity with none is refused at the emit. A sink not declared
+keyed carries no `flz.` key. The stamps are minted at the routing seam in the Operative, this
+SDK's own core; there is no tier here yet, so every keyed emit is stamped.
 
 ## Overflow, retry, park
 
@@ -136,6 +162,23 @@ range **before** any Entity state exists (a miss parks with the contract error n
 and its group); static keys outside the range idle silently; a keyless topology refuses the
 bind (`PartitionsWithoutKeyedProcedure`). The hash is the controller's own
 `Flezha.Partition.group_of/1` ([`partitioned_operatives.md`](partitioned_operatives.md)).
+
+## Dynamic entities
+
+A dynamic node mints one Entity per key up to its `max_entities/0`; at the cap a new key's
+input is dropped and counted (`[:flezha, :sdk, :dynamic]` telemetry, `event: :capped`), an
+existing key's is served, and a restore that would materialise a key past the cap is refused.
+With `entity_idle_ttl_ms/0` declared, the Operative runs one `:reap` tick at
+`FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms. The sweep runs in
+the Operative's own process — while it runs no push is routed, which is the drain gate — and
+asks each Entity whether it has been idle past the TTL holding no work (a bounded probe; a
+busy one is skipped until the next sweep), then evicts an idle one synchronously: the Entity
+ships `delete_entity_state` on its own record stream when the class persists (behind its
+records by construction), clears its slot so a successor is a cold start from `init_state/1`,
+and stops. At most 256 evictions happen per sweep; the rest wait for the next tick. Evicted
+keys are remembered (1 024 at most), so a live read of one answers `entity_evicted` rather
+than `entity_not_found`. Without a TTL nothing is swept and the Entities live for the
+operative's lifetime.
 
 ## Persistence
 
@@ -177,7 +220,7 @@ behind the Entity's records and replies the seq and size; `EntityState` answers 
 Decision-10 JSON (`%{procedure => state}` for a Single node, `%{procedure => %{key => state}}`
 for a Static or Dynamic one, narrowed by the selector) with `flz.change_seq` on the reply
 frame for one Entity and the refusals `entity_key_without_procedure`, `procedure_not_found`,
-`entity_not_found`, `entity_busy` by name; `EntityApplyState`, `MigrationDeserialization` and
+`entity_not_found`, `entity_evicted`, `entity_busy` by name; `EntityApplyState`, `MigrationDeserialization` and
 a non-empty `AddOperative.init_values` hand each procedure's JSON to its `state_from_json/1`
 (the object itself by default — declare it when the state's keys are atoms);
 `CreditWindowInit` and `CreditGrant` drive `Flezha.SDK.Credit`, one window per runner that
@@ -187,10 +230,27 @@ of one changeful module in a class would share a WAL identity and are refused at
 (`DuplicatePersistentProcedure`); the reference gives a named node its own identity, but here
 `named/2` also names the channel and the procedure name is the WAL segment.
 
+### Schema evolution
+
+`schema_version/0` (1) is stamped on every record and resolved per record on restore against
+`min_readable_schema_version/0` (the version itself unless declared; a floor above the
+version reads the version only): equal decodes, between the floor and the version migrates,
+above the version or below the floor refuses by name with the shared core's wordings. A
+migrating record is decoded and handed to `migrate_state/2` (a snapshot) or
+`migrate_change/2` (a change) with the stamped version and the DECODED term — the body codec
+is `:erlang.term_to_binary/2`, so there is no second codec for an author to choose —
+answering `{:ok, term}` at the running version or `{:error, reason}`. Both default to
+refusing (`no migration from schema_version N: the procedure declares none`), and a failing
+one refuses naming its reason and the version, reseating nothing. A restore that migrated
+answers `migrated`, and the controller compacts behind it so the migration is paid once.
+
 A graceful stop — SIGTERM (the BEAM's own `init:stop`, in a runner-only boot), `close/1`, a
-`RunnerDisconnect` — runs `terminate/2`: every live operative is serialised, one
+terminal `RunnerDisconnect` — runs `terminate/2`: every live operative is serialised, one
 `RunnerShutdownNotification` ships per operative, and the acks are awaited at most 2 s in
-parallel before the connection closes. `child_spec/1` sets a 10 s shutdown budget for it.
+parallel before the connection closes. `child_spec/1` sets a 10 s shutdown budget for it. A
+non-terminal `RunnerDisconnect` stops the runner in place — the reference's `Stopped`: the
+ack goes out, this side closes its streams, nothing reconnects and the process stays, so a
+`:permanent` supervisor has nothing to restart into a second registration.
 
 ## Runner-only boot (standalone)
 
@@ -207,13 +267,10 @@ The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_
 `deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
 the conformance gate ([`conformance.md`](conformance.md)). In prose: the effectively-once
 tier and everything on it (effect records, checkpoints, `ctx.stable_id`); correction windows
-and the clock kinds; entity timers; keyed channels (`keyed`, `emit_keyed`, the output identity
-stamps); the workflow kind (`kind: workflow` on `AddOperative` is refused: `workflow kind is
-not supported by the Elixir stream SDK`); `merge`, `route_latest`, `branch`, `codec`;
-dynamic-entity eviction (dynamic Entities live for the operative's lifetime); schema
-evolution (`schema_version/0` and the migrations — every record is stamped at version 1 and
-any other version is refused). A builder/ctx call into a deferred surface fails registration
-loudly, naming the operative module.
+and the clock kinds; entity timers; the workflow kind (`kind: workflow` on `AddOperative` is
+refused: `workflow kind is not supported by the Elixir stream SDK`); `merge`, `route_latest`,
+`branch`, `codec`. A builder/ctx call into a deferred surface fails registration loudly,
+naming the operative module.
 
 One more, outside the vocabulary because no capability names it: the hex package
 (`package-elixir-sdk`).

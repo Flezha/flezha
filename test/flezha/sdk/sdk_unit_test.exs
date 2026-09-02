@@ -234,6 +234,43 @@ defmodule Flezha.SDK.UnitTest do
     assert :Cycle in issues(Cyc)
   end
 
+  test "KeyedInterProcedureChannel and KeyedOnEntry — keyed/1 needs a plugin sink" do
+    defmodule KeyedEdge do
+      def factory_id, do: "keyed_edge"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.input("in")
+          |> Channels.into(EchoProc)
+          |> Channels.keyed()
+          |> Channels.into(KeyedProc)
+          |> Channels.sink("out")
+    end
+
+    defmodule KeyedEntry do
+      def factory_id, do: "keyed_entry"
+      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink("out")
+    end
+
+    assert {:error, {:invalid_topology, issues}} = Topology.build(KeyedEdge)
+    assert Enum.any?(issues, &match?({:KeyedInterProcedureChannel, _}, &1))
+    assert {:error, {:invalid_topology, [{:KeyedOnEntry, "in"}]}} = Topology.build(KeyedEntry)
+  end
+
+  test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do
+    single = Ctx.new(nil, nil, 0, channel: "c", keyed_sink?: true, key_required?: true)
+    assert {:error, {:key_required_on_keyed_channel, "c"}} = Ctx.emit(single, :a)
+    assert {:error, {:key_required_on_keyed_channel, "c"}} = Ctx.emit_with_meta(single, :a, %{})
+    assert :ok = Ctx.emit_keyed(single, "k", :a)
+    assert Ctx.take_emits(single) == [{:a, %{}, "k"}]
+
+    plain = Ctx.new(nil, "k", 0, channel: "p")
+    assert {:error, {:key_not_allowed_on_non_keyed_channel, "p"}} = Ctx.emit_keyed(plain, "k", :a)
+    assert :ok = Ctx.emit(plain, :a)
+    assert Ctx.take_emits(plain) == [{:a, %{}, nil}]
+  end
+
   test "a builder call into a deferred surface fails registration naming the module" do
     defmodule Deferred do
       def factory_id, do: "def"
@@ -256,7 +293,7 @@ defmodule Flezha.SDK.UnitTest do
     assert {:error, {:reserved_metadata_key, "flz.seq"}} =
              Ctx.emit_with_meta(ctx, :c, %{"flz.seq" => "1"})
 
-    assert Ctx.take_emits(ctx) == [{:a, %{}}, {:b, %{"m" => "1"}}]
+    assert Ctx.take_emits(ctx) == [{:a, %{}, nil}, {:b, %{"m" => "1"}, nil}]
   end
 
   # --- Codec ---

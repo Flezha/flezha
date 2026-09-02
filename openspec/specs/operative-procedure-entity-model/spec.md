@@ -745,6 +745,8 @@ When `entity_idle_ttl()` returns `Some(ttl)`, the SDK SHALL run one reaper threa
 
 The reaper SHALL sweep on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
 
+The Elixir SDK carries the same rule in its own core under its own spelling: `entity_idle_ttl_ms/0` (default `nil`), one `:reap` tick per Operative process at the same cadence, and the Operative's routing serialisation as the drain gate — while the sweep runs no push can be routed, an Entity mid-dispatch or holding queued or deferred work is skipped until the next sweep, and an idle one evicts synchronously so its `delete_entity_state` precedes any successor's first record on the same stream.
+
 #### Scenario: No eviction by default
 - **WHEN** a dynamic-mode Procedure does not override `entity_idle_ttl()` (it returns `None`)
 - **THEN** no reaper thread SHALL be spawned and its Entities SHALL never be evicted by idle TTL
@@ -782,6 +784,8 @@ When a dynamic-mode Entity has been evicted and a subsequent input arrives for t
 Each dynamic-mode Procedure SHALL declare a maximum entity count via `fn max_entities() -> usize` (default `100_000`). When the per-Procedure entity count reaches this cap, the runtime SHALL drop new-key inputs without allocating an Entity and SHALL increment `inputs_dropped_capped_total`. Inputs whose edge key function resolves to a key with an existing Entity SHALL NOT be affected by the cap; they SHALL be processed normally.
 
 The cap is soft: enforcement is best-effort against concurrent inserts. The runtime SHALL NOT propagate an over-cap rejection back to the agent; the input is silently dropped and the counter is incremented.
+
+The Elixir SDK's `max_entities/0` (default `100_000`) SHALL bind the same way at the point a dynamic key would mint an Entity, counting the drop through its `[:flezha, :sdk, :dynamic]` telemetry; a restore that would materialise a key past the cap SHALL be refused rather than minted.
 
 #### Scenario: Cap reached drops new-key inputs
 - **WHEN** a dynamic-mode Procedure with `max_entities = 5` already owns 5 Entities and an input arrives whose edge key function returns a 6th unseen key

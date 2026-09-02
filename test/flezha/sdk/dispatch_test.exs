@@ -42,6 +42,25 @@ defmodule Flezha.SDK.DispatchTest do
         |> Channels.sink("out")
   end
 
+  defmodule MetaEchoProc do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "meta_echo"
+    def init_state(_), do: nil
+
+    def run(input, s, ctx) do
+      :ok = Ctx.emit_with_meta(ctx, input, %{"tag" => "x"})
+      {:ok, s}
+    end
+  end
+
+  defmodule UnnamedMetaOp do
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "unnamed_meta_op"
+
+    def channels(c),
+      do: c |> Channels.input("in") |> Channels.into(MetaEchoProc) |> Channels.sink("out")
+  end
+
   defmodule OrderedProc do
     @behaviour Flezha.SDK.Procedure
     def name, do: "ordered"
@@ -178,7 +197,15 @@ defmodule Flezha.SDK.DispatchTest do
   test "full dispatch routes input → run → emit → sink output on a secondary" do
     %{op: op} = start_operative(EchoOp)
     Inbox.input(op, "in", "hello", %{})
-    assert_receive {:flz_data, _id, "op-1", "hello", %{"channel" => "out"}}, 1_000
+    # The frame names the producing node's channel, never the plugin.
+    assert_receive {:flz_data, _id, "op-1", "hello", %{"channel" => "e"}}, 1_000
+  end
+
+  test "an unnamed node's frame carries its procedure name, and user metadata rides it" do
+    %{op: op} = start_operative(UnnamedMetaOp)
+    Inbox.input(op, "in", "hello", %{})
+    assert_receive {:flz_data, _id, "op-1", "hello", meta}, 1_000
+    assert meta == %{"channel" => "meta_echo", "tag" => "x"}
   end
 
   test "per-Entity inputs are processed in arrival order" do
@@ -205,7 +232,7 @@ defmodule Flezha.SDK.DispatchTest do
     Inbox.input(op, "in", "x", %{})
 
     # third attempt succeeds → one completed dispatch, output emitted
-    assert_receive {:flz_data, _id, "op-1", "x", %{"channel" => "out"}}, 2_000
+    assert_receive {:flz_data, _id, "op-1", "x", %{"channel" => "f"}}, 2_000
     assert Counters.dispatches(counters) == 1
   end
 

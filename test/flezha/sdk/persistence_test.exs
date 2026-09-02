@@ -9,19 +9,28 @@ defmodule Flezha.SDK.PersistenceTest do
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Codec, Ctx, Entity, Operative, Park, Procedure, Record, Topology}
+  alias Flezha.SDK.{Codec, Counters, Ctx, Entity, Operative, Park, Procedure, Record, Topology}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
 
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{
+    CappedOp,
     CounterOp,
     CounterProc,
+    CounterV2Op,
+    CounterV2Proc,
     DynCounterOp,
     EchoOp,
     EchoProc,
+    FlooredProc,
+    GatedTtlOp,
+    KeyedOp,
+    MixedSinksOp,
     OptedOutCounterOp,
     OptedOutOp,
+    SingleKeyedOp,
     ThriftyProc,
+    TtlOp,
     TwoCountersOp
   }
 
@@ -198,6 +207,181 @@ defmodule Flezha.SDK.PersistenceTest do
     end
   end
 
+  describe "keyed sinks" do
+    @label "op-1/stamped/k0"
+
+    test "a keyed sink stamps flz.entity, flz.seq and flz.key after user metadata; the ordinal advances per plugin output and restarts per item" do
+      %{op: op} = start_operative(KeyedOp)
+      Inbox.input(op, "in", "4", %{})
+
+      assert [{"entity_state_change", _, _}, {"op-1", "a", first}, {"op-1", "b", second}] =
+               frames(3)
+
+      assert first == %{
+               "channel" => "c",
+               "tag" => "x",
+               "flz.entity" => @label,
+               "flz.seq" => "0.0",
+               "flz.key" => "k0"
+             }
+
+      assert second == %{
+               "channel" => "c",
+               "flz.entity" => @label,
+               "flz.seq" => "0.1",
+               "flz.key" => "k0"
+             }
+
+      # The next item: the handout seq moved to 1 and the ordinal restarted.
+      Inbox.input(op, "in", "6", %{})
+
+      assert [_record, {"op-1", "a", %{"flz.seq" => "1.0"}}, {"op-1", "b", %{"flz.seq" => "1.1"}}] =
+               frames(3)
+    end
+
+    test "a plain sink beside a keyed one advances the ordinal without being stamped" do
+      %{op: op} = start_operative(MixedSinksOp)
+      Inbox.input(op, "in", "4", %{})
+
+      assert [
+               _record,
+               {"op-1", "a", keyed_a},
+               {"op-1", "a", plain_a},
+               {"op-1", "b", keyed_b},
+               {"op-1", "b", plain_b}
+             ] =
+               frames(5)
+
+      assert keyed_a["flz.seq"] == "0.0" and keyed_b["flz.seq"] == "0.2"
+      assert plain_a == %{"channel" => "c", "tag" => "x"} and plain_b == %{"channel" => "c"}
+    end
+
+    test "a keyless emit from a Single Entity on a keyed sink is refused at emit time, nothing emitted" do
+      %{op: op, counters: counters} = start_operative(SingleKeyedOp)
+      Inbox.input(op, "in", "x", %{})
+
+      assert_receive {:"$gen_cast", {:park, _pid, _identity, %{error: error}}}, 2_000
+      assert error =~ "key_required_on_keyed_channel"
+      assert error =~ "\"r\""
+      # Emits flush only on `{:ok, _}`, and no dispatch completed.
+      assert Counters.dispatches(counters) == 0
+    end
+  end
+
+  describe "dynamic entities" do
+    setup do
+      id = {__MODULE__, make_ref()}
+      :telemetry.attach(id, [:flezha, :sdk, :dynamic], &__MODULE__.forward_dynamic/4, self())
+      on_exit(fn -> :telemetry.detach(id) end)
+      :ok
+    end
+
+    def forward_dynamic(_event, measurements, metadata, pid),
+      do: send(pid, {:dynamic, measurements, metadata})
+
+    test "a dynamic node with max_entities 2 mints two Entities and drops the third key's input, counting it" do
+      %{op: op, counters: counters} = start_operative(CappedOp)
+      for n <- ~w(1 2 3), do: Inbox.input(op, "in", n, %{})
+      # Two dispatches: two records and two outputs, and nothing for k3.
+      [_, _, _, _] = frames(4)
+      assert [{"capped", :dynamic, [{"k1", _}, {"k2", _}]}] = Operative.entities(op)
+      assert_receive {:dynamic, %{count: 1}, %{operative_id: "op-1", event: :capped}}, 1_000
+      assert Counters.dispatches(counters) == 2
+
+      # A live key is unaffected by the cap.
+      Inbox.input(op, "in", "1", %{})
+      assert [{"entity_state_change", _, _}, {"op-1", "2", _}] = frames(2)
+    end
+
+    test "an Entity idle past its TTL is evicted on the sweep: delete_entity_state follows its record, the slot is gone, the key reads evicted, the next input cold-starts at seq 0" do
+      %{op: op} = start_operative(TtlOp)
+      Inbox.input(op, "in", "5", %{})
+      assert [{"entity_state_change", _, _}, {"op-1", "5", _}] = frames(2)
+      {:ok, pid} = Operative.lookup(op, "ttl", "k5")
+
+      # A sweep right after the push keeps it: not idle past the TTL yet.
+      send(op, :reap)
+      assert {:ok, ^pid} = Operative.lookup(op, "ttl", "k5")
+
+      ref = Process.monitor(pid)
+      assert_receive {:flz_data, _, "delete_entity_state", frame, _}, 2_000
+      assert {:ok, {"op-1", "ttl", "k5"}} = Wire.decode_entity_id(frame)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+      assert_receive {:dynamic, %{count: 1}, %{operative_id: "op-1", event: :evicted}}, 1_000
+      assert {:error, :entity_evicted} = Operative.lookup(op, "ttl", "k5")
+      assert {:error, :entity_not_found} = Operative.lookup(op, "ttl", "never")
+      assert [{"ttl", :dynamic, []}] = Operative.entities(op)
+
+      # A cold start for the same key: `init_state/1` at seq 0, so the value
+      # reads 5 rather than the evicted 10.
+      Inbox.input(op, "in", "5", %{})
+      assert [{"entity_state_change", _, _} = r, {"op-1", "5", _}] = frames(2)
+      assert {0, {:delta, 5}, _} = record(r)
+      assert {:ok, fresh} = Operative.lookup(op, "ttl", "k5")
+      assert fresh != pid
+    end
+
+    test "a busy Entity is skipped by the sweep and evicted once it is idle" do
+      %{op: op} = start_operative(GatedTtlOp)
+      Inbox.input(op, "in", "x", %{})
+      {:ok, pid} = Operative.lookup(op, "gated_ttl", "x")
+
+      # Blocked inside run/3: the probe finds it busy and the sweep moves on.
+      send(op, :reap)
+      assert {:ok, ^pid} = Operative.lookup(op, "gated_ttl", "x")
+      assert Process.alive?(pid)
+
+      ref = Process.monitor(pid)
+      send(pid, :go)
+      assert_receive {:flz_data, _, "op-1", "x", _}, 2_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+      assert_receive {:dynamic, %{count: 1}, %{operative_id: "op-1", event: :evicted}}, 1_000
+      assert {:error, :entity_evicted} = Operative.lookup(op, "gated_ttl", "x")
+    end
+  end
+
+  describe "schema evolution" do
+    test "a procedure declaring schema_version 2 stamps 2; with a floor of 1 a v1 snapshot and a v1 change fold through its migrations and the fold reports migrated" do
+      %{op: op} = start_operative(CounterV2Op)
+      Inbox.input(op, "in", "1", %{})
+      assert [{"entity_state_change", frame, _}, {"op-1", "1", _}] = frames(2)
+      assert {:ok, %{header: <<3, _::32, 2::32-big, 7, _::binary>>}} = Wire.decode_frame(frame)
+
+      snapshot = Record.encode_body(%{value: 4})
+
+      assert {:ok, %{value: 7, unit: "n"}, 0, true} =
+               Record.fold(
+                 CounterV2Proc,
+                 nil,
+                 Record.header(snapshot, 1),
+                 snapshot,
+                 change_record(0, {:delta, 3}, 1),
+                 0
+               )
+
+      # A record at the running version decodes directly, and reports no migration.
+      assert {:ok, %{value: 2, unit: "n"}, 0, false} =
+               Record.fold(
+                 CounterV2Proc,
+                 nil,
+                 <<>>,
+                 <<>>,
+                 change_record(0, {:delta, 2, "x"}, 2),
+                 0
+               )
+    end
+
+    test "a failing migration refuses naming its reason and the version; a floor without a migration keeps the present wording" do
+      snapshot = Record.encode_body(:not_a_counter)
+
+      assert {:error, "migration from schema_version 1 failed (snapshot): bad shape"} =
+               Record.fold(CounterV2Proc, nil, Record.header(snapshot, 1), snapshot, <<>>, 0)
+
+      assert {:error, "no migration from schema_version 1: the procedure declares none (change)"} =
+               Record.fold(FlooredProc, nil, <<>>, <<>>, change_record(0, {:delta, 1}, 1), 0)
+    end
+  end
+
   describe "the Entity" do
     test "a changeful dispatch ships one record per change, each before its own output frame" do
       %{op: op} = start_operative(CounterOp)
@@ -214,7 +398,7 @@ defmodule Flezha.SDK.PersistenceTest do
       assert {0, {:delta, 3}, %{entity_id: {"op-1", "counter", ""}}} = r0
       assert {1, {:delta, 4}, _} = r1
 
-      assert [{"op-1", "3", %{"channel" => "out"}}, {"op-1", "7", _}] =
+      assert [{"op-1", "3", %{"channel" => "c"}}, {"op-1", "7", _}] =
                for({"op-1", _, _} = o <- four, do: o)
 
       first_record = Enum.find_index(ids, &(&1 == "entity_state_change"))

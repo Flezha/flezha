@@ -226,7 +226,7 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Entity may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | on | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
-| `FLEZHA_REAP_INTERVAL_MS` | `min(entity_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` — idle-Entity reaper cadence |
+| `FLEZHA_REAP_INTERVAL_MS` | `min(entity_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operative — idle-Entity reaper cadence |
 | `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` — frames buffered while no sink is installed |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` — write failures inside the window that request a reconnect |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` |
@@ -554,8 +554,8 @@ Overridden on the `Procedure` trait (Rust) or Procedure class (Java).
 |---|---|---|
 | `compact_after_bytes()` (`compactAfterBytes`) | 8 MiB, in lockstep with `:default_compact_after_bytes` | Per-Entity WAL size reported to the controller as the snapshot-compaction trigger. |
 | `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Entity; precedence is the override, then `FLEZHA_MAILBOX_CAPACITY`, then the default. Rust overrides must also set `MAILBOX_CAPACITY_OVERRIDDEN = true`. |
-| `entity_idle_ttl()` (`entityIdleTtl`) | `None` — no eviction | Evict a dynamic Entity after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
-| `max_entities()` | `100_000` | Soft cap on live dynamic Entities per Procedure; new keys past it are dropped. |
+| `entity_idle_ttl()` (`entityIdleTtl`; Elixir `entity_idle_ttl_ms/0`) | `None` — no eviction | Evict a dynamic Entity after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
+| `max_entities()` (Elixir `max_entities/0`) | `100_000` | Soft cap on live dynamic Entities per Procedure; new keys past it are dropped. |
 | `type Clock` | — (must be declared) | `WallClock`, `EventTimeFrom<..>` or `LogicalClock`; decides `ctx.now()` and event-time ordering. |
 
 ### Workflow class options

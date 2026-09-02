@@ -1027,6 +1027,125 @@ four checkpoints. **Next: R6 change 2 = `carry-keyed-dynamic-and-schema-in-elixi
 stamps + the channel-name deviation, the TTL reaper + `max_entities` (KI-135), the schema
 callbacks), fresh worker, survey-lite from the R6 design's D13 table then implement.
 
+**Docs committed `41ad380f` + `c45c543d`; tree clean 07:22; the R6 change-1 worker ended with its
+report (no subagent listed). R6 CHANGE 2 worker spawned 07:23** — fresh `general-purpose`, change
+id `carry-keyed-dynamic-and-schema-in-elixir`, two-step: step 1 writes the change (stamps + the
+channel-name deviation; the TTL reaper + KI-135's cap; the schema callbacks over the fold's
+decision table; three flips into the required set red-first; sizes against +865-for-560; the
+`entity.ex`/`operative.ex` ceilings), STOPS for my ruling; step 2 implements with checkpoints
+after every two batches. **Last seen 07:06 (+10m)**: reading, no change dir yet, load 0.84. **07:17 (+21m)**: still no change dir; nudge at +30 if none.
+
+### R6 CHANGE 2 SURVEY VERIFIED AND APPROVED 07:35
+
+`openspec/changes/carry-keyed-dynamic-and-schema-in-elixir/` — proposal, design D0–D14, 6 batches
+/ 36 boxes, five deltas machine-counted (elixir-sdk 4→6, 5→7 + 3 ADDED; conformance 12→13;
+output-identity 5→6; entity-model 4→4, 3→3; schema-evolution 3→3, 1→2), `--strict` valid; survey
+29 min / 417 k tokens. **Three corrections it made to the brief**: the schema half is two-thirds
+built (the fold's decision table spells all four wordings and reports `migrated`; only the
+declaration and the migrate arm are missing); `dynamic_entity` on Elixir is the bench's
+`DynamicProc`, gaining `apply_change` and `entity_idle_ttl_ms/0`; the reap-and-delete scenario
+is `reference_runtime: true` for a JAVA reason (its lazily-created Entity's state never reaches
+disk), so the Elixir reaper is proved by a unit test over the real `delete_entity_state` frame
+plus the live-read scenario — **the pin stays**. **Rulings**: the frame's channel name becomes
+the producing node's (closing the v1 deviation; two assertions move); `keyed/1` + `emit_keyed`
+with the refusals at emit time and the stamps after user metadata at the routing seam;
+**finding 1 — emit metadata dropped at `flush_emits/2` today — fixed in batch 1 red-first**;
+the reaper as a router tick with a probe-then-evict handshake, **measured at 1 000 idle Entities
+against a threshold set now: one sweep inside a quarter of its interval (12.5 ms at the e2e's
+50 ms), else D5's `last_push_ms` alternative**; KI-135's cap over a per-node map with the
+reference's silent drop + telemetry; migrations take the decoded term. Sized **+300 (240–380)**
+against +865-for-560. **Step 2 authorised**: batches 1–2 (keyed, dynamic), checkpoint 1.
+**Last seen 07:37 (+10m into batch 1)**: `channels.ex`, `ctx.ex`, `entity.ex`, `operative.ex`,
+`inbox.ex`, `stream.ex`, `topology.ex` and four test files edited, +791/−182; nothing running,
+load 0.43; no commit of the worker's.
+
+### R6 CHANGE 2 CHECKPOINT 1 VERIFIED 08:05 — `d88ec4c1` (keyed sinks + the stamps, the cap, the reaper)
+
+**My runs**: `mix test test/flezha/sdk/ --warnings-as-errors` **exit 0**, 97 passed; boundary OK;
+`--check --lint` moving only `lib/flezha/sdk 2770 → 3003` (+233 at the halfway point of a change
+priced +300); the smoke module under elixir `17 passed` twice (the worker's red is
+intermittent). Worker's red-first on every piece (the channel name `"f"` vs `"out"`; the dropped
+metadata `%{"channel" => "out"}` vs the user's `"tag"`; `keyed/1` as `DeferredBuilderSurface`;
+the cap `[k1, k2, k3]` against 2; no `delete_entity_state` frame). One commit for the two
+batches — the files overlap by hunk. **The measurement**: probe-only sweep over 1 000 Entities
+**7.2 ms** (inside the 12.5 ms threshold); evict-all **37.1 ms** (over) — **RULED: a per-sweep
+eviction budget** (~256 per tick at the measured 37 µs each), re-measured once; the
+`last_push_ms` alternative cannot move the evictions and is refused. **Three findings**: (1)
+**KI-136** — the non-terminal `RunnerDisconnect` branch returns `{:stop, :normal, …}` and the
+`:permanent` supervisor re-registers the runner (KI-131's shape on the other branch; the smoke
+red's mechanism, intermittent because the race usually loses) — boxed and fixed by this worker
+as its own commit before batch 3; (2) **KI-134 now leaks on EVERY multi-module elixir run and
+is SIGTERM-resistant** (fifth and sixth sightings, two of them mine); (3) a third assertion
+pinned the plugin name, moved. `operative.ex` 614 raw (proposal ~560), `entity.ex` 559 — under
+800. Baseline re-recorded (audit below). **Next**: the eviction budget, the KI-136 fix
+red-first, then batches 3–4 → checkpoint 2. **Committed `d88ec4c1` + `41035ebd` (08:08).** One more thing
+my log showed and the exit code did not: a compile warning in `lib/flezha/sdk` ("clauses with
+the same name and arity should be grouped together — `def handle_call/3`") let through by a
+cached compile — the first box of the go, proved by `mix compile --force --warnings-as-errors`.
+**Last seen 08:01 (+10m)**: `operative.ex`, `runner_server.ex` (KI-136), `procedure.ex`,
+`record.ex` (schema), the bench factory, the twins, the manifest flip, `node_test_helper.ex`
+(three atoms) and five test files edited, +542/−169; the partitioned arm running (its BEAM and
+runners, 1 s old); no commit of the worker's.
+
+### R6 CHANGE 2 CHECKPOINT 2 VERIFIED 08:25 — `1b2b695a` (KI-136), `dfc0bf9f` (the budget, the clauses), `83b3206c` (schema, twins, three flips)
+
+**Five capabilities are universal**: `entry_idle`, `state_persistence`, and now `keyed_channels`,
+`dynamic_entity`, `schema_evolution` — the gate red three times by its own voice, one per flip.
+**My runs**: `mix compile --force --warnings-as-errors` exit 0 with zero warnings (the clause
+grouping); the SDK suite 101 passed exit 0; boundary OK; the four arms under elixir — smoke
+`18 passed, 5 skipped`, partitioned `2 passed`, dynamic_entity `2 passed`, schema_evolution
+`2 passed` — no leftover on any uds run; gate 20 with the three atoms. **KI-136 fixed** by
+mirroring the reference (teardown, control handle closed, `stopped?: true`, stays), red-first;
+**KI-135 fixed** in `d88ec4c1` (the cap); both → *Resolved*. The eviction budget: 10.6 ms at
+1 000 with 744 deferred. The one new pair (`DynamicProc ↔ PartitionRelayProc` both journaling a
+push, as the two reference procedures do) **ruled a fixture twin**, accepted — a `defdelegate`
+from a test app into a bench module would couple two trees for 66 tokens. The change stands at
+**+287 against +300 (240–380)** — the second change landed inside its estimate. Baseline
+re-recorded (audit below). **Batches 5–6 authorised** (docs, dev note; full `mix test`, the
+smoke tier, the gates), checkpoint 3 is the close.
+
+### R6 CHANGE 2 CHECKPOINT 3 REPORTED 08:28 — verified bar the ticks, worker sent back
+
+The worker's close: full `mix test` 2027 passed exit 0; the elixir smoke tier 2045 passed, 5 skipped,
+exit 0; `mix bench --runtime elixir` `regression` 90 416 msg/s and `dynamic` 1 000/1 000 exit 0; the
+docs in present tense (my scan finds no history marker); the dev note written. **My runs**: format
+gate 0, the five naming gates 0, `mix compile --warnings-as-errors` 0 with zero warnings, every
+MODIFIED block carries every current scenario by name, `--check --lint` one row —
+`lib/mix prod_loc 3492 → 3493`, the bench twin's `keyed()` — **RULED accept**: the reference bench
+sinks are keyed, so the durable bench path pays for its stamps on both runtimes. **The one hole**:
+`tasks.md` has 0 of 36 boxes ticked against a report claiming every batch done; the worker is sent
+back to tick what it validated and leave the rest with a reason. Archive, commit and re-record follow
+the ticks. `ListAgents` shows no subagent (the worker is resumable by id).
+
+### R6 CHANGE 2 IS DONE — `carry-keyed-dynamic-and-schema-in-elixir`, closed `97aa1370`, archived
+
+The worker ticked 35 of 36 and left `0.4` open honestly (no separate starting reading); I ticked it
+— the starting numbers ARE `baseline.json` at `c45c543d`. Archived as
+`2026-09-02-carry-keyed-dynamic-and-schema-in-elixir` (specs: `+3, ~9, -0`). **Eight commits**:
+`d88ec4c1` `1b2b695a` `dfc0bf9f` `83b3206c` `8dbf8a05` `97aa1370` and the two docs commits.
+**Ratchet whole change** (`c45c543d` → `97aa1370`): `lib/flezha/sdk prod_loc` 2 770 → 3 057
+(**+287** against +300, range 240–380); `lib/mix` 3 483 → 3 493; `duplicate_pairs` `lib/mix`
+1 → 2, `test/apps` 144 → 145 (the fixture twin); `files_over_800` 0; credo in the area 5 → 4.
+Baseline re-recorded at `97aa1370` (one row, `lib/mix prod_loc 3492 → 3493`, the bench twin's
+`keyed()` — accepted: parity with the reference bench sinks); `--check --lint` **0**. **Five
+capabilities universal**: `entry_idle`, `state_persistence`, `keyed_channels`, `dynamic_entity`,
+`schema_evolution`. KI-135 and KI-136 *Resolved*. Decisions taken under the user's instruction:
+the fixture-twin pair, the bench-sink `keyed()` (beyond the brief, kept for parity), the 256
+eviction budget. Machine clean; `ListAgents` no subagent.
+
+**OWED — index lines for `carry-keyed-dynamic-and-schema-in-elixir`** (verbatim; `CLAUDE.md` and
+`INDEX.md` are the other session's uncommitted split, same reason as the six before):
+`CLAUDE.md` hook:
+`- [`keyed_channels`, `dynamic_entity` and `schema_evolution` in the Elixir SDK — the router is the drain gate](docs/dev_notes/carry-keyed-dynamic-and-schema-in-elixir.md) — an Elixir sink frame is named by its NODE, the stamps read the seq the dispatch STARTED at, and an evicted Entity must delete its own slot or the cold start is a warm one`
+`INDEX.md` abstract: **carry-keyed-dynamic-and-schema-in-elixir** (R6 change 2, 2026-09-02) — the identity stamps, the idle reaper with its cap and eviction trace, and the per-Procedure schema declaration with its migrations, re-expressed in the Elixir SDK's own core; `keyed_channels`, `dynamic_entity` and `schema_evolution` join the required set, five capabilities universal. Every Elixir sink frame is named by its producing node as every other SDK's is (closing the v1 deviation `partition_relay` documented), `keyed/1` and `emit_keyed/3` arrive with the two ctx refusals, and the stamps are minted at the routing seam from the seq the dispatch started at. The sweep runs in the Operative — the router's serialisation is the drain gate — with a two-call handshake per Entity, a 256-eviction budget per tick (37 ms → 10.6 ms at 1 000 idle), and the Entity clearing its own slot. `max_entities/0` binds (KI-135). Migrations take the decoded term. Found and fixed on the way: a non-terminal `RunnerDisconnect` exited the RunnerServer and its `:permanent` supervisor registered it again (KI-136 — it now closes its own write half and stays put, the reference's `Stopped`); `emit_with_meta/3`'s metadata never reached the wire; a cached compile hid a clause-grouping warning from `--warnings-as-errors`. Cost `lib/flezha/sdk` +287 against +300 estimated.
+
+**Next: R6 change 3 = `carry-entity-timers-in-elixir`** (timers + clocks: `entity_timers`), fresh
+worker, survey-lite from the R6 design's table then implement. What it inherits from change 2's
+report: `entity.ex` at ~560 raw takes its second split there, as the survey said; `handout_seq` and
+the `{value, meta, key}` emit record are the seams a timer firing's outputs ride; the `:reap` tick
+and `EntryIdle`'s tick are the two `Process.send_after` timers an Entity-timer wheel must not become
+a third of.
+
 **S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
 `state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
 three arms run by me too), full `mix test` 1962 passed, five naming gates exit 0, format gate
@@ -5493,7 +5612,7 @@ verifies and commits, §4 checkpoint each time.
 | **R5.1** | **DONE 2026-09-02** — KI-130 (`57135d69` + the convergence commit): the ship's gate and host waits are 5 s, a named-Entity read refuses, the wedge ladder is inverted (restart first), the Elixir RunnerServer no longer re-registers (KI-131). Drill green on seven runtimes, no zombie | — |
 | **R5.2** | **DONE 2026-09-02** — KI-125: the stdin watcher reads unbuffered; a signalled python runner exits 0 (was 134); red-first subprocess test; ruby/node/php measured clean | — |
 | **R5.3** | **DONE 2026-09-02** — KI-128 hardened: the verdict is read by the settled row's name, rows dumped on failure; red-first induced through the real channel | — |
-| **R6** | **IN PROGRESS 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → 2 `carry-keyed-dynamic-and-schema-in-elixir` (next) → 3 timers + clocks → 4 effectively_once → 5 correction_window; `workflow` is R7's. Size the rest against +865 for +560 estimated | The user's instruction includes Elixir; it is the largest row |
+| **R6** | **IN PROGRESS 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → **2 `carry-keyed-dynamic-and-schema-in-elixir` DONE** (8 commits, closed `97aa1370`, three more universal, +287 against +300) → 3 `carry-entity-timers-in-elixir` (next) → 4 effectively_once → 5 correction_window; `workflow` is R7's. Size the rest against +865 for +560 estimated | The user's instruction includes Elixir; it is the largest row |
 | **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
 | **R9** | `unify-cli-output-flag` — KI-80. `cluster status --json` ignores `--output json`; `audit list --output json` ignores `--json` | Agreed 2026-09-01, small |

@@ -151,13 +151,22 @@ defmodule Flezha.Bench.DynamicProc do
 
   def name, do: "dynamic_entity_procedure"
   def init_state(_), do: %{seen: []}
+  def apply_change(s, {:push, input}), do: %{s | seen: s.seen ++ [input]}
+  def state_from_json(%{"seen" => seen}), do: %{seen: seen}
 
-  # Rust journals the push as a Change and evicts on `DYN_TEST_TTL_MS`; v1 has
-  # neither, so the state is a plain term and the Entity lives for the
-  # operative's lifetime.
+  # The e2e sets the idle TTL short; unset, the Entities live for the
+  # operative's lifetime, as the reference's do.
+  def entity_idle_ttl_ms do
+    case System.get_env("DYN_TEST_TTL_MS") do
+      nil -> nil
+      ms -> String.to_integer(ms)
+    end
+  end
+
   def run(input, s, ctx) do
+    s = Ctx.apply(ctx, s, {:push, input})
     Ctx.emit(ctx, input)
-    {:ok, %{s | seen: [input | s.seen]}}
+    {:ok, s}
   end
 end
 
@@ -207,7 +216,8 @@ defmodule Flezha.Bench.TierStoreProc do
   def init_state(_), do: %{}
   def apply_change(values, {:set, key, value}), do: Map.put(values, key, value)
 
-  # Rust emits `key=value` keyed on `key`; v1 has no `emit_keyed`, same bytes unkeyed.
+  # Emits `key=value` under `key`, as the reference does: the bench sinks are
+  # keyed, so the durable path pays for its stamps here as it does there.
   def run(input, values, ctx) do
     {key, value} =
       case String.split(input, ":", parts: 2) do
@@ -219,7 +229,7 @@ defmodule Flezha.Bench.TierStoreProc do
       {:error, "poison value"}
     else
       values = Ctx.apply(ctx, values, {:set, key, value})
-      Ctx.emit(ctx, "#{key}=#{value}")
+      Ctx.emit_keyed(ctx, key, "#{key}=#{value}")
       {:ok, values}
     end
   end
@@ -238,6 +248,7 @@ defmodule Flezha.Bench.BenchKeyed do
     |> on_full(:drop_nothing)
     |> into(Flezha.Bench.TierStoreProc)
     |> named("sink")
+    |> keyed()
     |> sink("tier_sink")
   end
 end

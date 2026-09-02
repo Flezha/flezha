@@ -138,7 +138,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 |---|---|---|---|---|
 | 0 | `sdk_lang` | 1 | 2 | 3 |
 | 1..5 | `sdk_version` | `(major << 16) \| (minor << 8) \| patch` of the core crate version | same (stamped by the core) | the same packing of the `flezha` application version |
-| 5..9 | `schema_version` | the Procedure's `SCHEMA_VERSION` | the class-wide maximum of its Procedures' `schemaVersion()` | 1, until `schema_evolution` lands `schema_version/0` |
+| 5..9 | `schema_version` | the Procedure's `SCHEMA_VERSION` | the class-wide maximum of its Procedures' `schemaVersion()` | the Procedure's `schema_version/0` |
 | 9 | `format_id` | 1 postcard | 4 Kryo | 7 External Term Format |
 | 10..12 | reserved | 0 | 0 | 0 |
 | 12..16 | `crc32` | over the body | over the body | over the body |
@@ -147,7 +147,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 
 | Knob | Rust | Java | Elixir | Default |
 |---|---|---|---|---|
-| Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Procedure::SCHEMA_VERSION` | `Procedure.schemaVersion()` | fixed at 1 (`schema_evolution` is deferred) | 1 |
+| Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Procedure::SCHEMA_VERSION` | `Procedure.schemaVersion()` | `schema_version/0`, with `min_readable_schema_version/0` the floor | 1 |
 | Per-Entity WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Procedures in `AddOperative` metadata (`compact_after_bytes`) only when it differs from the default | `Procedure::compact_after_bytes()` | `Procedure.compactAfterBytes()` | `compact_after_bytes/0` | 8 MiB |
 | Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Procedure::max_timers_per_entity()` | `Procedure.maxTimersPerEntity()` | timers are deferred | 10 000 |
 | Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | none — records ship at dispatch end | 5 ms |
@@ -311,7 +311,10 @@ assertThat(ProcedureTestHarness.of(new CountProcedure()).withWallClock(t0)
 The authoring surface is the behaviour pair: `apply_change/2` on a `Procedure` declares it
 changeful, `Flezha.SDK.Ctx.apply/3` is the recorded mutation path, `state_from_json/1` turns
 a JSON object read back from the controller into the state term, `compact_after_bytes/0` is
-the compaction threshold, and `StreamOperative.persistence_enabled/0` is the class toggle.
+the compaction threshold, and `StreamOperative.persistence_enabled/0` is the class toggle;
+`schema_version/0` and `min_readable_schema_version/0` declare the version and the readable
+floor, and `migrate_state/2` / `migrate_change/2` read an older version's DECODED term into
+the running one — the body codec is the language's own, so there is no second codec to choose.
 The record, the fold, the slot, the commands and the shutdown are described in
 [`elixir_sdk.md`](elixir_sdk.md#persistence); the tests are `test/flezha/sdk/persistence_test.exs`
 and `commands_test.exs` over the fixtures in `test/helpers/sdk_persistence_fixtures.ex`.

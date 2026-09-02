@@ -463,15 +463,16 @@ Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 the reference every other is checked against. The Node, Ruby, PHP and Python SDKs carry every
 capability but `workflow`, whose reference fixtures need two builder surfaces every veneer
 lacks — an inter-procedure `codec()` and a hybrid `sink().into()` — and which they owe to the
-follow-up that adds them. The Elixir SDK is its own core: it carries `state_persistence` as a
-re-expression of the kernel's rules — the record header and the External Term Format body,
-the fold, compaction, the live read, the credit window, the shutdown notification — and
-defers the effectively-once tier, timers, correction windows, keyed channels, the workflow
-kind, dynamic-Entity eviction and schema evolution, each owed to a re-expression in Elixir.
-`entry_idle` and `state_persistence` are carried by all seven and sit in the required set:
-their mechanisms live once in the shared core for the six `flz_core` hosts and are
-re-expressed in the Elixir SDK. Keyed channels are the one capability every SDK but Elixir
-carries; Elixir defers by name because its own core mints no identity stamps yet.
+follow-up that adds them. The Elixir SDK is its own core: it carries `state_persistence`,
+`keyed_channels`, `dynamic_entity` and `schema_evolution` as re-expressions of the kernel's
+rules — the record header and the External Term Format body, the fold, compaction, the live
+read, the credit window, the shutdown notification, the identity stamps at its routing seam,
+the idle reaper with its cap and eviction trace, the per-Procedure schema declaration with its
+migrations — and defers the effectively-once tier, timers, correction windows and the
+workflow kind, each owed to a re-expression in Elixir. `entry_idle`, `state_persistence`,
+`keyed_channels`, `dynamic_entity` and `schema_evolution` are carried by all seven and sit in
+the required set: their mechanisms live once in the shared core for the six `flz_core` hosts
+and are re-expressed in the Elixir SDK.
 
 ---
 

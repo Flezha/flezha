@@ -235,12 +235,12 @@ resolves it before decoding anything (`docs/sdk/protocol_spec.md` → "Schema
 evolution"). A bump alone is fail-closed: the old records are refused, loudly,
 by name. To *read* them, declare how far back you read and how:
 
-| | Rust | Java |
-|---|---|---|
-| version | `const SCHEMA_VERSION: u32` | `int schemaVersion()` |
-| readable floor | `const MIN_READABLE_SCHEMA_VERSION: u32` | `int minReadableSchemaVersion()` |
-| state migration | `fn migrate_state(from_version, bytes)` | `State migrateState(int, byte[])` |
-| change migration | `fn migrate_change(from_version, bytes)` | `ChangeT migrateChange(int, byte[])` |
+| | Rust | Java | Elixir |
+|---|---|---|---|
+| version | `const SCHEMA_VERSION: u32` | `int schemaVersion()` | `schema_version/0` |
+| readable floor | `const MIN_READABLE_SCHEMA_VERSION: u32` | `int minReadableSchemaVersion()` | `min_readable_schema_version/0` |
+| state migration | `fn migrate_state(from_version, bytes)` | `State migrateState(int, byte[])` | `migrate_state(from_version, old_term) :: {:ok, state} \| {:error, reason}` |
+| change migration | `fn migrate_change(from_version, bytes)` | `ChangeT migrateChange(int, byte[])` | `migrate_change(from_version, old_term)` |
 
 Both migrations default to refusing, so declaring a floor without implementing
 them fails at the first affected record rather than guessing. Keep the old type
@@ -248,7 +248,8 @@ in your own source and decode it inside the migration — the runtime cannot kno
 a type that no longer exists in this build. Rust re-exports the codec it wrote
 the bytes with as `flezha_runner::state::postcard`; Java constructs a
 `KryoCodec` over **the old version's type list, in the old order** (Kryo ids are
-positional).
+positional); Elixir hands the migration the decoded term, its body codec being
+`:erlang.term_to_binary/2` with no second codec to choose.
 
 ```rust
 const SCHEMA_VERSION: u32 = 2;
@@ -397,7 +398,7 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | none                                                                         | single-entity (empty `entity_keys()`)                                                 |
 | `keys = [..]` + `entities_for = f` / `keys = {..}` + an `@EntitiesFor` method | `entity_keys()` = keys, `ENTITIES_FOR_OVERRIDDEN = true` / `entitiesForOverridden()`, `entities_for` delegates |
-| `idle_ttl = ms` / `max_entities = n` (Rust; dynamic knobs)                   | `entity_idle_ttl()` / `max_entities()` overrides — the KEY is not here. Java overrides `entityIdleTtl()` on a hand-written Procedure |
+| `idle_ttl = ms` / `max_entities = n` (Rust; dynamic knobs)                   | `entity_idle_ttl()` / `max_entities()` overrides — the KEY is not here. Java overrides `entityIdleTtl()` on a hand-written Procedure; Elixir declares `entity_idle_ttl_ms/0` / `max_entities/0` |
 
 Declaring only one of `keys` / `entities_for` is refused. Static keying is
 declared **on the procedure**; dynamic keying is declared **on the wiring** —

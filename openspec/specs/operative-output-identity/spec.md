@@ -133,7 +133,7 @@ SHALL show no regression on non-keyed emit paths.
 
 An SDK whose procedures run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class does not declare effectively-once; under the tier the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.entity` SHALL be spelled `<operative>/<procedure>/<entity_key or empty>`, matching the label the core derives for the same Entity, and `flz.seq` SHALL read the change sequence the activation carried at handout.
 
-An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK defers it here: it is not a poll host and inherits nothing from `flz_core`, so the stamps are feature work in its own core rather than a port, and queue row R6 owes them.
+An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK — not a poll host, inheriting nothing from `flz_core` — mints them in its own core at the routing seam where a sink frame is built: the same three keys, the seq the invocation started at, the ordinal advancing per plugin output of the invocation, appended after the user's metadata; it carries no tier yet, so every keyed emit is stamped, and the tier guard arrives with the change that carries `effectively_once` there.
 
 #### Scenario: The ordinal advances across emits within one invocation
 
@@ -159,4 +159,9 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 
 - **WHEN** an SDK does not mint the stamps
 - **THEN** its `conformance.json` lists `keyed_channels` under `deferred`, and the conformance gate refuses a manifest that carries the capability without the reference's fixture set
+
+#### Scenario: The Elixir SDK mints the same stamps in its own core
+
+- **WHEN** a dynamic Entity on an Elixir runner emits twice on a sink declared `keyed/1` in one invocation that started at change sequence 5
+- **THEN** the two frames carry `flz.entity` as `<operative>/<procedure>/<key>`, `flz.seq` `"5.0"` then `"5.1"`, and `flz.key` as the Entity's key, after the user's metadata
 

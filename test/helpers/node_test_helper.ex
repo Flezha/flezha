@@ -304,7 +304,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :partitioned,
     :pool_wedge,
     :entry_idle,
-    :state_persistence
+    :state_persistence,
+    :keyed_channels,
+    :dynamic_entity,
+    :schema_evolution
   ]
 
   def capabilities, do: @capabilities

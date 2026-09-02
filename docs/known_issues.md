@@ -1662,19 +1662,6 @@ under load.
 - **Verdict (supervisor, 2026-09-02)**: real, P3, owed; `carry-entry-idle-in-every-host` (R2b) runs its own scenario under swoole in the zts image if the box can, or reports by name — that run is not a substitute for the gap.
 
 
-### KI-135 · The Elixir SDK declares `max_entities/0` and never enforces it
-
-- **Severity**: P3 · a documented cap that binds nothing: `Procedure.max_entities/0` (default 100 000, `procedure.ex:8,24,30`) is read by `Procedure.max_entities/1` (`:58-62`), which has no caller; `Operative.ensure_entity/3` (`operative.ex:209-218`) mints a dynamic Entity for every new key. The reference caps best-effort (`flz_core/src/dynamic.rs:72-74`, `get_or_create`). · Found by the R6 survey, 2026-09-02.
-- **Evidence** (worker, a scratch script declaring `max_entities/0 = 2` on a dynamic node and routing three keys):
-
-      $ MIX_ENV=test FLEZHA_CONTROLLER_ENABLED=false mix run --no-start $SCRATCH/max_entities_probe.exs
-      max_entities declared: 2  live entities: 3  keys: ["k1", "k2", "k3"]
-
-- **Mechanism**: the cap is read nowhere on the routing path.
-- **A fix must** read the cap in `ensure_entity/3` and refuse or evict the way the reference does, with a unit test that declares a cap of 2 and routes three keys — red today. `dynamic_entity`'s neighbourhood: R6's second change (`carry-keyed-dynamic-and-schema-in-elixir`) owns it by name.
-- **Verdict (supervisor, 2026-09-02)**: real, P3, owed to R6's second change; does not pause the first.
-
-
 ### KI-134 · An `elixir_runner` outlived the harness closing its port in the elixir smoke tier — SUSPICION
 
 - **Severity**: P3 · seen once (R2b's batch 8, 2026-09-02): after the `--include sdk_smoke` arm under `FLEZHA_E2E_RUNTIME=elixir`, a `beam.smp … mix run --no-halt … smoke_12324` was still alive 1 m 22 s later, killed by pid (SIGTERM, then SIGKILL). The test app's stdin watcher is what should have halted it when the port closed. Not reproduced; rate unknown (one arm observed).
@@ -1688,6 +1675,8 @@ under load.
 - **Third sighting (R6 checkpoint 3, 2026-09-02)**: the supervisor's COMBINED run of the five `state_persistence` modules under `FLEZHA_E2E_RUNTIME=elixir` (`--include system --include sdk_smoke`, one BEAM) left one `mix run --no-halt` behind; the worker's five per-module runs of the same files left none. So the leak follows the multi-module run, not any one scenario — the app's exit on a port close is racing the next module's spawn, or the last module's teardown. Killed by pid.
 
 - **Fourth sighting and a mechanism candidate (R6 close, 2026-09-02)**: the elixir smoke tier (`2030 passed`) left `mix run --no-halt … -- smoke_27429` alive 16 s after; a SIGTERM by pid took more than 2 s to end it. The R6 worker's reading: `RunnerServer.reconnect/2` is a synchronous retry loop with `Process.sleep` inside `handle_info`, so an ORPHANED runner (its controller gone) cannot see the supervisor's exit signal until the `shutdown:` budget expires and the kill lands — a budget `carry-state-persistence-in-elixir` raised from 5 s to 10 s for the graceful ship, so the leak past `ensure_port_dead` now lasts longer. Not proved by experiment; the separating one is a reconnect loop stubbed to yield, then the same tier.
+
+- **Fifth and sixth sightings (2026-09-02, R6 change 2)**: the worker's smoke arm left `mix run --no-halt … smoke_1509` alive, parent `systemd --user`, SIGTERM did NOT end it and SIGKILL did; the supervisor's two smoke runs under elixir each left one too (killed by pid). The leak is now every multi-module elixir run, and SIGTERM-resistant — consistent with the reconnect-loop candidate above.
 
 ### KI-133 · A PHP fixture's `static` is a per-interpreter value under Swoole, so the poison probe's antidote can land on a different worker than its poison — SUSPICION
 
@@ -2692,6 +2681,28 @@ path, so none needs a red-first test.
   note in the same commit** — the note is the reason this looked like a capability.
 
 ## Resolved
+
+### KI-135 · The Elixir SDK declares `max_entities/0` and never enforces it — RESOLVED
+
+- **Severity**: P3 · a documented cap that binds nothing: `Procedure.max_entities/0` (default 100 000, `procedure.ex:8,24,30`) is read by `Procedure.max_entities/1` (`:58-62`), which has no caller; `Operative.ensure_entity/3` (`operative.ex:209-218`) mints a dynamic Entity for every new key. The reference caps best-effort (`flz_core/src/dynamic.rs:72-74`, `get_or_create`). · Found by the R6 survey, 2026-09-02.
+- **Evidence** (worker, a scratch script declaring `max_entities/0 = 2` on a dynamic node and routing three keys):
+
+      $ MIX_ENV=test FLEZHA_CONTROLLER_ENABLED=false mix run --no-start $SCRATCH/max_entities_probe.exs
+      max_entities declared: 2  live entities: 3  keys: ["k1", "k2", "k3"]
+
+- **Mechanism**: the cap is read nowhere on the routing path.
+- **A fix must** read the cap in `ensure_entity/3` and refuse or evict the way the reference does, with a unit test that declares a cap of 2 and routes three keys — red today. `dynamic_entity`'s neighbourhood: R6's second change (`carry-keyed-dynamic-and-schema-in-elixir`) owns it by name.
+- **Verdict (supervisor, 2026-09-02)**: real, P3, owed to R6's second change; does not pause the first.
+- **Resolved**: `d88ec4c1` — `max_entities/0` is a size check at `ensure_entity/3` over a per-node map; a new key past the cap is dropped and counted (`[:flezha, :sdk, :dynamic]` `event: :capped`), a materialise answers `entity_capped`; red first with a cap of 2 and three keys.
+
+### KI-136 · The Elixir SDK's RunnerServer is restarted by its supervisor after an intentional (non-terminal) `RunnerDisconnect` and re-registers the runner — RESOLVED
+
+- **Severity**: P2 · KI-131's shape on the OTHER branch: `runner_server.ex:393` answers a non-terminal `RunnerDisconnect` with `{:stop, :normal, …}`, and `Flezha.SDK.child_spec/1`'s `restart: :permanent` supervisor starts a fresh server, which connects again with all its factories — the reference (`flz_core/src/command/runner_disconnect.rs`) sets `Stopped` and stays put. · Found 2026-09-02 by the R6 change-2 worker's smoke arm under `FLEZHA_E2E_RUNTIME=elixir`.
+- **Evidence** (worker, `scratchpad/arms/red_sdk_smoke_e2e_test.exs.log`): `sdk_smoke_e2e_test.exs` "transport=uds intentional RunnerDisconnect shuts down cleanly" red — `runner_connect … "smoke_390-9ad42519-s3lj5q"` with all 25 factories AFTER the disconnect, then `GenServer.call(FleetManager, {:stop_namespace, "smoke_390"}, 20000)` exiting on a `:command_assign_runner_id` call that timed out. Intermittent: the supervisor's two runs of the same module read `17 passed` each; the re-registration itself is deterministic from the code.
+- **Mechanism**: `{:stop, :normal, …}` + `restart: :permanent` = a restart; KI-131 fixed the terminal branch by keeping the server up until `System.stop/1` ends the VM, and left this branch as it was. The re-registered runner is placeable again and races the namespace teardown.
+- **A fix must** mirror the reference: after a non-terminal disconnect the runner stays stopped — the server does not return `:stop` (or the child is not `:permanent` for a normal stop); red first with a test that sends the non-terminal command to a supervised runner and asserts no second registration.
+- **Verdict (supervisor, 2026-09-02)**: real, P2, boxed and fixed by the R6 change-2 worker as its own commit before its batch 3 (the Elixir SDK is its lane); the change-1 close's green smoke tier means the race usually loses.
+- **Resolved**: `1b2b695a` — after the ack the RunnerServer tears down its data streams, closes the control handle, marks itself stopped and stays (the reference's shape); red first with a permanent supervised runner coming back under a new pid; transport-modes 11 passed, the smoke scenario green under uds and quic.
 
 ### KI-128 · `credit_flow_e2e_test.exs` reads the credit flag at a point in time after the burst, so a legitimate re-attach fails it with a message naming the wrong cause — RESOLVED (hardened)
 

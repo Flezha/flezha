@@ -68,8 +68,10 @@ below the records written after it.
 
 A Procedure SHALL be able to declare, for its `State` and for its `Change`, how
 to read bytes stamped at an older schema version. Each migration entry point
-SHALL receive the stamped `from_version` and the record's bytes, and SHALL
-return the running version's typed value or an error.
+SHALL receive the stamped `from_version` and the record's bytes — or, in an
+SDK whose durable body codec is the language's own term format and offers no
+second codec to choose, the decoded term — and SHALL return the running
+version's typed value or an error.
 
 Both entry points SHALL default to refusing, so a Procedure that declares no
 migration keeps fail-closed behaviour rather than inheriting a guess. A
@@ -110,13 +112,22 @@ Procedure's records with a version it never declared and makes every sibling
 Procedure's history unreadable when any one of them is bumped.
 
 `MIN_READABLE_SCHEMA_VERSION` SHALL likewise be declared and carried per
-Procedure.
+Procedure. The Elixir SDK spells the pair `schema_version/0` and
+`min_readable_schema_version/0` on `Flezha.SDK.Procedure`, and the migrations
+`migrate_state/2` and `migrate_change/2`, each resolved per Procedure module at
+the Entity that stamps and folds the record.
 
 #### Scenario: bumping one Procedure does not disturb its siblings
 
 - **GIVEN** a class whose Procedure A declares `SCHEMA_VERSION = 2` and Procedure B declares `SCHEMA_VERSION = 1`
 - **WHEN** each Procedure's Entities persist a change record
 - **THEN** A's records SHALL be stamped 2 and B's records SHALL be stamped 1, and B's Entities SHALL restore without a migration
+
+#### Scenario: an Elixir Procedure's version is its own
+
+- **GIVEN** an Elixir class whose Procedure A declares `schema_version/0` as 2 and Procedure B declares none
+- **WHEN** each Procedure's Entity ships a change record
+- **THEN** A's header stamps 2 and B's stamps 1, and B restores a record stamped 1 without a migration
 
 ### Requirement: A migrating restore is made durable once
 

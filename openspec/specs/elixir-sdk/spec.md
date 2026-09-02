@@ -75,7 +75,7 @@ Each runner handle SHALL own its declared factory set, starting empty. `define_s
 - **THEN** the call returns the in-use error and the declared set is unchanged
 
 ### Requirement: Operative and Procedure behaviours mirror the current cross-SDK model
-The SDK SHALL define `Flezha.SDK.StreamOperative` (callbacks: `factory_id/0`, `channels/1` receiving the graph builder; optional `description/0`) and `Flezha.SDK.Procedure` (mandatory callbacks: `name/0`, `init_state/1` receiving the entity key or nil, `run/3` receiving input, state, and a ctx, returning `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`; optional callbacks with defaults: `entity_keys/0` → `[]`, `entities_for/1`, `mailbox_capacity/0` → 1024 with env override `FLEZHA_MAILBOX_CAPACITY` and range 1..=1_048_576, `max_entities/0` → 100_000). The ctx SHALL provide `emit/2`, `emit_with_meta/3` (refusing reserved `flz.`-prefixed metadata keys), `now/1` (wall-clock milliseconds evaluated once per invocation), and `entity_key/1`. Emits SHALL accumulate per invocation and flush only on `{:ok, _}` — a failing invocation discards its partial emits. `AddOperative` SHALL instantiate the operative's topology with one process per Entity; `RemOperative` SHALL stop it. Inputs to the same Entity SHALL be processed in arrival order; distinct Entities MAY process concurrently.
+The SDK SHALL define `Flezha.SDK.StreamOperative` (callbacks: `factory_id/0`, `channels/1` receiving the graph builder; optional `description/0`, `persistence_enabled/0`) and `Flezha.SDK.Procedure` (mandatory callbacks: `name/0`, `init_state/1` receiving the entity key or nil, `run/3` receiving input, state, and a ctx, returning `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`; optional callbacks with defaults: `entity_keys/0` → `[]`, `entities_for/1`, `mailbox_capacity/0` → 1024 with env override `FLEZHA_MAILBOX_CAPACITY` and range 1..=1_048_576, `max_entities/0` → 100_000 and ENFORCED on a dynamic node — at the cap a new key's input is dropped without an Entity and counted, an existing key's input is unaffected — `entity_idle_ttl_ms/0` → `nil` (no eviction), `schema_version/0` → 1, `min_readable_schema_version/0` → the schema version, `migrate_state/2` and `migrate_change/2` → refuse, `apply_change/2`, `compact_after_bytes/0`, `state_from_json/1`). The ctx SHALL provide `emit/2`, `emit_with_meta/3` (refusing reserved `flz.`-prefixed metadata keys), `emit_keyed/3` and `emit_keyed_with_meta/4` (the output's natural key on a keyed sink), `apply/3`, `now/1` (wall-clock milliseconds evaluated once per invocation), and `entity_key/1`. On a node whose sink is declared keyed, a keyless emit from a Single Entity SHALL be refused at call time with `{:error, {:key_required_on_keyed_channel, channel}}` and nothing emitted; `emit_keyed` on a node with no keyed sink SHALL be refused with `{:error, {:key_not_allowed_on_non_keyed_channel, channel}}`. Emits SHALL accumulate per invocation, with their metadata and key, and flush only on `{:ok, _}` — a failing invocation discards its partial emits. `AddOperative` SHALL instantiate the operative's topology with one process per Entity; `RemOperative` SHALL stop it. Inputs to the same Entity SHALL be processed in arrival order; distinct Entities MAY process concurrently.
 
 #### Scenario: End-to-end dispatch
 - **WHEN** the Controller starts an operative on the Elixir runner and a frame is sent to its input channel
@@ -93,8 +93,17 @@ The SDK SHALL define `Flezha.SDK.StreamOperative` (callbacks: `factory_id/0`, `c
 - **WHEN** the Controller issues `RemOperative`
 - **THEN** the operative's Entity processes terminate and subsequent frames for that operative id are not dispatched
 
+#### Scenario: The cap on dynamic Entities binds
+- **GIVEN** a dynamic node whose Procedure declares `max_entities/0` as 2
+- **WHEN** inputs for three distinct keys arrive
+- **THEN** two Entities exist, the third key's input is dropped without an Entity and counted, and a later input for either live key is dispatched normally
+
+#### Scenario: A keyless emit on a keyed sink is refused in a Single Entity
+- **WHEN** a Single Entity whose node's sink is declared `keyed/1` calls `Ctx.emit/2`
+- **THEN** the call answers `{:error, {:key_required_on_keyed_channel, channel}}` and nothing is emitted, while the same call in a dynamic Entity emits under that Entity's own key
+
 ### Requirement: The graph builder carries the v1 subset of the producer-first surface
-`channels/1` SHALL author topologies with: `input/2` and `input_with/3` (bytes passthrough, String UTF-8, custom parser; a parse failure rides the entry channel's retry→park ladder), `into/2` and `into_named/3` (unnamed mentions of one Procedure module unify into one node — fan-in; node-identity collisions refuse), edge transforms `map/2`, `filter/2`, `flat_map/2` and edge keying `key_by/2` (fused structurally into one composed closure per consumer edge — the runtime applies at most one transform + one key per edge and never observes a chain), `named/2`, `sink/2` and `sink_with/3` (returning the stream handle — hybrid by default; default serialization bytes/UTF-8/JSON), `sealed/1` (type-level terminator adding no topology), `on_full/2`, `retry_max/2`, `retry_backoff_ms/2`, and fan-out by handle reuse. Entity mode SHALL be derived from the wiring exactly as in the Rust SDK: non-empty `entity_keys/0` → Static; a keyed edge into a keyless procedure → Dynamic; otherwise Single. Registration SHALL accumulate refusals into `{:error, {:invalid_topology, issues}}` (never a raise) using the shared issue names, including `KeyByOnUnkeyableTarget`, `UnkeyedEdgeIntoDynamicProcedure`, `TransformAfterKeyBy`, `DuplicateChannel`, `Cycle`, `UnreachableProcedure`, `NodeIdentityCollision`, `MailboxCapacityZero`/`TooLarge`, `RetryMaxZero`, and `DuplicatePluginSink`. Edge type mismatch is the documented per-language asymmetry: with no type tokens, a mis-typed payload surfaces at dispatch and rides the retry→park ladder. Builder surface belonging to deferred capabilities (`merge`, `route_latest`, `branch`, `codec`, `keyed`, tier declarations) SHALL NOT exist in v1; calling it fails registration with an error naming the module.
+`channels/1` SHALL author topologies with: `input/2` and `input_with/3` (bytes passthrough, String UTF-8, custom parser; a parse failure rides the entry channel's retry→park ladder), `into/2` and `into_named/3` (unnamed mentions of one Procedure module unify into one node — fan-in; node-identity collisions refuse), edge transforms `map/2`, `filter/2`, `flat_map/2` and edge keying `key_by/2` (fused structurally into one composed closure per consumer edge — the runtime applies at most one transform + one key per edge and never observes a chain), `named/2`, `keyed/1` (declares output identity on the sink the handle reaches — the reference's `.keyed()`; on an entry handle, or on a handle that reaches `into/2` before any sink, registration refuses with `KeyedOnEntry` / `KeyedInterProcedureChannel`), `sink/2` and `sink_with/3` (returning the stream handle — hybrid by default; default serialization bytes/UTF-8/JSON), `sealed/1` (type-level terminator adding no topology), `on_full/2`, `retry_max/2`, `retry_backoff_ms/2`, and fan-out by handle reuse. Every plugin frame SHALL carry `channel` = the producing node's identity — the procedure's `name/0`, or the name `named/2` gave the node — never the plugin's name, so a `named/2` survives the plugin terminator and a forward target resolves its entry channel by the name the author declared; an entry routed straight to a sink carries the entry's name. User metadata from `emit_with_meta/3` SHALL ride the frame. Entity mode SHALL be derived from the wiring exactly as in the Rust SDK: non-empty `entity_keys/0` → Static; a keyed edge into a keyless procedure → Dynamic; otherwise Single. Registration SHALL accumulate refusals into `{:error, {:invalid_topology, issues}}` (never a raise) using the shared issue names, including `KeyByOnUnkeyableTarget`, `UnkeyedEdgeIntoDynamicProcedure`, `TransformAfterKeyBy`, `DuplicateChannel`, `Cycle`, `UnreachableProcedure`, `NodeIdentityCollision`, `MailboxCapacityZero`/`TooLarge`, `RetryMaxZero`, `DuplicatePluginSink`, `KeyedOnEntry` and `KeyedInterProcedureChannel`. Edge type mismatch is the documented per-language asymmetry: with no type tokens, a mis-typed payload surfaces at dispatch and rides the retry→park ladder. Builder surface belonging to deferred capabilities (`merge`, `route_latest`, `branch`, `codec`, tier declarations) SHALL NOT exist in v1; calling it fails registration with an error naming the module.
 
 #### Scenario: Linear chain with a transform and a key
 - **WHEN** an operative declares `c |> input("trades") |> filter(pred) |> key_by(key_fn) |> into(Candle) |> sink("candles")`
@@ -115,6 +124,14 @@ The SDK SHALL define `Flezha.SDK.StreamOperative` (callbacks: `factory_id/0`, `c
 #### Scenario: Deferred builder surface fails loudly
 - **WHEN** `channels/1` calls a builder function belonging to a deferred capability
 - **THEN** registration fails with an error naming the operative module — never a silent no-op, never a crash of the runner
+
+#### Scenario: The frame carries the node's channel name, and `named/2` survives the sink
+- **WHEN** a node named `"e"` is wired `|> named("e") |> sink("out")` and its Entity emits
+- **THEN** the plugin frame's metadata carries `channel: "e"`, and an unnamed node's frame carries its procedure's `name/0`
+
+#### Scenario: A keyed handle with no plugin sink is refused
+- **WHEN** `channels/1` declares `keyed/1` on a handle and then routes it with `into/2` before any sink
+- **THEN** registration returns `{:error, {:invalid_topology, [{:KeyedInterProcedureChannel, _}]}}`
 
 ### Requirement: Bounded Entity mailbox with the cross-SDK overflow default
 Each Entity SHALL have a bounded queue (capacity from `mailbox_capacity/0`) with an `OverflowPolicy` of `:drop_nothing`, `:drop_newest`, or `:drop_oldest`. The default SHALL be `:drop_nothing` for **every** edge kind (entry, inter-procedure, plugin-bound) — in lockstep with the Rust SDK builder, the Java SDK builder and the FFI host — and an operative that prefers to shed SHALL say so with `on_full/2`. The retired spelling SHALL NOT be accepted by `on_full/2`, by `Flezha.SDK.Stream`'s type, or by any manifest. Under `:drop_nothing` the routing caller SHALL wait for room (guarded by a monitor on the Entity so a dead Entity cannot wedge it) and SHALL neither drop nor refuse the input; the documented co-tenancy cost is that a delayed primary-stream router delays every operative fed by that stream, exactly as the Rust reader parks. Drops SHALL be observable via telemetry; `blocked_parks` SHALL count episodes (the first wait of a contiguous full period), and the `dispatches` heartbeat counter SHALL increment only on completed dispatches so a wedged Entity population is visible to the existing `runner_pool_wedged` classifier verdict.
@@ -186,7 +203,7 @@ The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `
 - **THEN** the second heartbeat's `credit_parked` is greater than the first's while `dispatches` stands still
 
 ### Requirement: Declarations and deferred commands follow the scope matrix
-`AddOperativeResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works, and a class whose smallest `compact_after_bytes/0` differs from the 8 MiB default SHALL declare `compact_after_bytes` with that value. The persistence-family commands — `RestoreInitState`, `CompactEntity`, `EntityState`, `EntityApplyState`, `MigrationSerialization` / `MigrationDeserialization`, `CreditWindowInit`, `CreditGrant` — SHALL be answered for real, by the SDK's own re-expression of the kernel's rules (the `state_persistence` requirement below); `EntityMailboxStatus` SHALL be tolerated with a debug log, as the reference tolerates a pre-credit controller. `WorkflowStop` SHALL be tolerated with a warn (no workflow factory is ever advertised). `RunnerDisconnect` SHALL terminate the connection cleanly.
+`AddOperativeResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works, and a class whose smallest `compact_after_bytes/0` differs from the 8 MiB default SHALL declare `compact_after_bytes` with that value. The persistence-family commands — `RestoreInitState`, `CompactEntity`, `EntityState`, `EntityApplyState`, `MigrationSerialization` / `MigrationDeserialization`, `CreditWindowInit`, `CreditGrant` — SHALL be answered for real, by the SDK's own re-expression of the kernel's rules (the `state_persistence` requirement below); `EntityMailboxStatus` SHALL be tolerated with a debug log, as the reference tolerates a pre-credit controller. `WorkflowStop` SHALL be tolerated with a warn (no workflow factory is ever advertised). `RunnerDisconnect` SHALL terminate the connection cleanly: a terminal one runs the graceful shutdown and ends the VM with the terminal status; a non-terminal one SHALL stop the runner in place — the reference's `Stopped` — leaving the controller to take the session down, reconnecting into nothing and keeping the process, so a `:permanent` supervisor has nothing to restart into a second registration.
 
 #### Scenario: Declaration-free response is empty
 - **WHEN** an operative with a keyed topology and no declarations binds
@@ -199,6 +216,11 @@ The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `
 #### Scenario: A non-default compaction threshold is declared
 - **WHEN** a class's only changeful Procedure declares `compact_after_bytes/0` as `1_048_576`
 - **THEN** its response metadata carries `compact_after_bytes: "1048576"`, and a class at the default carries no such key
+
+#### Scenario: A non-terminal RunnerDisconnect stops the runner in place
+- **GIVEN** an Elixir runner under a `:permanent` supervisor, registered with the controller
+- **WHEN** the controller sends a non-terminal `RunnerDisconnect`
+- **THEN** the runner acks, the controller's session for it ends, the same process stays alive with no reconnect attempt, and the namespace lists no runner afterwards
 
 ### Requirement: Command codec is isolated for future term-native migration and packaging
 All SDK-side control-channel encode/decode SHALL go through a single codec module speaking the `RunnerCommands.*` protobuf structs via the already-compiled `Flezha.Runner.CommandsProto` Protox modules. No SDK or native-transport code outside the codec SHALL reference Protox or `RunnerCommands`, and none SHALL assume control messages are binaries.
@@ -371,4 +393,66 @@ The Elixir SDK SHALL carry the `state_persistence` capability by re-expressing t
 #### Scenario: A persistence-free class still ships nothing
 - **WHEN** a `persistence_off_counter` operative folds inputs, and separately a Procedure without `apply_change/2` dispatches
 - **THEN** the controller writes no WAL record for either, the first advances its seq silently and the second holds no seq at all
+
+### Requirement: The Elixir SDK mints the identity stamps on keyed plugin output
+
+The Elixir SDK SHALL carry `keyed_channels` in its own core: every plugin frame from a sink declared `keyed/1` SHALL carry `flz.entity` (`<operative id>/<procedure name>/<entity key or empty>`, the label the shared core derives for the same Entity), `flz.seq` (`<change_seq at handout>.<emit ordinal>`, the seq the invocation started at, before its own changes advanced it) and `flz.key` (the emit's key, else the sink route's `key_by` over the value, else the emitting Entity's own key), appended after the user's metadata so a stamp cannot be clobbered. The ordinal SHALL start at zero for each work item, SHALL advance on every plugin-targeted output the invocation produces — stamped or not, each output of a `flat_map` counted — and SHALL NOT advance for an inter-procedure output. A sink not declared keyed SHALL carry no `flz.` key. `test/apps/elixir_runner`'s `partition_relay` SHALL declare its sink keyed and name its channel `input`, and the manifest SHALL list `keyed_channels` under `fixtures` with the reference's id.
+
+#### Scenario: A keyed sink's frame carries the three stamps after user metadata
+- **WHEN** a dynamic Entity keyed `"k1"` at change_seq 4 calls `Ctx.emit_with_meta/3` with `%{"tag" => "a"}` on a node whose sink is keyed
+- **THEN** the frame carries `tag: "a"`, `flz.entity: "op-1/counter/k1"`, `flz.seq: "4.0"` and `flz.key: "k1"`, and a second emit in the same invocation carries `flz.seq: "4.1"`
+
+#### Scenario: A fresh work item restarts the ordinal, and an inter-procedure output does not advance it
+- **WHEN** the next input for the same Entity emits once on the keyed sink after emitting once towards a consumer node
+- **THEN** its plugin frame carries ordinal `0`
+
+#### Scenario: A keyed output forwards to the partition of the target group that owns its key
+- **WHEN** `partition_relay` on an Elixir runner, partitioned three ways, feeds a partitioned `dynamic_entity` through `operative_forward`
+- **THEN** every key lands on the downstream member owning its key group and nowhere else, because the frame carries `flz.key` and `channel: "input"`
+
+#### Scenario: The smoke golden pins the stamp keys
+- **WHEN** `partition_relay` on an Elixir runner emits under a sink with `include_metadata`
+- **THEN** the sorted `flz.*` keys of the frame equal `keyed_output_stamps.json`
+
+### Requirement: The Elixir SDK evicts idle dynamic Entities and caps them
+
+The Elixir SDK SHALL carry `dynamic_entity` in its own core. A dynamic node whose Procedure declares `entity_idle_ttl_ms/0` SHALL be swept by one `:reap` tick in its Operative process at `FLEZHA_REAP_INTERVAL_MS`, else `min(ttl / 4, 30 s)` and at least 1 ms; a node declaring none SHALL never be swept and no tick SHALL be scheduled. The sweep SHALL run under the Operative's own routing serialisation — the drain gate: no push can be routed while it runs — and SHALL evict an Entity only when it has been idle past the TTL with an empty queue, no dispatch in flight, no held park and no deferred push, skipping a busy one until the next sweep. Eviction SHALL be destructive: the Entity SHALL ship `delete_entity_state` on its own record stream when the class persists (behind its records by construction), SHALL clear its slot so a successor is a cold start from `init_state/1`, and SHALL stop; the Operative SHALL drop it from the live map and remember the key in a trace of at most 1 024 keys. `Operative.lookup/4` SHALL answer `:entity_evicted` for a traced key that is not live, and the live read SHALL spell the shared core's `entity_evicted:` wording for it, distinguishably from `entity_not_found`. `max_entities/0` SHALL bind at `ensure_entity/3` as the behaviours requirement states. Creation, eviction and capped drops SHALL be reported as one `[:flezha, :sdk, :dynamic]` telemetry event carrying the kind. `test/apps/elixir_runner`'s `dynamic_entity` SHALL journal its push and read its TTL from `DYN_TEST_TTL_MS`, and the manifest SHALL list `dynamic_entity` under `fixtures` with the reference's id.
+
+#### Scenario: An idle Entity is evicted destructively on the sweep
+- **GIVEN** a persistent dynamic node with a TTL and an Entity that shipped a record at seq 0 and has been idle past the TTL
+- **WHEN** the sweep runs
+- **THEN** a `delete_entity_state` frame for that identity follows the record on the same stream, the Entity's slot is gone, `lookup/3` answers `{:error, :entity_evicted}`, and the next input for the key starts a fresh Entity at seq 0 from `init_state/1`
+
+#### Scenario: A busy or recently pushed Entity is kept
+- **WHEN** the sweep meets an Entity mid-dispatch, or one pushed within the TTL
+- **THEN** neither is evicted on that sweep and both are swept again on the next
+
+#### Scenario: A live dynamic Entity is readable by name, and an evicted key is refused by name
+- **WHEN** `EntityState` names a live key of a `dynamic_entity` operative on an Elixir runner, then names a key the reaper evicted, then names a key never seen
+- **THEN** the first answers that key's state alone, the second refuses with `entity_evicted`, the third with `entity_not_found`
+
+#### Scenario: No TTL, no tick
+- **WHEN** an Operative's dynamic nodes declare no `entity_idle_ttl_ms/0`
+- **THEN** no `:reap` message is ever scheduled and its Entities live for the operative's lifetime
+
+### Requirement: The Elixir SDK declares schema versions per Procedure and migrates across them
+
+The Elixir SDK SHALL carry `schema_evolution` in its own core. A Procedure's `schema_version/0` (default 1) SHALL be stamped on every record it ships and resolved per record on restore against its `min_readable_schema_version/0` (default: the version; a floor above the version reads the version only): equal decodes, between the floor and the version migrates, above the version or below the floor refuses with the shared core's wordings. A migrating record SHALL be handed to the Procedure's `migrate_state/2` (a snapshot) or `migrate_change/2` (a change) with the stamped `from_version` and the DECODED term — this SDK's body codec is the language's own term format, so the author receives the term, not bytes — and the fold SHALL continue with the running version's term the migration returns; a Procedure that declares no migration SHALL refuse the record naming the absent migration and the version, and a migration that returns `{:error, reason}` or raises SHALL refuse naming the reason and the version, reseating nothing. A restore that migrated any record SHALL answer `migrated` true, so the controller's compaction rewrites the baseline at the running version. `test/apps/elixir_runner` SHALL carry `schema_evolution_v1` and `schema_evolution_v2` as twins of the reference's `evolving_cart` pair, and the manifest SHALL list `schema_evolution` under `fixtures` with the reference's two ids.
+
+#### Scenario: State written at v1 comes back through the migration a bumped v2 declares
+- **GIVEN** an `evolving_cart` Entity on an Elixir runner that accumulated 7 under `schema_evolution_v1` and was compacted
+- **WHEN** the operative is stopped with its state preserved and started under `schema_evolution_v2`
+- **THEN** the restore migrates the snapshot and the tail, the state reads `total: 7` with `currency: "EUR"`, the controller observes the migration and compacts, and a second restart under v2 migrates nothing
+
+#### Scenario: v1 code meeting v2 state is refused, not decoded
+- **WHEN** an Entity written under `schema_evolution_v2` is restarted under `schema_evolution_v1` on an Elixir runner
+- **THEN** the restore is refused with `schema_version 2 is above the running procedure's 1` and the operative is left unbound
+
+#### Scenario: A floor without a migration fails at the first old record
+- **WHEN** a Procedure at version 2 declaring a floor of 1 and no `migrate_change/2` folds a record stamped 1
+- **THEN** the fold refuses naming the absent migration and version 1, and the Entity keeps the state it had
+
+#### Scenario: A failing migration reseats nothing
+- **WHEN** `migrate_state/2` answers `{:error, "bad shape"}` for a snapshot stamped 1
+- **THEN** the restore refuses with a reason carrying `bad shape` and `1`, and the Entity's state and seq are unchanged
 

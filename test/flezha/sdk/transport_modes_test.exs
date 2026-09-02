@@ -73,6 +73,37 @@ defmodule Flezha.SDK.InNodeE2ETest do
     assert [_runner_id] = FleetManager.active_runners(ns)
   end
 
+  # The reference answers a non-terminal `RunnerDisconnect` with `Stopped` and
+  # stays put; a runner that exits instead is restarted by its `:permanent`
+  # supervisor and registers again, into a session the controller is tearing
+  # down.
+  test "a non-terminal RunnerDisconnect stops the runner in place: same process, no second registration",
+       %{ns: ns, handle: handle} do
+    :ok = Flezha.SDK.close(handle)
+    kept = "#{ns}_kept"
+    on_exit(fn -> FleetManager.stop_namespace(kept) end)
+
+    pid =
+      start_supervised!(
+        Flezha.SDK.child_spec(namespace: kept, streams: [ProbeOp], transport: :native)
+      )
+
+    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(kept) != [] end, 15_000)
+    [runner_id] = FleetManager.active_runners(kept)
+    assert Process.whereis(Flezha.SDK.RunnerServer) == pid
+
+    NodeTestHelper.stop_runner(kept, runner_id)
+
+    assert NodeTestHelper.wait_until(
+             fn -> Process.alive?(pid) and :sys.get_state(pid).stopped? end,
+             5_000
+           ),
+           "the runner must stay put, stopped, after the controller's disconnect"
+
+    assert Process.whereis(Flezha.SDK.RunnerServer) == pid
+    assert FleetManager.active_runners(kept) == []
+  end
+
   defmodule IdleProbe do
     @moduledoc false
     @behaviour Flezha.SDK.IdleObserver

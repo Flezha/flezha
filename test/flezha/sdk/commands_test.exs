@@ -14,7 +14,14 @@ defmodule Flezha.SDK.CommandsTest do
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.State.Wire
   alias FlezhaTest.Helper.NodeTestHelper
-  alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, DynCounterOp, StaticCounterOp}
+
+  alias FlezhaTest.Helper.SdkPersistenceFixtures.{
+    CounterOp,
+    CounterV2Op,
+    DynCounterOp,
+    StaticCounterOp,
+    TtlOp
+  }
 
   defp credit(counters \\ Counters.new()) do
     {:ok, pid} = Credit.start_link(counters: counters)
@@ -165,6 +172,70 @@ defmodule Flezha.SDK.CommandsTest do
       Commands.dispatch(:migration_serialization, %{operative_id: "op-1"}, respond(), s)
       assert_receive {:replied, "success", [], json, %{}}, 2_000
       assert Jason.decode!(json)["counter"]["k0"] == %{"value" => 2}
+    end
+
+    test "a restore that migrated answers migrated, and the compaction behind it snapshots at the running version" do
+      %{op: op} = start_operative(CounterV2Op)
+      s = server_state(op, nil)
+      identity = Park.identity("op-1", "counter", "")
+      snapshot = Record.encode_body(%{value: 4})
+
+      Commands.dispatch(
+        :restore_init_state,
+        %{
+          entity_id: identity,
+          snapshot_header: Record.header(snapshot, 1),
+          snapshot_bytes: snapshot,
+          change_log_bytes: change_record(2, {:delta, 3}, 1),
+          terminal_seq: 2
+        },
+        respond(),
+        s
+      )
+
+      assert_receive {:replied, "success", [], raw, %{}}, 2_000
+
+      assert {:ok, %{terminal_seq: 2, migrated: true}} =
+               RunnerCommands.RestoreInitStateResponse.decode(raw)
+
+      Commands.dispatch(:compact_entity, %{entity_id: identity}, respond(), s)
+      assert_receive {:flz_data, _, "entity_state_snapshot", frame, _}, 2_000
+
+      assert {:ok, %{seq: 2, header: <<3, _::32, 2::32-big, _::binary>>, body: body}} =
+               Wire.decode_frame(frame)
+
+      assert {:ok, %{value: 7, unit: "n"}} = Record.decode_body(body)
+      assert_receive {:replied, "success", [], _raw, %{}}, 2_000
+    end
+
+    test "the live read of an evicted key names eviction, and of a never-seen key names absence" do
+      %{op: op} = start_operative(TtlOp)
+      Inbox.input(op, "in", "5", %{})
+      [_, _] = frames(2)
+      assert_receive {:flz_data, _, "delete_entity_state", _, _}, 2_000
+      s = server_state(op, nil)
+
+      Commands.dispatch(
+        :entity_state,
+        %{operative_id: "op-1", procedure: "ttl", entity_key: "k5"},
+        respond(),
+        s
+      )
+
+      assert_receive {:replied, "error", [reason], <<>>, %{}}, 2_000
+
+      assert reason ==
+               "entity_evicted: Entity `k5` of procedure `ttl` was idle-evicted; eviction is " <>
+                 "destructive, so there is no durable value to serve"
+
+      Commands.dispatch(
+        :entity_state,
+        %{operative_id: "op-1", procedure: "ttl", entity_key: "zz"},
+        respond(),
+        s
+      )
+
+      assert_receive {:replied, "error", ["entity_not_found: " <> _], <<>>, %{}}, 2_000
     end
 
     test "restore and compaction answer through the commands with their protobuf replies" do
