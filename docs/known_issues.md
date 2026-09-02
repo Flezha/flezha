@@ -40,6 +40,22 @@ below is all that survives — which is enough to write it again.
 
 ## P1 — correctness and silent data loss
 
+### KI-137 · An Entity outlives its Operative's `stop/1`, so `RemOperative` leaks every Entity of the removed operative
+
+- **Filed**: 2026-09-02, R6 change 3 survey (`carry-entity-timers-in-elixir`), reproduced by the supervisor at `887911fb`.
+- **Where**: `lib/flezha/sdk/operative.ex:67` (`stop/1` is `GenServer.stop(pid, :normal)`); `lib/flezha/sdk/runner_server.ex:499` (`teardown_operative/2` calls it on `RemOperative`); `lib/flezha/sdk/entity.ex` (no `trap_exit`, no `terminate/2`, started with `start_link` from the Operative).
+- **Evidence** (the probe: `SdkOperativeHarness.start_operative(CounterOp)`, `entity!/2`, `Operative.stop/1`, `Process.alive?/1` on both):
+
+  ```
+  $ MIX_ENV=test mix run --no-start stop_probe.exs
+  entity alive before stop: true
+  operative alive after stop: false; entity alive after stop: true
+  ```
+
+- **Mechanism**: an exit signal with reason `:normal` from a linked process is discarded by a process that does not trap exits (OTP link semantics), so the Operative's `:normal` exit never reaches its Entities; only an abnormal Operative death kills them. Each leaked Entity keeps its process, its state, its secondary handle and its counters slot for the runner's life; the Operative's ETS slot table dies with the Operative, so the next `write_slot/1` in a leaked Entity raises. The elixir-sdk spec's scenario "Operative removal — the operative's Entity processes terminate" is false today. Today the leak is memory; once an Entity can hold an armed timer (change 3) a leaked Entity is ACTIVE: a firing ships `entity_state_change` for a removed operative and crashes on the slot write.
+- **A fix must**: make the Operative's exit reach its Entities — the Entity trapping exits (gen_server terminates on its parent's `{:EXIT, parent, :normal}` and runs `terminate/2`, which change 3 needs for the timer refs anyway) or `Operative.terminate/2` sending `Process.exit(pid, :shutdown)` to every live Entity — with the regression test red first ("the Entity of a stopped Operative is dead"), as its own commit before change 3's batch 3.
+- **Ruled**: real; fixed inside `carry-entity-timers-in-elixir` at its checkpoint 1.
+
 ### KI-121 · An UNNAMED plugin sink takes the sink's name in the veneers and the producer node's in Rust
 
 - **Severity**: P2 · the second divergence on the same spec requirement as [[KI-120]], left

@@ -1033,7 +1033,39 @@ id `carry-keyed-dynamic-and-schema-in-elixir`, two-step: step 1 writes the chang
 channel-name deviation; the TTL reaper + KI-135's cap; the schema callbacks over the fold's
 decision table; three flips into the required set red-first; sizes against +865-for-560; the
 `entity.ex`/`operative.ex` ceilings), STOPS for my ruling; step 2 implements with checkpoints
-after every two batches. **Last seen 07:06 (+10m)**: reading, no change dir yet, load 0.84. **07:17 (+21m)**: still no change dir; nudge at +30 if none.
+after every two batches. **Last seen 07:06 (+10m)**: reading, no change dir yet, load 0.84. **07:17 (+21m)**: still no change dir; nudge at +30 if none. **08:49 (+21m)**: change dir created 08:47, `specs/` with three capability dirs, no `.md` yet; writing deltas by a scratch script; nothing running, load 0.17.
+
+### R6 CHANGE 3 SURVEY VERIFIED AND APPROVED 09:12
+
+`openspec/changes/carry-entity-timers-in-elixir/` — proposal 464, design D0–D14 441, tasks 6 batches /
+34 boxes, three deltas; `--strict` valid on my run; survey 27 min / 426 k tokens / 81 tool uses.
+**Machine-counted by scenario NAME** (nothing dropped): elixir-sdk 6→8, 7→8, 3→4, 6→7 + ADDED 7;
+sdk-conformance 13→14, 5→5 (the deferral example re-pointed to `workflow`); entity-timers 4→5 ×3.
+**Every coordinate holds at HEAD** (`FORMAT_ID_TIMER_OPS = 3` at `header.rs:105`, `TimerOp` at
+`schema.rs:205`, `wire.ex:522-538`'s private op codec, `entity.rs:171-226`'s `session_timeout`, no
+`reference_runtime` pin in `entity_timers_e2e_test.exs`, `operative.ex:67` `GenServer.stop(pid,
+:normal)`, `entity.ex` 559 lines with no `trap_exit`/`terminate`). **The design**: timers as folded
+state over changes 1–2's seams (the `format_id = 3` record every SDK writes, the fold's `{state,
+timers}`, the restatement at `change_seq`, the slot); a firing as a queue item through the same
+ladder; **no third `send_after` mechanism** — one BEAM timer per processing-time deadline whose due
+message folds the due set ascending onto the Entity's queue (the reference's list, for free);
+event-time firings queued ahead of the admitting input; `clock/0` + `event_time_of/1` with `now ==
+fired_at` under every clock; no `flz_core` change, no controller change. **Sized +330 (270–400)**
+against change 2's precedent, plus +8 in `lib/flezha/state` (the two public `Wire` wrappers, an
+allowed seam — accepted now).
+
+**Rulings** (under the user's instruction, none parked): the `entity.ex` split (D8, by mutation ×
+SCC, the struct in its own file for §11h) **approved as batch 1, its own commit**; the `timers_armed`
+gauge (D7) **the eight-line BEAM gauge** with the imprecision stated, the exact 25-line slot block
+recorded as the alternative; the measurement **as designed** (harness micro-bench ≤ before × 1.03,
+first run discarded, median of three, a direction row if the before spread exceeds 3 %; `mix bench`
+guard row; the feature-cost number once for change 4). **Finding 1 = KI-137 RULED REAL** — an Entity
+outlives `Operative.stop/1` (reproduced on my run: "entity alive after stop: true"; a `:normal` exit
+from a link is discarded by a non-trapping process), filed, fixed as its own commit red-first at
+checkpoint 1 before batch 3; I pointed the worker at the smaller shape (a trapping Entity terminates
+on its parent's EXIT by gen_server's own rule, and D6's `terminate/2` needs the trap anyway). My
+brief's `state.rs` was wrong; the fixture is `entity.rs`. **Step 2 authorised 09:12**: batches 0–2,
+checkpoint 1.
 
 ### R6 CHANGE 2 SURVEY VERIFIED AND APPROVED 07:35
 
@@ -1145,6 +1177,15 @@ report: `entity.ex` at ~560 raw takes its second split there, as the survey said
 the `{value, meta, key}` emit record are the seams a timer firing's outputs ride; the `:reap` tick
 and `EntryIdle`'s tick are the two `Process.send_after` timers an Entity-timer wheel must not become
 a third of.
+
+**Docs committed `887911fb`; tree clean 08:41 bar the two foreign files; `ListAgents` no subagent.
+R6 CHANGE 3 worker spawned 08:41** — fresh `general-purpose`, change id
+`carry-entity-timers-in-elixir`, two-step: step 1 writes the change (timers as folded state over
+`apply_change`/`Record`/the fold; firings through `handout_seq` and the emit record; NOT a third
+`Process.send_after` mechanism; the clock kinds under the determinism contract; the `entity.ex`
+split designed; MODIFIED blocks counted; twins against `state.rs`; a dispatch-path measurement with
+a threshold set now), STOPS for my ruling; step 2 on my go with checkpoints after every two batches.
+Sized by the survey at +260 / 6 batches. **Last seen 08:38 (+10m)**: reading, no change dir yet, load 0.35; nudge at +30 if none.
 
 **S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
 `state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
