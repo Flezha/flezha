@@ -91,7 +91,7 @@ defmodule Flezha.SDK.PersistenceTest do
         change_record(0, {:delta, 1}) <>
           change_record(1, {:delta, 2}) <> change_record(2, {:delta, 4})
 
-      assert {:ok, %{value: 7}, _timers, 2, false} =
+      assert {:ok, %{state: %{value: 7}}, 2, false} =
                Record.fold(CounterProc, nil, <<>>, <<>>, log, 0)
     end
 
@@ -99,7 +99,7 @@ defmodule Flezha.SDK.PersistenceTest do
       snap = Record.encode_body(%{value: 10})
       log = change_record(4, {:delta, 5})
 
-      assert {:ok, %{value: 15}, _timers, 4, false} =
+      assert {:ok, %{state: %{value: 15}}, 4, false} =
                Record.fold(CounterProc, nil, Record.header(snap, 1), snap, log, 3)
     end
 
@@ -107,19 +107,19 @@ defmodule Flezha.SDK.PersistenceTest do
       whole = change_record(0, {:delta, 1})
       torn = binary_part(change_record(1, {:delta, 2}), 0, 20)
 
-      assert {:ok, %{value: 1}, _timers, 0, false} =
+      assert {:ok, %{state: %{value: 1}}, 0, false} =
                Record.fold(CounterProc, nil, <<>>, <<>>, whole <> torn, 0)
     end
 
     test "a snapshot-only payload takes the controller's terminal" do
       snap = Record.encode_body(%{value: 3})
 
-      assert {:ok, %{value: 3}, _timers, 9, false} =
+      assert {:ok, %{state: %{value: 3}}, 9, false} =
                Record.fold(CounterProc, nil, Record.header(snap, 1), snap, <<>>, 9)
     end
 
     test "an empty payload is init_state at the hint" do
-      assert {:ok, %{value: 0}, _timers, 0, false} =
+      assert {:ok, %{state: %{value: 0}}, 0, false} =
                Record.fold(CounterProc, nil, <<>>, <<>>, <<>>, 0)
     end
 
@@ -139,7 +139,9 @@ defmodule Flezha.SDK.PersistenceTest do
       body = Record.encode_body({:delta, 1})
       msgpack = <<3, 0::32, 1::32, 5, 0, 0, :erlang.crc32(body)::32>>
 
-      assert {:error, "format_id 5 is not one this SDK writes (3, 7): the body cannot be decoded"} =
+      assert {:error,
+              "format_id 5 is not one this SDK writes (2, 3, 7): " <>
+                "the body cannot be decoded"} =
                Record.fold(CounterProc, nil, <<>>, <<>>, disk_record(0, msgpack, body), 0)
     end
 
@@ -199,7 +201,7 @@ defmodule Flezha.SDK.PersistenceTest do
             Timers.register_op(:event_time, 100)
           ]) <> timer_ops_record(2, [Timers.cancel_op(:event_time, 100)])
 
-      assert {:ok, %{value: 1}, timers, 2, false} =
+      assert {:ok, %{state: %{value: 1}, timers: timers}, 2, false} =
                Record.fold(CounterProc, nil, <<>>, <<>>, log, 0)
 
       assert Timers.all(timers, :processing_time) == [9_000]
@@ -221,10 +223,68 @@ defmodule Flezha.SDK.PersistenceTest do
 
       log = timer_ops_record(0, [Timers.register_op(:processing_time, 9_000)], 1)
 
-      assert {:ok, %{value: 0, unit: "n"}, timers, 0, true} =
+      assert {:ok, %{state: %{value: 0, unit: "n"}, timers: timers}, 0, true} =
                Record.fold(CounterV2Proc, nil, <<>>, <<>>, log, 0)
 
       assert Timers.contains?(timers, :processing_time, 9_000)
+    end
+
+    test "an effect record folds its enclosed changes, its timers, its offset and its event time" do
+      log =
+        change_record(0, {:delta, 1}) <>
+          effect_record(1, %{
+            changes: [Record.encode_body({:delta, 2}), Record.encode_body({:delta, 4})],
+            outputs: [%{channel: "out", key: "k1", metadata: [], payload: "k1=a"}],
+            consumed_offset: 9,
+            dlq: nil,
+            event_time: 400,
+            timers: [Timers.register_op(:processing_time, 9_000)]
+          })
+
+      assert {:ok, restored, 1, false} = Record.fold(CounterProc, nil, <<>>, <<>>, log, 0)
+      assert restored.state == %{value: 7}
+      assert Timers.all(restored.timers, :processing_time) == [9_000]
+      assert restored.floor == 9
+      assert restored.high_water == 400
+    end
+
+    test "a log with no effect record has no floor and no high-water" do
+      assert {:ok, restored, 0, false} =
+               Record.fold(CounterProc, nil, <<>>, <<>>, change_record(0, {:delta, 1}), 0)
+
+      assert restored.floor == -1
+      assert restored.high_water == nil
+    end
+
+    test "an effect-record header on a snapshot is malformed; an effect record at a migrated schema reports migrated" do
+      snap = Record.encode_body(%{value: 1})
+
+      assert {:error, "malformed restoration header (truncated or invalid)"} =
+               Record.fold(
+                 CounterProc,
+                 nil,
+                 Record.header(snap, 1, Record.effect_record_format_id()),
+                 snap,
+                 <<>>,
+                 0
+               )
+
+      log =
+        effect_record(
+          0,
+          %{
+            changes: [Record.encode_body({:delta, 3})],
+            outputs: [],
+            consumed_offset: nil,
+            dlq: nil,
+            event_time: 0,
+            timers: []
+          },
+          1
+        )
+
+      assert {:ok, %{state: %{value: 3, unit: "n"}}, 0, true} =
+               Record.fold(CounterV2Proc, nil, <<>>, <<>>, log, 0)
     end
   end
 
@@ -284,10 +344,9 @@ defmodule Flezha.SDK.PersistenceTest do
 
       identity = Park.identity("op-1", "timer", "")
 
-      assert [{^identity, %{value: 1}, 3, timers}] =
-               :ets.lookup(:sys.get_state(op).slots, identity)
-
-      assert Timers.all(timers, :processing_time) == [at]
+      assert [{^identity, held}] = :ets.lookup(:sys.get_state(op).slots, identity)
+      assert %{state: %{value: 1}, seq: 3, floor: -1} = held
+      assert Timers.all(held.timers, :processing_time) == [at]
     end
   end
 
@@ -463,7 +522,7 @@ defmodule Flezha.SDK.PersistenceTest do
 
       snapshot = Record.encode_body(%{value: 4})
 
-      assert {:ok, %{value: 7, unit: "n"}, _timers, 0, true} =
+      assert {:ok, %{state: %{value: 7, unit: "n"}}, 0, true} =
                Record.fold(
                  CounterV2Proc,
                  nil,
@@ -474,7 +533,7 @@ defmodule Flezha.SDK.PersistenceTest do
                )
 
       # A record at the running version decodes directly, and reports no migration.
-      assert {:ok, %{value: 2, unit: "n"}, _timers, 0, false} =
+      assert {:ok, %{state: %{value: 2, unit: "n"}}, 0, false} =
                Record.fold(
                  CounterV2Proc,
                  nil,

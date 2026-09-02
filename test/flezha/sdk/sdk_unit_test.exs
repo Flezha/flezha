@@ -1,7 +1,8 @@
 defmodule Flezha.SDK.UnitTest do
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Codec, Ctx, KeyGroup, PersistentId, Topology}
+  alias Flezha.SDK.{Channels, Codec, Ctx, KeyGroup, PersistentId, RunnerServer, Topology}
+  alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 
   # A ctx built without a procedure has no name to refuse with; the tests
   # that build one declare the policy themselves.
@@ -347,6 +348,179 @@ defmodule Flezha.SDK.UnitTest do
              Ctx.emit_with_meta(ctx, :c, %{"flz.seq" => "1"})
 
     assert Ctx.take_emits(ctx) == [{:a, %{}, nil}, {:b, %{"m" => "1"}, nil}]
+  end
+
+  # --- the effectively-once tier: the builder, the refusals, the declaration ---
+
+  test "the four tier calls pipe, and the three checkpoint options compose in any order" do
+    assert {:ok, tier} = Topology.build(TierStoreOp)
+    assert tier.effectively_once?
+    assert tier.checkpoint == nil
+
+    assert {:ok, batched} = Topology.build(CheckpointBatchedOp)
+    assert batched.effectively_once?
+    assert batched.checkpoint == %{every: nil, outputs: :at_checkpoint, max_delay_ms: 1_500}
+
+    defmodule EveryFirst do
+      def factory_id, do: "every_first"
+
+      def channels(c) do
+        c
+        |> Channels.effectively_once()
+        |> Channels.checkpoint_every(3)
+        |> Channels.outputs_at_checkpoint(50)
+        |> Channels.input("in")
+        |> Channels.into(KeyedProc)
+        |> Channels.named("sink")
+        |> Channels.keyed()
+        |> Channels.sink("out")
+      end
+    end
+
+    defmodule DelayFirst do
+      def factory_id, do: "delay_first"
+
+      def channels(c) do
+        c
+        |> Channels.outputs_at_checkpoint(50)
+        |> Channels.checkpoint_every(3)
+        |> Channels.effectively_once()
+        |> Channels.input("in")
+        |> Channels.into(KeyedProc)
+        |> Channels.named("sink")
+        |> Channels.keyed()
+        |> Channels.sink("out")
+      end
+    end
+
+    assert {:ok, a} = Topology.build(EveryFirst)
+    assert {:ok, b} = Topology.build(DelayFirst)
+    assert a.checkpoint == %{every: 3, outputs: :at_checkpoint, max_delay_ms: 50}
+    assert b.checkpoint == a.checkpoint
+  end
+
+  test "the five tier refusals by name" do
+    defmodule AckWithoutTier do
+      def factory_id, do: "ack_no_tier"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.checkpoint_ack()
+          |> Channels.input("in")
+          |> Channels.into(KeyedProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule EveryZero do
+      def factory_id, do: "every_zero"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.checkpoint_every(0)
+          |> Channels.input("in")
+          |> Channels.into(KeyedProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule DelayZero do
+      def factory_id, do: "delay_zero"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.outputs_at_checkpoint(0)
+          |> Channels.input("in")
+          |> Channels.into(KeyedProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule UnkeyedSink do
+      def factory_id, do: "unkeyed_sink"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.input("in")
+          |> Channels.into(KeyedProc)
+          |> Channels.named("sink")
+          |> Channels.sink("out")
+    end
+
+    defmodule Shedding do
+      def factory_id, do: "shedding"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.input("in")
+          |> Channels.on_full(:drop_newest)
+          |> Channels.into(KeyedProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    assert {:CheckpointAckWithoutTier, _} = one_issue(AckWithoutTier)
+    assert {:CheckpointEveryZero, _} = one_issue(EveryZero)
+    assert {:CheckpointMaxDelayZero, _} = one_issue(DelayZero)
+    assert {:UnkeyedChannelUnderEffectivelyOnce, "sink"} = one_issue(UnkeyedSink)
+    assert {:DroppingPolicyUnderEffectivelyOnce, "in", :drop_newest} = one_issue(Shedding)
+  end
+
+  test "the tier ships two more declaration keys, and they equal the committed goldens" do
+    assert {:ok, tier} = Topology.build(TierStoreOp)
+    assert {:ok, batched} = Topology.build(CheckpointBatchedOp)
+
+    assert RunnerServer.declarations(tier) == golden("tier_store")
+    assert RunnerServer.declarations(batched) == golden("checkpoint_batched_store")
+  end
+
+  defp one_issue(module) do
+    assert {:error, {:invalid_topology, issues}} = Topology.build(module)
+    assert length(issues) == 1
+    hd(issues)
+  end
+
+  defp golden(id),
+    do: Jason.decode!(File.read!("test/fixtures/declarations/#{id}.json"))
+
+  # --- the ctx under the tier ---
+
+  test "stable_id matches the cross-language fixture and advances its ordinal" do
+    ctx = Ctx.new(nil, nil, 0, identity: "instance/op/key", seq: 42, timer_policy: @timer_policy)
+    assert Ctx.stable_id(ctx) == "bbf81fd4955afd1724203700a240e822"
+    assert Ctx.stable_id(ctx) == "bbf81fd4965afd1724203700a240e95d"
+
+    empty = Ctx.new(nil, nil, 0, identity: "", seq: 0, timer_policy: @timer_policy)
+    assert Ctx.stable_id(empty) == "15915375576d2f389a938dc3a9940c9d"
+
+    Ctx.discard(ctx)
+    Ctx.discard(empty)
+  end
+
+  test "checkpoint/1 raises a flag the Entity reads, and discard/1 clears both tier slots" do
+    ctx = Ctx.new(nil, nil, 0, identity: "i", seq: 1, timer_policy: @timer_policy)
+    refute Ctx.checkpointed?(ctx)
+    assert :ok = Ctx.checkpoint(ctx)
+    assert Ctx.checkpointed?(ctx)
+    assert Ctx.stable_id(ctx) != Ctx.stable_id(ctx)
+
+    Ctx.discard(ctx)
+    refute Ctx.checkpointed?(ctx)
+    fresh = Ctx.new(nil, nil, 0, identity: "i", seq: 1, timer_policy: @timer_policy)
+    assert Ctx.stable_id(ctx) == Ctx.stable_id(fresh)
   end
 
   # --- Codec ---

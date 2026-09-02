@@ -96,6 +96,18 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
     disk_record(seq, Record.header(body, schema, Record.timer_ops_format_id()), body)
   end
 
+  @doc "A `format_id = 2` effect record, as any SDK writes it, at `schema`."
+  def effect_record(seq, body_map, schema \\ 1) do
+    body = Wire.encode_effect_body(body_map)
+    disk_record(seq, Record.header(body, schema, Record.effect_record_format_id()), body)
+  end
+
+  @doc "An effect record frame as `{seq, decoded_body}`; nil when the frame is not one."
+  def effect({"entity_effect_record", frame, _meta}) do
+    {:ok, %{seq: seq, header: header, body: body}} = Wire.decode_frame(frame)
+    {seq, Wire.decode_effect_record(header, body)}
+  end
+
   @doc "A timer-ops record frame as `{seq, ops, decoded_frame}`."
   def timer_ops({"entity_state_change", frame, _meta}) do
     {:ok, %{seq: seq, body: body} = decoded} = Wire.decode_frame(frame)

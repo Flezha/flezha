@@ -228,7 +228,410 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-**NONE — session 8 ended 2026-09-02 10:55 with no worker alive; see the head of this file and `### SESSION 8 HANDOVER`.** What follows is the session narrative; the R6 sections and `### SESSION 8 HANDOVER` (the newest, in order) are what the successor needs.
+**Session 9, 2026-09-02 11:52 — opened by `/loop /refactor`.** Orientation from the files: tree
+clean at `94c1eb80` bar the two foreign files (`M CLAUDE.md`, `?? docs/dev_notes/INDEX.md`, still
+NOT mine); `ListAgents` **no subagents**, peer `flezha-be` interactive/idle plus seven offline/cloud
+sessions; machine clean (no `beam.smp`/`cargo`/`mvn`/loops/zombies/containers, load 0.45/0.25/0.33);
+`openspec list` shows only `carry-effectively-once-in-elixir` 0/37 (the session-8 survey, on disk,
+unverified). **Taking the handover's order: KI-134 first as its own defect change, then the change-4
+§2 read, then its implementer.**
+
+**KI-134 worker spawned 11:58** — fresh `general-purpose`, change id `end-an-orphaned-elixir-runner`,
+one verify-then-fix worker (charter §11c: under ~2 000 lines, no separate survey). Lane: `lib/flezha/sdk/`
+(the reconnect loop; siblings only if the mechanism demands), `test/apps/elixir_runner/`,
+`test/flezha/sdk/`, `test/system/` only if a subprocess test is the honest vehicle, the change dir, its
+dev note, `docs/` prose a delta syncs. Singletons held: the Elixir suite. NOT `docs/known_issues.md`
+(mine — it reports the entry text and I append), NOT the git index. Brief carries: reproduce KI-134
+at HEAD with the combined five-module elixir run + `ps` 30 s after; the two candidate mechanisms
+(`RunnerServer.reconnect/2` sleeping inside `handle_info` under `trap_exit` so the parent's EXIT
+waits out the 10 s budget; the app's `stdin_loop/0` not seeing EOF) and the experiment that separates
+them; red-first tests shown red on HEAD with output; the fix deletion-funded; the cross-SDK rule
+stated either way; the negative evidence after the fixed run; KI-138 the next free number; STOP at
+the checkpoint. The change-4 survey read is mine and runs beside it (reading only).
+
+**KI-134 last seen 12:10 (+12m)**: on its third reproduction try (a time-boxed wait on `ki134/repro_3.done`,
+a `sleep 30` for the anchored `ps`), the app's `stdin_loop/0` instrumented with per-pid marker writes
+under the scratchpad (its separating experiment for mechanism b); no change dir yet; load 2.25 (its
+runs); every dirty path in its lane or mine.
+
+### THE KI-134 WORKER DIED ON THE MODEL RATE LIMIT 12:18 — what it leaves, and what it PROVED
+
+**It ran out of Fable quota (HTTP 429) at +20 min, before writing any change dir.** The user switched the
+session to Opus 5 and told me to restart it. Its analysis died with it; **its evidence is on disk** under
+the session scratchpad `ki134/` and is worth more than the entry it was sent to fix:
+
+- **Reproduced ONCE in SEVEN arms** of the combined five-module elixir run (run 1, orphan `smoke_2311`
+  reparented to `systemd --user`, alive 30 s after `mix` exited 0; runs 2–7 clean, `loop.log`). **KI-134's
+  "every multi-module elixir run" is refuted** — the rate is ~1 in 7.
+- **SIGTERM is not resisted**: that orphan logged `SIGTERM received - shutting down` and **ended within
+  1 s**. The fifth/sixth sightings' SIGKILL likely raced a shutdown already under way. **The entry's second
+  claim is refuted too.**
+- **The discriminator** — the one failing run carries `Failed to write log message to stdout, trying
+  stderr`, eight `stream closed during disconnect: connection_closed` and `[error] Writer crashed
+  (:epipe)`; the six clean runs carry none. That names the mechanism to the function: on the port close the
+  app's stdout writer dies of EPIPE and the group leader with it, so `stdin_loop/0`'s `IO.read(:stdio,
+  :line)` answers `{:error, _}` — **the branch the code deliberately makes a no-op** — instead of `:eof`.
+- **Two negatives, so nobody pays twice**: a bare VM halts on `:eof` with and without stdout noise
+  (`e1_bare_vm.log`); back-to-back ports share only fd 2, never stdin/stdout, so **the inherited-descriptor
+  theory is refuted** (`e2_inherit.log`).
+
+All of it appended to KI-134 by me (the file is the supervisor's, §11d). **The tree holds its
+instrumentation** — `M test/apps/elixir_runner/lib/application.ex`, marker writes inside `stdin_loop/0`,
+with the pristine file saved at `ki134/application.ex.orig`; the successor removes it before the fix
+lands. Machine swept 12:29: no loop, no `beam.smp`, no orphan, load 0.21.
+
+**KI-134 worker RESTARTED 12:32 on Opus 5**, fresh `general-purpose`, same lane and change id, resume brief:
+start from the evidence above rather than re-reproducing blind; force the EPIPE path deterministically to
+prove or refute the mechanism; then red-first test, fix, verify. **It closed at `bbcdaf41` — see
+*KI-134 IS DONE* below.**
+
+**R6 CHANGE 4 STEP 2 worker spawned 13:29** (Opus 5, fresh `general-purpose`), after KI-134 was committed
+and the tree was clean: one worker at a time, and both changes would otherwise have been live in the
+Elixir suite singleton at once. Segment = **batches 0, 1, 2 → checkpoint 1**, per the approved `tasks.md`.
+Brief carries my five rulings verbatim (D7's FIFO accepted as designed and not to be "improved" into the
+reference's gate; `CheckpointMaxDelayZero` accepted as core parity; the +490 budget with 580 as the
+accounting line; the unverified credo struct-field claim to be re-stated from the file rather than
+repeated; the rust arm deferred to batch 5), the §1b stop-and-wait with **KI-138** the next free number,
+the index-is-the-supervisor's rule with new files reported as unmeasured, `--check --lint` never bare,
+and batch 0's instruction to re-verify every coordinate at `bbcdaf41` and report what no longer holds
+rather than writing code for it. Lane: `lib/flezha/sdk/**`, `test/flezha/sdk/**`, two test helpers, the
+change dir. Machine at spawn: clean, load 0.49, no subagent.
+
+**Last seen 13:40 (+11m)**: batch 0 done by its files — the red half recorded, the guard row's before arm
+(`bench --shape regression`, EXIT=0, 163 090 msg/s receive-only) and the micro-bench before arm run as
+**three series**, which is the right instinct: spreads **9.38 %** (series 2) and **2.09 %** (series 3)
+around a ~20.4–21.1 µs/push median. **That straddles the 3 % rule**, so its gate-vs-direction verdict is
+the first thing I check at the checkpoint — a row whose before arm cannot hold 3 % cannot gate a 3 %
+threshold, and §8 says say so rather than run it. Batch 1 in flight and genuinely red first
+(`checkpoint_ack/1 is undefined`, 5 of 26 failing). Seven files dirty, all in lane; `entity.ex` is
+touched earlier than `tasks.md` puts it — noted, to be read at the checkpoint, not interrupted for.
+
+**13:51 (+22m)**: batch 2 in flight — `lib/flezha/sdk/entity/interval.ex` and
+`test/flezha/sdk/interval_test.exs` created (both UNMEASURED until my `git add -N`), `record.ex`,
+`entity/records.ex` and `entity/state.ex` edited, the fold's red half recorded (`red_fold.log`), credo
+read twice. 12 files dirty, +800/−196, every path in lane. Load 1.74 is its own runs; no leak, no loop,
+no zombie. Boxes still 0 — this worker ticks at the batch end, as change 3's did.
+
+**Last seen 12:43 (+11m)**: on step 1, and it is the right step — deterministic probes under `ki134/`
+(`e3.sh` + `e3_child.exs` driving a real stdout break with its own in/out pipes and marker;
+`read_after_break.exs` asking what `IO.read(:stdio, :line)` answers AFTER the writer breaks and whether
+the group leader is still alive; `status_probe.exs`/`status_probe2.exs` reading `:init.get_status()`
+through a `System.stop/1`). Red test file created: `?? test/flezha/sdk/elixir_runner_exit_test.exs`. No
+change dir yet. Machine clean, load 0.64, no `beam.smp`/`mix`/loop alive. Every dirty path in its lane
+or mine.
+
+**12:54 (+22m) — progressing, and I CORRECTED ITS MEASUREMENT.** Change dir written (`proposal.md`,
+`design.md`, `tasks.md`, `specs/`, 0 ticked), dev note started, red test file
+`?? test/flezha/sdk/elixir_runner_exit_test.exs` created, five fresh arms run. **Its `arms.log` records
+"ORPHAN" for arms 3, 4 and 5 — all three name the SAME pid 625883 and the SAME namespace `smoke_4293`,
+elapsed 0:40 → 1:38 → 2:36.** One leak from arm 3 outliving the later arms, counted three times, because
+the post-arm `ps` matches any surviving `mix run --no-halt` and not only the arm's own. Left uncorrected
+that ships as a 3-in-5 rate in the defect record; the truth is **1 in 5**, consistent with the inherited
+1 in 7. Messaged it to fix the counting and re-state any computed rate — and to READ the live specimen
+before killing it (`/proc/625883/fd/{0,1,2}`, its marker file's branch, then SIGTERM last), since that
+answers the `{:error, _}` mechanism directly without waiting for a synthetic repro. Machine otherwise
+clean, load 0.35.
+
+**13:05 (+33m) — it took both corrections and the mechanism is now PROVED, with the inherited hypothesis
+REFINED.** The specimen is gone (read, then killed). A corrected sweep is running (`arms2.sh`, per-arm
+epipe-line counts and a per-arm verdict, arms 1–2 clean at 0 epipe lines). **The synthetic reproduction
+landed** (`e6_*`): after the stdout break the watcher is not answered `{:error, _}` at all — 1.5 s later
+it is still parked in `:io.execute_request/3`, `[error] Writer crashed (:epipe)` on its stderr. So the
+mechanism is a **HANG, not an ignored error return**: under an application, `:stdio` is the application
+master relaying to the device rather than being it, `:io.request/2` monitors the master, and a device
+that dies answers the relayed read nothing at all. No end-of-file can ever arrive, so nothing halts the
+VM. Its candidate fix (`application.ex.final`) reads the `:user` device directly instead of `:stdio` and
+halts on a read error **guarded by `:init.get_status()`**, which keeps the original comment's
+load-bearing concern (never race a starting/stopping VM and swallow a failed boot's report). Not yet
+verified by me — that is the checkpoint. Live `mix test` under `timeout 480`, one time-boxed `until`
+loop, two transient defunct beams inside the run; load 2.08 is its own arm.
+
+### KI-134 CHECKPOINT REPORTED 13:16 — verified, ONE blocking failure sent back, and the mechanism was refuted TWICE
+
+Worker: 44 min, 234 k tokens, 96 tool uses. **It refuted the mechanism it was given** — mine, inherited
+from the dead worker — and caught it the honest way: it shipped the `{:error, _}`-branch-only fix, its
+test went green, **and the next arm still leaked**. The `{:error, _}` reading is right only for a BARE
+SCRIPT, where the group leader IS the io device. In the runner the watcher is armed from
+`Application.start/2`, so its group leader is the **application master**, which relays to `user` without
+being it; `:io.request/2` monitors only the process it sent to, so a dead device answers the relayed read
+**nothing at all** and the watcher parks in `:io.execute_request/3` for ever. **The topology decides the
+answer, and the wrong topology is a reproducible experiment that lies.**
+
+**My verification, by my own runs, not its report:**
+- **Red-first, independently proved.** A paired probe of mine (`ki134/sup/{old,new}.exs`): the pristine
+  watcher inline, armed from a real `Application.start/2`, stdout broken → **shell killed at my 40 s
+  timeout, VM still alive, no status file**; the fixed watcher → **exit 0 in 1 s**. Both halves of the fix
+  are load-bearing and the defect is deterministic on demand. Charter §11c's "the negative control is not
+  cut" earned its place again.
+- `mix test test/flezha/sdk/elixir_runner_exit_test.exs` → **2 passed**, 2.2 s, my run.
+- `watch_stdin/0` has a caller (`application.ex:16`); one file touched, nothing outside the lane; comments
+  state the invariant and narrate no history; no file near 800; `mix format --check-formatted` 0;
+  `format-check.sh` clean (its "NOT RUN" is a missing `rubocop`, pre-existing); `--strict` valid.
+- Its own honesty is worth recording: **the six clean arms prove little** — none carried the
+  `Writer crashed (:epipe)` trigger at all — so the deterministic test is the proof, not the arms. Rate
+  across both workers 1/7, 1/5, 0/6 ≈ **1 in 6**.
+
+**SENT BACK — one blocking failure.** After my `git add -N` the ratchet reads
+`BLOCKING test sleeps: 2 -> 3 [elixir_runner_exit_test.exs (+1)]`, the probe app's
+`Process.sleep(:infinity)` keep-alive at `:59`. Its own `--check --lint` said 0 **honestly**: the file was
+untracked and invisible — **charter §11e's one-directional silence, caught for the sixth time by the
+intent-add**. One-line cure (`receive do: (:never -> :ok)`), which my own probe already proved works.
+Its two non-defect observations accepted: `mix credo <dir>` crashes on an appended `mix.exs`, and
+`openspec/changes` is gitignored so the change dir would need `-f` (it is never committed, so it does not).
+**No new defect filed; KI-138 still free.**
+
+### R6 CHANGE 4 CHECKPOINT 1 VERIFIED 14:05 — batches 0–2 committed; the survey was WRONG on a constant, and a §1b defect is RULED
+
+Worker: 28 min, 309 k tokens, 149 tool uses. **Batches 0, 1, 2 done; nothing of batch 3 started.**
+
+**The batch-0 verification earned its place twice.** Every coordinate holds at `bbcdaf41` except one
+that is a wrong pointer with a right claim (`WalWriter` applies the effect at
+`wal_writer/settlement.ex:27-58`, not in `wal_writer.ex`; no design consequence). **And it caught a
+constant the design had wrong**: D2's FNV prime literal `0x1_0000_0000_0000_0000_0000_013B` is
+2^96 + 0x13b; the frozen constant (`flz_core/src/operative/instance.rs:18`) is
+`0x0000000001000000000000000000013b` = **2^88 + 0x13b**. Verified by me at both ends. Taken from the
+design, every `stable_id` this SDK derives would have disagreed with every other SDK — and the three
+cross-language fixture values are what caught it, red first. **That is the whole argument for a survey
+that is verified rather than trusted.**
+
+**The gate row is DECLARED A DIRECTION ROW, correctly and on its own evidence.** Three before-arm series
+of the harness micro-bench spread **15.52 % / 9.38 % / 2.09 %**, medians 23.26 / 20.44 / 21.10 µs/push —
+13.4 % across the medians. §8 is explicit: a row whose floor cannot resolve the effect being claimed is a
+direction row, and you say so rather than run it. This reproduces change 3's finding on the same box.
+Guard row before arm: **122 985 msg/s** median, inside change 3's band.
+
+**My verification, by my own runs**: `--check --lint` after intent-adding both new files shows **exactly
+one** regression, `lib/flezha/sdk prod_loc 3491 → 3805` (**+314**), which is the change's own budgeted
+feature work — no other row moved, `functions_over_50` 0, `files_over_800` 0. `mix credo --strict` shows
+**four** findings under `lib/flezha/sdk`, the same four as before and **no `StructFieldAmount`**. The
+riskiest slice on my run — interval, persistence, unit, timers — **90 passed**. `check-sdk-boundary.sh`
+OK. Largest touched file 707. The FNV constant matches the kernel's.
+
+**Ruling #4 was half wrong, and the worker measured rather than repeated it — as instructed.** `.credo.exs`
+counts no fields, but credo's own default `Credo.Check.Warning.StructFieldAmount` does, at
+`max_fields: 31`, under `--strict`; `Entity.State` sat at **31**, not 30, and adding `tier` fired a
+**fifth** finding in a blocking area budgeted at four. Cured on change 3's precedent by folding `held?`,
+`park_id`, `park_seq` into one `park` map: **30 fields, 31 keys, still a flatmap** (the Erlang boundary is
+further out at 33 keys, measured with `:erts_internal.term_type/1`), credo back to four, and a field of
+headroom for change 5. Six deliberate deviations from the design are recorded in its report, each with a
+reason; the two that matter are the constant and this.
+
+**Committed `f896879a`** — 15 files, the checkpoint's whole content. Budget: **+314 of +490** at batches
+0–2, with the Entity glue, the routing leaf, the operative plumbing and `settle/3` still to come
+(~+220 by the proposal's own table), landing near **+534** — inside the 420–580 range, above the
+midpoint. Flagged to the worker for batches 3–4, not treated as a breach.
+
+### R6 CHANGE 4 CHECKPOINT 2 VERIFIED 14:55 — batches 3–4 committed `d752847b`; the worker's open question was the SYMPTOM of a P1
+
+Worker: 34 min this segment, 486 k tokens cumulative, 76 tool uses. **Batches 3 and 4 done; batch 5 not
+started.**
+
+**My verification**: after intent-adding its four new files, `--check --lint` gives **one** row,
+`lib/flezha/sdk prod_loc 3491 → 4058` = **+567**, which reproduces its own line-by-line table exactly —
+`files_over_800` **0**, `functions_over_50` **0**, `narrative_markers` **0**, `duplicate_pairs` back to
+78. `entity.ex` is **771**, under the ceiling. `Entity.Tier` aliases only `Interval`, `Records` and
+`State` and **never names `Entity`**, so the split forms no cycle. The SDK slice on my run: **157
+passed**. Its inversion logs exist and say what it claims (`inv_tier` 1/12 passed with the tier arm
+disabled; `inv_hold` 11/12 with the hold ignoring its ref).
+
+**The unplanned third module is justified and I accept it.** `entity.ex` reached **854** with the tier
+arms inline and `files_over_800` is blocking, so D14's "nothing splits" was simply wrong. The split is by
+mutation per §7 — everything writing `tier.staged`/`deadline`/`owed` moves, the process keeps its mailbox
+and ladder — and it cost a module header. `entity.ex` came in **7 under** plan because of it. **+567
+against +490 is inside the 420–580 range**, 13 under the ceiling, and batches 5–6 add nothing to this
+area.
+
+**Six of the twelve tier tests were written after their code, and it said so and proved them by
+INVERSION rather than claiming a red it never had.** That is the honest instrument for a test written
+late, and it is worth more than the red it could have faked.
+
+**Its open question was the symptom; the disease is a P1 and I filed it as KI-139.** It asked whether to
+refuse a changeless class under the tier, because such a class ships nothing and its offsets never become
+durable. Reading the reference settles it and reframes it: `effect.rs:159-172` ships on
+`parked || !(changes.is_empty() && outputs.is_empty() && timers.is_empty())`, so **empty changes with an
+output SHIP**, and nothing there gates the effect stream on holding state. In Elixir the router **skips
+sink delivery for a tier class** (correct — the record carries it) while `settle/4` short-circuits on
+`changeful?`, so **both halves of the output path are off at once and the emit reaches nothing**. Not a
+durability gap: **silent output loss**. Unreachable at `d752847b` because nothing declares the shape and
+the capability is not flipped until batch 5.
+
+**Ruled**: fix it inside change 4, as its own commit, before the flip; **not** a compile refusal, because
+refusing in Elixir alone a shape the reference accepts is the very divergence R6 exists to remove. The
+narrower question — whether a stateless class should be DECLARABLE under the tier in every SDK — is
+escalated with options and a recommendation and blocks nothing.
+
+### KI-139 IS FIXED — `8c3ebcab` — and the worker REFUSED half my instruction, correctly, with a citation
+
+Two production lines, red first (an empty mailbox where the record should have been). My runs: SDK slice
+**158 passed**, `--check --lint` one row, +2 over checkpoint 2. **It refused the second half of my
+ruling**: I said to check `ship_effect/4`'s `persistent?: false` clause as the same hole, and it read
+`flz_core/src/flusher.rs:236-262` instead — the reference drains to frames, advancing the seq, then
+discards when `persistence_enabled` is false, which is exactly what our clause does. **An explicit
+persistence opt-out loses a tier class's outputs in the reference too, so matching it is parity.** It
+said so and offered to write it up as a cross-SDK finding rather than diverging quietly. That is the
+behaviour this programme wants from a worker, and my instruction was the thing that was wrong.
+
+### R6 CHANGE 4 — batch 5 HANDED TO A FRESH WORKER on the worker's own budget call
+
+**It asked to stop and I agreed.** At ~530 k it priced batch 5 at 200–260 k (two fixture files, the flip,
+six e2e files on `uds`, three on `quic`, the smoke tier, four Postgres-gated files with a container, both
+after-arms, two feature-cost rows with a `cargo build` and a broker) and batches 6–7 at 120–150 k, landing
+at **850–940 k** against the ~700 k where the last two workers died — **and the failure mode is the worst
+available: dying mid-arm with a container up and a half-flipped manifest.** The tree is the cheapest
+possible handover point: every mechanism built, committed and proved, 158 SDK tests green, `tasks.md`
+ticked through 4.3.
+
+**The four things it carried in its head, written down so they are not lost:**
+1. **The arms drive the test app's own `_build`** — rebuild `test/apps/elixir_runner` through the manifest
+   command (`MIX_ENV=dev` for the e2e arms, `MIX_ENV=prod` for the bench) or the arm proves the OLD SDK.
+   Its before-arms were taken after a `MIX_ENV=prod` rebuild.
+2. **The gate row is a DIRECTION row**, declared in batch 0 on measured evidence: before medians
+   **23.26 / 20.44 / 21.10 µs/push**, per-series spreads **15.5 % / 9.4 % / 2.1 %**. Report both numbers;
+   manufacture no verdict against a threshold the instrument cannot resolve. Script `…/r6c4/micro.exs`
+   (`MICRO_OP`, `MICRO_N`, `MICRO_RUNS`), and it already takes a fixture module name — which is exactly
+   what 5.7(a)'s `TierStore` vs `BenchKeyed` row needs.
+3. **The guard row's before arm**: 127 295 / 117 785 / **122 985** msg/s median, `…/r6c4/before_guard.log`.
+4. **`test/helpers/sdk_tier_fixtures.ex` already holds working tier twins** — `TierStoreOp` is the
+   `tier_store` shape knob for knob including `retry_backoff_ms(300)`; `CheckpointStoreOp` and
+   `CheckpointBatchedOp` are the two `checkpoint_store` postures. Batch 5.1's bench and app twins are
+   lifted from them, not re-derived.
+
+**BATCH 5 worker spawned 14:57** (Opus 5, fresh `general-purpose`) at `01070006`, tree clean, machine
+clean, no subagent. Brief carries the four handover items verbatim, the direction-row rule, the
+containers-by-name rule with the `compose down` prohibition, the red half before the flip, the anchored
+`ps` after every elixir arm (a survivor is now a REGRESSION, `bbcdaf41` having fixed that leak today),
+`--check --lint` never bare, §1b stop-and-wait with **KI-140** next free, and the instruction to stop at
+a clean boundary if batches 6–7 do not fit its budget. Segment: batch 5 → checkpoint, then 6 and 7 if
+the budget allows.
+
+**Last seen 15:08 (+11m) — fast and thorough.** By its files: the gate's red and green halves both
+recorded (`b5_gate_red.log`, `b5_gate_green.log`), the `uds` arms and smoke tier, the three `quic` crash
+files, the **Postgres four with both containers already stopped** (`docker ps` empty on my check), the
+after-arms (`after_guard.log` EXIT=0), and feature cost (a) in flight. Machine clean, load 1.22, no
+survivor, no container, no loop.
+
+**One thing to question at the checkpoint, not to interrupt for.** Its feature-cost (a) numbers show
+`BenchKeyed` at **64.66 µs/push at n=2000** and **131.61 µs/push at n=5000** — the per-push cost DOUBLES
+with the run length, so the harness is measuring something that scales with n rather than a per-push
+cost. Against that, `TierStore` at **244.63 µs/push at n=10 000** is not a comparison, it is three
+different measurements. It appears to have noticed (it ran `BenchKeyed` at two sizes rather than one),
+but the row is only meaningful **at equal n**, and if the cost still scales at equal n the row says
+nothing about the tier's marginal cost and should be reported as such rather than divided out. Charter §8
+already forbids running a row whose floor cannot resolve the effect claimed.
+
+### KI-138 RULED 14:05 — real, worth fixing, and it pauses the change for one commit
+
+**A raised invocation loses its ctx ref, so its process-dictionary slots can never be deleted.** Filed in
+`docs/known_issues.md` under a new *P2 — the process that grows*. Pre-existing at `bbcdaf41`.
+
+**Reproduced on MY run, not accepted on report** (charter §6b step 1): one input into a `retry_max(5)`
+class whose `run/3` raises →
+`one input, retry_max 5 -> 10 Ctx pdict entries left behind / distinct refs: 5`. **The retry ladder is
+the multiplier, not the input count.** Mechanism verified by reading `run_ladder/3`: the ctx is built
+INSIDE the `try`, so the `rescue` answers `{:raised, message}` and the sole holder of `ref` dies with the
+frame — **the key IS the lost ref**. I checked the three sibling arms and they are clean at HEAD, so the
+worker's description of the blast radius is exact and its success-arm `Ctx.discard/1` is hygiene for the
+two slots this change adds, not a silent second fix.
+
+**KI-138 IS FIXED — `5512f839`, its own commit, and the worker's fix is BETTER than the one I authorised.**
+I authorised the binding alone. It also **deleted `Ctx.new/4`'s two eager `Process.put` calls**, and that
+half is load-bearing rather than tidy: `Ctx.new/4`'s first two statements WERE the puts, so a raise after
+them (from `Procedure.timer_policy/1`, say) would leak slots nobody holds, and the `nil` arm would be a
+lie. Every reader already defaults to empty, so the puts bought nothing. Net **+4 production lines**.
+Regression test at `dispatch_test.exs:279` settles on the **park cast** — the positive signal that all
+three ladder attempts ran — never a sleep; red first at six entries over three refs. **My own before/after
+on the reproduction: 10 entries / 5 refs → 0 / 0**; `dispatch_test.exs` 12 passed on my run; one metric row,
+the expected one. Its `async: true` deviation accepted: the test belongs with the ladder's other behaviour
+tests and that module is `async: false` for a stated pre-existing reason, so the file-counting ratchet does
+not move.
+
+**Verdict as ruled: real and worth fixing, authorised as its own commit before batch 3**, red-first — the test
+asserts no `Flezha.SDK.Ctx` key survives a raised invocation, shown failing on this code first. ~6 lines
+plus the test, and the worker holding the context is the cheapest moment it will ever be fixed at.
+
+**Batch 3 last seen 14:19 (+10m)**: the routing leaf `lib/flezha/sdk/operative/routing.ex`,
+`test/flezha/sdk/effectively_once_test.exs` and `test/helpers/sdk_tier_fixtures.ex` created (all three
+UNMEASURED until my `git add -N`); `operative.ex`, `operative/inbox.ex`, `entity.ex` and
+`entity/records.ex` edited. 8 files dirty +367/−236, every path in lane. Machine clean, load 2.05 its own
+runs. Worker spend ~322 k at the fix; the two previous session limits fell near 700 k, so batch 5 may want
+a fresh worker — decided at checkpoint 2, not before.
+
+**14:41 (+32m)**: batch 4 in flight and near its end (`full_b4.log`, `credo_f.log`, `m_final.log` — the
+full suite and the closing metrics). `park.ex` and `entity/interval.ex` now edited too, and
+`test/flezha/sdk/effectively_once_test.exs`, `test/helpers/sdk_tier_fixtures.ex`,
+`lib/flezha/sdk/operative/routing.ex` exist. **A THIRD new module appeared that the design does not
+name: `lib/flezha/sdk/entity/tier.ex`.** The proposal budgeted exactly two (`entity/interval.ex` ~95,
+`operative/routing.ex` ~45) and gave each a §2 reuse clause. This one owes one, and it is the first
+question at checkpoint 2 — probably a ceiling-forced extraction of the tier arm out of `entity.ex`, which
+would be legitimate under §7, but a new module is never free and the report must say which rule forced it.
+Not interrupted for: it is mid-suite and the checkpoint is minutes away. Machine clean, load 1.63.
+
+### KI-134 IS DONE — `end-an-orphaned-elixir-runner`, closed `bbcdaf41`, archived
+
+**One commit, `bbcdaf41`.** The change directory is archived as
+`2026-09-02-end-an-orphaned-elixir-runner`; the `sdk-conformance` delta applied by hand (the
+`openspec archive` helper is blocked by the permission classifier in this session — the two steps it
+performs, splicing the MODIFIED requirement and moving the directory, were done directly and verified:
+the requirement's scenarios go **3 → 5 with none dropped**, `openspec validate --specs` **101 passed,
+0 failed**).
+
+**My close runs**: the sleep token gone (`grep` no match); `--check --lint` **0 regressions** against the
+`418457b2` baseline with both new files intent-added; the regression file **2 passed** on my own run;
+`mix format --check-formatted` 0 on both files; `format-check.sh` clean; the staged set is six paths,
+each read before staging, and the tree after the commit is clean bar the two foreign files. The worker's
+close: full `mix test` **2056 passed**, `compile --force --warnings-as-errors` 0, credo nothing new on
+either changed file.
+
+**The durable lesson, and it is not about stdin.** *A reproducible experiment in the wrong topology
+lies, and it lies in the direction of a fix that ships green.* The bare-script probe genuinely reproduced
+`{:error, :terminated}`; the runner arms its watcher from `Application.start/2`, where `:stdio` is the
+application master and the read is answered by nothing at all. The branch-only fix built on that probe
+passed its test and **the next e2e arm still leaked** — which is the only reason it was caught. Whenever a
+probe stands in for the real thing, the first question is which of the real thing's properties the probe
+does not have.
+
+**Baseline NOT re-recorded** (the practice at every close): `--check` is exit 0 and both moved rows —
+`test_loc` +73 and `async_false_share` 0.755 → 0.751 — move in the permitted direction, so the stale
+baseline is strictly the stricter comparison. Nothing is hidden by leaving it.
+
+**OWED — index lines for `end-an-orphaned-elixir-runner`** (the NINTH owed pair, same reason as the eight
+before: the other session's uncommitted `CLAUDE.md` split and untracked `INDEX.md`). Verbatim:
+`CLAUDE.md` hook:
+`- [The Elixir runner's stdin watcher hangs when its stdout breaks](docs/dev_notes/end-an-orphaned-elixir-runner.md) — `:stdio` under an application is the APPLICATION MASTER, not the device, and `:io.request/2` monitors the relay, so a dead device answers the read NOTHING`
+`INDEX.md` abstract: **end-an-orphaned-elixir-runner** (KI-134, 2026-09-02) — an `elixir_runner` outlived the harness closing its port about 1 run in 6. Erlang's standard io is one process (`user`) owning descriptors 0 and 1 together, so the SDK's disconnect burst into the closed pipe takes EPIPE and kills the device both directions share; and a process spawned from an application's `start/2` has the APPLICATION MASTER as its group leader, which is what `:stdio` resolves to. The master relays io requests to `user` without being it and `:io.request/2` monitors only the process it sent to, so the device's death is answered by nothing at all: the watcher parks in `:io.execute_request/3` for ever while the end-of-file the same close produced reaches a device nobody is reading. THE TOPOLOGY DECIDES THE ANSWER — in a bare script the group leader IS the device, its death answers `{:error, :terminated}`, and the deliberate no-op branch is reached; that probe is real, reproducible and the wrong experiment, and a fix built on it shipped green while the next arm still leaked. The fix is two lines, each load-bearing: the watcher takes `:user` as its group leader, and the now-reachable error branch halts only while `:init.get_status()` reports started, because start-up and shutdown are when the device dies as part of the VM going down and halting there swallows a failed boot's report. Elixir-only structurally: the other six apps read descriptor 0 directly. Two of KI-134's claims are refuted — the rate is ~1 in 6, and the specimen died 250 ms after SIGTERM. A post-arm `ps` for a surviving runner matches ANY survivor, so an earlier arm's leak is recounted by the next arm's check.
+
+### R6 CHANGE 4 SURVEY VERIFIED AND APPROVED 12:05 (session 9) — read while the KI-134 worker runs
+
+`openspec/changes/carry-effectively-once-in-elixir/` — proposal 466, design D0–D15 519, tasks 8 batches /
+37 boxes, checkpoints after 2, 4, 5 (+arms) and the close; six deltas; `--strict` valid (session 8's run).
+**Coordinates re-checked at HEAD by me**: `wire.ex` `effect_record_header?/1` 249, `decode_effect_body/1`
+302, `encode_effect_body/1` 343, `decode_effect_record/2` 457 — all public; `record.ex:141` refuses format 2
+by name; `operative.ex:200` drops the frame metadata; `check-sdk-boundary.sh:40` lists `Flezha.State.Wire`
+as an allowed seam; the Elixir manifest defers `effectively_once` (rust carries the four ids at `:73`);
+`TierStoreProc` at `elixir_factories.ex:209`; `@required_capabilities` at 13 atoms; raw sizes `entity.ex`
+631, `operative.ex` 635, `records.ex` 172, `runner_server.ex` 661, `persistence_test.exs` 648,
+`sdk_persistence_fixtures.ex` 789 — every one as the proposal states. **§2**: every item carries a reuse
+clause (23 of them; one new module `Entity.Interval` "no candidate" with the three near-misses named;
+`Operative.Routing` is a leaf MOVED out of `deliver/6`, not new logic); the pin table D10 names all
+eight files with the reason none pins; the measurement is three rows with thresholds (gate ≤ ×1.03
+with the before-spread rule, guard `mix bench` reported, feature cost twice); the ceilings are
+designed (`entity.ex` ~690, `operative.ex` ~650, nothing splits, seven functions watched); three risks;
+no operator follow-up (the Postgres four run once with the container by name); no §1b finding.
+
+**Rulings** (under the user's 2026-09-02 instruction, none parked): **D7 accepted** — the record is held
+in a FIFO and the Entity never gates, because on a single-process router the reference's gate is a
+two-party deadlock (the trace in D7 is right: `enqueue_block/2` into a full queue that only pops after
+the report the blocked router cannot send); the requirement is "offset never durable ahead of the
+output" and the FIFO satisfies it. **`CheckpointMaxDelayZero` accepted** — the core refuses it
+(`register.rs:196-199`), so the builder following the core is parity, not a fifth refusal invented here.
+**Size +490 (420–580) accepted** as the budget; above 580 is accounted line by line at the checkpoint.
+**One unverified claim, not load-bearing**: "credo's boundary is 31" struct fields — `.credo.exs`
+carries no field-count check I can find; the worker states the actual count and whether any check
+reads it. **The rust arm for row 5.7(b) is rebuilt** (`cargo build -p rust_runner --release`), not ruled
+immaterial — the sha is the evidence either way and the build is two minutes. **Step 2 spawns when
+KI-134's checkpoint is committed**: both touch `runner_server.ex` and the Elixir suite is one singleton.
+
+**Session 8 handover, kept below for the record.** What follows is the session narrative; the R6 sections and `### SESSION 8 HANDOVER` (the newest, in order) are what the successor needs.
 
 **Session 7, 2026-09-01 22:22 — opened by `/loop /refactor`, two minutes after session 6's
 handover.** Orientation from the files: tree clean at `de8be2c3` bar the two foreign files
@@ -2156,7 +2559,33 @@ made the veneers need three independent flags — which is RULE #1's named failu
 over an extendable seam. And it leaves a published SHALL untestable through the API in four
 SDKs while four tests continue to assert it by bypass.
 
-### Awaiting the user's decision — `openspec/changes/archive` is NOT tracked, and the ignore rule looks like it meant to be
+### Awaiting the user's decision
+
+### Should a STATELESS class be declarable under the effectively-once tier? (opened 2026-09-02, session 9)
+
+**Not blocking anything.** Change 4 fixes the data-loss half itself (KI-139); this is the narrower
+declaration question, and it is yours because either answer is a **cross-SDK surface change** that no
+SDK's fixtures exercise today.
+
+**What is true now**, measured, not assumed: `Procedure.changeful?/1` is `exports?(module,
+:apply_change, 2)`, so a plain stateless transform is "changeless". The reference ships an effect record
+whenever `parked || !(changes.is_empty() && outputs.is_empty() && timers.is_empty())` — **empty changes
+with an output ship** (`flz_core/src/effect.rs:159-172`) — and nothing there gates the effect stream on
+holding state. The reference's only tier declaration refusals concern shedding policies. **And no SDK
+exercises the combination**: every reference fixture is changeful and `decl_tests.rs` always writes
+`"persistent":true` beside `"effectively_once":true`.
+
+| option | what it means | cost |
+|---|---|---|
+| **1. Accept it everywhere** (recommended) | a stateless class under the tier ships an effect record carrying its outputs and the consumed offset, exactly as the reference's condition already allows | change 4's fix alone; no other SDK changes, because the reference already behaves this way. One fixture somewhere would make it non-hypothetical |
+| 2. Refuse it everywhere | the tier requires a stateful procedure; a sixth declaration issue in all seven SDKs plus the host | a cross-SDK change of its own, ~7 SDKs × a refusal + tests, and it forbids a shape the reference's own ship condition was written to allow |
+| 3. Leave it undefined | no refusal, no fixture, no statement | the shape stays expressible and each SDK answers differently the first time someone writes one — the exact class of divergence R6 exists to remove |
+
+**My recommendation: option 1**, and change 4's fix implements it. Option 2 is defensible only if you
+consider "effectively-once without durable state" meaningless as a product promise — if you do, say so
+and I will queue it as its own cross-SDK row rather than smuggling it into an Elixir change.
+
+ — `openspec/changes/archive` is NOT tracked, and the ignore rule looks like it meant to be
 
 `.gitignore:55-56` reads `/openspec/changes` then `!/openspec/changes/archive` — but **git
 cannot re-include a path inside an excluded directory**, so the negation is **inert**.

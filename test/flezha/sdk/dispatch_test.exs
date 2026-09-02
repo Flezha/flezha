@@ -140,6 +140,28 @@ defmodule Flezha.SDK.DispatchTest do
     def run(_input, _s, _ctx), do: {:error, {:non_retryable, "always"}}
   end
 
+  defmodule RaiserProc do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "raiser"
+    def init_state(_), do: nil
+    def run(_input, _s, _ctx), do: raise("boom")
+  end
+
+  defmodule RaiserOp do
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "raiser_op"
+
+    def channels(c),
+      do:
+        c
+        |> Channels.input("in")
+        |> Channels.retry_max(3)
+        |> Channels.retry_backoff_ms(1)
+        |> Channels.into(RaiserProc)
+        |> Channels.named("r")
+        |> Channels.sink("out")
+  end
+
   defmodule PoisonOp do
     @behaviour Flezha.SDK.StreamOperative
     def factory_id, do: "poison_op"
@@ -252,6 +274,19 @@ defmodule Flezha.SDK.DispatchTest do
     Entity.release_park(entity_pid, body.park_id)
     Inbox.input(op, "in", "poison2", %{})
     assert_receive {:"$gen_cast", {:park, ^entity_pid, _identity2, _body2}}, 1_000
+  end
+
+  test "a raised invocation leaves no ctx of its own in the Entity's dictionary" do
+    %{op: op} = start_operative(RaiserOp, runner: self())
+    Inbox.input(op, "in", "boom", %{})
+
+    # The park is the positive settle: every attempt of the ladder has run and
+    # the Entity is idle, so what the dictionary holds now is what it keeps.
+    assert_receive {:"$gen_cast", {:park, entity_pid, _identity, body}}, 2_000
+    assert body.attempts == 3
+
+    {:dictionary, dict} = Process.info(entity_pid, :dictionary)
+    assert Enum.filter(dict, fn {k, _} -> is_tuple(k) and elem(k, 0) == Ctx end) == []
   end
 
   # `GatedProc` with a one-item mailbox: each run is held until the test
