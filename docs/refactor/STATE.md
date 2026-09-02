@@ -2,8 +2,95 @@
 
 ## SESSION 10 — started 2026-09-02 18:35. Loop resumed with `/loop /refactor`.
 
-**Current worker**: none. **R7 change 1 of 8 is DONE and ARCHIVED.** Next: R7 change 2 (per-veneer
-workflow fixtures — node), then 3–5, then a fresh three-change survey for the elixir half.
+**Current worker**: none. Tree clean at `f670106f` apart from the other session's two files.
+**Next: R7 change 2 `carry-workflow-in-node`, approved and ready to implement.**
+
+## KI-146 CLOSED and COMMITTED `f670106f`, 20:58 — the instrument is repaired
+
+The cure is one place, as ruled: `SystemCase.__using__` publishes the runtime in `setup_all` beside the
+per-test `setup`. **Both are needed** — the worker measured it with a standalone ExUnit probe rather than
+assuming: `setup_all` is `#PID<0.112.0>`, `setup` and the test are `#PID<0.113.0>`, so `Process.put` in one
+is invisible in the other. A `setup_all` context carries **module tags only**, so only a `@moduletag` pins
+a module-wide fleet, and `runtime_for/1`'s doc now says so.
+
+**Only one of the three modules needed a tag, and the reasoning is the value here.**
+`multi_tenant` is byte-identical — the template is its whole cure. **`workflow_kind` was deliberately NOT
+pinned**: its "against a live Rust runner" prose was stale, java defers nothing and ships
+`EchoWorkflowOperative.java`, and `echo_workflow` is driven by no other module — pinning would have left
+java's declared fixture proved by nothing. It is now green under java, **driving `echo_workflow` on the
+java runner for the first time**. `cross_sdk_placement` was never affected but now declares
+`reference_runtime: true`: the one module *about* multiple SDKs is the one that must never follow the
+selection, and it said so nowhere.
+
+**The worker caught its own guard being unsound and said so.** Its first version asserted the OS argv —
+which is what KI-146's own "A fix must" suggested — and under `FLEZHA_E2E_RUNTIME=elixir` the launch is
+`sh -c '… exec mix run …'`, so `exec` replaces the argv with the beam's and no elixir runner appears in
+`ps` at all. The shipped guard reads `ClassRegistry.sdk_lang/2`, what the runner declared on the wire.
+**The filed entry's own suggested method was the wrong one**, and that is recorded in the entry.
+
+Verified by me: the structural diff read line by line, all three module decisions read, the guard read and
+**re-run under node myself** (`1 passed`), `lib/` untouched (lane held), `delete_sdk_lang/2` pre-existing.
+Arms: rust 10, node 9+1 skipped, java 9, guard green on six runtimes, full suite `exit 0, 2110 passed, 67.9 s`.
+
+### The ruby finding — ruled: NOT a defect, it is the rbenv trap again
+
+The worker reported the ruby runner cannot start (`cannot load such file -- msgpack`) and honestly declined
+to file it. **Correct not to file, and the diagnosis is one step short**: it used the *system* ruby 3.2.3.
+Under the project's pinned toolchain it is fine —
+`PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH" ruby test/apps/ruby_runner/runner.rb probe_ns` prints
+`[ruby_runner] namespace=probe_ns transport=uds executor=threads` and only then fails to find a controller,
+which is expected with none running. **This is the fourth thing the rbenv PATH has now cost**: the ruby
+suite, the ruby SDK build, the format gate, and now an e2e runner spawn. It is in the tasks preamble and in
+every brief and it still catches every worker — it belongs in `CLAUDE.md`, which I cannot write.
+
+## R7 change 2 `carry-workflow-in-node` — SURVEYED and APPROVED 20:15
+
+`openspec/changes/carry-workflow-in-node/` — proposal 429, design 388, tasks 265 (38 boxes, 6 batches),
+plus a `sdk-conformance` delta. `openspec validate --strict` **exit 0**; 5 scenarios carried, 0 dropped,
+1 added. **Approved**: every fixture carries a reuse decision, the one forced out-of-lane edit is named
+(`test/mix/bench_fleet_test.exs:44`, charter §11d), the size is derived twice independently and agrees,
+and the `.mjs`-classifies-as-`ts` sleep ratchet is spotted before it can fire.
+
+**It corrected my brief and it was right**: I wrote "16 of 19 fixtures in scope". Scope is
+`gate_test.exs:290` — set equality with the reference, both directions — so **all 19 are in scope**;
+16/19 counts fixtures needing a *surface*, which is a different question.
+
+**What "the number that matters is 7" means, re-derived not repeated**: seven fixtures declare a HYBRID
+channel — one channel carrying both a plugin sink and a consumer. `codec()` appears in 15, hybrid in 7,
+union 16. Seven matters because `codec()` is owed to no veneer, so of the 16, nine needed a method that
+does nothing and **seven needed a shape that did not exist**. Those seven sized change 1.
+
+**KI-141's wire proof already exists and needs no new e2e**: `workflow_crash_resume_e2e_test.exs:180`
+asserts exactly five payloads on `diamond_workflow`, whose `diam_a` channel carries a sink and two
+consumers. Under the per-edge model `.position` would have kept one. The fixture IS the proof, because
+the fan-out is a property of the declaration.
+
+## KI-146 — a gate that lies, found by the survey, REPRODUCED by me
+
+**A `test/system` module that spawns its fleet in `setup_all` always gets the RUST runner**, whatever
+runtime the run selected, because `SystemCase` publishes the runtime in a per-test `setup` — a different
+process, and later. My own run:
+
+```
+FLEZHA_E2E_RUNTIME=node mix test --include system test/system/multi_tenant_e2e_test.exs
+  [conformance] runtime=node …          Result: 7 passed
+  runners seen:  target/debug/rust_runner tenant-alpha
+                 target/debug/rust_runner tenant-beta
+```
+
+Zero node runners; seven scenarios credited to node against rust, silently. **Blast radius is exactly
+three modules**: `multi_tenant`, `workflow_kind`, `cross_sdk_placement` — the last of which exists to
+prove cross-SDK placement.
+
+**Ruled: fixed BEFORE change 2, though it does not block it.** Change 2's proof module spawns per test,
+so its evidence is sound. It goes first because R7's remaining four changes are all conformance claims,
+and the instrument should be repaired before four more measurements are taken with it. **The cure is per
+module, not blanket** — `workflow_kind`'s own moduledoc says "against a live Rust runner" and may honestly
+be reference-only, while `multi_tenant` is tagged `runner_lifecycle`, which no SDK defers.
+
+**Also corrected in `known_issues.md`**: KI-141 said `output_channel_id` is read in "exactly three
+places". It is **four** — `commit.rs:91` beside `:42`. Change 1's checkpoint caught this and it never
+reached the file the next reader opens.
 
 ## R7 change 1 `unify-veneer-procedure-output-channel` — CLOSED 2026-09-02 19:51, 45/45 boxes
 

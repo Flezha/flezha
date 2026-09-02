@@ -3,7 +3,7 @@
 **Mis see on**: iga lahtine asi ühes tabelis, tavakeeles, ilma žargoonita. Kaks lauset mure kohta ja üks
 minimaalne näide. **Supervisor uuendab seda pidevalt ise** ja raporteerib omanikule **kord tunnis**.
 
-**Viimati uuendatud**: 2026-09-02 19:51 · **Viimati raporteeritud**: 2026-09-02 18:36
+**Viimati uuendatud**: 2026-09-02 20:48 · **Viimati raporteeritud**: 2026-09-02 20:48
 
 ---
 
@@ -12,11 +12,8 @@ minimaalne näide. **Supervisor uuendab seda pidevalt ise** ja raporteerib omani
 | # | Mure | Näide | Seis |
 |---|---|---|---|
 | KI-55 | Kui panna kahe töösammu vahele teisendus, rakendatakse seda mõnes SDK-s kaks korda. Viga ei kuvata kusagil — lihtsalt vale väärtus liigub edasi. | Reegel "lisa ette `M:`" annab `M:M:mid:v`, kuigi peaks andma `M:mid:v`. | **Lahtine.** Tõsine |
-| KI-144 | Kui üks kanal saadab korraga nii lisandmoodulisse kui ka järgmisse töösammu, kodeeritakse järgmise sammu sõnum vale kodeerijaga. Sõnum ei jõua kohale, proovitakse kolm korda ja pannakse kõrvale. | Töösamm ootab arvu `42`, saab 4 baiti `00 00 00 2A` ja ei oska seda lugeda. | **Parandatud ja kommititud** `6612f8bc` — meie enda viga, leitud oma checkpointil |
-| KI-141 | Kui üks töösamm saadab tulemuse kahele järgmisele, siis teine neist visatakse vaikselt minema. Puudutab just seda teed, kus andmed peaks kettale jõudma. | Samm A saadab nii B-le kui C-le; C ei saa kunagi midagi. | **Parandatud ja tõestatud** — e2e jookseb neljal keelel, mõlemal transpordil |
 | KI-57 | Täisrunni ajal lähevad ühendusfailide teed operatsioonisüsteemi piirist pikemaks. Siis ei saa tööline üldse ühendust ja kõik, mis teda vajas, jääb vaikselt tegemata. | Tee `/tmp/flezha_.../stream_...sock` ületab 107 tähemärki ja ühendus lihtsalt ei teki. | **Lahtine.** Tõsine |
 | KI-142 | Kui kirjutada teisendus, mis ei lõpe kuskil, siis see visatakse vaikselt ära. Kaks peamist SDK-d keelavad selle, veneerid mitte. | `.map(f).sink('s')` ilma `.into()`-ta — `f` ei jookse kunagi. | Lahtine. **Üks PHP test kasutas seda päriselt** — parandatud, aga keeldu ikka pole |
-| KI-143 | Pythoni üks testiseadistus toetub nimetamisreeglile, mille äsjane parandus ära võttis. Selles keeles ei jõua edastatud sõnum enam kohale. | Üks rida `fixtures.py`-s; teised kolm keelt kirjutavad selle juba õigesti. | **Lahendatud** `47d32c9d` |
 | KI-129 | Elav olekupäring võib vastata olekuga, mis pole veel kettale kirjutatud, ega oska seda öelda. Andmeid ei kao, aga vastus lubab rohkem kui ta teab. | Küsid oleku, saad väärtuse, aga kettal seda veel pole. | Lahtine, väike |
 
 ## 2. Kohad, kus SDK-d käituvad erinevalt
@@ -52,7 +49,7 @@ minimaalne näide. **Supervisor uuendab seda pidevalt ise** ja raporteerib omani
 
 | # | Töö | Mida see tähendab | Seis |
 |---|---|---|---|
-| R7 | Viimane võimekus — töövood — puudub viies SDK-s. Kaheksa muudatust: neli veneeri saavad ühise paranduse, siis igaüks oma testid, siis kolm Elixiri jaoks. | Ilma selleta ei saa neis keeltes töövoogu üldse kirjutada. | **1/8 VALMIS ja arhiveeritud.** Järgmine: muudatus 2 (node'i töövoo-fikstuurid) |
+| R7 | Viimane võimekus — töövood — puudub viies SDK-s. Kaheksa muudatust: neli veneeri saavad ühise paranduse, siis igaüks oma testid, siis kolm Elixiri jaoks. | Ilma selleta ei saa neis keeltes töövoogu üldse kirjutada. | **1/8 valmis.** Muudatus 2 (node) töös, 0/38 |
 | R9 | Käsurea lippude ühtlustamine (KI-80). | Väike, kokku lepitud. | Ootab |
 | R10 | Avaldamise-eelne kontrollnimekiri. | Väike, ainult raamistik. | Ootab |
 | R11 | Kaks spetsi, mis lubavad koodis puuduvat (KI-115). | Enne parandust tuleb mõõta, kumb pool on vale. | Ootab |
@@ -71,5 +68,14 @@ minimaalne näide. **Supervisor uuendab seda pidevalt ise** ja raporteerib omani
 
 | # | Mis | Miks blokeeritud |
 |---|---|---|
-| — | 11 muudatuse indeksirida on kirjutamata. | Teine sessioon hoiab neid kahte faili muutmata kujul; nende töö kommitimine pole minu teha |
+| — | **12** muudatuse indeksirida on kirjutamata. | Teine sessioon hoiab neid kahte faili muutmata kujul; nende töö kommitimine pole minu teha |
 | — | Üks dokumendiparandus ei mahu committi. | Kogu kaust on git'i eest peidetud `.git/info/exclude` reegliga |
+
+## 8. Selle sessiooni jooksul lahendatud (ei ole enam ülalpool)
+
+| # | Mis | Kus |
+|---|---|---|
+| KI-141 | Hargnemise teine haru kadus vaikselt. | Mudel parandatud `55b8a748`, tõestatud e2e-ga neljal keelel |
+| KI-143 | Pythoni fikstuur nimetas kanali valesti. | `47d32c9d` |
+| KI-144 | Hübriidkanal kodeeris järgmise sammu sõnumi vale kodeerijaga, iga kirje DLQ-sse. | `6612f8bc` — meie enda viga, leitud oma checkpointil |
+| KI-146 | `setup_all`-is käivitatud tööline oli alati Rusti oma. | `f670106f` — ravi ühes kohas |

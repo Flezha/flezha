@@ -18,7 +18,9 @@ defmodule FlezhaTest.SystemCase do
   honoured whatever the filters say, and reports the capability by name.
 
   A scenario that proves controller mechanics rather than the runner pins the
-  reference SDK with `@tag reference_runtime: true`, and says why.
+  reference SDK with `@tag reference_runtime: true`, and says why. A module
+  whose whole fleet is pinned says so with `@moduletag`, because a fleet
+  spawned in `setup_all` is read from the module tags alone.
 
   A module whose scenarios span two capabilities overrides per test:
 
@@ -57,6 +59,10 @@ defmodule FlezhaTest.SystemCase do
   The runtime a scenario spawns: the selected SDK, or the reference when the
   scenario is tagged `reference_runtime: true`.
 
+  Takes either context ExUnit builds: a test's, or a `setup_all`'s — which
+  carries the module tags and nothing per-test, so only a `@moduletag` pins a
+  module-wide fleet to the reference.
+
   Not every `test/system` scenario proves the runner. Some prove *controller*
   mechanics — a journal cut, an outbox re-drive, a rewind — and merely need a
   runner to drive them. Those name the reference SDK so a run pointed at
@@ -78,6 +84,19 @@ defmodule FlezhaTest.SystemCase do
       @moduletag :system
       @moduletag capability: unquote(capability)
       @moduletag skip: FlezhaTest.SystemCase.deferral(unquote(capability))
+
+      # A module-wide fleet (charter §9) is spawned in `setup_all`, which runs
+      # before every `setup` AND in its own process, so the per-test
+      # publication below never reaches it. Both are needed, and the runtime
+      # each publishes is scoped to the process that spawns.
+      #
+      # A `setup_all` context carries the MODULE tags only — no per-test `@tag`
+      # exists yet — which is what a module-wide fleet should read anyway.
+      setup_all context do
+        NodeTestHelper.put_spawn_runtime(FlezhaTest.SystemCase.runtime_for(context))
+
+        :ok
+      end
 
       setup context do
         NodeTestHelper.put_spawn_runtime(FlezhaTest.SystemCase.runtime_for(context))

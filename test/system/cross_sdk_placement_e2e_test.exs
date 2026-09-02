@@ -26,6 +26,12 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
 
   @moduletag interop: true
 
+  # Both runners below name their language, so this module never follows
+  # `FLEZHA_E2E_RUNTIME` — it proves a controller-side placement filter, and its
+  # two runtimes ARE the scenario. The module tag says so rather than leaving a
+  # future runner spawn to pick up whichever SDK the run happened to select.
+  @moduletag reference_runtime: true
+
   @moduletag skip:
                FlezhaTest.SystemCase.skip_unless(
                  :interop in (ExUnit.configuration()[:include] || []),

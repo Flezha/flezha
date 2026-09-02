@@ -332,7 +332,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   @doc "The reference SDK — the manifest every other manifest is measured by."
   def reference_runtime, do: @reference_runtime
 
-  @doc "Scope `runtime` to the calling test process (`FlezhaTest.SystemCase`)."
+  @doc """
+  Scope `runtime` to the calling process (`FlezhaTest.SystemCase` publishes it
+  in both `setup_all` and `setup`, which ExUnit runs in different processes).
+  """
   def put_spawn_runtime(runtime), do: Process.put(@runtime_key, runtime)
 
   @doc "The runtime `start_runner_port/2` spawns when the caller names none."

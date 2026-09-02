@@ -1,12 +1,13 @@
 defmodule FlezhaTest.System.TaskKindE2ETest do
   @moduledoc """
-  End-to-end proof for `operative-task-kind` against a live Rust runner: a
-  unit started with `kind: :workflow` flows `AddOperative --kind task` → SDK spawns
-  a task → runs `run` once → emits `WorkflowCompleted` → the controller drives
-  deregister-on-completion. The whole loop is observable as the unit
-  disappearing from the durable registry without an explicit stop. Tagged
+  End-to-end proof for `operative-task-kind` against a live runner of the
+  selected SDK runtime: a unit started with `kind: :workflow` flows
+  `AddOperative --kind task` → SDK spawns a task → runs `run` once → emits
+  `WorkflowCompleted` → the controller drives deregister-on-completion. The
+  whole loop is observable as the unit disappearing from the durable registry
+  without an explicit stop. Tagged
   `:system` (boots a real subprocess); run with
-  `mix test --include system test/system/task_kind_e2e_test.exs`.
+  `mix test --include system test/system/workflow_kind_e2e_test.exs`.
   """
 
   use FlezhaTest.SystemCase, capability: :workflow
