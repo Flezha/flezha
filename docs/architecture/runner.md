@@ -461,9 +461,12 @@ capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conf
 Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
 the reference every other is checked against. The Node, Ruby, PHP and Python SDKs carry every
-capability but `workflow`, whose reference fixtures need two builder surfaces every veneer
-lacks — an inter-procedure `codec()` and a hybrid `sink().into()` — and which they owe to the
-follow-up that adds them. The Elixir SDK is its own core: it carries `state_persistence`,
+capability but `workflow`, whose reference fixtures they owe to the follow-up that ports
+them. The builder surface is no longer what blocks them: a procedure node owns exactly one
+output channel in every veneer, so the reference's hybrid `sink(...).into(...)` is writable,
+and an inter-procedure `codec()` is owed to no veneer at all — the core derives the journal
+codec from the channel's kind (`flz_core/src/host/register.rs`) and the declaration carries
+no codec key. The Elixir SDK is its own core: it carries `state_persistence`,
 `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers` and
 `effectively_once` as re-expressions of the kernel's rules — the record header and the
 External Term Format body, the fold, compaction, the live read, the credit window, the

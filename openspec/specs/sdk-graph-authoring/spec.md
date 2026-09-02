@@ -4,7 +4,9 @@
 TBD - created by archiving change sdk-graph-authoring-api. Update Purpose after archive.
 ## Requirements
 ### Requirement: Producer-first stream-handle graph builder
-Both SDKs SHALL author operative topologies through a producer-first fluent builder in which `.into(<procedure>)` wires a consumer onto the current stream and returns the **consumed procedure's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. The handle SHALL be a lightweight, copyable reference into the operative's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`codec()`, `keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operative.
+Every SDK SHALL author operative topologies through a producer-first fluent builder in which `.into(<procedure>)` wires a consumer onto the current stream and returns the **consumed procedure's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. A procedure node SHALL own **exactly one output channel**, created on first use and reused by every later call on a handle whose source is that node, so wiring a second consumer, attaching a plugin sink or overriding the channel name reaches the same channel rather than declaring another. A declaration in which one procedure produces two channels SHALL NOT be constructible: the runtime resolves a procedure's output channel to a single id, and a second producing channel would be journaled by nothing and re-seeded by nothing on crash-resume. The handle SHALL be a lightweight, copyable reference into the operative's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`codec()` where the SDK declares one, `keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operative.
+
+An SDK whose procedures hand the core **typed values** (Rust, Java) SHALL declare an inter-procedure codec on every inter-procedure channel of a durable structured workflow class, because the value has no byte form until one is declared. An SDK whose procedures hand the core **bytes** — every host over the erased poll core — SHALL NOT declare one, and the runtime SHALL derive the journal codec from the channel's kind: an inter-procedure channel of such a class is journalable and re-seedable with no codec declaration and no declaration key. A builder SHALL NOT offer a codec method that changes nothing; the absence of the method is the statement that the core decides.
 
 A chain MAY additionally carry **edge transforms** (`map`, `filter`, `flat_map` / `flatMap`) and **edge keying** (`key_by` / `keyBy`) between one `.into(...)` and the next. These SHALL return a stream handle of the same kind, SHALL NOT introduce a Procedure node into the topology, and SHALL be stored on the consumer edge the chain terminates in. Both the entry-stream handle and the output-stream handle SHALL expose the same transform, keying, and per-channel configuration surface; the two handles SHALL NOT drift.
 
@@ -34,6 +36,11 @@ The payload type of every non-entry channel SHALL be taken from the producing pr
 
 - **WHEN** user code retains a stream handle and calls `.into(...)` on it after the operative's topology has been frozen at registration
 - **THEN** the call SHALL fail with an error naming the operative and stating the topology is frozen
+
+#### Scenario: A byte-passing host declares no inter-procedure codec
+
+- **WHEN** a host over the erased poll core declares a durable structured workflow class whose procedure A is wired into procedure B, with no codec declared on the A→B channel
+- **THEN** registration SHALL succeed, the declaration SHALL carry no codec key, and A's handoff to B SHALL be journaled at the commit barrier and re-seeded on crash-resume from the codec the runtime derived from the channel's kind
 
 ### Requirement: Branching is handle reuse; `branch()` is equivalent sugar
 Using one stream handle to wire more than one consumer SHALL declare fan-out: every consumer receives every value released on that stream's channel. The builder SHALL also expose `branch(arm1, arm2, ...)` taking two or more lambdas, each invoked with a copy of the same handle; `branch` SHALL be pure sugar — the resulting topology SHALL be identical to the equivalent handle-reuse declaration, and the two spellings SHALL be freely mixable.
@@ -138,7 +145,7 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 
 ### Requirement: Single `sink` egress with optional `sealed` terminator
 
-Plugin egress SHALL be declared by exactly one builder method: `sink(name)` / `sink(name, serializer)` in Java and `sink(name)` / `sink_with(name, serializer)` in Rust. `sink` SHALL bind the channel to the named plugin sink and SHALL return the stream handle, so inter-procedure consumers MAY be wired after it — a channel is terminal by having no further wiring, not by method choice. `sink(name)` without a serializer SHALL apply the same default serialization rules as the removed `output` (passthrough for bytes, UTF-8 for strings, default JSON otherwise). The name SHALL be destination-neutral: it identifies the attachment point the controller routes to by channel-name metadata; several channels MAY name the same plugin sink. A separate optional `.sealed()` terminator SHALL return a non-chainable handle and add no topology or runtime difference — it is a compile-time statement that no consumer follows. The former `output` / `alsoOutput` / `also_output` / `also_output_with` spellings SHALL NOT exist in either SDK; there SHALL be no coexistence period. The rename SHALL be scoped to user-called builder methods: wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
+Plugin egress SHALL be declared by exactly one builder method in every SDK — `sink(name)` / `sink(name, serializer)` in Java, Node, Ruby, PHP and Python, and `sink(name)` / `sink_with(name, serializer)` in Rust. `sink` SHALL bind the producing procedure's output channel to the named plugin sink and SHALL return the stream handle, so inter-procedure consumers MAY be wired after it — a channel is terminal by having no further wiring, not by method choice. An SDK whose `sink` returns nothing SHALL NOT satisfy this requirement, because the hybrid declaration is unwritable in it. A channel carrying a plugin sink and no consumer SHALL be declared to the runtime as plugin-bound; a channel carrying a plugin sink **and** consumers SHALL keep its inter-procedure kind, and the host SHALL release both the consumer edge outputs and one plugin output for each emitted value. `sink(name)` without a serializer SHALL apply the same default serialization rules as the removed `output` (passthrough for bytes, UTF-8 for strings, default JSON otherwise). The name SHALL be destination-neutral: it identifies the attachment point the controller routes to by channel-name metadata; several channels MAY name the same plugin sink. A separate optional `.sealed()` terminator SHALL return a non-chainable handle and add no topology or runtime difference — it is a compile-time statement that no consumer follows, and SHALL exist only in the SDKs whose type system can enforce it. The former `output` / `alsoOutput` / `also_output` / `also_output_with` spellings SHALL NOT exist in any SDK; there SHALL be no coexistence period. The rename SHALL be scoped to user-called builder methods: wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
 
 #### Scenario: sink is hybrid by default
 
@@ -165,6 +172,11 @@ Plugin egress SHALL be declared by exactly one builder method: `sink(name)` / `s
 - **WHEN** a channel formerly declared with `alsoOutput("indicators", s)` is redeclared with `sink("indicators", s)`
 - **THEN** frames delivered to the plugin SHALL be byte-identical, including the `channel` name metadata and record keying
 
+#### Scenario: A hybrid channel declared in a veneer SDK keeps one channel
+
+- **WHEN** a Node, Ruby, PHP or Python operative declares `.named("mid").sink("mid_sink", enc).into(Next)` on one handle
+- **THEN** the declaration SHALL carry exactly one channel produced by that procedure, named `mid`, of inter-procedure kind, listing `Next` as its consumer, and each emitted value SHALL reach both `Next` and the `mid_sink` plugin
+
 ### Requirement: The channel-declaration API is replaced with no coexistence
 `ChannelDecl`, `.from(...)`, and the typed-and-named inter-procedure `channel(<type>, "name")` declaration SHALL be removed from both SDKs' public surface in the same change that introduces the graph builder. There SHALL be no transitional period in which both APIs are usable.
 
@@ -174,12 +186,17 @@ Plugin egress SHALL be declared by exactly one builder method: `sink(name)` / `s
 - **THEN** the code SHALL fail to compile — the methods do not exist
 
 ### Requirement: One contract across SDKs, per-language spelling allowed
-The graph builder's semantics — handle model, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `sink` vocabulary — SHALL be identical in Rust and Java, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Proc.class` vs turbofish, lambdas vs closures, `into(Proc.class, "name")` vs `into_named::<Proc>("name")`). Where Rust enforces a rule at compile time, Java SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
+The graph builder's semantics — handle model, one output channel per producing procedure, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `sink` vocabulary — SHALL be identical in every SDK, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Proc.class` vs turbofish vs a first-class procedure value, lambdas vs closures vs blocks, `into(Proc.class, "name")` vs `into_named::<Proc>("name")`) and to the two surfaces a language cannot express — a compile-time `sealed()` terminator and, for a host that hands the core bytes, an inter-procedure codec the runtime derives instead. Where Rust enforces a rule at compile time, every other SDK SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
 
 #### Scenario: Same graph, both SDKs, same behavior
 
 - **WHEN** the shared e2e branching fixture topology is authored in both SDKs with the new builder
 - **THEN** both runtimes SHALL produce the same sink outputs, journal shapes, and compensation order for the same scenario script
+
+#### Scenario: One fan-out declaration, one topology, every SDK
+
+- **WHEN** the same fan-out is authored in each SDK — a held handle wired into two procedures, and again as the equivalent `branch(...)` sugar
+- **THEN** every SDK's declaration SHALL carry one channel produced by that procedure listing both consumers, with the same derived channel name, and the two spellings SHALL produce identical declarations within each SDK
 
 ### Requirement: Latest-document router building block
 

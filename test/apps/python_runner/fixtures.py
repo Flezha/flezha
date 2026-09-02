@@ -514,14 +514,8 @@ partition_relay = flezha.procedure(
 
 @flezha.stream_operative("partition_relay")
 def partition_relay_operative(c: flezha.Channels) -> None:
-    # The plugin channel is named `input`, not `relay_out`: a forwarded frame
-    # keeps its producing channel's name, and that is what selects the
-    # receiving operative's entry channel — the downstream fixture's `input`.
-    # The Rust builder gets this by attaching the sink to a channel `named`
-    # separately; this builder's `sink` names the channel, so the name goes
-    # there. The entry here is `in` so the two cannot collide inside the class.
-    c.input("in", decode=text).key_by(prefix).into(partition_relay).keyed().sink(
-        "input", encode=raw
+    c.input("in", decode=text).key_by(prefix).into(partition_relay).named("input").keyed().sink(
+        "relay_out", encode=raw
     )
 
 

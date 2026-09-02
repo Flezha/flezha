@@ -20,10 +20,13 @@ module Flezha
   ConsumerEdge = Struct.new(:procedure, :transforms, :key_by, keyword_init: true)
 
   # A channel as the graph holds it. Its position in the list IS its id.
-  # `sink` is the plugin sink attached to it; nil means none.
+  # `sink` is the plugin sink attached to it; nil means none. `sink_encode` is
+  # that sink's payload encoder and belongs to the sink frame alone: an
+  # inter-procedure frame is decoded with the class codec, so encoding one with
+  # it hands the consuming procedure bytes it cannot read.
   ChannelSpec = Struct.new(
     :index, :name, :kind, :producer, :consumers, :overflow, :retry_max,
-    :retry_backoff_ms, :keyed, :sink, :decode, :encode,
+    :retry_backoff_ms, :keyed, :sink, :decode, :sink_encode,
     keyword_init: true
   )
 
@@ -253,7 +256,7 @@ module Flezha
       end
 
       target.sink = name.to_s
-      target.encode = encode
+      target.sink_encode = encode
       self
     end
 

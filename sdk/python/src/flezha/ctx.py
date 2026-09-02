@@ -253,7 +253,7 @@ class Ctx(Generic[S]):
             "key": None,
             "event_time": None,
             "metadata": [],
-            "payload": channel.encode(value) if channel.encode else _codec.encode(value),
+            "payload": _codec.encode(value),
         }
 
     def _edge_output(
@@ -290,9 +290,7 @@ class Ctx(Generic[S]):
                 else None
             ),
             "metadata": self._meta_list(metadata),
-            "payload": channel.encode(transformed)
-            if channel.encode
-            else _codec.encode(transformed),
+            "payload": _codec.encode(transformed),
         }
 
     def _plugin_output(
@@ -323,7 +321,7 @@ class Ctx(Generic[S]):
             "key": resolved,
             "event_time": None,
             "metadata": stamps,
-            "payload": channel.encode(value) if channel.encode else _codec.encode(value),
+            "payload": channel.sink_encode(value) if channel.sink_encode else _codec.encode(value),
         }
 
     def _identity_stamps(self, channel: ChannelSpec, key: str | None) -> list[tuple[str, str]]:

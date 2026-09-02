@@ -29,8 +29,15 @@ final class ChannelSpec
         public ?string $sink = null,
         /** @var (callable(string):mixed)|null */
         public $decode = null,
-        /** @var (callable(mixed):string)|null */
-        public $encode = null,
+        /**
+         * The plugin sink's payload encoder; null means the class codec. It
+         * belongs to the sink frame alone: an inter-procedure frame is decoded
+         * with the class codec, so encoding one with this hands the consuming
+         * procedure bytes it cannot read.
+         *
+         * @var (callable(mixed):string)|null
+         */
+        public $sinkEncode = null,
     ) {
     }
 }

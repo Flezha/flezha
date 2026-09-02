@@ -164,3 +164,87 @@ test('the builder invents no key the core never learned', () => {
   );
   check('workflow', new Set(Object.keys(workflow.workflow)));
 });
+
+// --- the cross-language topology golden ------------------------------------
+//
+// `test/fixtures/reference_topologies.txt` is the Rust reference's channel
+// topology for two fixtures, transcribed by hand. Four SDKs implement one
+// design with no compiler between them, so the file is what keeps them from
+// drifting: this builder declares both shapes in Node's spelling and the lines
+// must be the golden's, in order.
+
+const TOPOLOGIES = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../test/fixtures/reference_topologies.txt',
+);
+
+function goldenLines(topology) {
+  return readFileSync(TOPOLOGIES, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .filter((line) => line.startsWith(`${topology} |`));
+}
+
+/** The declaration rendered in the golden's columns, one line per channel. */
+function topologyLines(topology, spec) {
+  const decl = toHostClassDecl(spec);
+  return decl.channels.map((channel, index) => {
+    const consumers = channel.consumers ?? [];
+    return [
+      topology,
+      index,
+      channel.name,
+      channel.kind,
+      channel.producer ?? '-',
+      consumers.length > 0 ? consumers.join(',') : '-',
+      spec.channels[index].sink ?? '-',
+    ].join(' | ');
+  });
+}
+
+const bytes = (value) => Buffer.from(String(value), 'utf8');
+
+function hybridChannel() {
+  const producer = defineProcedure({
+    name: 'hybrid_producer_procedure',
+    handle: (input, ctx) => ctx.emit(input),
+  });
+  const consumer = defineProcedure({ name: 'hybrid_consumer_procedure', handle: () => {} });
+  return defineOperative({
+    factoryId: 'hybrid_channel',
+    channels: (c) => {
+      c.input('input')
+        .into(producer)
+        .named('hybrid_indicator')
+        .sink('hybrid_indicators', bytes)
+        .into(consumer);
+    },
+  });
+}
+
+function commitBlockChain() {
+  const commitA = defineProcedure({
+    name: 'tier_commit_a',
+    handle: (input, ctx) => ctx.emit(input, { key: 'job' }),
+  });
+  const blockB = defineProcedure({ name: 'block_b', handle: () => {} });
+  return defineWorkflow({
+    factoryId: 'commit_block_chain',
+    channels: (c) => {
+      c.effectivelyOnce();
+      c.input('in').into(commitA).named('mid').keyed().sink('tier_sink', bytes).into(blockB);
+    },
+  });
+}
+
+test('the hybrid stream topology is the reference, channel for channel', () => {
+  assert.deepEqual(topologyLines('hybrid_channel', hybridChannel()), goldenLines('hybrid_channel'));
+});
+
+test('the structured workflow topology is the reference, channel for channel', () => {
+  assert.deepEqual(
+    topologyLines('commit_block_chain', commitBlockChain()),
+    goldenLines('commit_block_chain'),
+  );
+});

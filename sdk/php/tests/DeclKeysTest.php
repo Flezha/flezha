@@ -11,6 +11,7 @@ use Flezha\BeyondWindow;
 use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Graph\Builder;
+use Flezha\Graph\ClassSpec;
 use Flezha\Graph\HostClassDecl;
 use Flezha\LoopMode;
 use Flezha\Procedure;
@@ -95,6 +96,67 @@ final class DeclKeysTest extends RepositoryTestCase
         sort($keys);
 
         return $keys;
+    }
+
+    /**
+     * The cross-language topology golden.
+     *
+     * `test/fixtures/reference_topologies.txt` is the Rust reference's channel
+     * topology for two fixtures, transcribed by hand. Four SDKs implement one
+     * design with no compiler between them, so the file is what keeps them
+     * from drifting: this builder declares both shapes in PHP's spelling and
+     * the lines must be the golden's, in order.
+     */
+    public function testTheHybridStreamTopologyIsTheReference(): void
+    {
+        self::assertSame(
+            $this->golden('hybrid_channel'),
+            $this->rendered('hybrid_channel', HybridChannelTopology::spec()),
+        );
+    }
+
+    public function testTheStructuredWorkflowTopologyIsTheReference(): void
+    {
+        self::assertSame(
+            $this->golden('commit_block_chain'),
+            $this->rendered('commit_block_chain', CommitBlockChainTopology::spec()),
+        );
+    }
+
+    /** @return list<string> */
+    private function golden(string $topology): array
+    {
+        $lines = file($this->repositoryFile('test/fixtures/reference_topologies.txt'), FILE_IGNORE_NEW_LINES) ?: [];
+
+        return array_values(array_filter(
+            array_map(trim(...), $lines),
+            static fn (string $line): bool => str_starts_with($line, "$topology |"),
+        ));
+    }
+
+    /**
+     * The declaration rendered in the golden's columns, one line per channel.
+     *
+     * @return list<string>
+     */
+    private function rendered(string $topology, ClassSpec $spec): array
+    {
+        $decl = HostClassDecl::of($spec);
+        $lines = [];
+        foreach ($decl['channels'] as $index => $channel) {
+            $consumers = $channel['consumers'] ?? [];
+            $lines[] = implode(' | ', [
+                $topology,
+                (string) $index,
+                $channel['name'],
+                $channel['kind'],
+                isset($channel['producer']) ? (string) $channel['producer'] : '-',
+                $consumers === [] ? '-' : implode(',', $consumers),
+                $spec->channels[$index]->sink ?? '-',
+            ]);
+        }
+
+        return $lines;
     }
 }
 
@@ -193,5 +255,70 @@ final class FullWorkflow extends WorkflowOperative
     public static function run(mixed $args, WorkflowCtx $ctx): mixed
     {
         return $args;
+    }
+}
+
+#[Proc(name: 'hybrid_producer_procedure')]
+final class HybridProducer extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->emit($input);
+
+        return null;
+    }
+}
+
+#[Proc(name: 'hybrid_consumer_procedure')]
+final class HybridConsumer extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return null;
+    }
+}
+
+/** The reference's stream fixture: one producing channel, a sink AND a consumer. */
+#[Operative(factoryId: 'hybrid_channel')]
+final class HybridChannelTopology extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('input')->into(HybridProducer::class)->named('hybrid_indicator')
+            ->sink('hybrid_indicators', static fn (mixed $v): string => (string) $v)
+            ->into(HybridConsumer::class);
+    }
+}
+
+#[Proc(name: 'tier_commit_a')]
+final class TierCommitA extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->emit($input, 'job');
+
+        return null;
+    }
+}
+
+#[Proc(name: 'block_b')]
+final class BlockB extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return null;
+    }
+}
+
+/** The reference's durable structured workflow: the same hybrid, mid-chain. */
+#[Operative(factoryId: 'commit_block_chain')]
+final class CommitBlockChainTopology extends WorkflowOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce();
+        $c->input('in')->into(TierCommitA::class)->named('mid')->keyed()
+            ->sink('tier_sink', static fn (mixed $v): string => (string) $v)
+            ->into(BlockB::class);
     }
 }

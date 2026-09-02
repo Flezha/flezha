@@ -108,7 +108,13 @@ class ChannelSpec:
     sink: str | None = None
     """The plugin sink attached to this channel; ``None`` means none."""
     decode: Callable[[Any], Any] | None = None
-    encode: Callable[[Any], bytes] | None = None
+    sink_encode: Callable[[Any], bytes] | None = None
+    """The plugin sink's payload encoder; ``None`` means the MessagePack default.
+
+    It belongs to the sink frame alone: an inter-procedure frame is decoded
+    with the class codec, so encoding one with this hands the consuming
+    procedure bytes it cannot read.
+    """
 
 
 @dataclass(slots=True)
@@ -375,7 +381,7 @@ class Edge(Generic[T]):
                 "declares a plugin sink more than once",
             )
         channel.sink = name
-        channel.encode = encode
+        channel.sink_encode = encode
         return self
 
     # -- internals ---------------------------------------------------------

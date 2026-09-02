@@ -102,3 +102,81 @@ class DeclKeysTest < Minitest::Test
     assert_empty extra, "the Ruby builder emits #{extra.join(', ')}, which the core never learned"
   end
 end
+
+# The cross-language topology golden.
+#
+# `test/fixtures/reference_topologies.txt` is the Rust reference's channel
+# topology for two fixtures, transcribed by hand. Four SDKs implement one
+# design with no compiler between them, so the file is what keeps them from
+# drifting: this builder declares both shapes in Ruby's spelling and the lines
+# must be the golden's, in order.
+class ReferenceTopologiesTest < Minitest::Test
+  TOPOLOGIES_FILE =
+    File.join(Flezha::TestSupport.repo_root, "test/fixtures/reference_topologies.txt")
+
+  BYTES = ->(value) { value.to_s }
+
+  class HybridProducer < Flezha::Procedure
+    procedure_name "hybrid_producer_procedure"
+    def process(input, ctx) = ctx.emit(input)
+  end
+
+  class HybridConsumer < Flezha::Procedure
+    procedure_name "hybrid_consumer_procedure"
+    def process(_input, _ctx) = nil
+  end
+
+  class HybridChannel < Flezha::StreamOperative
+    factory_id "hybrid_channel"
+    channels do |c|
+      c.input("input").into(HybridProducer).named("hybrid_indicator")
+       .sink("hybrid_indicators", encode: BYTES).into(HybridConsumer)
+    end
+  end
+
+  class TierCommitA < Flezha::Procedure
+    procedure_name "tier_commit_a"
+    def process(input, ctx) = ctx.emit(input, key: "job")
+  end
+
+  class BlockB < Flezha::Procedure
+    procedure_name "block_b"
+    def process(_input, _ctx) = nil
+  end
+
+  class CommitBlockChain < Flezha::WorkflowOperative
+    factory_id "commit_block_chain"
+    channels do |c|
+      c.effectively_once
+      c.input("in").into(TierCommitA).named("mid").keyed
+       .sink("tier_sink", encode: BYTES).into(BlockB)
+    end
+  end
+
+  def golden(topology)
+    File.readlines(TOPOLOGIES_FILE, chomp: true)
+        .map(&:strip)
+        .select { |line| line.start_with?("#{topology} |") }
+  end
+
+  # The declaration rendered in the golden's columns, one line per channel.
+  def emitted(topology, spec)
+    Flezha::Graph.to_host_class_decl(spec)["channels"].each_with_index.map do |channel, index|
+      consumers = channel["consumers"] || []
+      [
+        topology, index, channel["name"], channel["kind"],
+        channel["producer"] || "-",
+        consumers.empty? ? "-" : consumers.join(","),
+        spec.channels[index].sink || "-"
+      ].join(" | ")
+    end
+  end
+
+  def test_the_hybrid_stream_topology_is_the_reference
+    assert_equal golden("hybrid_channel"), emitted("hybrid_channel", HybridChannel.spec)
+  end
+
+  def test_the_structured_workflow_topology_is_the_reference
+    assert_equal golden("commit_block_chain"), emitted("commit_block_chain", CommitBlockChain.spec)
+  end
+end

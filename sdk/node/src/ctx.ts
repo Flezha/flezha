@@ -174,7 +174,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key: undefined,
       eventTime: undefined,
       metadata: [],
-      payload: Buffer.from(channel.encode ? channel.encode(value) : encodeValue(value)),
+      payload: Buffer.from(encodeValue(value)),
     };
   }
 
@@ -207,7 +207,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key,
       eventTime: extractor ? BigInt(extractor(transformed)) : undefined,
       metadata: metaList(options?.metadata, this.input.node.name),
-      payload: Buffer.from(channel.encode ? channel.encode(transformed) : encodeValue(transformed)),
+      payload: Buffer.from(encodeValue(transformed)),
     };
   }
 
@@ -237,7 +237,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       key,
       eventTime: undefined,
       metadata,
-      payload: Buffer.from(channel.encode ? channel.encode(value) : encodeValue(value)),
+      payload: Buffer.from(channel.sinkEncode ? channel.sinkEncode(value) : encodeValue(value)),
     };
   }
 

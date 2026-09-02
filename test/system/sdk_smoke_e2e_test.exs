@@ -119,6 +119,61 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         end
       end
 
+      # One emit, two destinations, on the shape the one-output-channel-per-
+      # procedure model exists for. Registration alone has always passed: a
+      # per-edge model declares a second channel for the sink, so the plugin
+      # frame names the SINK rather than the producing channel and the durable
+      # handoff a workflow journals is the wrong one. The channel name on the
+      # frame is what makes that visible from the controller.
+      @tag scenario: "hybrid channel",
+           capability: :graph_builder,
+           skip: FlezhaTest.SystemCase.deferral(:graph_builder)
+      test "one emit on a hybrid channel reaches the plugin sink and the consumer", ctx do
+        {port, _id} =
+          NodeTestHelper.start_runner_port(ctx.namespace,
+            transport: ctx.transport,
+            port_opts: [:stderr_to_stdout]
+          )
+
+        # This is the module's only test that keeps the port, and it stops
+        # reading it the moment its line appears — so the runner can be left
+        # writing into a pipe nobody drains and miss the namespace teardown.
+        # The test that opened the process ends it.
+        {:os_pid, os_pid} = :erlang.port_info(port, :os_pid)
+
+        on_exit(fn ->
+          NodeTestHelper.ensure_port_dead(port)
+          System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
+        end)
+
+        operative_id = unique("smoke_hybrid")
+
+        assert {:ok, _} =
+                 OperativeManager.start_operative(ctx.namespace, %Builder{
+                   id: operative_id,
+                   factory_id: "hybrid_channel",
+                   opts: [plugins: [sink(ctx.namespace, operative_id, include_metadata: true)]]
+                 })
+
+        OperativeManager.send_io(operative_id, ctx.namespace, "42", %{
+          "channel" => "input",
+          "input_type" => "2"
+        })
+
+        assert_receive {:message_forward, payload, metadata}, 30_000
+        assert payload == <<0, 0, 0, 42>>
+
+        assert metadata["channel"] == "hybrid_indicator",
+               "the plugin frame names #{inspect(metadata["channel"])}; one output channel per " <>
+                 "producing procedure means it carries the producing channel's name, not the sink's"
+
+        said = runner_said(port, "hybrid_consumer_procedure: received 42")
+
+        assert said =~ "hybrid_consumer_procedure: received 42",
+               "the inter-procedure consumer never ran, so the emit reached only the sink; " <>
+                 "the runner printed #{inspect(said)}"
+      end
+
       @tag scenario: "migration"
       test "an operative migrates between two runners of the same runtime", ctx do
         # Distinct identity files: an SDK that persists its stable id would
@@ -333,6 +388,32 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         File.mkdir_p!(@golden_dir)
         File.write!(path, Jason.encode!(actual, pretty: true) <> "\n")
         actual
+    end
+  end
+
+  # The runner's stdout until `needle` appears. A hybrid channel's consumer
+  # procedure holds no state and answers nothing, so what it prints is its only
+  # observable effect — and every SDK's fixture prints the same line.
+  defp runner_said(port, needle, budget \\ 30_000) do
+    read_port(port, needle, System.monotonic_time(:millisecond) + budget, "")
+  end
+
+  defp read_port(port, needle, deadline, seen) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    cond do
+      String.contains?(seen, needle) ->
+        seen
+
+      remaining <= 0 ->
+        seen
+
+      true ->
+        receive do
+          {^port, {:data, data}} -> read_port(port, needle, deadline, seen <> data)
+        after
+          remaining -> seen
+        end
     end
   end
 

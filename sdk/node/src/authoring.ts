@@ -58,8 +58,13 @@ export interface ChannelSpec {
   sink?: string;
   /** Entry payload decoder; absent means the MessagePack default. */
   decode?: (bytes: Uint8Array) => unknown;
-  /** Plugin payload encoder; absent means the MessagePack default. */
-  encode?: (value: unknown) => Uint8Array;
+  /**
+   * The plugin sink's payload encoder; absent means the MessagePack default.
+   * It belongs to the sink frame alone: an inter-procedure frame is decoded
+   * with the class codec, so encoding one with this hands the consuming
+   * procedure bytes it cannot read.
+   */
+  sinkEncode?: (value: unknown) => Uint8Array;
 }
 
 export interface WorkflowSpec {
@@ -407,7 +412,7 @@ class EdgeStream<T> implements Stream<T> {
       );
     }
     channel.sink = name;
-    channel.encode = encode as ((value: unknown) => Uint8Array) | undefined;
+    channel.sinkEncode = encode as ((value: unknown) => Uint8Array) | undefined;
     // The handle is returned, so `.into(...)` chains after it and the value
     // reaches both the consumer mailboxes and the sink. Terminality is the
     // absence of further wiring, not a different method.

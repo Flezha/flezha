@@ -46,7 +46,6 @@ module Flezha
 
     def check_channels(spec)
       names = {}
-      sinks = {}
 
       spec.channels.each do |channel|
         refuse(spec, channel.name, "this channel name is declared more than once") if names[channel.name]

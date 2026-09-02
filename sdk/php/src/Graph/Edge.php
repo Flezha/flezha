@@ -166,7 +166,7 @@ final class Edge
         }
 
         $channel->sink = $name;
-        $channel->encode = $encode;
+        $channel->sinkEncode = $encode;
 
         return $this;
     }

@@ -243,7 +243,7 @@ final class Ctx
                     'key' => null,
                     'event_time' => null,
                     'metadata' => [],
-                    'payload' => $this->payload($channel, $value),
+                    'payload' => $this->edgePayload($channel, $value),
                 ];
             }
         } else {
@@ -291,7 +291,7 @@ final class Ctx
                     ? $definition->eventTimeOf($transformed)
                     : null,
                 'metadata' => $this->metadata($metadata),
-                'payload' => $this->payload($channel, $transformed),
+                'payload' => $this->edgePayload($channel, $transformed),
             ];
         }
 
@@ -328,15 +328,26 @@ final class Ctx
             'key' => $resolved,
             'event_time' => null,
             'metadata' => $pairs,
-            'payload' => $this->payload($channel, $value),
+            'payload' => $this->pluginPayload($channel, $value),
         ];
     }
 
-    private function payload(ChannelSpec $channel, mixed $value): string
+    /**
+     * The inter-procedure frame's bytes: the class codec, always. The
+     * consuming procedure decodes with it, so a sink's serializer here would
+     * hand it bytes it cannot read.
+     */
+    private function edgePayload(ChannelSpec $channel, mixed $value): string
     {
-        return $channel->encode !== null
-            ? ($channel->encode)($value)
-            : Json::guard($channel->name, static fn (): string => Json::encode($value));
+        return Json::guard($channel->name, static fn (): string => Json::encode($value));
+    }
+
+    /** The plugin frame's bytes: the sink's own serializer, or the class codec. */
+    private function pluginPayload(ChannelSpec $channel, mixed $value): string
+    {
+        return $channel->sinkEncode !== null
+            ? ($channel->sinkEncode)($value)
+            : $this->edgePayload($channel, $value);
     }
 
     /**

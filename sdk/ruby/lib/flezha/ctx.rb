@@ -170,7 +170,7 @@ module Flezha
     end
 
     def workflow_output(channel, edge, value)
-      payload = channel.encode ? channel.encode.call(value) : Codec.encode(value)
+      payload = Codec.encode(value)
       {
         target: "edge", channel: channel.index, consumer: edge.procedure,
         plugin_channel: nil, key: nil, event_time: nil, metadata: [], payload: payload.b
@@ -186,7 +186,7 @@ module Flezha
 
       resolved = key || (edge.key_by && edge.key_by.call(transformed)) || @entity_key
       definition = @spec.procedures[edge.procedure].definition
-      payload = channel.encode ? channel.encode.call(transformed) : Codec.encode(transformed)
+      payload = Codec.encode(transformed)
       {
         target: "edge",
         channel: channel.index,
@@ -211,7 +211,7 @@ module Flezha
 
       pairs = meta_list(metadata)
       stamp_identity(pairs, channel, resolved)
-      payload = channel.encode ? channel.encode.call(value) : Codec.encode(value)
+      payload = channel.sink_encode ? channel.sink_encode.call(value) : Codec.encode(value)
       {
         target: "plugin", channel: nil, consumer: nil, plugin_channel: channel.name,
         key: resolved, event_time: nil, metadata: pairs, payload: payload.b

@@ -192,3 +192,100 @@ def test_each_declaration_carries_the_python_language_byte(
     assert decl["factory_id"] == factory
     assert decl["sdk_lang"] == 7
     assert decl["change_format_id"] == 5
+
+
+# --- the cross-language topology golden -------------------------------------
+#
+# ``test/fixtures/reference_topologies.txt`` is the Rust reference's channel
+# topology for two fixtures, transcribed by hand. Four SDKs implement one
+# design with no compiler between them, so the file is what keeps them from
+# drifting: this builder declares both shapes in Python's spelling and the
+# lines must be the golden's, in order.
+
+_TOPOLOGIES = _FIXTURE.parent / "reference_topologies.txt"
+
+
+def _golden(topology: str) -> list[str]:
+    return [
+        line
+        for line in (raw.strip() for raw in _TOPOLOGIES.read_text().splitlines())
+        if line.startswith(f"{topology} |")
+    ]
+
+
+def _lines(topology: str, spec: flezha.ClassSpec) -> list[str]:
+    """The declaration rendered in the golden's columns, one line per channel."""
+    decl = graph.to_host_class_decl(spec)
+    rendered = []
+    for index, channel in enumerate(decl["channels"]):
+        consumers = channel.get("consumers") or []
+        rendered.append(
+            " | ".join(
+                str(field)
+                for field in (
+                    topology,
+                    index,
+                    channel["name"],
+                    channel["kind"],
+                    channel.get("producer", "-"),
+                    ",".join(str(c) for c in consumers) if consumers else "-",
+                    spec.channels[index].sink or "-",
+                )
+            )
+        )
+    return rendered
+
+
+def _bytes(value: object) -> bytes:
+    return str(value).encode()
+
+
+class HybridProducer:
+    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.emit(value)
+
+
+class HybridConsumer:
+    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        return None
+
+
+hybrid_producer = flezha.procedure(HybridProducer, name="hybrid_producer_procedure")
+hybrid_consumer = flezha.procedure(HybridConsumer, name="hybrid_consumer_procedure")
+
+
+@flezha.stream_operative("hybrid_channel")
+def hybrid_channel(c: flezha.Channels) -> None:
+    c.input("input").into(hybrid_producer).named("hybrid_indicator").sink(
+        "hybrid_indicators", encode=_bytes
+    ).into(hybrid_consumer)
+
+
+class TierCommitA:
+    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.emit(value, key="job")
+
+
+class BlockB:
+    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        return None
+
+
+tier_commit_a = flezha.procedure(TierCommitA, name="tier_commit_a")
+block_b = flezha.procedure(BlockB, name="block_b")
+
+
+@flezha.workflow_operative("commit_block_chain")
+def commit_block_chain(c: flezha.Channels) -> None:
+    c.effectively_once()
+    c.input("in").into(tier_commit_a).named("mid").keyed().sink("tier_sink", encode=_bytes).into(
+        block_b
+    )
+
+
+def test_the_hybrid_stream_topology_is_the_reference() -> None:
+    assert _lines("hybrid_channel", hybrid_channel.spec) == _golden("hybrid_channel")
+
+
+def test_the_structured_workflow_topology_is_the_reference() -> None:
+    assert _lines("commit_block_chain", commit_block_chain.spec) == _golden("commit_block_chain")

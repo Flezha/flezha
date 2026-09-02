@@ -1,0 +1,49 @@
+# The channel topology two reference fixtures declare, pinned as data — the
+# cross-language instrument for "one output channel per producing procedure",
+# in the shape `test/fixtures/host_class_decl_keys.txt` uses for declaration
+# keys.
+#
+# Provenance: TRANSCRIBED BY HAND from the Rust reference and checked in. It is
+# not derived at test time and no runtime computes it — a golden a runtime
+# derives is not a golden, it is a second copy of the thing under test. The two
+# sources, read at `55b8a748`:
+#
+#   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelOperative
+#   commit_block_chain  test/apps/rust_runner/src/workflow.rs, TierCommitBlockWorkflow
+#
+# `commit_block_chain` is this file's name for the second shape because no
+# veneer registers a workflow fixture yet; it is `tier_commit_block_workflow`'s
+# topology with the `codec()` call dropped, which declares nothing (the core
+# derives an inter-procedure channel's journal codec from the channel kind —
+# `flz_core/src/host/register.rs`).
+#
+# Five readers pin it: `sdk/node/test/decl-keys.test.mjs`,
+# `sdk/ruby/test/decl_keys_test.rb`, `sdk/php/tests/DeclKeysTest.php` and
+# `sdk/python/tests/test_decl_keys.py` each build both topologies in their own
+# spelling and assert their declaration is these lines; the Rust column values
+# are what `sdk/rust`'s builder emits for the two fixtures above.
+#
+# Columns, `|`-separated, `-` for absent:
+#   topology | index | name | kind | producer | consumers | sink
+#
+# `index` is the channel's position in the declaration — id order is the
+# contract. `producer` and `consumers` are PROCEDURE indices, in declaration
+# order. `kind` is the declared kind after the wiring rule
+# (`sdk/rust/src/operative/builder.rs` `build_channel_desc`): a sink with no
+# consumer is `plugin`, everything else keeps the channel's own kind, so a
+# channel carrying both a sink and a consumer stays `inter_proc`. `sink` is the
+# plugin descriptor name; the core is never told it — a plugin output is
+# addressed by channel name — so it is read from the builder, not the wire
+# declaration.
+
+# hybrid_channel — a stream class. One entry, one producer whose single output
+# channel carries a plugin sink AND an inter-procedure consumer.
+# Procedures: 0 hybrid_producer_procedure, 1 hybrid_consumer_procedure.
+hybrid_channel | 0 | input | entry | - | 0 | -
+hybrid_channel | 1 | hybrid_indicator | inter_proc | 0 | 1 | hybrid_indicators
+
+# commit_block_chain — a structured workflow class, effectively-once, with the
+# same hybrid shape mid-chain and a keyed producing channel.
+# Procedures: 0 tier_commit_a, 1 block_b.
+commit_block_chain | 0 | in | entry | - | 0 | -
+commit_block_chain | 1 | mid | inter_proc | 0 | 1 | tier_sink
