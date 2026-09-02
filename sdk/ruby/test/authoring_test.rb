@@ -218,15 +218,122 @@ class AuthoringTest < Minitest::Test
     assert_equal %w[input in], klass.spec.channels.map(&:name)
   end
 
-  # Compatibility, not conformance: `sdk-graph-authoring` says an underived name
-  # comes from the PRODUCER NODE, and these veneers use the sink's. That second
-  # divergence is open and is not what this change moves — this test pins that
-  # it moves nothing but the named case.
-  def test_an_unnamed_edge_terminating_on_a_sink_keeps_the_name_it_has_today
+  # `sdk-graph-authoring`: an underived channel name
+  # comes from the PRODUCER NODE, never from the sink it terminates on — the
+  # sink's name is the plugin's, and several channels may name one sink.
+  def test_an_unnamed_edge_terminating_on_a_sink_takes_the_producing_nodes_name
     klass = operative("unnamed_sink") do |c|
       c.input("input").into(pass_through("plain")).sink("relay_out")
     end
 
-    assert_equal %w[input relay_out], klass.spec.channels.map(&:name)
+    assert_equal %w[input plain], klass.spec.channels.map(&:name)
+  end
+  # -- one output channel per producing procedure -----------------------------
+  #
+  # The model Rust and Java carry: a procedure node owns ONE output channel,
+  # created on first wiring and reused after. A held edge wired twice appends a
+  # second consumer to it — it does not declare a second channel claiming the
+  # same producer, which the core resolves by first match
+  # (`host/register.rs` `procedure_wiring`) and so silently truncates.
+
+  def channels_of(klass)
+    Flezha::Graph.to_host_class_decl(klass.spec)["channels"]
+                 .map { |c| [c["name"], c["kind"], c["producer"], c["consumers"]] }
+  end
+
+  def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers
+    b = pass_through("b")
+    c_proc = pass_through("c")
+    klass = operative("fan_out") do |c|
+      edge = c.input("in").into(pass_through("producer"))
+      edge.into(b)
+      edge.into(c_proc)
+    end
+    Flezha::Graph.validate(klass.spec)
+
+    assert_equal [["in", "entry", nil, [0]], ["producer", "inter_proc", 0, [1, 2]]],
+                 channels_of(klass)
+  end
+
+  def test_branch_and_two_into_statements_build_the_identical_declaration
+    producer = pass_through("producer")
+    b = pass_through("b")
+    c_proc = pass_through("c")
+    separate = operative("separate") do |c|
+      edge = c.input("in").into(producer)
+      edge.into(b)
+      edge.into(c_proc)
+    end
+    branched = operative("branched") do |c|
+      c.input("in").into(producer).branch(->(arm) { arm.into(b) }, ->(arm) { arm.into(c_proc) })
+    end
+
+    assert_equal channels_of(separate), channels_of(branched)
+  end
+
+  def test_sink_returns_the_edge_so_a_consumer_wires_behind_it
+    klass = operative("hybrid") do |c|
+      c.input("in").into(pass_through("producer")).named("hybrid_indicator")
+       .sink("hybrid_indicators").into(pass_through("consumer"))
+    end
+    Flezha::Graph.validate(klass.spec)
+
+    assert_equal [["in", "entry", nil, [0]], ["hybrid_indicator", "inter_proc", 0, [1]]],
+                 channels_of(klass)
+  end
+
+  def test_a_second_sink_on_one_channel_is_refused
+    message = refusal do
+      operative("twice") { |c| c.input("in").into(pass_through("a")).sink("out").sink("again") }.spec
+    end.message
+
+    assert_includes message, "declares a plugin sink more than once"
+  end
+
+  def test_keyed_is_refused_without_a_plugin_sink_and_accepted_with_one
+    no_sink = operative("keyed_no_sink") do |c|
+      c.input("in").into(pass_through("producer")).named("mid").keyed.into(pass_through("consumer"))
+    end
+    message = refusal { Flezha::Graph.validate(no_sink.spec) }.message
+
+    assert_includes message, "is declared keyed but has no plugin wire"
+
+    hybrid = operative("keyed_hybrid") do |c|
+      c.input("in").into(pass_through("producer")).named("mid").keyed
+       .sink("mid_sink").into(pass_through("consumer"))
+    end
+    Flezha::Graph.validate(hybrid.spec)
+
+    assert_equal true, hybrid.spec.channels[1].keyed
+  end
+
+  def test_a_transform_before_one_into_reaches_that_consumer_only
+    b = pass_through("b")
+    c_proc = pass_through("c")
+    klass = operative("per_edge_transform") do |c|
+      edge = c.input("in").into(pass_through("producer"))
+      edge.map { |value| "#{value}!" }.into(b)
+      edge.into(c_proc)
+    end
+    Flezha::Graph.validate(klass.spec)
+
+    assert_equal [[1, 1], [2, 0]],
+                 klass.spec.channels[1].consumers.map { |e| [e.procedure, e.transforms.size] }
+  end
+
+  # The reference declares exactly this — `tier_commit_block_workflow` opens
+  # with `c.effectively_once()` on a workflow class in Rust and Java — so the
+  # flag is read where the workflow spec is assembled rather than written false.
+  def test_a_workflow_class_carries_its_effectively_once_declaration
+    klass = Class.new(Flezha::WorkflowOperative)
+    klass.factory_id "tier_workflow"
+    klass.channels do |c|
+      c.effectively_once
+      c.input("in").into(pass_through("producer")).named("out").keyed.sink("out")
+    end
+    Flezha::Graph.validate(klass.spec)
+
+    assert_equal true, klass.spec.effectively_once
+    assert_equal true, Flezha::Graph.to_host_class_decl(klass.spec)["effectively_once"]
   end
 end

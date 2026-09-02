@@ -6,8 +6,8 @@ namespace Flezha\Graph;
 
 use Flezha\Dropped;
 use Flezha\Fanned;
-use Flezha\Exception\DeclarationException;
 use Flezha\Overflow;
+use Flezha\Exception\DeclarationException;
 use Flezha\Procedure;
 
 /**
@@ -124,30 +124,29 @@ final class Edge
     {
         $node = $this->builder->nodeFor($class, $nodeName);
 
-        if ($this->from[0] === 'entry') {
-            // One entry channel may feed several procedures; the transforms
-            // and the key belong to the channel, which is what the prepare
-            // crossing names.
-            $channel = $this->from[1];
-            $channel->consumers[] = $node->index;
-            $this->applyPending($channel);
-        } else {
-            $this->channel(
-                'inter_proc',
-                $this->pending['channelName'] ?? ($this->from[1]->name . '__' . $node->name),
-                [$node->index],
-            );
-        }
+        // The transforms and the key belong to this edge, not to the channel:
+        // one channel may feed several procedures, and a chain declared before
+        // one `into` must not reach another.
+        $this->channel()->consumers[] = new ConsumerEdge(
+            $node->index,
+            $this->transforms(),
+            $this->pending['keyBy'] ?? null,
+        );
 
         return new self($this->builder, ['procedure', $node], []);
     }
 
     /**
-     * Terminate this edge on a plugin-bound channel.
+     * Attach this edge's channel to the named plugin sink, and answer the edge.
+     *
+     * `sink(...)->into(...)` wires a consumer behind the sink, so one emit
+     * reaches both. A channel with no consumer behind it is the plugin-bound
+     * terminal — terminality is the absence of further wiring, not a different
+     * method.
      *
      * @param (callable(mixed):string)|null $encode
      */
-    public function sink(string $name, ?callable $encode = null): void
+    public function sink(string $name, ?callable $encode = null): self
     {
         if ($this->from[0] !== 'procedure') {
             throw new DeclarationException(
@@ -157,39 +156,39 @@ final class Edge
             );
         }
 
-        // The channel keeps its `named()` name; `$name` is the sink's, which is
-        // the default when the edge was not named. The channel name is what a
-        // frame carries and what selects a forward target's entry channel.
-        $this->channel('plugin', $this->pending['channelName'] ?? $name, [], $encode);
+        $channel = $this->channel();
+        if ($channel->sink !== null) {
+            throw new DeclarationException(
+                $this->builder->factoryId,
+                $channel->name,
+                'declares a plugin sink more than once'
+            );
+        }
+
+        $channel->sink = $name;
+        $channel->encode = $encode;
+
+        return $this;
     }
 
     /**
-     * Create the channel this edge terminates on, carrying everything the
-     * fluent calls put aside.
-     *
-     * One place, because an inter-procedure hop and a plugin sink differ only
-     * in their kind, their name and whether they name a consumer — and a
-     * setting applied on one but not the other is a fluent call that silently
-     * does nothing on half the edges.
-     *
-     * @param list<int>                     $consumers
-     * @param (callable(mixed):string)|null $encode
+     * The channel this edge's values leave on, with the pending options
+     * applied. An entry edge already has one; a procedure edge's is created on
+     * first use and reused after.
      */
-    private function channel(string $kind, string $name, array $consumers, ?callable $encode = null): void
+    private function channel(): ChannelSpec
     {
-        $this->builder->addChannel(
-            name: $name,
-            kind: $kind,
-            producer: $this->from[1]->index,
-            consumers: $consumers,
-            overflow: $this->pending['overflow'] ?? Overflow::DropNothing,
-            retryMax: $this->pending['retryMax'] ?? null,
-            retryBackoffMs: $this->pending['retryBackoffMs'] ?? null,
-            keyed: $this->pending['keyed'] ?? false,
-            transforms: $this->transforms(),
-            keyBy: $this->pending['keyBy'] ?? null,
-            encode: $encode,
-        );
+        if ($this->from[0] === 'entry') {
+            $channel = $this->from[1];
+        } else {
+            $channel = $this->builder->outputChannelFor($this->from[1]);
+            if (isset($this->pending['channelName'])) {
+                $channel->name = $this->pending['channelName'];
+            }
+        }
+        $this->applyPending($channel);
+
+        return $channel;
     }
 
     /** @return list<callable(mixed):mixed> */
@@ -215,7 +214,5 @@ final class Edge
         $channel->retryMax = $this->pending['retryMax'] ?? $channel->retryMax;
         $channel->retryBackoffMs = $this->pending['retryBackoffMs'] ?? $channel->retryBackoffMs;
         $channel->keyed = $channel->keyed || ($this->pending['keyed'] ?? false);
-        $channel->keyBy = $this->pending['keyBy'] ?? $channel->keyBy;
-        $channel->transforms = [...$channel->transforms, ...$this->transforms()];
     }
 }

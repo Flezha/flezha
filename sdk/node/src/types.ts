@@ -208,8 +208,14 @@ export interface Stream<T> {
    * topology the separate `into` statements would. At least two arms.
    */
   branch(arms: Array<(edge: Stream<T>) => void>): Stream<T>;
-  /** Terminate this edge on a plugin-bound channel. */
-  sink(name: string, encode?: (value: T) => Uint8Array): void;
+  /**
+   * Attach this edge's channel to the named plugin sink, and return the
+   * handle: `.sink(...).into(...)` wires a consumer behind the sink, so one
+   * emit reaches both. A channel with no consumer behind it is the
+   * plugin-bound terminal — terminality is the absence of further wiring,
+   * not a different method.
+   */
+  sink(name: string, encode?: (value: T) => Uint8Array): Stream<T>;
 }
 
 export interface ChannelBuilder {

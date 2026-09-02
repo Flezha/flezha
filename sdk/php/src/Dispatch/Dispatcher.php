@@ -10,6 +10,7 @@ use Flezha\Ctx;
 use Flezha\Exception\FlezhaException;
 use Flezha\Ffi\Core;
 use Flezha\Graph\ChannelSpec;
+use Flezha\Graph\ConsumerEdge;
 use Flezha\Graph\ProcNode;
 use Flezha\Logger;
 use Flezha\SpawnBridge;
@@ -268,7 +269,10 @@ final class Dispatcher
         // A filtered value is consumed and reaches no handler. It still
         // produces an effect, so its offset advances and nothing is retried.
         // A fanned one reaches the handler once per value.
-        foreach (self::valuesOf($channel, (string) $item['payload']) as $input) {
+        // This node's own edge off the channel: a transform chain declared
+        // before one `into` belongs to that consumer and to no other.
+        $edge = self::edgeInto($channel, $node->index);
+        foreach (self::valuesOf($channel, $edge, (string) $item['payload']) as $input) {
             $ctx->emitReturned($definition->instance->run($input, $ctx));
         }
     }
@@ -312,14 +316,16 @@ final class Dispatcher
     {
         $request = $activation['key_request'];
         $channel = $registered->spec->channels[$request['channel']] ?? null;
-        $consumer = $channel?->consumers[0] ?? null;
-        $node = $consumer === null ? null : ($registered->spec->procedures[$consumer] ?? null);
+        // The crossing answers one key set for the whole payload, so it reads
+        // the first consumer edge — the one the core routes the answer to.
+        $edge = $channel?->consumers[0] ?? null;
+        $node = $edge === null ? null : ($registered->spec->procedures[$edge->procedure] ?? null);
         $definition = $node?->definition;
 
         $answers = [];
         foreach ($request['payloads'] as $payload) {
             try {
-                $values = self::valuesOf($channel, (string) $payload);
+                $values = self::valuesOf($channel, $edge, (string) $payload);
                 // A filtered payload answers no key. For a dynamic consumer
                 // that is what tells the core not to route it at all — the
                 // drop happens before an entity is minted rather than inside one.
@@ -331,8 +337,8 @@ final class Dispatcher
                 $keys = [];
                 if ($request['want_keys']) {
                     foreach ($values as $value) {
-                        if ($channel?->keyBy !== null) {
-                            $keys[] = (string) ($channel->keyBy)($value);
+                        if ($edge?->keyBy !== null) {
+                            $keys[] = (string) ($edge->keyBy)($value);
                         } elseif ($definition?->declares('entitiesFor') === true) {
                             array_push($keys, ...$definition->entitiesFor($value));
                         }
@@ -447,7 +453,7 @@ final class Dispatcher
 
     /**
      * A payload as the handler sees it: the channel's declared decoder (or the
-     * JSON default), then its transforms in declaration order.
+     * JSON default), then the consuming edge's transforms in declaration order.
      *
      * One function for the two places a payload crosses in — an input item and
      * a payload at the prepare crossing — so a filter cannot mean one thing on
@@ -455,11 +461,23 @@ final class Dispatcher
      *
      * @return list<mixed>
      */
-    private static function valuesOf(?ChannelSpec $channel, string $payload): array
+    private static function valuesOf(?ChannelSpec $channel, ?ConsumerEdge $edge, string $payload): array
     {
         $decoded = $channel?->decode !== null ? ($channel->decode)($payload) : Json::decode($payload);
 
-        return Transforms::apply($channel?->transforms ?? [], $decoded);
+        return Transforms::apply($edge?->transforms ?? [], $decoded);
+    }
+
+    /** The channel's edge that feeds `$node`, or null when it feeds none. */
+    private static function edgeInto(?ChannelSpec $channel, int $node): ?ConsumerEdge
+    {
+        foreach ($channel?->consumers ?? [] as $edge) {
+            if ($edge->procedure === $node) {
+                return $edge;
+            }
+        }
+
+        return null;
     }
 
     /** @return array<string, mixed> */

@@ -22,6 +22,7 @@ from .procedure import Procedure
 __all__ = [
     "DROPPED",
     "Channels",
+    "ConsumerEdge",
     "Edge",
     "ChannelSpec",
     "ClassSpec",
@@ -78,6 +79,17 @@ class ProcNode:
     index: int
     name: str
     proc: Procedure[Any, Any]
+    output: "ChannelSpec | None" = None
+    """The one channel this node produces on, created on first wiring."""
+
+
+@dataclass(slots=True)
+class ConsumerEdge:
+    """One consumer of a channel, with the transforms and key of its own edge."""
+
+    procedure: int
+    transforms: list[Callable[[Any], Any]] = field(default_factory=list)
+    key_by: Callable[[Any], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -88,13 +100,13 @@ class ChannelSpec:
     name: str
     kind: str
     producer: int | None = None
-    consumers: list[int] = field(default_factory=list)
+    consumers: list[ConsumerEdge] = field(default_factory=list)
     overflow: str = "drop_nothing"
     retry_max: int | None = None
     retry_backoff_ms: int | None = None
     keyed: bool = False
-    transforms: list[Callable[[Any], Any]] = field(default_factory=list)
-    key_by: Callable[[Any], Any] | None = None
+    sink: str | None = None
+    """The plugin sink attached to this channel; ``None`` means none."""
     decode: Callable[[Any], Any] | None = None
     encode: Callable[[Any], bytes] | None = None
 
@@ -225,9 +237,25 @@ class Channels:
         self.procedures.append(node)
         return node
 
-    def add_channel(self, **spec: Any) -> ChannelSpec:
-        channel = ChannelSpec(index=len(self.channels), **spec)
+    def output_channel_for(self, node: ProcNode) -> ChannelSpec:
+        """The channel this node produces on, created on first use.
+
+        Lazily, so a leaf node never carries a phantom channel. Named by the
+        node's identity until a ``named(...)`` override, and reused by every
+        later call on an edge whose source is this node — which is what makes a
+        fan-out one channel with two consumers rather than two channels
+        claiming one producer.
+        """
+        if node.output is not None:
+            return node.output
+        channel = ChannelSpec(
+            index=len(self.channels),
+            name=node.name,
+            kind="inter_proc",
+            producer=node.index,
+        )
         self.channels.append(channel)
+        node.output = channel
         return channel
 
 
@@ -313,53 +341,42 @@ class Edge(Generic[T]):
     def into(self, proc: Procedure[T, O], name: str | None = None) -> Edge[O]:
         """Wire this edge into a procedure."""
         node = self._builder.node_for(proc, name)
-
-        if self._from[0] == "entry":
-            # One entry channel may feed several procedures; the transforms and
-            # the key belong to the channel, which is what the prepare crossing
-            # names.
-            channel: ChannelSpec = self._from[1]
-            channel.consumers.append(node.index)
-            self._apply_pending(channel)
-        else:
-            source: ProcNode = self._from[1]
-            self._builder.add_channel(
-                name=self._pending.get("channel_name") or f"{source.name}__{node.name}",
-                kind="inter_proc",
-                producer=source.index,
-                consumers=[node.index],
-                overflow=self._pending.get("overflow", "drop_nothing"),
-                retry_max=self._pending.get("retry_max"),
-                retry_backoff_ms=self._pending.get("retry_backoff_ms"),
-                keyed=self._pending.get("keyed", False),
+        # The transforms and the key belong to this edge, not to the channel:
+        # one channel may feed several procedures, and a chain declared before
+        # one `into` must not reach another.
+        self._channel().consumers.append(
+            ConsumerEdge(
+                procedure=node.index,
                 transforms=list(self._transforms),
                 key_by=self._pending.get("key_by"),
             )
-
+        )
         return Edge(self._builder, ("procedure", node), {})
 
-    def sink(self, name: str, *, encode: Callable[[Any], bytes] | None = None) -> None:
-        """Terminate this edge on a plugin-bound channel."""
+    def sink(self, name: str, *, encode: Callable[[Any], bytes] | None = None) -> Edge[T]:
+        """Attach this edge's channel to the named plugin sink, and answer the edge.
+
+        ``sink(...).into(...)`` wires a consumer behind the sink, so one emit
+        reaches both. A channel with no consumer behind it is the plugin-bound
+        terminal — terminality is the absence of further wiring, not a
+        different method.
+        """
         if self._from[0] != "procedure":
             raise DeclarationError(
                 self._builder.factory_id,
                 name,
                 "a plugin sink is fed by a procedure; wire the entry channel into one first",
             )
-        source: ProcNode = self._from[1]
-        self._builder.add_channel(
-            name=name,
-            kind="plugin",
-            producer=source.index,
-            consumers=[],
-            overflow=self._pending.get("overflow", "drop_nothing"),
-            retry_max=self._pending.get("retry_max"),
-            retry_backoff_ms=self._pending.get("retry_backoff_ms"),
-            keyed=self._pending.get("keyed", False),
-            transforms=list(self._transforms),
-            key_by=self._pending.get("key_by"),
-            encode=encode,
-        )
+        channel = self._channel()
+        if channel.sink is not None:
+            raise DeclarationError(
+                self._builder.factory_id,
+                channel.name,
+                "declares a plugin sink more than once",
+            )
+        channel.sink = name
+        channel.encode = encode
+        return self
 
     # -- internals ---------------------------------------------------------
 
@@ -374,6 +391,21 @@ class Edge(Generic[T]):
     def _with(self, **pending: Any) -> Edge[Any]:
         return Edge(self._builder, self._from, {**self._pending, **pending})
 
+    def _channel(self) -> ChannelSpec:
+        """The channel this edge's values leave on, with the pending options applied.
+
+        An entry edge already has one; a procedure edge's is created on first
+        use and reused after.
+        """
+        if self._from[0] == "entry":
+            channel: ChannelSpec = self._from[1]
+        else:
+            channel = self._builder.output_channel_for(self._from[1])
+            if self._pending.get("channel_name"):
+                channel.name = self._pending["channel_name"]
+        self._apply_pending(channel)
+        return channel
+
     def _apply_pending(self, channel: ChannelSpec) -> None:
         if "overflow" in self._pending:
             channel.overflow = self._pending["overflow"]
@@ -383,6 +415,3 @@ class Edge(Generic[T]):
             channel.retry_backoff_ms = self._pending["retry_backoff_ms"]
         if self._pending.get("keyed"):
             channel.keyed = True
-        if self._pending.get("key_by") is not None:
-            channel.key_by = self._pending["key_by"]
-        channel.transforms.extend(self._transforms)

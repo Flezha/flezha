@@ -65,9 +65,12 @@ final class HostClassDecl
     {
         return self::compact([
             'name' => $channel->name,
-            'kind' => $channel->kind,
+            'kind' => Validate::declaredKind($channel),
             'producer' => $channel->producer,
-            'consumers' => $channel->consumers,
+            'consumers' => array_map(
+                static fn (ConsumerEdge $edge): int => $edge->procedure,
+                $channel->consumers
+            ),
             'retry_max' => $channel->retryMax,
             'retry_backoff_ms' => $channel->retryBackoffMs,
             'overflow' => $channel->overflow->value,

@@ -90,9 +90,14 @@ module Flezha
     # One function for the two places a payload crosses in — an input item, and
     # a payload at the prepare crossing — so a filter cannot mean one thing on
     # one path and another on the other.
-    def value_of(channel, payload)
+    def value_of(channel, edge, payload)
       decoded = channel&.decode ? channel.decode.call(payload) : Codec.decode(payload)
-      Flezha.apply_transforms(channel&.transforms || [], decoded)
+      Flezha.apply_transforms(edge&.transforms || [], decoded)
+    end
+
+    # The channel's edge that feeds `node`, or nil when it feeds none.
+    def edge_into(channel, node)
+      channel&.consumers&.find { |edge| edge.procedure == node }
     end
 
     # Produce the answer for one activation. Raising is not an option here:
@@ -215,7 +220,9 @@ module Flezha
       end
 
       channel = registered.spec.channels[item[:channel] || 0]
-      input = value_of(channel, item[:payload] || "".b)
+      # This node's own edge off the channel: a transform chain declared before
+      # one `into` belongs to that consumer and to no other.
+      input = value_of(channel, edge_into(channel, node.index), item[:payload] || "".b)
       # A filtered value is consumed and reaches no handler. It still produces
       # an effect, so its offset advances and nothing is retried.
       return nil if input.equal?(DROPPED)
@@ -247,13 +254,15 @@ module Flezha
       return failed(activation[:token], "a key request carried no payloads", non_retryable: true) unless request
 
       channel = registered.spec.channels[request[:channel]]
-      consumer = channel&.consumers&.first
-      node = consumer && registered.spec.procedures[consumer]
+      # The crossing answers one key set for the whole payload, so it reads the
+      # first consumer edge — the one the core routes the answer to.
+      edge = channel&.consumers&.first
+      node = edge && registered.spec.procedures[edge.procedure]
       definition = node&.definition
 
       answers = request[:payloads].map do |payload|
         begin
-          value = value_of(channel, payload)
+          value = value_of(channel, edge, payload)
           # A filtered payload answers no key. For a dynamic consumer that is
           # what tells the core not to route it at all — the drop happens
           # before an entity is minted rather than inside one.
@@ -261,7 +270,7 @@ module Flezha
 
           keys =
             if !request[:want_keys] then []
-            elsif channel&.key_by then [channel.key_by.call(value).to_s]
+            elsif edge&.key_by then [edge.key_by.call(value).to_s]
             elsif definition&.entities_for? then definition.entities_for(value).map(&:to_s)
             else []
             end

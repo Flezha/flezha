@@ -40,8 +40,8 @@ test('a graph builds and its topology reaches the declaration', () => {
     decl.channels.map((channel) => [channel.name, channel.kind]),
     [
       ['in', 'entry'],
-      ['first__second', 'inter_proc'],
-      ['out', 'plugin'],
+      ['first', 'inter_proc'],
+      ['second', 'plugin'],
     ],
   );
   assert.deepEqual(
@@ -140,7 +140,7 @@ test('a named edge names the channel, not the consuming node', () => {
   const decl = toHostClassDecl(spec);
   assert.deepEqual(
     decl.channels.map((channel) => channel.name),
-    ['in', 'hop', 'out'],
+    ['in', 'hop', 'second'],
   );
   assert.deepEqual(
     decl.procedures.map((p) => p.name),
@@ -319,21 +319,43 @@ test('branch below two arms is refused', () => {
   );
 });
 
+// A procedure owns one output channel, so a second sink on it is the
+// reference's `DuplicatePluginSink`. Two procedures may name one sink; that is
+// several channels naming one plugin, which the reference permits.
 test('a duplicate plugin sink is refused', () => {
   const message = refusal(() => {
     const a = echo('a');
-    const b = echo('b');
     return defineOperative({
       factoryId: 'twice',
       channels: (c) => {
-        c.input('in').branch([
-          (edge) => edge.into(a).sink('out'),
-          (edge) => edge.into(b).sink('out'),
-        ]);
+        c.input('in').into(a).sink('out').sink('out_again');
       },
     });
   });
-  assert.match(message, /declared more than once/);
+  assert.match(message, /declares a plugin sink more than once/);
+});
+
+test('two procedures may name one plugin sink', () => {
+  const a = echo('a');
+  const b = echo('b');
+  const spec = defineOperative({
+    factoryId: 'one_sink_twice',
+    channels: (c) => {
+      c.input('in').branch([
+        (edge) => edge.into(a).sink('out'),
+        (edge) => edge.into(b).sink('out'),
+      ]);
+    },
+  });
+  validate(spec);
+  assert.deepEqual(
+    toHostClassDecl(spec).channels.map((channel) => [channel.name, channel.kind]),
+    [
+      ['in', 'entry'],
+      ['a', 'plugin'],
+      ['b', 'plugin'],
+    ],
+  );
 });
 
 test('an unkeyed edge into a dynamic procedure is refused', () => {
@@ -482,11 +504,10 @@ test('a named edge terminating on a sink names the channel too, and the sink nam
   );
 });
 
-// Compatibility, not conformance: `sdk-graph-authoring` says an underived name
-// comes from the PRODUCER NODE, and these veneers use the sink's. That second
-// divergence is open and is not what this change moves — this test pins that it
-// moves nothing but the named case.
-test('an unnamed edge terminating on a sink keeps the name it has today', () => {
+// `sdk-graph-authoring`: an underived channel name comes from the PRODUCER
+// NODE, never from the sink it terminates on — the sink's name is the plugin's,
+// and several channels may name one sink.
+test('an unnamed edge terminating on a sink takes the producing node’s name', () => {
   const spec = defineOperative({
     factoryId: 'unnamed_sink',
     channels: (c) => {
@@ -496,6 +517,145 @@ test('an unnamed edge terminating on a sink keeps the name it has today', () => 
   validate(spec);
   assert.deepEqual(
     toHostClassDecl(spec).channels.map((channel) => channel.name),
-    ['in', 'relay_out'],
+    ['in', 'plain'],
   );
+});
+
+// --- one output channel per producing procedure ------------------------------
+//
+// The model Rust and Java carry: a procedure node owns ONE output channel,
+// created on first wiring and reused after. A held handle wired twice appends
+// a second consumer to it — it does not declare a second channel claiming the
+// same producer, which the core resolves by first match
+// (`host/register.rs` `procedure_wiring`) and so silently truncates.
+
+test('a held handle wired twice is one channel with two consumers', () => {
+  const producer = echo('producer');
+  const spec = defineOperative({
+    factoryId: 'fan_out',
+    channels: (c) => {
+      const edge = c.input('in').into(producer);
+      edge.into(echo('b'));
+      edge.into(echo('c'));
+    },
+  });
+  validate(spec);
+  const channels = toHostClassDecl(spec).channels;
+  assert.deepEqual(
+    channels.map((channel) => [channel.name, channel.kind, channel.producer, channel.consumers]),
+    [
+      ['in', 'entry', undefined, [0]],
+      ['producer', 'inter_proc', 0, [1, 2]],
+    ],
+  );
+  assert.equal(channels.filter((channel) => channel.producer === 0).length, 1);
+});
+
+test('branch(...) and two into(...) statements build the identical declaration', () => {
+  const graph = (factoryId, wire) =>
+    JSON.stringify(
+      toHostClassDecl(
+        defineOperative({
+          factoryId,
+          channels: (c) => wire(c.input('in').into(echo('producer'))),
+        }),
+      ),
+    ).replace(factoryId, '<id>');
+
+  const separate = graph('separate', (edge) => {
+    edge.into(echo('b'));
+    edge.into(echo('c'));
+  });
+  const branched = graph('branched', (edge) =>
+    edge.branch([(arm) => arm.into(echo('b')), (arm) => arm.into(echo('c'))]),
+  );
+  assert.equal(separate, branched);
+});
+
+test('sink(...) returns the handle, so a consumer wires behind it', () => {
+  const spec = defineOperative({
+    factoryId: 'hybrid',
+    channels: (c) => {
+      c.input('in')
+        .into(echo('producer'))
+        .named('hybrid_indicator')
+        .sink('hybrid_indicators')
+        .into(echo('consumer'));
+    },
+  });
+  validate(spec);
+  assert.deepEqual(
+    toHostClassDecl(spec).channels.map((channel) => [
+      channel.name,
+      channel.kind,
+      channel.producer,
+      channel.consumers,
+    ]),
+    [
+      ['in', 'entry', undefined, [0]],
+      ['hybrid_indicator', 'inter_proc', 0, [1]],
+    ],
+  );
+});
+
+test('keyed() is refused without a plugin sink, and accepted with one', () => {
+  const message = refusal(() =>
+    defineOperative({
+      factoryId: 'keyed_no_sink',
+      channels: (c) => {
+        c.input('in').into(echo('producer')).named('mid').keyed().into(echo('consumer'));
+      },
+    }),
+  );
+  assert.match(message, /is declared keyed\(\) but has no plugin wire/);
+
+  const hybrid = defineOperative({
+    factoryId: 'keyed_hybrid',
+    channels: (c) => {
+      c.input('in')
+        .into(echo('producer'))
+        .named('mid')
+        .keyed()
+        .sink('mid_sink')
+        .into(echo('consumer'));
+    },
+  });
+  validate(hybrid);
+  assert.equal(toHostClassDecl(hybrid).channels[1].keyed, true);
+});
+
+test('a transform declared before one into(...) reaches that consumer only', () => {
+  const spec = defineOperative({
+    factoryId: 'per_edge_transform',
+    channels: (c) => {
+      const edge = c.input('in').into(echo('producer'));
+      edge.map((value) => `${value}!`).into(echo('b'));
+      edge.into(echo('c'));
+    },
+  });
+  validate(spec);
+  const [, channel] = spec.channels;
+  assert.deepEqual(
+    channel.consumers.map((consumer) => [consumer.procedure, consumer.transforms.length]),
+    [
+      [1, 1],
+      [2, 0],
+    ],
+  );
+});
+
+// The reference declares exactly this — `tier_commit_block_workflow` opens with
+// `c.effectively_once()` on a workflow class in Rust and Java — so the flag is
+// read where the workflow spec is assembled rather than written as `false`.
+test('a workflow class carries its effectivelyOnce() declaration', () => {
+  const spec = defineWorkflow({
+    factoryId: 'tier_workflow',
+    channels: (c) => {
+      c.effectivelyOnce();
+      c.input('in').into(echo('producer')).named('out').keyed().sink('out');
+    },
+  });
+  validate(spec);
+  assert.equal(spec.effectivelyOnce, true);
+  assert.equal(toHostClassDecl(spec).effectively_once, true);
 });

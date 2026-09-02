@@ -99,7 +99,7 @@ module Flezha
         builder = build_builder
         ClassSpec.new(
           factory_id: @factory_id, kind: :workflow, persistent: persistent,
-          effectively_once: false, ack_granularity: :per_input,
+          effectively_once: builder.effectively_once_flag, ack_granularity: :per_input,
           checkpoint_outputs: :as_produced, beyond_window_policy: :process_as_arrival,
           sync_durability: sync_durability_declared?,
           procedures: builder.procedures, channels: builder.channels,

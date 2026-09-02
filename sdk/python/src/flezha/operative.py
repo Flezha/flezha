@@ -115,6 +115,7 @@ class Operative:
             persistent=persistent,
             procedures=builder.procedures,
             channels=builder.channels,
+            effectively_once=builder.effectively_once_flag,
             sync_durability=bool(options.pop("sync_durability", False))
             or builder.sync_durability_flag,
             workflow={

@@ -49,17 +49,19 @@ final class Validate
     private static function channels(ClassSpec $spec): void
     {
         $names = [];
-        $sinks = [];
 
         foreach ($spec->channels as $channel) {
-            self::channelNames($spec, $channel, $names, $sinks);
+            if (isset($names[$channel->name])) {
+                self::refuse($spec, $channel->name, 'this channel name is declared more than once');
+            }
+            $names[$channel->name] = true;
             self::channelWiring($spec, $channel);
             self::overflow($spec, $channel);
 
             if ($channel->kind === 'entry' && $channel->consumers === []) {
                 self::refuse($spec, $channel->name, 'is an entry channel that names no consumer');
             }
-            if ($channel->kind === 'inter_proc' && $channel->consumers === []) {
+            if (self::declaredKind($channel) === 'inter_proc' && $channel->consumers === []) {
                 self::refuse(
                     $spec,
                     $channel->name,
@@ -70,32 +72,22 @@ final class Validate
     }
 
     /**
-     * @param array<string, true> $names
-     * @param array<string, true> $sinks
+     * The kind the wire carries.
+     *
+     * Terminality is derived from the wiring, not from which method the author
+     * called: a sink with nothing consuming behind it IS the plugin-bound
+     * terminal, and a sink declared alongside consumers is the hybrid — one
+     * channel the core journals as inter-procedure and whose values also reach
+     * the plugin.
      */
-    private static function channelNames(
-        ClassSpec $spec,
-        ChannelSpec $channel,
-        array &$names,
-        array &$sinks,
-    ): void {
-        if (isset($names[$channel->name])) {
-            self::refuse($spec, $channel->name, 'this channel name is declared more than once');
-        }
-        $names[$channel->name] = true;
-
-        if ($channel->kind !== 'plugin') {
-            return;
-        }
-        if (isset($sinks[$channel->name])) {
-            self::refuse($spec, $channel->name, 'declares a plugin sink more than once');
-        }
-        $sinks[$channel->name] = true;
+    public static function declaredKind(ChannelSpec $channel): string
+    {
+        return $channel->sink !== null && $channel->consumers === [] ? 'plugin' : $channel->kind;
     }
 
     private static function channelWiring(ClassSpec $spec, ChannelSpec $channel): void
     {
-        if ($channel->kind !== 'plugin' && $channel->keyed) {
+        if ($channel->sink === null && $channel->keyed) {
             self::refuse(
                 $spec,
                 $channel->name,
@@ -104,7 +96,7 @@ final class Validate
             );
         }
 
-        if ($spec->effectivelyOnce && $channel->kind === 'plugin' && !$channel->keyed) {
+        if ($spec->effectivelyOnce && $channel->sink !== null && !$channel->keyed) {
             self::refuse(
                 $spec,
                 $channel->name,
@@ -150,11 +142,11 @@ final class Validate
     private static function keying(ClassSpec $spec): void
     {
         foreach ($spec->channels as $channel) {
-            foreach ($channel->consumers as $consumer) {
-                $node = $spec->procedures[$consumer];
+            foreach ($channel->consumers as $edge) {
+                $node = $spec->procedures[$edge->procedure];
                 $mode = $node->definition->entityMode();
 
-                if ($channel->keyBy !== null && $mode === 'static') {
+                if ($edge->keyBy !== null && $mode === 'static') {
                     self::refuse($spec, $channel->name, sprintf(
                         'declares keyBy into procedure `%s`, which declares a static key set; '
                         . 'static keying routes by entitiesFor and may name several entities, '
@@ -162,7 +154,7 @@ final class Validate
                         $node->name,
                     ));
                 }
-                if ($channel->keyBy === null && $mode === 'dynamic') {
+                if ($edge->keyBy === null && $mode === 'dynamic') {
                     self::refuse($spec, $channel->name, sprintf(
                         'feeds dynamic procedure `%s` without a keyBy; every edge into a dynamic '
                         . 'procedure must name the entity its inputs reach',
@@ -378,10 +370,20 @@ final class Validate
             if ($channel->kind !== 'inter_proc' || $channel->producer === null) {
                 continue;
             }
-            array_push($successors[$channel->producer], ...$channel->consumers);
+            array_push($successors[$channel->producer], ...self::consumerIndices($channel));
         }
 
         return $successors;
+    }
+
+    /**
+     * The procedure indices a channel feeds, in declaration order.
+     *
+     * @return list<int>
+     */
+    private static function consumerIndices(ChannelSpec $channel): array
+    {
+        return array_map(static fn (ConsumerEdge $e): int => $e->procedure, $channel->consumers);
     }
 
     /**
@@ -395,7 +397,7 @@ final class Validate
         $reachable = [];
         $frontier = [];
         foreach ($entries as $entry) {
-            array_push($frontier, ...$entry->consumers);
+            array_push($frontier, ...self::consumerIndices($entry));
         }
         while ($frontier !== []) {
             $node = array_pop($frontier);
@@ -456,9 +458,6 @@ final class Validate
             return;
         }
 
-        if ($spec->effectivelyOnce) {
-            self::refuse($spec, null, 'is a workflow class and cannot declare effectivelyOnce');
-        }
         if ($spec->correctionWindowMs !== null) {
             self::refuse($spec, null, 'is a workflow class and cannot declare a correction window');
         }

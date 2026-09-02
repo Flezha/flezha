@@ -13,12 +13,17 @@ module Flezha
   DROPPED = Object.new.freeze
 
   # A procedure as the graph holds it, with its position in the declaration.
-  ProcNode = Struct.new(:index, :name, :klass, :definition)
+  # `output` is the one channel it produces on, created on first wiring.
+  ProcNode = Struct.new(:index, :name, :klass, :definition, :output)
+
+  # One consumer of a channel, with the transforms and key of its own edge.
+  ConsumerEdge = Struct.new(:procedure, :transforms, :key_by, keyword_init: true)
 
   # A channel as the graph holds it. Its position in the list IS its id.
+  # `sink` is the plugin sink attached to it; nil means none.
   ChannelSpec = Struct.new(
     :index, :name, :kind, :producer, :consumers, :overflow, :retry_max,
-    :retry_backoff_ms, :keyed, :transforms, :key_by, :decode, :encode,
+    :retry_backoff_ms, :keyed, :sink, :decode, :encode,
     keyword_init: true
   )
 
@@ -109,7 +114,7 @@ module Flezha
     def input(name, decode: nil)
       channel = ChannelSpec.new(
         index: @channels.size, name: name.to_s, kind: :entry, consumers: [],
-        overflow: :drop_nothing, keyed: false, transforms: [], decode: decode
+        overflow: :drop_nothing, keyed: false, decode: decode
       )
       @channels << channel
       Edge.new(self, [:entry, channel], {})
@@ -132,14 +137,27 @@ module Flezha
         )
       end
 
-      node = ProcNode.new(@procedures.size, identity, klass, definition)
+      node = ProcNode.new(@procedures.size, identity, klass, definition, nil)
       @procedures << node
       node
     end
 
-    def add_channel(**spec)
-      channel = ChannelSpec.new(index: @channels.size, **spec)
+    # The channel this node produces on, created on first use.
+    #
+    # Lazily, so a leaf node never carries a phantom channel. Named by the
+    # node's identity until a `named(...)` override, and reused by every later
+    # call on an edge whose source is this node — which is what makes a fan-out
+    # one channel with two consumers rather than two channels claiming one
+    # producer.
+    def output_channel_for(node)
+      return node.output if node.output
+
+      channel = ChannelSpec.new(
+        index: @channels.size, name: node.name, kind: :inter_proc,
+        producer: node.index, consumers: [], overflow: :drop_nothing, keyed: false
+      )
       @channels << channel
+      node.output = channel
       channel
     end
 
@@ -204,27 +222,21 @@ module Flezha
     # Wire this edge into a procedure.
     def into(klass, node_name = nil)
       node = @builder.node_for(klass, node_name)
-
-      if @from[0] == :entry
-        # One entry channel may feed several procedures; the transforms and the
-        # key belong to the channel, which is what the prepare crossing names.
-        channel = @from[1]
-        channel.consumers << node.index
-        apply_pending(channel)
-      else
-        @builder.add_channel(
-          name: @pending[:channel_name] || "#{@from[1].name}__#{node.name}",
-          kind: :inter_proc, producer: @from[1].index, consumers: [node.index],
-          overflow: @pending[:overflow] || :drop_nothing,
-          retry_max: @pending[:retry_max], retry_backoff_ms: @pending[:retry_backoff_ms],
-          keyed: @pending[:keyed] || false, transforms: transforms, key_by: @pending[:key_by]
-        )
-      end
-
+      # The transforms and the key belong to this edge, not to the channel: one
+      # channel may feed several procedures, and a chain declared before one
+      # `into` must not reach another.
+      channel.consumers << ConsumerEdge.new(
+        procedure: node.index, transforms: transforms, key_by: @pending[:key_by]
+      )
       Edge.new(@builder, [:procedure, node], {})
     end
 
-    # Terminate this edge on a plugin-bound channel.
+    # Attach this edge's channel to the named plugin sink, and answer the edge.
+    #
+    # `sink(...).into(...)` wires a consumer behind the sink, so one emit
+    # reaches both. A channel with no consumer behind it is the plugin-bound
+    # terminal — terminality is the absence of further wiring, not a different
+    # method.
     def sink(name, encode: nil)
       unless @from[0] == :procedure
         raise DeclarationError.new(
@@ -233,23 +245,35 @@ module Flezha
         )
       end
 
-      # The channel keeps its `named` name; `name` is the sink's, which is the
-      # default when the edge was not named. The channel name is what a frame
-      # carries and what selects a forward target's entry channel.
-      @builder.add_channel(
-        name: @pending[:channel_name] || name.to_s,
-        kind: :plugin, producer: @from[1].index, consumers: [],
-        overflow: @pending[:overflow] || :drop_nothing,
-        retry_max: @pending[:retry_max], retry_backoff_ms: @pending[:retry_backoff_ms],
-        keyed: @pending[:keyed] || false, transforms: transforms,
-        key_by: @pending[:key_by], encode: encode
-      )
-      nil
+      target = channel
+      if target.sink
+        raise DeclarationError.new(
+          @builder.factory_id, target.name, "declares a plugin sink more than once"
+        )
+      end
+
+      target.sink = name.to_s
+      target.encode = encode
+      self
     end
 
     private
 
     def transforms = @pending[:transforms] || []
+
+    # The channel this edge's values leave on, with the pending options
+    # applied. An entry edge already has one; a procedure edge's is created on
+    # first use and reused after.
+    def channel
+      if @from[0] == :entry
+        target = @from[1]
+      else
+        target = @builder.output_channel_for(@from[1])
+        target.name = @pending[:channel_name] if @pending[:channel_name]
+      end
+      apply_pending(target)
+      target
+    end
 
     def with(**next_pending)
       Edge.new(@builder, @from, @pending.merge(next_pending))
@@ -262,8 +286,6 @@ module Flezha
       channel.retry_max = @pending[:retry_max] unless @pending[:retry_max].nil?
       channel.retry_backoff_ms = @pending[:retry_backoff_ms] unless @pending[:retry_backoff_ms].nil?
       channel.keyed = true if @pending[:keyed]
-      channel.key_by = @pending[:key_by] if @pending[:key_by]
-      channel.transforms.concat(transforms)
     end
   end
 end

@@ -67,12 +67,15 @@ final class Harness implements SpawnBridge
             compactAfterBytes: null,
             syncDurability: false,
             procedures: [$this->node],
+            // One plugin-bound channel so `ctx->emit` has somewhere to go: with
+            // no consumer behind it the sink IS the terminal.
             channels: [new ChannelSpec(
                 index: 0,
                 name: 'out',
-                kind: 'plugin',
+                kind: 'inter_proc',
                 producer: 0,
                 overflow: Overflow::DropNothing,
+                sink: 'out',
             )],
         );
 

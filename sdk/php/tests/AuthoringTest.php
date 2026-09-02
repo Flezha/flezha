@@ -13,6 +13,9 @@ use Flezha\Ctx;
 use Flezha\Definition;
 use Flezha\Exception\DeclarationException;
 use Flezha\Graph\Builder;
+use Flezha\Graph\ClassSpec;
+use Flezha\Graph\Edge;
+use Flezha\Graph\HostClassDecl;
 use Flezha\Graph\Validate;
 use Flezha\Overflow;
 use Flezha\Procedure;
@@ -230,17 +233,16 @@ final class AuthoringTest extends TestCase
     }
 
     /**
-     * Compatibility, not conformance: `sdk-graph-authoring` says an underived
-     * name comes from the PRODUCER NODE, and these veneers use the sink's. That
-     * second divergence is open and is not what this change moves — this test
-     * pins that it moves nothing but the named case.
+     * `sdk-graph-authoring`: an underived channel name comes from the PRODUCER
+     * NODE, never from the sink it terminates on — the sink's name is the
+     * plugin's, and several channels may name one sink.
      */
-    public function testAnUnnamedEdgeTerminatingOnASinkKeepsTheNameItHasToday(): void
+    public function testAnUnnamedEdgeTerminatingOnASinkTakesTheProducingNodesName(): void
     {
         $spec = UnnamedSink::spec();
         Validate::spec($spec);
 
-        self::assertSame(['in', 'relay_out'], array_map(
+        self::assertSame(['in', 'counter'], array_map(
             static fn ($channel): string => $channel->name,
             $spec->channels,
         ));
@@ -307,7 +309,7 @@ final class AuthoringTest extends TestCase
         $builder = new Builder('under_test');
         $channels($builder);
 
-        Validate::spec(new \Flezha\Graph\ClassSpec(
+        Validate::spec(new ClassSpec(
             factoryId: 'under_test',
             kind: 'stream',
             persistent: true,
@@ -325,6 +327,174 @@ final class AuthoringTest extends TestCase
         ));
 
         return null;
+    }
+
+    // -- one output channel per producing procedure --------------------------
+    //
+    // The model Rust and Java carry: a procedure node owns ONE output channel,
+    // created on first wiring and reused after. A held edge wired twice appends
+    // a second consumer to it — it does not declare a second channel claiming
+    // the same producer, which the core resolves by first match
+    // (`host/register.rs` `procedure_wiring`) and so silently truncates.
+
+    /** @return list<array{string, string, ?int, list<int>}> */
+    private static function channelsOf(ClassSpec $spec): array
+    {
+        return array_map(
+            static fn (array $c): array => [
+                $c['name'],
+                $c['kind'],
+                $c['producer'] ?? null,
+                $c['consumers'] ?? [],
+            ],
+            HostClassDecl::of($spec)['channels'],
+        );
+    }
+
+    public function testAHeldEdgeWiredTwiceIsOneChannelWithTwoConsumers(): void
+    {
+        $spec = FanOut::spec();
+        Validate::spec($spec);
+
+        self::assertSame(
+            [['in', 'entry', null, [0]], ['counter', 'inter_proc', 0, [1, 2]]],
+            self::channelsOf($spec),
+        );
+    }
+
+    public function testBranchAndTwoIntoStatementsBuildTheIdenticalDeclaration(): void
+    {
+        self::assertSame(self::channelsOf(FanOut::spec()), self::channelsOf(Branched::spec()));
+    }
+
+    public function testSinkReturnsTheEdgeSoAConsumerWiresBehindIt(): void
+    {
+        $spec = Hybrid::spec();
+        Validate::spec($spec);
+
+        self::assertSame(
+            [['in', 'entry', null, [0]], ['hybrid_indicator', 'inter_proc', 0, [1]]],
+            self::channelsOf($spec),
+        );
+    }
+
+    public function testASecondSinkOnOneChannelIsRefused(): void
+    {
+        $this->expectExceptionMessage('declares a plugin sink more than once');
+        self::validate(static function (Builder $c): void {
+            $c->input('in')->into(Counter::class)->sink('out')->sink('again');
+        });
+    }
+
+    public function testKeyedIsRefusedWithoutAPluginSinkAndAcceptedWithOne(): void
+    {
+        $refused = null;
+        try {
+            self::validate(static function (Builder $c): void {
+                $c->input('in')->into(Counter::class)->named('mid')->keyed()->into(Echoer::class);
+            });
+        } catch (DeclarationException $e) {
+            $refused = $e->getMessage();
+        }
+        self::assertNotNull($refused);
+        self::assertStringContainsString('is declared keyed but has no plugin wire', $refused);
+
+        $spec = KeyedHybrid::spec();
+        Validate::spec($spec);
+        self::assertTrue(HostClassDecl::of($spec)['channels'][1]['keyed']);
+    }
+
+    public function testATransformBeforeOneIntoReachesThatConsumerOnly(): void
+    {
+        $spec = PerEdgeTransform::spec();
+        Validate::spec($spec);
+
+        self::assertSame(
+            [[1, 1], [2, 0]],
+            array_map(
+                static fn ($edge): array => [$edge->procedure, count($edge->transforms)],
+                $spec->channels[1]->consumers,
+            ),
+        );
+    }
+
+    /**
+     * The reference declares exactly this — `tier_commit_block_workflow` opens
+     * with `c.effectively_once()` on a workflow class in Rust and Java — and
+     * `Operative::classSpec` already reads the builder flag for both kinds, so
+     * PHP needed no change for it. This pins that.
+     */
+    public function testAWorkflowClassCarriesItsEffectivelyOnceDeclaration(): void
+    {
+        $spec = TierWorkflow::spec();
+        Validate::spec($spec);
+
+        self::assertTrue($spec->effectivelyOnce);
+        self::assertTrue(HostClassDecl::of($spec)['effectively_once']);
+    }
+}
+
+#[Operative(factoryId: 'fan_out')]
+final class FanOut extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $edge = $c->input('in')->into(Counter::class);
+        $edge->into(Echoer::class, 'b');
+        $edge->into(Echoer::class, 'c');
+    }
+}
+
+#[Operative(factoryId: 'branched')]
+final class Branched extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Counter::class)->branch(
+            static fn (Edge $e) => $e->into(Echoer::class, 'b'),
+            static fn (Edge $e) => $e->into(Echoer::class, 'c'),
+        );
+    }
+}
+
+#[Operative(factoryId: 'hybrid')]
+final class Hybrid extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Counter::class)->named('hybrid_indicator')
+            ->sink('hybrid_indicators')->into(Echoer::class);
+    }
+}
+
+#[Operative(factoryId: 'keyed_hybrid')]
+final class KeyedHybrid extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->input('in')->into(Counter::class)->named('mid')->keyed()
+            ->sink('mid_sink')->into(Echoer::class);
+    }
+}
+
+#[Operative(factoryId: 'per_edge_transform')]
+final class PerEdgeTransform extends StreamOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $edge = $c->input('in')->into(Counter::class);
+        $edge->map(static fn (mixed $v): mixed => $v)->into(Echoer::class, 'b');
+        $edge->into(Echoer::class, 'c');
+    }
+}
+
+#[Operative(factoryId: 'tier_workflow')]
+final class TierWorkflow extends WorkflowOperative
+{
+    public static function channels(Builder $c): void
+    {
+        $c->effectivelyOnce();
+        $c->input('in')->into(Counter::class)->named('out')->keyed()->sink('out');
     }
 }
 

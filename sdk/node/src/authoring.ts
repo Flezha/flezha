@@ -28,6 +28,17 @@ export interface ProcNode {
   /** The node identity — the procedure's name, or the name `named()` gave. */
   name: string;
   procedure: Procedure<unknown, unknown, unknown, unknown>;
+  /** The one channel this node produces on, created on first wiring. */
+  output?: ChannelSpec;
+}
+
+/** One consumer of a channel, with the transforms and key of its own edge. */
+export interface ConsumerEdge {
+  procedure: number;
+  /** Producer-side transforms for this edge, applied in declaration order. */
+  transforms: Array<(value: unknown) => unknown>;
+  /** Dynamic routing key for this edge. */
+  keyBy?: (value: unknown) => string;
 }
 
 export type ChannelKind = 'entry' | 'inter_proc' | 'plugin';
@@ -38,15 +49,13 @@ export interface ChannelSpec {
   name: string;
   kind: ChannelKind;
   producer?: number;
-  consumers: number[];
+  consumers: ConsumerEdge[];
   overflow: OverflowPolicy;
   retryMax?: number;
   retryBackoffMs?: number;
   keyed: boolean;
-  /** Producer-side transforms, applied in declaration order. */
-  transforms: Array<(value: unknown) => unknown>;
-  /** Dynamic routing key for this channel's consumer. */
-  keyBy?: (value: unknown) => string;
+  /** The plugin sink attached to this channel; absent means none. */
+  sink?: string;
   /** Entry payload decoder; absent means the MessagePack default. */
   decode?: (bytes: Uint8Array) => unknown;
   /** Plugin payload encoder; absent means the MessagePack default. */
@@ -222,7 +231,6 @@ class Builder implements ChannelBuilder {
       consumers: [],
       overflow: 'drop_nothing',
       keyed: false,
-      transforms: [],
       decode: decode as ((bytes: Uint8Array) => unknown) | undefined,
     };
     this.channels.push(channel);
@@ -254,9 +262,26 @@ class Builder implements ChannelBuilder {
     return node;
   }
 
-  addChannel(spec: Omit<ChannelSpec, 'index'>): ChannelSpec {
-    const channel: ChannelSpec = { ...spec, index: this.channels.length };
+  /**
+   * The channel this node produces on, created on first use so a leaf node
+   * never carries a phantom channel. Named by the node's identity until a
+   * `named(...)` override, and reused by every later call on a handle whose
+   * source is this node — which is what makes a fan-out one channel with two
+   * consumers rather than two channels claiming one producer.
+   */
+  outputChannelFor(node: ProcNode): ChannelSpec {
+    if (node.output) return node.output;
+    const channel: ChannelSpec = {
+      index: this.channels.length,
+      name: node.name,
+      kind: 'inter_proc',
+      producer: node.index,
+      consumers: [],
+      overflow: 'drop_nothing',
+      keyed: false,
+    };
     this.channels.push(channel);
+    node.output = channel;
     return channel;
   }
 }
@@ -328,6 +353,23 @@ class EdgeStream<T> implements Stream<T> {
     return this;
   }
 
+  /**
+   * The channel this handle's values leave on, with everything the fluent
+   * calls put aside applied to it. An entry handle already has one; a
+   * procedure handle's is created on first use and reused after.
+   */
+  private channel(): ChannelSpec {
+    const channel =
+      this.from.source === 'entry'
+        ? this.from.channel
+        : this.builder.outputChannelFor(this.from.node);
+    if (this.from.source === 'procedure' && this.pending.channelName) {
+      channel.name = this.pending.channelName;
+    }
+    applyPending(channel, this.pending);
+    return channel;
+  }
+
   into<TOut, TState, TChange>(
     procedure: Procedure<T, TOut, TState, TChange>,
     nodeName?: string,
@@ -336,32 +378,19 @@ class EdgeStream<T> implements Stream<T> {
       procedure as unknown as Procedure<unknown, unknown, unknown, unknown>,
       nodeName,
     );
-
-    if (this.from.source === 'entry') {
-      // One entry channel may feed several procedures; the transforms and the
-      // key belong to the channel, which is what the prepare crossing names.
-      const channel = this.from.channel;
-      channel.consumers.push(node.index);
-      applyPending(channel, this.pending);
-    } else {
-      this.builder.addChannel({
-        name: this.pending.channelName ?? `${this.from.node.name}__${node.name}`,
-        kind: 'inter_proc',
-        producer: this.from.node.index,
-        consumers: [node.index],
-        overflow: this.pending.overflow ?? 'drop_nothing',
-        retryMax: this.pending.retryMax,
-        retryBackoffMs: this.pending.retryBackoffMs,
-        keyed: this.pending.keyed ?? false,
-        transforms: this.pending.transforms,
-        keyBy: this.pending.keyBy,
-      });
-    }
+    // The transforms and the key belong to this edge, not to the channel: one
+    // channel may feed several procedures, and a chain declared before one
+    // `into` must not reach another.
+    this.channel().consumers.push({
+      procedure: node.index,
+      transforms: this.pending.transforms,
+      keyBy: this.pending.keyBy,
+    });
 
     return new EdgeStream<TOut>(this.builder, { source: 'procedure', node }, { transforms: [] });
   }
 
-  sink(name: string, encode?: (value: T) => Uint8Array): void {
+  sink(name: string, encode?: (value: T) => Uint8Array): Stream<T> {
     if (this.from.source !== 'procedure') {
       throw new DeclarationError(
         this.builder.factoryId,
@@ -369,22 +398,20 @@ class EdgeStream<T> implements Stream<T> {
         'a plugin sink is fed by a procedure; wire the entry channel into one first',
       );
     }
-    this.builder.addChannel({
-      // The channel keeps its `.named()` name; `name` is the sink's, which is
-      // the default when the edge was not named. The channel name is what a
-      // frame carries and what selects a forward target's entry channel.
-      name: this.pending.channelName ?? name,
-      kind: 'plugin',
-      producer: this.from.node.index,
-      consumers: [],
-      overflow: this.pending.overflow ?? 'drop_nothing',
-      retryMax: this.pending.retryMax,
-      retryBackoffMs: this.pending.retryBackoffMs,
-      keyed: this.pending.keyed ?? false,
-      transforms: this.pending.transforms,
-      keyBy: this.pending.keyBy,
-      encode: encode as ((value: unknown) => Uint8Array) | undefined,
-    });
+    const channel = this.channel();
+    if (channel.sink !== undefined) {
+      throw new DeclarationError(
+        this.builder.factoryId,
+        channel.name,
+        'declares a plugin sink more than once',
+      );
+    }
+    channel.sink = name;
+    channel.encode = encode as ((value: unknown) => Uint8Array) | undefined;
+    // The handle is returned, so `.into(...)` chains after it and the value
+    // reaches both the consumer mailboxes and the sink. Terminality is the
+    // absence of further wiring, not a different method.
+    return this;
   }
 }
 
@@ -397,8 +424,6 @@ function applyPending(channel: ChannelSpec, pending: PendingEdge): void {
   if (pending.retryMax !== undefined) channel.retryMax = pending.retryMax;
   if (pending.retryBackoffMs !== undefined) channel.retryBackoffMs = pending.retryBackoffMs;
   if (pending.keyed) channel.keyed = true;
-  if (pending.keyBy) channel.keyBy = pending.keyBy;
-  channel.transforms.push(...pending.transforms);
 }
 
 function buildGraph(factoryId: string, channels: OperativeDefinition['channels']): Builder {
@@ -451,7 +476,7 @@ export function defineWorkflow(definition: WorkflowDefinition): ClassSpec {
     factoryId: definition.factoryId,
     kind: 'workflow',
     persistent: definition.persistent ?? true,
-    effectivelyOnce: false,
+    effectivelyOnce: builder.effectivelyOnceFlag,
     ackGranularity: 'per_input',
     checkpointOutputs: 'as_produced',
     beyondWindowPolicy: 'process_as_arrival',

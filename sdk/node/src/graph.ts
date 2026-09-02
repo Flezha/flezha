@@ -15,7 +15,7 @@
  * data moves.
  */
 
-import type { ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
+import type { ChannelKind, ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
 import { DeclarationError } from './types.js';
 
 const MAX_MAILBOX_CAPACITY = 1_048_576;
@@ -41,44 +41,39 @@ function entityMode(node: ProcNode): 'single' | 'static' | 'dynamic' {
   return 'single';
 }
 
+/**
+ * The kind the wire carries. Terminality is derived from the wiring, not from
+ * which method the author called: a sink with nothing consuming behind it IS
+ * the plugin-bound terminal, and a sink declared alongside consumers is the
+ * hybrid — one channel the core journals as inter-procedure and whose values
+ * also reach the plugin.
+ */
+export function declaredKind(channel: ChannelSpec): ChannelKind {
+  return channel.sink !== undefined && channel.consumers.length === 0 ? 'plugin' : channel.kind;
+}
+
 function checkChannels(spec: ClassSpec): void {
   const names = new Set<string>();
-  const sinks = new Set<string>();
 
   for (const channel of spec.channels) {
-    checkChannelNames(spec, channel, names, sinks);
+    if (names.has(channel.name)) {
+      refuse(spec, channel.name, 'this channel name is declared more than once');
+    }
+    names.add(channel.name);
     checkChannelWiring(spec, channel);
     checkOverflow(spec, channel);
 
     if (channel.kind === 'entry' && channel.consumers.length === 0) {
       refuse(spec, channel.name, 'is an entry channel that names no consumer');
     }
-    if (channel.kind === 'inter_proc' && channel.consumers.length === 0) {
+    if (declaredKind(channel) === 'inter_proc' && channel.consumers.length === 0) {
       refuse(spec, channel.name, 'is an inter-procedure channel that names no consumer');
     }
   }
 }
 
-function checkChannelNames(
-  spec: ClassSpec,
-  channel: ChannelSpec,
-  names: Set<string>,
-  sinks: Set<string>,
-): void {
-  if (names.has(channel.name)) {
-    refuse(spec, channel.name, 'this channel name is declared more than once');
-  }
-  names.add(channel.name);
-
-  if (channel.kind !== 'plugin') return;
-  if (sinks.has(channel.name)) {
-    refuse(spec, channel.name, 'declares a plugin sink more than once');
-  }
-  sinks.add(channel.name);
-}
-
 function checkChannelWiring(spec: ClassSpec, channel: ChannelSpec): void {
-  if (channel.kind !== 'plugin' && channel.keyed) {
+  if (channel.sink === undefined && channel.keyed) {
     refuse(
       spec,
       channel.name,
@@ -87,7 +82,7 @@ function checkChannelWiring(spec: ClassSpec, channel: ChannelSpec): void {
     );
   }
 
-  if (spec.effectivelyOnce && channel.kind === 'plugin' && !channel.keyed) {
+  if (spec.effectivelyOnce && channel.sink !== undefined && !channel.keyed) {
     refuse(
       spec,
       channel.name,
@@ -136,9 +131,9 @@ function checkKeying(spec: ClassSpec): void {
   );
 
   for (const channel of spec.channels) {
-    for (const consumer of channel.consumers) {
-      const node = spec.procedures[consumer] as ProcNode;
-      if (channel.keyBy && entityMode(node) === 'static') {
+    for (const edge of channel.consumers) {
+      const node = spec.procedures[edge.procedure] as ProcNode;
+      if (edge.keyBy && entityMode(node) === 'static') {
         refuse(
           spec,
           channel.name,
@@ -147,7 +142,7 @@ function checkKeying(spec: ClassSpec): void {
             'keying names exactly one — declare one or the other, not both',
         );
       }
-      if (!channel.keyBy && dynamic.has(consumer)) {
+      if (!edge.keyBy && dynamic.has(edge.procedure)) {
         refuse(
           spec,
           channel.name,
@@ -327,7 +322,7 @@ function successorsOf(spec: ClassSpec): Map<number, number[]> {
   for (const channel of spec.channels) {
     if (channel.kind !== 'inter_proc' || channel.producer === undefined) continue;
     const list = successors.get(channel.producer) ?? [];
-    list.push(...channel.consumers);
+    list.push(...channel.consumers.map((edge) => edge.procedure));
     successors.set(channel.producer, list);
   }
   return successors;
@@ -340,7 +335,7 @@ function checkDag(
   successors: Map<number, number[]>,
 ): void {
   const reachable = new Set<number>();
-  const frontier = entries.flatMap((c) => c.consumers);
+  const frontier = entries.flatMap((c) => c.consumers.map((edge) => edge.procedure));
   while (frontier.length > 0) {
     const next = frontier.pop() as number;
     if (reachable.has(next)) continue;
@@ -390,9 +385,6 @@ function checkWorkflow(spec: ClassSpec): void {
     }
     return;
   }
-  if (spec.effectivelyOnce) {
-    refuse(spec, null, 'is a workflow class and cannot declare effectivelyOnce()');
-  }
   if (spec.correctionWindowMs !== undefined) {
     refuse(spec, null, 'is a workflow class and cannot declare a correction window');
   }
@@ -430,9 +422,9 @@ function compact<T extends Record<string, unknown>>(value: T): T {
 function channelJson(channel: ChannelSpec): Record<string, unknown> {
   return compact({
     name: channel.name,
-    kind: channel.kind,
+    kind: declaredKind(channel),
     producer: channel.producer,
-    consumers: channel.consumers,
+    consumers: channel.consumers.map((edge) => edge.procedure),
     retry_max: channel.retryMax,
     retry_backoff_ms: channel.retryBackoffMs,
     overflow: channel.overflow,

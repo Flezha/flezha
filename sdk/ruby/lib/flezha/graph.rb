@@ -49,37 +49,39 @@ module Flezha
       sinks = {}
 
       spec.channels.each do |channel|
-        check_channel_names(spec, channel, names, sinks)
+        refuse(spec, channel.name, "this channel name is declared more than once") if names[channel.name]
+        names[channel.name] = true
         check_channel_wiring(spec, channel)
         check_overflow(spec, channel)
 
         if channel.kind == :entry && channel.consumers.empty?
           refuse(spec, channel.name, "is an entry channel that names no consumer")
         end
-        if channel.kind == :inter_proc && channel.consumers.empty?
+        if declared_kind(channel) == :inter_proc && channel.consumers.empty?
           refuse(spec, channel.name, "is an inter-procedure channel that names no consumer")
         end
       end
     end
 
-    def check_channel_names(spec, channel, names, sinks)
-      refuse(spec, channel.name, "this channel name is declared more than once") if names[channel.name]
-      names[channel.name] = true
-
-      return unless channel.kind == :plugin
-
-      refuse(spec, channel.name, "declares a plugin sink more than once") if sinks[channel.name]
-      sinks[channel.name] = true
+    # The kind the wire carries.
+    #
+    # Terminality is derived from the wiring, not from which method the author
+    # called: a sink with nothing consuming behind it IS the plugin-bound
+    # terminal, and a sink declared alongside consumers is the hybrid — one
+    # channel the core journals as inter-procedure and whose values also reach
+    # the plugin.
+    def declared_kind(channel)
+      channel.sink && channel.consumers.empty? ? :plugin : channel.kind
     end
 
     def check_channel_wiring(spec, channel)
-      if channel.kind != :plugin && channel.keyed
+      if channel.sink.nil? && channel.keyed
         refuse(spec, channel.name,
                "is declared keyed but has no plugin wire; output identity stamps only " \
                "exist on plugin-bound frames, so add a sink(...) or drop the keyed")
       end
 
-      return unless spec.effectively_once && channel.kind == :plugin && !channel.keyed
+      return unless spec.effectively_once && channel.sink && !channel.keyed
 
       refuse(spec, channel.name,
              "has a plugin wire but is not declared keyed; the effectively-once tier " \
@@ -116,16 +118,16 @@ module Flezha
                     .map(&:index).to_h { |index| [index, true] }
 
       spec.channels.each do |channel|
-        channel.consumers.each do |consumer|
-          node = spec.procedures[consumer]
-          if channel.key_by && node.definition.entity_mode == :static
+        channel.consumers.each do |edge|
+          node = spec.procedures[edge.procedure]
+          if edge.key_by && node.definition.entity_mode == :static
             refuse(spec, channel.name,
                    "declares key_by into procedure `#{node.name}`, which declares a static " \
                    "key set; static keying routes by entities_for and may name several " \
                    "entities, edge keying names exactly one — declare one or the other, " \
                    "not both")
           end
-          if !channel.key_by && dynamic[consumer]
+          if !edge.key_by && dynamic[edge.procedure]
             refuse(spec, channel.name,
                    "feeds dynamic procedure `#{node.name}` without a key_by; every edge into " \
                    "a dynamic procedure must name the entity its inputs reach")
@@ -259,11 +261,11 @@ module Flezha
       spec.channels.each do |channel|
         next unless channel.kind == :inter_proc && channel.producer
 
-        successors[channel.producer].concat(channel.consumers)
+        successors[channel.producer].concat(channel.consumers.map(&:procedure))
       end
 
       reachable = {}
-      frontier = entries.flat_map(&:consumers)
+      frontier = entries.flat_map { |channel| channel.consumers.map(&:procedure) }
       until frontier.empty?
         node = frontier.pop
         next if reachable[node]
@@ -306,9 +308,6 @@ module Flezha
         return
       end
 
-      if spec.effectively_once
-        refuse(spec, nil, "is a workflow class and cannot declare effectively_once")
-      end
       if spec.correction_window_ms
         refuse(spec, nil, "is a workflow class and cannot declare a correction window")
       end
@@ -327,9 +326,9 @@ module Flezha
     def channel_json(channel)
       compact(
         "name" => channel.name,
-        "kind" => channel.kind.to_s,
+        "kind" => declared_kind(channel).to_s,
         "producer" => channel.producer,
-        "consumers" => channel.consumers,
+        "consumers" => channel.consumers.map(&:procedure),
         "retry_max" => channel.retry_max,
         "retry_backoff_ms" => channel.retry_backoff_ms,
         "overflow" => channel.overflow.to_s,

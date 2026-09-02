@@ -9,7 +9,7 @@
 
 import { encodeValue } from './codec.js';
 import { applyTransforms } from './authoring.js';
-import type { ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
+import type { ChannelSpec, ClassSpec, ConsumerEdge, ProcNode } from './authoring.js';
 import type { NativeItemEffect, NativeMeta, NativeOutput, NativeTimerOp } from './native.js';
 import { entityIdentity, stableId } from './identity.js';
 import { readOnlyState } from './state.js';
@@ -139,56 +139,105 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       );
     }
     for (const channel of targets) {
-      const output = this.outputFor(channel, value, options);
-      if (output) this.outputs.push(output);
+      // A channel with no consumer releases nothing on the edge path: on a
+      // workflow that is the plugin-bound terminal, and seeding the next stage
+      // from it would hand the driver a terminal output.
+      if (this.structuredWorkflow) {
+        const edge = channel.consumers[0];
+        if (edge) this.outputs.push(this.workflowOutput(channel, edge, value));
+      } else {
+        for (const edge of channel.consumers) {
+          const output = this.edgeOutput(channel, edge, value, options);
+          if (output) this.outputs.push(output);
+        }
+      }
+      if (channel.sink !== undefined) this.outputs.push(this.pluginOutput(channel, value, options));
     }
+  }
+
+  /**
+   * A structured workflow releases ONE value per emit: the driver fans it out
+   * to every consumer itself, from the journaled handoff, so the host names
+   * the producing channel and its first consumer and applies neither the
+   * edge's transforms nor its key.
+   */
+  private get structuredWorkflow(): boolean {
+    return this.input.spec.kind === 'workflow' && this.input.spec.channels.length > 0;
+  }
+
+  private workflowOutput(channel: ChannelSpec, edge: ConsumerEdge, value: unknown): NativeOutput {
+    return {
+      target: 'edge',
+      channel: channel.index,
+      consumer: edge.procedure,
+      pluginChannel: undefined,
+      key: undefined,
+      eventTime: undefined,
+      metadata: [],
+      payload: Buffer.from(channel.encode ? channel.encode(value) : encodeValue(value)),
+    };
   }
 
   emitTo(channel: string, value: unknown, options?: EmitOptions): void {
     this.emit(value, { ...options, channel });
   }
 
-  private outputFor(
+  /** One consumer's frame: its own transforms, its own key, its own clock. */
+  private edgeOutput(
     channel: ChannelSpec,
+    edge: ConsumerEdge,
     value: unknown,
     options: EmitOptions | undefined,
   ): NativeOutput | null {
     // Producer-side, in declaration order: the core routes on `(edge, key)`
     // and never evaluates a host closure.
-    const transformed = applyTransforms(channel.transforms, value);
+    const transformed = applyTransforms(edge.transforms, value);
     if (transformed === DROPPED) return null;
 
     const key =
-      options?.key ??
-      (channel.keyBy ? channel.keyBy(transformed) : undefined) ??
-      this.input.entityKey;
+      options?.key ?? (edge.keyBy ? edge.keyBy(transformed) : undefined) ?? this.input.entityKey;
 
+    const extractor = this.input.spec.procedures[edge.procedure]?.procedure.definition.eventTime;
+
+    return {
+      target: 'edge',
+      channel: channel.index,
+      consumer: edge.procedure,
+      pluginChannel: undefined,
+      key,
+      eventTime: extractor ? BigInt(extractor(transformed)) : undefined,
+      metadata: metaList(options?.metadata, this.input.node.name),
+      payload: Buffer.from(channel.encode ? channel.encode(transformed) : encodeValue(transformed)),
+    };
+  }
+
+  /**
+   * The plugin frame, serialized once from the value as emitted: an edge's
+   * transforms belong to that edge, so they never reach the sink.
+   */
+  private pluginOutput(
+    channel: ChannelSpec,
+    value: unknown,
+    options: EmitOptions | undefined,
+  ): NativeOutput {
+    const key = options?.key ?? this.input.entityKey;
     if (channel.keyed && key === undefined) {
       throw new EmitError(
         `${this.input.node.name}: emits on keyed channel \`${channel.name}\` with no key, ` +
           'and has no entity key of its own to fall back on; pass { key } on the emit',
       );
     }
-
-    const consumer = channel.consumers[0];
-    const consumerNode = consumer === undefined ? undefined : this.input.spec.procedures[consumer];
-    const extractor = consumerNode?.procedure.definition.eventTime;
-    const eventTime = extractor ? BigInt(extractor(transformed)) : undefined;
-
-    const payload = channel.encode ? channel.encode(transformed) : encodeValue(transformed);
-    const isPlugin = channel.kind === 'plugin';
     const metadata = metaList(options?.metadata, this.input.node.name);
-    if (isPlugin) this.stampIdentity(metadata, channel, key);
-
+    this.stampIdentity(metadata, channel, key);
     return {
-      target: isPlugin ? 'plugin' : 'edge',
-      channel: isPlugin ? undefined : channel.index,
-      consumer: isPlugin ? undefined : consumer,
-      pluginChannel: isPlugin ? channel.name : undefined,
+      target: 'plugin',
+      channel: undefined,
+      consumer: undefined,
+      pluginChannel: channel.name,
       key,
-      eventTime,
+      eventTime: undefined,
       metadata,
-      payload: Buffer.from(payload),
+      payload: Buffer.from(channel.encode ? channel.encode(value) : encodeValue(value)),
     };
   }
 

@@ -41,7 +41,8 @@ final class DispatchTest extends TestCase
         $this->registry = new Registry();
         foreach (
             [EchoOperative::class, CounterOperative::class, KeyedOperative::class, StampOperative::class,
-                MixedStampOperative::class] as $class
+                MixedStampOperative::class, WfEmitOperative::class,
+                WfEmitStreamOperative::class] as $class
         ) {
             $spec = $class::spec();
             Validate::spec($spec);
@@ -373,31 +374,45 @@ final class DispatchTest extends TestCase
         );
     }
 
-    public function testANonKeyedPluginEmitCarriesNoStampsAndStillAdvancesTheOrdinal(): void
+    public function testANonKeyedPluginEmitCarriesNoStamps(): void
     {
-        [$plain, $keyed] = $this->mixed('"mixed"')['effects'][0]['outputs'];
+        [$plain] = $this->mixed('"mixed"', procedure: 0)['effects'][0]['outputs'];
 
         self::assertSame('plain_out', $plain['plugin_channel']);
         self::assertSame([], $plain['metadata']);
+    }
+
+    public function testUserMetadataRidesAKeyedPluginFrameWithTheStampsAfterIt(): void
+    {
+        $outputs = $this->mixed('"mixed"', procedure: 1)['effects'][0]['outputs'];
+        $keyed = array_values(array_filter(
+            $outputs,
+            static fn (array $o): bool => $o['target'] === 'plugin',
+        ))[0];
+
         self::assertSame('keyed_out', $keyed['plugin_channel']);
         self::assertSame(
             [
                 'user' => 'meta',
                 'flz.entity' => 'op/stamp_emitter/ek',
-                'flz.seq' => '5.1',
+                'flz.seq' => '5.0',
                 'flz.key' => 'ek',
             ],
             $keyed['metadata'],
         );
     }
 
-    public function testAFannedEmitAdvancesTheOrdinalOncePerProducedOutput(): void
+    public function testAFlatMapFansTheConsumerEdgeAndNotThePluginFrame(): void
     {
-        $outputs = $this->mixed('"fanned"')['effects'][0]['outputs'];
+        $outputs = $this->mixed('"fanned"', procedure: 1)['effects'][0]['outputs'];
 
-        self::assertCount(2, $outputs);
-        self::assertSame('5.0', $outputs[0]['metadata']['flz.seq']);
-        self::assertSame('5.1', $outputs[1]['metadata']['flz.seq']);
+        // Two edge frames from the `flatMap`, and ONE plugin frame: the
+        // serializer runs once per emit, from the value as emitted.
+        self::assertSame(
+            ['edge', 'edge', 'plugin'],
+            array_map(static fn (array $o): string => $o['target'], $outputs),
+        );
+        self::assertSame('5.0', $outputs[2]['metadata']['flz.seq']);
     }
 
     public function testAFreshWorkItemRestartsTheEmitOrdinal(): void
@@ -434,10 +449,43 @@ final class DispatchTest extends TestCase
         return $this->work('stamp_operative', 0, [self::input($payload)], 'ek', 5);
     }
 
-    /** @return array<string, mixed> */
-    private function mixed(string $payload): array
+    public function testAStructuredWorkflowReleasesOneUntransformedEdgeOutput(): void
     {
-        return $this->work('mixed_stamp_operative', 0, [self::input($payload)], 'ek', 5);
+        $outputs = $this->work('wf_emit', 0, [self::input('10')])['effects'][0]['outputs'];
+
+        self::assertSame(
+            [['edge', 1, null, '10'], ['plugin', null, 'handoff', '10']],
+            array_map(
+                static fn (array $o): array => [
+                    $o['target'],
+                    $o['consumer'],
+                    $o['plugin_channel'],
+                    $o['payload'],
+                ],
+                $outputs,
+            ),
+        );
+        self::assertNull($outputs[0]['key']);
+        self::assertNull($outputs[0]['event_time']);
+    }
+
+    public function testTheSameGraphOnAStreamClassReleasesOneOutputPerConsumer(): void
+    {
+        $outputs = $this->work('wf_emit_stream', 0, [self::input('10')])['effects'][0]['outputs'];
+
+        self::assertSame(
+            [['edge', 1, '11'], ['edge', 2, '10'], ['plugin', null, '10']],
+            array_map(
+                static fn (array $o): array => [$o['target'], $o['consumer'], $o['payload']],
+                $outputs,
+            ),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function mixed(string $payload, int $procedure = 0): array
+    {
+        return $this->work('mixed_stamp_operative', $procedure, [self::input($payload)], 'ek', 5);
     }
 
     /** @param list<array<string, mixed>> $items @return array<string, mixed> */

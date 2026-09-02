@@ -13,6 +13,7 @@ use Flezha\Graph\Edge;
 use Flezha\Overflow;
 use Flezha\Procedure;
 use Flezha\StreamOperative;
+use Flezha\WorkflowOperative;
 
 /**
  * The procedures and operatives the unit suite declares against.
@@ -113,10 +114,7 @@ final class KeyedOperative extends StreamOperative
 }
 
 /**
- * Two plugin channels, one keyed and one not, and a `flatMap` on the keyed arm.
- *
- * The fan-out matters: PHP produces several outputs from one emit where the
- * other veneers produce one, so the emit ordinal advances per OUTPUT here.
+ * The keyed plugin emitter: one output channel, carrying the identity stamps.
  */
 #[Proc(name: 'stamp_emitter', dynamicEntities: true)]
 final class StampEmitter extends Procedure
@@ -129,9 +127,8 @@ final class StampEmitter extends Procedure
         } elseif ($input === 'spoof') {
             $ctx->emit('v', channel: 'keyed_out', metadata: ['flz.seq' => '999.0']);
         } elseif ($input === 'fanned') {
-            $ctx->emit('x', channel: 'fanned_out');
+            $ctx->emit('x', channel: 'keyed_out');
         } else {
-            $ctx->emit('p', channel: 'plain_out');
             $ctx->emit('k', channel: 'keyed_out', metadata: ['user' => 'meta']);
         }
 
@@ -157,10 +154,31 @@ final class StampOperative extends StreamOperative
     }
 }
 
+#[Proc]
+final class PlainEmitter extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->emit('p', channel: 'plain_out');
+
+        return null;
+    }
+}
+
+#[Proc]
+final class FanTarget extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return null;
+    }
+}
+
 /**
- * A keyed and a non-keyed plugin channel off one procedure, plus a `flatMap`
- * arm. The Rust SDK refuses this shape (`TopologyIssue::DuplicatePluginSink`);
- * the erased hosts accept it.
+ * A procedure owns ONE output channel, so a keyed and a non-keyed plugin
+ * channel are two procedures. The `flatMap` arm fans onto a CONSUMER edge,
+ * which is where a transform chain lives: the plugin frame is serialized once
+ * per emit from the value as emitted, in every SDK.
  */
 #[Operative(factoryId: 'mixed_stamp_operative')]
 final class MixedStampOperative extends StreamOperative
@@ -169,14 +187,13 @@ final class MixedStampOperative extends StreamOperative
     {
         $c->input('input')
             ->keyBy(static fn (mixed $v): string => 'ek')
-            ->into(StampEmitter::class)
             ->branch(
-                static fn (Edge $e) => $e->sink('plain_out'),
-                static fn (Edge $e) => $e->keyed()->sink('keyed_out'),
-                static fn (Edge $e) => $e
+                static fn (Edge $e) => $e->into(PlainEmitter::class)->named('plain_out')
+                    ->sink('plain_out'),
+                static fn (Edge $e) => $e->into(StampEmitter::class)->named('keyed_out')
+                    ->keyed()->sink('keyed_out')
                     ->flatMap(static fn (mixed $v): array => [$v . '1', $v . '2'])
-                    ->keyed()
-                    ->sink('fanned_out'),
+                    ->into(FanTarget::class),
             );
     }
 }
@@ -274,4 +291,64 @@ final class Timing extends Procedure
     {
         $ctx->change(['kind' => $timer->kind, 'at' => $timer->scheduledAt, 'now' => $ctx->now()]);
     }
+}
+
+// -- the structured-workflow emit arm ----------------------------------------
+//
+// One released value is ONE edge output on a workflow class, untransformed and
+// unkeyed, naming the producing channel and its first consumer: the driver fans
+// it out from the journaled handoff. On a stream class the same topology
+// releases one output per consumer, transformed and keyed. The plugin output
+// rides alongside either way.
+
+#[Proc(name: 'wf_producer')]
+final class WfProducer extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        $ctx->emit($input);
+
+        return null;
+    }
+}
+
+#[Proc(name: 'wf_b')]
+final class WfB extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return null;
+    }
+}
+
+#[Proc(name: 'wf_c')]
+final class WfC extends Procedure
+{
+    public function run(mixed $input, Ctx $ctx): mixed
+    {
+        return null;
+    }
+}
+
+trait WorkflowEmitGraph
+{
+    public static function channels(Builder $c): void
+    {
+        $edge = $c->input('in')->into(WfProducer::class)->named('handoff');
+        $edge->map(static fn (mixed $v): mixed => $v + 1)->into(WfB::class);
+        $edge->into(WfC::class);
+        $edge->sink('wf_out');
+    }
+}
+
+#[Operative(factoryId: 'wf_emit')]
+final class WfEmitOperative extends WorkflowOperative
+{
+    use WorkflowEmitGraph;
+}
+
+#[Operative(factoryId: 'wf_emit_stream')]
+final class WfEmitStreamOperative extends StreamOperative
+{
+    use WorkflowEmitGraph;
 }

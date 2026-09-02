@@ -10,6 +10,7 @@ import {
   decodeValue,
   defineOperative,
   defineProcedure,
+  defineWorkflow,
   encodeValue,
   loadNative,
 } from '../dist/esm/index.js';
@@ -64,6 +65,7 @@ const Spec = defineOperative({
     c.input('in')
       .keyBy((value) => String(value))
       .into(Counter)
+      .named('out')
       .keyed()
       .sink('out');
   },
@@ -399,22 +401,30 @@ const StampSpec = defineOperative({
     c.input('in')
       .keyBy(() => 'ek')
       .into(StampEmitter)
+      .named('keyed_out')
       .keyed()
       .sink('keyed_out');
   },
 });
 
-// A keyed and a non-keyed plugin channel off one procedure. The Rust SDK
-// refuses this shape (`TopologyIssue::DuplicatePluginSink`); the erased hosts
-// accept it, and it is the only place the ordinal's advance is visible apart
-// from the emits it stamps.
+// A procedure owns ONE output channel, so a keyed and a non-keyed plugin
+// channel are two procedures. The unkeyed one carries no stamps at all.
+const PlainEmitter = defineProcedure({
+  name: 'plain_emitter',
+  handle: (_input, ctx) => {
+    ctx.emitTo('plain_out', 'p');
+  },
+});
+
 const MixedSpec = defineOperative({
   factoryId: 'stamps_mixed',
   channels: (c) => {
     c.input('in')
       .keyBy(() => 'ek')
-      .into(StampEmitter)
-      .branch([(edge) => edge.sink('plain_out'), (edge) => edge.keyed().sink('keyed_out')]);
+      .branch([
+        (edge) => edge.into(PlainEmitter).named('plain_out').sink('plain_out'),
+        (edge) => edge.into(StampEmitter).named('keyed_out').keyed().sink('keyed_out'),
+      ]);
   },
 });
 
@@ -442,16 +452,14 @@ test('a keyed plugin emit carries the identity stamps, and the ordinal advances 
   });
 });
 
-test('a non-keyed plugin emit carries no stamps and still advances the ordinal', async () => {
+test('a non-keyed plugin emit carries no stamps', async () => {
   const result = await answer(
     mixedActivation({ entityKey: 'ek', changeSeq: 5n, items: [inputItem('mixed')] }),
     depsFor(MixedSpec),
   );
-  const [plain, keyed] = result.effects[0].outputs;
+  const [plain] = result.effects[0].outputs;
   assert.equal(plain.pluginChannel, 'plain_out');
   assert.deepEqual(plain.metadata, []);
-  assert.equal(keyed.pluginChannel, 'keyed_out');
-  assert.equal(metaOf(keyed)['flz.seq'], '5.1');
 });
 
 test('a fresh work item restarts the emit ordinal', async () => {
@@ -511,4 +519,63 @@ test('user metadata survives beside the stamps and cannot spoof one', async () =
     depsFor(spec),
   );
   assert.equal(spoofed.effects[0].verdict, 'retryable');
+});
+
+// --- the structured-workflow emit arm ---------------------------------------
+//
+// One released value is ONE edge output on a workflow class, untransformed and
+// unkeyed, naming the producing channel and its first consumer: the driver
+// fans it out from the journaled handoff. On a stream class the same topology
+// releases one output per consumer, transformed and keyed. The plugin output
+// rides alongside either way.
+
+const WorkflowProducer = defineProcedure({
+  name: 'wf_producer',
+  handle: (input, ctx) => {
+    ctx.emit(input);
+  },
+});
+
+const workflowGraph = (c) => {
+  const edge = c.input('in').into(WorkflowProducer).named('handoff');
+  edge.map((value) => value + 1).into(defineProcedure({ name: 'wf_b', handle: (i) => i }));
+  edge.into(defineProcedure({ name: 'wf_c', handle: (i) => i }));
+  edge.sink('wf_out');
+};
+
+const WorkflowSpec = defineWorkflow({ factoryId: 'wf_emit', channels: workflowGraph });
+const StreamTwinSpec = defineOperative({ factoryId: 'wf_emit_stream', channels: workflowGraph });
+
+test('a structured workflow releases one untransformed edge output per emit', async () => {
+  const result = await answer(
+    activationFor('wf_emit')({ items: [inputItem(10)] }),
+    depsFor(WorkflowSpec),
+  );
+  assert.equal(result.outcome, 'work');
+  const outputs = result.effects[0].outputs;
+  assert.deepEqual(
+    outputs.map((o) => [o.target, o.consumer, o.pluginChannel, decodeValue(o.payload)]),
+    [
+      ['edge', 1, undefined, 10],
+      ['plugin', undefined, 'handoff', 10],
+    ],
+  );
+  assert.equal(outputs[0].key, undefined);
+  assert.equal(outputs[0].eventTime, undefined);
+});
+
+test('the same graph on a stream class releases one output per consumer', async () => {
+  const result = await answer(
+    activationFor('wf_emit_stream')({ items: [inputItem(10)] }),
+    depsFor(StreamTwinSpec),
+  );
+  const outputs = result.effects[0].outputs;
+  assert.deepEqual(
+    outputs.map((o) => [o.target, o.consumer, decodeValue(o.payload)]),
+    [
+      ['edge', 1, 11],
+      ['edge', 2, 10],
+      ['plugin', undefined, 10],
+    ],
+  );
 });

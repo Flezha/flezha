@@ -18,7 +18,7 @@ from typing import Any, Callable, Iterable
 
 from . import codec as _codec
 from . import determinism
-from .builder import DROPPED, ChannelSpec, ClassSpec, ProcNode, apply_transforms
+from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
 from .ctx import Ctx
 from .logger import log
 from .errors import FlezhaError
@@ -260,11 +260,11 @@ def run_now(coroutine: Any) -> Any:
     )
 
 
-def value_of(channel: ChannelSpec | None, payload: Any) -> Any:
+def value_of(channel: ChannelSpec | None, edge: ConsumerEdge | None, payload: Any) -> Any:
     """A payload as the handler sees it.
 
-    The channel's declared decoder (or the MessagePack default), then its
-    transforms in declaration order. :data:`~flezha.builder.DROPPED` when a
+    The channel's declared decoder (or the MessagePack default), then the
+    consuming edge's transforms in declaration order. :data:`~flezha.builder.DROPPED` when a
     filter rejected it. One function for the two places a payload crosses in —
     an input item, and a payload at the prepare crossing — so a filter cannot
     mean one thing on one path and another on the other.
@@ -273,7 +273,7 @@ def value_of(channel: ChannelSpec | None, payload: Any) -> Any:
         decoded = channel.decode(payload)
     else:
         decoded = _codec.decode(payload)
-    return apply_transforms(channel.transforms if channel else (), decoded)
+    return apply_transforms(edge.transforms if edge else (), decoded)
 
 
 async def invoke(
@@ -442,7 +442,10 @@ async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> Any:
         )
 
     channel = entity.registered.channel_at(item.get("channel") or 0)
-    value = value_of(channel, item.get("payload") or b"")
+    # This node's own edge off the channel: a transform chain declared before
+    # one `into` belongs to that consumer and to no other.
+    edge = _edge_into(channel, entity.node.index)
+    value = value_of(channel, edge, item.get("payload") or b"")
     # A filtered value is consumed and reaches no handler. It still produces an
     # effect, so its offset advances and nothing is retried.
     if value is DROPPED:
@@ -466,20 +469,22 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
         return failed(activation["token"], "a key request carried no payloads", non_retryable=True)
 
     channel = registered.channel_at(request["channel"])
-    consumer = channel.consumers[0] if channel and channel.consumers else None
-    proc = registered.spec.procedures[consumer].proc if consumer is not None else None
+    # The crossing answers one key set for the whole payload, so it reads the
+    # first consumer edge — the one the core routes the answer to.
+    edge = channel.consumers[0] if channel and channel.consumers else None
+    proc = registered.spec.procedures[edge.procedure].proc if edge is not None else None
 
     answers: list[dict[str, Any]] = []
     for payload in request["payloads"]:
         try:
-            value = value_of(channel, payload)
+            value = value_of(channel, edge, payload)
             # A filtered payload answers no key. For a dynamic consumer that is
             # what tells the core not to route it at all — the drop happens
             # before an entity is minted rather than inside one.
             if value is DROPPED:
                 answers.append({"keys": []})
                 continue
-            keys = _keys_for(request, channel, proc, value)
+            keys = _keys_for(request, edge, proc, value)
             event_time = (
                 proc.event_time_of(value)
                 if request["want_event_time"] and proc is not None and proc.event_time is not None
@@ -497,16 +502,23 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
     return {"token": activation["token"], "outcome": "prepared", "prepared": answers}
 
 
+def _edge_into(channel: ChannelSpec | None, node: int) -> ConsumerEdge | None:
+    """The channel's edge that feeds `node`, or ``None`` when it feeds none."""
+    if channel is None:
+        return None
+    return next((edge for edge in channel.consumers if edge.procedure == node), None)
+
+
 def _keys_for(
     request: dict[str, Any],
-    channel: ChannelSpec | None,
+    edge: ConsumerEdge | None,
     proc: Procedure[Any, Any] | None,
     value: Any,
 ) -> list[str]:
     if not request["want_keys"]:
         return []
-    if channel is not None and channel.key_by is not None:
-        return [str(channel.key_by(value))]
+    if edge is not None and edge.key_by is not None:
+        return [str(edge.key_by(value))]
     if proc is not None and proc.entities_for is not None:
         return proc.entities_of(value)
     return []

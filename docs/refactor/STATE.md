@@ -1,5 +1,102 @@
 # Refactor board
 
+## HANDOVER — session 9 ended 2026-09-02 18:40. READ THIS FIRST.
+
+**Tree is CLEAN** at `417a5780` apart from two files a DIFFERENT session owns and which are NOT mine to
+commit: `M CLAUDE.md` and `?? docs/dev_notes/INDEX.md`. **No worker is alive** (`ListAgents` shows no
+subagent). **The loop was stopped on the owner's instruction, to hand over.**
+
+### The owner's standing instructions from this session — these are NOT optional
+
+1. **Report total progress after every finished unit of work, unprompted** — a table of tracks (areas,
+   queue rows, capabilities, defects, commits) plus what is left, numbers derived from the files at that
+   moment and never from an earlier report. Asked for twice.
+2. **`docs/refactor/OPEN-WORK.md` is a living, plain-language list of everything unsolved**, in Estonian,
+   two sentences per item with a minimal example and no jargon. **Report it to the owner once an hour**,
+   and **update it the moment anything changes** — a list that lags is what they complained about. Keep
+   the 10–15 min worker stall checks separate and silent; the hourly table is for the owner.
+3. **The owner writes in Estonian and expects replies in Estonian.** Answers ~50 % shorter than default,
+   conclusion first, plain wording.
+4. **Beyond-window telemetry is NOT a requirement** — ruled 2026-09-02, requirement removed from
+   `stream-correction` by `234c2c4d`. Do not re-add it. KI-115's recovery-telemetry half is a DIFFERENT
+   case and stays open.
+
+### Where the programme stands
+
+**R6 IS COMPLETE** — eight of nine capabilities universal, `@required_capabilities` at 15. Only
+`workflow` remains, which is R7.
+
+**R7 is in flight, change 1 of 8.** `unify-veneer-procedure-output-channel`: **batches 0–4 done and
+committed at `55b8a748`** (node, ruby, python, php — one output channel per producing procedure,
+`sink()` returns the edge, the structured-workflow emit arm). All four unit suites green; four
+`prod_loc` rows all inside the proposal's 20–50 band (node +29, ruby +22, python +47, php +47 after my
+intent-add of `ConsumerEdge.php`). **Batches 5–6 remain**: the cross-language golden, the new e2e, the
+spec delta, the docs line, the final gates, the dev note.
+
+### Do this, in order
+
+1. **KI-143 FIRST — one line, and the change is broken without it.** `test/apps/python_runner/fixtures.py:523`
+   must spell `.into(partition_relay).named("input").keyed().sink("relay_out", encode=raw)` as the other
+   three veneers already do, and its four-line comment deleted. The committed change removed the naming
+   behaviour that fixture depended on; `partitioned_operatives_e2e_test.exs:250` would fail on the python
+   runtime and nothing catches it before that run. The fixture's own comment predicted this change.
+2. **Batch 5 as re-planned.** Task 5.3 is rewritten IN the change directory to say the proposal's "What
+   it proves" #3 was wrong: **no e2e covers `hybrid_channel`** (0 hits in `test/system/`, 7 in the
+   manifests — it registers and nothing drives it). Ruled: **write the e2e**, lane widened by
+   `test/system/sdk_smoke_e2e_test.exs`. Registration is exactly what was passing while a fan-out
+   silently lost its second consumer.
+3. **Then batch 6**, then changes 2–5 (fixtures per veneer), then **a fresh three-change survey for the
+   elixir half**, which is larger than all of R6 and must not be briefed as one change.
+
+### Open decisions the owner owes, unchanged
+
+- **A triage round** over every open defect entry before more fixing. **Recommended**: I verified four of
+  eleven "serious" entries were already fixed and never marked, so the list overstates.
+- **Baseline re-record.** `docs/refactor/baseline.json` is stale for `lib/flezha/sdk` (3 491 recorded,
+  4 215 actual) because R6 changes 4 and 5 never re-recorded. Not urgent — a stale baseline is the
+  stricter comparison — but R7's elixir changes inherit it. Needs the owner: `--write-baseline` is
+  blocked by the permission classifier.
+- **The `.gitignore` negation for `openspec/changes/archive` is inert**, so every archived proposal is
+  machine-local. Recommendation: delete the dead rule.
+
+### What this session did
+
+**37 commits.** R6 changes 4 and 5 closed (`7045a809`, `ae6a9630`), R6 complete; KI-134, KI-138, KI-139
+found, reproduced and fixed; KI-140 closed by the owner's ruling; KI-141, KI-142, KI-143 filed; the R7
+survey re-scoped its row on measurement and refuted the board on five counts; R7 change 1's batches 0–4
+landed. **Of the six defects filed today, five were pre-existing and one was introduced by our own change
+and caught at its own checkpoint before it could ship** — the owner asked for that number and it should
+be re-derived, not repeated.
+
+### The one caveat on `55b8a748`, from the worker's last words
+
+I asked it to stop and report; it did, in full, and I committed on that report **after verifying the four
+`prod_loc` rows myself with `--check --lint` following my own `git add -N` of `ConsumerEdge.php`** (node
++29, ruby +22, python +47, php +47, all inside the proposal's 20–50 band; `duplicate_pairs` unmoved on
+three areas and improved by 6 on php). Then I stopped it, and its very last words were:
+
+> *"Already at a clean boundary — nothing is mid-edit. Verifying provenance of the greens and cleaning up now."*
+
+**So the one thing it did not finish is confirming that each suite's green was taken AFTER that language's
+last edit.** Its report gives exit codes and counts for all four (node 128, ruby 112, python 184, php 161)
+and I have no reason to doubt them — the numbers rise sensibly from HEAD and its ceiling fix was
+re-measured after the fact. But it is not the same as the worker's own provenance check, and it costs
+about four minutes to remove the doubt. **The next session should re-run the four suites before batch 5**,
+which it needs to do anyway after KI-143's one-line fixture fix.
+
+### Traps this session paid for
+
+- **`openspec archive` is blocked by the permission classifier here.** Both closes were done by hand:
+  splice the MODIFIED requirement into `openspec/specs/<cap>/spec.md` **with a scenario-drop guard**, then
+  `mv` the change directory into `openspec/changes/archive/<date>-<id>`. The guard script is at
+  `scratchpad/apply_deltas.py`; point its `CHANGE` at the new directory. It caught nothing wrong in
+  twenty requirements, which is the point.
+- **`git add -N` before reading ANY number.** It exposed a blocking credo row and an 81-line undercount on
+  one file in one change, and a `sdk/php` undercount here. Seven catches this session.
+- **A worker that reports its own instrument lying in its favour is the one to trust.** Two did.
+- Ruby needs `PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH"`; python's suite is
+  `sdk/python/.venv/bin/python -m pytest tests -q` with `PYTHONPATH=src:tests`.
+
 ## HANDOVER — session 8 ended 2026-09-02 10:55. READ THIS FIRST.
 
 **Tree is CLEAN at the last docs commit** apart from two files a DIFFERENT session owns and which
@@ -592,6 +689,49 @@ no design or tasks yet. **That is the survey taking up the invitation to argue f
 if it holds up it is the better one: a shared surface landing first means five SDKs implement against a
 settled contract instead of each inventing one. I am not reading the proposal until it reports — a
 half-written argument is not the argument.
+
+### R7 CHANGE 1 CHECKPOINT 1 (node) 18:05 — it found a test that was GREEN FOR THE WRONG REASON
+
+Batches 0–2 done, node only. `npm run check` **exit 0, 128 tests** (HEAD 119); `--check --lint` shows
+`sdk/node prod_loc 3124 → 3153` = **+29**, inside the proposal's +35 ± 15, `duplicate_pairs` **unmoved at
+2**, `files_over_800` and `functions_over_50` **0**. Three standing rows are the ones my brief named, to
+the line. **No new file, so nothing was hiding behind §11e this time** — and it said so rather than
+letting me assume.
+
+**It corrected the survey on three points and I verified all three**: `output_channel_id` has **FOUR**
+workflow readers, not three (`commit.rs:91` was missed); `ensureOutputChannel` is at `:663-672`; and
+**`hybrid_channel` is covered by NO e2e** — 0 hits in `test/system/` against 7 in the manifests, so it
+registers and nothing drives it. The proposal's "What it proves" #3 and task 5.3 were both wrong.
+
+**The finding that matters is a test that passed for the wrong reason.** node's *"a duplicate plugin sink
+is refused"* asserted a refusal on **two procedures naming one sink** — and only ever passed because
+under the per-edge model both channels collided on the name `out`. **The reference explicitly permits that
+shape**: `sdk/rust/src/channel/builder/stream.rs:334`, *"Several channels may name one sink."* I read it
+myself. The real refusal — a second `sink()` on one procedure's channel — was **unreachable** in node,
+because `checkChannelNames` tested `sinks.has(name)` after `names.has(name)` had already refused. It is
+re-aimed at the refusal that exists and a new test pins that two procedures may still share a sink.
+Two more changed tests carried comments admitting they recorded a divergence "not what this change
+moves"; **this change is what moves it**. And it did not hide the one assertion it lost — the emit
+ordinal's advance needed two plugin channels in one invocation, a shape **no SDK including the reference
+can now express** — it named the two tests that still cover it.
+
+**Its red-first judgement, endorsed**: four reds captured by script on unmodified HEAD, verbatim per
+language, rather than leaving three suites red across a checkpoint. **(a) is KI-141's declaration-level
+reproduction and it is identical in all four languages** — two channels, one `producer: 0`.
+
+**Three rulings.** (1) The **dangling transform chain** — both references refuse it, no veneer does,
+and it is latent (nothing declares one). **Filed as KI-142, follow-up change, NOT folded in**: a refusal
+in four languages has its own proof obligation and change 1 is already restructuring four builders.
+(2) The **wire rename** (`A__B` → `A`, and a sink-terminal channel taking the producing node's name) is
+**accepted** — it is the reference's rule and three published SHALLs say the veneers are wrong; the
+library is unpublished so no shim is owed. Obligation: confirm for ruby/python/php what it confirmed for
+node, and state the rename in the dev note and docs as a behaviour change for an author who wrote
+`.sink('x')` without `.named('x')`. (3) **Batch 5's live proof — option (a), write the e2e, lane widened
+by that one file.** Registration is exactly what was already passing while the fan-out silently lost its
+second consumer; the headline needs a test that would fail without the change.
+
+**Batches 3–4 authorised** (python, ruby, php) at ~258 k spend, the transcription risk retired now the
+design is proven once in node.
 
 ### R7 SURVEY VERIFIED AND APPROVED 17:40 — it refuted the board on FIVE points, and every one holds
 
@@ -6595,7 +6735,7 @@ verifies and commits, §4 checkpoint each time.
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
 | **R9** | `unify-cli-output-flag` — KI-80. `cluster status --json` ignores `--output json`; `audit list --output json` ignores `--json` | Agreed 2026-09-01, small |
 | **R10** | `add-publish-readiness-checklist` — KI-52 and the one-way-door items | Agreed 2026-09-01, seed only |
-| **R11** | **KI-115 + KI-140** — **three** published specs mandate behaviour the code lacks (a third found 2026-09-02: `stream-correction` SHALLs beyond-window telemetry that `grep` finds emitted 0 times in every SDK). One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
+| **R11** | **KI-115** — **two** published specs mandate behaviour the code lacks. **KI-140 is CLOSED: the owner ruled on 2026-09-02 that beyond-window telemetry is not a requirement, and `drop-unemitted-beyond-window-telemetry` removed it from `stream-correction`.** One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
 | **R12** | **The docs-citation gate** (~120 lines). Would have caught 27 of area 8's 76 findings automatically. **Build it AFTER the docs are clean so it lands green** — a gate that lands red is KI-94 all over again | Ruling 3, approved in principle |
 
 **OWED — index lines for `carry-state-persistence-in-elixir`** (the R6 worker's report carries them verbatim: the `CLAUDE.md` hook *"`state_persistence` in the Elixir SDK — the kernel's rules re-expressed in its own core"* → an Elixir Entity IS its process, so the Operative keeps a SLOT of what each persistent Entity last shipped: a replacement at seq 0 would have every later record dedup-dropped by the controller in silence), same reason as the others.

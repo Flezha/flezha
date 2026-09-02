@@ -285,7 +285,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
 
     @flezha.stream_operative("keyed_sink")
     def keyed_sink(c: flezha.Channels) -> None:
-        c.input("in").into(keyless).keyed().sink("out")
+        c.input("in").into(keyless).named("out").keyed().sink("out")
 
     deps = deps_for(keyed_sink, fake_core)
     (effect,) = answered(work_activation(18, "x", factory="keyed_sink"), deps)["effects"]
@@ -332,3 +332,65 @@ def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> N
     )
     assert seen == ["a", "b"]
     assert result["outcome"] == "work"
+
+
+# -- the structured-workflow emit arm ------------------------------------------
+#
+# One released value is ONE edge output on a workflow class, untransformed and
+# unkeyed, naming the producing channel and its first consumer: the driver fans
+# it out from the journaled handoff. On a stream class the same topology
+# releases one output per consumer, transformed and keyed. The plugin output
+# rides alongside either way.
+
+
+@flezha.procedure(name="wf_producer")
+def _wf_producer(value: int, ctx: flezha.Ctx[None]) -> None:
+    ctx.emit(value)
+
+
+@flezha.procedure(name="wf_b")
+def _wf_b(value: int) -> int:
+    return value
+
+
+@flezha.procedure(name="wf_c")
+def _wf_c(value: int) -> int:
+    return value
+
+
+def _workflow_graph(c: flezha.Channels) -> None:
+    edge = c.input("in").into(_wf_producer).named("handoff")
+    edge.map(lambda value: value + 1).into(_wf_b)
+    edge.into(_wf_c)
+    edge.sink("wf_out")
+
+
+def test_a_structured_workflow_releases_one_untransformed_edge_output(
+    fake_core: FakeCore,
+) -> None:
+    @flezha.workflow_operative("wf_emit")
+    def wf_emit(c: flezha.Channels) -> None:
+        _workflow_graph(c)
+
+    deps = deps_for(wf_emit, fake_core)
+    (effect,) = answered(work_activation(40, 10, factory="wf_emit"), deps)["effects"]
+    assert [
+        (o["target"], o["consumer"], o["plugin_channel"], codec.decode(o["payload"]))
+        for o in effect["outputs"]
+    ] == [("edge", 1, None, 10), ("plugin", None, "handoff", 10)]
+    assert effect["outputs"][0]["key"] is None
+    assert effect["outputs"][0]["event_time"] is None
+
+
+def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer(
+    fake_core: FakeCore,
+) -> None:
+    @flezha.stream_operative("wf_emit_stream")
+    def wf_emit_stream(c: flezha.Channels) -> None:
+        _workflow_graph(c)
+
+    deps = deps_for(wf_emit_stream, fake_core)
+    (effect,) = answered(work_activation(41, 10, factory="wf_emit_stream"), deps)["effects"]
+    assert [
+        (o["target"], o["consumer"], codec.decode(o["payload"])) for o in effect["outputs"]
+    ] == [("edge", 1, 11), ("edge", 2, 10), ("plugin", None, 10)]

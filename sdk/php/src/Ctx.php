@@ -7,6 +7,7 @@ namespace Flezha;
 use Flezha\Codec\Json;
 use Flezha\Exception\EmitException;
 use Flezha\Graph\ChannelSpec;
+use Flezha\Graph\ConsumerEdge;
 use Flezha\Graph\ClassSpec;
 use Flezha\Graph\ProcNode;
 
@@ -120,9 +121,7 @@ final class Ctx
         }
 
         foreach ($targets as $target) {
-            foreach ($this->outputsFor($target, $value, $key, $metadata) as $output) {
-                $this->outputs[] = $output;
-            }
+            $this->release($target, $value, $key, $metadata);
         }
     }
 
@@ -217,58 +216,127 @@ final class Ctx
     }
 
     /**
-     * One emit's outputs on one channel — several when a `flatMap` fanned it,
-     * none when a `filter` dropped it.
+     * A structured workflow releases ONE value per emit: the driver fans it out
+     * to every consumer itself, from the journaled handoff, so the host names
+     * the producing channel and its first consumer and applies neither the
+     * edge's transforms nor its key.
+     */
+    private function structuredWorkflow(): bool
+    {
+        return $this->spec->kind === 'workflow' && $this->spec->channels !== [];
+    }
+
+    /** @param array<string, string>|null $metadata */
+    private function release(ChannelSpec $channel, mixed $value, ?string $key, ?array $metadata): void
+    {
+        // A channel with no consumer releases nothing on the edge path: on a
+        // workflow that is the plugin-bound terminal, and seeding the next
+        // stage from it would hand the driver a terminal output.
+        if ($this->structuredWorkflow()) {
+            $first = $channel->consumers[0] ?? null;
+            if ($first !== null) {
+                $this->outputs[] = [
+                    'target' => 'edge',
+                    'channel' => $channel->index,
+                    'consumer' => $first->procedure,
+                    'plugin_channel' => null,
+                    'key' => null,
+                    'event_time' => null,
+                    'metadata' => [],
+                    'payload' => $this->payload($channel, $value),
+                ];
+            }
+        } else {
+            foreach ($channel->consumers as $edge) {
+                foreach ($this->edgeOutputs($channel, $edge, $value, $key, $metadata) as $output) {
+                    $this->outputs[] = $output;
+                }
+            }
+        }
+
+        if ($channel->sink !== null) {
+            $this->outputs[] = $this->pluginOutput($channel, $value, $key, $metadata);
+        }
+    }
+
+    /**
+     * One consumer's frames — several when a `flatMap` fanned the value, none
+     * when a `filter` dropped it — with that edge's transforms, key and clock.
      *
      * @param array<string, string>|null $metadata
      * @return list<array<string, mixed>>
      */
-    private function outputsFor(ChannelSpec $channel, mixed $value, ?string $key, ?array $metadata): array
-    {
+    private function edgeOutputs(
+        ChannelSpec $channel,
+        ConsumerEdge $edge,
+        mixed $value,
+        ?string $key,
+        ?array $metadata,
+    ): array {
+        $definition = $this->spec->procedures[$edge->procedure]->definition;
         $outputs = [];
 
         // Producer-side, in declaration order: the core routes on `(edge, key)`
         // and never evaluates a host closure.
-        foreach (Transforms::apply($channel->transforms, $value) as $transformed) {
-            $resolved = $key
-                ?? ($channel->keyBy !== null ? (string) ($channel->keyBy)($transformed) : null)
-                ?? $this->entityKey;
-
-            if ($channel->keyed && $resolved === null) {
-                throw new EmitException(sprintf(
-                    '%s: emits on keyed channel `%s` with no key, and has no entity key of its '
-                    . 'own to fall back on; pass a key on the emit',
-                    $this->node->name,
-                    $channel->name,
-                ));
-            }
-
-            $consumer = $channel->consumers[0] ?? null;
-            $consumerNode = $consumer === null ? null : $this->spec->procedures[$consumer];
-            $definition = $consumerNode?->definition;
-            $isPlugin = $channel->kind === 'plugin';
-            $pairs = $this->metadata($metadata);
-            if ($isPlugin) {
-                $this->stampIdentity($pairs, $channel, $resolved);
-            }
-
+        foreach (Transforms::apply($edge->transforms, $value) as $transformed) {
             $outputs[] = [
-                'target' => $isPlugin ? 'plugin' : 'edge',
-                'channel' => $isPlugin ? null : $channel->index,
-                'consumer' => $isPlugin ? null : $consumer,
-                'plugin_channel' => $isPlugin ? $channel->name : null,
-                'key' => $resolved,
-                'event_time' => $definition?->declares('eventTime') === true
+                'target' => 'edge',
+                'channel' => $channel->index,
+                'consumer' => $edge->procedure,
+                'plugin_channel' => null,
+                'key' => $key
+                    ?? ($edge->keyBy !== null ? (string) ($edge->keyBy)($transformed) : null)
+                    ?? $this->entityKey,
+                'event_time' => $definition->declares('eventTime')
                     ? $definition->eventTimeOf($transformed)
                     : null,
-                'metadata' => $pairs,
-                'payload' => $channel->encode !== null
-                    ? ($channel->encode)($transformed)
-                    : Json::guard($channel->name, static fn (): string => Json::encode($transformed)),
+                'metadata' => $this->metadata($metadata),
+                'payload' => $this->payload($channel, $transformed),
             ];
         }
 
         return $outputs;
+    }
+
+    /**
+     * The plugin frame, serialized once from the value as emitted: an edge's
+     * transforms belong to that edge, so they never reach the sink.
+     *
+     * @param array<string, string>|null $metadata
+     * @return array<string, mixed>
+     */
+    private function pluginOutput(ChannelSpec $channel, mixed $value, ?string $key, ?array $metadata): array
+    {
+        $resolved = $key ?? $this->entityKey;
+        if ($channel->keyed && $resolved === null) {
+            throw new EmitException(sprintf(
+                '%s: emits on keyed channel `%s` with no key, and has no entity key of its '
+                . 'own to fall back on; pass a key on the emit',
+                $this->node->name,
+                $channel->name,
+            ));
+        }
+
+        $pairs = $this->metadata($metadata);
+        $this->stampIdentity($pairs, $channel, $resolved);
+
+        return [
+            'target' => 'plugin',
+            'channel' => null,
+            'consumer' => null,
+            'plugin_channel' => $channel->name,
+            'key' => $resolved,
+            'event_time' => null,
+            'metadata' => $pairs,
+            'payload' => $this->payload($channel, $value),
+        ];
+    }
+
+    private function payload(ChannelSpec $channel, mixed $value): string
+    {
+        return $channel->encode !== null
+            ? ($channel->encode)($value)
+            : Json::guard($channel->name, static fn (): string => Json::encode($value));
     }
 
     /**

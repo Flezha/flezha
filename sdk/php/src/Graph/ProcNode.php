@@ -15,6 +15,8 @@ final class ProcNode
         public readonly string $name,
         public readonly string $class,
         public readonly Definition $definition,
+        /** The one channel this node produces on, created on first wiring. */
+        public ?ChannelSpec $output = null,
     ) {
     }
 }

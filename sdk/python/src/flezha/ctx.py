@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generic, Iterable, Mapping, TypeVar
 
 from . import codec as _codec
-from .builder import DROPPED, ChannelSpec, ClassSpec, ProcNode, apply_transforms
+from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
 from .errors import EmitError
 from .identity import entity_identity, stable_id
 
@@ -152,9 +152,7 @@ class Ctx(Generic[S]):
                 f"with into(...) or sink(...)"
             )
         for target in targets:
-            output = self._output_for(target, value, key, metadata)
-            if output is not None:
-                self.outputs.append(output)
+            self._release(target, value, key, metadata)
 
     def timer_after(self, milliseconds: int) -> int:
         """Register a processing-time timer ``milliseconds`` from ``now``.
@@ -213,55 +211,119 @@ class Ctx(Generic[S]):
 
     # -- internals -----------------------------------------------------------
 
-    def _output_for(
+    @property
+    def _structured_workflow(self) -> bool:
+        """A structured workflow releases ONE value per emit.
+
+        The driver fans it out to every consumer itself, from the journaled
+        handoff, so the host names the producing channel and its first consumer
+        and applies neither the edge's transforms nor its key.
+        """
+        return self._spec.kind == "workflow" and bool(self._spec.channels)
+
+    def _release(
         self,
         channel: ChannelSpec,
         value: Any,
         key: str | None,
         metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
+    ) -> None:
+        # A channel with no consumer releases nothing on the edge path: on a
+        # workflow that is the plugin-bound terminal, and seeding the next
+        # stage from it would hand the driver a terminal output.
+        if self._structured_workflow:
+            if channel.consumers:
+                self.outputs.append(self._workflow_output(channel, channel.consumers[0], value))
+        else:
+            for edge in channel.consumers:
+                output = self._edge_output(channel, edge, value, key, metadata)
+                if output is not None:
+                    self.outputs.append(output)
+        if channel.sink is not None:
+            self.outputs.append(self._plugin_output(channel, value, key, metadata))
+
+    def _workflow_output(
+        self, channel: ChannelSpec, edge: ConsumerEdge, value: Any
+    ) -> dict[str, Any]:
+        return {
+            "target": "edge",
+            "channel": channel.index,
+            "consumer": edge.procedure,
+            "plugin_channel": None,
+            "key": None,
+            "event_time": None,
+            "metadata": [],
+            "payload": channel.encode(value) if channel.encode else _codec.encode(value),
+        }
+
+    def _edge_output(
+        self,
+        channel: ChannelSpec,
+        edge: ConsumerEdge,
+        value: Any,
+        key: str | None,
+        metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
     ) -> dict[str, Any] | None:
+        """One consumer's frame: its own transforms, its own key, its own clock."""
         # Producer-side, in declaration order: the core routes on `(edge, key)`
         # and never evaluates a host closure.
-        transformed = apply_transforms(channel.transforms, value)
+        transformed = apply_transforms(edge.transforms, value)
         if transformed is DROPPED:
             return None
 
         resolved = key
-        if resolved is None and channel.key_by is not None:
-            resolved = channel.key_by(transformed)
+        if resolved is None and edge.key_by is not None:
+            resolved = edge.key_by(transformed)
         if resolved is None:
             resolved = self.entity_key
+
+        consumer_proc = self._spec.procedures[edge.procedure].proc
+        return {
+            "target": "edge",
+            "channel": channel.index,
+            "consumer": edge.procedure,
+            "plugin_channel": None,
+            "key": None if resolved is None else str(resolved),
+            "event_time": (
+                consumer_proc.event_time_of(transformed)
+                if consumer_proc.event_time is not None
+                else None
+            ),
+            "metadata": self._meta_list(metadata),
+            "payload": channel.encode(transformed)
+            if channel.encode
+            else _codec.encode(transformed),
+        }
+
+    def _plugin_output(
+        self,
+        channel: ChannelSpec,
+        value: Any,
+        key: str | None,
+        metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """The plugin frame, serialized once from the value as emitted.
+
+        An edge's transforms belong to that edge, so they never reach the sink.
+        """
+        resolved = key if key is not None else self.entity_key
         if channel.keyed and resolved is None:
             raise EmitError(
                 f"{self._node.name}: emits on keyed channel `{channel.name}` with no key, and "
                 f"has no entity key of its own to fall back on; pass `key=` on the emit"
             )
-
-        consumer = channel.consumers[0] if channel.consumers else None
-        consumer_proc = self._spec.procedures[consumer].proc if consumer is not None else None
-        event_time = (
-            consumer_proc.event_time_of(transformed)
-            if consumer_proc is not None and consumer_proc.event_time is not None
-            else None
-        )
-
-        payload = channel.encode(transformed) if channel.encode else _codec.encode(transformed)
-        is_plugin = channel.kind == "plugin"
-        key = None if resolved is None else str(resolved)
-        stamps = self._meta_list(metadata)
-        if is_plugin:
-            stamps += self._identity_stamps(channel, key)
-            self._emit_ordinal += 1
-
+        resolved = None if resolved is None else str(resolved)
+        stamps = self._meta_list(metadata) + self._identity_stamps(channel, resolved)
+        self._emit_ordinal += 1
         return {
-            "target": "plugin" if is_plugin else "edge",
-            "channel": None if is_plugin else channel.index,
-            "consumer": None if is_plugin else consumer,
-            "plugin_channel": channel.name if is_plugin else None,
-            "key": key,
-            "event_time": event_time,
+            "target": "plugin",
+            "channel": None,
+            "consumer": None,
+            "plugin_channel": channel.name,
+            "key": resolved,
+            "event_time": None,
             "metadata": stamps,
-            "payload": payload,
+            "payload": channel.encode(value) if channel.encode else _codec.encode(value),
         }
 
     def _identity_stamps(self, channel: ChannelSpec, key: str | None) -> list[tuple[str, str]]:

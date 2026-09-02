@@ -280,7 +280,10 @@ async function runWork(
           const decoded = channel?.decode
             ? channel.decode(item.payload ?? Buffer.alloc(0))
             : decodeValue(item.payload ?? Buffer.alloc(0));
-          const input = applyTransforms(channel?.transforms ?? [], decoded);
+          // This node's own edge off the channel: a transform chain declared
+          // before one `into` belongs to that consumer and to no other.
+          const edge = channel?.consumers.find((each) => each.procedure === node.index);
+          const input = applyTransforms(edge?.transforms ?? [], decoded);
           // A filtered value is consumed and reaches no handler. It still
           // produces an effect, so its offset advances and nothing is retried.
           if (input === DROPPED) return undefined;
@@ -353,22 +356,24 @@ function prepare(
     return failed(activation.token, 'a key request carried no payloads', true);
   }
   const channel = registered.spec.channels[request.channel] as ChannelSpec | undefined;
-  const consumer = channel?.consumers[0];
-  const node = consumer === undefined ? undefined : registered.spec.procedures[consumer];
+  // The crossing answers one key set for the whole payload, so it reads the
+  // first consumer edge — the one the core routes the answer to.
+  const edge = channel?.consumers[0];
+  const node = edge === undefined ? undefined : registered.spec.procedures[edge.procedure];
   const definition = node?.procedure.definition;
 
   const answers: NativePrepareAnswer[] = request.payloads.map((payload) => {
     try {
       const decoded = channel?.decode ? channel.decode(payload) : decodeValue(payload);
-      const value = applyTransforms(channel?.transforms ?? [], decoded);
+      const value = applyTransforms(edge?.transforms ?? [], decoded);
       // A filtered payload answers no key. For a dynamic consumer that is what
       // tells the core not to route it at all — the drop happens before an
       // entity is minted rather than inside one.
       if (value === DROPPED) return { keys: [] };
 
       const keys = request.wantKeys
-        ? channel?.keyBy
-          ? [channel.keyBy(value)]
+        ? edge?.keyBy
+          ? [edge.keyBy(value)]
           : definition?.entities?.entitiesFor
             ? definition.entities.entitiesFor(value as never)
             : []

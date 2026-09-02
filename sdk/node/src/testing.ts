@@ -97,7 +97,7 @@ export class ProcedureTestHarness<TIn, TOut, TState, TChange> {
           .sink('harness_out'),
     });
     this.node = this.spec.procedures[0] as ProcNode;
-    this.outgoing = this.spec.channels.filter((channel) => channel.kind === 'plugin');
+    this.outgoing = this.spec.channels.filter((channel) => channel.producer !== undefined);
   }
 
   /** A harness over the procedure's declared starting state. */

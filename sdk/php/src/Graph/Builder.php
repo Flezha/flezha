@@ -172,35 +172,29 @@ final class Builder
         return $node;
     }
 
-    /** @param list<int> $consumers @param list<callable(mixed):mixed> $transforms */
-    public function addChannel(
-        string $name,
-        string $kind,
-        ?int $producer,
-        array $consumers,
-        Overflow $overflow,
-        ?int $retryMax,
-        ?int $retryBackoffMs,
-        bool $keyed,
-        array $transforms,
-        ?callable $keyBy,
-        ?callable $encode = null,
-    ): ChannelSpec {
+    /**
+     * The channel this node produces on, created on first use.
+     *
+     * Lazily, so a leaf node never carries a phantom channel. Named by the
+     * node's identity until a `named(...)` override, and reused by every later
+     * call on an edge whose source is this node — which is what makes a fan-out
+     * one channel with two consumers rather than two channels claiming one
+     * producer.
+     */
+    public function outputChannelFor(ProcNode $node): ChannelSpec
+    {
+        if ($node->output !== null) {
+            return $node->output;
+        }
+
         $channel = new ChannelSpec(
             index: count($this->channels),
-            name: $name,
-            kind: $kind,
-            producer: $producer,
-            consumers: $consumers,
-            overflow: $overflow,
-            retryMax: $retryMax,
-            retryBackoffMs: $retryBackoffMs,
-            keyed: $keyed,
-            transforms: $transforms,
-            keyBy: $keyBy,
-            encode: $encode,
+            name: $node->name,
+            kind: 'inter_proc',
+            producer: $node->index,
         );
         $this->channels[] = $channel;
+        $node->output = $channel;
 
         return $channel;
     }

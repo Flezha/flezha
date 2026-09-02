@@ -52,35 +52,33 @@ def validate(spec: ClassSpec) -> None:
 
 def _check_channels(spec: ClassSpec) -> None:
     names: set[str] = set()
-    sinks: set[str] = set()
-
     for channel in spec.channels:
-        _check_channel_names(spec, channel, names, sinks)
+        if channel.name in names:
+            _refuse(spec, channel.name, "this channel name is declared more than once")
+        names.add(channel.name)
         _check_channel_wiring(spec, channel)
         _check_overflow(spec, channel)
 
         if channel.kind == "entry" and not channel.consumers:
             _refuse(spec, channel.name, "is an entry channel that names no consumer")
-        if channel.kind == "inter_proc" and not channel.consumers:
+        if declared_kind(channel) == "inter_proc" and not channel.consumers:
             _refuse(spec, channel.name, "is an inter-procedure channel that names no consumer")
 
 
-def _check_channel_names(
-    spec: ClassSpec, channel: ChannelSpec, names: set[str], sinks: set[str]
-) -> None:
-    if channel.name in names:
-        _refuse(spec, channel.name, "this channel name is declared more than once")
-    names.add(channel.name)
+def declared_kind(channel: ChannelSpec) -> str:
+    """The kind the wire carries.
 
-    if channel.kind != "plugin":
-        return
-    if channel.name in sinks:
-        _refuse(spec, channel.name, "declares a plugin sink more than once")
-    sinks.add(channel.name)
+    Terminality is derived from the wiring, not from which method the author
+    called: a sink with nothing consuming behind it IS the plugin-bound
+    terminal, and a sink declared alongside consumers is the hybrid — one
+    channel the core journals as inter-procedure and whose values also reach
+    the plugin.
+    """
+    return "plugin" if channel.sink is not None and not channel.consumers else channel.kind
 
 
 def _check_channel_wiring(spec: ClassSpec, channel: ChannelSpec) -> None:
-    if channel.kind != "plugin" and channel.keyed:
+    if channel.sink is None and channel.keyed:
         _refuse(
             spec,
             channel.name,
@@ -88,7 +86,7 @@ def _check_channel_wiring(spec: ClassSpec, channel: ChannelSpec) -> None:
             "on plugin-bound frames, so add a sink(...) or drop the keyed",
         )
 
-    if spec.effectively_once and channel.kind == "plugin" and not channel.keyed:
+    if spec.effectively_once and channel.sink is not None and not channel.keyed:
         _refuse(
             spec,
             channel.name,
@@ -131,9 +129,9 @@ def _check_keying(spec: ClassSpec) -> None:
     dynamic = {node.index for node in spec.procedures if node.proc.entity_mode == "dynamic"}
 
     for channel in spec.channels:
-        for consumer in channel.consumers:
-            node = spec.procedures[consumer]
-            if channel.key_by and node.proc.entity_mode == "static":
+        for edge in channel.consumers:
+            node = spec.procedures[edge.procedure]
+            if edge.key_by and node.proc.entity_mode == "static":
                 _refuse(
                     spec,
                     channel.name,
@@ -142,7 +140,7 @@ def _check_keying(spec: ClassSpec) -> None:
                     f"entities, edge keying names exactly one — declare one or the other, "
                     f"not both",
                 )
-            if not channel.key_by and consumer in dynamic:
+            if not edge.key_by and edge.procedure in dynamic:
                 _refuse(
                     spec,
                     channel.name,
@@ -217,10 +215,10 @@ def _check_topology(spec: ClassSpec) -> None:
     successors: dict[int, list[int]] = {node.index: [] for node in spec.procedures}
     for channel in spec.channels:
         if channel.kind == "inter_proc" and channel.producer is not None:
-            successors[channel.producer].extend(channel.consumers)
+            successors[channel.producer].extend(edge.procedure for edge in channel.consumers)
 
     reachable: set[int] = set()
-    frontier = [consumer for channel in entries for consumer in channel.consumers]
+    frontier = [edge.procedure for channel in entries for edge in channel.consumers]
     while frontier:
         node_index = frontier.pop()
         if node_index in reachable:
@@ -268,8 +266,6 @@ def _check_workflow(spec: ClassSpec) -> None:
             )
         return
 
-    if spec.effectively_once:
-        _refuse(spec, None, "is a workflow class and cannot declare effectively_once")
     if spec.correction_window_ms:
         _refuse(spec, None, "is a workflow class and cannot declare a correction window")
     if spec.run and spec.channels:
@@ -298,9 +294,9 @@ def _channel_json(channel: ChannelSpec) -> dict[str, Any]:
     return _compact(
         {
             "name": channel.name,
-            "kind": channel.kind,
+            "kind": declared_kind(channel),
             "producer": channel.producer,
-            "consumers": channel.consumers,
+            "consumers": [edge.procedure for edge in channel.consumers],
             "retry_max": channel.retry_max,
             "retry_backoff_ms": channel.retry_backoff_ms,
             "overflow": channel.overflow,

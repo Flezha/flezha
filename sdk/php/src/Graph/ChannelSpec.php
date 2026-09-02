@@ -12,13 +12,11 @@ use Flezha\Overflow;
  */
 final class ChannelSpec
 {
-    /**
-     * @param list<int>                   $consumers
-     * @param list<callable(mixed):mixed> $transforms
-     */
+    /** @param list<ConsumerEdge> $consumers */
     public function __construct(
         public readonly int $index,
-        public readonly string $name,
+        /** Rewritten by a `named(...)` override on an edge off this channel. */
+        public string $name,
         /** `entry` | `inter_proc` | `plugin` */
         public readonly string $kind,
         public ?int $producer = null,
@@ -27,9 +25,8 @@ final class ChannelSpec
         public ?int $retryMax = null,
         public ?int $retryBackoffMs = null,
         public bool $keyed = false,
-        public array $transforms = [],
-        /** @var (callable(mixed):string)|null */
-        public $keyBy = null,
+        /** The plugin sink attached to this channel; null means none. */
+        public ?string $sink = null,
         /** @var (callable(string):mixed)|null */
         public $decode = null,
         /** @var (callable(mixed):string)|null */

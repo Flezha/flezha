@@ -132,29 +132,24 @@ watermark.
 ### Requirement: Beyond-window late inputs follow the declared policy
 
 Late inputs older than the correction window SHALL follow the operative's
-declared policy: `process_as_arrival` (default) or `drop`. Both outcomes SHALL
-emit telemetry identifying the entity and the lateness magnitude.
+declared policy: `process_as_arrival` (default) or `drop`.
 
 In the Elixir SDK the two arms differ in one more way that is not optional: a
 beyond-window input under `process_as_arrival` is dispatched but does **not**
 advance the event-time high-water, and under `drop` it does neither. An old
 straggler that dragged the high-water backwards would make every following
-on-time input look late and start a correction storm. The telemetry sentence
-above is satisfied by no SDK today — the reference emits none — so the Elixir
-SDK matches the reference's behaviour rather than diverging alone, and the gap
-is recorded against the reference.
+on-time input look late and start a correction storm.
 
 #### Scenario: Default policy processes as arrival
 
 - **WHEN** an input arrives 2 hours late against a 10-minute window with no
   policy declared
-- **THEN** it is processed as a normal arrival and beyond-window telemetry is
-  emitted
+- **THEN** it is processed as a normal arrival
 
-#### Scenario: Drop policy drops with telemetry
+#### Scenario: Drop policy drops the input
 
 - **WHEN** the operative declares `drop` and a beyond-window input arrives
-- **THEN** the input is not processed and drop telemetry is emitted
+- **THEN** the input is not processed
 
 #### Scenario: An Elixir beyond-window arrival does not move the high-water
 

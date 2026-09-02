@@ -457,3 +457,115 @@ def test_an_unreachable_procedure_is_refused() -> None:
 def test_a_valid_graph_passes() -> None:
     declare(demo)
     assert [node.name for node in demo.spec.procedures] == ["echo", "count_up"]
+
+
+# -- one output channel per producing procedure -------------------------------
+#
+# The model Rust and Java carry: a procedure node owns ONE output channel,
+# created on first wiring and reused after. A held edge wired twice appends a
+# second consumer to it — it does not declare a second channel claiming the same
+# producer, which the core resolves by first match (`host/register.rs`
+# `procedure_wiring`) and so silently truncates.
+
+
+def _channels(operative: flezha.Operative) -> list[tuple[object, ...]]:
+    decl = graph.to_host_class_decl(operative.spec)
+    return [
+        (c.get("name"), c.get("kind"), c.get("producer"), c.get("consumers"))
+        for c in decl["channels"]
+    ]
+
+
+def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
+    @flezha.stream_operative("fan_out")
+    def fan_out(c: flezha.Channels) -> None:
+        edge = c.input("in").into(echo)
+        edge.into(count_up, "b")
+        edge.into(count_up, "c")
+
+    declare(fan_out)
+    assert _channels(fan_out) == [
+        ("in", "entry", None, [0]),
+        ("echo", "inter_proc", 0, [1, 2]),
+    ]
+
+
+def test_branch_and_two_into_statements_build_the_identical_declaration() -> None:
+    @flezha.stream_operative("separate")
+    def separate(c: flezha.Channels) -> None:
+        edge = c.input("in").into(echo)
+        edge.into(count_up, "b")
+        edge.into(count_up, "c")
+
+    @flezha.stream_operative("branched")
+    def branched(c: flezha.Channels) -> None:
+        c.input("in").into(echo).branch(
+            lambda arm: arm.into(count_up, "b"), lambda arm: arm.into(count_up, "c")
+        )
+
+    declare(separate)
+    declare(branched)
+    assert _channels(separate) == _channels(branched)
+
+
+def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
+    @flezha.stream_operative("hybrid")
+    def hybrid(c: flezha.Channels) -> None:
+        c.input("in").into(echo).named("hybrid_indicator").sink("hybrid_indicators").into(count_up)
+
+    declare(hybrid)
+    assert _channels(hybrid) == [
+        ("in", "entry", None, [0]),
+        ("hybrid_indicator", "inter_proc", 0, [1]),
+    ]
+
+
+def test_a_second_sink_on_one_channel_is_refused() -> None:
+    @flezha.stream_operative("twice")
+    def twice(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("out").sink("out_again")
+
+    with pytest.raises(DeclarationError, match="declares a plugin sink more than once"):
+        declare(twice)
+
+
+def test_keyed_is_refused_without_a_plugin_sink_and_accepted_with_one() -> None:
+    @flezha.stream_operative("keyed_no_sink")
+    def keyed_no_sink(c: flezha.Channels) -> None:
+        c.input("in").into(echo).named("mid").keyed().into(count_up)
+
+    with pytest.raises(DeclarationError, match="is declared keyed but has no plugin wire"):
+        declare(keyed_no_sink)
+
+    @flezha.stream_operative("keyed_hybrid")
+    def keyed_hybrid(c: flezha.Channels) -> None:
+        c.input("in").into(echo).named("mid").keyed().sink("mid_sink").into(count_up)
+
+    declare(keyed_hybrid)
+    assert graph.to_host_class_decl(keyed_hybrid.spec)["channels"][1]["keyed"] is True
+
+
+def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
+    @flezha.stream_operative("per_edge_transform")
+    def per_edge_transform(c: flezha.Channels) -> None:
+        edge = c.input("in").into(echo)
+        edge.map(lambda value: f"{value}!").into(count_up, "b")
+        edge.into(count_up, "c")
+
+    declare(per_edge_transform)
+    channel = per_edge_transform.spec.channels[1]
+    assert [(e.procedure, len(e.transforms)) for e in channel.consumers] == [(1, 1), (2, 0)]
+
+
+# The reference declares exactly this — `tier_commit_block_workflow` opens with
+# `c.effectively_once()` on a workflow class in Rust and Java — so the flag is
+# read where the workflow spec is assembled rather than defaulted to False.
+def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
+    @flezha.workflow_operative("tier_workflow")
+    def tier_workflow(c: flezha.Channels) -> None:
+        c.effectively_once()
+        c.input("in").into(echo).named("out").keyed().sink("out")
+
+    declare(tier_workflow)
+    assert tier_workflow.spec.effectively_once is True
+    assert graph.to_host_class_decl(tier_workflow.spec)["effectively_once"] is True

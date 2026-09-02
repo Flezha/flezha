@@ -38,11 +38,12 @@ module Flezha
         @entity_key = entity_key
         @operative = operative
         @node = ProcNode.new(0, @definition.name, procedure_class, @definition)
-        # One plugin channel so `ctx.emit` has somewhere to go. A procedure
-        # under test emits to be observed, not to be routed.
+        # One plugin-bound channel so `ctx.emit` has somewhere to go. A
+        # procedure under test emits to be observed, not to be routed: with no
+        # consumer behind it the sink IS the terminal.
         @channel = ChannelSpec.new(
-          index: 0, name: "out", kind: :plugin, producer: 0, consumers: [],
-          overflow: :drop_nothing, keyed: false, transforms: []
+          index: 0, name: "out", kind: :inter_proc, producer: 0, consumers: [],
+          overflow: :drop_nothing, keyed: false, sink: "out"
         )
         @spec = ClassSpec.new(
           factory_id: "<harness>", kind: :stream, persistent: true, effectively_once: false,

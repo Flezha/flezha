@@ -86,10 +86,7 @@ module Flezha
                 "into(...) or sink(...)"
       end
 
-      targets.each do |target|
-        output = output_for(target, value, key, metadata)
-        @outputs << output if output
-      end
+      targets.each { |target| release(target, value, key, metadata) }
       nil
     end
 
@@ -150,38 +147,74 @@ module Flezha
 
     private
 
-    def output_for(channel, value, key, metadata)
+    # A structured workflow releases ONE value per emit: the driver fans it out
+    # to every consumer itself, from the journaled handoff, so the host names
+    # the producing channel and its first consumer and applies neither the
+    # edge's transforms nor its key.
+    def structured_workflow? = @spec.kind == :workflow && !@spec.channels.empty?
+
+    def release(channel, value, key, metadata)
+      # A channel with no consumer releases nothing on the edge path: on a
+      # workflow that is the plugin-bound terminal, and seeding the next stage
+      # from it would hand the driver a terminal output.
+      if structured_workflow?
+        first = channel.consumers.first
+        @outputs << workflow_output(channel, first, value) if first
+      else
+        channel.consumers.each do |edge|
+          output = edge_output(channel, edge, value, key, metadata)
+          @outputs << output if output
+        end
+      end
+      @outputs << plugin_output(channel, value, key, metadata) if channel.sink
+    end
+
+    def workflow_output(channel, edge, value)
+      payload = channel.encode ? channel.encode.call(value) : Codec.encode(value)
+      {
+        target: "edge", channel: channel.index, consumer: edge.procedure,
+        plugin_channel: nil, key: nil, event_time: nil, metadata: [], payload: payload.b
+      }
+    end
+
+    # One consumer's frame: its own transforms, its own key, its own clock.
+    def edge_output(channel, edge, value, key, metadata)
       # Producer-side, in declaration order: the core routes on `(edge, key)`
       # and never evaluates a host closure.
-      transformed = Flezha.apply_transforms(channel.transforms, value)
+      transformed = Flezha.apply_transforms(edge.transforms, value)
       return nil if transformed.equal?(DROPPED)
 
-      resolved = key || (channel.key_by && channel.key_by.call(transformed)) || @entity_key
+      resolved = key || (edge.key_by && edge.key_by.call(transformed)) || @entity_key
+      definition = @spec.procedures[edge.procedure].definition
+      payload = channel.encode ? channel.encode.call(transformed) : Codec.encode(transformed)
+      {
+        target: "edge",
+        channel: channel.index,
+        consumer: edge.procedure,
+        plugin_channel: nil,
+        key: resolved,
+        event_time: definition.event_time? ? definition.event_time_of(transformed) : nil,
+        metadata: meta_list(metadata),
+        payload: payload.b
+      }
+    end
+
+    # The plugin frame, serialized once from the value as emitted: an edge's
+    # transforms belong to that edge, so they never reach the sink.
+    def plugin_output(channel, value, key, metadata)
+      resolved = key || @entity_key
       if channel.keyed && resolved.nil?
         raise EmitError,
               "#{@node.name}: emits on keyed channel `#{channel.name}` with no key, and has " \
               "no entity key of its own to fall back on; pass `key:` on the emit"
       end
 
-      consumer = channel.consumers.first
-      consumer_node = consumer && @spec.procedures[consumer]
-      definition = consumer_node&.definition
-      event_time = definition&.event_time? ? definition.event_time_of(transformed) : nil
-
-      payload = channel.encode ? channel.encode.call(transformed) : Codec.encode(transformed)
-      plugin = channel.kind == :plugin
       pairs = meta_list(metadata)
-      stamp_identity(pairs, channel, resolved) if plugin
-
+      stamp_identity(pairs, channel, resolved)
+      payload = channel.encode ? channel.encode.call(value) : Codec.encode(value)
       {
-        target: plugin ? "plugin" : "edge",
-        channel: plugin ? nil : channel.index,
-        consumer: plugin ? nil : consumer,
-        plugin_channel: plugin ? channel.name : nil,
-        key: resolved,
-        event_time: event_time,
-        metadata: pairs,
-        payload: payload.b
+        target: "plugin", channel: nil, consumer: nil, plugin_channel: channel.name,
+        key: resolved, event_time: nil, metadata: pairs, payload: payload.b
       }
     end
 

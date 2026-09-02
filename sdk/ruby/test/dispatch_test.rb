@@ -232,7 +232,6 @@ class DispatchTest < Minitest::Test
       elsif input == "spoof"
         ctx.emit_to("keyed_out", "v", metadata: { "flz.seq" => "999.0" })
       else
-        ctx.emit_to("plain_out", "p")
         ctx.emit_to("keyed_out", "k", metadata: { "user" => "meta" })
       end
       nil
@@ -253,19 +252,28 @@ class DispatchTest < Minitest::Test
     end
   end
 
-  # A keyed and a non-keyed plugin channel off one procedure. The Rust SDK
-  # refuses this shape (`TopologyIssue::DuplicatePluginSink`); the erased hosts
-  # accept it, and it is the only place the ordinal's advance is visible apart
-  # from the emits it stamps.
+  class PlainEmitter < Flezha::Procedure
+    procedure_name "plain_emitter"
+
+    def process(_input, ctx)
+      ctx.emit_to("plain_out", "p")
+      nil
+    end
+  end
+
+  # A procedure owns ONE output channel, so a keyed and a non-keyed plugin
+  # channel are two procedures. The unkeyed one carries no stamps at all.
   class MixedStampOperative < Flezha::StreamOperative
     factory_id "mixed_stamp_op"
     channels do |c|
       c.input("input", decode: ->(b) { b.dup.force_encoding("UTF-8") })
        .key_by { |_v| "ek" }
-       .into(StampEmitter)
        .branch(
-         ->(edge) { edge.sink("plain_out", encode: ->(v) { v.to_s.b }) },
-         ->(edge) { edge.keyed.sink("keyed_out", encode: ->(v) { v.to_s.b }) }
+         ->(edge) { edge.into(PlainEmitter).named("plain_out").sink("plain_out", encode: ->(v) { v.to_s.b }) },
+         lambda { |edge|
+           edge.into(StampEmitter).named("keyed_out").keyed
+               .sink("keyed_out", encode: ->(v) { v.to_s.b })
+         }
        )
     end
   end
@@ -291,15 +299,20 @@ class DispatchTest < Minitest::Test
                    "flz.key" => "ek" }, meta_of(outputs[1]))
   end
 
-  def test_a_non_keyed_plugin_emit_carries_no_stamps_and_still_advances_the_ordinal
-    plain, keyed = stamp_answer("mixed", operative: MixedStampOperative,
-                                         factory: "mixed_stamp_op")[:effects][0][:outputs]
+  def test_a_non_keyed_plugin_emit_carries_no_stamps
+    plain, = stamp_answer("mixed", operative: MixedStampOperative,
+                                   factory: "mixed_stamp_op")[:effects][0][:outputs]
 
     assert_equal "plain_out", plain[:plugin_channel]
     assert_empty plain[:metadata]
+  end
+
+  def test_user_metadata_rides_a_keyed_plugin_frame_with_the_stamps_after_it
+    keyed, = stamp_answer("mixed")[:effects][0][:outputs]
+
     assert_equal "keyed_out", keyed[:plugin_channel]
     assert_equal({ "user" => "meta", "flz.entity" => "op-1/stamp_emitter/ek",
-                   "flz.seq" => "5.1", "flz.key" => "ek" }, meta_of(keyed))
+                   "flz.seq" => "5.0", "flz.key" => "ek" }, meta_of(keyed))
   end
 
   def test_a_fresh_work_item_restarts_the_emit_ordinal
@@ -314,5 +327,71 @@ class DispatchTest < Minitest::Test
 
     assert_equal "retryable", result[:effects][0][:verdict]
     refute result[:effects][0].key?(:outputs), "a refused emit must leave no outputs behind"
+  end
+  # -- the structured-workflow emit arm ---------------------------------------
+  #
+  # One released value is ONE edge output on a workflow class, untransformed and
+  # unkeyed, naming the producing channel and its first consumer: the driver
+  # fans it out from the journaled handoff. On a stream class the same topology
+  # releases one output per consumer, transformed and keyed. The plugin output
+  # rides alongside either way.
+
+  class WfProducer < Flezha::Procedure
+    procedure_name "wf_producer"
+    def process(input, ctx) = ctx.emit(input)
+  end
+
+  class WfB < Flezha::Procedure
+    procedure_name "wf_b"
+    def process(input, _ctx) = input
+  end
+
+  class WfC < Flezha::Procedure
+    procedure_name "wf_c"
+    def process(input, _ctx) = input
+  end
+
+  WORKFLOW_GRAPH = lambda do |c|
+    edge = c.input("in").into(WfProducer).named("handoff")
+    edge.map { |value| value + 1 }.into(WfB)
+    edge.into(WfC)
+    edge.sink("wf_out")
+  end
+
+  class WfEmitOperative < Flezha::WorkflowOperative
+    factory_id "wf_emit"
+    channels(&WORKFLOW_GRAPH)
+  end
+
+  class WfEmitStreamOperative < Flezha::StreamOperative
+    factory_id "wf_emit_stream"
+    channels(&WORKFLOW_GRAPH)
+  end
+
+  def emit_arm_outputs(operative, factory)
+    deps = Flezha::TestSupport.deps(operative, @core)
+    activation = Flezha::TestSupport.activation(
+      factory: factory, kind: :work, entity_key: "ek", change_seq: 0,
+      items: [input_item(Flezha::Codec.encode(10))]
+    )
+    Flezha::Dispatch.answer(activation, deps)[:effects][0][:outputs]
+  end
+
+  def test_a_structured_workflow_releases_one_untransformed_edge_output
+    outputs = emit_arm_outputs(WfEmitOperative, "wf_emit")
+
+    assert_equal [["edge", 1, nil, 10], ["plugin", nil, "handoff", 10]],
+                 outputs.map { |o|
+                   [o[:target], o[:consumer], o[:plugin_channel], Flezha::Codec.decode(o[:payload])]
+                 }
+    assert_nil outputs[0][:key]
+    assert_nil outputs[0][:event_time]
+  end
+
+  def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer
+    outputs = emit_arm_outputs(WfEmitStreamOperative, "wf_emit_stream")
+
+    assert_equal [["edge", 1, 11], ["edge", 2, 10], ["plugin", nil, 10]],
+                 outputs.map { |o| [o[:target], o[:consumer], Flezha::Codec.decode(o[:payload])] }
   end
 end
