@@ -323,6 +323,18 @@ The harness drives the same `invoke` every activation kind goes through, and
 so what it proves is what the runner does, rather than something that agrees
 with it. It also drives `async def` handlers, so a test needs no event loop.
 
+## Entry-input idle
+
+`runner.last_entry_delivery(channel)` answers when an entry channel last
+received a frame (`None` before its first), and
+`runner.on_entry_idle(channel, threshold_ms, observer)` reports silence past
+the threshold as episodes — one `idle`, one `resumed` — to an `IdleObserver`
+subclass or a bare callable. Both are legal before `start()`. The tick is one
+daemon thread per runner, woken by `Event.wait` and never `time.sleep`, under
+either executor; it runs while the GIL is free, so a pure-Python body that
+holds the lock past the tick delays the report by its length and never changes
+the count. Contract: [`entry_input_idle.md`](entry_input_idle.md).
+
 ## Deferred, by name
 
 - **Sub-interpreter execution** (PEP 684/734), owed to `sdk-python-subinterpreters`.
@@ -344,8 +356,3 @@ with it. It also drives `async def` handlers, so a test needs no event loop.
 - `workflow`, owed to `sdk-durable-fixture-parity` alongside the Node, Ruby, PHP
   and Elixir apps that defer it. The mechanism is present in the SDK; what is
   deferred is the fixture set that proves it end to end.
-- `entry_idle`, where that is **not** true and the manifest says so by name. The
-  shared core stamps every entry delivery and `Core.entry_last_delivery_nanos`
-  reads it, but the runner handle carries neither `last_entry_delivery` nor
-  `on_entry_idle`, and the SDK has no idle observer, episode latch or tick — the
-  policy half is per-SDK host code that exists in Rust and Java only.

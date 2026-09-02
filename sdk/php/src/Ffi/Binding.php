@@ -78,6 +78,9 @@ final class Binding
         int32_t flz_core_spawn_workflow(uintptr_t ctx, const char *instance_id, const char *factory_id, const char *payload, size_t payload_len, const char *if_running, char **outcome_out, size_t *outcome_len_out);
         uint64_t flz_core_monotonic_nanos(void);
         uint64_t flz_core_entry_last_delivery_nanos(const char *channel);
+        uint64_t flz_core_idle_watch_new(const char *channel, uint64_t threshold_nanos);
+        int32_t flz_core_idle_watch_poll(uint64_t id, uint64_t *gap_nanos);
+        void flz_core_idle_watch_free(uint64_t id);
         void flz_core_buf_free(char *buf, size_t len);
         void flz_core_context_free(uintptr_t ctx);
         void flz_core_set_log_callback(void (*callback)(int32_t level, const char *message));
@@ -95,6 +98,12 @@ final class Binding
     public const ERR = -1;
     /** Success for non-poll calls. */
     public const OK = 0;
+    /** `idleWatchPoll` crossed no episode boundary. */
+    public const IDLE_NONE = 0;
+    /** The watched channel's silence first exceeded the threshold: one episode. */
+    public const IDLE_IDLE = 1;
+    /** A frame ended the episode and re-armed the latch. */
+    public const IDLE_RESUMED = 2;
 
     private static ?FFI $handle = null;
 

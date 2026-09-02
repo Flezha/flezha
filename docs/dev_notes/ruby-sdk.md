@@ -109,10 +109,11 @@ Per-change gotchas for `ruby-sdk`. Read before touching `sdk/ruby/`,
   connect variable — and admission is one row in each. `node-sdk` edited the
   same file for the same reason; the change's spec delta was corrected to say
   so rather than claiming the gate is untouched.
-- **The manifest defers the same nine capabilities Node and Elixir defer**, to
-  `sdk-durable-fixture-parity`. This is a deferral of fixtures, not mechanism:
-  the dispatcher answers every activation kind, and `dispatch_test.rb` sweeps
-  all nine.
+- **The manifest defers `workflow` alone.** This is a deferral of fixtures,
+  not mechanism: the dispatcher answers every activation kind, and
+  `dispatch_test.rb` sweeps all of them. The entry-idle observer is the gem's
+  own host layer (`lib/flezha/entry_idle.rb`) over the latch the core keeps by
+  watch id, not a mechanism the core carries on the gem's behalf.
 
 ## What the refine pass found
 
@@ -171,7 +172,7 @@ fails in a suite is evidence of a leak before it is evidence of load.
 
 ## Owed
 
-- `sdk-durable-fixture-parity` — the nine deferred fixture sets, shared with
-  the Node and Elixir apps.
+- The `workflow` fixture set, shared with the Node, PHP and Python apps, owed
+  to the follow-up that adds the two builder surfaces it needs.
 - `ruby-sdk-ractor-executor` — the Ractor executor, deferred by name. The
   state discipline that keeps it reachable landed here.

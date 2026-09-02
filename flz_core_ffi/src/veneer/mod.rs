@@ -283,3 +283,20 @@ pub fn spawn_workflow(
 pub fn entry_last_delivery_nanos(channel: &CStr) -> u64 {
     unsafe { crate::flz_core_entry_last_delivery_nanos(channel.as_ptr()) }
 }
+
+/// Register an episode latch over `channel`; `0` means the name was refused.
+pub fn idle_watch_new(channel: &CStr, threshold_nanos: u64) -> u64 {
+    unsafe { crate::flz_core_idle_watch_new(channel.as_ptr(), threshold_nanos) }
+}
+
+/// Advance a watch's latch: the ABI's status and the episode's gap in
+/// nanoseconds, `0` when there is no episode.
+pub fn idle_watch_poll(id: u64) -> (i32, u64) {
+    let mut gap = 0u64;
+    let status = unsafe { crate::flz_core_idle_watch_poll(id, &mut gap) };
+    (status, gap)
+}
+
+pub fn idle_watch_free(id: u64) {
+    crate::flz_core_idle_watch_free(id)
+}

@@ -134,9 +134,9 @@ rather than drained. Nothing is lost — the core re-hands them on the next bind
 
 ## Deferred, by name
 
-The manifest carries the six required capabilities and defers the same nine the
-Node and Ruby manifests do — on **fixtures, not mechanism**: persistence, the
-effectively-once tier, timers, correction windows, keyed channels, the workflow
-kind, dynamic-Entity eviction, the entry-idle observer and schema evolution are
-all implemented and reached through the same core the Rust and Java arms prove
-them on. The proof fixture-by-fixture is owed to `sdk-durable-fixture-parity`.
+The manifest defers `workflow` alone — on **fixtures, not mechanism**: the
+workflow kind is implemented and reached through the same core the Rust and
+Java arms prove it on, and its fixtures wait on two builder surfaces every
+veneer lacks. The entry-idle observer is this SDK's own host layer
+(`src/EntryIdle.php`) over the latch the core keeps by watch id; it is not
+something the core proves on this SDK's behalf.

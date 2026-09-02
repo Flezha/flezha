@@ -75,6 +75,16 @@ keyset), `entities_for/1`, `mailbox_capacity/0` (1024; env `FLEZHA_MAILBOX_CAPAC
 (a reserved `flz.` key answers `{:error, {:reserved_metadata_key, k}}`), `now/1` (wall ms,
 once per invocation), `entity_key/1`.
 
+Entry-input idle rides the handle: `Flezha.SDK.last_entry_delivery(handle, channel)` answers
+when an entry channel last received a frame (`nil` before its first — the handle is free, so
+the read is legal before `start/1`), and `Flezha.SDK.on_entry_idle(handle, channel,
+threshold_ms, observer)` reports silence past the threshold as episodes to a module
+implementing `Flezha.SDK.IdleObserver` (`idle/1`, optional `resumed/1`) or a fun of arity one;
+`child_spec/1` takes the same registrations as `idle_observers: [{channel, threshold_ms,
+observer}]`. Both layers are this SDK's own: `Flezha.SDK.EntryInput` keeps one `:atomics` cell
+per entry-channel name and `Flezha.SDK.EntryIdle` — one process per runner — the episode
+latch and the tick. Contract: [`entry_input_idle.md`](entry_input_idle.md).
+
 ## Graph builder (v1 subset)
 
 `input`/`input_with` → `into`/`into_named` → `sink`/`sink_with`/`sealed`, with
@@ -143,7 +153,7 @@ effectively-once tier, checkpoints, correction windows, entity timers, `ctx.stab
 clocks); the workflow kind (`kind: workflow` on `AddOperative` is refused: `workflow kind is
 not supported by the Elixir stream SDK`); keyed channels (`keyed`, `emit_keyed`, output
 identity stamps); `merge`, `route_latest`, `branch`, `codec`; dynamic-entity eviction (dynamic
-Entities live for the operative's lifetime); and the entry-idle observer. A builder/ctx call
+Entities live for the operative's lifetime). A builder/ctx call
 into a deferred surface fails registration loudly, naming the operative module; a persistence
 frame from the controller is ignored with a warning.
 

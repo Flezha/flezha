@@ -27,6 +27,7 @@ from .builder import DROPPED, Channels, Edge
 from .codec import TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
 from .entity_state import state
+from .entry_idle import IdleObserver
 from .logger import configure as configure_logging
 from .errors import (
     CoreError,
@@ -60,6 +61,7 @@ __all__ = [
     # runner
     "create_runner",
     "Runner",
+    "IdleObserver",
     "configure_logging",
     # codec
     "TypeCodec",

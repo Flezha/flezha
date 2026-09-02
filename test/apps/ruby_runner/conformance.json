@@ -33,8 +33,7 @@
   },
   "toolchain": "ruby --version",
   "deferred": [
-    "workflow",
-    "entry_idle"
+    "workflow"
   ],
   "fixtures": {
     "runner_lifecycle": [
@@ -93,6 +92,9 @@
     ],
     "dynamic_entity": [
       "dynamic_entity"
+    ],
+    "entry_idle": [
+      "entry_idle_probe"
     ],
     "pool_wedge": [
       "wedge_probe"

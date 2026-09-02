@@ -25,6 +25,7 @@ export type { Native } from './native.js';
 export { ACTIVATION_SCHEMA_VERSION, createRunner, Runner } from './runner.js';
 export { StateMutationError } from './state.js';
 export { DELAY_WARN_MS } from './loop-watch.js';
+export type { IdleObserver } from './entry-idle.js';
 export { DeclarationError } from './types.js';
 export type {
   BeyondWindowPolicy,

@@ -19,6 +19,8 @@ namespace = ARGV[0] || "default"
 runner = Flezha.create_runner(namespace)
 runner.logger(Flezha::ConsoleLogger.new(ENV.fetch("FLEZHA_LOG_LEVEL", "info")))
 Fixtures::ALL.each { |operative| runner.define_stream(operative) }
+# A runner-level registration, not a declaration: armed beside the fixtures.
+Fixtures.arm_entry_idle_probe(runner)
 
 # The harness stops a runner by closing its pipes. A write that lands after
 # that raises EPIPE on the stream, and an unhandled stream error would turn a

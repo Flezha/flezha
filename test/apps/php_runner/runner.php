@@ -26,9 +26,11 @@ declare(strict_types=1);
 require __DIR__ . '/../../../sdk/php/vendor/autoload.php';
 require __DIR__ . '/fixtures.php';
 require __DIR__ . '/fixtures_state.php';
+require __DIR__ . '/fixtures_probe.php';
 
 use Flezha\Flezha;
 use Flezha\Logger;
+use Flezha\TestApp\EntryIdleProbeCounters;
 use Flezha\TestApp\Fixtures;
 
 $namespace = $argv[1] ?? 'default';
@@ -39,6 +41,8 @@ $runner = Flezha::createRunner($namespace)
 foreach (Fixtures::all() as $operative) {
     $runner->defineStream($operative);
 }
+// A runner-level registration, not a declaration: armed beside the fixtures.
+EntryIdleProbeCounters::arm($runner);
 
 // The configuration this run is under, before it starts: readiness is the
 // SDK's own startup line, which reports the executor.

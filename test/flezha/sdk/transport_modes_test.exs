@@ -73,6 +73,50 @@ defmodule Flezha.SDK.InNodeE2ETest do
     assert [_runner_id] = FleetManager.active_runners(ns)
   end
 
+  defmodule IdleProbe do
+    @moduledoc false
+    @behaviour Flezha.SDK.IdleObserver
+
+    @impl true
+    def idle(gap_ms), do: notify({:sdk_idle, gap_ms})
+
+    @impl true
+    def resumed(gap_ms), do: notify({:sdk_resumed, gap_ms})
+
+    defp notify(message) do
+      case Process.whereis(:sdk_in_node_probe) do
+        nil -> :ok
+        pid -> send(pid, message)
+      end
+    end
+  end
+
+  # The cell for `in` is process-global by name, so a frame an earlier test fed
+  # may already be stamped; what is asserted is the episode order, which holds
+  # from either starting point.
+  test "an entry channel's silence reaches an observer registered on the live handle", %{
+    ns: ns,
+    handle: handle
+  } do
+    assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
+    assert %Flezha.SDK{} = Flezha.SDK.on_entry_idle(handle, "in", 1_000, IdleProbe)
+
+    operative_id = "idle_op_#{System.unique_integer([:positive])}"
+    builder = %Builder{id: operative_id, factory_id: "sdk_probe", init_values: %{}, opts: []}
+    assert {:ok, _info} = OperativeManager.start_operative(ns, builder)
+
+    OperativeManager.send_io(operative_id, ns, "one", %{"channel" => "in", "input_type" => "2"})
+    assert_receive {:sdk_probe_ran, "one"}, 10_000
+    assert %DateTime{} = Flezha.SDK.last_entry_delivery(handle, "in")
+
+    assert_receive {:sdk_idle, gap_ms}, 5_000
+    assert gap_ms >= 1_000
+
+    OperativeManager.send_io(operative_id, ns, "two", %{"channel" => "in", "input_type" => "2"})
+    assert_receive {:sdk_probe_ran, "two"}, 10_000
+    assert_receive {:sdk_resumed, _}, 5_000
+  end
+
   test "io_in drives run/3 through the placed operative", %{ns: ns} do
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
 

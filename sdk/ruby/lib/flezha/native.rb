@@ -34,6 +34,15 @@ module Flezha
       new
     end
 
+    # The entry points that take no context and therefore no guard: they read
+    # a process-global clock, channel table and watch table, none of which a
+    # fork breaks. Reachable before `create`, which is what lets a runner
+    # answer `last_entry_delivery` and register an idle watch before it boots.
+    def self.context_free
+      load_extension
+      Native
+    end
+
     def initialize
       # Recorded at construction rather than at `start`, so a fork between the
       # two is caught by the same guard.
@@ -63,7 +72,8 @@ module Flezha
     ENTRY_POINTS = %i[
       declare_class start poll wait_starvation complete abandon shutdown
       workflow_emit workflow_recv workflow_cancelled spawn_workflow
-      monotonic_nanos entry_last_delivery_nanos last_error
+      monotonic_nanos entry_last_delivery_nanos idle_watch_new idle_watch_poll
+      idle_watch_free last_error
     ].freeze
 
     ENTRY_POINTS.each do |entry|

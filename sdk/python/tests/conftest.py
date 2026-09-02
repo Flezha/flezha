@@ -94,6 +94,8 @@ class FakeCore:
         self.started: str | None = None
         self.complete_gate: threading.Event | None = None
         self.dispatch_threads: set[int] = set()
+        self.idle_watches = 0
+        self.idle_freed: list[int] = []
 
     # -- the ABI ----------------------------------------------------------
 
@@ -176,6 +178,21 @@ class FakeCore:
 
     def monotonic_nanos(self) -> int:
         return time.monotonic_ns()
+
+    def entry_last_delivery_nanos(self, channel: str) -> int:
+        return 0
+
+    def idle_watch_new(self, channel: str, threshold_nanos: int) -> int:
+        with self._lock:
+            self.idle_watches += 1
+            return self.idle_watches
+
+    def idle_watch_poll(self, watch_id: int) -> tuple[int, int]:
+        return (0, 0)
+
+    def idle_watch_free(self, watch_id: int) -> None:
+        with self._lock:
+            self.idle_freed.append(watch_id)
 
 
 def work_activation(

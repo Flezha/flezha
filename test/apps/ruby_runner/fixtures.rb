@@ -326,6 +326,54 @@ module Fixtures
     end
   end
 
+  # -- entry_idle_probe -----------------------------------------------------
+  #
+  # An IdleObserver has no ctx and cannot emit, so the observer counts
+  # episodes and a procedure reports them as
+  # `<absent_at_boot>:<episodes>:<resumes>`. Two entry channels fan into ONE
+  # procedure: the core interns one observation per channel NAME, so a frame
+  # on `idle_report` leaves `idle_input`'s stamp untouched and the e2e can poll
+  # without ending the silence it measures. Every worker thread shares this
+  # process's memory, so counters under a mutex are enough.
+
+  ENTRY_IDLE_WATCHED = "idle_input"
+  ENTRY_IDLE_THRESHOLD_MS = 1_000
+  ENTRY_IDLE = { absent_at_boot: nil, episodes: 0, resumes: 0 }
+  ENTRY_IDLE_LOCK = Mutex.new
+
+  class EntryIdleCounter
+    def idle(_gap_ms) = ENTRY_IDLE_LOCK.synchronize { ENTRY_IDLE[:episodes] += 1 }
+    def resumed(_gap_ms) = ENTRY_IDLE_LOCK.synchronize { ENTRY_IDLE[:resumes] += 1 }
+  end
+
+  # Read the accessor before `run`, then watch the channel. The stamp is taken
+  # ahead of anything that can decline a frame, so "absent before the first
+  # frame" is observable here and nowhere inside a procedure.
+  def self.arm_entry_idle_probe(runner)
+    ENTRY_IDLE[:absent_at_boot] = runner.last_entry_delivery(ENTRY_IDLE_WATCHED).nil?
+    runner.on_entry_idle(ENTRY_IDLE_WATCHED, ENTRY_IDLE_THRESHOLD_MS, EntryIdleCounter.new)
+  end
+
+  class EntryIdleProbe < Flezha::Procedure
+    procedure_name "entry_idle_probe_procedure"
+
+    def process(_input, _ctx)
+      ENTRY_IDLE_LOCK.synchronize do
+        "#{ENTRY_IDLE[:absent_at_boot]}:#{ENTRY_IDLE[:episodes]}:#{ENTRY_IDLE[:resumes]}"
+      end
+    end
+  end
+
+  class EntryIdleProbeOperative < Flezha::StreamOperative
+    factory_id "entry_idle_probe"
+    channels do |c|
+      # Both channels wire the same class: one node, fan-in.
+      c.input(ENTRY_IDLE_WATCHED, decode: TEXT).into(EntryIdleProbe)
+      c.input("idle_report", decode: TEXT).into(EntryIdleProbe).named("report")
+       .sink("entry_idle_report", encode: BYTES)
+    end
+  end
+
   # -- candle ---------------------------------------------------------------
   #
   # Late-input correction is about fold ORDER, and the only way to prove that
@@ -499,7 +547,7 @@ module Fixtures
     StaticEntityOperative, SugarStaticEntityOperative, MixedOperative,
     SugarDoNothingOperative, SugarStoreInputOperative, HybridChannelOperative,
     EntityStressOperative, *STATE, CandleOperative, PoisonProbeOperative,
-    WedgeProbeOperative, SessionTimeoutOperative, *BOUNDED_MAILBOX, PartitionRelayOperative,
-    DynamicEntityOperative
+    WedgeProbeOperative, EntryIdleProbeOperative, SessionTimeoutOperative, *BOUNDED_MAILBOX,
+    PartitionRelayOperative, DynamicEntityOperative
   ].freeze
 end

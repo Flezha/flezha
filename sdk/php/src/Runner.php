@@ -63,6 +63,7 @@ final class Runner
     private ?Core $core = null;
     private ?Executor $executor = null;
     private ?Dispatcher $dispatcher = null;
+    private ?EntryIdle $idle = null;
     private ?int $maxActivations = null;
     private Shutdown $shutdown;
 
@@ -130,6 +131,53 @@ final class Runner
         Logger::use($logger);
 
         return $this;
+    }
+
+    /**
+     * When the runner last delivered a frame to entry channel `$channel`, or
+     * null before its first frame (and for a name no declared operative has —
+     * both mean "nothing has arrived here"). Legal before `start()`; reading
+     * never blocks delivery.
+     *
+     * The instant is the *signal*; whether the silence since then is anomalous
+     * is the application's call. Register an observer with `onEntryIdle`
+     * instead of polling this in a loop.
+     */
+    public function lastEntryDelivery(string $channel): ?\DateTimeImmutable
+    {
+        return EntryIdle::lastEntryDelivery($this->core ?? Core::contextFree(), $channel);
+    }
+
+    /**
+     * Observe silence on entry channel `$channel`: `$observer` is notified
+     * once per idle episode, when the gap since the last delivered frame first
+     * exceeds `$thresholdMs`, and once again when a frame resumes it. Silence
+     * before the channel's very first frame is never an episode.
+     *
+     * Legal before and after `start()`. Evaluation runs between polls of the
+     * thread that started the runner — never inside a body — so an observer
+     * that throws costs the data plane nothing. Several observers may watch
+     * one channel.
+     *
+     * A worker interpreter's handle registers nothing: the entry script re-runs
+     * in each one, and only the thread that started the runner owns its
+     * observers, as it owns its signals and its standard input.
+     */
+    public function onEntryIdle(string $channel, int $thresholdMs, IdleObserver|callable $observer): self
+    {
+        if (self::$attachment !== null) {
+            return $this;
+        }
+        $this->idle ??= new EntryIdle($this->core ?? Core::contextFree());
+        $this->idle->register($channel, $thresholdMs, $observer);
+
+        return $this;
+    }
+
+    /** Advance the idle observers — between polls, on the thread that owns them. */
+    public function observeIdle(): void
+    {
+        $this->idle?->tick();
     }
 
     /**
@@ -238,6 +286,7 @@ final class Runner
 
         while (!$state->stopping()) {
             $this->observeShutdown();
+            $this->observeIdle();
 
             $bytes = null;
             $status = $core->poll(self::POLL_TIMEOUT_MS, $bytes);
@@ -351,6 +400,8 @@ final class Runner
         if ($state !== null) {
             self::reportSizing($state);
         }
+
+        $this->idle?->stop();
 
         // The context is released only when nothing is still running against
         // it; `abandonContext` is what a bounded drain that gave up leaves.

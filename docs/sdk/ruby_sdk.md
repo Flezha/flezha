@@ -229,12 +229,11 @@ bare mutable global holds any of it.
 
 ## Deferred fixtures
 
-The manifest defers two capabilities' end-to-end fixture sets —
-`workflow` and `entry_idle` — to
-**`sdk-durable-fixture-parity`**, the shared follow-up that also owes them for
-the Node and Elixir apps. The Elixir app defers two more, `keyed_channels` and
-`dynamic_entity`, because its SDK is its own core: it mints no identity stamps
-and has no fold to evict against.
+The manifest defers one capability's end-to-end fixture set — `workflow` —
+to the follow-up that owes the two builder surfaces every veneer lacks, an
+inter-procedure `codec()` and a hybrid `sink().into()`, shared with the Node,
+PHP and Python apps. The Elixir app defers more, because its SDK is its own
+core.
 
 This is a deferral of **fixtures, not mechanism**: the dispatcher answers every
 activation kind the boundary defines — work, restore fold, snapshot, live state
@@ -242,6 +241,14 @@ read, apply state, migration serialize, key request, workflow run and
 compensate run — and the gem's unit suite sweeps all of them. What is owed is
 the end-to-end coverage, and the conformance gate holds the deferral honest in
 both directions.
+
+`entry_idle` is carried with the gem's own host layer: `Runner#last_entry_delivery`
+and `Runner#on_entry_idle` (`lib/flezha/entry_idle.rb`) over the episode latch
+the core keeps by watch id, ticked by one Ruby thread woken through
+`Queue#pop(timeout:)` — never `sleep` — and proved end to end by the
+`entry_idle_probe` twin under both executors. Both calls are legal before
+`boot`, through `Core.context_free`. Contract and the per-host spellings:
+[`entry_input_idle.md`](entry_input_idle.md).
 
 `keyed_channels` left that list when the gem began minting the output identity
 stamps (`Flezha::Ctx#stamp_identity`): the capability is carried with the

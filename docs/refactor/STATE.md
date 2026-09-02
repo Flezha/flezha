@@ -739,6 +739,153 @@ settled channel — the old assertion failed with KI-128's exact message, the ne
 the same state. Test-only, no production line. ADDED requirement in `credit-grant-flow-control`
 (the guarantee the by-name read leans on), archived and synced. One commit.
 
+**Committed `1a1217e2`; tree clean 03:25. Queue rows R5.1–R5.3 all DONE.** Remaining: R2b, R6,
+R7, R9, R10, R11, R12. **R2b SURVEY worker spawned 03:26** — fresh `general-purpose`, change id
+`carry-entry-idle-in-every-host`, survey only (no code): per-SDK table for node/ruby/php (+
+python's deferral, + Elixir's two layers), the reuse decision for the observer (one
+`flz_core_ffi`-side watcher every veneer reuses vs per-host re-expression, measured against each
+host's threading model — php's single `sync` loop is the hard case), the proof (R2's tagged
+scenario per runtime + unit tests), batches, ratchet deltas per area, spec deltas, risks. STOPS
+for my ruling. `ListAgents`: no subagent before the spawn. **Last seen 03:21 (+10m)**: reading — no change
+dir yet, nothing running, load 0.27. **03:32 (+21m)**: `proposal.md` written, design/tasks next.
+
+### R2b SURVEY VERIFIED AND APPROVED 03:50 — the latch is shared, the tick is per host, Elixir is in
+
+`openspec/changes/carry-entry-idle-in-every-host/` — proposal, ten-decision design, 8 batches /
+~40 boxes, three deltas (`entry-input-observability` MODIFIED ×2, `sdk-conformance` MODIFIED
+×1, `elixir-sdk` ADDED), `--strict` valid; survey cost 26 min / 338 k tokens. **Verified by me**:
+the latch at `entry_idle.rs:86` (`evaluate` — the pure state machine the survey says Java
+duplicates), the four veneers' raw ABI read bound (`Core.php:241`, `native.rb:66`,
+`native.py:196`, `native.ts:190`), R2's `entry_idle_e2e_test.exs`, the Swoole gap (no
+`FLEZHA_PHP_EXECUTOR` in any workflow — the php workflow builds the zts image and prints a
+version line), and **every MODIFIED block carries its live scenarios** (conformance 10 → 11,
+observability 2 → 3 and 4 → 5 — machine-counted, not read from a window).
+
+**The reuse decision, approved**: the observer is three parts and one is shareable — the latch
+generalises Rust's and Java's identical `evaluate` into `flz_core::entry_input::IdleWatch`
+behind three context-free ABI entries (`idle_watch_new/_poll/_free`), the Rust SDK rewired
+onto it as its own zero-behaviour commit; the tick and delivery are per host because a native
+tick calling back is IMPOSSIBLE on Ruby (`rb_thread_call_with_gvl` cannot adopt a foreign
+thread — the log-callback refusal) and PHP (one thread, inside `poll` or a body), and sharing
+it on node/python only would be two mechanisms. Node: `setInterval().unref()` on the main loop;
+Ruby: a thread on `Queue#pop(timeout:)`; Python: a daemon thread on `Event.wait`; PHP: between
+polls of the thread that started the runner; Elixir: `Process.send_after`. No sleep token
+anywhere — `sleeps` has zero headroom in three blocking areas and the instrument counts
+`sleep(` in ruby/php and `time.sleep` in python as production.
+
+**Rulings**: Java keeps its copy with a NAMED follow-up (`move-java-entry-idle-latch-onto-the-core`);
+Python's deferral lifted; **Elixir both layers in batch 6** (~180 lines, severable) so the
+capability becomes universal and `@required_capabilities` gains `entry_idle` in batch 7
+red-first — the first capability the programme makes universal; PHP's probe family moves to
+`fixtures_probe.php` (`fixtures.php` is 775); **risk 2's assertion relaxation refused up
+front** — evidence first, relaxed only if an arm shows the held-thread delay. Expected ratchet:
+**+775 prod lines across seven blocking areas** (`flz_core` +55 funded by `sdk/rust` −40,
+`flz_core_ffi` +140, node +95, ruby +90, php +125, python +95, `lib/flezha/sdk` +175) — feature
+work under the user's parity instruction, re-recorded per checkpoint with an audit. Filed:
+**KI-132** (the Swoole executor axis nothing runs, P3 owed) and **KI-133** (`PoisonProbe`'s
+static per interpreter, suspicion). **Step 2 authorised 03:52**: batches 1–2, checkpoint 1
+commits = the Rust rewire, the ABI, node.
+**Last seen 03:50 (+11m into step 2)**: batch 1 largely written — `entry_input.rs`, the FFI
+`lib.rs` + `veneer/mod.rs` + three glue files, the four bindings and their surface tests, the ABI
+test, `sdk/rust/src/entry_idle.rs`; 19 code files, +662/−231; nothing running, load 1.14.
+
+### R2b CHECKPOINT 1 VERIFIED 04:20 — batches 1–2 landed, and the worker committed them itself
+
+**The breach**: the worker committed `a1da755c` (the Rust rewire), `d9ff579b` (the ABI + four
+bindings) and `78938daf` (node) on its own — it read my "commits at checkpoint 1, in this
+order" as its instruction. Stopped at once; told the index is mine alone from here, including
+`git add -N`. The commits are kept because their CONTENT passed my verification, not because
+they were made: `cargo test -p flz_core` 152, the ABI scenario 2, `flezha_runner --test
+entry_idle` 3/3, the node scenario `1 passed` at `FLEZHA_NODE_WORKERS=0` and `=4`, the rust
+arm `1 passed` (identical to before the rewire), gate 20, `npm test` exit 0, no narrative
+marker in any of the three diffs, the FFI diff skimmed (three entries, an id table, the
+constants). Worker's red-first: the node scenario with the arming removed fails at
+`entry_idle_e2e_test.exs:80` after the cold report passes. Four artefacts rebuilt through
+their scripts (02:23 → 03:49).
+
+**Baseline re-recorded at `78938daf`**, audited: 36 areas in/out; ratcheted moves are exactly
+the planned six — `flz_core 12853 → 12899` (+46 vs est. +55), `flz_core_ffi 3220 → 3334` (+114
+vs +140), `sdk/node 3013 → 3124` (+111 vs +95), `sdk/python +6`, `sdk/ruby +1`, `sdk/php +20`
+(the binding layer only) — plus `sdk/rust 6001 → 5970` TIGHTENED by the moved latch; the rest
+`test_loc`/`files`. `--check --lint` 0 regressions. **Batches 3–4 (ruby, python) authorised
+04:22**, same worker, checkpoint 2; commits are mine. Docs committed `10d29e15`.
+**Last seen 04:15 (+11m)**: ruby and python host layers both written (`entry_idle.rb`/`.py`
++ tests, runners, twins, manifests), pytest running; no commit of the worker's since the
+checkpoint. Load 0.36.
+
+### R2b CHECKPOINT 2 VERIFIED 04:35 — ruby `2a601d45`, python `0189706b`, committed by me
+
+**My runs**: the scenario `1 passed` under ruby `threads` and `fibers` and python `thread`
+and `asyncio`; gate 20; `rake test` 102 runs / 0 failures; pytest 171 passed; the only
+`sleep` tokens in the four new files are in comments (ruby waits on `Queue#pop(timeout:)`,
+python on `Event.wait`); the watchers read as designed (registration list, one tick thread,
+contained delivery, `stop` frees every id). Worker's red-first: ruby fails at the COLD step
+with the arming removed (its arm is where `absent_at_boot` is read) and at the episode step
+with only the observer removed; python at the episode step. No arm showed the held-thread
+mechanism, so ruling 4's assertion stands unrelaxed. **The worker did not touch the index
+this time.** Baseline re-recorded (audit below): `sdk/ruby 1944 → 2061` (+117 vs est. +90),
+`sdk/python 2907 → 3053` (+146 vs est. +95) — the host layer costs more than the survey
+guessed in both, the same direction as node. **Batches 5–6 (php, elixir) authorised**,
+checkpoint 3. Committed `2a601d45`, `0189706b`, `5e515f78`.
+**Last seen 04:35 (+10m into batch 5)**: php written — `IdleObserver.php`, `EntryIdle.php`,
+an `EntryIdleBridge.php` the design did not name (RULE #1 check at the checkpoint), the two
+loop calls, `Core.php`, `fixtures_probe.php` 204 / `fixtures.php` 699, manifest flipped, test
+file; ticks 27; nothing running, load 0.74; no commit of the worker's.
+
+### R2b CHECKPOINT 3 VERIFIED 04:55 — php `8ed47164`, elixir `a36de818`, and the Swoole arm RAN
+
+**My runs**: php `1 passed` under sync; phpunit 151; `mix test test/flezha/sdk/
+--warnings-as-errors` 45 passed; `check-sdk-boundary` OK; gate 20; no sleep token in any of the
+nine new files; the `EntryIdleBridge` interface is the `SpawnBridge` shape `Core` already
+implements (RULE #1: the existing seam, so the unit tests script a bridge). **The worker ran
+the Swoole arm inside `flezha-php-zts`** through a php shim on the harness's own launch line —
+`1 passed`, the worker interpreter re-ran the entry script as designed, the cross-interpreter
+report through the pid-keyed file proved; the first end-to-end run of that executor the
+repository has recorded (KI-132 stays CI's gap). Ruling 3's split: `fixtures.php` 775 → 699,
+`fixtures_probe.php` 204. Elixir: both layers as designed (cells in `:persistent_term`, the
+stamp after `resolve_channel/2` before `parse/3`, the clock anchored at VM start, the GenServer
+with `evaluate/2` pure, delivery under rescue/catch). Baseline re-recorded (audit below):
+`sdk/php 4183 → 4320` (+137 vs est. +125), `lib/flezha 1042 → 1082` (`sdk.ex` is counted
+there), `lib/flezha/sdk 1746 → 1905` (+159 vs est. +175). No `sleeps`/`refutes`/credo/pairs
+row moved. **Batches 7–8 authorised**: the Elixir twin, the flip, `@required_capabilities`
+red-first, docs, the dev note, verification — checkpoint 4 is the close. Committed `8ed47164`, `a36de818`, `502491dd`.
+**Last seen 04:59 (+10m into batch 7)**: the Elixir twin, the elixir manifest flip,
+`node_test_helper.ex` (the required set), eleven docs and the dev note written; a full
+`mix test` running (BEAM + reference runners, 25 s old); ticks 41. **Watch at the
+checkpoint**: `flz_core_ffi/tests/abi/lifecycle.rs` is modified again (766 lines after
+batch 1 against the 800 ceiling).
+
+### R2b IS DONE — `entry_idle` in every host, the first capability the programme made universal
+
+Close verified by me: elixir arm `1 passed`; gate 20 with `:entry_idle` in `@required_capabilities`
+(the worker recorded the gate RED first, naming `entry_idle` and the declaration); five naming
+gates exit 0; `--check --lint` 0 regressions; the twin and the docs read as designed; the dev
+note carries no history. Worker's close: full `mix test` **1971 passed**; smoke tiers node
+1992, python 1992, elixir 1987, ruby and php `1991/1992` with the same single red — **KI-109**
+(`FsyncBatcherTest:94` against the node-global singleton; evidence appended to its entry, not
+this change's); one `elixir_runner` outlived its port close in the elixir smoke tier — filed as
+**KI-134** (suspicion). The `flz_core_ffi` ABI test comment reworded for the kind gate (749
+lines).
+
+| commit | what |
+|---|---|
+| `a1da755c` | the latch moves into `flz_core`; the Rust SDK ticks over it (worker-committed, verified after) |
+| `d9ff579b` | three context-free ABI entries, bound in node, ruby, python, php (worker-committed, verified after) |
+| `78938daf` | node host layer + twin (worker-committed, verified after) |
+| `10d29e15` | docs: checkpoint 1 baseline, KI-132/133 |
+| `2a601d45` · `0189706b` · `5e515f78` | ruby, python, checkpoint 2 baseline |
+| `8ed47164` · `a36de818` · `502491dd` | php (Swoole arm run in the zts image), elixir both layers, checkpoint 3 baseline |
+| `2bcdc119` | the close: Elixir twin, the flip, the required set, eleven docs, the dev note |
+| this commit | archive's spec sync (three specs, every scenario carried), baseline, KI-109 evidence, KI-134 |
+
+Ratchet over the row, all re-recorded with audits: `flz_core` +46, `flz_core_ffi` +114,
+`sdk/node` +111, `sdk/ruby` +117, `sdk/python` +146, `sdk/php` +137, `lib/flezha` +40,
+`lib/flezha/sdk` +159, `sdk/rust` −31, `test` `async_false_share` 0.774 → 0.77. Seven of
+the nine capabilities remain deferred by Elixir alone; `workflow` by five (R7). **OWED index
+lines** (`CLAUDE.md` hook, `INDEX.md` abstract) recorded under *Next steps* with R5's and
+R5.1's. The follow-up `move-java-entry-idle-latch-onto-the-core` is named in the dev note.
+Worker: one `general-purpose`, 3 h 20 m, ~750 k tokens, 4 checkpoints.
+
 **S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
 `state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
 three arms run by me too), full `mix test` 1962 passed, five naming gates exit 0, format gate
@@ -5198,7 +5345,7 @@ verifies and commits, §4 checkpoint each time.
 |---|---|---|
 | **R1** | **KI-116 — the two mechanisms** (P1). Make provider `convert_value/2` refuse by default instead of the injected catch-all accepting anything; make `Extension.Table.subscribe/3` turn a crash into a refusal, not only a `:throw`. Then the 8 sites follow. | Only item where today's code can lose data. Fix the mechanism, not the sites |
 | **R2** | **`entry_idle` — make the matrix TRUE.** RE-SCOPED 2026-09-01 on measurement: the real split is **2 implement / 5 do not**, not 3/4, and **python CLAIMS it with no mechanism**. Python defers by name; rust+java write the fixture and the first `test/system/` scenario; spec and docs corrected. **The five-SDK feature work moves to R2b** | The row's own escape clause: a fixture unless the mechanism is absent. It is absent in five |
-| **R2b** | **`entry_idle` host layer — node, ruby, php (accessor + observer + latch + tick), and BOTH layers in elixir.** Displaced from R2 by the measurement above. **Do not lose this**: R2 was the only row carrying `entry_idle` for node/ruby/php — R5 covers six other capabilities and R7 covers `workflow` | Real feature work, priced separately from R2's doc-and-fixture size |
+| **R2b** | **DONE 2026-09-02** — `carry-entry-idle-in-every-host`, 12 commits `a1da755c` … `2bcdc119` + close: the latch in `flz_core` behind three ABI entries, five host ticks, Elixir's two layers, `entry_idle` in `@required_capabilities`. See *R2b IS DONE* | — |
 | **R3** | **`connect_discovery` into `@required_capabilities`** (`test/helpers/node_test_helper.ex:293`). All seven already carry it. | One line, zero SDK work, makes one capability un-regressable today |
 | **R4** | **Identity stamps in node/ruby/php** — `flz.entity`/`flz.seq`/`flz.key` on a non-tier keyed plugin emit. Reference: `emit_sink.rs:357-378`, Java `EmitContext.java:283-285`, Python `ctx.py:267-280`, ~15 lines each. Then `keyed_channels` fixtures. | Mechanism gap, small, proof already written in two SDKs |
 | **R5** | **DONE 2026-09-02** — 42 fixture implementations over six segments (S0 `95b6590c` … S5 close), both changes archived; see *R5 IS DONE*. The row's true size was 42, not 18 | — |
@@ -5212,6 +5359,8 @@ verifies and commits, §4 checkpoint each time.
 | **R10** | `add-publish-readiness-checklist` — KI-52 and the one-way-door items | Agreed 2026-09-01, seed only |
 | **R11** | **KI-115** — two published specs mandate behaviour the code lacks. One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
 | **R12** | **The docs-citation gate** (~120 lines). Would have caught 27 of area 8's 76 findings automatically. **Build it AFTER the docs are clean so it lands green** — a gate that lands red is KI-94 all over again | Ruling 3, approved in principle |
+
+**OWED — index lines for `end-a-wedged-runner-on-terminal-disconnect`, `exit-cleanly-after-sigterm-in-python`, `harden-credit-flow-verdict-read` and `carry-entry-idle-in-every-host`**, same reason; each worker's report carries the hook and abstract verbatim (the R2b ones: the `CLAUDE.md` hook *"`entry_idle` in every host — one latch in the core, five ticks, the first universal capability"* → the LATCH moved into `flz_core` behind three context-free ABI entries; the tick and the delivery stay per host because MRI cannot adopt a foreign thread and PHP has none).
 
 **OWED — two index lines for `port-durable-fixtures-to-veneers`**, blocked on another session's
 uncommitted `CLAUDE.md` index split and untracked `docs/dev_notes/INDEX.md` (a line added there

@@ -173,6 +173,12 @@ final class BindingTest extends TestCase
 
         try {
             self::assertSame(0, $core->entryLastDeliveryNanos('no_such_channel'));
+            // The idle latch lives in the core; the shim only advances it.
+            $watch = $core->idleWatchNew('no_such_channel', 0);
+            self::assertGreaterThan(0, $watch);
+            self::assertSame([Binding::IDLE_NONE, 0], $core->idleWatchPoll($watch), 'cold start is not an episode');
+            $core->idleWatchFree($watch);
+            self::assertSame(Binding::ERR, $core->idleWatchPoll($watch)[0], 'a freed id answers the ABI error');
         } finally {
             $core->free();
         }

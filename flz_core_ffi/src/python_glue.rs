@@ -545,6 +545,26 @@ fn entry_last_delivery_nanos(channel: &str) -> PyResult<u64> {
     Ok(veneer::entry_last_delivery_nanos(&channel))
 }
 
+/// Register an episode latch over the named entry channel in the core; the
+/// tick that advances it is a Python thread of the host's own.
+#[pyfunction]
+fn idle_watch_new(channel: &str, threshold_nanos: u64) -> PyResult<u64> {
+    let channel = veneer::c_string("channel", channel)?;
+    Ok(veneer::idle_watch_new(&channel, threshold_nanos))
+}
+
+/// Advance a watch's latch to now: `(status, gap_nanos)`.
+#[pyfunction]
+fn idle_watch_poll(id: u64) -> (i32, u64) {
+    veneer::idle_watch_poll(id)
+}
+
+/// Drop a watch.
+#[pyfunction]
+fn idle_watch_free(id: u64) {
+    veneer::idle_watch_free(id)
+}
+
 /// Whether this extension was built for a free-threaded interpreter.
 ///
 /// Reported in the runner's startup line, so a benchmark can never be
@@ -598,6 +618,9 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
         "entry_last_delivery_nanos",
         "flz_core_entry_last_delivery_nanos",
     ),
+    ("idle_watch_new", "flz_core_idle_watch_new"),
+    ("idle_watch_poll", "flz_core_idle_watch_poll"),
+    ("idle_watch_free", "flz_core_idle_watch_free"),
     ("Core.last_error", "flz_core_last_error"),
     ("free_threaded", "flz_core_schema_version"),
     ("native_surface", "flz_core_schema_version"),
@@ -614,6 +637,9 @@ pub fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(schema_version, m)?)?;
     m.add_function(wrap_pyfunction!(monotonic_nanos, m)?)?;
     m.add_function(wrap_pyfunction!(entry_last_delivery_nanos, m)?)?;
+    m.add_function(wrap_pyfunction!(idle_watch_new, m)?)?;
+    m.add_function(wrap_pyfunction!(idle_watch_poll, m)?)?;
+    m.add_function(wrap_pyfunction!(idle_watch_free, m)?)?;
     m.add_function(wrap_pyfunction!(free_threaded, m)?)?;
     m.add_function(wrap_pyfunction!(native_surface, m)?)?;
     Ok(())

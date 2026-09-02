@@ -460,17 +460,17 @@ capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conf
 
 Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against. The Elixir, Node, Ruby, PHP and Python SDKs (v1)
-all defer the persistence family, the effectively-once tier, timers, correction windows, the
-workflow kind, dynamic-Entity eviction, the entry-idle observer and schema evolution, for
-different reasons: Elixir has no per-Entity persistence at all, while the Node, Ruby, PHP and
-Python SDKs implement all of them but `entry_idle` and have not yet proved them fixture by
-fixture against the reference. Those four owe their fixture sets to the shared follow-up
-`sdk-durable-fixture-parity`. `entry_idle` is the exception because it is the one capability
-whose mechanism those four also lack: they carry the shared core's delivery stamp and not the
-observer built on it, which is per-SDK host code Rust and Java alone have. Keyed channels are
-the other exception, in the opposite direction: every SDK but Elixir carries them, and Elixir
-defers by name because its own core mints no identity stamps yet.
+the reference every other is checked against. The Node, Ruby, PHP and Python SDKs carry every
+capability but `workflow`, whose reference fixtures need two builder surfaces every veneer
+lacks — an inter-procedure `codec()` and a hybrid `sink().into()` — and which they owe to the
+follow-up that adds them. The Elixir SDK (v1) is its own core and defers the persistence
+family, the effectively-once tier, timers, correction windows, keyed channels, the workflow
+kind, dynamic-Entity eviction and schema evolution, each owed to a re-expression in Elixir.
+`entry_idle` is carried by all seven and sits in the required set: its stamp and episode
+latch live once in the shared core for the six `flz_core` hosts and are re-expressed in the
+Elixir SDK, and each host adds its own tick and delivery. Keyed channels are the one
+capability every SDK but Elixir carries; Elixir defers by name because its own core mints no
+identity stamps yet.
 
 ---
 

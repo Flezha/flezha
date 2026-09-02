@@ -140,7 +140,7 @@ two carries the second per test, with its own skip:
 manifest exactly once — under `deferred` or as a `fixtures` key — so one can be
 neither forgotten nor claimed twice. The **required set**
 (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
-`retry_ladder`, `partitioned`, `pool_wedge`) can never be deferred, and it holds
+`retry_ladder`, `partitioned`, `pool_wedge`, `entry_idle`) can never be deferred, and it holds
 **every capability no manifest defers**: a capability every SDK carries is one
 none of them may drop. The gate refuses drift in both directions, with a
 different message for each — a manifest deferring a required capability names

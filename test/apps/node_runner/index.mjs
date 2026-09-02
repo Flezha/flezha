@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 import { consoleLogger, createRunner } from '@flezha/sdk';
 
+import { armEntryIdleProbe } from './fixtures.mjs';
+
 const namespace = process.argv[2] || 'default';
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures.mjs');
 const workers = Number(process.env.FLEZHA_NODE_WORKERS ?? 0) || 0;
@@ -31,6 +33,10 @@ process.on('unhandledRejection', (reason) => {
 for (const stream of [process.stdout, process.stderr]) {
   stream.on('error', () => {});
 }
+
+// A runner-level registration, not a declaration: armed here, beside the
+// fixtures the chain above registers by specifier.
+armEntryIdleProbe(runner);
 
 await runner.run();
 

@@ -177,33 +177,35 @@ the one thing `scripts/build-python-sdk.sh` has already done.
 
 ## The test app and the conformance manifest
 
-**Python defers two capabilities where every other veneer SDK defers nine.**
-Node, Ruby, PHP and Elixir all defer the persistence family, the tier, timers,
-correction windows, keyed channels, workflow, dynamic-entity eviction, entry
-idle and schema evolution. Python carries all of them but `workflow` and
-`entry_idle`, and each of the seven it carries is proved by the live
+**Python defers one capability, `workflow`.** Elixir defers the persistence
+family, the tier, timers, correction windows, keyed channels, workflow,
+dynamic-entity eviction, entry idle and schema evolution. Python carries all of
+them but `workflow`, and each of the eight it carries is proved by the live
 suite:
 
 | capability | what it took |
 | --- | --- |
 | `keyed_channels` | the identity stamps above |
+| `entry_idle` | the host half over the core's latch — below |
 | `state_persistence` | six fixtures; `coalescing_counter`'s coalesce key has no SDK seam (Rust's is a `Change` trait method), and the fold is idempotent per `(interval, ts)` either way, so the change ships uncoalesced — a throughput property, not a semantic one |
 | `effectively_once` | four fixtures, plus `Channels.checkpoint_ack()`, which Rust and Java have and no veneer SDK had |
 | `correction_window` | the `candle` fixture, on an event-time clock |
 | `schema_evolution` | two fixtures declaring one procedure name either side of a version bump |
 | `entity_timers`, `dynamic_entity` | fixtures the app already had |
 
-**`entry_idle` is deferred too, and the reason is the opposite of `workflow`'s.**
-The capability is two layers: the delivery stamp lives in `flz_core`
-(`entry_input.rs`, written on the shared dispatch path), so Python has it for
-free like every FFI veneer, and `Core.entry_last_delivery_nanos` plumbs the ABI
-read. The policy half — `last_entry_delivery` and `on_entry_idle` on the runner
-handle, the `IdleObserver`, the episode latch and the tick — is per-SDK host
-code and exists in Rust and Java only. A manifest entry with an empty fixture
-list is not evidence of a capability: this one claimed a surface the SDK does
-not expose, and the claim is what made a zero-fixture capability look free.
-Owed, with the four veneers' remaining host-layer work, to the follow-up that
-carries it.
+**`entry_idle` is two layers, and Python owns only the host half of the
+second.** The delivery stamp lives in `flz_core` (`entry_input.rs`, written on
+the shared dispatch path), so Python has it like every FFI veneer, and
+`Core.entry_last_delivery_nanos` reads it. The episode latch is the core's too
+(`IdleWatch`, reached by watch id through `Core.idle_watch_new` / `_poll` /
+`_free`), so `entry_idle.py` holds what is host policy and nothing else: the
+registrations, one daemon tick thread woken by `Event.wait` — never
+`time.sleep` — contained delivery, and `last_entry_delivery` derived from the
+gap so a clock step cannot skew it. `Runner.on_entry_idle` and
+`Runner.last_entry_delivery` are legal before `start()` because the three watch
+calls and the two clock reads take no context. A manifest entry with an empty
+fixture list is not evidence of a capability; `entry_idle_probe` is the
+fixture, and `entry_idle_e2e_test.exs` proves it under both executors.
 
 **`workflow` stays deferred, by name**, to `sdk-durable-fixture-parity`. Its 19
 reference fixtures need two authoring-surface additions Python does not have —

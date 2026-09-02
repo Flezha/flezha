@@ -153,6 +153,13 @@ registration taking the caller's own threshold and callback (`on_entry_idle` /
 `onEntryIdle`). `on*` is already the SDK's callback prefix (`on_full`,
 `on_timer`), so `addListener` / `subscribe` / `watch` synonyms are not used.
 
+The threshold and the reported gap are spelled in the SDK's own duration: a
+`Duration` where the language has one (Rust, Java), and milliseconds where the
+SDK's timers already speak milliseconds (`timerAfter(ms)`, `timer_after(ms)`,
+`retry_backoff_ms` — Node, Ruby, PHP, Python, Elixir). The accessor's instant
+is the host's wall-clock type (`Date`, `Time`, `DateTimeImmutable`,
+`datetime`, `DateTime`), derived from the monotonic gap.
+
 The registration never carries a default threshold or a default action. The
 *signal* is SDK knowledge; the *policy* — what value is anomalous, and what to
 do about it — is the application's domain knowledge, and an SDK-side default

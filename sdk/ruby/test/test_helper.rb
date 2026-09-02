@@ -131,6 +131,10 @@ module Flezha
       def workflow_recv(*) = nil
       def workflow_cancelled(*) = false
       def monotonic_nanos = 1_234
+      def entry_last_delivery_nanos(_channel) = 0
+      def idle_watch_new(_channel, _threshold_nanos) = @lock.synchronize { @idle_watches = (@idle_watches || 0) + 1 }
+      def idle_watch_poll(_id) = [0, 0]
+      def idle_watch_free(_id) = record(:idle_watch_free)
 
       # Wake every blocked call: a shutdown a test has to wait out is a sleep
       # wearing a signal's name.

@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 
@@ -45,6 +45,76 @@ impl EntryObservation {
     }
 }
 
+/// One episode boundary an [`IdleWatch`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Episode {
+    /// The channel's silence first exceeded the threshold, by this gap.
+    Idle(Duration),
+    /// A frame ended an episode that had lasted this gap.
+    Resumed(Duration),
+}
+
+/// One entry channel's episode latch over its observation: the half of idle
+/// observation every host shares, so no SDK re-derives the state machine. The
+/// tick that drives it and the observer it reports to are the host's — the
+/// Rust SDK calls [`evaluate`](Self::evaluate) directly, the C ABI hosts by
+/// watch id. Only the caller's tick mutates the latch, so it is
+/// single-threaded by construction.
+#[derive(Debug)]
+pub struct IdleWatch {
+    observation: Arc<EntryObservation>,
+    threshold: Duration,
+    /// The delivery stamp the current episode fired against; `None` while
+    /// armed. Comparing stamps (not clock readings) is what makes a resume
+    /// exact: the stamp moves if and only if a frame arrived.
+    fired_at: Option<u64>,
+}
+
+impl IdleWatch {
+    /// A latch over `channel`. Legal before the channel's class is declared:
+    /// the observation cell is interned by name, so this and the later
+    /// topology resolve the same cell.
+    pub fn new(channel: &str, threshold: Duration) -> Self {
+        Self::over(observation_for(channel), threshold)
+    }
+
+    fn over(observation: Arc<EntryObservation>, threshold: Duration) -> Self {
+        Self {
+            observation,
+            threshold,
+            fired_at: None,
+        }
+    }
+
+    pub fn threshold(&self) -> Duration {
+        self.threshold
+    }
+
+    /// Advance the latch to `now_nanos` and report the boundary it crossed,
+    /// if any.
+    pub fn evaluate(&mut self, now_nanos: u64) -> Option<Episode> {
+        // No frame has ever arrived: a cold start is not an idle episode.
+        let last = self.observation.last_delivery_nanos()?;
+        match self.fired_at {
+            None => {
+                let gap = Duration::from_nanos(now_nanos.saturating_sub(last));
+                if gap <= self.threshold {
+                    return None;
+                }
+                self.fired_at = Some(last);
+                Some(Episode::Idle(gap))
+            }
+            Some(fired_at) if last != fired_at => {
+                self.fired_at = None;
+                Some(Episode::Resumed(Duration::from_nanos(
+                    last.saturating_sub(fired_at),
+                )))
+            }
+            Some(_) => None,
+        }
+    }
+}
+
 /// Every entry channel mentioned so far, by name: one name is one observed
 /// input however many classes declare it.
 static OBSERVATIONS: LazyLock<DashMap<String, Arc<EntryObservation>>> = LazyLock::new(DashMap::new);
@@ -70,6 +140,57 @@ pub fn last_delivery(channel: &str) -> Option<Instant> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SECOND: u64 = 1_000_000_000;
+
+    fn watch(threshold: Duration) -> (IdleWatch, Arc<EntryObservation>) {
+        let observation = Arc::new(EntryObservation::default());
+        (
+            IdleWatch::over(Arc::clone(&observation), threshold),
+            observation,
+        )
+    }
+
+    #[test]
+    fn a_cold_start_never_fires_however_long_it_lasts() {
+        let (mut watch, _observation) = watch(Duration::from_secs(1));
+        assert_eq!(watch.evaluate(3600 * SECOND), None);
+    }
+
+    #[test]
+    fn an_episode_fires_once_and_a_resume_re_arms_it() {
+        let (mut watch, observation) = watch(Duration::from_secs(1));
+        observation.stamp_at(SECOND);
+
+        assert_eq!(
+            watch.evaluate(SECOND + SECOND / 2),
+            None,
+            "inside threshold"
+        );
+        assert_eq!(
+            watch.evaluate(3 * SECOND),
+            Some(Episode::Idle(Duration::from_secs(2)))
+        );
+        assert_eq!(watch.evaluate(4 * SECOND), None, "latched for the episode");
+        assert_eq!(watch.evaluate(60 * SECOND), None, "still latched");
+
+        observation.stamp_at(60 * SECOND);
+        assert_eq!(
+            watch.evaluate(61 * SECOND),
+            Some(Episode::Resumed(Duration::from_secs(59))),
+            "the resume reports the silence that ended"
+        );
+        assert_eq!(
+            watch.evaluate(61 * SECOND),
+            None,
+            "re-armed, inside threshold"
+        );
+        assert_eq!(
+            watch.evaluate(63 * SECOND),
+            Some(Episode::Idle(Duration::from_secs(3))),
+            "a later gap fires a second episode"
+        );
+    }
 
     #[test]
     fn a_cell_is_absent_until_a_delivery_stamps_it() {

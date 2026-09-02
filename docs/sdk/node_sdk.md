@@ -211,6 +211,21 @@ rebuilds an entity exactly that way on a warm restart, so a difference is what
 a restart would lose. A handler is also an ordinary function: a plain unit test
 can call it with no runner started and no controller running.
 
+## Entry-input idle
+
+`runner.lastEntryDelivery(channel)` answers when an entry channel last received
+a frame (`null` before its first), and `runner.onEntryIdle(channel,
+thresholdMs, observer)` reports silence past the threshold as episodes — one
+`idle`, one `resumed` — to an `IdleObserver` or a bare function. Both are legal
+before `run()`. The tick is a timer on the main loop, `unref`ed so a drained
+process still exits: under `.workers(n)` that loop dispatches nothing and the
+tick is exact; under `.workers(0)` a synchronous handler holds it, and the
+episode is reported at the first tick the loop reaches afterwards — once,
+because the latch compares stamps. Under `.workers(n)` the observer runs on the
+main isolate and a procedure on a worker; what the observer records reaches
+the procedure only through a channel the application builds, such as a
+`BroadcastChannel`. Contract: [`entry_input_idle.md`](entry_input_idle.md).
+
 ## Configuration
 
 | Variable | Meaning | Default |

@@ -1612,6 +1612,8 @@ under load.
 
 ## P3 — warts, wording, and measurement notes
 
+- **Evidence (R2b close, 2026-09-02)**: the same red in two smoke-tier arms of a change that touches nothing in `lib/flezha/state` — `fsync_batcher_test.exs:94` under `FLEZHA_E2E_RUNTIME=ruby` read `right: MapSet.new([])` (a concurrent flush emptied the singleton's set) and under `php` read the set plus a concurrent test's writer `{"rw_19170", "proc", "k1"}`; green in the full suite and in the node, python and elixir arms of the same tree. The two `right:` values name the mechanism the entry records: strict equality against a node-global singleton.
+
 ### KI-129 · On an erased host with more than one loop, a live Entity read can answer state whose changes are not yet journaled, and its seq stamp cannot say so
 
 - **Severity**: P3 · a wart in what the live read promises, not a data-loss path: the WAL is
@@ -1641,6 +1643,38 @@ under load.
   commit (the three waits, red first by rate); the read semantics are recorded, not changed —
   a test settles on `await_seq`, never on a live read, before anything that depends on the
   journal.
+
+
+### KI-132 · The PHP Swoole executor is an axis of the run that nothing runs end to end
+
+- **Severity**: P3 · a test gap, the same class as a pin nothing reads: `test/apps/php_runner/conformance.json` declares `FLEZHA_PHP_EXECUTOR` as an axis of the run (`sync` or `swoole`), and no workflow, script or recorded arm sets it to `swoole`. · Found by the R2b survey, 2026-09-02.
+- **Where**: `.github/workflows/php-sdk.yml:113-138` builds the ZTS + Swoole image and prints a version line; nothing runs a scenario in it. Every recorded php arm (R5's `2017/2019`, the KI-130 drill on seven runtimes) is the default `sync`.
+- **Evidence**:
+
+      $ grep -rn FLEZHA_PHP_EXECUTOR .github/workflows/        → exit 1
+      $ grep -rn -i swoole .github/workflows/ | grep -v Dockerfile
+      .github/workflows/php-sdk.yml:113: - name: Cache the ZTS PHP + Swoole image
+      .github/workflows/php-sdk.yml:136:   assert(class_exists("Swoole\\Thread"), "no Swoole\\Thread");
+      .github/workflows/php-sdk.yml:138:   printf("php %s zts, swoole %s, %d cpus\n", ...);
+      $ grep -c -i "executor=swoole\|FLEZHA_PHP_EXECUTOR=swoole" docs/refactor/STATE.md docs/dev_notes/php-sdk.md → 0 / 0
+
+- **A fix must** run at least the smoke tier under `FLEZHA_PHP_EXECUTOR=swoole` somewhere that reads the result — the nightly, or the php workflow inside the `flezha-php-zts` image with the controller toolchain — or the manifest stops calling the executor an axis of the run.
+- **Verdict (supervisor, 2026-09-02)**: real, P3, owed; `carry-entry-idle-in-every-host` (R2b) runs its own scenario under swoole in the zts image if the box can, or reports by name — that run is not a substitute for the gap.
+
+
+### KI-134 · An `elixir_runner` outlived the harness closing its port in the elixir smoke tier — SUSPICION
+
+- **Severity**: P3 · seen once (R2b's batch 8, 2026-09-02): after the `--include sdk_smoke` arm under `FLEZHA_E2E_RUNTIME=elixir`, a `beam.smp … mix run --no-halt … smoke_12324` was still alive 1 m 22 s later, killed by pid (SIGTERM, then SIGKILL). The test app's stdin watcher is what should have halted it when the port closed. Not reproduced; rate unknown (one arm observed).
+- **Where**: `test/apps/elixir_runner/` — the entry point's end-of-file handling on standard input, and whatever `mix run --no-halt` does with a closed stdin.
+- **A fix must** first reproduce (the elixir smoke tier, then `ps` for a surviving `mix run --no-halt` 30 s after) and read what the app does on EOF; the other six apps exit on it.
+- **Verdict (supervisor, 2026-09-02)**: a suspicion, recorded; boxed by whoever next runs the elixir smoke tier.
+
+
+### KI-133 · A PHP fixture's `static` is a per-interpreter value under Swoole, so the poison probe's antidote can land on a different worker than its poison — SUSPICION
+
+- **Severity**: P3 · `test/apps/php_runner/fixtures.php:403` `PoisonProbe::$antidoteTaken` is `private static bool`; each `Swoole\Thread` is a fresh interpreter (`docs/dev_notes/php-sdk.md`), so the static is one value per worker and the antidote and the poison can land on different workers once the pool grows. · Found by the R2b survey, 2026-09-02; not reproduced — the arm that would show it is KI-132's.
+- **A fix must** move the probe's memory to something one per process (a pid-keyed file, as R2b's `entry_idle` twin does) or prove the fixture is only ever driven with one worker.
+- **Verdict (supervisor, 2026-09-02)**: a suspicion, recorded; reproduced or refuted the day KI-132's arm runs.
 
 
 ### KI-124 · Python's `persistence_off_counter` declares the reference's procedures under `stateful_counter`'s names

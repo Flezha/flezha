@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import struct
 import sys
+import threading
 import time
 from typing import Any
 
@@ -365,6 +366,57 @@ def wedge_probe_operative(c: flezha.Channels) -> None:
     c.input("input", decode=text).into(wedge_probe).named("out").sink("wedge_sink", encode=raw)
 
 
+# -- entry_idle_probe --------------------------------------------------------
+#
+# An IdleObserver has no ctx and cannot emit, so the observer counts episodes
+# and a procedure reports them as `<absent_at_boot>:<episodes>:<resumes>`. Two
+# entry channels fan into ONE procedure: the core interns one observation per
+# channel NAME, so a frame on `idle_report` leaves `idle_input`'s stamp
+# untouched and the e2e can poll without ending the silence it measures. Every
+# worker thread shares this process's memory, so a dict under a lock is enough.
+
+ENTRY_IDLE_WATCHED = "idle_input"
+_ENTRY_IDLE_THRESHOLD_MS = 1_000
+_ENTRY_IDLE: dict[str, Any] = {"absent_at_boot": None, "episodes": 0, "resumes": 0}
+_ENTRY_IDLE_LOCK = threading.Lock()
+
+
+class _EntryIdleCounter(flezha.IdleObserver):
+    def idle(self, gap_ms: float) -> None:
+        with _ENTRY_IDLE_LOCK:
+            _ENTRY_IDLE["episodes"] += 1
+
+    def resumed(self, gap_ms: float) -> None:
+        with _ENTRY_IDLE_LOCK:
+            _ENTRY_IDLE["resumes"] += 1
+
+
+def arm_entry_idle_probe(runner: flezha.Runner) -> None:
+    """Read the accessor before ``run``, then watch the channel.
+
+    The stamp is taken ahead of anything that can decline a frame, so "absent
+    before the first frame" is observable here and nowhere inside a procedure.
+    """
+    _ENTRY_IDLE["absent_at_boot"] = runner.last_entry_delivery(ENTRY_IDLE_WATCHED) is None
+    runner.on_entry_idle(ENTRY_IDLE_WATCHED, _ENTRY_IDLE_THRESHOLD_MS, _EntryIdleCounter())
+
+
+@flezha.procedure(name="entry_idle_probe_procedure")
+def entry_idle_probe(_value: str) -> str:
+    with _ENTRY_IDLE_LOCK:
+        absent = str(_ENTRY_IDLE["absent_at_boot"]).lower()
+        return f"{absent}:{_ENTRY_IDLE['episodes']}:{_ENTRY_IDLE['resumes']}"
+
+
+@flezha.stream_operative("entry_idle_probe")
+def entry_idle_probe_operative(c: flezha.Channels) -> None:
+    # Both channels wire the same procedure: one node, fan-in.
+    c.input(ENTRY_IDLE_WATCHED, decode=text).into(entry_idle_probe)
+    c.input("idle_report", decode=text).into(entry_idle_probe).named("report").sink(
+        "entry_idle_report", encode=raw
+    )
+
+
 # -- session_timeout ---------------------------------------------------------
 #
 # The worked session-timeout shape (`entity_timers`): each input pushes the idle
@@ -527,6 +579,7 @@ ALL: list[flezha.Operative] = [
     candle_operative,
     poison_probe_operative,
     wedge_probe_operative,
+    entry_idle_probe_operative,
     session_timeout_operative,
     *BOUNDED_MAILBOX,
     partition_relay_operative,

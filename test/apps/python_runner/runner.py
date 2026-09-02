@@ -31,6 +31,8 @@ def main() -> None:
     runner = flezha.create_runner(namespace)
     for operative in fixtures.ALL:
         runner.define_stream(operative)
+    # A runner-level registration, not a declaration: armed beside the fixtures.
+    fixtures.arm_entry_idle_probe(runner)
 
     # The configuration this run is under, before it starts: readiness is the
     # SDK's own startup line, which reports the wheel tier, the executor and the

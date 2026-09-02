@@ -211,6 +211,12 @@ def test_the_clock_and_the_entry_probe_need_no_context() -> None:
     try:
         assert core.monotonic_nanos() > 0
         assert core.entry_last_delivery_nanos("never-fed") == 0
+        # The idle latch lives in the core; the veneer only advances it.
+        watch = core.idle_watch_new("never-fed", 0)
+        assert watch > 0
+        assert core.idle_watch_poll(watch) == (0, 0), "cold start is not an episode"
+        core.idle_watch_free(watch)
+        assert core.idle_watch_poll(watch)[0] == -1, "a freed id answers the ABI error"
     finally:
         core.free()
 
