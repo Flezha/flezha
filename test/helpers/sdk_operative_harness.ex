@@ -12,6 +12,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   import ExUnit.Assertions
 
   alias Flezha.SDK.{Counters, KeyGroup, Operative, Record, Topology}
+  alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
   alias Flezha.Transport.Local
 
@@ -54,6 +55,23 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
     {seq, change, decoded}
   end
 
+  @doc "`pid`, the Entity at `{operative_id, procedure, key}`, is evicted: its delete frame lands, then it ends."
+  def assert_evicted(pid, {operative_id, procedure, key}) do
+    ref = Process.monitor(pid)
+    assert_receive {:flz_data, _, "delete_entity_state", frame, _}, 2_000
+    assert {:ok, {^operative_id, ^procedure, ^key}} = Wire.decode_entity_id(frame)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+  end
+
+  @doc "Kill the Entity of `procedure` untrappably through its `\"kill\"` input; the dead pid."
+  def kill!(op, procedure) do
+    pid = entity!(op, procedure)
+    ref = Process.monitor(pid)
+    Inbox.input(op, "in", "kill", %{})
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 2_000
+    pid
+  end
+
   @doc "The Entity of `procedure` at `key`, which must exist."
   def entity!(op, procedure, key \\ nil) do
     {:ok, pid} = Operative.lookup(op, procedure, key)
@@ -70,5 +88,18 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   def change_record(seq, change, schema \\ 1) do
     body = Record.encode_body(change)
     disk_record(seq, Record.header(body, schema), body)
+  end
+
+  @doc "A `format_id = 3` timer-ops record, as any SDK writes it, at `schema`."
+  def timer_ops_record(seq, ops, schema \\ 1) do
+    body = Wire.encode_timer_ops(ops)
+    disk_record(seq, Record.header(body, schema, Record.timer_ops_format_id()), body)
+  end
+
+  @doc "A timer-ops record frame as `{seq, ops, decoded_frame}`."
+  def timer_ops({"entity_state_change", frame, _meta}) do
+    {:ok, %{seq: seq, body: body} = decoded} = Wire.decode_frame(frame)
+    {:ok, ops} = Wire.decode_timer_ops(body)
+    {seq, ops, decoded}
   end
 end

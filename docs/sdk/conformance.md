@@ -141,7 +141,7 @@ manifest exactly once — under `deferred` or as a `fixtures` key — so one can
 neither forgotten nor claimed twice. The **required set**
 (`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
 `retry_ladder`, `partitioned`, `pool_wedge`, `entry_idle`, `state_persistence`,
-`keyed_channels`, `dynamic_entity`, `schema_evolution`) can never be
+`keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`) can never be
 deferred, and it holds
 **every capability no manifest defers**: a capability every SDK carries is one
 none of them may drop. The gate refuses drift in both directions, with a

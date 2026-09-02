@@ -9,7 +9,19 @@ defmodule Flezha.SDK.PersistenceTest do
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Codec, Counters, Ctx, Entity, Operative, Park, Procedure, Record, Topology}
+  alias Flezha.SDK.{
+    Codec,
+    Counters,
+    Ctx,
+    Entity,
+    Operative,
+    Park,
+    Procedure,
+    Record,
+    Timers,
+    Topology
+  }
+
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
 
@@ -22,14 +34,18 @@ defmodule Flezha.SDK.PersistenceTest do
     DynCounterOp,
     EchoOp,
     EchoProc,
+    EventTimeOp,
     FlooredProc,
     GatedTtlOp,
     KeyedOp,
+    LogicalClockOp,
     MixedSinksOp,
+    NowOp,
     OptedOutCounterOp,
     OptedOutOp,
     SingleKeyedOp,
     ThriftyProc,
+    TimerOp,
     TtlOp,
     TwoCountersOp
   }
@@ -75,14 +91,15 @@ defmodule Flezha.SDK.PersistenceTest do
         change_record(0, {:delta, 1}) <>
           change_record(1, {:delta, 2}) <> change_record(2, {:delta, 4})
 
-      assert {:ok, %{value: 7}, 2, false} = Record.fold(CounterProc, nil, <<>>, <<>>, log, 0)
+      assert {:ok, %{value: 7}, _timers, 2, false} =
+               Record.fold(CounterProc, nil, <<>>, <<>>, log, 0)
     end
 
     test "a snapshot seeds the state and the tail folds over it" do
       snap = Record.encode_body(%{value: 10})
       log = change_record(4, {:delta, 5})
 
-      assert {:ok, %{value: 15}, 4, false} =
+      assert {:ok, %{value: 15}, _timers, 4, false} =
                Record.fold(CounterProc, nil, Record.header(snap, 1), snap, log, 3)
     end
 
@@ -90,19 +107,20 @@ defmodule Flezha.SDK.PersistenceTest do
       whole = change_record(0, {:delta, 1})
       torn = binary_part(change_record(1, {:delta, 2}), 0, 20)
 
-      assert {:ok, %{value: 1}, 0, false} =
+      assert {:ok, %{value: 1}, _timers, 0, false} =
                Record.fold(CounterProc, nil, <<>>, <<>>, whole <> torn, 0)
     end
 
     test "a snapshot-only payload takes the controller's terminal" do
       snap = Record.encode_body(%{value: 3})
 
-      assert {:ok, %{value: 3}, 9, false} =
+      assert {:ok, %{value: 3}, _timers, 9, false} =
                Record.fold(CounterProc, nil, Record.header(snap, 1), snap, <<>>, 9)
     end
 
     test "an empty payload is init_state at the hint" do
-      assert {:ok, %{value: 0}, 0, false} = Record.fold(CounterProc, nil, <<>>, <<>>, <<>>, 0)
+      assert {:ok, %{value: 0}, _timers, 0, false} =
+               Record.fold(CounterProc, nil, <<>>, <<>>, <<>>, 0)
     end
 
     test "a foreign language is refused before its format is looked at" do
@@ -121,7 +139,7 @@ defmodule Flezha.SDK.PersistenceTest do
       body = Record.encode_body({:delta, 1})
       msgpack = <<3, 0::32, 1::32, 5, 0, 0, :erlang.crc32(body)::32>>
 
-      assert {:error, "format_id 5 is not one this SDK writes (7): the body cannot be decoded"} =
+      assert {:error, "format_id 5 is not one this SDK writes (3, 7): the body cannot be decoded"} =
                Record.fold(CounterProc, nil, <<>>, <<>>, disk_record(0, msgpack, body), 0)
     end
 
@@ -171,6 +189,105 @@ defmodule Flezha.SDK.PersistenceTest do
     test "a fold that raises inside apply_change is a refusal, not a crash" do
       assert {:error, "restore fold failed: " <> _} =
                Record.fold(CounterProc, nil, <<>>, <<>>, change_record(0, :not_a_delta), 0)
+    end
+
+    test "a timer-ops record folds into the pending set and leaves the state untouched" do
+      log =
+        change_record(0, {:delta, 1}) <>
+          timer_ops_record(1, [
+            Timers.register_op(:processing_time, 9_000),
+            Timers.register_op(:event_time, 100)
+          ]) <> timer_ops_record(2, [Timers.cancel_op(:event_time, 100)])
+
+      assert {:ok, %{value: 1}, timers, 2, false} =
+               Record.fold(CounterProc, nil, <<>>, <<>>, log, 0)
+
+      assert Timers.all(timers, :processing_time) == [9_000]
+      assert Timers.all(timers, :event_time) == []
+    end
+
+    test "a timer-ops header on a snapshot is malformed; a timer-ops record at a migrated schema reports migrated" do
+      snap = Record.encode_body(%{value: 1})
+
+      assert {:error, "malformed restoration header (truncated or invalid)"} =
+               Record.fold(
+                 CounterProc,
+                 nil,
+                 Record.header(snap, 1, Record.timer_ops_format_id()),
+                 snap,
+                 <<>>,
+                 0
+               )
+
+      log = timer_ops_record(0, [Timers.register_op(:processing_time, 9_000)], 1)
+
+      assert {:ok, %{value: 0, unit: "n"}, timers, 0, true} =
+               Record.fold(CounterV2Proc, nil, <<>>, <<>>, log, 0)
+
+      assert Timers.contains?(timers, :processing_time, 9_000)
+    end
+  end
+
+  describe "the clocks" do
+    test "Ctx.now/1 serves the declared clock: the seq the dispatch started at, the input's event time, or the epoch millisecond" do
+      %{op: op} = start_operative(LogicalClockOp)
+      for n <- [5, 6, 7], do: Inbox.input(op, "in", Integer.to_string(n), %{})
+      assert for({"op-1", out, _} <- frames(6), do: out) == ["0", "1", "2"]
+
+      %{op: op} = start_operative(EventTimeOp, operative_id: "op-2")
+      Inbox.input(op, "in", "1720000000000", %{})
+      assert [{"op-2", "1720000000000", _}] = frames(1)
+
+      %{op: op} = start_operative(NowOp, operative_id: "op-3")
+      before = System.system_time(:millisecond)
+      Inbox.input(op, "in", "x", %{})
+      assert [{"op-3", now, _}] = frames(1)
+      assert String.to_integer(now) >= before
+    end
+  end
+
+  describe "timers" do
+    test "a registration ships one timer-ops record after the dispatch's change records, at the next seq" do
+      %{op: op} = start_operative(TimerOp)
+      before = System.system_time(:millisecond)
+      Inbox.input(op, "in", "3", %{})
+      [r0, r1, out] = frames(3)
+      assert {0, {:delta, 3}, _} = record(r0)
+
+      assert {1, [%{kind: :processing_time, register: true, scheduled_at: at}], decoded} =
+               timer_ops(r1)
+
+      assert <<3, _::32, 1::32, 3, 0, 0, _::32>> = decoded.header
+      assert at >= before + 3_000
+      assert {"op-1", "3", _} = out
+
+      Inbox.input(op, "in", "4", %{})
+      [_r2, r3, _out] = frames(3)
+      assert {3, [%{register: true}], _} = timer_ops(r3)
+      assert {:ok, %{value: 7}, 4} = Entity.read(entity!(op, "timer"), 1_000)
+    end
+
+    test "compaction re-states the pending set above the snapshot's seq, and the slot carries it" do
+      %{op: op} = start_operative(TimerOp)
+      Inbox.input(op, "in", "1", %{})
+      [_r0, r1, _out] = frames(3)
+      {1, [%{scheduled_at: at}], _} = timer_ops(r1)
+      pid = entity!(op, "timer")
+
+      assert {:ok, 1, _size} = Entity.snapshot(pid)
+      [{"entity_state_snapshot", _, _}, restated] = frames(2)
+
+      assert {2, [%{kind: :processing_time, register: true, scheduled_at: ^at}], _} =
+               timer_ops(restated)
+
+      assert {:ok, %{value: 1}, 3} = Entity.read(pid, 1_000)
+
+      identity = Park.identity("op-1", "timer", "")
+
+      assert [{^identity, %{value: 1}, 3, timers}] =
+               :ets.lookup(:sys.get_state(op).slots, identity)
+
+      assert Timers.all(timers, :processing_time) == [at]
     end
   end
 
@@ -303,10 +420,7 @@ defmodule Flezha.SDK.PersistenceTest do
       send(op, :reap)
       assert {:ok, ^pid} = Operative.lookup(op, "ttl", "k5")
 
-      ref = Process.monitor(pid)
-      assert_receive {:flz_data, _, "delete_entity_state", frame, _}, 2_000
-      assert {:ok, {"op-1", "ttl", "k5"}} = Wire.decode_entity_id(frame)
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+      assert_evicted(pid, {"op-1", "ttl", "k5"})
       assert_receive {:dynamic, %{count: 1}, %{operative_id: "op-1", event: :evicted}}, 1_000
       assert {:error, :entity_evicted} = Operative.lookup(op, "ttl", "k5")
       assert {:error, :entity_not_found} = Operative.lookup(op, "ttl", "never")
@@ -349,7 +463,7 @@ defmodule Flezha.SDK.PersistenceTest do
 
       snapshot = Record.encode_body(%{value: 4})
 
-      assert {:ok, %{value: 7, unit: "n"}, 0, true} =
+      assert {:ok, %{value: 7, unit: "n"}, _timers, 0, true} =
                Record.fold(
                  CounterV2Proc,
                  nil,
@@ -360,7 +474,7 @@ defmodule Flezha.SDK.PersistenceTest do
                )
 
       # A record at the running version decodes directly, and reports no migration.
-      assert {:ok, %{value: 2, unit: "n"}, 0, false} =
+      assert {:ok, %{value: 2, unit: "n"}, _timers, 0, false} =
                Record.fold(
                  CounterV2Proc,
                  nil,
@@ -428,17 +542,29 @@ defmodule Flezha.SDK.PersistenceTest do
       Inbox.input(op, "in", "1", %{})
       Inbox.input(op, "in", "2", %{})
       [_, _, _, _] = frames(4)
-      first = entity!(op, "counter")
-      ref = Process.monitor(first)
-
-      Inbox.input(op, "in", "kill", %{})
-      assert_receive {:DOWN, ^ref, :process, ^first, :killed}, 2_000
+      first = kill!(op, "counter")
 
       Inbox.input(op, "in", "4", %{})
       [r, out] = frames(2)
       assert {2, {:delta, 4}, _} = record(r)
       assert {"op-1", "7", _} = out
       assert entity!(op, "counter") != first
+    end
+
+    test "the Entity of a stopped Operative is dead, and of a killed one too" do
+      %{op: op} = start_operative(CounterOp)
+      stopped = entity!(op, "counter")
+      ref = Process.monitor(stopped)
+      Operative.stop(op)
+      assert_receive {:DOWN, ^ref, :process, ^stopped, :normal}, 2_000
+
+      %{op: op} = start_operative(CounterOp, operative_id: "op-2")
+      killed = entity!(op, "counter")
+      ref = Process.monitor(killed)
+      Process.unlink(op)
+      Process.exit(op, :kill)
+      # Quietly, whatever ended the Operative: the Entity did not crash.
+      assert_receive {:DOWN, ^ref, :process, ^killed, :normal}, 2_000
     end
 
     test "a restore re-seats the state and the seq, and dispatch continues from terminal + 1" do

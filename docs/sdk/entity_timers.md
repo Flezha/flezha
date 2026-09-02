@@ -2,10 +2,11 @@
 
 For operative authors who need a Procedure to act on the passage of time —
 session timeouts, idle flushes, join expiry, windows — and for SDK
-implementers: the timer surface in Rust and Java, which kind fires when, how a
-firing is triggered without a timer thread, why timers are durable for free,
-what a failed firing does, the bounds, the limits, and where the code lives.
-The Elixir SDK defers timers ([`elixir_sdk.md`](elixir_sdk.md)).
+implementers: the timer surface in Rust, Java and Elixir, which kind fires
+when, how a firing is triggered without a timer thread, why timers are durable
+for free, what a failed firing does, the bounds, the limits, and where the code
+lives. The Elixir SDK carries it in its own core
+([`elixir_sdk.md`](elixir_sdk.md#timers-and-clocks)).
 
 A Procedure registers a timer from `run` (or from a firing), and the runtime
 calls `on_timer` when it comes due, with no input to carry it:
@@ -50,12 +51,12 @@ public void onTimer(long firedAt, TimerKind kind,
 
 ## The surface
 
-| Rust | Java | Fires when |
-| --- | --- | --- |
-| `ctx.timer_at_event_time(ts)` | `ctx.timerAtEventTime(ts)` | the Entity's event-time high-water reaches `ts` |
-| `ctx.timer_after(d)` | `ctx.timerAfter(d)` | wall-clock time reaches `ctx.now() + d` |
-| `ctx.cancel_event_time_timer(ts)` | `ctx.cancelEventTimeTimer(ts)` | — |
-| `ctx.cancel_processing_time_timer(ts)` | `ctx.cancelProcessingTimeTimer(ts)` | — |
+| Rust | Java | Elixir | Fires when |
+| --- | --- | --- | --- |
+| `ctx.timer_at_event_time(ts)` | `ctx.timerAtEventTime(ts)` | `Ctx.timer_at_event_time(ctx, ts)` | the Entity's event-time high-water reaches `ts` |
+| `ctx.timer_after(d)` | `ctx.timerAfter(d)` | `Ctx.timer_after(ctx, ms)` | wall-clock time reaches `ctx.now() + d` |
+| `ctx.cancel_event_time_timer(ts)` | `ctx.cancelEventTimeTimer(ts)` | `Ctx.cancel_event_time_timer(ctx, ts)` | — |
+| `ctx.cancel_processing_time_timer(ts)` | `ctx.cancelProcessingTimeTimer(ts)` | `Ctx.cancel_processing_time_timer(ctx, ts)` | — |
 
 Registration returns the **absolute** scheduled timestamp, which is the handle
 a cancellation takes. Pending timers are a **set**: a duplicate registration
@@ -63,7 +64,9 @@ is idempotent, and cancelling an unregistered timer changes nothing.
 `on_timer` / `onTimer` receives the same `StateHandle` and `ProcedureCtx` as
 `run`, so a firing may apply Changes, emit and register further timers. Its
 default panics (Rust) / throws (Java) naming the Procedure — registration is
-a runtime call, so an unhandled timer cannot be caught at build time.
+a runtime call, so an unhandled timer cannot be caught at build time; in
+Elixir, where `on_timer/4` is an optional behaviour callback, a firing on a
+Procedure without it parks non-retryably naming the Procedure and the callback.
 
 **`fired_at` is the scheduled time, never the wall clock.** A timer scheduled
 for T that fires at T+δ reports T, and `ctx.now()` equals `fired_at` inside
@@ -101,7 +104,12 @@ Entity. Due entries fire in ascending scheduled order, ties broken by Entity
 identity. There is **no timer thread**: the list is serviced by whichever
 thread next enters `PollCore::poll`, and the nearest entry shortens its wait
 ([`../architecture/runner.md`](../architecture/runner.md), "The ladder, and
-the list that owns no thread").
+the list that owns no thread"). In the Elixir SDK, which is not a poll host,
+the BEAM's own timer service is that list: the Entity process arms one
+`Process.send_after/3` per pending processing-time timer, and its due message
+folds every timer due by then onto the Entity's own queue, ascending, so the
+one drain serialises firings against `run/3`; a due message that finds no
+room comes back 5 ms later.
 
 ## Durability: timers are folded state
 
@@ -166,18 +174,19 @@ wedged, not an idle Operative.
 
 ## Where the code lives
 
-| Piece | Rust | Java |
-| --- | --- | --- |
-| Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/entity/timer.rs`, which adds `timer_policy_for::<S>()`) | `flezha-sdk-runtime/.../state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`, `.../entity/TimerCounters.java` |
-| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core |
-| The surface and the hook | `sdk/rust/src/procedure/{ctx,mod}.rs` | `flezha-sdk-api/.../procedure/{ProcedureCtx,Procedure}.java`, `.../state/TimerKind.java` |
-| The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/operative/dispatcher.rs`, `sdk/rust/src/entity/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) |
-| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core |
-| Controller: `Flezha.State.Wire` decodes the effect record's `timers` field; nothing else changes | `lib/flezha/state/wire.ex` | — |
+| Piece | Rust | Java | Elixir |
+| --- | --- | --- | --- |
+| Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/entity/timer.rs`, which adds `timer_policy_for::<S>()`) | `flezha-sdk-runtime/.../state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`, `.../entity/TimerCounters.java` | `lib/flezha/sdk/timers.ex` (the set and the session); arming in `lib/flezha/sdk/entity.ex` (`arm`, `disarm`, `rearm`) |
+| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core | `entity.ex` — `admit/2` at admission, `handle_info({:timer_due, _})` off the BEAM's timer service |
+| The surface and the hook | `sdk/rust/src/procedure/{ctx,mod}.rs` | `flezha-sdk-api/.../procedure/{ProcedureCtx,Procedure}.java`, `.../state/TimerKind.java` | `lib/flezha/sdk/{ctx,procedure}.ex` |
+| The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/operative/dispatcher.rs`, `sdk/rust/src/entity/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) | `entity.ex` (`dispatch/2`, `call/3`), `lib/flezha/sdk/record.ex` (the fold), `lib/flezha/sdk/entity/records.ex` (the record, the restatement, the slot) |
+| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | `Flezha.State.Wire.encode_timer_ops/1` — the same bytes |
+| Controller: `Flezha.State.Wire` decodes the effect record's `timers` field; nothing else changes | `lib/flezha/state/wire.ex` | — | — |
 
 Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`, Java `ActivationDispatcherTest`,
+Elixir `test/flezha/sdk/{timers_test,entity_timers_test}.exs`,
 and `test/system/entity_timers_e2e_test.exs`, which drives a session-timeout
-fixture on both runtimes, including a re-seat from disk that proves the
+fixture on every runtime, including a re-seat from disk that proves the
 pending timer survived it. Examples: `sdk/rust/examples/session_timeout.rs`,
 Java `E12_SessionTimeout`.
 

@@ -1,4 +1,8 @@
-# Refactor board
+(batch 4: the
+twin, the flip — `@required_capabilities` is now 13 atoms: `:runner_lifecycle`, `:connect_discovery`, `:graph_builder`, `:liveness`, `:retry_ladder`, `:partitioned`, `:pool_wedge`, `:entry_idle`, `:state_persistence`, `:keyed_channels`, `:dynamic_entity`, `:schema_evolution`, `:entity_timers`;
+`entity_timers` is the SIXTH capability this programme made universal, after `entry_idle`,
+`state_persistence`, `keyed_channels`, `dynamic_entity`, `schema_evolution`; the batch-4 commit
+subject's "seven" counts the required set). # Refactor board
 
 ## HANDOVER — session 6 ended 2026-09-01 22:20. READ THIS FIRST.
 
@@ -1035,7 +1039,7 @@ decision table; three flips into the required set red-first; sizes against +865-
 `entity.ex`/`operative.ex` ceilings), STOPS for my ruling; step 2 implements with checkpoints
 after every two batches. **Last seen 07:06 (+10m)**: reading, no change dir yet, load 0.84. **07:17 (+21m)**: still no change dir; nudge at +30 if none. **08:49 (+21m)**: change dir created 08:47, `specs/` with three capability dirs, no `.md` yet; writing deltas by a scratch script; nothing running, load 0.17.
 
-### R6 CHANGE 3 SURVEY VERIFIED AND APPROVED 09:12
+### R6 CHANGE 3 SURVEY VERIFIED AND APPROVED 08:57
 
 `openspec/changes/carry-entity-timers-in-elixir/` — proposal 464, design D0–D14 441, tasks 6 batches /
 34 boxes, three deltas; `--strict` valid on my run; survey 27 min / 426 k tokens / 81 tool uses.
@@ -1064,8 +1068,104 @@ outlives `Operative.stop/1` (reproduced on my run: "entity alive after stop: tru
 from a link is discarded by a non-trapping process), filed, fixed as its own commit red-first at
 checkpoint 1 before batch 3; I pointed the worker at the smaller shape (a trapping Entity terminates
 on its parent's EXIT by gen_server's own rule, and D6's `terminate/2` needs the trap anyway). My
-brief's `state.rs` was wrong; the fixture is `entity.rs`. **Step 2 authorised 09:12**: batches 0–2,
-checkpoint 1.
+brief's `state.rs` was wrong; the fixture is `entity.rs`. **Step 2 authorised 08:57**: batches 0–2,
+checkpoint 1. **Last seen 09:08 (+11m)**: batch 0 done by its scratch files (the micro-bench, the red half, a KI-137 green try), batch 1 in flight — `entity/` created, `entity.ex` −291, `operative.ex` and `persistence_test.exs` edited, +177/−291; load 1.77 (test runs); no commit of the worker's. **09:19 (+22m)**: batch 1 done by its files (`entity/`, `timers.ex`, `timers_test.exs`, `wire.ex` + `wire_test.exs`, the boundary and gate readings), batch 2's red halves recorded (`b2_red_unit`, `b2_red_persist`); 10 files +519/−295; load 0.99; no commit of the worker's.
+
+### R6 CHANGE 3 CHECKPOINT 1 REPORTED 09:35 — verified, three nits sent back before the commit
+
+**My runs**: forced compile 0/0 warnings; `mix test test/flezha/sdk/ test/flezha/state/wire_test.exs
+--warnings-as-errors` 134 passed exit 0; boundary + four naming gates 0; no sleep token; after my
+`git add -N` on the four new files `--check --lint` reads two rows — `lib/flezha/sdk prod_loc 3057 →
+3349` (+292: `timers.ex` 117, `entity/records.ex` 108, `ctx.ex` 44, `entity/state.ex` 38,
+`procedure.ex` 30, `entity.ex` −88 …) and `lib/flezha/state 6958 → 6983` (`wire.ex` +25 for two
+wrappers, the `@spec` map type spelled twice) — accepted as feature cost. **KI-137 fixed red-first by
+the MONITOR shape** (not my trap-exit suggestion: gen_server's parent-EXIT path would log one error
+report per Entity on an abnormal Operative exit): `Entity.start/1` unlinked, the Operative monitors
+each Entity (the one `start_entity` site) and its `:EXIT` clause became the `:DOWN` clause, the Entity
+monitors its Operative and stops `:normal` on its DOWN through `terminate/2`; the test pins a stopped
+AND a killed Operative; the never-read `monitors` field deleted. Read in full: `timers.ex` (the set,
+the session over a copy, the tally), `entity/records.ex` (`ship/3` with the trailing timer-ops record,
+`restate_timers/1` above the snapshot, the slot row with the pending set), `record.ex` (language →
+format → schema, `{:timer_ops, decision}`, the five-tuple fold), `ctx.ex` (the session in the pdict),
+`topology.ex` (`check_clock/2`). **The measurement**: the before arm's own spread 5.4 % / 8.1 % >
+3 %, so the gate row is a DIRECTION row as the rule provides; the guard row 123 583 / 120 603 /
+128 839 msg/s. **Three nits sent back before the commit**: the `timer_policy(nil)` test-only clause
+in `procedure.ex` (delete), the twice-spelled map type in `wire.ex` (one `@type`), the format
+refusal naming 7 alone. **Commit shape ruled**: two sets by path — the codec and the set (`wire.ex`,
+`wire_test.exs`, `timers.ex`, `timers_test.exs`), then the rest with KI-137 named; the fix's own
+commit cannot be cut because `entity.ex` and `persistence_test.exs` carry the split, the fix and
+batch 2 in the same hunks — recorded as the deviation.
+
+**Nits applied by the worker (134 passed exit 0 on its run; the nil clause gone, `@type timer_op`,
+the refusal naming `3, 7` — verified by grep). COMMITTED 09:30**: `f4f66c06` (the codec and the set),
+`1dade009` (the split, the clocks, the ctx surface, the format-3 record, KI-137). Tree clean bar the two
+foreign files. **Batches 3–4 authorised** (the Entity fires; the twin, the flip, the arms, the after
+arm), checkpoint 2. KI-137 → *Resolved* `c8f02954`; machine swept 09:32 (clean). **Last seen 09:43 (+10m into batch 3)**: `entity.ex`, `counters.ex`, `runner_server.ex`, `operative.ex`, the fixtures and a new `test/flezha/sdk/entity_timers_test.exs` (the firing tests in their own file), +648/−144; red halves recorded (`b3_red`), a suite run in the load (2.18); no commit of the worker's.
+
+### R6 CHANGE 3 CHECKPOINT 2 REPORTED 10:05 — one race found on my run, sent back
+
+The worker: batches 3–4 done; `entity_timers` flipped, gate red by name then green with the atom;
+the arm 2 passed under uds AND quic; the smoke tier 18/5; forced compile 0/0; the slice 144 exit 0;
+`functions_over_50` 0; the ratchet `lib/flezha/sdk 3057 → 3485` (**+428** against +330, range
+270–400 — `timers.ex` 117 for 85, the Entity glue +130 for 85, `ctx.ex` 44 for 35) and
+`lib/flezha/state +15`; the direction row 22.6 µs/push after vs 21.0/21.6 before inside a 14.6 %
+spread; the guard row median 120 880 vs 123 583 msg/s (−2.2 %, inside both spreads); feature cost
+27.7 µs/push on `TimerOp`. One design deviation: a crashed Single/Static Entity is RE-MINTED at once
+(its slot's armed timers must not wait for an input); dynamic stays lazy. **My runs**: forced
+compile 0/0; the app rebuilt 0; the `entity_timers` arm under uds **2 passed, exit 0**, no
+leftover; gate 20; boundary + four naming gates 0; no sleep; `--check --lint` the two rows exactly.
+**The slice under my parallel metrics run: 163/164** — `entity_timers_test.exs:168` read
+`timers_armed` 0 where 1 was expected. Mechanism, at the function: `Entity.complete/5` flushes the
+emits BEFORE `reflect/3` arms and moves the gauge, so a reader settling on the output frame reads the
+gauge in the gap. **Ruled**: fix the ORDER (arm before the outputs leave; the record still ships
+first), not the test; audit the other gauge reads; three green runs. **Also ruled**: the
+`Timers.Session` opens LAZILY on the first timer call (fields on the ctx struct, no pdict write on a
+timer-less push; a firing still commits its removal), then the after arm re-measured once — the
+proposal promised "nothing measurable" and the instrument cannot resolve 3 %, so the cost is removed
+by construction. Size +428 ACCEPTED (named honestly, no parallel mechanism in the Entity diff); the
+eager re-mint ACCEPTED (the reference's "an Entity always exists"), to be documented with why it
+cannot loop.
+
+**Amended and COMMITTED 10:12**: the order is records → `reflect/3` → outputs; the audit found TWO
+more gauge reads in the same gap (both now settle on the arm's own `:registered` report); the session
+opens lazily (+6 lines, not zero); **the gate row now resolves: 19.09 µs/push after (spread 3.05 %)
+vs 21.03 / 21.62 before** — the timer-less push got cheaper once it stopped opening a session; three
+seeds green; my slice 164 passed exit 0. `8ecccd9f` (batch 3: the Entity fires), `c9c323f2` (batch 4: the
+twin, the flip — **seven capabilities universal**: `entry_idle`, `state_persistence`,
+`keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers` + the six that always were
+under `sdk_smoke`… — i.e. `entity_timers` is the sixth the programme made universal). **Batches 5–6
+authorised**, checkpoint 3 = the close.
+
+### R6 CHANGE 3 IS DONE — `carry-entity-timers-in-elixir`, closed `418457b2`, archived
+
+All 34 boxes ticked (seven with a note). Archived as `2026-09-02-carry-entity-timers-in-elixir`.
+**Five commits**: `f4f66c06` `1dade009` `8ecccd9f` `c9c323f2` `418457b2` (+ the docs commits). **My
+close runs**: `--strict` valid; no MODIFIED block drops a scenario name; the docs diff carries no
+history marker and `defers timers` is gone from `docs/`; format gate 0; five naming gates 0;
+`--check --lint` exactly the two feature rows. The worker's close: full `mix test` **2054 passed
+exit 0** (2027 at change 2's close + 27), forced compile 0/0, credo `lib/flezha/sdk` 4 none new.
+**Ratchet whole change** (`97aa1370` → `418457b2`): `lib/flezha/sdk prod_loc` 3 057 → 3 491 (**+434**
+against +330, range 270–400 — over the top: `timers.ex` 117 for 85, the Entity glue +130 for 85,
+`ctx.ex` 50 for 35); `lib/flezha/state` +15; `files_over_800` 0, `functions_over_50` 0, `cycles` 0,
+`duplicate_pairs` at baseline. Baseline re-recorded at `418457b2`; `--check --lint` **0**. **Six
+capabilities universal by this programme**: `entry_idle`, `state_persistence`, `keyed_channels`,
+`dynamic_entity`, `schema_evolution`, `entity_timers`; Elixir defers `effectively_once`,
+`correction_window`, `workflow`. Decisions taken under the user's instruction: the monitor shape for
+KI-137, the eight-line gauge, the eager re-mint, the lazy session, the size over its range.
+
+**OWED — index lines for `carry-entity-timers-in-elixir`** (verbatim; same reason as the seven before):
+`CLAUDE.md` hook:
+`- [`entity_timers` in the Elixir SDK — the BEAM's timer service is the wake list](docs/dev_notes/carry-entity-timers-in-elixir.md) — a due message never fires ITS timer, it folds every timer due by then onto the Entity's queue ascending; the wire order is records, arm, outputs; and a Procedure that opens no session must pay nothing (the direction row reversed on that alone)`
+`INDEX.md` abstract: **carry-entity-timers-in-elixir** (R6 change 3, 2026-09-02) — per-Entity timers of both kinds and the three clock kinds re-expressed in the Elixir SDK's own core: `Flezha.SDK.Timers` (the pending set per kind and the session over a copy of it), the `format_id = 3` record every SDK writes folded into the set and re-stated above a compaction's snapshot, one `Process.send_after/3` per deadline with the due-set fold in place of a wheel, event-time firings queued ahead of the input that crossed the high-water, `on_timer/4` through the same ladder with its removal committed even on a park, the slot and the restore re-arming, eviction discarding, `timers_armed`/`timers_fired` on the heartbeat and one telemetry event; `entity_timers` joins the required set, six capabilities universal. The Entity split into its durable half (`Entity.Records`, `Entity.State`) first. Found and fixed on the way: an Entity outlived `Operative.stop/1` because a link discards a `:normal` exit (KI-137 — monitors both ways now, quiet on an abnormal Operative exit where trapping would log per Entity); the output frame left before the timers were armed (records → arm → outputs now); the eagerly opened session cost the timer-less push ~7 % (lazy now: 19.1 vs 21.0 µs/push); a crashed Single/Static Entity is re-minted at once so a slot's timers never wait for an input. Cost `lib/flezha/sdk` +434 against +330 estimated.
+
+**Next: R6 change 4 = `carry-effectively-once-in-elixir`** (the tier: the staged interval, the
+checkpoint close, the effect record, the outbox; sized +380 / 8 batches by the survey), fresh
+worker, survey-lite then implement. What it inherits from change 3's report: `Timers.session/4` and
+the firing's op 0 are where `EffectRecordBody.timers` attaches; `Records.ship/3`'s trailing ops
+record is what the tier folds into the effect record instead; `reflect/3` is where an effect
+record's timers reflect; the event-time high-water becomes durable there; `Ctx.timers`/`firing` are
+already fields on the ctx; the feature-cost number for a push that commits a timer op is 27.7
+µs/push.
 
 ### R6 CHANGE 2 SURVEY VERIFIED AND APPROVED 07:35
 
@@ -5653,7 +5753,7 @@ verifies and commits, §4 checkpoint each time.
 | **R5.1** | **DONE 2026-09-02** — KI-130 (`57135d69` + the convergence commit): the ship's gate and host waits are 5 s, a named-Entity read refuses, the wedge ladder is inverted (restart first), the Elixir RunnerServer no longer re-registers (KI-131). Drill green on seven runtimes, no zombie | — |
 | **R5.2** | **DONE 2026-09-02** — KI-125: the stdin watcher reads unbuffered; a signalled python runner exits 0 (was 134); red-first subprocess test; ruby/node/php measured clean | — |
 | **R5.3** | **DONE 2026-09-02** — KI-128 hardened: the verdict is read by the settled row's name, rows dumped on failure; red-first induced through the real channel | — |
-| **R6** | **IN PROGRESS 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → **2 `carry-keyed-dynamic-and-schema-in-elixir` DONE** (8 commits, closed `97aa1370`, three more universal, +287 against +300) → 3 `carry-entity-timers-in-elixir` (next) → 4 effectively_once → 5 correction_window; `workflow` is R7's. Size the rest against +865 for +560 estimated | The user's instruction includes Elixir; it is the largest row |
+| **R6** | **IN PROGRESS 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → **2 `carry-keyed-dynamic-and-schema-in-elixir` DONE** (8 commits, closed `97aa1370`, three more universal, +287 against +300) → **3 `carry-entity-timers-in-elixir` DONE** (5 commits, closed `418457b2`, `entity_timers` universal, +434 against +330, KI-137 fixed) → 4 `carry-effectively-once-in-elixir` (next) → 5 correction_window; `workflow` is R7's. Size the rest against +865 for +560 estimated | The user's instruction includes Elixir; it is the largest row |
 | **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
 | **R9** | `unify-cli-output-flag` — KI-80. `cluster status --json` ignores `--output json`; `audit list --output json` ignores `--json` | Agreed 2026-09-01, small |

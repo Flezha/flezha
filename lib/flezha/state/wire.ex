@@ -351,6 +351,30 @@ defmodule Flezha.State.Wire do
     ])
   end
 
+  @typedoc "One mutation of an Entity's pending-timer set, as the postcard `TimerOp` carries it."
+  @type timer_op :: %{
+          kind: :event_time | :processing_time,
+          scheduled_at: non_neg_integer(),
+          register: boolean()
+        }
+
+  @doc """
+  The body of a `format_id = 3` timer-ops record — a postcard `Vec<TimerOp>`,
+  the shape every SDK writes for its pending-timer mutations and the fold of
+  any of them reads back; `decode_timer_ops/1` is its exact inverse.
+  """
+  @spec encode_timer_ops([timer_op()]) :: binary()
+  def encode_timer_ops(ops), do: IO.iodata_to_binary(encode_vec(ops, &encode_timer_op/1))
+
+  @spec decode_timer_ops(binary()) :: {:ok, [timer_op()]} | {:error, term()}
+  def decode_timer_ops(body) when is_binary(body) do
+    case decode_vec(body, &decode_timer_op/1) do
+      {:ok, ops, <<>>} -> {:ok, ops}
+      {:ok, _ops, _trailing} -> {:error, :trailing_bytes}
+      {:error, _} = err -> err
+    end
+  end
+
   @doc """
   Decode a postcard `ParkBody` (the body of a `park_payload` frame,
   tier-off dead-letter park):

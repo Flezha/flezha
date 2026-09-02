@@ -307,7 +307,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :state_persistence,
     :keyed_channels,
     :dynamic_entity,
-    :schema_evolution
+    :schema_evolution,
+    :entity_timers
   ]
 
   def capabilities, do: @capabilities

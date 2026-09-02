@@ -1035,16 +1035,16 @@
   "lib/flezha/sdk": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.216,
-   "comment_lines": 265,
+   "comment_density": 0.223,
+   "comment_lines": 326,
    "credo_warnings": 4,
    "cycles": 0,
-   "doc_lines": 576,
+   "doc_lines": 674,
    "duplicate_pairs": 1,
    "duplicate_pairs_list": [
     "lib/flezha/runner/control_channel.ex:119-125 <-> lib/flezha/sdk/codec.ex:46-52 (45 tokens)"
    ],
-   "files": 24,
+   "files": 27,
    "files_over_800": 0,
    "files_over_800_list": [],
    "functions_over_50": 0,
@@ -1054,31 +1054,34 @@
    "max_cycle_files": 0,
    "narrative_markers": 0,
    "narrative_markers_by_file": {},
-   "prod_loc": 3057,
+   "prod_loc": 3491,
    "prod_loc_by_file": {
     "lib/flezha/sdk/channels.ex": 211,
     "lib/flezha/sdk/codec.ex": 75,
     "lib/flezha/sdk/commands.ex": 346,
-    "lib/flezha/sdk/counters.ex": 64,
+    "lib/flezha/sdk/counters.ex": 75,
     "lib/flezha/sdk/credit.ex": 63,
-    "lib/flezha/sdk/ctx.ex": 86,
+    "lib/flezha/sdk/ctx.ex": 136,
     "lib/flezha/sdk/data_stream.ex": 31,
-    "lib/flezha/sdk/entity.ex": 377,
+    "lib/flezha/sdk/entity.ex": 407,
+    "lib/flezha/sdk/entity/records.ex": 108,
+    "lib/flezha/sdk/entity/state.ex": 38,
     "lib/flezha/sdk/entry_idle.ex": 87,
     "lib/flezha/sdk/entry_input.ex": 38,
     "lib/flezha/sdk/idle_observer.ex": 5,
     "lib/flezha/sdk/jitter.ex": 6,
     "lib/flezha/sdk/key_group.ex": 37,
-    "lib/flezha/sdk/operative.ex": 424,
+    "lib/flezha/sdk/operative.ex": 429,
     "lib/flezha/sdk/operative/inbox.ex": 6,
     "lib/flezha/sdk/park.ex": 28,
     "lib/flezha/sdk/persistent_id.ex": 77,
-    "lib/flezha/sdk/procedure.ex": 130,
-    "lib/flezha/sdk/record.ex": 157,
-    "lib/flezha/sdk/runner_server.ex": 460,
+    "lib/flezha/sdk/procedure.ex": 159,
+    "lib/flezha/sdk/record.ex": 184,
+    "lib/flezha/sdk/runner_server.ex": 462,
     "lib/flezha/sdk/stream.ex": 28,
     "lib/flezha/sdk/stream_operative.ex": 14,
-    "lib/flezha/sdk/topology.ex": 203,
+    "lib/flezha/sdk/timers.ex": 117,
+    "lib/flezha/sdk/topology.ex": 220,
     "lib/flezha/sdk/transport.ex": 104
    },
    "refutes": 0,
@@ -1227,7 +1230,7 @@
    "comment_lines": 1112,
    "credo_warnings": 26,
    "cycles": 1,
-   "doc_lines": 2359,
+   "doc_lines": 2365,
    "duplicate_pairs": 5,
    "duplicate_pairs_list": [
     "lib/flezha/plugin/provider/postgres.ex:164-168 <-> lib/flezha/state/durability_tier/backend/postgres.ex:187-191 (68 tokens)",
@@ -1246,7 +1249,7 @@
    "max_cycle_files": 23,
    "narrative_markers": 0,
    "narrative_markers_by_file": {},
-   "prod_loc": 6958,
+   "prod_loc": 6973,
    "prod_loc_by_file": {
     "lib/flezha/state/commands.ex": 168,
     "lib/flezha/state/completion.ex": 53,
@@ -1289,7 +1292,7 @@
     "lib/flezha/state/wal_writer/settlement.ex": 244,
     "lib/flezha/state/wal_writer/state.ex": 78,
     "lib/flezha/state/watchdog.ex": 350,
-    "lib/flezha/state/wire.ex": 353,
+    "lib/flezha/state/wire.ex": 368,
     "lib/flezha/state/writer_registry.ex": 24
    },
    "refutes": 0,
@@ -2244,13 +2247,13 @@
    "test_loc": 17627
   },
   "test": {
-   "async_false_share": 0.763,
+   "async_false_share": 0.755,
    "clippy_warnings": 0,
-   "comment_density": 0.149,
-   "comment_lines": 4204,
+   "comment_density": 0.148,
+   "comment_lines": 4235,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 2879,
+   "doc_lines": 2920,
    "duplicate_pairs": 78,
    "duplicate_pairs_list": [
     "lib/flezha/application.ex:158-163 <-> test/flezha/boot/application_children_test.exs:40-45 (52 tokens)",
@@ -2296,12 +2299,12 @@
     "test/flezha/runner/stream_channel_test.exs:319-324 <-> test/flezha/service/hub_manager_test.exs:195-200 (43 tokens)",
     "test/flezha/runner/stream_channel_test.exs:321-324 <-> test/helpers/installer_case.ex:109-112 (41 tokens)",
     "test/flezha/sdk/dispatch_test.exs:19-34 <-> test/flezha/sdk/transport_modes_test.exs:326-341 (69 tokens)",
-    "test/flezha/sdk/dispatch_test.exs:28-41 <-> test/flezha/sdk/sdk_unit_test.exs:17-30 (50 tokens)",
+    "test/flezha/sdk/dispatch_test.exs:28-41 <-> test/flezha/sdk/sdk_unit_test.exs:21-34 (50 tokens)",
     "test/flezha/state/entity_state_test.exs:85-90 <-> test/flezha/state/wal_writer_test.exs:225-230 (64 tokens)",
     "test/flezha/state/gap_recovery_test.exs:71-84 <-> test/flezha/state/runner_restart_realign_test.exs:283-296 (122 tokens)",
     "test/flezha/state/runner_restart_realign_test.exs:38-44 <-> test/flezha/state/watchdog_test.exs:28-34 (40 tokens)",
     "test/flezha/state/wal_rewind_test.exs:52-60 <-> test/helpers/outbox_case.ex:85-93 (40 tokens)",
-    "test/helpers/node_test_helper.ex:482-491 <-> test/system/control_plane_wedge_e2e_test.exs:351-359 (44 tokens)",
+    "test/helpers/node_test_helper.ex:483-492 <-> test/system/control_plane_wedge_e2e_test.exs:351-359 (44 tokens)",
     "test/load/credit_soak_test.exs:129-133 <-> test/system/credit_flow_e2e_test.exs:96-100 (50 tokens)",
     "test/load/credit_soak_test.exs:131-136 <-> test/system/dynamic_entity_e2e_test.exs:153-159 (58 tokens)",
     "test/load/credit_soak_test.exs:88-114 <-> test/system/credit_flow_e2e_test.exs:49-77 (96 tokens)",
@@ -2332,7 +2335,7 @@
     "test/system/effectively_once_postgres_e2e_test.exs:18-26 <-> test/system/remote_durability_e2e_test.exs:32-40 (58 tokens)",
     "test/system/entity_timers_e2e_test.exs:160-173 <-> test/system/schema_evolution_e2e_test.exs:248-261 (57 tokens)"
    ],
-   "files": 232,
+   "files": 234,
    "files_over_800": 0,
    "files_over_800_list": [],
    "functions_over_50": 0,
@@ -2361,17 +2364,17 @@
     "test/helpers/node_test_helper.ex": 1,
     "test/system/dlq_e2e_test.exs": 1
    },
-   "test_files": 198,
-   "test_loc": 40382
+   "test_files": 200,
+   "test_loc": 41121
   },
   "test/apps": {
    "async_false_share": null,
    "clippy_warnings": 0,
    "comment_density": 0.179,
-   "comment_lines": 1133,
+   "comment_lines": 1141,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 1109,
+   "doc_lines": 1111,
    "duplicate_pairs": 145,
    "duplicate_pairs_list": [
     "lib/mix/tasks/bench/elixir_factories.ex:153-159 <-> test/apps/elixir_runner/lib/factories.ex:585-592 (66 tokens)",
@@ -2546,7 +2549,7 @@
     "test/apps/rust_runner/src/workflow.rs": 1
    },
    "test_files": 0,
-   "test_loc": 10255
+   "test_loc": 10294
   }
  },
  "bench": {
@@ -2629,7 +2632,7 @@
   "governor": "powersave",
   "hostname": "moon"
  },
- "head": "97aa1370",
+ "head": "418457b2",
  "repo": {
   "clippy_warnings": 0,
   "credo_warnings": 153,

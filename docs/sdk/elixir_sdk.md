@@ -77,15 +77,22 @@ a new key's input is dropped and counted, an existing key's is served),
 three — `apply_change/2` (declares a changeful, persisted procedure; see
 [Persistence](#persistence)), `compact_after_bytes/0` (8 MiB) and `state_from_json/1` — and
 the schema four — `schema_version/0` (1), `min_readable_schema_version/0` (the version),
-`migrate_state/2`, `migrate_change/2` (see [Schema evolution](#schema-evolution)).
+`migrate_state/2`, `migrate_change/2` (see [Schema evolution](#schema-evolution)) — and the
+timer four — `clock/0` (`:wall`), `event_time_of/1`, `on_timer/4`, `max_timers_per_entity/0`
+(10 000; see [Timers and clocks](#timers-and-clocks)).
 `StreamOperative` takes an optional `persistence_enabled/0` (default `true`).
 `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers
 `{:error, {:reserved_metadata_key, k}}`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
 output's natural key on a sink declared `keyed/1`; on a node with no keyed sink they answer
 `{:error, {:key_not_allowed_on_non_keyed_channel, channel}}`, and a keyless emit from a
 Single Entity on a keyed sink answers `{:error, {:key_required_on_keyed_channel, channel}}`),
-`apply/3` (fold a change and record it), `now/1` (wall ms, once per invocation),
-`entity_key/1`.
+`apply/3` (fold a change and record it), `now/1` (the declared clock's value, once per
+invocation; the scheduled timestamp inside `on_timer/4`), `entity_key/1`, and the timer four
+— `timer_after/2` (milliseconds after `now/1`), `timer_at_event_time/2`,
+`cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
+`{:ok, at}`, the absolute timestamp a cancel takes, or
+`{:error, {:event_time_timer_without_event_time_clock, procedure, clock}}` /
+`{:error, {:timer_cap_exceeded, procedure, max}}`.
 
 Entry-input idle rides the handle: `Flezha.SDK.last_entry_delivery(handle, channel)` answers
 when an entry channel last received a frame (`nil` before its first — the handle is free, so
@@ -180,6 +187,60 @@ keys are remembered (1 024 at most), so a live read of one answers `entity_evict
 than `entity_not_found`. Without a TTL nothing is swept and the Entities live for the
 operative's lifetime.
 
+## Timers and clocks
+
+`clock/0` names what `Ctx.now/1` serves, read once per invocation: `:wall` (the epoch
+millisecond at dispatch entry, the default), `:logical` (the Entity's durable change seq —
+`terminal + 1` after a restore — refused as `UnservableClock` on a procedure without
+`apply_change/2`) or `:event_time` (what `event_time_of/1` extracts from the input; refused
+as `EventTimeClockWithoutExtractor` without it). Inside `on_timer/4`, `now/1` is the
+scheduled timestamp under every clock, so a chained `timer_after/2` schedules off the timer
+that woke it and a replay registers the same instant.
+
+A Procedure registers a deadline from `run/3` or from a firing and handles it in
+`on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers
+are one set per kind, bounded by `max_timers_per_entity/0`: a duplicate registration is a
+no-op, a cancel of nothing answers `false`. An invocation's registrations and cancellations
+accumulate on a session over a copy of the set — opened on the first timer call, so an
+invocation that registers nothing pays nothing — and commit only when it completes; a
+firing's session opens on its own removal, committed even when the firing parks, so a poison
+timer parks once. A firing on a Procedure that exports no `on_timer/4` parks non-retryably
+naming the procedure and the callback.
+
+**Which kind fires when.** A **processing-time** timer (`timer_after/2`) fires when the
+wall clock reaches it: the Entity process arms one `Process.send_after/3` per pending
+timer — the BEAM's own timer service is the wake list no thread of this SDK owns — and the
+due message folds every timer due by then onto the Entity's own input queue, ascending, so
+the drain that serialises inputs serialises firings, whatever order two same-millisecond
+messages arrive in; a due message that finds no room comes back 5 ms later, never drops; a
+firing whose timer has left the pending set fires nothing. An **event-time** timer
+(`timer_at_event_time/2`, `:event_time` clock only) fires at admission: when an input's
+`event_time_of/1` advances the Entity's high-water past it, every due timer is queued ahead
+of that input, ascending — an Entity nothing arrives at never fires one. The order on the
+wire is the same for both: the dispatch's change records, then its timer ops, then — once
+the timers are armed and counted — its outputs.
+
+**Durability.** The committed ops ship after the dispatch's change records as one
+`format_id = 3` record (the postcard `Vec<TimerOp>` every SDK writes, stored by the
+controller as any change record), so the restore fold rebuilds the pending set from the
+same log the state comes back through and re-arms it, overdue timers firing at once,
+ascending; a compaction re-states the whole set above the snapshot's seq; the slot a
+replacement seeds from carries it. A Procedure without `apply_change/2` holds its timers in
+memory only — the shared core's host path buffers timer ops only for a slot with a flusher
+entry, and this SDK ships nothing for a `NoChange` procedure. Eviction discards an Entity's
+timers with its state. A Single or Static Entity that crashes outside the ladder is minted
+again at once, as it was at start, so the timers its slot holds are re-armed before any
+input; it cannot loop, because everything a Procedure raises rides the ladder and parks —
+only a crash outside it re-mints, and a fresh Entity dispatches nothing until an input or a
+due timer reaches it.
+
+**Observability.** Registrations, firings, cancellations and refusals are one
+`[:flezha, :sdk, :timers]` telemetry event carrying `event:` and `procedure:` — this SDK's
+per-Procedure counters. The heartbeat carries `timers_armed` (the processing-time timers
+armed on the BEAM's timer service, released on firing, disarm and the Entity's end; an
+Entity killed untrappably releases nothing, so the gauge over-states by its count until the
+runner restarts) and `timers_fired`.
+
 ## Persistence
 
 A procedure that exports `apply_change(state, change)` is changeful and persisted; one
@@ -266,8 +327,8 @@ working example (path dependency, runner-only, stdin-EOF watcher).
 The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)'s
 `deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
 the conformance gate ([`conformance.md`](conformance.md)). In prose: the effectively-once
-tier and everything on it (effect records, checkpoints, `ctx.stable_id`); correction windows
-and the clock kinds; entity timers; the workflow kind (`kind: workflow` on `AddOperative` is
+tier and everything on it (effect records, checkpoints, `ctx.stable_id`); correction windows;
+the workflow kind (`kind: workflow` on `AddOperative` is
 refused: `workflow kind is not supported by the Elixir stream SDK`); `merge`, `route_latest`,
 `branch`, `codec`. A builder/ctx call into a deferred surface fails registration loudly,
 naming the operative module.
@@ -276,7 +337,7 @@ One more, outside the vocabulary because no capability names it: the hex package
 (`package-elixir-sdk`).
 
 Each deferred capability's follow-up re-expresses the kernel's rules
-(`StagedInterval::fold`, the timer set, the replay slice) in Elixir under the "one change,
+(`StagedInterval::fold`, the replay slice) in Elixir under the "one change,
 every SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`, as its
 persistence already shows.
 

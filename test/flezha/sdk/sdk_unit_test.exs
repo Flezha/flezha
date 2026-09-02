@@ -3,6 +3,10 @@ defmodule Flezha.SDK.UnitTest do
 
   alias Flezha.SDK.{Channels, Codec, Ctx, KeyGroup, PersistentId, Topology}
 
+  # A ctx built without a procedure has no name to refuse with; the tests
+  # that build one declare the policy themselves.
+  @timer_policy %{procedure: "unit", cap: 10_000, clock: :wall}
+
   # --- fixtures ---
 
   defmodule EchoProc do
@@ -234,6 +238,48 @@ defmodule Flezha.SDK.UnitTest do
     assert :Cycle in issues(Cyc)
   end
 
+  test "UnservableClock, EventTimeClockWithoutExtractor, UnknownClock — a clock the runtime cannot serve" do
+    defmodule LogicalNoChange do
+      @behaviour Flezha.SDK.Procedure
+      def name, do: "logical_no_change"
+      def clock, do: :logical
+      def init_state(_), do: nil
+      def run(_i, s, _ctx), do: {:ok, s}
+    end
+
+    defmodule EventTimeNoExtractor do
+      @behaviour Flezha.SDK.Procedure
+      def name, do: "event_time_no_extractor"
+      def clock, do: :event_time
+      def init_state(_), do: nil
+      def run(_i, s, _ctx), do: {:ok, s}
+    end
+
+    defmodule Sundial do
+      @behaviour Flezha.SDK.Procedure
+      def name, do: "sundial"
+      def clock, do: :sundial
+      def init_state(_), do: nil
+      def run(_i, s, _ctx), do: {:ok, s}
+    end
+
+    defmodule ClockOp do
+      def factory_id, do: "clock_op"
+
+      def channels(c) do
+        c |> Channels.input("a") |> Channels.into(LogicalNoChange)
+        c |> Channels.input("b") |> Channels.into(EventTimeNoExtractor)
+        c |> Channels.input("c") |> Channels.into(Sundial)
+      end
+    end
+
+    assert {:error, {:invalid_topology, issues}} = Topology.build(ClockOp)
+    assert {:UnservableClock, inspect(LogicalNoChange)} in issues
+    assert {:EventTimeClockWithoutExtractor, inspect(EventTimeNoExtractor)} in issues
+    assert {:UnknownClock, inspect(Sundial)} in issues
+    assert length(issues) == 3
+  end
+
   test "KeyedInterProcedureChannel and KeyedOnEntry — keyed/1 needs a plugin sink" do
     defmodule KeyedEdge do
       def factory_id, do: "keyed_edge"
@@ -259,13 +305,20 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do
-    single = Ctx.new(nil, nil, 0, channel: "c", keyed_sink?: true, key_required?: true)
+    single =
+      Ctx.new(nil, nil, 0,
+        channel: "c",
+        keyed_sink?: true,
+        key_required?: true,
+        timer_policy: @timer_policy
+      )
+
     assert {:error, {:key_required_on_keyed_channel, "c"}} = Ctx.emit(single, :a)
     assert {:error, {:key_required_on_keyed_channel, "c"}} = Ctx.emit_with_meta(single, :a, %{})
     assert :ok = Ctx.emit_keyed(single, "k", :a)
     assert Ctx.take_emits(single) == [{:a, %{}, "k"}]
 
-    plain = Ctx.new(nil, "k", 0, channel: "p")
+    plain = Ctx.new(nil, "k", 0, channel: "p", timer_policy: @timer_policy)
     assert {:error, {:key_not_allowed_on_non_keyed_channel, "p"}} = Ctx.emit_keyed(plain, "k", :a)
     assert :ok = Ctx.emit(plain, :a)
     assert Ctx.take_emits(plain) == [{:a, %{}, nil}]
@@ -284,7 +337,7 @@ defmodule Flezha.SDK.UnitTest do
   # --- Ctx ---
 
   test "emits accumulate and flush; reserved flz. keys refuse" do
-    ctx = Ctx.new(nil, "k", 123)
+    ctx = Ctx.new(nil, "k", 123, timer_policy: @timer_policy)
     assert Ctx.now(ctx) == 123
     assert Ctx.entity_key(ctx) == "k"
     assert :ok = Ctx.emit(ctx, :a)

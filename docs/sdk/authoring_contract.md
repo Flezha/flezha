@@ -364,9 +364,11 @@ exists to catch is structurally unrepresentable for sugared procedures.
 
 A Procedure can act because time passed, not only because an input arrived:
 `ctx.timer_at_event_time(ts)` / `ctx.timer_after(d)` (Rust) —
-`ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) — register a
-per-Entity deadline, and `Procedure::on_timer` / `Procedure.onTimer` handles
-the firing with the same `StateHandle` and `ProcedureCtx` `run` gets.
+`ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) —
+`Ctx.timer_at_event_time(ctx, ts)` / `Ctx.timer_after(ctx, ms)` (Elixir) —
+register a per-Entity deadline, and `Procedure::on_timer` /
+`Procedure.onTimer` / `on_timer/4` handles the firing with the same
+`StateHandle` and `ProcedureCtx` `run` gets.
 Registration returns the absolute timestamp it is scheduled at; that value is
 the handle a cancellation takes.
 
@@ -383,9 +385,11 @@ Three rules make the callback part of the determinism contract:
    not happen twice; a timer is internal state, and skipping it on replay
    would rebuild a pending set the live run never had.
 
-`on_timer`'s default panics (Rust) / throws (Java) naming the Procedure:
-registration is a runtime call, so a Procedure that registers a timer without
-handling it cannot be refused at build time. Full contract, including which
+`on_timer`'s default panics (Rust) / throws (Java) naming the Procedure, and
+a firing on an Elixir Procedure without `on_timer/4` parks non-retryably
+naming the Procedure and the callback: registration is a runtime call, so a
+Procedure that registers a timer without handling it cannot be refused at
+build time. Full contract, including which
 kind to reach for, in [`entity_timers.md`](entity_timers.md).
 
 ## 4. Entity mode is an explicit opt-in, never inferred

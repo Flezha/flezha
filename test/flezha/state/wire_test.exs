@@ -122,6 +122,20 @@ defmodule Flezha.State.WireTest do
       assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()
     end
 
+    # The bytes `flz_core/src/timer.rs` pins for the same two ops: what a
+    # `format_id = 3` timer-ops record carries, whichever SDK wrote it.
+    test "encode_timer_ops/1 pins the SDKs' TimerOp postcard bytes (cross-language fixture)" do
+      ops = [
+        %{kind: :processing_time, scheduled_at: 31_000, register: true},
+        %{kind: :event_time, scheduled_at: 100, register: false}
+      ]
+
+      bytes = <<2, 1, 0x98, 0xF2, 0x01, 1, 0, 0x64, 0>>
+      assert Wire.encode_timer_ops(ops) == bytes
+      assert {:ok, ^ops} = Wire.decode_timer_ops(bytes)
+      assert {:error, :trailing_bytes} = Wire.decode_timer_ops(bytes <> <<9>>)
+    end
+
     test "round-trips a dead-letter park entry (atomic tier-on park)" do
       body = %{
         changes: [],

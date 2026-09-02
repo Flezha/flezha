@@ -6,7 +6,7 @@ TBD - created by archiving change entity-timers. Update Purpose after archive.
 ### Requirement: A Procedure SHALL be able to register per-Entity timers of two kinds
 
 `ProcedureCtx` SHALL offer `timer_at_event_time(ts_ms)` and `timer_after(duration)`
-(Rust) / `timerAtEventTime(long)` and `timerAfter(Duration)` (Java), each returning
+(Rust) / `timerAtEventTime(long)` and `timerAfter(Duration)` (Java) / `Flezha.SDK.Ctx.timer_at_event_time/2` and `timer_after/2` taking milliseconds and answering `{:ok, at}` (Elixir), each returning
 the absolute millisecond timestamp the timer is scheduled at, and each SHALL offer a
 cancellation taking that timestamp. Registering the same kind and timestamp twice on
 one Entity SHALL be idempotent — pending timers are a set, not a queue. Timers SHALL
@@ -33,6 +33,10 @@ Entity.
 - **WHEN** Entity `a` registers a timer at 31000 and Entity `b` of the same Procedure does not
 - **THEN** `on_timer` SHALL be invoked for `a` only, with `a`'s state
 
+#### Scenario: The Elixir ctx registers the same absolute timestamp and cancels by it
+- **WHEN** an Elixir Procedure calls `Ctx.timer_after(ctx, 30_000)` while `Ctx.now(ctx)` is 1000, calls it again, and then calls `Ctx.cancel_processing_time_timer(ctx, 31000)`
+- **THEN** both registrations answer `{:ok, 31000}` and leave exactly one processing-time timer pending at 31000, and the cancellation answers `true` and leaves none
+
 ### Requirement: A fired timer SHALL invoke `on_timer` with the scheduled timestamp
 
 `Procedure` SHALL gain `on_timer(fired_at, kind, state, ctx)` receiving the same
@@ -40,7 +44,11 @@ Entity.
 register further timers. `fired_at` SHALL be the timestamp the timer was **scheduled
 at**, never the wall-clock time at which it actually fired. The default
 implementation SHALL panic with a message naming the Procedure, because registering
-a timer without handling it is an authoring error not detectable at build time.
+a timer without handling it is an authoring error not detectable at build time; in
+the Elixir SDK, whose Procedure is a behaviour with optional callbacks, a firing on a
+Procedure that exports no `on_timer/4` SHALL park non-retryably with a message naming
+the Procedure and the callback — the end state the panic reaches through the retry
+ladder, without the retries.
 
 #### Scenario: A late-firing processing-time timer reports its scheduled time
 
@@ -61,6 +69,10 @@ a timer without handling it is an authoring error not detectable at build time.
 
 - **WHEN** a Procedure registers a timer and does not override `on_timer`
 - **THEN** firing SHALL panic with a message naming the Procedure and directing the author to implement `on_timer`
+
+#### Scenario: An Elixir Procedure without on_timer/4 parks the firing by name
+- **WHEN** an Elixir Procedure registers a timer and exports no `on_timer/4`
+- **THEN** the firing parks on its first attempt with a message naming the Procedure and `on_timer/4`, the fired timer's removal is committed, and the Entity is held until the park's ack exactly as for a poison input
 
 ### Requirement: Event-time timers SHALL fire on the Entity's event-time high-water
 
@@ -92,7 +104,14 @@ event-time timer.
 A processing-time timer SHALL be tracked on the poll core's shared
 deferred-wake list — one list per process, serviced by threads already waiting
 in `poll` — and, on expiry, SHALL be enqueued onto the target Entity's existing
-mailbox. No per-Operative timer thread SHALL exist. `on_timer` SHALL therefore
+mailbox. No per-Operative timer thread SHALL exist. In the Elixir SDK, which is not a poll
+host, the BEAM's own timer service SHALL be that list: the Entity process arms one
+`Process.send_after/3` per pending processing-time timer and, on a due message,
+enqueues every timer due at or below the later of the scheduled and the current
+time onto its own input queue in ascending order, so the Entity's single drain
+serialises firings against `run/3` as it serialises inputs; a due message that
+finds no room re-arms itself 5 ms later, never drops; a firing whose timer is no
+longer pending fires nothing. `on_timer` SHALL therefore
 never run concurrently with `run` on the same Entity, and firing SHALL obey the
 same ordering and back-pressure the mailbox already applies to inputs. Due
 entries SHALL fire in ascending scheduled order, ties broken by Entity
@@ -121,6 +140,10 @@ identity.
   entity key, and scheduled time, and one instance cancels its timer
 - **THEN** only that instance's timer SHALL be disarmed and the other SHALL
   fire on schedule
+
+#### Scenario: An Elixir Entity fires from the BEAM's timer service through its own queue
+- **WHEN** an Elixir Entity holds processing-time timers at 100 and 200 that are both overdue after a restore, with one input queued ahead of the due message and one arriving after it
+- **THEN** `on_timer` runs for 100 then 200 after the first input and before the second, through the Entity's own queue and drain
 
 ### Requirement: Pending timers SHALL be durable state, requiring no new store
 

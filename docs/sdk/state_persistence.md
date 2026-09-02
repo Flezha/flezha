@@ -149,7 +149,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 |---|---|---|---|---|
 | Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Procedure::SCHEMA_VERSION` | `Procedure.schemaVersion()` | `schema_version/0`, with `min_readable_schema_version/0` the floor | 1 |
 | Per-Entity WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Procedures in `AddOperative` metadata (`compact_after_bytes`) only when it differs from the default | `Procedure::compact_after_bytes()` | `Procedure.compactAfterBytes()` | `compact_after_bytes/0` | 8 MiB |
-| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Procedure::max_timers_per_entity()` | `Procedure.maxTimersPerEntity()` | timers are deferred | 10 000 |
+| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Procedure::max_timers_per_entity()` | `Procedure.maxTimersPerEntity()` | `max_timers_per_entity/0` | 10 000 |
 | Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | none — records ship at dispatch end | 5 ms |
 
 ## Rust SDK

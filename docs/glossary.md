@@ -75,7 +75,8 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   stored: the single `flz operative list` row and `info`'s coverage check derive from the members.
 - **Timer (per-entity)** — a deadline a procedure registers on its own entity. An **event-time**
   timer fires when the entity's event-time high-water crosses it, a **processing-time** timer from
-  the deferred-wake list. `on_timer` receives the scheduled timestamp; the pending set is folded
+  the deferred-wake list (the BEAM's timer service in the Elixir SDK). `on_timer` receives the
+  scheduled timestamp; the pending set is folded
   state, so a crash-resume owes exactly the timers it owed. See [`sdk/entity_timers.md`](sdk/entity_timers.md).
 - **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **extension
   points** on a host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed
