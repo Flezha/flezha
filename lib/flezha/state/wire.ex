@@ -464,6 +464,15 @@ defmodule Flezha.State.Wire do
   end
 
   @doc """
+  Encode a postcard `CorrectionRequestBody`: the mirror of
+  `decode_correction_request/1`, one varint and nothing else.
+  """
+  @spec encode_correction_request(non_neg_integer()) :: binary()
+  def encode_correction_request(target_event_time)
+      when is_integer(target_event_time) and target_event_time >= 0,
+      do: encode_varint(target_event_time)
+
+  @doc """
   Decode a postcard `CorrectionRequestBody` (the body of a `correction_request`
   frame): a single `target_event_time: u64`. The Entity identity rides the
   frame envelope, so the body carries nothing else — the controller re-reads the

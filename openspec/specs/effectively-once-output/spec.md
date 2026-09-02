@@ -257,7 +257,7 @@ The reason is that an edge output is the one output kind with no durable copy: `
 
 With the ordering correct, at-least-once edge delivery composes into effectively-once without a second mechanism: the edge payload carries the producer's input offset, the consumer's own effect record acknowledges that offset, and the consumer's restored floor skips a re-emitted duplicate. A fan-out invocation SHALL hold its record until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all consumers and each one's own floor decides whether it is a duplicate.
 
-This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it.
+This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it. The Elixir SDK, whose Entity ships its own records and whose router is one process that blocks on a full consumer, holds an invocation's effect record in a FIFO until its router reports every edge push admitted and ships the FIFO in seq order, never gating its own queue — a gated Entity and a router blocked on it would wait on each other; a replacement after an untrappable kill loses the held records, whose offsets were never durable, and the controller's re-forward reproduces them.
 
 #### Scenario: A crash between the fold and the delivery loses nothing
 
@@ -273,4 +273,8 @@ This requirement binds the host (C-ABI) resolution path, where an activation's o
 
 - **WHEN** an invocation emits to three consumers, two pushes land, and the runner dies before the third
 - **THEN** the invocation's offset SHALL NOT be durable, and after restart all three consumers SHALL end in the state they would have reached had the invocation completed once
+
+#### Scenario: The Elixir Entity holds its record until the edge is admitted
+- **WHEN** a tier-mode Elixir Procedure emits towards a consumer whose mailbox of one is full and whose dispatch is held
+- **THEN** the producer's effect record for that input is not on the stream while the push waits, and ships as soon as the consumer admits it
 

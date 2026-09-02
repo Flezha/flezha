@@ -8,6 +8,8 @@
 #   bench_echo            — do_nothing with a declared Block on the entry mailbox
 #   bench_keyed           — "key:value" upsert, emits "key=value" (Single Entity), persisted
 #   bench_keyed_nopersist — the same upsert with the class's persistence off
+#   tier_store            — the same upsert under the effectively-once tier
+#   bench_checkpoint      — the tier acknowledging on a declared input cadence
 # Lives beside the bench task (not under test/) because the in-process
 # `--transport native` bench needs it in the controller's own build; the
 # standalone test/apps/elixir_runner registers the same modules from the dep.
@@ -219,19 +221,25 @@ defmodule Flezha.Bench.TierStoreProc do
   # Emits `key=value` under `key`, as the reference does: the bench sinks are
   # keyed, so the durable path pays for its stamps here as it does there.
   def run(input, values, ctx) do
-    {key, value} =
-      case String.split(input, ":", parts: 2) do
-        [key, value] -> {key, value}
-        [key] -> {key, ""}
-      end
-
-    if value == "poison" do
-      {:error, "poison value"}
-    else
-      values = Ctx.apply(ctx, values, {:set, key, value})
-      Ctx.emit_keyed(ctx, key, "#{key}=#{value}")
-      {:ok, values}
+    case split(input) do
+      {_key, "poison"} -> {:error, "poison value"}
+      {key, value} -> upsert(key, value, values, ctx)
     end
+  end
+
+  # The lenient `key:value` split and the upsert, shared with the checkpoint
+  # postures over this same store.
+  def split(input) do
+    case String.split(input, ":", parts: 2) do
+      [key, value] -> {key, value}
+      [key] -> {key, ""}
+    end
+  end
+
+  def upsert(key, value, values, ctx) do
+    values = Ctx.apply(ctx, values, {:set, key, value})
+    Ctx.emit_keyed(ctx, key, "#{key}=#{value}")
+    {:ok, values}
   end
 end
 
@@ -264,6 +272,85 @@ defmodule Flezha.Bench.KeyedNoPersist do
   defdelegate channels(c), to: Flezha.Bench.BenchKeyed
 end
 
+defmodule Flezha.Bench.TierStore do
+  @moduledoc false
+  @behaviour Flezha.SDK.StreamOperative
+  def factory_id, do: "tier_store"
+
+  # `bench_keyed` under the tier: the durable posture the round-trip bench
+  # measures with `--durability on`, and the conformance fixture the tier's
+  # crash and dead-letter scenarios drive. The 300 ms backoff base keeps the
+  # min-watermark freeze observable while the ladder runs; DropNothing because
+  # a durable-input-log operative that shed at its mailbox would hold the
+  # min-watermark on the shed offset for ever.
+  def channels(c) do
+    import Flezha.SDK.Channels
+
+    c
+    |> effectively_once()
+    |> input("input")
+    |> on_full(:drop_nothing)
+    |> retry_backoff_ms(300)
+    |> into(Flezha.Bench.TierStoreProc)
+    |> named("sink")
+    |> keyed()
+    |> sink("tier_sink")
+  end
+end
+
+defmodule Flezha.Bench.BenchCheckpointProc do
+  @moduledoc false
+  @behaviour Flezha.SDK.Procedure
+
+  # The same upsert under its own procedure name, so the declaration a
+  # checkpoint class registers is distinguishable from `tier_store`'s.
+  def name, do: "bench_checkpoint_procedure"
+  defdelegate init_state(key), to: Flezha.Bench.TierStoreProc
+  defdelegate apply_change(state, change), to: Flezha.Bench.TierStoreProc
+  defdelegate run(input, state, ctx), to: Flezha.Bench.TierStoreProc
+end
+
+defmodule Flezha.Bench.BenchCheckpoint do
+  @moduledoc false
+  @behaviour Flezha.SDK.StreamOperative
+  def factory_id, do: "bench_checkpoint"
+
+  # `tier_store` driven by a declared cadence instead of a `commit:` input:
+  # the amortised posture, acknowledging every FLEZHA_BENCH_CHECKPOINT_EVERY
+  # inputs per Entity. FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint
+  # additionally holds the interval's outputs until it closes.
+  def channels(c) do
+    import Flezha.SDK.Channels
+
+    c =
+      c
+      |> effectively_once()
+      |> checkpoint_every(env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500))
+
+    c =
+      if System.get_env("FLEZHA_BENCH_CHECKPOINT_OUTPUTS") == "at_checkpoint",
+        do: outputs_at_checkpoint(c, env_int("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50)),
+        else: c
+
+    c
+    |> input("input")
+    |> on_full(:drop_nothing)
+    |> into(Flezha.Bench.BenchCheckpointProc)
+    |> named("sink")
+    |> keyed()
+    |> sink("tier_sink")
+  end
+
+  # The reference's lenient parse: anything that is not an integer is the
+  # default.
+  defp env_int(key, default) do
+    case Integer.parse(System.get_env(key, "")) do
+      {n, ""} -> n
+      _ -> default
+    end
+  end
+end
+
 defmodule Mix.Tasks.Bench.ElixirFactories do
   @moduledoc "Registry of the Elixir bench factory operatives (see this file's header)."
 
@@ -275,7 +362,9 @@ defmodule Mix.Tasks.Bench.ElixirFactories do
       Flezha.Bench.DynamicEntity,
       Flezha.Bench.BenchEcho,
       Flezha.Bench.BenchKeyed,
-      Flezha.Bench.KeyedNoPersist
+      Flezha.Bench.KeyedNoPersist,
+      Flezha.Bench.TierStore,
+      Flezha.Bench.BenchCheckpoint
     ]
   end
 end

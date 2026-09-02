@@ -308,7 +308,9 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :keyed_channels,
     :dynamic_entity,
     :schema_evolution,
-    :entity_timers
+    :entity_timers,
+    :effectively_once,
+    :correction_window
   ]
 
   def capabilities, do: @capabilities

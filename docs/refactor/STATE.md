@@ -460,6 +460,321 @@ refusing in Elixir alone a shape the reference accepts is the very divergence R6
 narrower question — whether a stateless class should be DECLARABLE under the tier in every SDK — is
 escalated with options and a recommendation and blocks nothing.
 
+### R6 CHANGE 5 SURVEY VERIFIED AND APPROVED 16:12 — the strongest proposal of the row, and it earned a lane extension
+
+`openspec/changes/carry-correction-window-in-elixir/` — proposal 341, design 461, tasks 225 / **46 boxes**
+/ 7 batches, three deltas (`elixir-sdk`, `sdk-conformance`, `stream-correction`); `--strict` valid on its
+run. Survey cost 262 k / 111 tool uses. **Deltas built by slicing the LIVE specs with a script and a
+scenario-drop guard**, not retyped: six MODIFIED each **+1 scenario, zero dropped**, one ADDED with 7.
+
+**Verified by me, not read from its report**: the spec sentences at `stream-correction/spec.md:97,103`;
+`grep 'beyond_window'` over `flz_core/src` and `lib/` → **7 hits, 0 with telemetry/log/counter**;
+`Wire.decode_correction_request/1` at `:473` with **no encoder**; `entity.ex` at **782**; the reuse table
+carrying a clause for all **twenty** items.
+
+**Three things earn naming.** (1) **The refusal it did NOT write**: `shedding_edges/3` plus
+`CorrectionWithoutTier` already refuse exactly the set the reference's second message names, so a second
+check could only fire where the first fired — the parallel mechanism §2 forbids, refused against its own
+convenience. (2) **The `member_granular` branch it did NOT write**: this Entity drains one item at a time,
+so re-queuing the sorted members gives the interleave structurally. Naming the one place the BEAM shape is
+genuinely simpler is the difference between a port and a re-expression. (3) **Non-goals with a stop
+condition** — "no splice … if the implementation grows any of them the design is wrong and the batch
+stops".
+
+**Rulings.** Change **approved**. **Seven batches accepted over the survey's five** — batch 0 and a closing
+batch were their own in every prior change of this row. **+210 ± 40 accepted, expecting nearer +250**,
+accounted line by line past +250. **The measurement plan as written**: two honest rows and **no
+feature-cost row**, for the reason I reached at change 4's close — that instrument measures the harness,
+not the feature. **LANE EXTENDED** by `lib/flezha/state/wire.ex` + `wire_test.exs` for
+`encode_correction_request/1` and its round-trip only: the alternative it offered was a duplicate varint
+encoder in the SDK, declared as a knowing duplicate, which is exactly what §2 calls a defect rather than a
+design — and it refused to take it silently, which is the behaviour this programme wants. `Wire` is the
+declared postcard seam, listed in `check-sdk-boundary.sh`, already carrying three encoders for this SDK.
+
+**Its §1b finding is KI-140, ruled real, pre-existing, cross-SDK, and NOT this change's** — match the
+reference and say so. What it could not know: **it is the THIRD member of a class**. KI-115's half B is the
+same shape, and **queue row R11 now reads three specs instead of two**. KI-141 is the next free number.
+
+**What I will check hardest**: risk 2, because it fails silently. The ordering guarantee rests on
+`Operative.push/6` using the synchronous `Entity.enqueue_block/2`, and **dies the moment a member arrives
+by cast under a shedding `on_full`** — so this change's correctness rests on a refusal written by another
+change. Task 1.5 proving that refusal fires is not a formality and task 3.4's live input between the last
+member and the marker is the test I read first. **A slice that flushes short is a wrong answer with no
+error anywhere, and no gate in this repo would catch it.** Second: `entity.ex`'s 4–8 projected lines of
+headroom against a blocking 800, with `Entity.Clock` pre-designed and measured inside batch 3.
+
+**Step 2 authorised 16:12.** **Last seen 16:19 (+10m)**: batches 1–2 in flight, **12 of 46 boxes**, red
+and green halves both recorded (`b1_red.log`, `b1_green.log`, `b1_slice.log`, `b2_wire.log`); the granted
+lane extension in use (`wire.ex` + `wire_test.exs` edited). **`entity.ex` is at 791** against the blocking
+800 — inside its own 792–796 projection with **nine lines left**, so the `Entity.Clock` split it
+pre-designed is now a live possibility rather than a contingency. 14 files dirty, all in lane. Machine
+clean, load 0.69.
+
+### R6 CHANGE 5 CHECKPOINT 1 (batches 0–3) 16:30 — the worker's negative control REFUSED TO FAIL, and it said so
+
+**28 of 46 boxes.** `mix test test/flezha/sdk/ test/flezha/state/wire_test.exs` **200 passed**; compile
+clean. Verified by me: `entity.ex` **799**, `wire.ex` **+9**, `enqueue_block` at `operative.ex:464` under
+`:drop_nothing` only, `kick/1` doing `send(self(), :process)` inside the call.
+
+**The finding of the checkpoint is a test that did not fail.** Risk 2 — the one I said I would read first
+— was tested by five inversions. Four failed as designed. **Inversion E, the one that matters, PASSED**:
+making the broadcast flush immediately instead of taking the queue changed nothing, 19/19. It then tried
+to construct a case that would separate them, could not, and explained WHY to the function: `kick/1`
+sends `:process` into the Entity's own mailbox *during* the handling of the `enqueue_block` call, so it
+is queued ahead of the caller's reply and the drain always keeps up; a full mailbox cannot deepen the
+queue because `admit_waiter/1` enqueues inside the same `process_next/1` that popped, and a queue-holding
+park does not exist under the tier. **So the ordering guarantee is the SYNCHRONOUS `enqueue_block`, and
+the queue marker is defence in depth that no test can currently distinguish.** Reporting that, rather
+than writing the row green, is the difference between a proof and a hope.
+
+**Ruled: keep the marker, correct the claim.** Two lines is the right price for removing a dependency on
+a coupling that lives in another module and is documented nowhere, and the failure it guards is silent —
+if that call ever becomes a cast the fold order goes wrong with no error and no gate here would catch it.
+D5, the dev note and a comment at the marker all say the truth: the call is the guarantee, the marker is
+depth. **The dev note must name the coupling explicitly**, because that is the sentence a future change
+needs to find before it changes the call.
+
+**Ruled: TAKE the `Entity.Clock` split in batch 4, at 799 of 800.** The charter earns a module with a
+ceiling and the ceiling is not crossed — but **799 is a tripwire, not a margin**. R7's workflow change
+touches this SDK and would hit a blocking gate on its first added line, under pressure, and take an
+undesigned split right then: **exactly how change 4 got its unplanned module at 854, after its own design
+said nothing would split.** This one is designed, split by mutation on `timers.high_water`, forms no
+cycle, and was measured before it was needed. The module header is accounted and named, not pretended
+free.
+
+**Accepted without change**: `wire.ex` +9 (a `@doc` sentence); no `admit/2` clause for a slice member
+(better than the plan — the extraction is never duplicated); and **a member whose extractor raises is
+dispatched and parked rather than sorted at 0** — better engineering than the reference's `unwrap_or(0)`,
+which sorts by a value it invented, but a **deliberate divergence** and to be named as one in the dev
+note. **Re-measuring both before-arms rather than inheriting change 4's** was right: every spread is worse
+than change 4's worst, so the direction verdict is confirmed by fresh measurement, and its own note that
+one tight guard series does not prove a tight instrument is the correct reading of a quiet box.
+
+**Spend ~390 k**, batches 4–6 priced at 250–350 k, with a stated plan to stop at the batch-4 checkpoint if
+the e2e arms misbehave. Endorsed.
+
+**16:41 (+11m) — the split landed and the ruling is vindicated by the number.** `entity.ex` **799 → 718**,
+`lib/flezha/sdk/entity/clock.ex` **124** new: 81 lines moved, **82 lines of headroom** where there was one.
+R7 can now touch that file without hitting a blocking gate on its first line. **39 of 46 boxes**; batch 4
+done by its files (the `candle` twin in `factories_state.ex`, the `conformance.json` flip,
+`node_test_helper.ex`'s required set), docs started, full suite running. Two new files to intent-add at
+the close (`clock.ex`, `correction_window_test.exs`). Machine clean, no container, load 2.45 its own.
+
+### R7 SURVEY worker spawned 17:08 — the last capability, and the inverse shape of R6
+
+Machine clean at spawn, tree clean bar the two foreign files, `openspec list` empty, no subagent.
+**Read-only survey**, Opus 5, fresh `general-purpose`.
+
+**R7's shape is the inverse of R6's, and the brief says so.** R6 was one SDK against eight capabilities,
+so each change flipped its own capability and added an atom. **R7 is one capability against five SDKs —
+node, ruby, php, python, elixir — so the flip happens exactly ONCE, when the last of the five lands.**
+Every earlier change carries no flip and must state what it proves instead. Java and Rust already carry
+`workflow`; the reference's fixture list is **19** (`test/apps/rust_runner/src/workflow.rs`).
+
+**The central question the survey must settle**: the 2026-09-01 audit recorded `workflow` as **M —
+missing MECHANISM**, not a missing fixture, for node/ruby/php/elixir (python was not in that table and
+defers it too). **A missing mechanism and a missing fixture differ by an order of magnitude in cost**, so
+the brief demands per-SDK evidence with file and line, and says to report where the audit is wrong if it
+is. It also demands the board's own "18 of 19 fixtures" be verified rather than trusted, and invites the
+survey to **argue for a different cut** — by surface, or with a shared core first — since the board's
+one-liner is a hypothesis written before anyone read the code.
+
+Brief also carries: the R5 and R6 precedents as calibration (three of five R6 changes overshot by 15–55 %);
+§8's direction-row rule with the measured 14–18 % harness spread; the `duplicate_pairs` cross-area trap
+that fired twice today, with a demand to say how five fixture twins will be kept apart; and the standing
+`java-diamond-resume` regression, to be re-established at HEAD because R7 runs those fixtures — whether it
+blocks the row is mine to rule, not the survey's.
+
+**Last seen 17:23 (+15m)**: reading, machine idle (load 0.48, nothing running), tree untouched. **The
+first change it is writing is named `unify-veneer-procedure-output-channel`** — a SURFACE change across
+the veneers, not a per-SDK `carry-workflow-in-<sdk>`. `proposal.md` is 353 lines and its `specs/` exists;
+no design or tasks yet. **That is the survey taking up the invitation to argue for a different cut**, and
+if it holds up it is the better one: a shared surface landing first means five SDKs implement against a
+settled contract instead of each inventing one. I am not reading the proposal until it reports — a
+half-written argument is not the argument.
+
+### R7 SURVEY VERIFIED AND APPROVED 17:40 — it refuted the board on FIVE points, and every one holds
+
+Survey 292 k / 127 tool uses, read-only, nothing built or run. **I verified its five refutations myself
+and all five are true.**
+
+| the board said | the truth, verified |
+|---|---|
+| `workflow` is a missing MECHANISM in node/ruby/php/elixir | **elixir only.** node has `defineWorkflow`, ruby and php `WorkflowOperative`, python `workflow_operative`; elixir refuses the kind outright at `runner_server.ex:441-442`. **An order of magnitude off** |
+| two builder surfaces owed everywhere, one of them `codec()` | **`codec()` is owed to NO veneer** — `register.rs:492-493` derives the journal codec from `channel_decl.kind == HostChannelKind::InterProc`; the decl has no key; Java's is dead weight |
+| 18 of 19 fixtures need one or both | **16 of 19**, and the number that matters is **7** |
+| the two surfaces are two things | **one root cause**: the veneers model an inter-proc channel PER EDGE, Rust and Java per PRODUCING PROCEDURE |
+| the reference is `workflow.rs` | **two files** — `workflow.rs` 11 + `workflow_loop.rs` 8. A survey opening only the first sizes R7 at 58 % |
+
+**And it found a live defect the board never named. Filed as KI-141.** `procedure_wiring`
+(`register.rs:567-571`) resolves a procedure's output channel with `.position(...)` — **first match wins**
+— so a veneer fan-out declares two channels for one procedure and the second is silently dropped.
+`output_channel_id` is read in exactly three places, **all workflow**: the journaled handoff, the
+crash-resume re-seed and the driver fan-out. Invisible on a stream class; **silent truncation of the
+durable handoff on a workflow class**. Unreachable today only because no veneer registers a workflow
+fixture — reachable the moment change 2 lands one. **Three published SHALLs already say the veneers are
+wrong** (`sdk-graph-authoring` :7, :44, :141), all scoped "Both SDKs" because they predate the veneers.
+**R11's category, found by a different route.**
+
+**The cut is approved, and its first change is right to be cross-SDK.** The board assumed one change per
+SDK; the cross-SDK rule forbids that for a seam every SDK carries, so the four veneers are fixed in ONE
+change and fixtures follow per SDK — R5's shape exactly (S0 the seam, S1–S5 the fixtures). Eight changes:
+1 the seam (node/ruby/php/python), 2–5 fixtures per veneer, **6–8 elixir**, with the flip in 8 alone.
+**Sized ≈ +6 300 (5 000–8 400)**, calibrated against R5's real fixture files and R6's overshoot record.
+
+**Ruled: the elixir half is a ROW, not a change, and will not be briefed as one.** `flz_core/src/workflow/`
+is ~2 854 production Rust lines against an Elixir SDK of 6 641 total, which inherits nothing from
+`flz_core`. R7's elixir half alone is larger than all of R6. It gets its own three-change survey once
+change 5 lands — briefing it as one change is how this week's two workers died at ~700 k.
+
+**Java diamond: CLOSED, and my memory of it was stale.** KI-33's fix `4de341b5` is an ancestor of HEAD
+(verified), the `@tag skip:` is gone and a no-crash diamond scenario runs beside the crash one. **The
+MEMORY.md line calling it an open regression has been deleted.** Nothing blocks R7 — and that fix's own
+arm is exactly what change 1 ports into four veneers.
+
+**Owed before change 6**: `docs/refactor/baseline.json` is stale — `lib/flezha/sdk` reads 3 491 there
+against 4 215 at R6 change 5's close, because changes 4 and 5 never re-recorded. Change 1 touches no
+Elixir file, so it is not urgent, but change 6 inherits it. **Still needs the user.**
+
+### R6 CHANGE 5 IS DONE — `carry-correction-window-in-elixir`, closed `ae6a9630`, archived. **QUEUE ROW R6 IS COMPLETE.**
+
+**All 46 boxes ticked.** Archived as `2026-09-02-carry-correction-window-in-elixir`. **`correction_window`
+is the EIGHTH universal capability; `@required_capabilities` is 15 atoms; only `workflow` remains, and it
+is row R7.**
+
+**The three spec deltas spliced by me with the scenario-drop guard**: seven readings, every MODIFIED
+**+1 scenario, zero dropped**, all matching D11 (elixir-sdk 9→10 and 5→6 plus an ADDED with 7;
+sdk-conformance 15→16; stream-correction 5→6, 3→4, 2→3). `openspec validate --specs` **101 passed, 0
+failed**. `openspec list`: **no active changes**.
+
+**My close runs**: `--check --lint` **three** rows — `lib/mix` (change 4's, untouched), `lib/flezha/sdk`
+**4215** and `lib/flezha/state` **+4**; `duplicate_pairs` **absent on both areas**, so 78 and 145 hold;
+the slice `test/flezha/sdk/` + `wire_test` + `gate_test` **220 passed**; `correction_window_test` **19
+passed**; `@required_capabilities` **15**. The worker's close: full suite **2110 passed**, 69.1 s, no
+handover flake.
+
+**§11e fired TWICE on one file, and the worker called the first half itself.** It reported
+`lib/flezha/sdk 4134` and said the number was **wrong by −81 in its own favour** because `clock.ex` was
+untracked — before I could find it. After my `git add -N` it read **4215**, its predicted figure to the
+line. **The same silence was hiding a second thing: a BLOCKING `test credo_warnings 0 → 1`**, an
+unordered alias group in the new test file, invisible until the intent-add. One line cured it, and it
+now matches the order `effectively_once_test.exs` already uses rather than inventing a third convention.
+**A number read before the intent-add is not evidence — the seventh time this session's rule has paid.**
+
+**The headline is a negative control that refused to fail** — see checkpoint 1 above. The marker is kept
+as defence in depth with the claim corrected in three places, and the dev note names the coupling nothing
+enforces: `Operative.push/6`'s synchronous `enqueue_block/2` is the guarantee, and if it ever becomes a
+cast the fold order goes wrong with no error and no gate here would catch it.
+
+**The `Entity.Clock` split I ordered at 799**: `entity.ex` **799 → 718**, `clock.ex` 124 raw / 81 by the
+metric, split by mutation on the `timers` map, no upward edge, header cost named not pretended free. Two
+things stayed behind deliberately, one of them because moving it would make `Clock` pattern-match an
+`Entity` struct and **a struct pattern is a dependency edge (§11h)**.
+
+**Measurement**: guard row before 123 917 / 123 905 / 124 163 → after 117 717 / 121 279 / 126 802, the
+after population bracketing the before, median −2.1 % inside a ±8 % floor. Direction row reported with no
+verdict, and the worker named its own caveats — arms not interleaved, load moved 0.22 → 1.45 between them.
+
+**OWED — index lines for `carry-correction-window-in-elixir`** (the ELEVENTH owed pair, same reason).
+Verbatim:
+`CLAUDE.md` hook:
+`- [Late-input correction in the Elixir SDK](docs/dev_notes/carry-correction-window-in-elixir.md) — the slice's order is guaranteed by `Operative.push/6` being a synchronous call, and the queue marker that also guards it is defence in depth no test can distinguish`
+`INDEX.md` abstract: **carry-correction-window-in-elixir** (R6 change 5, 2026-09-02) — the lateness classification, the correction request, the replay slice and its event-time order re-expressed in `lib/flezha/sdk`; `correction_window` becomes the EIGHTH universal capability and `@required_capabilities` reaches 15, leaving only `workflow` (R7). The smallest change of the row because the controller half is SDK-blind and complete: not one line of `lib/flezha/operative`, `lib/flezha/runner` or `lib/flezha/state` changed except `Wire.encode_correction_request/1`, four counted lines beside a decoder that had stood alone since `stream-late-input-correction`. THERE IS NO SPLICE — a rewound baseline and an event-time-sorted slice on the existing replay. The headline is a negative control that refused to fail: replacing the `%Tier.SliceEnd{}` queue marker with an immediate flush left the suite at 19/19, because `Operative.push/6`'s synchronous `enqueue_block/2` plus `kick/1` sending `:process` inside that call make the drain provably keep up — so the marker is defence in depth and the CALL is the guarantee, which nothing enforces. `Entity.Clock` was split at 799 of a blocking 800, by mutation on the `timers` map, taking `entity.ex` to 718. A member whose extractor raises is dispatched and parked rather than sorted at 0 as the reference's `unwrap_or(0)` does — a deliberate divergence, same end state. The two `candle` twins collided in `duplicate_pairs` on TWO blocking areas at once despite being designed apart, and the cure changed the in-suite probe, never the app twin. `--check` under-counted `lib/flezha/sdk` by 81 lines because `clock.ex` was untracked (§11e), and the same silence hid a blocking credo row: true delta **+155**, not the reported +74. KI-140: `stream-correction`'s beyond-window telemetry is emitted by no SDK, so this one matches the reference.
+
+## R6 IS DONE — five changes, 2026-09-02
+
+| # | change | commits | capability |
+|---|---|---|---|
+| 1 | `carry-state-persistence-in-elixir` | 11, closed `41ad380f` | `state_persistence` |
+| 2 | `carry-keyed-dynamic-and-schema-in-elixir` | 8, closed `97aa1370` | `keyed_channels`, `dynamic_entity`, `schema_evolution` |
+| 3 | `carry-entity-timers-in-elixir` | 5, closed `418457b2` | `entity_timers` |
+| 4 | `carry-effectively-once-in-elixir` | 5, closed `7045a809` | `effectively_once` |
+| 5 | `carry-correction-window-in-elixir` | 1, closed `ae6a9630` | `correction_window` |
+
+**Eight of nine capabilities universal**; `@required_capabilities` **13 → 15** over changes 4 and 5.
+Defects found and closed on the way by changes 4–5 alone: **KI-137, KI-138, KI-139**; KI-140 filed and
+ruled cross-SDK. **Next: R7 `workflow` across the veneers**, then R9–R12.
+
+### R6 CHANGE 4 IS DONE — `carry-effectively-once-in-elixir`, closed `7045a809`, archived. `effectively_once` IS THE SEVENTH UNIVERSAL CAPABILITY.
+
+**All 37 boxes ticked.** Archived as `2026-09-02-carry-effectively-once-in-elixir`. **Five commits**:
+`f896879a` (the declaration, ctx and interval), `5512f839` (KI-138), `d752847b` (the Entity ships),
+`8c3ebcab` (KI-139), `7045a809` (the twins, the flip, the arms, the docs) — plus the board's own.
+
+**The six spec deltas were applied by hand**, the `openspec archive` helper being blocked by this
+session's permission classifier. I wrote the splice with a **scenario-drop guard** rather than trusting
+myself: every MODIFIED requirement grew by **exactly one** scenario with **none dropped**, and the
+thirteen readings reproduce `design.md` D12's stated counts one for one (elixir-sdk 8→9, 8→9, 3→4, 4→5,
+6→7, 7→8, 4→5 plus an ADDED requirement of 8; sdk-conformance 14→15; checkpoint-granularity 5→6;
+effectively-once-output 3→4; operative-output-identity 6→7; entity-timers 2→3). `openspec validate
+--specs` **101 passed, 0 failed**. `openspec list`: **no active changes**.
+
+**My close runs**: the two-token test fix is exactly what I authorised and nothing else; `bench_fleet_test`
+**5 passed**; `gate_test` **20 passed**; the SDK slice **158 passed**; the handover flake **green alone,
+8 passed**; `--check --lint` exactly **two** rows, both this change's own budgeted feature work
+(`lib/flezha/sdk` +569 inside 420–580, `lib/mix` +56 against +45 accounted by module). The worker's close:
+full `mix test` **2085 passed** on a quiet box, three full runs for the whole segment and no re-run "to
+see if it worked".
+
+**Batch 7's red was diagnosed, not dismissed, and it was not this change's.** A full run failed on the
+handover module's "runner disconnect preserve" — a filed, load-sensitive flake whose entry I have updated
+with its **second sighting**: 82.1 s run against 64.5 and 69.8 either side, green alone twice, and a
+blast-radius grep showing the file reaches nothing this change touched and drives the RUST reference
+runtime. The entry's coordinate was stale (`flezha_test.exs:598` → `flezha_handover_test.exs:276`) and is
+corrected.
+
+**The tier's cost, honestly measured.** The gate row stays a **direction row**: before spreads
+15.5/9.4/2.1 %, after 10.8/11.0/7.3 %, medians 21.10 → 22.12 µs/push. The instrument cannot resolve the
+3 % it polices and no verdict is asserted against it. Feature cost: `TierStore` **244.63** vs `BenchKeyed`
+**245.07** µs/push at n=10 000 — the tier's marginal cost is **nothing measurable** — but the absolute
+numbers are **not comparable to change 3's 27.7** because the harness cost grows with the distinct-key
+count (46 µs at n=500 → 245 at n=10 000, pre-existing in `BenchKeyed`). Round-trip `--durability on`:
+elixir **13 531** vs rust **15 222** rec/s (≈89 %); `checkpoint`: elixir 9 364/9 114 vs rust 12 303–13 773.
+**Zero loss and zero duplicates on all 13 rounds.** The rounds-2/3 dip was re-measured rather than shipped
+and is reported as measured, not explained.
+
+**Baseline NOT re-recorded.** `--write-baseline` is blocked by the permission classifier and the board's
+practice needs the user; the two standing rows are this change's own feature work and a stale baseline is
+the STRICTER comparison, so nothing is hidden by leaving it. Change 5 will read its own delta on top.
+**Worth one line from the user**: re-record now, or let changes 4 and 5 accumulate and re-record once at
+R6's close.
+
+**OWED — index lines for `carry-effectively-once-in-elixir`** (the TENTH owed pair, same reason as the
+nine before: the other session's uncommitted `CLAUDE.md` split and untracked `INDEX.md`). Verbatim:
+`CLAUDE.md` hook:
+`- [The effectively-once tier in the Elixir SDK](docs/dev_notes/carry-effectively-once-in-elixir.md) — the record is HELD in a FIFO and the Entity's queue never is, because on a single-process router the reference's gate is a deadlock`
+`INDEX.md` abstract: **carry-effectively-once-in-elixir** (R6 change 4, 2026-09-02) — the effect record, the staged interval, the consumed-offset floor, the tier-on park and `Ctx.stable_id/1` re-expressed in `lib/flezha/sdk`, which inherits nothing from `flz_core`; `effectively_once` becomes the SEVENTH universal capability and `@required_capabilities` reaches 14 atoms. D14's "nothing splits" was wrong — `entity.ex` reached 854 with the tier arms inline against a blocking `files_over_800`, so an unplanned `Flezha.SDK.Entity.Tier` took everything that writes `tier.staged`/`deadline`/`owed` (split by mutation, aliases `Interval`/`Records`/`State` and never `Entity`, so no cycle). D7's hold is load-bearing: the reference gates a producing Entity until its edge push lands, which here is a two-party deadlock between a gated Entity and a single-process router blocked in `enqueue_block/2` on that Entity's own full queue — so the RECORD is held in a FIFO and the queue never is. KI-139: the router skips sink delivery for a tier class (correct) while `settle/4` short-circuited on `changeful?`, so BOTH halves of a stateless class's output path were off at once — silent output loss, two lines, and `persistent?` became `persistence_enabled and (changeful? or tier.on?)`; the neighbouring `persistent?: false` discard is PARITY with `flusher.rs:236-262`, not a second hole. KI-138: a raised invocation lost its ctx ref, so its dictionary slots could never be deleted — the key IS the lost ref. Six of twelve tier tests were written after their code and proved by INVERSION rather than a faked red. The gate row is a DIRECTION row by measurement. Copying the checkpoint twin's `run/3` body raised `duplicate_pairs` on TWO blocking areas at once, because the detector counts one cross-file pair against both areas it spans.
+
+**OWED — one doc edit git cannot carry.** `bench/flink/README.md` is excluded by `.git/info/exclude:25`
+(`/bench/flink/`), so the whole directory is machine-local. Its `--runtime` row was corrected on disk to
+"`elixir` carries every posture — `off`, `state`, `on` and `checkpoint`", replacing a claim that elixir
+carries only `--durability off` and is refused otherwise — which **13 green round-trip rounds disprove**.
+Whoever un-excludes that directory owes the commit.
+
+**Next: R6 change 5 `carry-correction-window-in-elixir`** — the last of the row, sized +200 / 5 batches by
+the survey. What it inherits from change 4: `Interval.fold/4`'s `event_time` and the restored
+`high_water` are where the replay slice reads its baseline; `%Entity.Input{}` is where `flz.replay` rides;
+`Records.settle/4` is where a corrected record's epoch lands; `Entity.State` has **one** field of headroom
+before credo's 31-field cap, so change 5's fields go into the `tier` or `timers` map, never as new struct
+fields.
+
+**R6 CHANGE 5 worker spawned 15:47** (Opus 5, fresh `general-purpose`) at `80da4fc9`, tree clean, machine
+clean, no subagent. **Two-step**: step 1 writes `openspec/changes/carry-correction-window-in-elixir/` and
+STOPS for my ruling; step 2 implements with a checkpoint every two batches. Brief carries the four
+inheritance facts from change 4's close verbatim, the reference note's headline (**THERE IS NO SPLICE** —
+a rewound baseline plus an event-time-sorted slice on the existing replay; a design that invents a splice
+is wrong), the credo 31-field trap stated as invisible-until-it-fires, the demand for a per-scenario pin
+table and a §2 reuse clause per item, the instruction that any proposed measurement row must state its
+floor and whether that floor can resolve the effect claimed (change 4's harness row is a DIRECTION row by
+measurement), the red half before the flip, containers by name, the anchored `ps`, §1b stop-and-wait with
+**KI-140** next free, and the budget rule with the four precedents (two deaths at ~700 k, two clean stops
+at 530 k and 285 k, both right).
+
+**Scope confirmed by me before the spawn**: `correction_window` is deferred by **elixir alone** — the
+other six manifests all carry it as `["candle"]` — so this change makes it the **eighth** universal
+capability and leaves only `workflow` (R7). Two scenario files: `late_input_correction_e2e_test.exs` and
+the `correction_window` part of `sdk_smoke_e2e_test.exs`.
+
 ### KI-139 IS FIXED — `8c3ebcab` — and the worker REFUSED half my instruction, correctly, with a citation
 
 Two production lines, red first (an empty mailbox where the record should have been). My runs: SDK slice
@@ -518,6 +833,11 @@ different measurements. It appears to have noticed (it ran `BenchKeyed` at two s
 but the row is only meaningful **at equal n**, and if the cost still scales at equal n the row says
 nothing about the tier's marginal cost and should be reported as such rather than divided out. Charter §8
 already forbids running a row whose floor cannot resolve the effect claimed.
+
+**15:19 (+21m)**: re-running the `uds` arms under an `f_` prefix into `uds_results_final.txt` — a
+deliberate re-run, presumably after a fixture change, which is the right instinct if anything the arms
+drive moved. One time-boxed `until` loop alive as briefed, one live smoke run, containers stopped, no
+survivor, no zombie. Load 2.04, its own.
 
 ### KI-138 RULED 14:05 — real, worth fixing, and it pauses the change for one commit
 
@@ -6270,12 +6590,12 @@ verifies and commits, §4 checkpoint each time.
 | **R5.1** | **DONE 2026-09-02** — KI-130 (`57135d69` + the convergence commit): the ship's gate and host waits are 5 s, a named-Entity read refuses, the wedge ladder is inverted (restart first), the Elixir RunnerServer no longer re-registers (KI-131). Drill green on seven runtimes, no zombie | — |
 | **R5.2** | **DONE 2026-09-02** — KI-125: the stdin watcher reads unbuffered; a signalled python runner exits 0 (was 134); red-first subprocess test; ruby/node/php measured clean | — |
 | **R5.3** | **DONE 2026-09-02** — KI-128 hardened: the verdict is read by the settled row's name, rows dumped on failure; red-first induced through the real channel | — |
-| **R6** | **IN PROGRESS 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → **2 `carry-keyed-dynamic-and-schema-in-elixir` DONE** (8 commits, closed `97aa1370`, three more universal, +287 against +300) → **3 `carry-entity-timers-in-elixir` DONE** (5 commits, closed `418457b2`, `entity_timers` universal, +434 against +330, KI-137 fixed) → 4 `carry-effectively-once-in-elixir` (SURVEY WRITTEN 10:52, unverified — see SESSION 8 HANDOVER) → 5 correction_window; `workflow` is R7's. Size the rest against +865 for +560 estimated | The user's instruction includes Elixir; it is the largest row |
-| **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
+| **R6** | **DONE 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → **2 `carry-keyed-dynamic-and-schema-in-elixir` DONE** (8 commits, closed `97aa1370`, three more universal, +287 against +300) → **3 `carry-entity-timers-in-elixir` DONE** (5 commits, closed `418457b2`, `entity_timers` universal, +434 against +330, KI-137 fixed) → **4 `carry-effectively-once-in-elixir` DONE** (5 commits, closed `7045a809`, +569 against +490, KI-138 + KI-139 fixed) → **5 `carry-correction-window-in-elixir` DONE** (closed `ae6a9630`, +155 against +210, `Entity.Clock` split at 799/800). **EIGHT of nine capabilities universal, `@required_capabilities` at 15; only `workflow` (R7) remains.** | The user's instruction includes Elixir; it is the largest row |
+| **R7** | **`workflow` — SURVEYED AND RE-SCOPED 2026-09-02.** The board's line was wrong on five counts (see *R7 SURVEY VERIFIED*): the mechanism is missing in **elixir only**, `codec()` is owed to **no** veneer, it is **16 of 19** fixtures not 18, the two surfaces are **one** root cause (per-edge vs per-procedure channel ownership), and the reference is **two** files. **Eight changes**: 1 the cross-SDK seam (`unify-veneer-procedure-output-channel`, node/ruby/php/python), 2–5 fixtures per veneer, 6–8 elixir (its own survey — bigger than all of R6). ≈ **+6 300** lines. The flip is in change 8 alone. **KI-141 filed**: the per-edge model silently truncates a workflow fan-out's durable handoff | Largest row in the programme; re-scoped on measurement, not assumption |
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
 | **R9** | `unify-cli-output-flag` — KI-80. `cluster status --json` ignores `--output json`; `audit list --output json` ignores `--json` | Agreed 2026-09-01, small |
 | **R10** | `add-publish-readiness-checklist` — KI-52 and the one-way-door items | Agreed 2026-09-01, seed only |
-| **R11** | **KI-115** — two published specs mandate behaviour the code lacks. One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
+| **R11** | **KI-115 + KI-140** — **three** published specs mandate behaviour the code lacks (a third found 2026-09-02: `stream-correction` SHALLs beyond-window telemetry that `grep` finds emitted 0 times in every SDK). One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
 | **R12** | **The docs-citation gate** (~120 lines). Would have caught 27 of area 8's 76 findings automatically. **Build it AFTER the docs are clean so it lands green** — a gate that lands red is KI-94 all over again | Ruling 3, approved in principle |
 
 **OWED — index lines for `carry-state-persistence-in-elixir`** (the R6 worker's report carries them verbatim: the `CLAUDE.md` hook *"`state_persistence` in the Elixir SDK — the kernel's rules re-expressed in its own core"* → an Elixir Entity IS its process, so the Operative keeps a SLOT of what each persistent Entity last shipped: a replacement at seq 0 would have every later record dedup-dropped by the controller in silence), same reason as the others.

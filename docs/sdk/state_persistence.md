@@ -52,7 +52,8 @@ GC pause included) delays its records: the durability bound is a guideline, not 
 With persistence off the drain still runs (buffer emptied, seq advanced) but nothing is sent.
 The Elixir SDK has no flusher: its Entity process ships each dispatch's records itself, at
 the end of the dispatch and before the dispatch's outputs, and advances the seq silently when
-the class's persistence is off.
+the class's persistence is off. Under the effectively-once tier it ships one effect record in
+their place, carrying the outputs rather than preceding them.
 
 ### Persistence toggle
 
@@ -84,8 +85,12 @@ and event-time high-water from the effect records, and re-arms processing-time t
 
 The Elixir SDK folds in its own core (`Flezha.SDK.Record.fold/6`), in the Entity's mailbox
 order: the on-disk framing's CRC over header and body, the language before the format before
-the schema with the core's refusal wordings, then `apply_change/2` per record; a refused fold
-leaves the Entity as it was and the controller parks the operative.
+the schema with the core's refusal wordings, then `apply_change/2` per record; one walk with
+an arm per format, so an effect record is unwrapped in place — its enclosed change bodies
+fold under the enclosing record's version decision, its timer ops join the pending set, and
+its consumed offset and event time become the Entity's floor and high-water — while a
+snapshot header carrying that format is malformed. A refused fold leaves the Entity as it
+was and the controller parks the operative.
 Rust folds in-process with postcard and verifies each record's header (`sdk_lang`,
 `schema_version`, `format_id`) and trailing CRC32, failing loud with
 `RestoreError::{LangMismatch, SchemaMismatch, HeaderInvalid, CrcMismatch, SnapshotDecode,
@@ -121,7 +126,7 @@ and give-up are the controller's.
 | Channel | Name | Carries |
 |---|---|---|
 | data, SDK → controller | `entity_state_change` | one change record (`format_id` 1 postcard / 4 Kryo / 7 ETF) or timer-ops record (3) |
-| data, SDK → controller | `entity_effect_record` | effectively-once effect record (`format_id` 2: changes, outputs, consumed offset, timers) |
+| data, SDK → controller | `entity_effect_record` | effectively-once effect record (`format_id` 2: changes — enclosed in the writing SDK's own codec, postcard / Kryo / ETF — outputs, consumed offset, timers, dead-letter entry) |
 | data, SDK → controller | `entity_state_snapshot` | compaction snapshot body |
 | data, SDK → controller | `delete_entity_state` | dynamic-Entity eviction |
 | data, SDK → controller | `park_payload`, `compensation_intent`, `compensation_done` | DLQ park; workflow saga markers |
@@ -315,8 +320,14 @@ the compaction threshold, and `StreamOperative.persistence_enabled/0` is the cla
 `schema_version/0` and `min_readable_schema_version/0` declare the version and the readable
 floor, and `migrate_state/2` / `migrate_change/2` read an older version's DECODED term into
 the running one — the body codec is the language's own, so there is no second codec to choose.
+The class-level `Flezha.SDK.Channels.effectively_once/1` puts the class on the
+effectively-once tier, and `checkpoint_ack/1` / `checkpoint_every/2` /
+`outputs_at_checkpoint/2` each turn the checkpoint granularity on: the Entity then ships one
+`entity_effect_record` per effectful invocation or per closed interval in place of change
+records, and `Flezha.SDK.Ctx.checkpoint/1` closes an interval from inside `run/3`.
 The record, the fold, the slot, the commands and the shutdown are described in
-[`elixir_sdk.md`](elixir_sdk.md#persistence); the tests are `test/flezha/sdk/persistence_test.exs`
+[`elixir_sdk.md`](elixir_sdk.md#persistence), the tier in
+[`elixir_sdk.md`](elixir_sdk.md#effectively-once-tier); the tests are `test/flezha/sdk/persistence_test.exs`
 and `commands_test.exs` over the fixtures in `test/helpers/sdk_persistence_fixtures.ex`.
 There is no replay harness yet: the contract that `run/3`'s state equals the fold of its
 recorded changes is stated, not machine-checked.

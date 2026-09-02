@@ -58,6 +58,16 @@ defmodule Flezha.SDK.UnitTest do
     end
   end
 
+  defmodule EventTimeProc do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "event_time_proc"
+    def init_state(_), do: 0
+    def clock, do: :event_time
+    def event_time_of(input), do: String.to_integer(input)
+    def apply_change(s, _), do: s
+    def run(_input, state, _ctx), do: {:ok, state}
+  end
+
   defmodule StaticProc do
     @behaviour Flezha.SDK.Procedure
     def name, do: "static"
@@ -477,6 +487,159 @@ defmodule Flezha.SDK.UnitTest do
     assert {:CheckpointMaxDelayZero, _} = one_issue(DelayZero)
     assert {:UnkeyedChannelUnderEffectivelyOnce, "sink"} = one_issue(UnkeyedSink)
     assert {:DroppingPolicyUnderEffectivelyOnce, "in", :drop_newest} = one_issue(Shedding)
+  end
+
+  test "the three correction refusals by name, and the tier's shedding refusal covers the fourth" do
+    defmodule WindowWithoutTier do
+      def factory_id, do: "window_no_tier"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.correction_window(600_000)
+          |> Channels.input("in")
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule WindowWithoutEventTime do
+      def factory_id, do: "window_no_event_time"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.correction_window(600_000)
+          |> Channels.input("in")
+          |> Channels.into(KeyedProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule WindowZero do
+      def factory_id, do: "window_zero"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.correction_window(0)
+          |> Channels.input("in")
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule PolicyWithoutWindow do
+      def factory_id, do: "policy_no_window"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.beyond_window_policy(:drop)
+          |> Channels.input("in")
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    assert {:CorrectionWithoutTier, _} = one_issue(WindowWithoutTier)
+
+    assert {:CorrectionWithoutEventTime, "keyed", :wall} = one_issue(WindowWithoutEventTime)
+
+    assert {:CorrectionWindowZero, _} = one_issue(WindowZero)
+    assert {:CorrectionWindowZero, _} = one_issue(PolicyWithoutWindow)
+  end
+
+  # `register.rs` refuses a shedding channel under a declared window with its own
+  # message; here a window requires the tier and the tier already refuses every
+  # shedding edge, so the same program is refused by the check that exists.
+  test "a shedding policy under a declared window is refused by the tier's own check" do
+    defmodule SheddingUnderWindow do
+      def factory_id, do: "shedding_window"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.correction_window(600_000)
+          |> Channels.input("in")
+          |> Channels.on_full(:drop_oldest)
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    assert {:DroppingPolicyUnderEffectivelyOnce, "in", :drop_oldest} =
+             one_issue(SheddingUnderWindow)
+  end
+
+  test "the two correction options compose in either order and neither clears the other" do
+    defmodule WindowThenPolicy do
+      def factory_id, do: "window_then_policy"
+
+      # The tier declared LAST, which is still legal and is the point.
+      def channels(c),
+        do:
+          c
+          |> Channels.correction_window(600_000)
+          |> Channels.beyond_window_policy(:drop)
+          |> Channels.effectively_once()
+          |> Channels.input("in")
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    defmodule PolicyThenWindow do
+      def factory_id, do: "policy_then_window"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.beyond_window_policy(:drop)
+          |> Channels.correction_window(600_000)
+          |> Channels.input("in")
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    assert {:ok, %{correction: %{window_ms: 600_000, beyond_window: :drop}}} =
+             Topology.build(WindowThenPolicy)
+
+    assert {:ok, %{correction: %{window_ms: 600_000, beyond_window: :drop}}} =
+             Topology.build(PolicyThenWindow)
+  end
+
+  test "a correction class declares the two keys the candle golden pins" do
+    defmodule CandleShape do
+      def factory_id, do: "candle_shape"
+
+      def channels(c),
+        do:
+          c
+          |> Channels.effectively_once()
+          |> Channels.correction_window(600_000)
+          |> Channels.input("in")
+          |> Channels.into(EventTimeProc)
+          |> Channels.named("sink")
+          |> Channels.keyed()
+          |> Channels.sink("out")
+    end
+
+    assert {:ok, topo} = Topology.build(CandleShape)
+    assert RunnerServer.declarations(topo) == golden("candle")
   end
 
   test "the tier ships two more declaration keys, and they equal the committed goldens" do

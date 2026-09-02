@@ -118,6 +118,17 @@ keyless procedure → dynamic; else single. Refusals accumulate into one
 `KeyedInterProcedureChannel` (`keyed/1` reaching a procedure before any sink),
 `DeferredBuilderSurface` (names the operative module).
 
+Six calls declare the class rather than an edge and answer the token so they pipe in any
+order: `effectively_once/1`, `checkpoint_ack/1` / `checkpoint_every/2` /
+`outputs_at_checkpoint/2`, each of which turns the checkpoint granularity on by itself, and
+`correction_window/2` / `beyond_window_policy/2`, which amend one correction policy so that
+declaring a policy alone leaves a zero window — refused, because a fate for a window nobody
+declared is an authoring error. Their refusals are `CheckpointAckWithoutTier`,
+`CheckpointEveryZero`, `CheckpointMaxDelayZero`, `UnkeyedChannelUnderEffectivelyOnce`
+(naming the sink's channel), `DroppingPolicyUnderEffectivelyOnce` (naming the node's inbound
+channel and the policy), `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (naming a
+Procedure and the clock it declares) and `CorrectionWindowZero`.
+
 ## Keyed channels
 
 `keyed/1` on the handle before `sink/2` declares output identity on that sink — the
@@ -129,7 +140,10 @@ stamped or not) and `flz.key`, appended after the user's metadata so a stamp can
 clobbered. The key is the emit's own (`emit_keyed/3`), else the sink route's `key_by`, else
 the emitting Entity's; a Single Entity with none is refused at the emit. A sink not declared
 keyed carries no `flz.` key. The stamps are minted at the routing seam in the Operative, this
-SDK's own core; there is no tier here yet, so every keyed emit is stamped.
+SDK's own core. Under the effectively-once tier the Entity captures the same output through
+the same seam into its effect record and stamps nothing: the controller derives
+`flz.entity`, `flz.seq` and `flz.epoch` at flush, so a host that also stamped would produce a
+second answer.
 
 ## Overflow, retry, park
 
@@ -152,9 +166,10 @@ a frozen `dispatches` with `blocked_parks` climbing is backpressure, and frozen 
 a stall (`data_heartbeat` every ~10 s per data stream, `control_ping` every 15 s, echoed by the
 controller).
 
-There is no declare-time refusal of a shedding policy here, because this SDK declares no
-durability tier and no correction window for one to contradict — the rule the other SDKs
-enforce ships with `effectively_once` if this SDK ever gains it.
+A shedding policy on a node fed under `effectively_once/1` is refused at registration
+(`DroppingPolicyUnderEffectivelyOnce`, naming the channel and the policy): a durable-input-log
+class that shed at its mailbox would hold the min-watermark on the shed offset for ever while
+the log behind it kept growing.
 
 A failing `run/3` (error tuple, raise, or exit) retries up to `retry_max` (default 3 total)
 with exponential backoff and ±50 % jitter from `retry_backoff_ms` (default 50 ms, cap 5 s);
@@ -276,7 +291,11 @@ The controller's commands are answered by `Flezha.SDK.Commands`, off the runner'
 `RestoreInitState` folds the snapshot then the change log in the controller's on-disk framing
 (`Flezha.SDK.Record.fold/6` — CRC over header and body, language before format before schema,
 the shared core's refusal wordings), re-arms `change_seq` to `max(folded, terminal_seq) + 1`
-and replies `terminal_seq`; `CompactEntity` ships `entity_state_snapshot` at `change_seq - 1`
+and replies `terminal_seq`; the walk has one arm per format, so an effect record
+(`format_id = 2`) is unwrapped in place — its enclosed change bodies fold in seq order under
+the enclosing record's version decision, its timer ops join the pending set, its consumed
+offset becomes the Entity's floor and its event time the high-water — and a snapshot header
+carrying format 2 is malformed; `CompactEntity` ships `entity_state_snapshot` at `change_seq - 1`
 behind the Entity's records and replies the seq and size; `EntityState` answers the
 Decision-10 JSON (`%{procedure => state}` for a Single node, `%{procedure => %{key => state}}`
 for a Static or Dynamic one, narrowed by the selector) with `flz.change_seq` on the reply
@@ -313,6 +332,66 @@ non-terminal `RunnerDisconnect` stops the runner in place — the reference's `S
 ack goes out, this side closes its streams, nothing reconnects and the process stays, so a
 `:permanent` supervisor has nothing to restart into a second registration.
 
+## Effectively-once tier
+
+`Channels.effectively_once/1` puts a class on the tier. The declaration ships
+`effectively_once: "true"` (and `ack_granularity: "checkpoint"` when one of the three
+checkpoint options is declared), which is what makes the controller stamp `flz.offset` on
+every forwarded input, re-forward from `watermark + 1` on every bind, and derive the output
+identity at flush.
+
+**One record per effectful invocation.** In place of the change records and the trailing
+timer-ops record, the Entity ships one `entity_effect_record` (`format_id = 2`, the postcard
+body `Flezha.State.Wire.encode_effect_body/1` writes byte-exactly) carrying the invocation's
+changes, its captured plugin outputs, the consumed offset, the event time, the timer ops and,
+on a park, the dead-letter entry. State, outputs and the offset cannot tear because they are
+one record at one seq.
+
+**The offset and the floor.** The Operative reads `flz.offset` off the frame metadata for a
+tier class only and enqueues `%Entity.Input{value, offset}`; an emit's origin carries the
+offset of the input that produced it, so an inter-procedure push inherits it. An input at or
+below the floor a restore rebuilt is a completed dispatch: the counter advances and no record
+ships.
+
+**The interval and its four closes.** `checkpoint_ack/1`, `checkpoint_every/2` and
+`outputs_at_checkpoint/2` each turn checkpoint granularity on. `Flezha.SDK.Entity.Interval`
+then stages the changes, the timer ops and the last offset across invocations, and one record
+closes the whole interval — on `Ctx.checkpoint/1`, on a park, on `every` inputs, or on
+`max_delay_ms` after the interval opened. The delay is one `Process.send_after/3` whose
+message enqueues a close on the Entity's own queue, so it lands behind the inputs that
+preceded it and runs no author code; a stale one finds nothing open.
+
+**Held outputs.** Under `outputs_at_checkpoint/2` the interval's outputs are held with its
+changes and ride the closing record in production order under one seq. Under the default
+they flush as they happen, so a sink sees an interval's outputs long before its offsets are
+acknowledged.
+
+**The park holds nothing.** A poison input parks inside the record as its `dlq` entry — with
+the error, the attempts, the payload bytes and the offset — and closes the interval. There is
+no `park_payload` frame and no wait for `ParkPayloadAck`: the queued input dispatches
+immediately. A parked firing's removal rides the same record's `timers`.
+
+**The edge hold.** An invocation whose outputs include an inter-procedure push holds its
+record in a FIFO until the router reports every push admitted, so the offset is never durable
+ahead of the output. The Entity never gates its own queue on that report: on a single-process
+router a gated Entity and a router blocked on that Entity's full queue would wait on each
+other.
+
+**`Ctx.stable_id/1`** answers the frozen 32-hex FNV-1a-128 over the Entity's wire identity,
+the seq the invocation started at and a per-invocation ordinal — the same value every other
+SDK derives for the same three facts, so an effect re-driven after a crash carries the id it
+carried before.
+
+**The restore and the slot.** A restore discards the open interval, cancels its deadline and
+sets the floor and the event-time high-water from the log. The Operative's slot table carries
+the staged interval and the floor beside `{state, seq}`, so an Entity killed untrappably comes
+back holding what it had staged; records already owed to an edge report die with the process,
+and the seq gap that leaves is what makes the controller resync the Entity and re-forward
+those offsets.
+
+A class with `persistence_enabled/0` false advances the seq and ships nothing under the tier,
+as it does outside it.
+
 ## Runner-only boot (standalone)
 
 A standalone node depends on flezha as a library without becoming a controller:
@@ -322,13 +401,47 @@ transport servers, HubManager, convergence, state-path migration or boot-ready g
 host app runs SDK processes via `Flezha.SDK.child_spec/1`. `test/apps/elixir_runner` is a
 working example (path dependency, runner-only, stdin-EOF watcher).
 
+## Late-input correction
+
+`Channels.correction_window/2` declares how far behind an Entity's event-time high-water a
+late input may land and still be corrected; `beyond_window_policy/2` declares what happens to
+one that lands further back — `:process_as_arrival`, the default and the behaviour of a class
+with no window at all, or `:drop`. The declaration requires `effectively_once/1` (only the
+tier journals inputs before forwarding them, so only the tier has a durable input to replay)
+and at least one `:event_time`-clocked Procedure (there is nothing else to order a replay by).
+It ships `correction_window_ms` and `beyond_window_policy`, which is what makes the controller
+derive the input-log hold window and the snapshot age floor from the declaration rather than
+from an operator setting.
+
+**There is no splice.** An input is journaled before it is forwarded, so a late one is already
+in the log at its arrival offset; the correction is the tier's ordinary restore-and-replay with
+a rewound baseline and an event-time-ordered slice. The SDK's half is four things:
+
+- **Classify, before advancing.** `Flezha.SDK.Entity.Clock` tracks the high-water and
+  `Flezha.SDK.Entity.Tier.classify/3` places every input against it. At or ahead of it — or
+  with no high-water yet — the input dispatches and the high-water rises.
+- **Ask, and withhold.** Behind the high-water but inside the window, the input is *not*
+  dispatched: one `correction_request` frame goes out on the Entity's own state stream carrying
+  the target event time alone, and the replayed slice brings the input back in place. With no
+  state stream there is nobody to ask, so it falls back to processing as an arrival.
+- **Never drag the window backwards.** A beyond-window arrival is dispatched under the default
+  policy but does **not** advance the high-water — otherwise one hour-old straggler would make
+  every input after it look late.
+- **Hold the slice, then order it.** Inputs the controller marks `flz.replay` are buffered as
+  the Entity pops them; the payload-less `flz.replay_end` broadcast reaches every Entity of the
+  operative and takes its place on each one's queue behind the members it closes. Popping it
+  dispatches the slice by ascending event time, ties broken by ascending input-log offset,
+  ahead of anything enqueued behind the broadcast. A restore discards a buffered slice, because
+  the controller re-forwards it from the rewound watermark.
+
+The fixture is `candle` in `test/apps/elixir_runner`, the same id and the same knobs every
+other SDK registers, and the scenarios are `test/system/late_input_correction_e2e_test.exs`.
+
 ## Deferred capabilities (v1 scope)
 
 The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)'s
 `deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
-the conformance gate ([`conformance.md`](conformance.md)). In prose: the effectively-once
-tier and everything on it (effect records, checkpoints, `ctx.stable_id`); correction windows;
-the workflow kind (`kind: workflow` on `AddOperative` is
+the conformance gate ([`conformance.md`](conformance.md)). In prose: the workflow kind (`kind: workflow` on `AddOperative` is
 refused: `workflow kind is not supported by the Elixir stream SDK`); `merge`, `route_latest`,
 `branch`, `codec`. A builder/ctx call into a deferred surface fails registration loudly,
 naming the operative module.
@@ -336,9 +449,8 @@ naming the operative module.
 One more, outside the vocabulary because no capability names it: the hex package
 (`package-elixir-sdk`).
 
-Each deferred capability's follow-up re-expresses the kernel's rules
-(`StagedInterval::fold`, the replay slice) in Elixir under the "one change,
-every SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`, as its
+Each deferred capability's follow-up re-expresses the kernel's rules in Elixir under the
+"one change, every SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`, as its
 persistence already shows.
 
 ## Packaging boundary

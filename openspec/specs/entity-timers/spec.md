@@ -183,6 +183,8 @@ emitted, and the removal of the fired timer from the pending set. That record's
 Absent a declared tier, firing SHALL degrade to at-least-once exactly as input
 processing does.
 
+In the Elixir SDK the firing's ops — its removal as op 0 — ride the record's `timers` beside the changes and the captured outputs, and no `format_id = 3` record is written under the tier.
+
 #### Scenario: A firing produces a nil-offset effect record
 
 - **WHEN** an `on_timer` body on an effectively-once Procedure applies a change and emits
@@ -192,6 +194,10 @@ processing does.
 
 - **WHEN** the runner crashes after `on_timer` returns but before its effect record is durable
 - **THEN** after restore the timer SHALL still be pending and the firing SHALL be repeated in full, with no partial state change surviving
+
+#### Scenario: An Elixir firing rides the effect record
+- **WHEN** a processing-time timer fires on an Elixir Procedure declaring `effectively_once/1`
+- **THEN** one `entity_effect_record` carries `on_timer/4`'s change, its output, the removal op and no consumed offset, and no separate timer-ops record ships
 
 ### Requirement: Pending timers per Entity SHALL be bounded
 

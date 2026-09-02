@@ -464,16 +464,18 @@ the reference every other is checked against. The Node, Ruby, PHP and Python SDK
 capability but `workflow`, whose reference fixtures need two builder surfaces every veneer
 lacks — an inter-procedure `codec()` and a hybrid `sink().into()` — and which they owe to the
 follow-up that adds them. The Elixir SDK is its own core: it carries `state_persistence`,
-`keyed_channels`, `dynamic_entity`, `schema_evolution` and `entity_timers` as re-expressions
-of the kernel's rules — the record header and the External Term Format body, the fold,
-compaction, the live read, the credit window, the shutdown notification, the identity stamps
-at its routing seam, the idle reaper with its cap and eviction trace, the per-Procedure schema
-declaration with its migrations, the pending-timer set with its two firing paths and the
-clock kinds — and defers the effectively-once tier, correction windows and the workflow kind,
-each owed to a re-expression in Elixir. `entry_idle`, `state_persistence`, `keyed_channels`,
-`dynamic_entity`, `schema_evolution` and `entity_timers` are carried by all seven and sit in
-the required set: their mechanisms live once in the shared core for the six `flz_core` hosts
-and are re-expressed in the Elixir SDK.
+`keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers` and
+`effectively_once` as re-expressions of the kernel's rules — the record header and the
+External Term Format body, the fold, compaction, the live read, the credit window, the
+shutdown notification, the identity stamps at its routing seam, the idle reaper with its cap
+and eviction trace, the per-Procedure schema declaration with its migrations, the
+pending-timer set with its two firing paths and the clock kinds, the effect record with its
+staged interval, its consumed-offset floor and its park — and defers correction windows and
+the workflow kind, each owed to a re-expression in Elixir. `entry_idle`,
+`state_persistence`, `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers`
+and `effectively_once` are carried by all seven and sit in the required set: their mechanisms
+live once in the shared core for the six `flz_core` hosts and are re-expressed in the Elixir
+SDK.
 
 ---
 

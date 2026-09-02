@@ -926,7 +926,8 @@ ONE fsync so state, outputs and progress can never tear apart. Decoded by
 
 ```text
 EffectRecordBody {
-    changes:         Vec<Vec<u8>>,      -- postcard (or Kryo) Change bytes, folded in order
+    changes:         Vec<Vec<u8>>,      -- Change bytes in the writing SDK's own codec
+                                        -- (postcard, Kryo or ETF), folded in order
     outputs:         Vec<OutputRecord>, -- the invocation's plugin emits
     consumed_offset: Option<u64>,       -- flz.offset of the input; None for a timer firing
     dlq:             Option<DlqEntryBody>,

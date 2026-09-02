@@ -4,7 +4,9 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
   reference's `tier_store` (a keyed upsert over a keyed plugin sink under
   `effectively_once/1`), its checkpoint postures, its poison and timer
   variants, a persistence-off variant and a two-node shape with an
-  inter-procedure edge under the tier.
+  inter-procedure edge under the tier, and the correction probes — an
+  event-time class recording nothing but the ORDER its inputs were folded
+  in, which is the only thing a correction changes.
   """
 
   alias Flezha.SDK.{Channels, Ctx}
@@ -245,6 +247,67 @@ defmodule FlezhaTest.Helper.SdkTierFixtures do
         |> Channels.effectively_once()
         |> Channels.input("input")
         |> Channels.into(StatelessTierProc)
+        |> Channels.named("sink")
+        |> Channels.keyed()
+        |> Channels.sink("tier_sink")
+  end
+
+  # The correction probes. Deliberately NOT the reference's `candle`: no bucket
+  # arithmetic and no emit format, because the only claim a unit test makes here
+  # is about fold ORDER. Input is `<event_time>:<label>`.
+  defmodule CorrectionProc do
+    @moduledoc false
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "correction_procedure"
+    def clock, do: :event_time
+    def init_state(_), do: %{order: []}
+
+    # Newest first, and the Change IS the event time: nothing here needs the
+    # app fixture's bucketing, its JSON shape or its tuple.
+    def apply_change(s, at), do: %{s | order: [at | s.order]}
+
+    def event_time_of(input) do
+      {at, _rest} = Integer.parse(input)
+      at
+    end
+
+    def run(input, s, ctx) do
+      at = Ctx.now(ctx)
+      Ctx.emit_keyed(ctx, "fold", input)
+      {:ok, Ctx.apply(ctx, s, at)}
+    end
+  end
+
+  defmodule CorrectionOp do
+    @moduledoc false
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "correction_probe"
+
+    def channels(c),
+      do:
+        c
+        |> Channels.effectively_once()
+        |> Channels.correction_window(600_000)
+        |> Channels.input("input")
+        |> Channels.into(CorrectionProc)
+        |> Channels.named("sink")
+        |> Channels.keyed()
+        |> Channels.sink("tier_sink")
+  end
+
+  defmodule CorrectionDropOp do
+    @moduledoc false
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "correction_probe_drop"
+
+    def channels(c),
+      do:
+        c
+        |> Channels.effectively_once()
+        |> Channels.correction_window(600_000)
+        |> Channels.beyond_window_policy(:drop)
+        |> Channels.input("input")
+        |> Channels.into(CorrectionProc)
         |> Channels.named("sink")
         |> Channels.keyed()
         |> Channels.sink("tier_sink")

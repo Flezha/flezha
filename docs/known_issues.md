@@ -664,6 +664,17 @@ re-run by the supervisor before they were written here.**
 ---
 
 
+### KI-141 · The veneers declare one inter-proc channel PER EDGE, so a fan-out silently loses every consumer but the first
+
+- **Severity**: P1 on a workflow class, invisible on a stream class. **Unreachable today** — no veneer registers a workflow fixture — and reachable the moment R7's change 2 lands one. Found by the R7 survey, 2026-09-02, reading source at `eee08b90`.
+- **Where**: `sdk/node/src/authoring.ts:347`, `sdk/ruby/lib/flezha/builder.rb:215`, `sdk/python/src/flezha/builder.py:326`, `sdk/php/src/Graph/Edge.php:135` — each `into()` from a procedure source calls `addChannel`. Rust and Java instead reuse one channel per producing procedure (`StreamOperativeTopologyBuilder.ensureOutputChannel`, `:664-671`).
+- **Mechanism, named to the function**: `flz_core/src/host/register.rs` `procedure_wiring` resolves a procedure's output channel with `.position(|c| c.producer == Some(proc_id))` — **the FIRST match wins**. A veneer fan-out declares two channels for one procedure, so the second is dropped. `output_channel_id` is read in exactly three places, all workflow: `workflow/commit.rs:42` (the journaled handoff), `workflow/resume.rs:81` (crash-resume re-seed), `workflow/driver.rs:84` (driver fan-out). **The durable handoff is truncated with no error and no counter.**
+- **Evidence** (supervisor's own reads): the four `addChannel` call sites; `register.rs:567-571`'s `.position(...)`; and `register.rs:492-493`, which derives the journal codec from `channel_decl.kind == HostChannelKind::InterProc` — so the board's separate `codec()` surface is owed to no veneer at all.
+- **Three published SHALLs already say the veneers are wrong**: `openspec/specs/sdk-graph-authoring/spec.md:7` (`.into()` adds a consumer of the producer's channel), `:44` ("both … SHALL be consumers of **the same channel**"), `:141` (`sink` SHALL return the stream handle). All three are scoped "Both SDKs"/"Rust and Java" because they predate the veneers.
+- **A fix must** move the veneers to one output channel per producing procedure, which makes `sink()` able to return the edge and removes the need for any codec surface. Per-consumer transforms and `key_by` move from the channel onto the consumer edge, as Rust and Java already model them.
+- **Verdict (supervisor, 2026-09-02)**: **real, and it is R7 change 1's whole subject** — `unify-veneer-procedure-output-channel`, approved and running. Not a separate change. **This is R11's category found by a different route**: a published requirement four SDKs violate, which is why the survey was told to check the board's description rather than trust it.
+
+
 ## P2 — gates that lie, and time sinks
 
 
@@ -780,6 +791,16 @@ at all today, and if so does anything report it? If the behaviour exists and onl
 is missing, that is a code defect and the spec is right. If the whole mechanism was
 replaced, the spec is stale like A. **Do not amend the spec until that is measured** —
 amending it to match the code would ratify a silence the spec deliberately forbade.
+
+
+### KI-140 · A third published spec mandates telemetry that no SDK emits — beyond-window lateness
+
+- **Severity**: P3 · observability the spec promises and nothing provides. **Pre-existing since `stream-late-input-correction` landed, in every SDK.** Found by the R6 change-5 worker while writing its proposal, 2026-09-02.
+- **Where**: `openspec/specs/stream-correction/spec.md:97` — *"Both outcomes SHALL emit telemetry identifying the entity and the lateness magnitude"* — and its scenario at `:103`, *"beyond-window telemetry is emitted"*.
+- **Evidence** (supervisor's own run): `grep -rn 'beyond_window' --include=*.rs --include=*.ex flz_core/src lib/` returns **7** lines; filtering those for `telemetry|execute|counter|tracing|Logger` returns **0**. The seven are the topology field, the declaration key, the policy branch and its comment, the registration check and the decl reader — plumbing, no emission.
+- **Mechanism, named to the function**: `flz_core/src/poll_core/assembly.rs::admit_and_track` returns a boolean from its `Lateness::BeyondWindow` arm and emits nothing on either branch; no caller observes the classification, so the telemetry has no site to be emitted from.
+- **Verdict (supervisor, 2026-09-02)**: **real, not change 5's, and NOT to be fixed in one SDK.** Emitting it in Elixir alone would be divergence, not parity — the exact failure class queue row R6 exists to remove. `carry-correction-window-in-elixir` matches the reference's behaviour and says so in its `stream-correction` delta and its non-goals.
+- **This is the THIRD member of a class, and that is the useful finding.** [[KI-115]]'s half B is the same shape — `plugin-installation/spec.md:409` MUSTs a `[:flezha, :recovery, :orphaned_plugin]` event that `grep` finds zero times — and its half A is a spec naming a removed Make target. **Queue row R11 is where all three land**, and its scope grows from two specs to three. The rule R11 already carries applies here unchanged: **measure which side is wrong before amending**, because amending the spec to match the code ratifies a silence the spec deliberately forbade. For this entry the question is whether the classification should be observable at all, and it is answered once, for every SDK, in `flz_core`.
 
 
 ### KI-6 · `ruff check` is red, and is deliberately not gated
@@ -1270,6 +1291,16 @@ Kept here rather than deleted, so "was never true" stays distinguishable from
   `@temp_namespace` and fixed `operative_1..15` shared with three sibling
   tests, `reset_recovery_states/0` on a process-global cache, the singleton
   convergence `Loop` on a 1 s tick while `:663` also drives `Loop.tick_now/0` — and
+  **SECOND SIGHTING, 2026-09-02 (R6 change 4, batch 7)**: the test now lives at
+  `test/flezha_handover_test.exs:276` (this entry's `test/flezha_test.exs:598` coordinate is stale — the
+  module was split since) and failed once in a full run that took **82.1 s** against 64.5 s and 69.8 s
+  either side, following a full suite, a fleet test and a metrics run on the same box. **Green alone on
+  two runs (8 passed, 9.3 s), including the supervisor's own.** Blast radius checked and empty: a grep of
+  that file for `capability`, `conformance`, `required_capabilities`, `tier_store`, `checkpoint_store`,
+  `bench_keyed` and `effectively_once` returns nothing, and it drives `store_input` under the RUST
+  reference runtime, so nothing change 4 touched is reachable from it. Load-sensitive, as filed. The
+  entry's "if a seventh sighting arrives, eliminate the `on_entry_idle` watcher first" note attaches to
+  the DRAIN member of this family, not to this one. Still no mechanism; still 0 of 12 alone. — and
   **none of them is *the* mechanism.** A fix with no mechanism is a guess.
 - **MOVED 2026-09-01 by `refactor-7-tests` segment C**: this test now lives at
   **`test/flezha_handover_test.exs:81`** in `FlezhaTest.Handover`. A **fourth sighting**

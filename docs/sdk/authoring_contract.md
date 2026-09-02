@@ -55,7 +55,7 @@ after a restart, and nothing reports the difference until the restart.
 | --- | --- |
 | Rust | The borrow checker. `StateHandle` hands out the generated mutators and `apply`; there is no `&mut S` to assign through, so an unrecorded mutation does not compile. |
 | Java | The generated `<State>Handle`. The state object is reachable, so an unrecorded mutation is possible in principle and prevented by the generated surface being the only one an author is given. |
-| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. There is no replay harness yet, so the contract is stated rather than checked. |
+| Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Entity's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 | PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `Harness::assertReplayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
@@ -511,7 +511,9 @@ without `id`, or `sink` on a procedure with no output, is refused.
   timing. Both facts are frozen at registration, so the contradiction is
   decidable before any data moves, which is where an author can still see it.
   Shedding stays fully available to a class that promises neither. Refused in
-  every SDK's builder and again in `flz_core`'s declaration validation, so a
+  every SDK's builder — `DroppingPolicyUnderEffectivelyOnce` names the channel
+  and the policy in the Elixir SDK, which is its own core — and again in
+  `flz_core`'s declaration validation for the six hosts on it, so a
   hand-written host declaration cannot slip past.
 
 ## 6. Canonical reference operative (cross-SDK conformance anchor)

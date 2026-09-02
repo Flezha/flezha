@@ -180,7 +180,7 @@ interval. Silence between checkpoints is the mode's steady state.
 
 Every SDK that carries the effectively-once tier SHALL expose the bare checkpoint opt-in on its channel builder, spelled in that language's casing (`checkpoint_ack()` / `checkpointAck()`), so a class whose interval is closed only by an explicit `ctx.checkpoint()` is expressible without declaring a cadence it does not want. Each option that presumes the checkpoint interval — the bare opt-in, the declared cadence, and holding outputs until the interval closes — SHALL set the checkpoint granularity itself rather than requiring a second call, and setting it SHALL be idempotent, so the options compose in any order and any combination and each preserves the others' policy. An SDK SHALL NOT be able to produce a declaration that holds outputs at the checkpoint, or closes the interval on a cadence, while acknowledging per input: the core refuses that declaration at registration, and a builder that can express it hands its author a class that cannot start.
 
-An SDK that carries the tier SHALL prove the opt-in through its own authoring surface rather than by writing the declaration by hand, so the refusal a wrong declaration earns is one an author can actually reach. An SDK that cannot yet carry the tier SHALL defer `effectively_once` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK defers it here: none of the tier's builder methods exists in its core, and the seam is feature work rather than a port, which queue row R6 owes.
+An SDK that carries the tier SHALL prove the opt-in through its own authoring surface rather than by writing the declaration by hand, so the refusal a wrong declaration earns is one an author can actually reach. An SDK that cannot yet carry the tier SHALL defer `effectively_once` by name in its own conformance manifest, naming the follow-up that owes it. The Elixir SDK carries it in its own core: `Flezha.SDK.Channels.checkpoint_ack/1`, `checkpoint_every/2` and `outputs_at_checkpoint/2` route through one private policy amendment that sets the granularity, as the reference's do, and `Flezha.SDK.Topology.build/1` refuses `CheckpointAckWithoutTier` before the operative starts.
 
 #### Scenario: Holding outputs at the checkpoint acknowledges at the checkpoint
 
@@ -206,4 +206,8 @@ An SDK that carries the tier SHALL prove the opt-in through its own authoring su
 
 - **WHEN** an SDK's channel builder does not carry the checkpoint options
 - **THEN** its `conformance.json` lists `effectively_once` under `deferred`, and the conformance gate refuses a manifest that carries the capability without the reference's fixture set
+
+#### Scenario: The Elixir builder's options imply the granularity and compose
+- **WHEN** an Elixir class declares `effectively_once/1` then `outputs_at_checkpoint/2` alone, and another declares the three options in any order
+- **THEN** both register with `checkpoint` ack-granularity, the first with no cadence and the second carrying all three, and a class declaring any of them without `effectively_once/1` is refused at `Topology.build/1` naming the missing tier
 

@@ -22,6 +22,18 @@ observable: it SHALL log once for that operative and emit telemetry naming the f
 its configured value, and its derived value — the disk a declaration commits must
 never be committed silently.
 
+In the Elixir SDK, whose runner core inherits nothing from `flz_core`, the three
+prerequisites are re-expressed as build-time refusals carrying the reference's
+names: `CorrectionWithoutTier`, `CorrectionWithoutEventTime` and
+`CorrectionWindowZero`. The keyed-channel prerequisite needs no refusal of its
+own there, because a window requires the tier and the tier already refuses an
+unkeyed plugin channel with `UnkeyedChannelUnderEffectivelyOnce`; a shedding
+overflow policy is refused the same way, by the tier's own
+`DroppingPolicyUnderEffectivelyOnce`. The declaration reaches the controller as
+`correction_window_ms` and `beyond_window_policy` on `AddOperativeResponse.metadata`,
+so the derivation of the hold window and the snapshot age floor is the controller's
+existing one and is not re-expressed.
+
 #### Scenario: Declaration without event time refused
 
 - **WHEN** an operative declares `correction_window` with `type Clock = WallClock`
@@ -53,6 +65,11 @@ never be committed silently.
 - **THEN** the raise is logged once for that operative and emitted as telemetry naming
   the floor, its configured value, and its derived value
 
+#### Scenario: The Elixir SDK refuses the declaration at build time
+
+- **WHEN** an Elixir class declares `correction_window/2` without `effectively_once/1`, or over Procedures none of which declares an `:event_time` clock, or with a window of zero
+- **THEN** registration answers `{:error, {:invalid_topology, issues}}` naming `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (with the Procedure and the clock it declares) or `CorrectionWindowZero`, and no Entity is started
+
 ### Requirement: Late inputs inside the window trigger automatic correction
 
 Each Entity SHALL track its event-time high-water. An input whose extracted
@@ -68,6 +85,23 @@ and only then dispatch it.
 The late input is already in the input log at its arrival offset, because inputs
 are journaled before they are forwarded; the slice therefore contains it by
 construction and no separate splice SHALL be performed.
+
+The Elixir SDK re-expresses this in its own core. Its Entity already tracks the
+event-time high-water and restores it from its effect records, so the
+classification is a decision taken in the one function that extracts the event
+time, before it advances the high-water; a correctable input is withheld and one
+`correction_request` frame — seq zero, a zero record header, a body of the target
+event time alone — leaves on the Entity's own state stream. A run with no state
+stream dispatches the input as an arrival instead, as the reference does when no
+sink is installed. A marked member is buffered when the Entity pops it, and the
+end-of-slice broadcast is placed on that Entity's queue behind the members rather
+than executed on arrival, so the close can never overtake a member it was meant to
+include; the flush sorts by extracted event time with the input-log offset as the
+tie-break and re-queues the ordered members at the head. Each re-queued member is
+dispatched individually, so an event-time timer the slice makes due fires between
+the members that straddle it without a batch-splitting rule of its own. A restore
+discards a buffered slice, because the controller re-forwards it from the rewound
+watermark.
 
 #### Scenario: Late trade corrects a candle
 
@@ -90,11 +124,25 @@ construction and no separate splice SHALL be performed.
   are dispatched as members of the sorted slice, and those journaled above it are
   dispatched in arrival order after the slice
 
+#### Scenario: An Elixir Entity folds the replayed slice in event-time order
+
+- **WHEN** an Elixir class declaring a correction window has folded event times 100 and 300, an input at event time 200 arrives, and the controller replays the marked slice and closes it with the end-of-slice broadcast
+- **THEN** the input at 200 is not dispatched on arrival, exactly one `correction_request` carrying target 200 is sent, the replayed members are held until the broadcast, and the fold order after the slice is 100, 200, 300 — while an input journaled above the slice and enqueued behind the broadcast folds after all three
+
 ### Requirement: Beyond-window late inputs follow the declared policy
 
 Late inputs older than the correction window SHALL follow the operative's
 declared policy: `process_as_arrival` (default) or `drop`. Both outcomes SHALL
 emit telemetry identifying the entity and the lateness magnitude.
+
+In the Elixir SDK the two arms differ in one more way that is not optional: a
+beyond-window input under `process_as_arrival` is dispatched but does **not**
+advance the event-time high-water, and under `drop` it does neither. An old
+straggler that dragged the high-water backwards would make every following
+on-time input look late and start a correction storm. The telemetry sentence
+above is satisfied by no SDK today — the reference emits none — so the Elixir
+SDK matches the reference's behaviour rather than diverging alone, and the gap
+is recorded against the reference.
 
 #### Scenario: Default policy processes as arrival
 
@@ -107,6 +155,11 @@ emit telemetry identifying the entity and the lateness magnitude.
 
 - **WHEN** the operative declares `drop` and a beyond-window input arrives
 - **THEN** the input is not processed and drop telemetry is emitted
+
+#### Scenario: An Elixir beyond-window arrival does not move the high-water
+
+- **WHEN** an Elixir Entity with high-water 1 000 000 and a 600 000 ms window receives an input at event time 1 000 under the default policy, and then an input at event time 1 000 001
+- **THEN** the straggler is dispatched as an arrival, the high-water is still 1 000 000 when the next input is classified, and that next input is on time; under a declared `drop` policy the straggler is not dispatched and the high-water is likewise unmoved
 
 ### Requirement: Corrected outputs republish under a bumped epoch
 

@@ -59,11 +59,11 @@ defmodule Mix.Tasks.Bench.FleetTest do
     test "the caller names what asked for the capability" do
       %Mix.Error{message: message} =
         assert_raise(Mix.Error, fn ->
-          Fleet.parse_runtime("elixir", :effectively_once, "--durability on")
+          Fleet.parse_runtime("elixir", :workflow, "--durability on")
         end)
 
       assert message =~ "carries no --durability on"
-      assert message =~ "defers effectively_once"
+      assert message =~ "defers workflow"
     end
   end
 end

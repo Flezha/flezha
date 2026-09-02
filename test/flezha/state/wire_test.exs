@@ -64,6 +64,20 @@ defmodule Flezha.State.WireTest do
     end
   end
 
+  describe "correction request body" do
+    test "a target event time round-trips through the SDK's encoder and the controller's decoder" do
+      for target <- [0, 1, 127, 128, 600_000, 0xFFFF_FFFF_FFFF_FFFF] do
+        assert {:ok, ^target} =
+                 target |> Wire.encode_correction_request() |> Wire.decode_correction_request()
+      end
+    end
+
+    test "the encoded body is exactly the varint, with no trailing bytes" do
+      assert Wire.encode_correction_request(300) == <<172, 2>>
+      assert {:error, :trailing_bytes} = Wire.decode_correction_request(<<172, 2, 0>>)
+    end
+  end
+
   describe "effect record body (effectively-once tier)" do
     # The exact postcard bytes the Rust SDK emits for this body — pinned on
     # the SDK side by flusher::tests::
