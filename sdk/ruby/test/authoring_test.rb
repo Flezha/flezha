@@ -324,6 +324,8 @@ class AuthoringTest < Minitest::Test
   # The reference declares exactly this — `tier_commit_block_workflow` opens
   # with `c.effectively_once()` on a workflow class in Rust and Java — so the
   # flag is read where the workflow spec is assembled rather than written false.
+  # It stays off the wire: the core refuses `effectively_once` on a workflow
+  # class, and Java's `HostClassDeclaration.forWorkflow` never writes it either.
   def test_a_workflow_class_carries_its_effectively_once_declaration
     klass = Class.new(Flezha::WorkflowOperative)
     klass.factory_id "tier_workflow"
@@ -334,6 +336,6 @@ class AuthoringTest < Minitest::Test
     Flezha::Graph.validate(klass.spec)
 
     assert_equal true, klass.spec.effectively_once
-    assert_equal true, Flezha::Graph.to_host_class_decl(klass.spec)["effectively_once"]
+    refute_includes Flezha::Graph.to_host_class_decl(klass.spec).keys, "effectively_once"
   end
 end

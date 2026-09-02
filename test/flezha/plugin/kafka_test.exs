@@ -448,10 +448,19 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         })
 
       # Send never answers — a broker round-trip that outlives the test — so a
-      # chain that waited on it would block until the GenServer.call timeout.
-      # With cast_enqueue the chain returns immediately.
+      # chain that waited on it would block for the worker's 30 s
+      # `delivery_timeout_ms`. With cast_enqueue the chain returns while the
+      # stub is still parked, which is what the report below witnesses.
+      test_pid = self()
+
       :sys.replace_state(producer_pid, fn state ->
-        %{state | send_fn: fn _w, _r, _ns -> NodeTestHelper.park() end}
+        %{
+          state
+          | send_fn: fn _w, _r, _ns ->
+              send(test_pid, :broker_entered)
+              NodeTestHelper.park()
+            end
+        }
       end)
 
       ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "x", metadata: %{}}
@@ -460,7 +469,15 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         :timer.tc(fn -> Kafka.Producer.on_output(ctx, opts) end)
 
       assert {:ok, ^ctx} = result
-      assert elapsed_us < 1_000, "expected <1ms, got #{elapsed_us}us"
+
+      # The property, not a microsecond count: the broker WAS entered and never
+      # answered, and the chain had already returned. The bound is sized against
+      # the 30 s the return distinguishes itself from — a tighter one measures
+      # scheduler jitter, not the enqueue.
+      assert_receive :broker_entered, 5_000
+
+      assert elapsed_us < 1_000_000,
+             "the enqueue waited #{div(elapsed_us, 1_000)}ms on a broker that never answers"
 
       ProducerSup.stop_worker(plugin_id, @topic, 0)
     end

@@ -87,14 +87,21 @@ defmodule Flezha.State.FsyncBatcherTest do
       {:ok, _} = Supervisor.find_or_start(a)
       {:ok, _} = Supervisor.find_or_start(b)
 
-      FsyncBatcher.mark_dirty(a)
-      FsyncBatcher.mark_dirty(b)
-      FsyncBatcher.mark_dirty(a)
+      # Its own batcher, as the test above: the application's singleton seeds
+      # itself from every writer registered in the NODE and is flushed by
+      # whatever else is running, so `==` against it asserts a neighbouring
+      # module's live writers as well as these two.
+      {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+      :ok = FsyncBatcher.flush_now(batcher)
 
-      assert MapSet.new([a, b]) == FsyncBatcher.dirty_set()
+      FsyncBatcher.mark_dirty(a, batcher)
+      FsyncBatcher.mark_dirty(b, batcher)
+      FsyncBatcher.mark_dirty(a, batcher)
 
-      :ok = FsyncBatcher.flush_now()
-      assert MapSet.size(FsyncBatcher.dirty_set()) == 0
+      assert MapSet.new([a, b]) == FsyncBatcher.dirty_set(batcher)
+
+      :ok = FsyncBatcher.flush_now(batcher)
+      assert MapSet.size(FsyncBatcher.dirty_set(batcher)) == 0
     end
 
     test "actual fsync runs against live writer" do

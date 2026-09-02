@@ -8,12 +8,14 @@ never learned already fails at the core's ``deny_unknown_fields``.
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 
 import pytest
 
 import flezha
 from flezha import graph
+from flezha.builder import ClassSpec
 
 _FIXTURE = (
     pathlib.Path(__file__).resolve().parents[3] / "test" / "fixtures" / "host_class_decl_keys.txt"
@@ -192,6 +194,47 @@ def test_each_declaration_carries_the_python_language_byte(
     assert decl["factory_id"] == factory
     assert decl["sdk_lang"] == 7
     assert decl["change_format_id"] == 5
+
+
+# --- the keys a workflow class may not put on the wire ----------------------
+#
+# ``flz_core::host::register::refuse_workflow_facts`` refuses
+# ``effectively_once`` and ``correction_window_ms`` on a workflow class
+# outright, and ``refuse_tier_facts`` refuses the checkpoint family without the
+# checkpoint acknowledgement the first refusal leaves unreachable there. One
+# builder serves both kinds, so the gate lives in it.
+
+_REFUSED_ON_WORKFLOW = (
+    "effectively_once",
+    "ack_granularity",
+    "checkpoint_every",
+    "checkpoint_outputs",
+    "checkpoint_max_delay_ms",
+    "correction_window_ms",
+    "beyond_window_policy",
+)
+
+
+def _tier_spec(kind: str) -> ClassSpec:
+    """The stream fixture's spec re-kinded: every refused key populated at once."""
+    return dataclasses.replace(
+        every_key.spec,
+        factory_id=f"tier_{kind}",
+        kind=kind,
+        workflow=every_workflow_key.spec.workflow if kind == "workflow" else None,
+    )
+
+
+def test_a_workflow_class_declares_none_of_the_keys_the_core_refuses() -> None:
+    decl = graph.to_host_class_decl(_tier_spec("workflow"))
+    emitted = [key for key in _REFUSED_ON_WORKFLOW if key in decl]
+    assert not emitted, f"keys the core refuses on a workflow class: {emitted}"
+
+
+def test_a_stream_class_still_declares_every_one_of_them() -> None:
+    decl = graph.to_host_class_decl(_tier_spec("stream"))
+    missing = [key for key in _REFUSED_ON_WORKFLOW if key not in decl]
+    assert not missing, f"stream keys the gate dropped: {missing}"
 
 
 # --- the cross-language topology golden -------------------------------------

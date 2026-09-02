@@ -110,12 +110,13 @@ def stateful_counter_operative(c: flezha.Channels) -> None:
 def persistence_off_operative(c: flezha.Channels) -> None:
     """The same topology with per-Entity persistence off.
 
-    Same procedure names as `stateful_counter`, because the toggle is a class
-    property and not a different computation.
+    Its own node names, as the reference declares them: a node identity is per
+    class, so reusing `stateful_counter`'s would leave the two classes
+    indistinguishable to anything that reads a declaration.
     """
-    c.input("input", decode=text).into(counter_entry, "counter_entry_procedure").named(
+    c.input("input", decode=text).into(counter_entry, "persistence_off_entry_procedure").named(
         "ticks"
-    ).into(counter, "counter_procedure")
+    ).into(counter, "persistence_off_counter_procedure")
 
 
 @flezha.procedure(name="tick_entry_procedure")

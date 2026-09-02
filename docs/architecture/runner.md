@@ -458,9 +458,9 @@ fixture ids it registers for the ones it carries. The static gate fails any pull
 manifests do not account for every capability, and the nightly publishes a per-runtime
 capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conformance.md).
 
-Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
+Today: Rust, Java and Node carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against. The Node, Ruby, PHP and Python SDKs carry every
+the reference every other is checked against. The Ruby, PHP and Python SDKs carry every
 capability but `workflow`, whose reference fixtures they owe to the follow-up that ports
 them. The builder surface is no longer what blocks them: a procedure node owns exactly one
 output channel in every veneer, so the reference's hybrid `sink(...).into(...)` is writable,

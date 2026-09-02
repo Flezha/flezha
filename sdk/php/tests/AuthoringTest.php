@@ -422,7 +422,9 @@ final class AuthoringTest extends TestCase
      * The reference declares exactly this — `tier_commit_block_workflow` opens
      * with `c.effectively_once()` on a workflow class in Rust and Java — and
      * `Operative::classSpec` already reads the builder flag for both kinds, so
-     * PHP needed no change for it. This pins that.
+     * PHP needed no change for it. This pins that, and that the flag stays off
+     * the wire: the core refuses `effectively_once` on a workflow class, and
+     * Java's `HostClassDeclaration.forWorkflow` never writes it either.
      */
     public function testAWorkflowClassCarriesItsEffectivelyOnceDeclaration(): void
     {
@@ -430,7 +432,7 @@ final class AuthoringTest extends TestCase
         Validate::spec($spec);
 
         self::assertTrue($spec->effectivelyOnce);
-        self::assertTrue(HostClassDecl::of($spec)['effectively_once']);
+        self::assertArrayNotHasKey('effectively_once', HostClassDecl::of($spec));
     }
 }
 

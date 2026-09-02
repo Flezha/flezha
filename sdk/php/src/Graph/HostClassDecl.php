@@ -37,13 +37,7 @@ final class HostClassDecl
             'persistent' => $spec->persistent,
             'sdk_lang' => self::SDK_LANG_PHP,
             'change_format_id' => self::FORMAT_ID_JSON,
-            'effectively_once' => $spec->effectivelyOnce,
-            'ack_granularity' => $spec->ackGranularity->value,
-            'checkpoint_every' => $spec->checkpointEvery,
-            'checkpoint_outputs' => $spec->checkpointOutputs->value,
-            'checkpoint_max_delay_ms' => $spec->checkpointMaxDelayMs,
-            'correction_window_ms' => $spec->correctionWindowMs,
-            'beyond_window_policy' => $spec->beyondWindowPolicy->value,
+            ...self::streamTier($spec),
             'compact_after_bytes' => $spec->compactAfterBytes,
             'sync_durability' => $spec->syncDurability,
             'channels' => array_map(self::channel(...), $spec->channels),
@@ -58,6 +52,36 @@ final class HostClassDecl
                 'wake_after_ms' => $workflow->wakeAfterMs,
             ]),
         ]);
+    }
+
+    /**
+     * The tier, checkpoint and correction keys, which only a stream class puts
+     * on the wire. The core refuses `effectively_once` and
+     * `correction_window_ms` on a workflow class outright, and the checkpoint
+     * family rests on a checkpoint acknowledgement that refusal leaves
+     * unreachable there.
+     *
+     * The spec keeps the flag either way: `Ctx::stampIdentity` reads it to
+     * decide whether a keyed plugin frame carries its own identity, so gating
+     * the declaration must not gate the in-process tier.
+     *
+     * @return array<string, mixed>
+     */
+    private static function streamTier(ClassSpec $spec): array
+    {
+        if ($spec->kind !== 'stream') {
+            return [];
+        }
+
+        return [
+            'effectively_once' => $spec->effectivelyOnce,
+            'ack_granularity' => $spec->ackGranularity->value,
+            'checkpoint_every' => $spec->checkpointEvery,
+            'checkpoint_outputs' => $spec->checkpointOutputs->value,
+            'checkpoint_max_delay_ms' => $spec->checkpointMaxDelayMs,
+            'correction_window_ms' => $spec->correctionWindowMs,
+            'beyond_window_policy' => $spec->beyondWindowPolicy->value,
+        ];
     }
 
     /** @return array<string, mixed> */

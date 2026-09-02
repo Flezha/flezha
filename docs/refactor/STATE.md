@@ -2,46 +2,119 @@
 
 ## SESSION 10 — started 2026-09-02 18:35. Loop resumed with `/loop /refactor`.
 
-**Current worker**: none. Tree clean at `f670106f` apart from the other session's two files.
-**Next: R7 change 2 `carry-workflow-in-node`, approved and ready to implement.**
+## STANDING INSTRUCTIONS FROM THE OWNER — 2026-09-02 evening, ALL NON-OPTIONAL
 
-## KI-146 CLOSED and COMMITTED `f670106f`, 20:58 — the instrument is repaired
+1. **THE DELIVERABLE IS THE OPEN LIST SHRINKING**, not R7 completion. Deadline Friday 2026-09-04.
+   Clear the small items; the owner wants to watch the list contract.
+2. **Every report leads with a NUMBERS BLOCK** — done / remaining, derived from the files at that moment,
+   never from an earlier report. The owner asked for this explicitly: *"ma tahan pidevalt näha progressi
+   siin selgelt numbrites, palju tehtud on ja palju teha veel on."*
+3. **TIMEOUT CAPS, evidence-based** — these replace the old `timeout 580` everywhere, in every brief and
+   in every change's `tasks.md` preamble:
+   | what | cap |
+   |---|---|
+   | any `mix test`, full suite or one module | **180 s** (full suite measures 62.9–67.9 s) |
+   | any SDK unit suite (`npm test`, `pytest`, `phpunit`, `rake test`) | **120 s** |
+   | any build (`scripts/build-*-sdk.sh`, maven, cargo) | **300 s** |
+   | anything else | **120 s** |
+   **A timeout is a RESULT — report it, never re-run with a bigger number.** 580 s was eight times the
+   slowest thing measured; a ceiling nothing reaches is not a wedge detector.
+4. **Two or more workers at once in disjoint lanes**; a found defect is FILED not fixed unless it blocks
+   the change in flight; whole changes per worker with one checkpoint at the end.
 
-The cure is one place, as ruled: `SystemCase.__using__` publishes the runtime in `setup_all` beside the
-per-test `setup`. **Both are needed** — the worker measured it with a standalone ExUnit probe rather than
-assuming: `setup_all` is `#PID<0.112.0>`, `setup` and the test are `#PID<0.113.0>`, so `Process.put` in one
-is invisible in the other. A `setup_all` context carries **module tags only**, so only a `@moduletag` pins
-a module-wide fleet, and `runtime_for/1`'s doc now says so.
+## LIVE — 22:11
 
-**Only one of the three modules needed a tag, and the reasoning is the value here.**
-`multi_tenant` is byte-identical — the template is its whole cure. **`workflow_kind` was deliberately NOT
-pinned**: its "against a live Rust runner" prose was stale, java defers nothing and ships
-`EchoWorkflowOperative.java`, and `echo_workflow` is driven by no other module — pinning would have left
-java's declared fixture proved by nothing. It is now green under java, **driving `echo_workflow` on the
-java runner for the first time**. `cross_sdk_placement` was never affected but now declares
-`reference_runtime: true`: the one module *about* multiple SDKs is the one that must never follow the
-selection, and it said so nowhere.
+**Current workers: THREE, in parallel** — R7 changes 3, 4 and 5 spawned 22:25, each survey-lite from
+change 2's archived proposal and dev note, then implement to CLOSE.
 
-**The worker caught its own guard being unsound and said so.** Its first version asserted the OS argv —
-which is what KI-146's own "A fix must" suggested — and under `FLEZHA_E2E_RUNTIME=elixir` the launch is
-`sh -c '… exec mix run …'`, so `exec` replaces the argv with the beam's and no elixir runner appears in
-`ps` at all. The shipped guard reads `ClassRegistry.sdk_lang/2`, what the runner declared on the wire.
-**The filed entry's own suggested method was the wrong one**, and that is recorded in the entry.
+| worker | change | lane |
+|---|---|---|
+| `ab0c1880` | `carry-workflow-in-python` | `test/apps/python_runner/`, `sdk/python/` |
+| `a01af958` | `carry-workflow-in-ruby` | `test/apps/ruby_runner/`, `sdk/ruby/` |
+| `a3405445` | `carry-workflow-in-php` | `test/apps/php_runner/`, `sdk/php/` |
 
-Verified by me: the structural diff read line by line, all three module decisions read, the guard read and
-**re-run under node myself** (`1 passed`), `lib/` untouched (lane held), `delete_sdk_lang/2` pre-existing.
-Arms: rust 10, node 9+1 skipped, java 9, guard green on six runtimes, full suite `exit 0, 2110 passed, 67.9 s`.
+**TWO SHARED FILES ARE WITHHELD FROM ALL THREE AND ARE MINE TO EDIT WHEN THEY LAND**:
+`test/mix/bench_fleet_test.exs:42` (the accepted-runtime list, currently `[:java, :node, :rust]`) and
+`docs/architecture/runner.md` (the per-SDK paragraph). Three workers editing one line is exactly the
+collision this parallel run exists to avoid; each is told to REPORT what it needs rather than write it.
 
-### The ruby finding — ruled: NOT a defect, it is the rbenv trap again
+Each brief carries its own language's traps: python the sleep-regex key, **ruby the rbenv PATH** (which
+has now cost four sessions — suite, build, rubocop AND the e2e runner spawn), php the attribute-vs-factory
+question and the fact that this box cannot run its threaded executor at all.
 
-The worker reported the ruby runner cannot start (`cannot load such file -- msgpack`) and honestly declined
-to file it. **Correct not to file, and the diagnosis is one step short**: it used the *system* ruby 3.2.3.
-Under the project's pinned toolchain it is fine —
-`PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH" ruby test/apps/ruby_runner/runner.rb probe_ns` prints
-`[ruby_runner] namespace=probe_ns transport=uds executor=threads` and only then fails to find a controller,
-which is expected with none running. **This is the fourth thing the rbenv PATH has now cost**: the ruby
-suite, the ruby SDK build, the format gate, and now an e2e runner spawn. It is in the tasks preamble and in
-every brief and it still catches every worker — it belongs in `CLAUDE.md`, which I cannot write.
+## R7 change 2 `carry-workflow-in-node` — CLOSED `fc0fc2db`, 38/38 boxes
+
+**Node is the first veneer that defers nothing.** Nineteen fixture twins in one 557-line
+`fixtures_workflow.mjs`; `conformance.json` `deferred: ["workflow"]` → `[]`; `index.mjs` becomes the
+repository's only caller of `Runner.defineWorkflow`. **No `test/system/` file was touched** — flipping the
+manifest is what un-skips scenarios that already existed.
+
+**KI-141 is answered ON THE WIRE**, which was the change's whole purpose. Deleting the diamond's `DiamC`
+arm turns `workflow_crash_resume_e2e_test.exs:180` red on both transports with *"the fan-out multiplied
+the released batch"* — **three payloads where five are asserted**, `c:` and `j:c:` absent. Restored, both
+pass. The test measures the fan-out rather than passing beside it.
+
+Gates, verified by me: full `mix test` **2110 passed, 68.1 s**; `format-check.sh` **0** with the rbenv
+PATH; `openspec validate --specs` **101 passed** after I applied the delta by hand with a scenario-drop
+guard (**5 → 6, none dropped**); `test/apps` after my `git add -N` — **files 142 → 143** (the new file IS
+measured), **`sleeps` 8 unchanged** so the ratchet held, `duplicate_pairs` 145 → 106, `files_over_800` 0.
+Net **+807** against a stated +696 (580–900).
+
+**The worker refused to burn a cap to satisfy a box literally**, and was right: task 4.4 said to run
+`--include system --include sdk_smoke`, which spans 25 modules and cannot fit 180 s. It ran the **five
+sites the manifest flip actually un-skips** instead and sampled `ps` through each, which is better
+evidence than the box asked for.
+
+**KI-145's owed node control arm is negative**: the node arm left no survivor, four times out of four.
+
+**Incidental, now in the dev note so nobody chases it again**: every `mix test` boots two namespace-less
+reference runners from `config/runtime.exs:12-13` (`FLEZHA_EXTERNAL_PROCESSES`). They belong to no
+module's fleet and appear whatever `FLEZHA_E2E_RUNTIME` says. The worker chased them for four sampler
+runs before finding the config line.
+
+**Still owed and blocked**: the `CLAUDE.md` hook and the `INDEX.md` abstract are drafted verbatim in the
+worker's report and NOT applied — both files carry another session's uncommitted work. This is the
+**13th** index line waiting on that block.
+
+## PACE CHANGE, 21:04 — on the owner's instruction. THE DELIVERABLE IS THE LIST SHRINKING.
+
+The owner has a deadline this Friday and asked for **visible contraction of `OPEN-WORK.md`**, not R7
+completion: *"näita mulle, et asjad liiguvad, tõmba see nimekiri tühjaks, tee need pisikesed asjad ära."*
+Three standing rules change from now:
+
+1. **TWO OR MORE WORKERS AT ONCE, in disjoint lanes.** The one-worker invariant existed to protect a
+   shared tree; the actual risk is two workers in the same files, and **I never let a worker run
+   `git add`**, so I stage per path myself. Every parallel brief NAMES the other worker's lane and says
+   to expect foreign changes in `git status`.
+2. **A found defect is FILED, not fixed**, unless it blocks the change in flight. KI-146 cost 41 minutes
+   and I chose to fix it before change 2 — under this rule it would have waited.
+3. **Whole changes per worker, one checkpoint at the end**, not two-batch segments.
+
+**The measurement that forced this**: change 2's batches 0–2 were sized at **4 hours** in `tasks.md` and
+took the worker **14 minutes**. The batch estimates are HUMAN hours. I have been planning at roughly five
+times the real rate, and the bottleneck was never idle time — worker utilisation this session is
+**126 of 155 minutes, 81 %** — it was that only one lane ever ran.
+
+**Current workers (2, parallel):**
+- **A** `a56f22b2` — `carry-workflow-in-node` batches 3–5 through CLOSE. Lane: `test/apps/node_runner/`,
+  `test/mix/bench_fleet_test.exs:42`, `openspec/`, three docs files.
+- **B** `ae55d4e9` — **five small defects: KI-124, KI-117, KI-68, KI-109, KI-133.** Lane:
+  `test/apps/python_runner/fixtures_state.py`, `test/apps/php_runner/fixtures.php`,
+  `test/flezha/plugin/kafka_test.exs`, `test/flezha/state/fsync_batcher_test.exs`,
+  `lib/flezha/runner/control_channel.ex`. Briefed that **KI-68 touches production and escalating is the
+  right answer if the only fix changes what production waits for**, and that a non-reproducing entry is a
+  RESULT — it leaves the list as Resolved with the evidence that refutes it.
+
+Both spawned 21:04. **Last seen 21:17, 13m — NO LANE COLLISION**, which was the thing to prove:
+A holds `test/apps/node_runner/{conformance.json,index.mjs,fixtures_workflow.mjs}` and
+`test/mix/bench_fleet_test.exs`; B holds `test/apps/python_runner/fixtures_state.py`,
+`test/flezha/plugin/kafka_test.exs`, `test/flezha/state/fsync_batcher_test.exs` and a new
+`sdk/python/tests/test_fixture_app.py`. Zero overlap. **Change 2 is 22/38** (was 10/38) — the manifest is
+flipped and batch 3 is done.
+Load 5.33 and explainable: A's node e2e arm (`beam.smp` at 27.6 %, `npm start`, the two `default`-namespace
+`rust_runner`s that `config/runtime.exs` always boots) plus B. Two new files owe my `git add -N`.
+**Watch**: A's arm was at 9:08 elapsed against its own `timeout 580` — if it is killed, that is a RESULT
+the worker reports, not a reason to raise the cap.
 
 ## R7 change 2 `carry-workflow-in-node` — SURVEYED and APPROVED 20:15
 

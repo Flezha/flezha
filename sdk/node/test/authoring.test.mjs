@@ -646,7 +646,9 @@ test('a transform declared before one into(...) reaches that consumer only', () 
 
 // The reference declares exactly this — `tier_commit_block_workflow` opens with
 // `c.effectively_once()` on a workflow class in Rust and Java — so the flag is
-// read where the workflow spec is assembled rather than written as `false`.
+// read where the workflow spec is assembled rather than written as `false`. It
+// stays off the wire: the core refuses `effectively_once` on a workflow class,
+// and Java's `HostClassDeclaration.forWorkflow` never writes it either.
 test('a workflow class carries its effectivelyOnce() declaration', () => {
   const spec = defineWorkflow({
     factoryId: 'tier_workflow',
@@ -657,5 +659,5 @@ test('a workflow class carries its effectivelyOnce() declaration', () => {
   });
   validate(spec);
   assert.equal(spec.effectivelyOnce, true);
-  assert.equal(toHostClassDecl(spec).effectively_once, true);
+  assert.equal('effectively_once' in toHostClassDecl(spec), false);
 });

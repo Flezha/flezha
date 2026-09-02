@@ -55,6 +55,71 @@ final class DeclKeysTest extends RepositoryTestCase
         ));
     }
 
+    /**
+     * The keys a workflow class may not put on the wire.
+     *
+     * `flz_core::host::register::refuse_workflow_facts` refuses
+     * `effectively_once` and `correction_window_ms` on a workflow class
+     * outright, and `refuse_tier_facts` refuses the checkpoint family without
+     * the checkpoint acknowledgement the first refusal leaves unreachable
+     * there. One builder serves both kinds, so the gate lives in it.
+     */
+    private const REFUSED_ON_WORKFLOW = [
+        'effectively_once',
+        'ack_granularity',
+        'checkpoint_every',
+        'checkpoint_outputs',
+        'checkpoint_max_delay_ms',
+        'correction_window_ms',
+        'beyond_window_policy',
+    ];
+
+    public function testAWorkflowClassDeclaresNoneOfTheKeysTheCoreRefuses(): void
+    {
+        $decl = HostClassDecl::of(self::tierSpec('workflow'));
+        $emitted = array_values(array_intersect(self::REFUSED_ON_WORKFLOW, array_keys($decl)));
+
+        self::assertSame([], $emitted, sprintf(
+            'keys the core refuses on a workflow class: %s',
+            implode(', ', $emitted),
+        ));
+    }
+
+    public function testAStreamClassStillDeclaresEveryOneOfThem(): void
+    {
+        $decl = HostClassDecl::of(self::tierSpec('stream'));
+        $missing = array_values(array_diff(self::REFUSED_ON_WORKFLOW, array_keys($decl)));
+
+        self::assertSame([], $missing, sprintf(
+            'stream keys the gate dropped: %s',
+            implode(', ', $missing),
+        ));
+    }
+
+    /** The stream fixture's spec re-kinded: every refused key populated at once. */
+    private static function tierSpec(string $kind): ClassSpec
+    {
+        $stream = FullStream::spec();
+
+        return new ClassSpec(
+            factoryId: "decl_keys_{$kind}_tier",
+            kind: $kind,
+            persistent: $stream->persistent,
+            effectivelyOnce: $stream->effectivelyOnce,
+            ackGranularity: $stream->ackGranularity,
+            checkpointEvery: $stream->checkpointEvery,
+            checkpointOutputs: $stream->checkpointOutputs,
+            checkpointMaxDelayMs: $stream->checkpointMaxDelayMs,
+            correctionWindowMs: $stream->correctionWindowMs,
+            beyondWindowPolicy: $stream->beyondWindowPolicy,
+            compactAfterBytes: $stream->compactAfterBytes,
+            syncDurability: $stream->syncDurability,
+            procedures: $stream->procedures,
+            channels: $stream->channels,
+            workflow: $kind === 'workflow' ? FullWorkflow::spec()->workflow : null,
+        );
+    }
+
     /** @return list<string> */
     private function spelled(): array
     {

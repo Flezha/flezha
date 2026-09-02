@@ -165,6 +165,46 @@ test('the builder invents no key the core never learned', () => {
   check('workflow', new Set(Object.keys(workflow.workflow)));
 });
 
+// --- the keys a workflow class may not put on the wire ----------------------
+//
+// `flz_core::host::register::refuse_workflow_facts` refuses `effectively_once`
+// and `correction_window_ms` on a workflow class outright, and
+// `refuse_tier_facts` refuses the checkpoint family without the checkpoint
+// acknowledgement the first refusal leaves unreachable there. One builder
+// serves both kinds, so the gate lives in it.
+
+const REFUSED_ON_WORKFLOW = [
+  'effectively_once',
+  'ack_granularity',
+  'checkpoint_every',
+  'checkpoint_outputs',
+  'checkpoint_max_delay_ms',
+  'correction_window_ms',
+  'beyond_window_policy',
+];
+
+/** The stream fixture's spec re-kinded: every refused key populated at once. */
+function tierSpec(kind) {
+  return {
+    ...fullyDeclaredStream(),
+    factoryId: `node_decl_${kind}_tier`,
+    kind,
+    workflow: kind === 'workflow' ? fullyDeclaredWorkflow().workflow : undefined,
+  };
+}
+
+test('a workflow class declares none of the keys the core refuses on one', () => {
+  const decl = toHostClassDecl(tierSpec('workflow'));
+  const emitted = REFUSED_ON_WORKFLOW.filter((key) => key in decl);
+  assert.deepEqual(emitted, [], `keys the core refuses on a workflow class: ${emitted.join(', ')}`);
+});
+
+test('a stream class still declares every one of them', () => {
+  const decl = toHostClassDecl(tierSpec('stream'));
+  const missing = REFUSED_ON_WORKFLOW.filter((key) => !(key in decl));
+  assert.deepEqual(missing, [], `stream keys the gate dropped: ${missing.join(', ')}`);
+});
+
 // --- the cross-language topology golden ------------------------------------
 //
 // `test/fixtures/reference_topologies.txt` is the Rust reference's channel

@@ -211,7 +211,9 @@ The smoke tier SHALL bind one fixture per declaration key the controller reads (
 
 ### Requirement: Every SDK test app honours the test-app contract
 
-A test app SHALL take its namespace from the first command-line argument; SHALL end its own OS process when the port the harness manages it by goes away, whether that reaches it as end-of-file on standard input or as a standard-input read that can no longer answer one — a read error is the close arriving by another road, never a reason to stop watching; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, park a pool worker — never the driver thread — until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
+A test app SHALL take its namespace from the first command-line argument; SHALL end its own OS process when the port the harness manages it by goes away, whether that reaches it as end-of-file on standard input or as a standard-input read that can no longer answer one — a read error is the close arriving by another road, never a reason to stop watching; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, suspend the parked activation **without occupying the host's dispatch capacity** until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
+
+The parked activation's obligation is the same on every host and its spelling is not: a host whose manifest declares a worker-pool dispatch model SHALL park a pool worker and SHALL NOT park the driver thread, while a host whose manifest declares an event-loop dispatch model SHALL suspend the activation and yield the loop. A synchronous hold on an event-loop host is a violation of this requirement, not an implementation of it: it freezes every other activation the loop owns, which is the wedge signature a different capability's fixture exists to produce. In both cases the runner SHALL keep answering control pings while a fixture is parked, and a sibling procedure the driver has not yet reached SHALL remain dispatchable.
 
 An app whose runtime reads standard input through a device it also writes standard output through — the Elixir runner's `user` process is the only one — SHALL address its watch at that device rather than at a relay in front of it, so the device's death is reported to the read instead of leaving it unanswered, and SHALL treat that death as the close. It SHALL do so only while the runtime reports itself started: during start-up and during shutdown the device dies as part of that, and ending the process there would race the shutdown and replace the report and exit status the runtime had chosen with its own.
 
@@ -233,9 +235,14 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 - **WHEN** a crash-resume scenario starts a workflow fixture without `FLEZHA_WORKFLOW_E2E_RELEASE` set
 - **THEN** the fixture's blocking procedure does not complete until the runner is respawned with the variable set, and the runner keeps answering control pings meanwhile
 
+#### Scenario: An event-loop host parks without holding its loop
+- **WHEN** a test app whose manifest declares an event-loop dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **THEN** the activation suspends and the loop is yielded, so the runner answers control pings and dispatches other activations, and an app that instead holds the loop synchronously fails this requirement
+
 #### Scenario: The retired QUIC variable is not honoured
 - **WHEN** a test app's connect path is checked against the pinned environment fixture
 - **THEN** an app reading `FLEZHA_QUIC_ADDRESS` fails the gate naming the app and the replacement
+
 ### Requirement: The suite has a smoke tier and a full tier
 
 `test/system/sdk_smoke_e2e_test.exs` (tags `:system`, `:sdk_smoke`, capability `runner_lifecycle`) SHALL exercise, for the selected runtime across every transport its manifest lists: handshake and `AssignRunnerId`, `ConnectSocket`, add/remove operative lifecycle, end-to-end data flow, `PipeToOperative` routing, in-runtime migration, reconnect under controller restart, the live-factory-set assertion and the golden snapshots. `FLEZHA_E2E_RUNTIME=<sdk> mix test --include sdk_smoke` SHALL complete without any other tag. `--include system` SHALL run the full suite including the smoke tier.

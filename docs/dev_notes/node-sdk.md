@@ -198,17 +198,15 @@ replay gate is what finds it. In Node the state guard makes that impossible —
 That is what the harness test exercises; a test written against "handler
 mutates state directly" passes trivially and proves nothing.
 
-## Scope carried, and what the deferral costs
+## Scope carried
 
-The manifest carries the six required capabilities and defers the other nine.
-The SDK **implements** state persistence, timers, keyed channels, dynamic
-entities, the effectively-once tier and workflows — the deferral is about
-fixtures, not mechanism: the gate requires a carried capability to list *every*
-reference fixture id, so a capability is all-or-nothing and the remaining
-thirty-odd fixture twins (nineteen of them workflow) are the work. `pool_wedge`
-is **claimed**, per the drill's result: `control_plane_wedge_e2e_test.exs`
-produces the `runner_pool_wedged` verdict against the Node runner and the
-runner is evicted.
+The manifest defers nothing: it carries all sixteen capabilities — the fifteen
+required (`@required_capabilities`, `test/helpers/node_test_helper.ex`) and
+`workflow`. A carried capability is all-or-nothing, because the gate requires it
+to list *every* reference fixture id, so `workflow` means the nineteen twins in
+`fixtures_workflow.mjs` and not a subset. `pool_wedge` is **claimed**, per the
+drill's result: `control_plane_wedge_e2e_test.exs` produces the
+`runner_pool_wedged` verdict against the Node runner and the runner is evicted.
 
 Both dispatch configurations are an axis of the run
 (`FLEZHA_NODE_WORKERS`), matching the shape `FLEZHA_E2E_RUNTIME` already has.

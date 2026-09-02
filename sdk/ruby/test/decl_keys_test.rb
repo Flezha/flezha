@@ -101,6 +101,36 @@ class DeclKeysTest < Minitest::Test
     extra = spelled - declared
     assert_empty extra, "the Ruby builder emits #{extra.join(', ')}, which the core never learned"
   end
+
+  # --- the keys a workflow class may not put on the wire --------------------
+  #
+  # `flz_core::host::register::refuse_workflow_facts` refuses
+  # `effectively_once` and `correction_window_ms` on a workflow class outright,
+  # and `refuse_tier_facts` refuses the checkpoint family without the
+  # checkpoint acknowledgement the first refusal leaves unreachable there. One
+  # builder serves both kinds, so the gate lives in it.
+  REFUSED_ON_WORKFLOW = %w[
+    effectively_once ack_granularity checkpoint_every checkpoint_outputs
+    checkpoint_max_delay_ms correction_window_ms beyond_window_policy
+  ].freeze
+
+  # The stream fixture's spec re-kinded: every refused key populated at once.
+  def tier_spec(kind)
+    spec = FullStream.spec.dup
+    spec.kind = kind
+    spec.workflow = kind == :workflow ? FullWorkflow.spec.workflow : nil
+    spec
+  end
+
+  def test_a_workflow_class_declares_none_of_the_keys_the_core_refuses
+    emitted = REFUSED_ON_WORKFLOW & Flezha::Graph.to_host_class_decl(tier_spec(:workflow)).keys
+    assert_empty emitted, "keys the core refuses on a workflow class: #{emitted.join(', ')}"
+  end
+
+  def test_a_stream_class_still_declares_every_one_of_them
+    missing = REFUSED_ON_WORKFLOW - Flezha::Graph.to_host_class_decl(tier_spec(:stream)).keys
+    assert_empty missing, "stream keys the gate dropped: #{missing.join(', ')}"
+  end
 end
 
 # The cross-language topology golden.

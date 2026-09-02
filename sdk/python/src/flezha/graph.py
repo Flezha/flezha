@@ -324,6 +324,30 @@ def _procedure_json(node: ProcNode) -> dict[str, Any]:
     )
 
 
+def _stream_tier_json(spec: ClassSpec) -> dict[str, Any]:
+    """The tier, checkpoint and correction keys, which only a stream class sends.
+
+    The core refuses ``effectively_once`` and ``correction_window_ms`` on a
+    workflow class outright, and the checkpoint family rests on a checkpoint
+    acknowledgement that refusal leaves unreachable there.
+
+    The spec keeps the flag either way: :meth:`Ctx._identity_stamps` reads it to
+    decide whether a keyed plugin frame carries its own identity, so gating the
+    declaration must not gate the in-process tier.
+    """
+    if spec.kind != "stream":
+        return {}
+    return {
+        "effectively_once": spec.effectively_once,
+        "ack_granularity": spec.ack_granularity,
+        "checkpoint_every": spec.checkpoint_every,
+        "checkpoint_outputs": spec.checkpoint_outputs,
+        "checkpoint_max_delay_ms": spec.checkpoint_max_delay_ms,
+        "correction_window_ms": spec.correction_window_ms,
+        "beyond_window_policy": spec.beyond_window_policy,
+    }
+
+
 def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
     """The declaration the core deserializes.
 
@@ -337,13 +361,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "persistent": spec.persistent,
             "sdk_lang": SDK_LANG_PYTHON,
             "change_format_id": FORMAT_ID_MSGPACK,
-            "effectively_once": spec.effectively_once,
-            "ack_granularity": spec.ack_granularity,
-            "checkpoint_every": spec.checkpoint_every,
-            "checkpoint_outputs": spec.checkpoint_outputs,
-            "checkpoint_max_delay_ms": spec.checkpoint_max_delay_ms,
-            "correction_window_ms": spec.correction_window_ms,
-            "beyond_window_policy": spec.beyond_window_policy,
+            **_stream_tier_json(spec),
             "compact_after_bytes": spec.compact_after_bytes,
             "sync_durability": spec.sync_durability,
             "channels": [_channel_json(channel) for channel in spec.channels],

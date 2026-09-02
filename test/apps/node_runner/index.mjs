@@ -16,11 +16,13 @@ import { armEntryIdleProbe } from './fixtures.mjs';
 
 const namespace = process.argv[2] || 'default';
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures.mjs');
+const workflows = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures_workflow.mjs');
 const workers = Number(process.env.FLEZHA_NODE_WORKERS ?? 0) || 0;
 
 const runner = createRunner(namespace)
   .logger(consoleLogger(process.env.FLEZHA_LOG_LEVEL ?? 'info'))
   .defineStream(fixtures)
+  .defineWorkflow(workflows)
   .workers(workers);
 
 process.on('unhandledRejection', (reason) => {

@@ -352,6 +352,29 @@ module Flezha
       )
     end
 
+    # The tier, checkpoint and correction keys, which only a stream class puts
+    # on the wire. The core refuses `effectively_once` and
+    # `correction_window_ms` on a workflow class outright, and the checkpoint
+    # family rests on a checkpoint acknowledgement that refusal leaves
+    # unreachable there.
+    #
+    # The spec keeps the flag either way: `Ctx#stamp_identity` reads it to
+    # decide whether a keyed plugin frame carries its own identity, so gating
+    # the declaration must not gate the in-process tier.
+    def stream_tier_json(spec)
+      return {} unless spec.kind == :stream
+
+      {
+        "effectively_once" => spec.effectively_once,
+        "ack_granularity" => spec.ack_granularity.to_s,
+        "checkpoint_every" => spec.checkpoint_every,
+        "checkpoint_outputs" => spec.checkpoint_outputs.to_s,
+        "checkpoint_max_delay_ms" => spec.checkpoint_max_delay_ms,
+        "correction_window_ms" => spec.correction_window_ms,
+        "beyond_window_policy" => spec.beyond_window_policy.to_s
+      }
+    end
+
     # The declaration the core deserializes. Every key here is pinned by
     # `test/fixtures/host_class_decl_keys.txt`, which this gem's own test
     # reads: a key the core learns that Ruby cannot spell fails that test.
@@ -361,13 +384,7 @@ module Flezha
         "persistent" => spec.persistent,
         "sdk_lang" => SDK_LANG_RUBY,
         "change_format_id" => FORMAT_ID_MSGPACK,
-        "effectively_once" => spec.effectively_once,
-        "ack_granularity" => spec.ack_granularity.to_s,
-        "checkpoint_every" => spec.checkpoint_every,
-        "checkpoint_outputs" => spec.checkpoint_outputs.to_s,
-        "checkpoint_max_delay_ms" => spec.checkpoint_max_delay_ms,
-        "correction_window_ms" => spec.correction_window_ms,
-        "beyond_window_policy" => spec.beyond_window_policy.to_s,
+        **stream_tier_json(spec),
         "compact_after_bytes" => spec.compact_after_bytes,
         "sync_durability" => spec.sync_durability,
         "channels" => spec.channels.map { |channel| channel_json(channel) },

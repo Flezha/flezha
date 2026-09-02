@@ -559,7 +559,9 @@ def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
 
 # The reference declares exactly this — `tier_commit_block_workflow` opens with
 # `c.effectively_once()` on a workflow class in Rust and Java — so the flag is
-# read where the workflow spec is assembled rather than defaulted to False.
+# read where the workflow spec is assembled rather than defaulted to False. It
+# stays off the wire: the core refuses `effectively_once` on a workflow class,
+# and Java's `HostClassDeclaration.forWorkflow` never writes it either.
 def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
     @flezha.workflow_operative("tier_workflow")
     def tier_workflow(c: flezha.Channels) -> None:
@@ -568,4 +570,4 @@ def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
 
     declare(tier_workflow)
     assert tier_workflow.spec.effectively_once is True
-    assert graph.to_host_class_decl(tier_workflow.spec)["effectively_once"] is True
+    assert "effectively_once" not in graph.to_host_class_decl(tier_workflow.spec)

@@ -383,7 +383,7 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "a declared window holds a fully-consumed tail against truncation" do
-      class = "held-#{System.unique_integer([:positive])}"
+      class = opened_class("held")
       Application.put_env(:flezha, :input_log_hold_window_ms, 0)
       :ok = ClassRegistry.put_correction_window(class, 600_000)
 
@@ -413,7 +413,7 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "a live log yields its tail and each Entity's own consumed offset" do
-      class = "cursors-#{System.unique_integer([:positive])}"
+      class = opened_class("cursors")
       seg_a = {class, "proc", "a"}
       seg_b = {class, "proc", "b"}
 
@@ -436,12 +436,22 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "an Entity that has reported nothing is absent from consumed" do
-      class = "cursors-quiet-#{System.unique_integer([:positive])}"
+      class = opened_class("cursors-quiet")
       {:ok, 0} = InputLog.append(class, "i0", %{})
 
       assert %{tail: 0, consumed: consumed} = InputLog.cursors(class)
       assert consumed == %{}
     end
+  end
+
+  # A class whose log this test opens, closed when the test ends. The setup's
+  # `on_exit` closes the class it minted, and a test that shadows it with one of
+  # its own leaves a live, registered `InputLog` behind the module — which every
+  # `FsyncBatcher` started afterwards seeds its dirty set from.
+  defp opened_class(prefix) do
+    class = "#{prefix}-#{System.unique_integer([:positive])}"
+    on_exit(fn -> TestHelpers.close_input_log(class) end)
+    class
   end
 
   defp stop_log(class) do

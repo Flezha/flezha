@@ -726,6 +726,25 @@ re-run by the supervisor before they were written here.**
 - **Verdict (supervisor, 2026-09-02)**: **recorded, not actioned.** It did not block change 1 and the timebox was spent on the P1 beside it. It belongs to R7's php fixture change (change 4) or to a defect row of its own; whichever takes it, the control arm against node is the part that makes the answer mean anything.
 
 
+### KI-147 · Every veneer emits `effectively_once` on a WORKFLOW class, which the core refuses — the runner dies at boot
+
+- **Severity**: P1 · **live on node the moment it declares a workflow fixture, latent in python, ruby and php until R7 changes 3–5 land theirs.** Found by the R7 change-2 worker, 2026-09-02, driving the port it had just written; **mechanism verified by the supervisor in all five SDKs before ruling**.
+- **Where**: `sdk/node/src/graph.ts:463` `toHostClassDecl`, `sdk/php/src/Graph/HostClassDecl.php:40` `of`, `sdk/python/src/flezha/graph.py:336` and `sdk/ruby/lib/flezha/graph.rb:360` — each is a SINGLE declaration builder that emits `effectively_once: spec.effectively_once` for **stream and workflow alike**.
+- **Mechanism, named to the function**: `flz_core::host::register::refuse_workflow_facts` (`flz_core/src/host/register.rs:111`) rejects `decl.effectively_once` on any workflow class. The veneers have one `classJson` for both kinds, so the key rides along and the registration is refused at boot. **The two SDKs that are right are right for different reasons**: Java writes the key only inside `HostClassDeclaration.forStream` (`:68-69`) and never in `forWorkflow`; the Rust SDK is native and never crosses `register.rs` at all. So `effectivelyOnce()` on a workflow is a source-parity no-op on the wire for the whole FFI host family, and the veneers are the only ones that forward it.
+- **Evidence** (the worker's run): `timeout 180 env FLEZHA_E2E_RUNTIME=node mix test --include sdk_smoke test/system/sdk_smoke_e2e_test.exs:57` → **exit 2**, `Result: 0/2 passed`, both transports, the runner dying at boot with
+
+  ```
+  Error: a workflow class cannot declare effectively_once
+      at Runner.declareAll (sdk/node/dist/esm/runner.js:241:20)
+  ** (RuntimeError) temporary test runner not connected
+  ```
+
+  An earlier whole-module arm hit the same wall 25 times and **timed out at 580 s** — 25 tests × the manifest's 60 s connect timeout. **Blast radius is exactly this one key**: with `c.effectively_once()` temporarily commented out, the whole smoke module is `exit 0, 25 passed` and crash-resume is `exit 0, 13 passed`.
+- **`effectively_once` is not the only key `refuse_workflow_facts` refuses** — `correction_window_ms` is refused outright and `sync_durability` conditionally. The veneers emit those from the same unconditional builder, so the fix must cover every key that function refuses, not just the one that fired.
+- **A fix must** gate the refused keys behind the class kind in all four veneers' declaration builders, as `HostClassDeclaration.forWorkflow` already does, **and keep the flag local to the spec** — `sdk/node/src/ctx.ts:256` and its three siblings read `spec.effectively_once` to decide whether to stamp `flz.entity`/`flz.seq`/`flz.key` on a keyed plugin frame; off the tier those stamps are written, under it the controller derives identity from the effect record. **Dropping `effectivelyOnce()` from the fixture instead would be a false green of exactly the KI-144 shape**: it changes the frames on the wire, silently stops `tier_commit_block_workflow` being the effectively-once fixture, and node's tier e2e cell is `(reference/uds)` so nothing would catch it.
+- **Verdict (supervisor, 2026-09-02)**: **real, P1, and fixed in ALL FOUR veneers at once**, though it is live only on node. The Cross-SDK rule requires it, and the other three each land workflow fixtures in R7 changes 3–5 — fixing it once now spares three identical stops later. It **blocks R7 change 2**, which is why it is fixed rather than filed under the deadline rule that otherwise defers found defects.
+
+
 ### KI-146 · A `test/system` module that spawns its fleet in `setup_all` always gets the REFERENCE runner, so another SDK is credited with a rust run
 
 - **Severity**: P1 for the programme's evidence, P3 for production · **a conformance gate that lies in the reporting SDK's favour.** Found by the R7 change-2 survey, 2026-09-02, reading rather than running; **reproduced by the supervisor the same day**.
