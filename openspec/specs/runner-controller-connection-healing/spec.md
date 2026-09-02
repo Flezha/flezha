@@ -141,11 +141,11 @@ The Controller SHALL retain a disconnected Runner's peer entry (including its as
 
 ### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
 
-When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`), it SHALL serialize each local operative's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{operative_id, serialized_state}` on the control channel for each operative, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(operative_id)`), which SHALL replace `state.snapshot` with the supplied binary atomically. The agent SHALL respond with `RunnerShutdownAck{operative_id}` once the snapshot is enqueued.
+When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`; or, for the Elixir SDK, the RunnerServer's `terminate/2` reached by the BEAM's `init:stop`, `Flezha.SDK.close/1` or `RunnerDisconnect`), it SHALL serialize each local operative's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{operative_id, serialized_state}` on the control channel for each operative, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(operative_id)`), which SHALL replace `state.snapshot` with the supplied binary atomically. The agent SHALL respond with `RunnerShutdownAck{operative_id}` once the snapshot is enqueued.
 
 The SDK SHALL wait at most 2 s per operative for the ack (with parallelism across operatives) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
 
-`RunnerShutdownNotification` and `RunnerShutdownAck` are additive opcodes: agents that don't recognise them SHALL log and ignore (existing protobuf-decoder behaviour); SDKs that don't send them — an SDK that defers `state_persistence` by name, as the Elixir SDK does — fall back to the periodic-snapshot freshness shipped by `heal-connections-on-restart`.
+`RunnerShutdownNotification` and `RunnerShutdownAck` are additive opcodes: agents that don't recognise them SHALL log and ignore (existing protobuf-decoder behaviour); SDKs that don't send them — an SDK that defers `state_persistence` by name — fall back to the periodic-snapshot freshness shipped by `heal-connections-on-restart`. Every shipped SDK carries `state_persistence`, so every shipped SDK sends them.
 
 #### Scenario: Graceful runner shutdown ships fresh state to the agent
 - **GIVEN** a runner running operative `p1` with current in-memory state `S_now` and the most recent periodic snapshot at `T - 45s` showing state `S_old`
@@ -160,6 +160,12 @@ The SDK SHALL wait at most 2 s per operative for the ack (with parallelism acros
 - **WHEN** the runner receives SIGTERM
 - **THEN** `flz_core_shutdown` SHALL serialize `p1`'s state through the host's still-polling loops and emit `RunnerShutdownNotification{operative_id: "p1", ...}` before the poll reports shutting down
 - **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=node` and `python` SHALL see `Overwatch.state.snapshot` populated within its window
+
+#### Scenario: The Elixir runner's supervisor shutdown ships the notification
+- **GIVEN** an Elixir runner running operative `p1`, booted runner-only so the BEAM's default `sigterm` handling is `init:stop`
+- **WHEN** the runner receives SIGTERM
+- **THEN** the application stop reaches the RunnerServer's `terminate/2`, which SHALL serialize `p1` through its live Entities and emit `RunnerShutdownNotification{operative_id: "p1", ...}` before the control connection is closed
+- **AND** `state_freshness_e2e_test.exs` under `FLEZHA_E2E_RUNTIME=elixir` SHALL see `Overwatch.state.snapshot` populated within its window
 
 #### Scenario: A stopping runner does not re-register
 - **GIVEN** an erased host whose stop path has called `flz_core_shutdown` and whose notification the agent has acknowledged

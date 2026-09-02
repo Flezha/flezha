@@ -71,9 +71,12 @@ end
 `run/3` returns `{:ok, new_state} | {:error, reason} | {:error, {:non_retryable, reason}}`;
 emits flush only on `{:ok, _}`. Optional `Procedure` callbacks: `entity_keys/0` (static
 keyset), `entities_for/1`, `mailbox_capacity/0` (1024; env `FLEZHA_MAILBOX_CAPACITY`, range
-`1..1_048_576`), `max_entities/0` (100_000). `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3`
-(a reserved `flz.` key answers `{:error, {:reserved_metadata_key, k}}`), `now/1` (wall ms,
-once per invocation), `entity_key/1`.
+`1..1_048_576`), `max_entities/0` (100_000), and the persistence three — `apply_change/2`
+(declares a changeful, persisted procedure; see [Persistence](#persistence)),
+`compact_after_bytes/0` (8 MiB) and `state_from_json/1`. `StreamOperative` takes an optional
+`persistence_enabled/0` (default `true`). `Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3`
+(a reserved `flz.` key answers `{:error, {:reserved_metadata_key, k}}`), `apply/3` (fold a
+change and record it), `now/1` (wall ms, once per invocation), `entity_key/1`.
 
 Entry-input idle rides the handle: `Flezha.SDK.last_entry_delivery(handle, channel)` answers
 when an entry channel last received a frame (`nil` before its first — the handle is free, so
@@ -134,6 +137,61 @@ and its group); static keys outside the range idle silently; a keyless topology 
 bind (`PartitionsWithoutKeyedProcedure`). The hash is the controller's own
 `Flezha.Partition.group_of/1` ([`partitioned_operatives.md`](partitioned_operatives.md)).
 
+## Persistence
+
+A procedure that exports `apply_change(state, change)` is changeful and persisted; one
+without it is the reference's `NoChange` — its state is a plain term nothing ships.
+`Flezha.SDK.Ctx.apply(ctx, state, change)` is the only recorded mutation path: it returns
+`apply_change(state, change)` and records the change, and `run/3` returns the state it
+produced — one fold, one push, so a replay of the recorded changes is the state.
+
+```elixir
+defmodule Counter do
+  @behaviour Flezha.SDK.Procedure
+  def name, do: "counter"
+  def init_state(_key), do: %{value: 0}
+  def apply_change(s, {:delta, n}), do: %{s | value: s.value + n}
+  def state_from_json(%{"value" => v}), do: %{value: v}
+  def run(n, s, ctx), do: {:ok, Flezha.SDK.Ctx.apply(ctx, s, {:delta, n})}
+end
+```
+
+After a successful dispatch the Entity ships one `entity_state_change` frame per recorded
+change — the shared 16-byte header (`sdk_lang` 3, the SDK's version, the schema version, the
+Erlang External Term Format id `7` allocated in `flz_core::header`), the record framed
+through `Flezha.State.Wire.encode_frame/4` under the instance-keyed identity, at
+`seq = change_seq` from `0`, in dispatch order on one secondary stream, before the dispatch's
+own output frame, each under the credit window. The body is `:erlang.term_to_binary/2`,
+deterministic. With the class's `persistence_enabled/0` false the seq advances and nothing
+ships. A changeful Entity also writes `{state, seq}` into its Operative's slot table after
+its records are on the wire, so an Entity killed untrappably comes back on the same seq line
+rather than at seq 0, where the controller's writer would drop every later record as a
+duplicate.
+
+The controller's commands are answered by `Flezha.SDK.Commands`, off the runner's loop:
+`RestoreInitState` folds the snapshot then the change log in the controller's on-disk framing
+(`Flezha.SDK.Record.fold/6` — CRC over header and body, language before format before schema,
+the shared core's refusal wordings), re-arms `change_seq` to `max(folded, terminal_seq) + 1`
+and replies `terminal_seq`; `CompactEntity` ships `entity_state_snapshot` at `change_seq - 1`
+behind the Entity's records and replies the seq and size; `EntityState` answers the
+Decision-10 JSON (`%{procedure => state}` for a Single node, `%{procedure => %{key => state}}`
+for a Static or Dynamic one, narrowed by the selector) with `flz.change_seq` on the reply
+frame for one Entity and the refusals `entity_key_without_procedure`, `procedure_not_found`,
+`entity_not_found`, `entity_busy` by name; `EntityApplyState`, `MigrationDeserialization` and
+a non-empty `AddOperative.init_values` hand each procedure's JSON to its `state_from_json/1`
+(the object itself by default — declare it when the state's keys are atoms);
+`CreditWindowInit` and `CreditGrant` drive `Flezha.SDK.Credit`, one window per runner that
+parks the shipping Entity — never drops — and counts `credit_parked` on the heartbeat. A
+class whose smallest `compact_after_bytes/0` differs from the default declares it. Two nodes
+of one changeful module in a class would share a WAL identity and are refused at registration
+(`DuplicatePersistentProcedure`); the reference gives a named node its own identity, but here
+`named/2` also names the channel and the procedure name is the WAL segment.
+
+A graceful stop — SIGTERM (the BEAM's own `init:stop`, in a runner-only boot), `close/1`, a
+`RunnerDisconnect` — runs `terminate/2`: every live operative is serialised, one
+`RunnerShutdownNotification` ships per operative, and the acks are awaited at most 2 s in
+parallel before the connection closes. `child_spec/1` sets a 10 s shutdown budget for it.
+
 ## Runner-only boot (standalone)
 
 A standalone node depends on flezha as a library without becoming a controller:
@@ -147,28 +205,29 @@ working example (path dependency, runner-only, stdin-EOF watcher).
 
 The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)'s
 `deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
-the conformance gate ([`conformance.md`](conformance.md)). In prose: state persistence and
-everything gated on it (entity state shipping, restore, compaction, credit windows, the
-effectively-once tier, checkpoints, correction windows, entity timers, `ctx.stable_id`,
-clocks); the workflow kind (`kind: workflow` on `AddOperative` is refused: `workflow kind is
-not supported by the Elixir stream SDK`); keyed channels (`keyed`, `emit_keyed`, output
-identity stamps); `merge`, `route_latest`, `branch`, `codec`; dynamic-entity eviction (dynamic
-Entities live for the operative's lifetime). A builder/ctx call
-into a deferred surface fails registration loudly, naming the operative module; a persistence
-frame from the controller is ignored with a warning.
+the conformance gate ([`conformance.md`](conformance.md)). In prose: the effectively-once
+tier and everything on it (effect records, checkpoints, `ctx.stable_id`); correction windows
+and the clock kinds; entity timers; keyed channels (`keyed`, `emit_keyed`, the output identity
+stamps); the workflow kind (`kind: workflow` on `AddOperative` is refused: `workflow kind is
+not supported by the Elixir stream SDK`); `merge`, `route_latest`, `branch`, `codec`;
+dynamic-entity eviction (dynamic Entities live for the operative's lifetime); schema
+evolution (`schema_version/0` and the migrations — every record is stamped at version 1 and
+any other version is refused). A builder/ctx call into a deferred surface fails registration
+loudly, naming the operative module.
 
-Two more, outside the vocabulary because no capability names them:
-graceful-shutdown final-state, and the hex package (`package-elixir-sdk`).
+One more, outside the vocabulary because no capability names it: the hex package
+(`package-elixir-sdk`).
 
 Each deferred capability's follow-up re-expresses the kernel's rules
-(`StagedInterval::fold`, the credit window, restore) in Elixir under the "one change, every
-SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`.
+(`StagedInterval::fold`, the timer set, the replay slice) in Elixir under the "one change,
+every SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`, as its
+persistence already shows.
 
 ## Packaging boundary
 
 SDK modules (`lib/flezha/sdk/`) touch the controller application only through named seams:
 `Flezha.SDK.Codec` (the only module that may reference `Flezha.Runner.CommandsProto` /
-`RunnerCommands`), `Flezha.State.Wire.encode_park_body/1` (postcard),
+`RunnerCommands`), `Flezha.State.Wire` (the frame and entity-id codec, the postcard park body),
 `Flezha.Partition.group_of/1` (key-group hash), `Flezha.Transport.Stream`,
 `Flezha.Transport.Local(.Stream)` and `Flezha.Transport.Server` (native), and
 `Flezha.Transport.Native` (the `flz_nif` client entry points, socket modes).

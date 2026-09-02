@@ -436,7 +436,7 @@ The rule, normative for every binding:
   | 0 | unspecified — never places | — |
   | 1 | Rust | yes (postcard) |
   | 2 | Java | yes (Kryo) |
-  | 3 | Elixir | no (v1 persists nothing) |
+  | 3 | Elixir | yes (External Term Format, `format_id` 7) |
   | 4 | Node | yes (MessagePack) |
   | 5 | Ruby | yes (MessagePack) |
   | 6 | PHP | yes (JSON) |
@@ -463,14 +463,15 @@ Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 the reference every other is checked against. The Node, Ruby, PHP and Python SDKs carry every
 capability but `workflow`, whose reference fixtures need two builder surfaces every veneer
 lacks — an inter-procedure `codec()` and a hybrid `sink().into()` — and which they owe to the
-follow-up that adds them. The Elixir SDK (v1) is its own core and defers the persistence
-family, the effectively-once tier, timers, correction windows, keyed channels, the workflow
+follow-up that adds them. The Elixir SDK is its own core: it carries `state_persistence` as a
+re-expression of the kernel's rules — the record header and the External Term Format body,
+the fold, compaction, the live read, the credit window, the shutdown notification — and
+defers the effectively-once tier, timers, correction windows, keyed channels, the workflow
 kind, dynamic-Entity eviction and schema evolution, each owed to a re-expression in Elixir.
-`entry_idle` is carried by all seven and sits in the required set: its stamp and episode
-latch live once in the shared core for the six `flz_core` hosts and are re-expressed in the
-Elixir SDK, and each host adds its own tick and delivery. Keyed channels are the one
-capability every SDK but Elixir carries; Elixir defers by name because its own core mints no
-identity stamps yet.
+`entry_idle` and `state_persistence` are carried by all seven and sit in the required set:
+their mechanisms live once in the shared core for the six `flz_core` hosts and are
+re-expressed in the Elixir SDK. Keyed channels are the one capability every SDK but Elixir
+carries; Elixir defers by name because its own core mints no identity stamps yet.
 
 ---
 

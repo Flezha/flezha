@@ -325,6 +325,24 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
     end
   end
 
+  defmodule StoreProc do
+    @behaviour Flezha.SDK.Procedure
+    def name, do: "lr_store_procedure"
+    def init_state(_), do: %{inputs: []}
+    def apply_change(s, {:push, v}), do: %{s | inputs: s.inputs ++ [v]}
+    def run(input, s, ctx), do: {:ok, Ctx.apply(ctx, s, {:push, input})}
+  end
+
+  defmodule StoreOp do
+    @behaviour Flezha.SDK.StreamOperative
+    def factory_id, do: "lr_store"
+
+    def channels(c) do
+      import Flezha.SDK.Channels
+      c |> input("in") |> into(StoreProc) |> named("store") |> sink("lr_store_out")
+    end
+  end
+
   defp start_runner(ns, streams) do
     handle =
       Enum.reduce(streams, Flezha.SDK.create_runner(ns, transport: :native), fn m, acc ->
@@ -449,6 +467,66 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
              Flezha.SDK.remove_stream(handle2, EchoOp)
 
     assert n >= 1
+  end
+
+  test "a live read answers through the controller, and a close ships the freshest state to the Overwatch",
+       %{
+         ns: ns
+       } do
+    handle = start_runner(ns, [StoreOp])
+    on_exit(fn -> Flezha.SDK.close(handle) end)
+    operative_id = "lr_store_#{System.unique_integer([:positive])}"
+
+    assert {:ok, _} =
+             OperativeManager.start_operative(ns, %Builder{
+               id: operative_id,
+               factory_id: "lr_store",
+               init_values: %{},
+               opts: [snapshot_interval: 0]
+             })
+
+    {:ok, overwatch} = OperativeManager.get_operative_pid(ns, operative_id)
+    assert :sys.get_state(overwatch).snapshot == nil
+
+    for input <- ~w(alpha beta gamma) do
+      OperativeManager.send_io(operative_id, ns, input, %{"channel" => "in", "input_type" => "2"})
+    end
+
+    # The live read is the residency signal, and the EntityState command end to end.
+    assert NodeTestHelper.wait_until(
+             fn ->
+               live_state(ns, operative_id) ==
+                 %{"lr_store_procedure" => %{"inputs" => ["alpha", "beta", "gamma"]}}
+             end,
+             15_000
+           )
+
+    assert {:ok, _json, seq} =
+             OperativeManager.get_entity_state(ns, operative_id, %{
+               procedure: "lr_store_procedure"
+             })
+
+    assert seq == 3, "three records shipped, so the one Entity read at change_seq 3"
+
+    # A close is a graceful stop: terminate/2 ships the notification and the
+    # controller's Overwatch keeps the state the runner held.
+    :ok = Flezha.SDK.close(handle)
+
+    assert NodeTestHelper.wait_until(
+             fn -> Process.alive?(overwatch) and :sys.get_state(overwatch).snapshot != nil end,
+             5_000
+           ),
+           "no RunnerShutdownNotification reached the Overwatch"
+
+    assert Jason.decode!(:sys.get_state(overwatch).snapshot) ==
+             %{"lr_store_procedure" => %{"inputs" => ["alpha", "beta", "gamma"]}}
+  end
+
+  defp live_state(ns, operative_id) do
+    case OperativeManager.get_entity_state(ns, operative_id) do
+      {:ok, json} -> Jason.decode!(json)
+      _ -> nil
+    end
   end
 
   defp factory_ids(factories) do

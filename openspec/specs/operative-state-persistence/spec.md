@@ -286,13 +286,13 @@ Every WAL record and snapshot file SHALL carry a 16-byte header preceding the pa
 - bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python. Values `8–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
 - bytes 1:5 — `sdk_version: u32 BE` (semver-encoded)
 - bytes 5:9 — `schema_version: u32 BE` (per-Procedure, user-controlled)
-- bytes 9:10 — `format_id: u8` (1 = postcard, 2 = bincode, 3 = rkyv-zerocopy, 4 = kryo-registered, 5 = msgpack, 6 = json). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte.
+- bytes 9:10 — `format_id: u8` (1 = postcard, 2 = effect record, 3 = timer ops, 4 = kryo-registered, 5 = msgpack, 6 = json, 7 = etf — Erlang External Term Format, the Elixir SDK's codec). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte; a new codec takes the next free value in the same table of record.
 - bytes 10:12 — reserved, MUST be zero
 - bytes 12:16 — `crc32: u32 BE` over the payload bytes (change_bytes for WAL records; snapshot_bytes for snapshot files)
 
 The agent SHALL stamp the header at write time using the SDK-supplied values (the SDK ships the header pre-stamped in the wire frame; the agent writes it verbatim). The agent SHALL treat an unknown `sdk_lang` or `format_id` as opaque — it stores and re-ships such records unchanged and SHALL NOT reject them, so allocating a new SDK's value requires no agent change. The agent SHALL, however, **read** byte 0 to resolve a factory's established language for the placement guard; that read is a routing decision, not a validation of the body.
 
-The SDK SHALL verify the header at read time on **every** restore path — the typed path and the host path alike — before any body reaches a codec. A record whose `sdk_lang` is not the reading SDK's own value SHALL be refused with a language-mismatch error naming both values; the SDK SHALL NOT attempt to decode it, and SHALL NOT fall back to a partial or empty state. The agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
+The SDK SHALL verify the header at read time on **every** restore path — the typed path, the host path and an SDK that is its own core alike — before any body reaches a codec. A record whose `sdk_lang` is not the reading SDK's own value SHALL be refused with a language-mismatch error naming both values; the SDK SHALL NOT attempt to decode it, and SHALL NOT fall back to a partial or empty state. The agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
 
 **The language is resolved before the format.** A record from another SDK is neither a format question nor a schema one, so the language gate SHALL be applied first and its refusal SHALL name both languages. Reading the format byte first makes a record written by an SDK with a different codec report as a malformed header, naming neither.
 
@@ -355,6 +355,11 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 - **WHEN** three SDKs write MessagePack bodies and therefore all stamp `format_id = 5`
 - **THEN** their records SHALL remain distinguishable by `sdk_lang`, and a restore SHALL refuse on that byte rather than on the codec byte
+
+#### Scenario: An Elixir record is self-describing and the Elixir SDK refuses every other language
+
+- **WHEN** an Elixir Entity writes a change record and later restores it, and separately is sent a record stamped with any other SDK's `sdk_lang`
+- **THEN** the written header SHALL carry `sdk_lang = 3` and `format_id = 7`, the Elixir restore SHALL decode it, and the foreign record SHALL be refused by the SDK's own fold with the language-mismatch wording naming both languages before its format byte is read
 
 ### Requirement: Idempotent emits with stable dedup keys
 

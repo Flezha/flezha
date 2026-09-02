@@ -303,7 +303,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :retry_ladder,
     :partitioned,
     :pool_wedge,
-    :entry_idle
+    :entry_idle,
+    :state_persistence
   ]
 
   def capabilities, do: @capabilities

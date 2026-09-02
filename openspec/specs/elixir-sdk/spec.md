@@ -171,7 +171,7 @@ The SDK SHALL decode `AddOperative`'s `partition_index`/`partition_count`/`key_g
 - **THEN** it produces `"BTC-USD"→129`, `"ETH-USD"→213`, `"SOL-USD"→60`, `""→141`, `"a"→100`
 
 ### Requirement: Liveness self-reporting matches the cross-SDK contract
-The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `PingResponse` carrying the nonce, and emit `data_heartbeat` frames (empty body) every `FLEZHA_DATA_HEARTBEAT_MS` (default 10 s), jittered into `[base/2, base]`, on each bound secondary stream, with metadata carrying at least `dispatches` (incremented only on completed dispatches — the key the `runner_pool_wedged` verdict requires) and `blocked_parks`. `credit_parked` MAY be omitted (no state stream exists in v1). The contract SHALL hold identically in both deployment modes.
+The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `PingResponse` carrying the nonce, and emit `data_heartbeat` frames (empty body) every `FLEZHA_DATA_HEARTBEAT_MS` (default 10 s), jittered into `[base/2, base]`, on each bound secondary stream, with metadata carrying at least `dispatches` (incremented only on completed dispatches — the key the `runner_pool_wedged` verdict requires), `blocked_parks`, and `credit_parked` — the count of credit-park wait iterations, so a runner parked on an exhausted window reads as parked rather than wedged beside a frozen `dispatches`. The contract SHALL hold identically in both deployment modes.
 
 #### Scenario: Heartbeats keep idle channels live
 - **WHEN** the runner is connected with zero traffic for several minutes
@@ -181,8 +181,12 @@ The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `
 - **WHEN** dispatch progress halts while the runner process remains alive and fed
 - **THEN** consecutive heartbeats carry a non-advancing `dispatches` value, enabling the existing `runner_pool_wedged` classifier verdict
 
+#### Scenario: A credit park is visible as a park
+- **WHEN** an Entity is parked on an exhausted credit window across two heartbeats
+- **THEN** the second heartbeat's `credit_parked` is greater than the first's while `dispatches` stands still
+
 ### Requirement: Declarations and deferred commands follow the scope matrix
-`AddOperativeResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works. Persistence-family commands (`RestoreInitState`, `CompactEntity`, `EntityState`, `EntityApplyState`, `MigrationSerialization`/`Deserialization`) SHALL be answered with a safe empty response plus a `warn` if one ever arrives — structurally none fires for a persistence-free runner. `WorkflowStop` SHALL be tolerated with a warn (no workflow factory is ever advertised). `RunnerDisconnect` SHALL terminate the connection cleanly.
+`AddOperativeResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works, and a class whose smallest `compact_after_bytes/0` differs from the 8 MiB default SHALL declare `compact_after_bytes` with that value. The persistence-family commands — `RestoreInitState`, `CompactEntity`, `EntityState`, `EntityApplyState`, `MigrationSerialization` / `MigrationDeserialization`, `CreditWindowInit`, `CreditGrant` — SHALL be answered for real, by the SDK's own re-expression of the kernel's rules (the `state_persistence` requirement below); `EntityMailboxStatus` SHALL be tolerated with a debug log, as the reference tolerates a pre-credit controller. `WorkflowStop` SHALL be tolerated with a warn (no workflow factory is ever advertised). `RunnerDisconnect` SHALL terminate the connection cleanly.
 
 #### Scenario: Declaration-free response is empty
 - **WHEN** an operative with a keyed topology and no declarations binds
@@ -191,6 +195,10 @@ The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `
 #### Scenario: Keyless topology declares its keyedness
 - **WHEN** an operative whose topology has no keyed procedure binds
 - **THEN** its response metadata carries `keyed: "false"`, and a later partitioned start of that class is refused at the controller before any member starts
+
+#### Scenario: A non-default compaction threshold is declared
+- **WHEN** a class's only changeful Procedure declares `compact_after_bytes/0` as `1_048_576`
+- **THEN** its response metadata carries `compact_after_bytes: "1048576"`, and a class at the default carries no such key
 
 ### Requirement: Command codec is isolated for future term-native migration and packaging
 All SDK-side control-channel encode/decode SHALL go through a single codec module speaking the `RunnerCommands.*` protobuf structs via the already-compiled `Flezha.Runner.CommandsProto` Protox modules. No SDK or native-transport code outside the codec SHALL reference Protox or `RunnerCommands`, and none SHALL assume control messages are binaries.
@@ -207,7 +215,7 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 - **THEN** every controller-application reference resolves to one of the named seams, and any new stray reference fails the audit
 
 ### Requirement: Bench harness covers the elixir runtime on all three transports
-`mix bench --runtime elixir` SHALL run the `regression`, `entity`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `entity_stress`, and `dynamic_entity` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`; a round-trip run combining `--runtime elixir` with a durability other than `off` SHALL be refused at the task with an error naming the deferred persistence capability, before any runner starts.
+`mix bench --runtime elixir` SHALL run the `regression`, `entity`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `entity_stress`, and `dynamic_entity` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`, and at durability `state` registering `bench_keyed`, the persistent twin; a round-trip run combining `--runtime elixir` with a durability posture whose capability the Elixir manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
 
 #### Scenario: Comparable bench run in-process
 - **WHEN** `mix bench --runtime elixir -n 100 -m 1000` runs with the native transport configured
@@ -227,7 +235,11 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 
 #### Scenario: Round-trip tiered durability refused by name
 - **WHEN** `mix bench.roundtrip --runtime elixir --durability on` runs
-- **THEN** the task exits before starting a runner with an error naming the deferred persistence capability and the Elixir SDK guide
+- **THEN** the task exits before starting a runner with an error naming the deferred `effectively_once` capability and the Elixir SDK guide
+
+#### Scenario: Round-trip persistent run on the elixir runtime
+- **WHEN** `mix bench.roundtrip --runtime elixir --workload keyed --durability state` runs with the uds transport configured
+- **THEN** the elixir runner serves `bench_keyed`, the controller writes a WAL for its Entity, and every record is received exactly once
 
 ### Requirement: A crashed Entity is recovered by its Operative, and the recovery is a requirement
 
@@ -236,11 +248,20 @@ drop a dead Entity from its live map on `:EXIT`, and SHALL recreate it on that
 key's next input. A crashed Entity SHALL NOT take the Operative down with it, and
 SHALL NOT leave the key permanently unroutable.
 
-The recreated Entity starts fresh: the SDK persists no Entity state in v1, so the
-in-flight value that ended the previous process and any in-memory Procedure state
-are lost. That is the documented v1 behaviour of a persistence-free runner, not a
-gap this change closes — but it SHALL be stated, because the other SDKs' hosts
-owe the same "a dead worker comes back" property and this is the reference for it.
+A recreated Entity of a Procedure that declares no `apply_change/2` starts
+fresh: its state is a plain term that nothing persists, so the in-flight value
+that ended the previous process and any in-memory state are lost. That is the
+documented behaviour of a persistence-free Procedure — but it SHALL be stated,
+because the other SDKs' hosts owe the same "a dead worker comes back" property
+and this is the reference for it.
+
+A recreated Entity of a changeful Procedure SHALL continue on the seq line and
+from the state its last shipped record left: the Operative SHALL keep, per
+persistent Entity, the state and `change_seq` as of that Entity's last shipped
+record, written by the Entity after its records are on the wire, and SHALL
+seed the replacement from it. A replacement that restarted at seq 0 would have
+every later record dropped by the controller's writer as a duplicate while the
+runner kept dispatching, which is a silent divergence and not a recovery.
 
 A crash SHALL be logged naming the operative, the node reference and the entity
 key, so a key crashing on every input is visible rather than appearing as silent
@@ -258,6 +279,11 @@ inactivity.
 #### Scenario: A repeatedly crashing key is visible
 - **WHEN** an Entity crashes on every input for its key
 - **THEN** each crash SHALL be logged naming the operative, node reference and entity key
+
+#### Scenario: A persistent Entity comes back on its own seq line
+- **GIVEN** a changeful Entity that has shipped records at seq 0 through 4
+- **WHEN** its process is killed untrappably and the next input for its key arrives
+- **THEN** the replacement dispatches from the state the seq-4 record left and ships that input's record at seq 5, and the controller's writer appends it
 
 ### Requirement: The Elixir runner reports handout liveness on its heartbeat
 
@@ -282,9 +308,7 @@ on them.
 
 The Elixir SDK SHALL hold the allocated language byte `3` and SHALL carry it on every factory it advertises — in the connect init frame's factory entries and in `UpdateFactories` — in both deployment modes (in-node native and standalone UDS/QUIC). The value SHALL come from one constant in the SDK, not be spelled per call site.
 
-The SDK persists no Entity state in v1 and therefore stamps no record headers; the byte is nonetheless mandatory, because the SDK advertises factory ids that the Rust and Java test apps also advertise (the round-trip twins are specified as sharing ids), and the controller's placement guard is what keeps those ids from crossing runtimes.
-
-Should the SDK later gain persistence, it SHALL stamp the same value at byte 0 of every durable record and SHALL refuse to restore a record carrying any other value, per the shared header contract.
+The SDK SHALL stamp the same value at byte 0 of every durable record it ships — change records and snapshots alike — and SHALL refuse to restore a record carrying any other value, per the shared header contract, with the language-mismatch wording the core uses, naming both languages, before the record's format or schema is looked at. The byte is what keeps the Elixir SDK's factory ids — which the Rust and Java test apps also advertise — from crossing runtimes at the controller's placement guard, and what keeps another SDK's bytes out of the Elixir codec.
 
 #### Scenario: The language rides both deployment modes
 - **WHEN** the SDK connects in native mode and in standalone mode
@@ -298,6 +322,10 @@ Should the SDK later gain persistence, it SHALL stamp the same value at byte 0 o
 - **GIVEN** a namespace where an Elixir runner and a Rust runner both advertise `do_nothing`, established at the Rust language
 - **WHEN** an operative of `do_nothing` is placed
 - **THEN** the Elixir runner SHALL NOT be a candidate, and the placement SHALL go to the Rust runner
+
+#### Scenario: Every durable record is stamped and a foreign one is refused
+- **WHEN** an Elixir Entity ships a change record, and later a `RestoreInitState` for it carries a record stamped with the Rust SDK's byte
+- **THEN** the shipped record's byte 0 is `3`, and the restore is refused with the language-mismatch wording naming `elixir (3)` and `rust (1)` — never decoded, never reported as a malformed header
 
 ### Requirement: The Elixir SDK records entry deliveries and reports idle episodes in both deployment modes
 
@@ -314,4 +342,33 @@ The Elixir SDK SHALL carry the `entry_idle` capability with its own re-expressio
 #### Scenario: A raising observer costs the runner nothing
 - **WHEN** a registered observer raises inside `idle/1`
 - **THEN** the SDK logs one warning naming the channel and the episode, the Entity processes and the tick continue, and the next episode invokes the observer again
+
+### Requirement: The Elixir SDK persists per-Entity state in its own core
+
+The Elixir SDK SHALL carry the `state_persistence` capability by re-expressing the kernel's rules in Elixir, inheriting nothing from `flz_core` and changing nothing in the controller, which SHALL keep being unable to tell an Elixir runner from a Rust one. A Procedure that exports `apply_change/2` is changeful and persisted; `Flezha.SDK.Ctx.apply/3` SHALL be the only recorded mutation path, returning `apply_change(state, change)` and recording the change for the record stream, so that one fold is one push; a Procedure without `apply_change/2` is the reference's `NoChange` and ships nothing. `StreamOperative.persistence_enabled/0` (default `true`) SHALL, when `false`, advance the seq and ship nothing. After a successful dispatch the Entity SHALL ship one `entity_state_change` frame per recorded change — the 16-byte header stamping `sdk_lang = 3`, the SDK's version, the Procedure's schema version and the Erlang External Term Format id `7` allocated in `flz_core::header`, over `Flezha.State.Wire.encode_frame/4` and the instance-keyed identity — at `seq = change_seq` advancing from `0`, in dispatch order on one secondary stream, before the dispatch's output frame, each under the credit window's `acquire`. The SDK SHALL answer `RestoreInitState` by folding the snapshot then the change log in the controller's on-disk framing under the Entity's own serialisation — CRC over header and body, language before format before schema, the core's refusal wordings — re-arming `change_seq` to `max(folded terminal, terminal_seq) + 1` and replying `terminal_seq`; `CompactEntity` by shipping `entity_state_snapshot` at `change_seq − 1` after the Entity's records and replying `snapshot_seq` and the body size, with `{0, 0}` and an error for an unknown Entity; `EntityState` with the Decision-10 JSON shape narrowed by its selector, `flz.change_seq` on the reply frame for one Entity, and the refusals `entity_key_without_procedure`, `procedure_not_found`, `entity_not_found` and `entity_busy` by name; `EntityApplyState`, `MigrationDeserialization` and a non-empty `AddOperative.init_values` by handing each Procedure's JSON to its `state_from_json/1` (default: the object itself); `MigrationSerialization` with the whole-operative JSON; `CreditWindowInit` and `CreditGrant` by arming and replenishing one runner-wide window that parks the shipping Entity, never drops, counts `credit_parked`, and is disarmed on reconnect. On graceful termination — SIGTERM through the BEAM's `init:stop`, `Flezha.SDK.close/1`, `RunnerDisconnect` — the RunnerServer SHALL serialise every live operative, ship one `RunnerShutdownNotification` each and wait at most 2 s in parallel for the acks before closing. `test/apps/elixir_runner` SHALL carry the six reference twins and the manifest SHALL list `state_persistence` under `fixtures`.
+
+#### Scenario: A change is durable on the controller and the state is readable by name
+- **WHEN** a `store_input` operative on an Elixir runner receives three inputs
+- **THEN** the controller's WAL for `{operative_id, "store_input_procedure", ""}` holds three records at seq 0, 1, 2 stamped `sdk_lang = 3` and `format_id = 7`, and `EntityState` answers `{"store_input_procedure": {"binary_inputs": [], "text_inputs": [...]}}` holding the three inputs
+
+#### Scenario: A rebind restores the accumulated state
+- **GIVEN** a `resume_probe` Entity that has folded a running total of 100 and was compacted at seq 7
+- **WHEN** the operative is stopped with its state preserved and started again on an Elixir runner
+- **THEN** the restore folds the snapshot and the tail, answers `terminal_seq` at or above 7, the next input `+7` emits `107`, and its record ships at `terminal_seq + 1`
+
+#### Scenario: Compaction produces a snapshot behind the records
+- **WHEN** the controller's sweep sends `CompactEntity` for an Elixir Entity at `change_seq = 50`
+- **THEN** an `entity_state_snapshot` frame arrives at seq 49 after every change record the Entity shipped, the reply carries `snapshot_seq = 49`, and the controller writes the snapshot file and truncates the WAL behind it
+
+#### Scenario: A parked sender resumes on a grant and never drops
+- **WHEN** an Elixir Entity overdrives a 64 KiB credit window with 300 KiB of change records
+- **THEN** it parks on `acquire` between the controller's fsync-minted grants, every record lands in seq order, the heartbeat's `credit_parked` advances, and the controller counts zero sheds and zero overruns
+
+#### Scenario: SIGTERM ships the freshest state
+- **WHEN** an Elixir runner holding a `store_input` operative with three applied inputs receives SIGTERM
+- **THEN** the controller's `Overwatch.state.snapshot` for that operative holds the Decision-10 JSON with the three inputs within the 2 s ack window, and the runner exits
+
+#### Scenario: A persistence-free class still ships nothing
+- **WHEN** a `persistence_off_counter` operative folds inputs, and separately a Procedure without `apply_change/2` dispatches
+- **THEN** the controller writes no WAL record for either, the first advances its seq silently and the second holds no seq at all
 

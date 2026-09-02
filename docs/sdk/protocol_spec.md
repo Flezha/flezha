@@ -898,10 +898,10 @@ right per-Entity WAL without a side table:
 
 | Offset | Field | Value |
 |--------|-------|-------|
-| 0 | `sdk_lang: u8` | `1` Rust, `2` Java |
+| 0 | `sdk_lang: u8` | `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python — the allocation table in `flz_core/src/header.rs` |
 | 1..5 | `sdk_version: u32 BE` | `(major << 16) \| (minor << 8) \| patch` |
 | 5..9 | `schema_version: u32 BE` | the Procedure's declared schema version |
-| 9 | `format_id: u8` | `1` postcard change, `2` effect record, `3` timer-ops record, `4` Kryo change (Java) |
+| 9 | `format_id: u8` | `1` postcard change, `2` effect record, `3` timer-ops record, `4` Kryo change (Java), `5` MessagePack change (Node, Ruby, Python), `6` JSON change (PHP), `7` External Term Format change (Elixir) |
 | 10..12 | reserved | zero |
 | 12..16 | `crc32: u32 BE` | over the body |
 
@@ -910,9 +910,10 @@ and decodes only `format_id = 2`. A **timer-ops record** (`format_id = 3`)
 carries a postcard `Vec<TimerOp>` mutating the Entity's pending-timer set; the
 controller never decodes it — the pending set is SDK-owned state
 ([`entity_timers.md`](entity_timers.md)). On restore the kernel validates the
-header for both hosts and refuses a mismatch with a typed error:
-`RestoreError::LangMismatch` (a Java runner reading a Rust header or vice
-versa), `SchemaMismatch`, `CrcMismatch`, `HeaderInvalid`.
+header for every host it serves — and the Elixir SDK's own fold does the same
+— and refuses a mismatch by name, the language before anything else:
+`RestoreError::LangMismatch` (one SDK reading another's header),
+`SchemaFromTheFuture` / `SchemaTooOld`, `CrcMismatch`, `HeaderInvalid`.
 
 ### Data-stream payload-id `entity_effect_record`
 

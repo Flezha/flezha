@@ -50,7 +50,7 @@ pub enum RestoreError {
 pub const SDK_LANG_UNSPECIFIED: u8 = 0;
 pub const SDK_LANG_RUST: u8 = 1;
 pub const SDK_LANG_JAVA: u8 = 2;
-/// Persists no Entity state, but its factories carry the byte for placement.
+/// Its own core, not a `flz_core` host; writes `FORMAT_ID_ETF` bodies.
 pub const SDK_LANG_ELIXIR: u8 = 3;
 pub const SDK_LANG_NODE: u8 = 4;
 pub const SDK_LANG_RUBY: u8 = 5;
@@ -97,6 +97,9 @@ pub const FORMAT_ID_MSGPACK: u8 = 5;
 
 /// PHP's JSON codec.
 pub const FORMAT_ID_JSON: u8 = 6;
+
+/// Erlang External Term Format, the Elixir SDK's codec.
+pub const FORMAT_ID_ETF: u8 = 7;
 
 /// A postcard `Vec<TimerOp>`, stored and truncated as any change record.
 pub const FORMAT_ID_TIMER_OPS: u8 = 3;
@@ -341,6 +344,7 @@ mod tests {
             FORMAT_ID_KRYO,
             FORMAT_ID_MSGPACK,
             FORMAT_ID_JSON,
+            FORMAT_ID_ETF,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {

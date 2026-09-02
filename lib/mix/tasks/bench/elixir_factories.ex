@@ -6,7 +6,8 @@
 #   dynamic_entity — dynamic:    filter + key_by(prefix) → keyed Entity → sink
 # plus the `mix bench.roundtrip` twins:
 #   bench_echo            — do_nothing with a declared Block on the entry mailbox
-#   bench_keyed_nopersist — "key:value" upsert, emits "key=value" (Single Entity)
+#   bench_keyed           — "key:value" upsert, emits "key=value" (Single Entity), persisted
+#   bench_keyed_nopersist — the same upsert with the class's persistence off
 # Lives beside the bench task (not under test/) because the in-process
 # `--transport native` bench needs it in the controller's own build; the
 # standalone test/apps/elixir_runner registers the same modules from the dep.
@@ -204,6 +205,7 @@ defmodule Flezha.Bench.TierStoreProc do
 
   def name, do: "tier_store_procedure"
   def init_state(_), do: %{}
+  def apply_change(values, {:set, key, value}), do: Map.put(values, key, value)
 
   # Rust emits `key=value` keyed on `key`; v1 has no `emit_keyed`, same bytes unkeyed.
   def run(input, values, ctx) do
@@ -216,19 +218,18 @@ defmodule Flezha.Bench.TierStoreProc do
     if value == "poison" do
       {:error, "poison value"}
     else
+      values = Ctx.apply(ctx, values, {:set, key, value})
       Ctx.emit(ctx, "#{key}=#{value}")
-      {:ok, Map.put(values, key, value)}
+      {:ok, values}
     end
   end
 end
 
-defmodule Flezha.Bench.KeyedNoPersist do
+defmodule Flezha.Bench.BenchKeyed do
   @moduledoc false
   @behaviour Flezha.SDK.StreamOperative
-  def factory_id, do: "bench_keyed_nopersist"
+  def factory_id, do: "bench_keyed"
 
-  # Rust switches the class's per-Entity persistence off; v1 has no persistence
-  # at all, so this is the heap-only posture by construction.
   def channels(c) do
     import Flezha.SDK.Channels
 
@@ -241,6 +242,17 @@ defmodule Flezha.Bench.KeyedNoPersist do
   end
 end
 
+defmodule Flezha.Bench.KeyedNoPersist do
+  @moduledoc false
+  @behaviour Flezha.SDK.StreamOperative
+  def factory_id, do: "bench_keyed_nopersist"
+
+  # The same upsert with the class's persistence off — the heap-only posture
+  # the bench isolates against the durable one.
+  def persistence_enabled, do: false
+  defdelegate channels(c), to: Flezha.Bench.BenchKeyed
+end
+
 defmodule Mix.Tasks.Bench.ElixirFactories do
   @moduledoc "Registry of the Elixir bench factory operatives (see this file's header)."
 
@@ -251,6 +263,7 @@ defmodule Mix.Tasks.Bench.ElixirFactories do
       Flezha.Bench.EntityStress,
       Flezha.Bench.DynamicEntity,
       Flezha.Bench.BenchEcho,
+      Flezha.Bench.BenchKeyed,
       Flezha.Bench.KeyedNoPersist
     ]
   end

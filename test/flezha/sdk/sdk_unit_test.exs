@@ -247,7 +247,7 @@ defmodule Flezha.SDK.UnitTest do
   # --- Ctx ---
 
   test "emits accumulate and flush; reserved flz. keys refuse" do
-    ctx = Ctx.new("k", 123)
+    ctx = Ctx.new(nil, "k", 123)
     assert Ctx.now(ctx) == 123
     assert Ctx.entity_key(ctx) == "k"
     assert :ok = Ctx.emit(ctx, :a)

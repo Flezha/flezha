@@ -1,14 +1,14 @@
 # SDK State Persistence
 
 For operative authors and SDK implementers: how a Procedure's per-Entity state becomes
-durable in the Rust and Java SDKs — the shared model (State, Change, snapshot + change-log
-restore, compaction, the persistence toggle, payload ids, the record header), then each
-SDK's authoring surface and test harness. The controller's on-disk layout, fsync batching,
-retention and the `flz state` CLI are in
+durable in the Rust, Java and Elixir SDKs — the shared model (State, Change, snapshot +
+change-log restore, compaction, the persistence toggle, payload ids, the record header), then
+each SDK's authoring surface and test harness. The controller's on-disk layout, fsync
+batching, retention and the `flz state` CLI are in
 [`../internals/state_persistence.md`](../internals/state_persistence.md); frame layouts in
-[`protocol_spec.md`](protocol_spec.md#11-per-entity-state-persistence). The Elixir SDK defers
-state persistence entirely ([`elixir_sdk.md`](elixir_sdk.md)); a builder or ctx call into
-it fails registration loudly.
+[`protocol_spec.md`](protocol_spec.md#11-per-entity-state-persistence). The Elixir SDK is
+its own core and carries the same rules re-expressed in Elixir
+([`elixir_sdk.md`](elixir_sdk.md#persistence)); the FFI veneers carry them through the core.
 
 ## Shared concepts
 
@@ -50,15 +50,18 @@ Rust pushes typed Changes into the buffer directly; Java has no flusher of its o
 Kryo-encoded change bytes ride the activation result into the core, so a long invocation (a
 GC pause included) delays its records: the durability bound is a guideline, not a hard cap.
 With persistence off the drain still runs (buffer emptied, seq advanced) but nothing is sent.
+The Elixir SDK has no flusher: its Entity process ships each dispatch's records itself, at
+the end of the dispatch and before the dispatch's outputs, and advances the seq silently when
+the class's persistence is off.
 
 ### Persistence toggle
 
-| Surface | Rust | Java |
-|---|---|---|
-| Stream class toggle | `StreamOperative::PERSISTENCE_ENABLED` const, default `true`; frozen on the instance at start, a change applies on the next stop + start | `StreamOperative.persistenceEnabled()` default-method exists but the runtime does not read it; the host declaration ships `persistent = true` iff some Procedure declares a Change other than `NoChange`, so the Java opt-out is per-Procedure via `NoChange` |
-| Runner override | `StreamInstance::new` (`flz_core/src/operative/instance.rs`, `operator_override.unwrap_or(class_const)`) accepts an `operative_persistence.<OperativeClass>` override, but the runner's `start_operative` passes none — the class const decides | same core seam, same unfed override |
-| Workflow class toggle | `WorkflowOperative::PERSISTENCE_ENABLED`, default `true` | `WorkflowOperative.persistenceEnabled()`, default `true` |
-| Controller side | `:operative_persistence` (`%{class => bool}`) resolves `persistent_state?` for workflow classes; a stream class is always durable on the controller side | same |
+| Surface | Rust | Java | Elixir |
+|---|---|---|---|
+| Stream class toggle | `StreamOperative::PERSISTENCE_ENABLED` const, default `true`; frozen on the instance at start, a change applies on the next stop + start | `StreamOperative.persistenceEnabled()` default-method exists but the runtime does not read it; the host declaration ships `persistent = true` iff some Procedure declares a Change other than `NoChange`, so the Java opt-out is per-Procedure via `NoChange` | `StreamOperative.persistence_enabled/0`, default `true`, read when an Entity starts; a Procedure without `apply_change/2` is `NoChange` |
+| Runner override | `StreamInstance::new` (`flz_core/src/operative/instance.rs`, `operator_override.unwrap_or(class_const)`) accepts an `operative_persistence.<OperativeClass>` override, but the runner's `start_operative` passes none — the class const decides | same core seam, same unfed override | none — the class callback decides |
+| Workflow class toggle | `WorkflowOperative::PERSISTENCE_ENABLED`, default `true` | `WorkflowOperative.persistenceEnabled()`, default `true` | the workflow kind is deferred |
+| Controller side | `:operative_persistence` (`%{class => bool}`) resolves `persistent_state?` for workflow classes; a stream class is always durable on the controller side | same | same |
 
 Durable-vs-opted-out workflow guarantees: [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
 
@@ -79,6 +82,10 @@ discards any open checkpoint interval, half-filled replay slice and queued input
 controller re-forwards them from the durable input log), restores the consumed-offset floor
 and event-time high-water from the effect records, and re-arms processing-time timers.
 
+The Elixir SDK folds in its own core (`Flezha.SDK.Record.fold/6`), in the Entity's mailbox
+order: the on-disk framing's CRC over header and body, the language before the format before
+the schema with the core's refusal wordings, then `apply_change/2` per record; a refused fold
+leaves the Entity as it was and the controller parks the operative.
 Rust folds in-process with postcard and verifies each record's header (`sdk_lang`,
 `schema_version`, `format_id`) and trailing CRC32, failing loud with
 `RestoreError::{LangMismatch, SchemaMismatch, HeaderInvalid, CrcMismatch, SnapshotDecode,
@@ -91,7 +98,9 @@ an evicted Entity is never restored — eviction deletes its files.
 
 ### Compaction (`CompactEntity`)
 
-Compaction is controller-driven and real on both SDKs. On `CompactEntity { entity_id }` the
+Compaction is controller-driven and real on all three SDKs (the Elixir Entity has nothing
+pending when it answers — its records ship at dispatch end — so its snapshot is the state at
+`change_seq - 1`, framed behind the records on the same stream). On `CompactEntity { entity_id }` the
 core, under the Entity's exclusivity gate, drains the pending flush buffer first
 (`flush_one`) so in-memory state equals the shipped WAL, then reads
 `snapshot_seq = change_seq - 1` — the highest seq the snapshot already folds. The controller
@@ -111,7 +120,7 @@ and give-up are the controller's.
 
 | Channel | Name | Carries |
 |---|---|---|
-| data, SDK → controller | `entity_state_change` | one change record (`format_id` 1 postcard / 4 Kryo) or timer-ops record (3) |
+| data, SDK → controller | `entity_state_change` | one change record (`format_id` 1 postcard / 4 Kryo / 7 ETF) or timer-ops record (3) |
 | data, SDK → controller | `entity_effect_record` | effectively-once effect record (`format_id` 2: changes, outputs, consumed offset, timers) |
 | data, SDK → controller | `entity_state_snapshot` | compaction snapshot body |
 | data, SDK → controller | `delete_entity_state` | dynamic-Entity eviction |
@@ -121,26 +130,27 @@ and give-up are the controller's.
 | control, controller → SDK | `EntityMailboxStatus` | legacy `full` / `open` back-pressure (pre-credit sessions) |
 
 Every durable record carries a 16-byte big-endian header stamped by the core's
-`HeaderTemplate`; effect records and timer-ops records use `format_id` 2 and 3 on both
-SDKs, and a Rust restore rejects any `sdk_lang` other than 1:
+`HeaderTemplate` — by `Flezha.SDK.Record.header/2` in the Elixir SDK; effect records and
+timer-ops records use `format_id` 2 and 3 on the SDKs that write them, and every SDK's
+restore rejects any `sdk_lang` but its own before it reads the format byte:
 
-| Bytes | Field | Rust | Java |
-|---|---|---|---|
-| 0 | `sdk_lang` | 1 | 2 |
-| 1..5 | `sdk_version` | `(major << 16) \| (minor << 8) \| patch` of the core crate version | same (stamped by the core) |
-| 5..9 | `schema_version` | the Procedure's `SCHEMA_VERSION` | the class-wide maximum of its Procedures' `schemaVersion()` |
-| 9 | `format_id` | 1 postcard | 4 Kryo |
-| 10..12 | reserved | 0 | 0 |
-| 12..16 | `crc32` | over the body | over the body |
+| Bytes | Field | Rust | Java | Elixir |
+|---|---|---|---|---|
+| 0 | `sdk_lang` | 1 | 2 | 3 |
+| 1..5 | `sdk_version` | `(major << 16) \| (minor << 8) \| patch` of the core crate version | same (stamped by the core) | the same packing of the `flezha` application version |
+| 5..9 | `schema_version` | the Procedure's `SCHEMA_VERSION` | the class-wide maximum of its Procedures' `schemaVersion()` | 1, until `schema_evolution` lands `schema_version/0` |
+| 9 | `format_id` | 1 postcard | 4 Kryo | 7 External Term Format |
+| 10..12 | reserved | 0 | 0 | 0 |
+| 12..16 | `crc32` | over the body | over the body | over the body |
 
 ### Per-Procedure knobs
 
-| Knob | Rust | Java | Default |
-|---|---|---|---|
-| Schema version — bump on a non-additive Change-schema edit; a Rust restore fails loud with `SchemaMismatch` on a differing header; neither SDK has a migrator | `Procedure::SCHEMA_VERSION` | `Procedure.schemaVersion()` | 1 |
-| Per-Entity WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; both SDKs ship the smallest value across the class's Procedures in `AddOperative` metadata (`compact_after_bytes`) only when it differs from the default | `Procedure::compact_after_bytes()` | `Procedure.compactAfterBytes()` | 8 MiB |
-| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Procedure::max_timers_per_entity()` | `Procedure.maxTimersPerEntity()` | 10 000 |
-| Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | 5 ms |
+| Knob | Rust | Java | Elixir | Default |
+|---|---|---|---|---|
+| Schema version — bump on a non-additive Change-schema edit; a restore refuses a version above the running one or below the readable floor by name | `Procedure::SCHEMA_VERSION` | `Procedure.schemaVersion()` | fixed at 1 (`schema_evolution` is deferred) | 1 |
+| Per-Entity WAL size at which the controller solicits a snapshot; `flz_core::persistence::DEFAULT_COMPACT_AFTER_BYTES`, in lockstep with the controller's `:default_compact_after_bytes`; every SDK ships the smallest value across the class's Procedures in `AddOperative` metadata (`compact_after_bytes`) only when it differs from the default | `Procedure::compact_after_bytes()` | `Procedure.compactAfterBytes()` | `compact_after_bytes/0` | 8 MiB |
+| Pending-timer cap; past it registration returns / throws `TimerCapExceeded` | `Procedure::max_timers_per_entity()` | `Procedure.maxTimersPerEntity()` | timers are deferred | 10 000 |
+| Flusher linger between drains | `FLEZHA_FLUSH_LINGER_MS` env (read once by the core) | same | none — records ship at dispatch end | 5 ms |
 
 ## Rust SDK
 
@@ -295,6 +305,18 @@ assertThat(ProcedureTestHarness.of(new CountProcedure()).withWallClock(t0)
 | Configure | `withKeyedChannel()`, `withEntityKey(key)`, `withWallClock(ms)`, `withWallClockScript(ms...)` |
 | Drive / assert | `applyInputs(iterable)`; `expectChanges`, `expectEmits`, `expectState`, `recordedChanges()`, `recordedEmits()`, `emitRecords()`, `state()`, `replay(initial, log)`. No timer methods — Java timer coverage lives in `ActivationDispatcherTest` |
 | Gates | `replayEquals()` returns `Optional.empty()` when the Kryo bytes of the live state equal those of the replayed state (vacuously for a `NoChange` Procedure), else `ReplayMismatch(expectedBytes, actualBytes)` whose `toString()` is a hex dump; it compares state only. `replayEmitsEqual(inputs)` returns an empty `Optional` when a replay produces the same emit sequence, else a diagnostic string |
+
+## Elixir SDK
+
+The authoring surface is the behaviour pair: `apply_change/2` on a `Procedure` declares it
+changeful, `Flezha.SDK.Ctx.apply/3` is the recorded mutation path, `state_from_json/1` turns
+a JSON object read back from the controller into the state term, `compact_after_bytes/0` is
+the compaction threshold, and `StreamOperative.persistence_enabled/0` is the class toggle.
+The record, the fold, the slot, the commands and the shutdown are described in
+[`elixir_sdk.md`](elixir_sdk.md#persistence); the tests are `test/flezha/sdk/persistence_test.exs`
+and `commands_test.exs` over the fixtures in `test/helpers/sdk_persistence_fixtures.ex`.
+There is no replay harness yet: the contract that `run/3`'s state equals the fold of its
+recorded changes is stated, not machine-checked.
 
 ## See also
 

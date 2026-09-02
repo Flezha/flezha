@@ -886,6 +886,147 @@ lines** (`CLAUDE.md` hook, `INDEX.md` abstract) recorded under *Next steps* with
 R5.1's. The follow-up `move-java-entry-idle-latch-onto-the-core` is named in the dev note.
 Worker: one `general-purpose`, 3 h 20 m, ~750 k tokens, 4 checkpoints.
 
+**Docs committed `d7c19eb7`; tree clean 05:28. Queue: R6, R7, R9, R10, R11, R12 remain. R6
+SURVEY worker spawned 05:29** — fresh `general-purpose`, survey only: per-capability table for the
+Elixir SDK's eight deferred capabilities (kernel rule, what `lib/flezha/sdk` extends, what is
+missing, the wire frames, the proving scenarios, honest sizes), the cut into ≤ 8-batch changes in
+dependency order with `state_persistence` first, and the first change fully written
+(`carry-state-persistence-in-elixir`) with deltas, proof and risks. STOPS for my ruling.
+`ListAgents`: no subagent before the spawn. **Last seen 05:22 (+10m)**: reading, no change dir yet,
+nothing running, load 0.95. **05:33 (+21m)**: writing — `carry-state-persistence-in-elixir/proposal.md` and
+`specs/` exist, design and tasks next.
+
+### R6 SURVEY VERIFIED AND APPROVED 06:05 — five changes, 50–90 hours, the first written
+
+Survey cost 27 min / 556 k tokens / 103 tool uses. **The row, sized honestly**: eight deferred
+capabilities, every one a missing MECHANISM in the SDK's own core — `state_persistence` +560
+(480–650) Elixir lines / 8 batches; `keyed_channels` + `dynamic_entity` + `schema_evolution`
++220 / 6; `entity_timers` (+ three clock kinds) +260 / 6; `effectively_once` +380 / 8;
+`correction_window` +200 / 5; `workflow` excluded (R7). **≈ +1 630 lines, 33 batches, 50–90 h**;
+`lib/flezha/sdk` ends near 3 500 `prod_loc` and `entity.ex` needs a second split by change 3.
+The cut and order approved: 1 `carry-state-persistence-in-elixir` (four cells wait on it) →
+2 `carry-keyed-dynamic-and-schema-in-elixir` → 3 `carry-entity-timers-in-elixir` →
+4 `carry-effectively-once-in-elixir` → 5 `carry-correction-window-in-elixir`; each flips the
+LAST deferrer and adds its capability to `@required_capabilities` red-first.
+
+**The first change, verified by me**: the nine-tag ignore clause at `runner_server.ex:368-384`
+(every persistence command answered with a warn), no `apply_change`/`schema_version`/`terminate/2`
+in `lib/flezha/sdk`, file sizes (`runner_server.ex` 602, `operative.ex` 339, `entity.ex` 314,
+`factories.ex` 639 — the `factories_state.ex` split is forced), and **every MODIFIED block
+carries its live scenarios plus one** (machine-counted across four specs). Fourteen design
+decisions read; every proposal item carries a reuse clause (`Ctx.apply/3` extends the pdict
+slot `emit/2` uses; frames through `Flezha.State.Wire.encode_frame/4`, an allowed seam;
+`Commands` is the RunnerServer's zero-mutation SCC per §7; `Credit` mirrors `credit.rs`'s five
+operations, no candidate). **Rulings**: D3's ETS slot approved, the seq-gap alternative refused
+(recovery through an error path, inputs folded into a cold state until the resync — the silent
+loss the slot prevents); `FORMAT_ID_ETF = 7` approved as the table-of-record allocation (three
+lines in `flz_core`); risk 2 accepted as designed with `credit_parked` counted as iterations;
+risk 3 is batch 4's to prove. **KI-135** filed (`max_entities/0` declared and never enforced;
+owed to change 2). Doc drift in `protocol_spec.md:889` folded into 7.4. **Step 2 authorised
+06:07**: batches 1–2, checkpoint 1; commits are mine.
+**Last seen 05:51 (+11m into step 2)**: batch 1 largely written — `header.rs`, `record.ex`,
+`procedure.ex`/`ctx.ex`/`stream_operative.ex`/`topology.ex`, `persistence_test.exs`, and
+`entity.ex`/`operative.ex` begun; a new `test/helpers/sdk_operative_harness.ex` (RULE #1 check at
+the checkpoint) and two existing SDK tests adapted; 12 files +572/−172; nothing running, load
+0.48; no commit of the worker's. **06:02 (+22m)**: 14 files, +597/−173, test runs in the load
+(1.47/5 min); no commit of the worker's.
+
+### R6 CHECKPOINT 1 VERIFIED 06:20 — `0a4173ed` (the byte), `a63f56bb` (the harness), `4d76ea1e` (the record)
+
+**My runs**: `mix test test/flezha/sdk/ --warnings-as-errors` **exit 0**, 75 passed (five
+earlier runs read 75 passed AND exit 1 — two aliases left unused by the harness move, a gate
+that printed instead of failing; the worker had claimed clean from the result line, fixed on
+send-back and re-proved by exit code); `cargo test -p flz_core header` 18; the SDK boundary
+OK; `--check --lint` moving only the two feature rows. Read: the codec (language → format →
+schema with the core's wordings, the on-disk walk with header-and-body CRC), the ship step
+and slot seed in `entity.ex`, the `DuplicatePersistentProcedure` refusal (task 0.6 answered:
+Rust gives a named node its own identity; Elixir's node name doubles as channel and WAL
+identity, so two nodes of one changeful module are refused), the harness moved down (−22 in
+`dispatch_test.exs`). Worker's red-first: the slot test with the seed held back read seq 0
+on the replacement's first record. Design D5's "`{0, 0}` with an error" sentence was wrong;
+the code mirrors the core's saturating subtraction. Two unattributed reds in the worker's
+first runs are 0 in 29 since. **KI-134 recurred** (a second `mix run --no-halt` left behind by
+an elixir arm; evidence appended). Baseline re-recorded (audit below): `lib/flezha/sdk 1905 →
+2298` (+393 at the halfway point of a change priced +560), `flz_core +1`. **Batches 3–4 authorised**
+(the credit window and the commands; the shutdown), checkpoint 2. Committed `0a4173ed`, `a63f56bb`,
+`4d76ea1e`, `f2ac2898`.
+**Last seen 06:18 (+10m into batch 3)**: `credit.ex` and `commands.ex` written; `runner_server.ex`,
+`codec.ex`, `counters.ex`, `entity.ex`, `operative.ex`, `sdk.ex` edited; tests growing; 9 files
++262/−150; nothing running, load 0.64; no commit of the worker's. **06:29 (+21m)**: 14 entries,
++438/−331, test runs in the load (3.96); no commit of the worker's.
+
+### R6 CHECKPOINT 2 VERIFIED 06:50 — `fbab9321` (the commands, the window, the shutdown), `dc045ea4` (the in-node proof)
+
+**My runs**: `mix test test/flezha/sdk/ --warnings-as-errors` **exit 0**, 87 passed, no warning;
+boundary OK; format clean on every touched file; `--check --lint` moving only the two feature
+rows; no sleep token. Read: `Credit`'s five operations with `acquire` on `:infinity` and
+`acquire(nil, _)` un-metered; `Commands.dispatch/4` per command, `state_json/3`, `apply_json/3`,
+`shutdown/2` with the deadline as a parameter; `terminate/2` in the RunnerServer,
+`credit_parked` on the heartbeat, `compact_after_bytes` in the declaration; `child_spec`
+`shutdown: 10_000`. **Worker's proof by signal**: `kill -TERM` to a runner-only VM → the
+Overwatch's snapshot populated → the VM exited, no runner left; the in-node twin reads
+`flz.change_seq` 3 through the real ControlUnit. **Two sound deviations**: an unnamed `Credit`
+by pid (a `:normal` stop does not kill a linked non-trapping singleton — red first in an
+existing test as `already_started`), and the core's `max(seq − 1, 0)` over the design's
+error. **The worker's own instrument caught four ratchet regressions and it fixed them before
+reporting** (an `init/1` over 50 lines, two codec names over 32 characters, the test file over
+800 → split into a fixtures helper and `commands_test.exs`, an alias order). Baseline
+re-recorded (audit below): `lib/flezha/sdk 2298 → 2770` (**+865 so far against the +560
+estimate** — the commands module alone is 337 code lines; accepted as feature cost, the
+survey's own "Elixir re-expresses the host half too"), `lib/flezha +1`. **Batches 5–6
+authorised** (fixtures + bench twin; the flip, the e2e green half, the required set),
+checkpoint 3.
+
+### R6 CHECKPOINT 3 VERIFIED 07:05 — `4930afe1` (the bench twin), `f114d23f` (the twins, the flip, the required set)
+
+**`state_persistence` is UNIVERSAL** — the second capability the programme made so, and the
+first that needed an SDK's own core. **My runs**: the five modules under elixir `21 passed, 7
+skipped` (the worker's per-module runs the same; the red half `16 / 12`); gate 20 with
+`:state_persistence` in the required set (the worker recorded it RED first, naming the
+capability and the declaration); `--check --lint` moving only `lib/mix +9`; the twins read
+faithful (the reference's procedure names through `defdelegate`, `state_from_json/1` back to
+atom keys, `persistence_enabled/0` false on the off twin, `bench_keyed` as the durable posture
+with the no-persist class delegating its channels); no sleep token. Worker's three unit-only
+claims proved through the real bind (the `store_input` golden with its `init_values` seed;
+`credit_flow`'s parked count off the heartbeat). **KI-134 sighted a third time, on MY combined
+five-module run** where the worker's per-module runs leaked nothing — evidence appended: the
+leak follows the multi-module run. Baseline re-recorded (audit below): `lib/mix 3474 → 3483`.
+**Batches 7–8 authorised** (docs, dev note; full `mix test`, smoke tiers, the bench posture,
+gates), checkpoint 4 is the close. Committed `4930afe1`, `f114d23f`, `bee2936e`.
+**Last seen 06:51 (+10m into batch 7)**: six docs edited, the dev note written; ticks 41; a suite
+run in the 5-min load; nothing running now; no commit of the worker's.
+
+### R6 CHANGE 1 IS DONE — `carry-state-persistence-in-elixir`, closed `41ad380f`, archived
+
+**My runs at the close**: full `mix test` **2013 passed**; the five naming gates exit 0;
+`--check --lint` 0 regressions; the dev note (126 lines) and six docs in present tense with no
+history marker. Worker's close: the elixir smoke tier `2030 passed, 6 skipped`; format gate
+with rubocop on `PATH` exit 0; `cargo clippy -p flz_core` clean; `mix bench.roundtrip
+--runtime elixir --durability state -p 1 -m 10` **stops refusing** (dies at the absent Kafka
+broker, not measured — charter §8). The three risks revisited by the worker: the slot held
+under the real controller (the partitioned rescale restored and continued; `credit_flow`'s
+300 records in seq order, zero sheds); the park in the Entity green twice; the shutdown chain
+proved by signal. **KI-134 sighted a fourth time with a mechanism CANDIDATE** — the SDK's
+`reconnect/2` is a synchronous retry loop with `Process.sleep` inside `handle_info`, so an
+orphaned runner cannot see its supervisor's exit until the `shutdown:` budget (now 10 s) lands
+the kill; appended to the entry, not proved.
+
+| commit | what |
+|---|---|
+| `0a4173ed` · `a63f56bb` · `4d76ea1e` · `f2ac2898` | the byte, the harness, the record layer, checkpoint 1 |
+| `fbab9321` · `dc045ea4` · `8f1e05f8` | the commands, the window, the shutdown; the in-node proof; checkpoint 2 |
+| `4930afe1` · `f114d23f` · `bee2936e` | the bench twin; the twins, the flip, the required set; checkpoint 3 |
+| `41ad380f` | the docs and the dev note |
+| this commit | the archive's spec sync (four specs), the baseline, KI-134's fourth sighting |
+
+**The cost, honestly**: `lib/flezha/sdk` **1905 → 2770 (+865) against the survey's +560** — the
+JSON walk and apply (`commands.ex` 337 where 150 was guessed) and the shutdown are where the
+estimate was short; the row's changes 2–5 are sized against THIS number, not the survey's.
+Worker: one `general-purpose`, 2 h 25 m of implementation after a 27-min survey, ~850 k tokens,
+four checkpoints. **Next: R6 change 2 = `carry-keyed-dynamic-and-schema-in-elixir`** (keyed
+stamps + the channel-name deviation, the TTL reaper + `max_entities` (KI-135), the schema
+callbacks), fresh worker, survey-lite from the R6 design's D13 table then implement.
+
 **S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
 `state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
 three arms run by me too), full `mix test` 1962 passed, five naming gates exit 0, format gate
@@ -5352,13 +5493,15 @@ verifies and commits, §4 checkpoint each time.
 | **R5.1** | **DONE 2026-09-02** — KI-130 (`57135d69` + the convergence commit): the ship's gate and host waits are 5 s, a named-Entity read refuses, the wedge ladder is inverted (restart first), the Elixir RunnerServer no longer re-registers (KI-131). Drill green on seven runtimes, no zombie | — |
 | **R5.2** | **DONE 2026-09-02** — KI-125: the stdin watcher reads unbuffered; a signalled python runner exits 0 (was 134); red-first subprocess test; ruby/node/php measured clean | — |
 | **R5.3** | **DONE 2026-09-02** — KI-128 hardened: the verdict is read by the settled row's name, rows dumped on failure; red-first induced through the real channel | — |
-| **R6** | **Elixir SDK — build the nine.** Its SDK is its own core and inherits nothing from `flz_core`: it defers the SURFACE, raising `UndefinedFunctionError`. This is feature work (WAL fold, restore, timers, clock/window, keyed stamps, dynamic entity, schema version, workflow), not a fixture port. **Budget it separately from R5.** | The user's instruction includes Elixir; it is the largest row |
+| **R6** | **IN PROGRESS 2026-09-02** — five changes: **1 `carry-state-persistence-in-elixir` DONE** (11 commits, `state_persistence` universal, `lib/flezha/sdk` +865) → 2 `carry-keyed-dynamic-and-schema-in-elixir` (next) → 3 timers + clocks → 4 effectively_once → 5 correction_window; `workflow` is R7's. Size the rest against +865 for +560 estimated | The user's instruction includes Elixir; it is the largest row |
 | **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |
 | **R9** | `unify-cli-output-flag` — KI-80. `cluster status --json` ignores `--output json`; `audit list --output json` ignores `--json` | Agreed 2026-09-01, small |
 | **R10** | `add-publish-readiness-checklist` — KI-52 and the one-way-door items | Agreed 2026-09-01, seed only |
 | **R11** | **KI-115** — two published specs mandate behaviour the code lacks. One is plainly stale (`make docker-build-multiarch`). The other is **NOT established**: a spec MUSTs a telemetry event emitted 0 times — measure which side is wrong before amending, because amending the spec to match the code would ratify a silence the spec forbade | Filed 2026-09-01 |
 | **R12** | **The docs-citation gate** (~120 lines). Would have caught 27 of area 8's 76 findings automatically. **Build it AFTER the docs are clean so it lands green** — a gate that lands red is KI-94 all over again | Ruling 3, approved in principle |
+
+**OWED — index lines for `carry-state-persistence-in-elixir`** (the R6 worker's report carries them verbatim: the `CLAUDE.md` hook *"`state_persistence` in the Elixir SDK — the kernel's rules re-expressed in its own core"* → an Elixir Entity IS its process, so the Operative keeps a SLOT of what each persistent Entity last shipped: a replacement at seq 0 would have every later record dedup-dropped by the controller in silence), same reason as the others.
 
 **OWED — index lines for `end-a-wedged-runner-on-terminal-disconnect`, `exit-cleanly-after-sigterm-in-python`, `harden-credit-flow-verdict-read` and `carry-entry-idle-in-every-host`**, same reason; each worker's report carries the hook and abstract verbatim (the R2b ones: the `CLAUDE.md` hook *"`entry_idle` in every host — one latch in the core, five ticks, the first universal capability"* → the LATCH moved into `flz_core` behind three context-free ABI entries; the tick and the delivery stay per host because MRI cannot adopt a foreign thread and PHP has none).
 

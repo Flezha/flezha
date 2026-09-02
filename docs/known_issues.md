@@ -1662,6 +1662,19 @@ under load.
 - **Verdict (supervisor, 2026-09-02)**: real, P3, owed; `carry-entry-idle-in-every-host` (R2b) runs its own scenario under swoole in the zts image if the box can, or reports by name — that run is not a substitute for the gap.
 
 
+### KI-135 · The Elixir SDK declares `max_entities/0` and never enforces it
+
+- **Severity**: P3 · a documented cap that binds nothing: `Procedure.max_entities/0` (default 100 000, `procedure.ex:8,24,30`) is read by `Procedure.max_entities/1` (`:58-62`), which has no caller; `Operative.ensure_entity/3` (`operative.ex:209-218`) mints a dynamic Entity for every new key. The reference caps best-effort (`flz_core/src/dynamic.rs:72-74`, `get_or_create`). · Found by the R6 survey, 2026-09-02.
+- **Evidence** (worker, a scratch script declaring `max_entities/0 = 2` on a dynamic node and routing three keys):
+
+      $ MIX_ENV=test FLEZHA_CONTROLLER_ENABLED=false mix run --no-start $SCRATCH/max_entities_probe.exs
+      max_entities declared: 2  live entities: 3  keys: ["k1", "k2", "k3"]
+
+- **Mechanism**: the cap is read nowhere on the routing path.
+- **A fix must** read the cap in `ensure_entity/3` and refuse or evict the way the reference does, with a unit test that declares a cap of 2 and routes three keys — red today. `dynamic_entity`'s neighbourhood: R6's second change (`carry-keyed-dynamic-and-schema-in-elixir`) owns it by name.
+- **Verdict (supervisor, 2026-09-02)**: real, P3, owed to R6's second change; does not pause the first.
+
+
 ### KI-134 · An `elixir_runner` outlived the harness closing its port in the elixir smoke tier — SUSPICION
 
 - **Severity**: P3 · seen once (R2b's batch 8, 2026-09-02): after the `--include sdk_smoke` arm under `FLEZHA_E2E_RUNTIME=elixir`, a `beam.smp … mix run --no-halt … smoke_12324` was still alive 1 m 22 s later, killed by pid (SIGTERM, then SIGKILL). The test app's stdin watcher is what should have halted it when the port closed. Not reproduced; rate unknown (one arm observed).
@@ -1669,6 +1682,12 @@ under load.
 - **A fix must** first reproduce (the elixir smoke tier, then `ps` for a surviving `mix run --no-halt` 30 s after) and read what the app does on EOF; the other six apps exit on it.
 - **Verdict (supervisor, 2026-09-02)**: a suspicion, recorded; boxed by whoever next runs the elixir smoke tier.
 
+
+- **Recurrence (R6 batch 1, 2026-09-02)**: after a `--include system` run of the five `state_persistence` modules under `FLEZHA_E2E_RUNTIME=elixir`, `ps` showed `… mix run --no-halt --no-deps-check -- smoke_4354` (etime 0:36) after `ensure_port_dead` had returned; killed by pid. Two of two elixir arms this session have left one behind, so the rate is not "once" — the box is owed the day the elixir smoke tier next runs with time to read the app's stdin handling.
+
+- **Third sighting (R6 checkpoint 3, 2026-09-02)**: the supervisor's COMBINED run of the five `state_persistence` modules under `FLEZHA_E2E_RUNTIME=elixir` (`--include system --include sdk_smoke`, one BEAM) left one `mix run --no-halt` behind; the worker's five per-module runs of the same files left none. So the leak follows the multi-module run, not any one scenario — the app's exit on a port close is racing the next module's spawn, or the last module's teardown. Killed by pid.
+
+- **Fourth sighting and a mechanism candidate (R6 close, 2026-09-02)**: the elixir smoke tier (`2030 passed`) left `mix run --no-halt … -- smoke_27429` alive 16 s after; a SIGTERM by pid took more than 2 s to end it. The R6 worker's reading: `RunnerServer.reconnect/2` is a synchronous retry loop with `Process.sleep` inside `handle_info`, so an ORPHANED runner (its controller gone) cannot see the supervisor's exit signal until the `shutdown:` budget expires and the kill lands — a budget `carry-state-persistence-in-elixir` raised from 5 s to 10 s for the graceful ship, so the leak past `ensure_port_dead` now lasts longer. Not proved by experiment; the separating one is a reconnect loop stubbed to yield, then the same tier.
 
 ### KI-133 · A PHP fixture's `static` is a per-interpreter value under Swoole, so the poison probe's antidote can land on a different worker than its poison — SUSPICION
 

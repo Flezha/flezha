@@ -8,12 +8,11 @@ defmodule Flezha.SDK.DispatchTest do
   # async: false: the live controller and its fleet; registered singletons; node-global tables.
   use ExUnit.Case, async: false
 
-  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup, Operative, Topology}
+  alias Flezha.SDK.{Channels, Counters, Entity, KeyGroup}
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
-  alias Flezha.Transport.Local
-  alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.{NodeTestHelper, SdkOperativeHarness}
 
   # --- fixtures ---
 
@@ -172,26 +171,7 @@ defmodule Flezha.SDK.DispatchTest do
 
   # --- helpers ---
 
-  defp start_operative(op_module, opts \\ []) do
-    {:ok, topo} = Topology.build(op_module)
-    {sdk_sec, ctrl_sec} = Local.Stream.open()
-    :ok = Flezha.Transport.Stream.controlling_process(ctrl_sec, self())
-    :ok = Flezha.Transport.Stream.set_active(ctrl_sec)
-
-    counters = Counters.new()
-
-    {:ok, pid} =
-      Operative.start_link(
-        operative_id: Keyword.get(opts, :operative_id, "op-1"),
-        topology: topo,
-        range: Keyword.get(opts, :range, KeyGroup.decode(0, 0, 0, 0)),
-        counters: counters,
-        runner: Keyword.get(opts, :runner, self()),
-        secondaries: [sdk_sec]
-      )
-
-    %{op: pid, counters: counters, ctrl_secondary: ctrl_sec}
-  end
+  defdelegate start_operative(op_module, opts \\ []), to: SdkOperativeHarness
 
   # --- tests ---
 
