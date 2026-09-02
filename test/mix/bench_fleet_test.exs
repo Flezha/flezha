@@ -39,7 +39,7 @@ defmodule Mix.Tasks.Bench.FleetTest do
           "workflow" not in (PortPilot.manifest(runtime)["deferred"] || [])
         end)
 
-      assert Enum.sort(accepted) == [:java, :node, :rust]
+      assert Enum.sort(accepted) == [:java, :node, :php, :python, :ruby, :rust]
 
       for runtime <- accepted do
         assert Fleet.parse_runtime(Atom.to_string(runtime), :workflow) == runtime

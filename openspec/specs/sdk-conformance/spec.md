@@ -239,6 +239,14 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 - **WHEN** a test app whose manifest declares an event-loop dispatch model reaches the release gate in a workflow fixture and the variable is absent
 - **THEN** the activation suspends and the loop is yielded, so the runner answers control pings and dispatches other activations, and an app that instead holds the loop synchronously fails this requirement
 
+#### Scenario: A host with a selectable dispatch model owes the obligation under every member
+- **WHEN** a test app's manifest names a `dispatch.env` variable that selects between dispatch models — `FLEZHA_PYTHON_EXECUTOR` and `FLEZHA_RUBY_EXECUTOR` are the two — and a workflow fixture reaches the release gate under any value that variable takes
+- **THEN** the same fixture spelling satisfies the parking obligation for the model actually in force, parking one pool worker under a pool member and yielding under a loop or fiber member, and a spelling that satisfies only the model the manifest names by default fails this requirement
+
+#### Scenario: A thread-pool host parks a worker rather than a timer
+- **WHEN** a test app whose manifest declares the `thread-pool` dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **THEN** the calling pool worker parks off the processor with no timer and no spin, the runner keeps answering control pings from the threads the core owns, and the pool grows on the core's starvation signal so a sibling the driver has not yet reached is dispatched
+
 #### Scenario: The retired QUIC variable is not honoured
 - **WHEN** a test app's connect path is checked against the pinned environment fixture
 - **THEN** an app reading `FLEZHA_QUIC_ADDRESS` fails the gate naming the app and the replacement

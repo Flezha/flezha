@@ -132,11 +132,12 @@ rather than drained. Nothing is lost — the core re-hands them on the next bind
 - **No launcher, no fork.** `flz_core` spawns ~20 OS threads that do not
   survive `fork(2)`, and the process/supervision layer is the orchestrator's.
 
-## Deferred, by name
+## Deferred, by name — nothing
 
-The manifest defers `workflow` alone — on **fixtures, not mechanism**: the
-workflow kind is implemented and reached through the same core the Rust and
-Java arms prove it on, and its fixtures wait on two builder surfaces every
-veneer lacks. The entry-idle observer is this SDK's own host layer
+The manifest's `deferred` list is empty: `test/apps/php_runner/conformance.json`
+registers the reference's nineteen workflow fixtures across
+`fixtures_workflow.php` and `fixtures_workflow_loop.php`, so every capability in
+the vocabulary is carried. `docs/dev_notes/carry-workflow-in-php.md` holds what
+that port cost. The entry-idle observer is still this SDK's own host layer
 (`src/EntryIdle.php`) over the latch the core keeps by watch id; it is not
 something the core proves on this SDK's behalf.

@@ -177,11 +177,10 @@ the one thing `scripts/build-python-sdk.sh` has already done.
 
 ## The test app and the conformance manifest
 
-**Python defers one capability, `workflow`.** Elixir defers the persistence
-family, the tier, timers, correction windows, keyed channels, workflow,
-dynamic-entity eviction, entry idle and schema evolution. Python carries all of
-them but `workflow`, and each of the eight it carries is proved by the live
-suite:
+**Python defers nothing.** Elixir defers the persistence family, the tier,
+timers, correction windows, keyed channels, workflow, dynamic-entity eviction,
+entry idle and schema evolution. Python carries all nine, and each is proved by
+the live suite:
 
 | capability | what it took |
 | --- | --- |
@@ -192,6 +191,7 @@ suite:
 | `correction_window` | the `candle` fixture, on an event-time clock |
 | `schema_evolution` | two fixtures declaring one procedure name either side of a version bump |
 | `entity_timers`, `dynamic_entity` | fixtures the app already had |
+| `workflow` | nineteen twins in `fixtures_workflow.py` — `docs/dev_notes/carry-workflow-in-python.md` |
 
 **`entry_idle` is two layers, and Python owns only the host half of the
 second.** The delivery stamp lives in `flz_core` (`entry_input.rs`, written on
@@ -207,14 +207,12 @@ calls and the two clock reads take no context. A manifest entry with an empty
 fixture list is not evidence of a capability; `entry_idle_probe` is the
 fixture, and `entry_idle_e2e_test.exs` proves it under both executors.
 
-**`workflow` stays deferred, by name**, to `sdk-durable-fixture-parity`. Its 19
-reference fixtures need two authoring-surface additions Python does not have —
-an inter-procedure `codec()` declaration, and a hybrid channel spelled as
-`sink(...).into(...)` rather than as a `branch` — and the structured-workflow
-semantics (loop modes, rewind, branch and diamond trees, staged outbox undo) are
-the largest single block in the reference app. Run-sugar workflows *do* work:
-`examples/python/durable_agent` declares one and it binds against a live
-controller.
+**`workflow` needed neither authoring-surface addition it was once thought to
+need.** The hybrid channel is `sink(...).into(...)` and `Edge.sink` answers the
+edge, so it is already spelled; and an inter-procedure `codec()` is owed to no
+veneer, because the core derives that channel's journal codec from the channel
+kind (`flz_core/src/host/register.rs`). What the port took is one companion
+module and three factories: `docs/dev_notes/carry-workflow-in-python.md`.
 
 **The gate is not clause-free for a new SDK.** Two per-SDK tables take one row
 each (`@connect_sources` and the `sdk_lang` source-of-truth map), the nightly

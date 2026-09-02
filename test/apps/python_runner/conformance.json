@@ -32,9 +32,7 @@
     }
   },
   "toolchain": "python3 --version",
-  "deferred": [
-    "workflow"
-  ],
+  "deferred": [],
   "fixtures": {
     "runner_lifecycle": [
       "do_nothing",
@@ -72,6 +70,27 @@
     ],
     "keyed_channels": [
       "partition_relay"
+    ],
+    "workflow": [
+      "echo_workflow",
+      "commit_block_workflow",
+      "sync_durable_workflow",
+      "optout_commit_block",
+      "tier_commit_block_workflow",
+      "saga_block_workflow",
+      "outbox_block_workflow",
+      "undo_outbox_workflow",
+      "chat_loop_workflow",
+      "stateless_loop_workflow",
+      "chat_rewind_workflow",
+      "retry_workflow",
+      "branch_workflow",
+      "diamond_workflow",
+      "bench_chain_1",
+      "bench_chain_4",
+      "bench_chain_16",
+      "bench_chain_optout_4",
+      "bench_loop_workflow"
     ],
     "dynamic_entity": [
       "dynamic_entity"

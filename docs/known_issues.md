@@ -306,6 +306,8 @@ designed to turn it into a refusal.
 catch-all is what makes an apparent validator inert), and decide whether `subscribe/3`
 should turn a raise into a refusal rather than letting it escape. Fixing sites one at a
 time leaves the mechanism that generates them.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **REFUTED — resolved.** Live probe against the python SDK: one procedure with two named plugin channels is **REFUSED** — `two_plugin_channels: chan_b: declares a plugin sink more than once`. The same refusal and a covering test exist in node, ruby, php and java, and `grep -rn emitTo sdk/java test/apps/java_runner` finds nothing. The veneers no longer accept a shape Rust rejects.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **REFUTED — resolved by `55b8a748`.** Live probe: `.into(validate).sink("audit_sink")` with no `.named()` declares `[('in','entry',None), ('validate','inter_proc','audit_sink')]` — the **producer node's** name, which is exactly the published spec's *"Derived name ships on the wire"* scenario. All four veneers now set `channel.sink` and never `channel.name`, and the old *"keeps the name it has today"* compatibility tests are gone. One output channel per producing procedure closed this without naming it.
 
 
 
@@ -382,6 +384,7 @@ re-run by the supervisor before they were written here.**
   reproduction was unperformable — and folding it in would grow a P1 correctness
   change into an instrumentation change. It is queued with KI-68 and KI-69 as the
   runner/controller-seam group to be surveyed together.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **TRIAGE 2026-09-02 — still open, but DOWNGRADE it.** The primary claim holds (`grep -n 'stats\|DriverStats' flz_nif/src/quic_driver.rs` → exit 1; `server.rs:112` still `stats: None`). But the entry's SECOND remedy arm — *state that QUIC is uninstrumented* — **has been met**, by `443903f9`: `stall_classifier.ex:59-62` now says *"the driver verdicts are UDS-only … the QUIC driver produces none"*, and `docs/internals/transport_liveness.md:65` says the same. **The silence is closed; only the feature is owed.**
 
 
 ### KI-57 · UDS socket paths overflow `sun_path` in a full run, and a test dies of it
@@ -726,6 +729,22 @@ re-run by the supervisor before they were written here.**
 - **Verdict (supervisor, 2026-09-02)**: **recorded, not actioned.** It did not block change 1 and the timebox was spent on the P1 beside it. It belongs to R7's php fixture change (change 4) or to a defect row of its own; whichever takes it, the control arm against node is the part that makes the answer mean anything.
 
 
+### KI-148 · `flz plugin list --output json` runs a DIFFERENT query, not merely a different format
+
+- **Severity**: P2 · a script asking for the installed plugins with the tree's canonical flag gets the provider registry instead, in text. Found by the supervisor's triage round, 2026-09-02.
+- **Where**: `cli/src/plugin.rs:226-239` — a **third** inline output-format reader in the CLI, which accepts only `--json` and does not even take `-o=json` as `args::json_or_text` does.
+- **Mechanism, named to the function**: `--json` is overloaded to mean BOTH *"render JSON"* AND *"select the installed list"* — the arm is `if installed || want_json`. So:
+
+  ```
+  plugin list --json          ->  list_installed_plugins("json")
+  plugin list --output json   ->  list_plugins()        # a different query, not a different format
+  ```
+
+- **This is NOT covered by KI-80's remedy.** Accepting both spellings everywhere would still leave `--json` selecting a different collection; the overload has to come apart first.
+- **A fix must** separate the two meanings — the format flag selects rendering only, and an explicit `--installed` selects the collection — and fold this site into whatever single reader KI-80's change lands, so the CLI stops carrying three.
+- **Verdict (supervisor, 2026-09-02)**: **filed, not fixed.** It belongs to R9 (the CLI flag row) with KI-80, which is the change that already owes the CLI one output-format reader instead of three.
+
+
 ### KI-147 · Every veneer emits `effectively_once` on a WORKFLOW class, which the core refuses — the runner dies at boot
 
 - **Severity**: P1 · **live on node the moment it declares a workflow fixture, latent in python, ruby and php until R7 changes 3–5 land theirs.** Found by the R7 change-2 worker, 2026-09-02, driving the port it had just written; **mechanism verified by the supervisor in all five SDKs before ruling**.
@@ -889,6 +908,7 @@ at all today, and if so does anything report it? If the behaviour exists and onl
 is missing, that is a code defect and the spec is right. If the whole mechanism was
 replaced, the spec is stale like A. **Do not amend the spec until that is measured** —
 amending it to match the code would ratify a silence the spec deliberately forbade.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **TRIAGE 2026-09-02 — half B changes shape, and the question this entry demanded be answered is now answered.** The entry said *"either the skip behaviour exists without its observability (a code defect) or the mechanism was replaced (a stale spec) — do not amend until measured."* Measured: `grep -rn 'defmodule Flezha.Recovery' lib/` → **exit 1**. `Recovery.Coordinator` and `Recovery.PluginStore` **do not exist anywhere** in `lib/` or `test/`. Plugin subscriptions now persist into the ProcessHub child spec and are replayed by `Overwatch.init/1`. So **half B is stale like half A** — it cannot be a missing-telemetry code defect, because the modules the requirement addresses are gone. **R11 narrows from "unknown which side" to two stale specs.** The residual question worth carrying: does `Overwatch.init/1` skip a subscription whose installed plugin is gone, and is that reported?
 
 
 ### KI-140 · A third published spec mandates telemetry that no SDK emits — RESOLVED (requirement removed on the owner's ruling)
@@ -1221,6 +1241,7 @@ amending it to match the code would ratify a silence the spec deliberately forba
 - **The `ship_effect/4` half of my instruction was WRONG and the worker refused it with a citation.** I told it to check `ship_effect/4`'s `persistent?: false` clause as the same hole. It is not: `flz_core/src/flusher.rs:236-262` drains the buffer to frames — advancing `change_seq` — and only then discards when `persistence_enabled` is false, which is byte for byte what `write_slot(%{s | change_seq: s.change_seq + 1})` does. **An explicit persistence opt-out loses a tier class's outputs in the reference too**; Elixir matching it is parity. If that posture is itself wrong it is a cross-SDK finding against `flusher.rs`, not this change's, and it is not filed as one.
 - **Left open by name, not by omission**: `write_slot/1` stays guarded on `changeful?`, so a stateless tier class keeps its staged interval in the process only. Under checkpoint granularity a replacement after an untrappable kill loses that interval and the seq gap makes the controller resync — the recovery path risk 1 already names, now reachable by one more shape. No fixture has it; the slot was not widened.
 - **Verdict (supervisor, 2026-09-02)**: **real; fixed inside change 4 before the capability flips**, as its own commit. It is not a compile refusal: refusing in Elixir alone a shape the reference accepts is precisely the divergence queue row R6 exists to remove, and a refusal in every SDK is a cross-SDK declaration change that no SDK's fixtures exercise. **The narrower question — whether a stateless class should be DECLARABLE under the tier at all — is escalated to the user** and does not block; see `docs/refactor/STATE.md` → *Awaiting the user's decision*.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **REFUTED — resolved.** Re-ran the entry's own shim experiment: `target/debug/flz` beside an `flzvm` exiting 7, all five verbs (`stop`, `rewind`, `replay`, `state`, `controller start`) exit **1**, not 0. The exit codes propagate. Nothing to fix.
 
 
 ## P2 — the process that grows
@@ -1286,6 +1307,7 @@ amending it to match the code would ratify a silence the spec deliberately forba
   the refusal instructs — **and** register the `on_exit` **before** `wait_until_ready!/1`,
   so a failed setup cannot leak the daemon. Both halves, or the next failure poisons the
   next run.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **FIXED 2026-09-02**, `983787a9`, both halves the entry prescribed. Reproduced deterministically first: `0 tests, 1 invalid`, exit 2, 60.6 s, the daemon log naming *"state root app_data/state is already claimed (held by pid 352867)"* — **that pid is the test's own `mix test` BEAM**. The test now passes `FLEZHA_STATE_DIR` for a directory of its own, and registers `on_exit` **before** `wait_until_ready!/1` so a daemon that boots but never answers is still stopped and its temp directory removed. After: `1 passed`, exit 0, **4.2 s**. Supervisor-verified by its own run.
 
 
 - **Evidence against "every run" (supervisor, 2026-09-02)**: of three full `--include system` arms run one at a time at `0ba5c9fe`+S5 — node, ruby, php — only the ruby arm produced the `1 invalid` (`daemon did not become ready within 60000ms` at `release_cli_system_test.exs:77`, 183 s arm); node and php did not. With session 6's clean baseline arm that is 1 of 4 measured, so the entry's "fails on every run" is refuted; the failure is real and intermittent.
@@ -1813,6 +1835,7 @@ under load.
   commit (the three waits, red first by rate); the read semantics are recorded, not changed —
   a test settles on `await_seq`, never on a live read, before anything that depends on the
   journal.
+- **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **RESOLVED as ruled.** The test race is gone — `schema_evolution_e2e_test.exs` carries `await_seq(wait_for_writer(...), n, 30_000)` at `:108`, `:144` and `:165`. The read semantics were ruled not worth changing and are unchanged.
 
 
 ### KI-132 · The PHP Swoole executor is an axis of the run that nothing runs end to end

@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import flezha  # noqa: E402
 import fixtures  # noqa: E402
+import fixtures_workflow  # noqa: E402
 
 
 def main() -> None:
@@ -31,6 +32,8 @@ def main() -> None:
     runner = flezha.create_runner(namespace)
     for operative in fixtures.ALL:
         runner.define_stream(operative)
+    for operative in fixtures_workflow.ALL:
+        runner.define_workflow(operative)
     # A runner-level registration, not a declaration: armed beside the fixtures.
     fixtures.arm_entry_idle_probe(runner)
 

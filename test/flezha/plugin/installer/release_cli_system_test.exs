@@ -52,11 +52,13 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
     plugin_root = Path.join(tmp, "plugins")
     data_dir = Path.join(tmp, "recovery")
     socket_dir = Path.join(tmp, "sockets")
+    state_dir = Path.join(tmp, "state")
     log_path = Path.join(tmp, "flezha.log")
     File.mkdir_p!(tmp)
     File.mkdir_p!(plugin_root)
     File.mkdir_p!(data_dir)
     File.mkdir_p!(socket_dir)
+    File.mkdir_p!(state_dir)
 
     env =
       [
@@ -66,6 +68,10 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
         {"FLEZHA_PLUGIN_ROOT", plugin_root},
         {"FLEZHA_DATA_DIR", data_dir},
         {"FLEZHA_SOCKET_FILES_PATH", socket_dir <> "/"},
+        # Without its own state root the daemon claims `app_data/state`, which
+        # the `mix test` BEAM running this file already holds, and refuses to
+        # boot.
+        {"FLEZHA_STATE_DIR", state_dir},
         {"FLEZHA_LOG_PATH", log_path},
         {"FLEZHA_TRANSPORT", "uds"},
         {"FLEZHA_TRANSPORTS", "uds"},
@@ -74,14 +80,17 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
 
     {_, 0} = System.cmd(@flzvm, ["daemon"], env: env, stderr_to_stdout: true)
 
-    wait_until_ready!(env)
-
+    # Registered before the readiness wait: a daemon that boots but never
+    # answers must still be stopped, or it holds its node name and poisons
+    # every later run in this release directory.
     on_exit(fn ->
       # Best-effort shutdown — if the daemon already exited, `stop` returns
       # non-zero but that's fine.
       _ = System.cmd(@flzvm, ["stop"], env: env, stderr_to_stdout: true)
       File.rm_rf!(tmp)
     end)
+
+    wait_until_ready!(env)
 
     {:ok, tmp: tmp, env: env, plugin_root: plugin_root}
   end

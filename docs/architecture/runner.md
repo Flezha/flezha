@@ -458,13 +458,11 @@ fixture ids it registers for the ones it carries. The static gate fails any pull
 manifests do not account for every capability, and the nightly publishes a per-runtime
 capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conformance.md).
 
-Today: Rust, Java and Node carry the whole vocabulary — the Rust app's manifest,
+Today: **every FFI SDK carries the whole vocabulary** — Rust, Java, Node, Python, Ruby and
+PHP. The Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against. The Ruby, PHP and Python SDKs carry every
-capability but `workflow`, whose reference fixtures they owe to the follow-up that ports
-them. The builder surface is no longer what blocks them: a procedure node owns exactly one
-output channel in every veneer, so the reference's hybrid `sink(...).into(...)` is writable,
-and an inter-procedure `codec()` is owed to no veneer at all — the core derives the journal
+the reference every other is checked against, and no veneer manifest defers a capability.
+An inter-procedure `codec()` is owed to no veneer at all — the core derives the journal
 codec from the channel's kind (`flz_core/src/host/register.rs`) and the declaration carries
 no codec key. The Elixir SDK is its own core: it carries `state_persistence`,
 `keyed_channels`, `dynamic_entity`, `schema_evolution`, `entity_timers` and

@@ -22,59 +22,63 @@
 4. **Two or more workers at once in disjoint lanes**; a found defect is FILED not fixed unless it blocks
    the change in flight; whole changes per worker with one checkpoint at the end.
 
-## LIVE — 22:11
+## LIVE — 23:54
 
-**Current workers: THREE, in parallel** — R7 changes 3, 4 and 5 spawned 22:25, each survey-lite from
-change 2's archived proposal and dev note, then implement to CLOSE.
+**Two workers, parallel, disjoint lanes:**
+- `a94f8dd3` — **R9, the CLI output-format unification**, closing **KI-80 AND KI-148 together**. Lane
+  `cli/src/`. KI-148 must go with it rather than after: `--json` on `plugin list` is overloaded to mean
+  both *"render JSON"* and *"select the installed list"*, so accepting both spellings everywhere would
+  leave a caller asking for installed plugins still getting the provider registry.
+- `a71c33d5` — **KI-142, the dangling-transform refusal in all four veneers.** Lane the four `sdk/*` trees.
+  Re-verified live today: `.into(validate).map(f).sink('s')` is ACCEPTED and the map has nowhere to run.
 
-| worker | change | lane |
-|---|---|---|
-| `ab0c1880` | `carry-workflow-in-python` | `test/apps/python_runner/`, `sdk/python/` |
-| `a01af958` | `carry-workflow-in-ruby` | `test/apps/ruby_runner/`, `sdk/ruby/` |
-| `a3405445` | `carry-workflow-in-php` | `test/apps/php_runner/`, `sdk/php/` |
+## TRIAGE ROUND — done, and the list overstated exactly as suspected
 
-**TWO SHARED FILES ARE WITHHELD FROM ALL THREE AND ARE MINE TO EDIT WHEN THEY LAND**:
-`test/mix/bench_fleet_test.exs:42` (the accepted-runtime list, currently `[:java, :node, :rust]`) and
-`docs/architecture/runner.md` (the per-SDK paragraph). Three workers editing one line is exactly the
-collision this parallel run exists to avoid; each is told to REPORT what it needs rather than write it.
+Twelve entries verified against HEAD. **Three were dead**, one was already resolved, one was fixed:
 
-Each brief carries its own language's traps: python the sleep-regex key, **ruby the rbenv PATH** (which
-has now cost four sessions — suite, build, rubocop AND the e2e runner spawn), php the attribute-vs-factory
-question and the fact that this box cannot run its threaded executor at all.
+| verdict | entries |
+|---|---|
+| **REFUTED** | KI-79 (exit codes are correct), KI-118 (all four veneers now refuse it), **KI-121 (closed by `55b8a748` without naming it)** |
+| **RESOLVED as ruled** | KI-129 |
+| **FIXED** | KI-114 → `983787a9` |
+| downgraded / reclassified | KI-72, KI-115 |
+| still open, escalated | KI-55, KI-57, KI-80, KI-132, KI-142 |
+| **NEW** | KI-148 |
 
-## R7 change 2 `carry-workflow-in-node` — CLOSED `fc0fc2db`, 38/38 boxes
+**KI-114 is the one worth remembering.** The test spawned a daemon with no `FLEZHA_STATE_DIR`, so the
+daemon claimed `app_data/state` — which the `mix test` BEAM running that very file already held. The log
+said so outright: *"already claimed (held by pid 352867)"*, **and that pid was the test's own BEAM**. It
+could never pass alongside anything. `1 invalid` in 60.6 s → **`1 passed` in 4.2 s**. Its second half was
+the leak: `on_exit` registered AFTER the readiness wait, so a daemon that booted but never answered was
+never stopped — the stale `/tmp/flz_release_sys_test_*` directories were the standing evidence, and are
+now cleared.
 
-**Node is the first veneer that defers nothing.** Nineteen fixture twins in one 557-line
-`fixtures_workflow.mjs`; `conformance.json` `deferred: ["workflow"]` → `[]`; `index.mjs` becomes the
-repository's only caller of `Runner.defineWorkflow`. **No `test/system/` file was touched** — flipping the
-manifest is what un-skips scenarios that already existed.
+**KI-115 half B changed shape rather than closing.** The entry insisted the question be measured before
+amending: is the skip behaviour missing its telemetry (code defect) or was the mechanism replaced (stale
+spec)? Measured — `Flezha.Recovery.Coordinator` and `Recovery.PluginStore` **do not exist anywhere**. So
+it cannot be a code defect. **R11 narrows from "unknown which side" to two stale specs.**
 
-**KI-141 is answered ON THE WIRE**, which was the change's whole purpose. Deleting the diamond's `DiamC`
-arm turns `workflow_crash_resume_e2e_test.exs:180` red on both transports with *"the fan-out multiplied
-the released batch"* — **three payloads where five are asserted**, `c:` and `j:c:` absent. Restored, both
-pass. The test measures the fan-out rather than passing beside it.
+**KI-72 is downgraded, not closed.** QUIC still has no counters, but the entry's second arm — *say so* —
+was met by `443903f9`: the classifier and `transport_liveness.md` both now state the driver verdicts are
+UDS-only. The silence is closed; only the feature is owed.
 
-Gates, verified by me: full `mix test` **2110 passed, 68.1 s**; `format-check.sh` **0** with the rbenv
-PATH; `openspec validate --specs` **101 passed** after I applied the delta by hand with a scenario-drop
-guard (**5 → 6, none dropped**); `test/apps` after my `git add -N` — **files 142 → 143** (the new file IS
-measured), **`sleeps` 8 unchanged** so the ratchet held, `duplicate_pairs` 145 → 106, `files_over_800` 0.
-Net **+807** against a stated +696 (580–900).
+## R7 changes 3, 4 and 5 — CLOSED `093a12c0`, and EVERY FFI SDK NOW CARRIES `workflow`
 
-**The worker refused to burn a cap to satisfy a box literally**, and was right: task 4.4 said to run
-`--include system --include sdk_smoke`, which spans 25 modules and cannot fit 180 s. It ran the **five
-sites the manifest flip actually un-skips** instead and sampled `ps` through each, which is better
-evidence than the box asked for.
+Three workers in parallel, three disjoint lanes, no collision. Each departure is the language, not a
+preference: python builds a stateful procedure as a CLASS in the factory's closure (its hooks are read off
+an instance) and got all nineteen declarations BYTE-IDENTICAL to node's; ruby needed two base classes
+where node needed three functions, because `Declarative#inherited` carries a parent's declarations; php
+could not use factory functions at all and split its port in two files, because as one it is 998 against a
+blocking 800.
 
-**KI-145's owed node control arm is negative**: the node arm left no survivor, four times out of four.
+**Three different release gates, every one checked by RUNNING the ratchet regex rather than by eye** —
+`test/apps sleeps` stayed at 8 where a direct transliteration would have made it 9 in all three.
+**KI-141's negative control ran in all three and all three matched node's byte for byte.**
 
-**Incidental, now in the dev note so nobody chases it again**: every `mix test` boots two namespace-less
-reference runners from `config/runtime.exs:12-13` (`FLEZHA_EXTERNAL_PROCESSES`). They belong to no
-module's fleet and appear whatever `FLEZHA_E2E_RUNTIME` says. The worker chased them for four sampler
-runs before finding the config line.
-
-**Still owed and blocked**: the `CLAUDE.md` hook and the `INDEX.md` abstract are drafted verbatim in the
-worker's report and NOT applied — both files carry another session's uncommitted work. This is the
-**13th** index line waiting on that block.
+The two withheld shared files were mine and are settled: `bench_fleet_test.exs:42` gained the three
+runtimes, `runner.md` now says every FFI SDK carries the whole vocabulary. All three spec deltas MODIFIED
+the same requirement, so I merged them — python's and ruby's are one idea in two spellings, php's is
+distinct: **6 → 8 scenarios, none dropped.**
 
 ## PACE CHANGE, 21:04 — on the owner's instruction. THE DELIVERABLE IS THE LIST SHRINKING.
 

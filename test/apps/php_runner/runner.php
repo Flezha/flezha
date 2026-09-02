@@ -27,11 +27,14 @@ require __DIR__ . '/../../../sdk/php/vendor/autoload.php';
 require __DIR__ . '/fixtures.php';
 require __DIR__ . '/fixtures_state.php';
 require __DIR__ . '/fixtures_probe.php';
+require __DIR__ . '/fixtures_workflow.php';
+require __DIR__ . '/fixtures_workflow_loop.php';
 
 use Flezha\Flezha;
 use Flezha\Logger;
 use Flezha\TestApp\EntryIdleProbeCounters;
 use Flezha\TestApp\Fixtures;
+use Flezha\TestApp\WorkflowFixtures;
 
 $namespace = $argv[1] ?? 'default';
 
@@ -40,6 +43,10 @@ $runner = Flezha::createRunner($namespace)
 
 foreach (Fixtures::all() as $operative) {
     $runner->defineStream($operative);
+}
+// The same registration, under the name that says which kind it is.
+foreach (WorkflowFixtures::all() as $operative) {
+    $runner->defineWorkflow($operative);
 }
 // A runner-level registration, not a declaration: armed beside the fixtures.
 EntryIdleProbeCounters::arm($runner);
