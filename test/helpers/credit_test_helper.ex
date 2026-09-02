@@ -20,11 +20,14 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
       body::binary, :erlang.crc32(body)::32-big>>
   end
 
-  @doc "LivenessCounters row for `runner_id`'s channel `name`, or nil."
-  def counters_row(runner_id, name) do
-    LivenessCounters.snapshot_all().channels
-    |> Enum.find(fn c -> c.runner_id == runner_id and c.name == name end)
+  @doc "Every LivenessCounters channel row registered for `runner_id`."
+  def channel_rows(runner_id) do
+    Enum.filter(LivenessCounters.snapshot_all().channels, &(&1.runner_id == runner_id))
   end
+
+  @doc "LivenessCounters row for `runner_id`'s channel `name`, or nil."
+  def counters_row(runner_id, name),
+    do: Enum.find(channel_rows(runner_id), &(&1.name == name))
 
   @doc """
   One counter off `runner_id`'s channel `name`, or `nil` when the row has not
@@ -43,17 +46,12 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
   end
 
   @doc "First credit-active channel row for `runner_id`, or nil."
-  def active_credit_row(runner_id) do
-    LivenessCounters.snapshot_all().channels
-    |> Enum.find(fn c -> c.runner_id == runner_id and c.credit_active == 1 end)
-  end
+  def active_credit_row(runner_id),
+    do: Enum.find(channel_rows(runner_id), &(&1.credit_active == 1))
 
   @doc "Max `hb_credit_parked` self-report across `runner_id`'s channels."
   def parked_counter(runner_id) do
-    LivenessCounters.snapshot_all().channels
-    |> Enum.filter(fn c -> c.runner_id == runner_id end)
-    |> Enum.map(& &1.hb_credit_parked)
-    |> Enum.max(fn -> 0 end)
+    channel_rows(runner_id) |> Enum.map(& &1.hb_credit_parked) |> Enum.max(fn -> 0 end)
   end
 
   @doc "Wait for `operative_id`'s WalWriter registration under `procedure`; returns the entity_id."

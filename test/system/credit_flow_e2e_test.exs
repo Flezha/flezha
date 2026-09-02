@@ -38,6 +38,8 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   @input_bytes 1_024
   @slow_fsync_ms 1_000
 
+  @credit_fields [:credit_active, :credit_ledger_level, :credit_overrun_total, :hb_credit_parked]
+
   # One scenario, one runner, under a deliberately slowed fsync path.
   setup do
     prev_fsync = Application.get_env(:flezha, :agent_fsync_interval_ms)
@@ -106,8 +108,8 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     # broken persistence path from a broken handshake in the failure mode).
     assert wait_for_entity(operative_id, @procedure, 30_000)
 
-    assert wait_until(fn -> active_credit_row(ce_id) != nil end, 30_000),
-           "credit handshake never completed"
+    credit_row = wait_until(fn -> active_credit_row(ce_id) end, 30_000)
+    assert credit_row, "credit handshake never completed: #{credit_rows(ce_id)}"
 
     # Overdrive: ~300 KiB of state changes against a 64 KiB window on a 1 s
     # fsync tick. The SDK can only progress as fast as fsync mints credit,
@@ -130,14 +132,30 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     metrics = Metrics.for_entity(entity_id)
     assert Metrics.get(metrics, :wal_shed_total) == 0
 
-    row = active_credit_row(ce_id)
-    assert row, "no credit-speaking secondary channel row for #{ce_id}"
-    assert row.credit_overrun_total == 0
+    # The verdict is read from the channel the handshake settled on, by name:
+    # its counters array is one per channel process, and a socket close after
+    # the burst (a legitimate re-attach) clears `credit_active` on it, so a
+    # fresh search for a credit-speaking row would find none and blame the
+    # handshake. `credit_overrun_total` is monotonic for the channel's life.
+    row = counters_row(ce_id, credit_row.name)
+    assert row, "#{inspect(credit_row.name)} left the liveness registry: #{credit_rows(ce_id)}"
+
+    assert row.credit_overrun_total == 0,
+           "credit overrun on the burst's channel: #{credit_rows(ce_id)}"
 
     # Park-then-resume is visible: the SDK's credit_parked self-report
     # (data_heartbeat metadata, 300ms cadence here) advanced while the
     # window was exhausted.
     assert wait_until(fn -> parked_counter(ce_id) > 0 end, 15_000),
-           "SDK never reported a credit park despite the overdriven window"
+           "SDK never reported a credit park despite the overdriven window: #{credit_rows(ce_id)}"
+  end
+
+  # The runner's channel rows, so a red names its cause: the flag gone (a
+  # close), a ledger overrun, or a park never reported.
+  defp credit_rows(runner_id) do
+    Enum.map_join(channel_rows(runner_id), "; ", fn row ->
+      "#{inspect(row.name)} " <>
+        Enum.map_join(@credit_fields, " ", &"#{&1}=#{Map.fetch!(row, &1)}")
+    end)
   end
 end

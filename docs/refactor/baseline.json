@@ -97,16 +97,16 @@
    "async_false_share": null,
    "clippy_warnings": 0,
    "comment_density": 0.149,
-   "comment_lines": 698,
+   "comment_lines": 706,
    "credo_warnings": 0,
    "cycles": 0,
-   "doc_lines": 2062,
+   "doc_lines": 2076,
    "duplicate_pairs": 4,
    "duplicate_pairs_list": [
     "flz_core/src/command/compact.rs:17-23 <-> flz_core/src/command/restore.rs:7-13 (42 tokens)",
     "flz_core/src/effect.rs:27-38 <-> flz_core/src/schema.rs:186-192 (40 tokens)",
     "flz_core/src/host/activation.rs:512-518 <-> flz_core/src/host/workflow.rs:71-77 (43 tokens)",
-    "flz_core/src/host/commands.rs:41-50 <-> sdk/rust/src/entity/restore.rs:102-111 (40 tokens)"
+    "flz_core/src/host/commands.rs:42-51 <-> sdk/rust/src/entity/restore.rs:102-111 (40 tokens)"
    ],
    "files": 73,
    "files_over_800": 0,
@@ -114,10 +114,10 @@
    "functions_over_50": 7,
    "functions_over_50_list": [
     "flz_core/src/admission.rs:178 admit_from_entity (52)",
-    "flz_core/src/command/entity_state.rs:113 serialize_selected_state (51)",
+    "flz_core/src/command/entity_state.rs:120 serialize_selected_state (51)",
     "flz_core/src/coordinator.rs:525 heartbeat_metadata (51)",
     "flz_core/src/effect.rs:142 fold (74)",
-    "flz_core/src/host/commands.rs:67 restore_fold_exclusive (54)",
+    "flz_core/src/host/commands.rs:68 restore_fold_exclusive (54)",
     "flz_core/src/routing.rs:344 dispatch (52)",
     "flz_core/src/workflow/driver.rs:392 drive_chain (63)"
    ],
@@ -126,7 +126,7 @@
    "max_cycle_files": 0,
    "narrative_markers": 0,
    "narrative_markers_by_file": {},
-   "prod_loc": 12812,
+   "prod_loc": 12853,
    "prod_loc_by_file": {
     "flz_core/src/admission.rs": 217,
     "flz_core/src/bench_support.rs": 165,
@@ -134,7 +134,7 @@
     "flz_core/src/command/compact.rs": 64,
     "flz_core/src/command/credit.rs": 26,
     "flz_core/src/command/entity_apply_state.rs": 22,
-    "flz_core/src/command/entity_state.rs": 417,
+    "flz_core/src/command/entity_state.rs": 436,
     "flz_core/src/command/entity_status.rs": 16,
     "flz_core/src/command/migration_deserialization.rs": 48,
     "flz_core/src/command/migration_serialization.rs": 17,
@@ -161,7 +161,7 @@
     "flz_core/src/flusher.rs": 242,
     "flz_core/src/header.rs": 218,
     "flz_core/src/host/activation.rs": 532,
-    "flz_core/src/host/commands.rs": 197,
+    "flz_core/src/host/commands.rs": 199,
     "flz_core/src/host/decl.rs": 187,
     "flz_core/src/host/entity.rs": 255,
     "flz_core/src/host/mod.rs": 32,
@@ -177,7 +177,7 @@
     "flz_core/src/park.rs": 104,
     "flz_core/src/persistent_id.rs": 79,
     "flz_core/src/poll_core/assembly.rs": 321,
-    "flz_core/src/poll_core/mod.rs": 443,
+    "flz_core/src/poll_core/mod.rs": 463,
     "flz_core/src/poll_core/starvation.rs": 53,
     "flz_core/src/poll_core/wake.rs": 222,
     "flz_core/src/restore.rs": 137,
@@ -205,7 +205,7 @@
    "sleeps": 0,
    "sleeps_by_file": {},
    "test_files": 0,
-   "test_loc": 2900
+   "test_loc": 2975
   },
   "flz_core_ffi": {
    "async_false_share": null,
@@ -557,7 +557,7 @@
    "async_false_share": null,
    "clippy_warnings": 0,
    "comment_density": 0.334,
-   "comment_lines": 470,
+   "comment_lines": 473,
    "credo_warnings": 9,
    "cycles": 1,
    "doc_lines": 411,
@@ -1035,8 +1035,8 @@
   "lib/flezha/sdk": {
    "async_false_share": null,
    "clippy_warnings": 0,
-   "comment_density": 0.196,
-   "comment_lines": 140,
+   "comment_density": 0.197,
+   "comment_lines": 141,
    "credo_warnings": 5,
    "cycles": 0,
    "doc_lines": 286,
@@ -1054,7 +1054,7 @@
    "max_cycle_files": 0,
    "narrative_markers": 0,
    "narrative_markers_by_file": {},
-   "prod_loc": 1745,
+   "prod_loc": 1746,
    "prod_loc_by_file": {
     "lib/flezha/sdk/channels.ex": 201,
     "lib/flezha/sdk/codec.ex": 44,
@@ -1069,7 +1069,7 @@
     "lib/flezha/sdk/park.ex": 28,
     "lib/flezha/sdk/persistent_id.ex": 77,
     "lib/flezha/sdk/procedure.ex": 65,
-    "lib/flezha/sdk/runner_server.ex": 401,
+    "lib/flezha/sdk/runner_server.ex": 402,
     "lib/flezha/sdk/stream.ex": 26,
     "lib/flezha/sdk/stream_operative.ex": 6,
     "lib/flezha/sdk/topology.ex": 177,
@@ -1944,7 +1944,7 @@
    "doc_lines": 4022,
    "duplicate_pairs": 216,
    "duplicate_pairs_list": [
-    "flz_core/src/host/commands.rs:41-50 <-> sdk/rust/src/entity/restore.rs:102-111 (40 tokens)",
+    "flz_core/src/host/commands.rs:42-51 <-> sdk/rust/src/entity/restore.rs:102-111 (40 tokens)",
     "flz_core_ffi/tests/abi/harness.rs:44-49 <-> sdk/rust/tests/runner_lifecycle.rs:116-121 (45 tokens)",
     "flz_core_ffi/tests/abi/lifecycle.rs:88-92 <-> sdk/rust/tests/runner_lifecycle.rs:395-401 (60 tokens)",
     "flz_transport/src/utility/noise.rs:8-11 <-> sdk/rust/src/testing/tests/harness_smoke.rs:114-117 (42 tokens)",
@@ -2235,7 +2235,7 @@
    "async_false_share": 0.774,
    "clippy_warnings": 0,
    "comment_density": 0.151,
-   "comment_lines": 4136,
+   "comment_lines": 4145,
    "credo_warnings": 0,
    "cycles": 0,
    "doc_lines": 2812,
@@ -2252,7 +2252,7 @@
     "test/fixtures/plugins/build_fixtures.exs:218-234 <-> test/flezha/plugin/installer/release_cli_system_test.exs:172-185 (47 tokens)",
     "test/flezha/authz/authz_test.exs:144-152 <-> test/flezha/authz/enforcement_test.exs:52-57 (63 tokens)",
     "test/flezha/boot/recovery_hooks_test.exs:32-39 <-> test/flezha/runner/control_channel_workflow_test.exs:40-48 (43 tokens)",
-    "test/flezha/convergence/convergence_diff_test.exs:164-171 <-> test/flezha/convergence/convergence_heal_test.exs:436-443 (40 tokens)",
+    "test/flezha/convergence/convergence_diff_test.exs:164-171 <-> test/flezha/convergence/convergence_heal_test.exs:438-445 (40 tokens)",
     "test/flezha/convergence/convergence_loop_test.exs:261-268 <-> test/flezha/state/wal_rewind_test.exs:31-38 (41 tokens)",
     "test/flezha/convergence/output_stall_drill_test.exs:109-114 <-> test/flezha/state/recovery_test.exs:46-49 (41 tokens)",
     "test/flezha/convergence/output_stall_drill_test.exs:30-44 <-> test/flezha/state/watchdog_test.exs:29-48 (80 tokens)",
@@ -2289,7 +2289,7 @@
     "test/flezha/state/gap_recovery_test.exs:71-84 <-> test/flezha/state/runner_restart_realign_test.exs:283-296 (122 tokens)",
     "test/flezha/state/runner_restart_realign_test.exs:38-44 <-> test/flezha/state/watchdog_test.exs:28-34 (40 tokens)",
     "test/flezha/state/wal_rewind_test.exs:52-60 <-> test/helpers/outbox_case.ex:85-93 (40 tokens)",
-    "test/helpers/node_test_helper.ex:477-486 <-> test/system/control_plane_wedge_e2e_test.exs:326-334 (44 tokens)",
+    "test/helpers/node_test_helper.ex:477-486 <-> test/system/control_plane_wedge_e2e_test.exs:351-359 (44 tokens)",
     "test/load/credit_soak_test.exs:129-133 <-> test/system/credit_flow_e2e_test.exs:94-98 (50 tokens)",
     "test/load/credit_soak_test.exs:131-136 <-> test/system/dynamic_entity_e2e_test.exs:153-159 (58 tokens)",
     "test/load/credit_soak_test.exs:88-114 <-> test/system/credit_flow_e2e_test.exs:47-75 (96 tokens)",
@@ -2350,7 +2350,7 @@
     "test/system/dlq_e2e_test.exs": 1
    },
    "test_files": 195,
-   "test_loc": 38986
+   "test_loc": 39001
   },
   "test/apps": {
    "async_false_share": null,
@@ -2617,7 +2617,7 @@
   "governor": "powersave",
   "hostname": "moon"
  },
- "head": "0ba5c9fe",
+ "head": "91e59b66",
  "repo": {
   "clippy_warnings": 0,
   "credo_warnings": 154,

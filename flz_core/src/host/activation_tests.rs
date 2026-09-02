@@ -11,40 +11,9 @@ use std::sync::Arc;
 use super::activation::settle_item;
 use super::HostPayload;
 use crate::entity::{EntityItem, EntityPayload, EntitySlot};
-use crate::operative::instance::StreamInstance;
 use crate::poll_core::ItemAttempt;
 use crate::schema;
-use crate::test_support::{saturate, spin_until, stream_pair};
-
-/// A tier class: one entry channel into `p0`, one inter-procedure channel
-/// from `p0` to every consumer in `consumers`, each with a one-slot
-/// mailbox so it is full after a single push.
-fn instance(id: &str, consumers: &[u32]) -> Arc<StreamInstance> {
-    let consumer_list = consumers
-        .iter()
-        .map(|c| c.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let procs = std::iter::once(r#"{"name":"p0"}"#.to_string())
-        .chain(
-            consumers
-                .iter()
-                .map(|c| format!(r#"{{"name":"p{c}","mailbox_capacity":1}}"#)),
-        )
-        .collect::<Vec<_>>()
-        .join(",");
-    let json = format!(
-        r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"effectively_once":true,
-             "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
-                         {{"name":"mid","kind":"inter_proc","producer":0,
-                           "consumers":[{consumer_list}]}},
-                         {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
-             "procedures":[{procs}]}}"#
-    );
-    super::register_host_class_json(json.as_bytes()).expect("class registers");
-    let topology = crate::operative::registry::get_class(id).expect("class registered");
-    StreamInstance::new(topology, Arc::from(format!("{id}_inst").as_str()))
-}
+use crate::test_support::{host_class, saturate, spin_until, stream_pair};
 
 /// Fill one consumer's single mailbox slot and claim its round, so nothing
 /// drains it until the test says so.
@@ -137,7 +106,7 @@ fn free_one_slot(slot: &Arc<EntitySlot>) {
 #[test]
 fn no_record_carries_the_offset_until_the_edge_push_lands() {
     let id = format!("edge_order_{}", std::process::id());
-    let instance = instance(&id, &[1]);
+    let instance = host_class::instance(&id, &[], &[1]);
     let producer = Arc::clone(&instance.entities[0][0]);
     let consumer = Arc::clone(&instance.entities[1][0]);
     saturate_slot(&consumer);
@@ -182,7 +151,7 @@ fn no_record_carries_the_offset_until_the_edge_push_lands() {
 #[test]
 fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     let id = format!("edge_fanout_{}", std::process::id());
-    let instance = instance(&id, &[1, 2, 3]);
+    let instance = host_class::instance(&id, &[], &[1, 2, 3]);
     let producer = Arc::clone(&instance.entities[0][0]);
     let full = Arc::clone(&instance.entities[3][0]);
     saturate_slot(&full);

@@ -6,6 +6,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::entity::BytesBuffer;
 use crate::entity::EntitySlot;
@@ -201,18 +202,20 @@ fn snapshot_state(outcome: schema::ActivationOutcome) -> Result<Vec<u8>, Error> 
     }
 }
 
-/// Live-read / migration serialize for a host-run Entity. MUST run under the
-/// entity gate (the caller's `with_entity_exclusive` closure).
+/// Live-read / migration serialize for a host-run Entity, waiting `wait` for
+/// the host's answer. MUST run under the entity gate (the caller's
+/// `with_entity_exclusive` closure).
 pub fn state_json_locked(
     slot: &Arc<EntitySlot>,
     migration: bool,
+    wait: Duration,
 ) -> Result<(serde_json::Value, u64), Error> {
     let kind = if migration {
         schema::ActivationKind::MigrationSerialize
     } else {
         schema::ActivationKind::LiveStateRead
     };
-    let json = match crate::poll_core::global().host_command(slot, kind)? {
+    let json = match crate::poll_core::global().host_command_within(slot, kind, wait)? {
         schema::ActivationOutcome::StateJson { json }
         | schema::ActivationOutcome::MigrationState { json } => json,
         schema::ActivationOutcome::Failed(err) => return Err(Error::HostCrossing(err.message)),

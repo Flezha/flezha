@@ -602,3 +602,24 @@ the line SHALL also name the listen address.
 - **WHEN** a controller boots successfully
 - **THEN** its log contains the resolved absolute socket directory and the `FLEZHA_SOCKET_FILES_PATH` assignment that attaches a runner to it
 
+### Requirement: A graceful ship waits at most the gate bound for an Entity inside an activation
+
+The per-Entity serialize a graceful shutdown runs SHALL wait at most 5 s for the Entity's handout exclusivity; an Entity still inside an activation at that bound SHALL be omitted from the `RunnerShutdownNotification`, with a log line naming the Entity and the bound, and the notification SHALL still carry every other Entity's state. The bound applies to every path that runs the ship — SIGTERM, `Drop` of the runner handle, the host's own stop entry, and the controller-ordered terminal disconnect — and to a live state read of the same Entity, so that no command interaction can hold the runner's control thread for the life of the process. A controller-ordered terminal disconnect SHALL therefore end the process with the non-zero terminal status whatever the host's loops are doing: the exit is the core's, from its own thread.
+
+An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its own means — its application shutdown ends a wedged Entity process — and exit with the same status.
+
+#### Scenario: A terminal disconnect ordered to a wedged runner ends it
+- **GIVEN** a runner one of whose Entities is inside an activation that never returns
+- **WHEN** the controller orders a terminal disconnect
+- **THEN** the runner SHALL acknowledge, ship the state of every other Entity, log the busy Entity as omitted, and exit with a non-zero status within the bound plus the ack wait
+- **AND** its session SHALL close and its operatives SHALL be rerouted by the existing disconnect path
+
+#### Scenario: The omitted Entity's state is at most one activation stale
+- **GIVEN** the busy Entity's last completed activation left state `S`
+- **WHEN** the notification ships without it
+- **THEN** the controller's snapshot for that operative SHALL hold `S` from the periodic snapshot or the WAL, exactly as it would after a crash, and nothing newer existed to ship
+
+#### Scenario: A live read of a wedged Entity is refused, not held
+- **WHEN** a live state read names an Entity inside an activation older than the bound
+- **THEN** the runner SHALL answer with an error naming the Entity as busy after the bound, and the control thread SHALL go on serving later commands
+

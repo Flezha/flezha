@@ -50,7 +50,7 @@ defmodule Flezha.Convergence.Planner do
 
   The two ladders are the exception: every rung of one keys on
   `ladder_key/2`, so escalating (`resync_runner` → `rebind_operative`;
-  `evict_runner` → `restart_runner`) walks ONE cooldown instead of restarting
+  `restart_runner` → `evict_runner`) walks ONE cooldown instead of restarting
   the throttle under a fresh key — which is also what makes the attempt count
   the rung.
   """
@@ -140,17 +140,19 @@ defmodule Flezha.Convergence.Planner do
   # a wedged operative is rebound.
   defp wedge_ops(%Diff{data_plane_wedge: nil}, _backoff), do: []
 
-  # A runner rides its own two-rung ladder. Eviction first — cheap, moves the
-  # work, leaves the process alone; the terminal restart only once eviction has
-  # been applied and the classifier STILL proves the same runner wedged, since
-  # an evicted-but-connected runner is placeable again and would otherwise flap.
+  # A runner rides its own two-rung ladder. The terminal restart first, on the
+  # session the verdict named — eviction would end that session, the same
+  # process would reconnect under a fresh id no rung keyed on the session could
+  # reach, and it would be placeable again; eviction only once the restart has
+  # been applied and the classifier STILL proves the same session wedged, which
+  # is a process that did not exit.
   defp wedge_ops(
          %Diff{data_plane_wedge: {:runner, ns, runner_id}, data_plane_layer: layer},
          backoff
        ) do
     [
       op(
-        rung(backoff, @wedge_reason, runner_id, :evict_runner, :restart_runner),
+        rung(backoff, @wedge_reason, runner_id, :restart_runner, :evict_runner),
         ns,
         runner_id,
         wedge_args(layer)

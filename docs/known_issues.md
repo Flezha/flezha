@@ -1612,46 +1612,6 @@ under load.
 
 ## P3 — warts, wording, and measurement notes
 
-### KI-130 · A wedged PHP runner cannot die: evicted and ordered to exit, it stays up, reconnects under a fresh identity and wins the rebind
-
-- **Severity**: P2 · the convergence ladder's last rung (`runner_pool_wedged` → evict → terminal
-  disconnect → the orchestrator restarts a failed process) does not end the process it targets
-  on a single-loop erased host, and the controller re-identifies the returning process as a
-  new runner and places work on it. Pre-existing on every count; visible on 2026-09-02
-  because the full php system arm ran with `control_plane_wedge_e2e_test.exs` for the first
-  time (R5 S5 close-out).
-- **Where**: `sdk/php/src/Runner.php` — SIGTERM (`pcntl_signal`) and stdin EOF are polled
-  between polls, so a `sync` loop inside a body (`sleep(3600)` in the `wedge_probe` fixture)
-  observes neither; `flz_core/src/shutdown.rs:228` `exit_terminally` runs
-  `run_active_graceful_shutdown()` before `process::exit(70)`, and the bridge's snapshot
-  function serialises every Entity under `with_entity_exclusive`, which waits on the wedged
-  Entity's gate without bound; the controller side (`FleetManager.evict_runner` with
-  `proved_wedged`) clears the binding and nothing in the handshake refuses that process's
-  return.
-- **Evidence** (worker, `$SCRATCH/r5s2/s5/probe/`): `FLEZHA_E2E_RUNTIME=php mix test --include system test/system/control_plane_wedge_e2e_test.exs`
-  → `3 passed` (5.9 s), `2/3 passed` (124.5 s), then the probe copy `3 passed` (7.7 s), `2/3
-  passed` (124.6 s) — 3 red of 5, always `:71`, the phase-2 rebind wait expiring. The
-  extended failure message shows the operative rebound onto a runner id that is neither A
-  nor B, listed in `active_runners` beside B, with only two `runner up` lines in the namespace
-  — runner A back under a fresh identity after `[flezha] controller ordered a terminal
-  disconnect (reason=convergence:runner_pool_wedged); exiting 70`. Supervisor's own run:
-  `3 passed`, and one `php … runner.php wedge_e2e_…` process left alive after it (killed by
-  pid). Node's drill is green because `watchStdinEof` terminates its wedged runner after the
-  5 s grace, so the zombie is dead before it can re-register.
-- **A fix must** decide which half owns it, and probably take two: `exit_terminally` must
-  not wait unboundedly on a wedged Entity for any SDK (the rung exists precisely for a
-  runner that cannot finish its work — a bounded wait, or skipping the wedged Entity's
-  serialise, keeps the ship for the others); and the controller should refuse or at least
-  not place on a runner it has evicted as wedged until the orchestrator's restart is
-  evidenced (a fresh process, not a fresh id). The PHP host's own inability to observe a
-  signal inside a body is the SDK's documented single-loop posture and is the smallest
-  part. Red first: the php drill above, 3 in 5.
-- **Verdict (supervisor, 2026-09-02)**: real, P2, not R5's — none of the row's commits
-  touches these paths — and larger than a close-out. Own change, queued as the next work
-  item after R5 closes; the drill leaves one wedged php process per run until then, so a php
-  full arm is followed by a kill by pid.
-
-
 ### KI-129 · On an erased host with more than one loop, a live Entity read can answer state whose changes are not yet journaled, and its seq stamp cannot say so
 
 - **Severity**: P3 · a wart in what the live read promises, not a data-loss path: the WAL is
@@ -1681,74 +1641,6 @@ under load.
   commit (the three waits, red first by rate); the read semantics are recorded, not changed —
   a test settles on `await_seq`, never on a live read, before anything that depends on the
   journal.
-
-
-### KI-128 · `credit_flow_e2e_test.exs` reads the credit flag at a point in time after the burst, so a legitimate re-attach fails it with a message naming the wrong cause — SUSPICION
-
-- **Severity**: P3 · seen once in 20 five-file php arms (supervisor 1/4, worker 0/16 including 14 in the failing arm shape), never alone (php 3/3, rust 1/1). · Found 2026-09-02 by the supervisor's verification arm of R5 S2 batch 3, the first day the scenario ran under php.
-- **Where**: `test/system/credit_flow_e2e_test.exs:133-134` — `active_credit_row(ce_id)`
-  (`test/helpers/credit_test_helper.ex:46-49`) is a point-in-time read of the first
-  `LivenessCounters` row for the runner with `credit_active == 1`, no wait. That flag is set
-  by the `{:credit_ack, session}` handler (`stream_channel.ex:383`) after the SDK acks the
-  `CreditWindowInit` offered on the first state frame of an attach, and cleared in exactly
-  one function, `Records.reset_credit/1` (`records.ex:329-334`), whose only caller is the
-  `{:flz_closed, _, _}` handler (`stream_channel.ex:467`): the state stream's socket closed
-  and the next state frame re-runs the handshake.
-- **Evidence**: `FLEZHA_E2E_RUNTIME=php mix test --include system --include sdk_smoke <sdk_smoke compaction credit_flow state_freshness partitioned_operatives>` →
-  once `22/23 passed`, `no credit-speaking secondary channel row for credit_flow_e2e_8667569809`
-  at `:134`, after a normal ~5 s burst (`await_seq(writer, 300)` at `:127` had passed). Test
-  logging runs at `:error` (`config/test.exs:165`), so the discriminating lines — the
-  `Connection closed for IO socket.` warning at `stream_channel.ex:452`, the credit-session
-  info line, a credit-overrun warning, the runner's own `tracing::warn!` — are all suppressed
-  and the log shows nothing between "runner up" and the assertion.
-- **Mechanism (as far as the box got)**: the row was credit-speaking at `:109`, the burst
-  landed, and between the last state frame and `:133` the secondary stream closed →
-  `reset_credit` → `credit_active` 0; with the burst over no state frame re-ran the handshake,
-  so the read finds no credit-speaking row. Two candidates for the close, unseparated: (A)
-  runner-side, `state_sink.rs:228` `request_reconnect("broken_pipe_flood")` or the control
-  reader's silence verdict (`control_unit.rs:338`); (B) controller-side, the `runner_retiring?`
-  branch at `stream_channel.ex:449` or a gate close. php's cold single-loop tempo (the first
-  runner's mean body 10 ms) widens the window; nothing php-specific in the port touches the
-  path (the six fixtures are folds; node ran the same burst green four times, ruby twice).
-- **The separating experiment**: the arm with the test logger at `:warning` so a close prints,
-  and the failure at `:134` dumping the runner's rows (`credit_active`, `credit_ledger_level`,
-  `credit_overrun_total`, `hb_credit_parked`) — an overrun > 0 at that moment means (B), zero
-  with a close means (A).
-- **A fix should** read the credit verdict from the row captured at `:109` (its counters ref
-  is per attach and holds the burst's numbers whatever happens after) and dump the rows on
-  failure so the message names the real cause; red-first by rate, which this box could not
-  deliver.
-- **Verdict (supervisor, 2026-09-02)**: a suspicion under §1b step 3 — 30-minute box spent,
-  unreproduced; the php `state_persistence` flip lands (the scenario is green 19 of 20 and
-  the failure shape is the harness's, not the port's). The test hardening is owed as a small
-  item of its own.
-
-
-### KI-125 · A Python runner aborts at interpreter exit after a graceful SIGTERM shutdown
-
-- **Severity**: P3 · the drain completes and every notification ships; then the main thread
-  waits exactly 1 s and the process dies with `SIGABRT` (exit 134), which an orchestrator reads
-  as a crash after every graceful stop of a runner whose stdin is a pipe. · Found by the R5 S2
-  worker, 2026-09-01, timing the KI-123 fix under `strace`.
-- **Where**: `sdk/python/src/flezha/runner.py:311-334` `_watch_stdin_eof` — a daemon thread
-  blocked in `sys.stdin.buffer.read(1)`; CPython's finalisation waits one second for that
-  buffer's lock and then aborts with `Fatal Python error: _enter_buffered_busy: could not
-  acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown`.
-- **Evidence** (supervisor's own run, no SDK loaded):
-
-      $ sleep 5 | sdk/python/.venv/bin/python stdin_daemon.py   # a daemon thread in stdin.buffer.read(1), sleep 0.2, normal exit
-      Fatal Python error: _enter_buffered_busy: could not acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown, possibly due to daemon threads
-      exit=134
-
-  Under the runner: after SIGTERM the main thread sits in one timed `FUTEX_WAIT` of 1.000 s
-  (`ETIMEDOUT`) and then `tgkill(SIGABRT)`. An EOF-driven exit does not hit it — the watcher
-  itself returns.
-- **A fix must** stop holding the buffer lock at finalisation: read the descriptor unbuffered
-  (`os.read(sys.stdin.fileno(), 1)`), or end the watcher before exit, or exit through
-  `os._exit` after the drain. Red first: a subprocess test that SIGTERMs a runner with a piped
-  stdin and asserts exit status 0.
-- **Verdict (supervisor, 2026-09-01)**: real, P3, owed to its own python-only change after R5
-  S2; does not pause the row.
 
 
 ### KI-124 · Python's `persistence_off_counter` declares the reference's procedures under `stateful_counter`'s names
@@ -2747,6 +2639,134 @@ path, so none needs a red-first test.
   note in the same commit** — the note is the reason this looked like a capability.
 
 ## Resolved
+
+### KI-128 · `credit_flow_e2e_test.exs` reads the credit flag at a point in time after the burst, so a legitimate re-attach fails it with a message naming the wrong cause — RESOLVED (hardened)
+
+- **Severity**: P3 · seen once in 20 five-file php arms (supervisor 1/4, worker 0/16 including 14 in the failing arm shape), never alone (php 3/3, rust 1/1). · Found 2026-09-02 by the supervisor's verification arm of R5 S2 batch 3, the first day the scenario ran under php.
+- **Where**: `test/system/credit_flow_e2e_test.exs:133-134` — `active_credit_row(ce_id)`
+  (`test/helpers/credit_test_helper.ex:46-49`) is a point-in-time read of the first
+  `LivenessCounters` row for the runner with `credit_active == 1`, no wait. That flag is set
+  by the `{:credit_ack, session}` handler (`stream_channel.ex:383`) after the SDK acks the
+  `CreditWindowInit` offered on the first state frame of an attach, and cleared in exactly
+  one function, `Records.reset_credit/1` (`records.ex:329-334`), whose only caller is the
+  `{:flz_closed, _, _}` handler (`stream_channel.ex:467`): the state stream's socket closed
+  and the next state frame re-runs the handshake.
+- **Evidence**: `FLEZHA_E2E_RUNTIME=php mix test --include system --include sdk_smoke <sdk_smoke compaction credit_flow state_freshness partitioned_operatives>` →
+  once `22/23 passed`, `no credit-speaking secondary channel row for credit_flow_e2e_8667569809`
+  at `:134`, after a normal ~5 s burst (`await_seq(writer, 300)` at `:127` had passed). Test
+  logging runs at `:error` (`config/test.exs:165`), so the discriminating lines — the
+  `Connection closed for IO socket.` warning at `stream_channel.ex:452`, the credit-session
+  info line, a credit-overrun warning, the runner's own `tracing::warn!` — are all suppressed
+  and the log shows nothing between "runner up" and the assertion.
+- **Mechanism (as far as the box got)**: the row was credit-speaking at `:109`, the burst
+  landed, and between the last state frame and `:133` the secondary stream closed →
+  `reset_credit` → `credit_active` 0; with the burst over no state frame re-ran the handshake,
+  so the read finds no credit-speaking row. Two candidates for the close, unseparated: (A)
+  runner-side, `state_sink.rs:228` `request_reconnect("broken_pipe_flood")` or the control
+  reader's silence verdict (`control_unit.rs:338`); (B) controller-side, the `runner_retiring?`
+  branch at `stream_channel.ex:449` or a gate close. php's cold single-loop tempo (the first
+  runner's mean body 10 ms) widens the window; nothing php-specific in the port touches the
+  path (the six fixtures are folds; node ran the same burst green four times, ruby twice).
+- **The separating experiment**: the arm with the test logger at `:warning` so a close prints,
+  and the failure at `:134` dumping the runner's rows (`credit_active`, `credit_ledger_level`,
+  `credit_overrun_total`, `hb_credit_parked`) — an overrun > 0 at that moment means (B), zero
+  with a close means (A).
+- **A fix should** read the credit verdict from the row captured at `:109` (its counters ref
+  is per attach and holds the burst's numbers whatever happens after) and dump the rows on
+  failure so the message names the real cause; red-first by rate, which this box could not
+  deliver.
+- **Verdict (supervisor, 2026-09-02)**: a suspicion under §1b step 3 — 30-minute box spent,
+  unreproduced; the php `state_persistence` flip lands (the scenario is green 19 of 20 and
+  the failure shape is the harness's, not the port's). The test hardening is owed as a small
+  item of its own.
+- **Corrected at the code by the hardening (2026-09-02)**: a `snapshot_all/0` row is a VALUE map, so a row captured at `:109` holds the handshake's numbers, never the burst's — what survives the settle is the row's key `{runner_id, name}`; the `:counters` array is one per channel PROCESS (registered once in `StreamChannel.init/1`, kept across `{:flz_closed}` and a re-bind, pruned only on owner death); `reset_credit/1` zeroes `credit_active` and `credit_ledger_level` only, `credit_overrun_total` is bump-only. A controller-side `close_stream` drops the fd with no `{:flz_closed}`, so the mechanism was induced by sending the driver's own tuple to the channel the settled row names.
+- **Resolved (hardened)**: `harden-credit-flow-verdict-read` — the test reads the verdict by the settled row's name through `counters_row/2` and every credit assertion dumps the runner's rows. Red first, induced: the old assertion failed with KI-128's exact message on the induced close; the new read on the same state is green (`hb_credit_parked 91 → 95`, overrun 0). rust, php ×3 (+2 by the supervisor), node `1 passed`. Which side closes the stream in the wild stays unseparated; the test now names it when it happens. `test/load/credit_soak_test.exs:162,189` reads the same way and is opt-in — left. ADDED requirement in `credit-grant-flow-control`.
+
+### KI-125 · A Python runner aborts at interpreter exit after a graceful SIGTERM shutdown — RESOLVED
+
+- **Severity**: P3 · the drain completes and every notification ships; then the main thread
+  waits exactly 1 s and the process dies with `SIGABRT` (exit 134), which an orchestrator reads
+  as a crash after every graceful stop of a runner whose stdin is a pipe. · Found by the R5 S2
+  worker, 2026-09-01, timing the KI-123 fix under `strace`.
+- **Where**: `sdk/python/src/flezha/runner.py:311-334` `_watch_stdin_eof` — a daemon thread
+  blocked in `sys.stdin.buffer.read(1)`; CPython's finalisation waits one second for that
+  buffer's lock and then aborts with `Fatal Python error: _enter_buffered_busy: could not
+  acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown`.
+- **Evidence** (supervisor's own run, no SDK loaded):
+
+      $ sleep 5 | sdk/python/.venv/bin/python stdin_daemon.py   # a daemon thread in stdin.buffer.read(1), sleep 0.2, normal exit
+      Fatal Python error: _enter_buffered_busy: could not acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown, possibly due to daemon threads
+      exit=134
+
+  Under the runner: after SIGTERM the main thread sits in one timed `FUTEX_WAIT` of 1.000 s
+  (`ETIMEDOUT`) and then `tgkill(SIGABRT)`. An EOF-driven exit does not hit it — the watcher
+  itself returns.
+- **A fix must** stop holding the buffer lock at finalisation: read the descriptor unbuffered
+  (`os.read(sys.stdin.fileno(), 1)`), or end the watcher before exit, or exit through
+  `os._exit` after the drain. Red first: a subprocess test that SIGTERMs a runner with a piped
+  stdin and asserts exit status 0.
+- **Verdict (supervisor, 2026-09-01)**: real, P3, owed to its own python-only change after R5
+  S2; does not pause the row.
+- **Resolved**: `exit-cleanly-after-sigterm-in-python` — `_watch_stdin_eof` reads the descriptor with `os.read(sys.stdin.fileno(), 1)`, holding no `BufferedReader` lock at finalisation. Red first: `test_a_signalled_runner_with_a_piped_stdin_exits_cleanly` read `-6 == 0` with the abort on stderr at HEAD (the test keeps stdin OPEN — `communicate` would close it and turn the path into EOF); after, the python runner exits 0 after 53 ms where it was 134 after 2195 ms. Ruby, node and php measured clean (0 / 0 / no thread). ADDED requirement in `python-sdk`.
+
+### KI-130 · A wedged PHP runner cannot die: evicted and ordered to exit, it stays up, reconnects under a fresh identity and wins the rebind — RESOLVED
+
+- **Severity**: P2 · the convergence ladder's last rung (`runner_pool_wedged` → evict → terminal
+  disconnect → the orchestrator restarts a failed process) does not end the process it targets
+  on a single-loop erased host, and the controller re-identifies the returning process as a
+  new runner and places work on it. Pre-existing on every count; visible on 2026-09-02
+  because the full php system arm ran with `control_plane_wedge_e2e_test.exs` for the first
+  time (R5 S5 close-out).
+- **Where**: `sdk/php/src/Runner.php` — SIGTERM (`pcntl_signal`) and stdin EOF are polled
+  between polls, so a `sync` loop inside a body (`sleep(3600)` in the `wedge_probe` fixture)
+  observes neither; `flz_core/src/shutdown.rs:228` `exit_terminally` runs
+  `run_active_graceful_shutdown()` before `process::exit(70)`, and the bridge's snapshot
+  function serialises every Entity under `with_entity_exclusive`, which waits on the wedged
+  Entity's gate without bound; the controller side (`FleetManager.evict_runner` with
+  `proved_wedged`) clears the binding and nothing in the handshake refuses that process's
+  return.
+- **Evidence** (worker, `$SCRATCH/r5s2/s5/probe/`): `FLEZHA_E2E_RUNTIME=php mix test --include system test/system/control_plane_wedge_e2e_test.exs`
+  → `3 passed` (5.9 s), `2/3 passed` (124.5 s), then the probe copy `3 passed` (7.7 s), `2/3
+  passed` (124.6 s) — 3 red of 5, always `:71`, the phase-2 rebind wait expiring. The
+  extended failure message shows the operative rebound onto a runner id that is neither A
+  nor B, listed in `active_runners` beside B, with only two `runner up` lines in the namespace
+  — runner A back under a fresh identity after `[flezha] controller ordered a terminal
+  disconnect (reason=convergence:runner_pool_wedged); exiting 70`. Supervisor's own run:
+  `3 passed`, and one `php … runner.php wedge_e2e_…` process left alive after it (killed by
+  pid). Node's drill is green because `watchStdinEof` terminates its wedged runner after the
+  5 s grace, so the zombie is dead before it can re-register.
+- **A fix must** decide which half owns it, and probably take two: `exit_terminally` must
+  not wait unboundedly on a wedged Entity for any SDK (the rung exists precisely for a
+  runner that cannot finish its work — a bounded wait, or skipping the wedged Entity's
+  serialise, keeps the ship for the others); and the controller should refuse or at least
+  not place on a runner it has evicted as wedged until the orchestrator's restart is
+  evidenced (a fresh process, not a fresh id). The PHP host's own inability to observe a
+  signal inside a body is the SDK's documented single-loop posture and is the smallest
+  part. Red first: the php drill above, 3 in 5.
+- **Verdict (supervisor, 2026-09-02)**: real, P2, not R5's — none of the row's commits
+  touches these paths — and larger than a close-out. Own change, queued as the next work
+  item after R5 closes; the drill leaves one wedged php process per run until then, so a php
+  full arm is followed by a kill by pid.
+- **Mechanism corrected by the fix's survey (2026-09-02)**: (1) `Planner.wedge_ops/2` ran `evict_runner` first and `restart_runner` second, keyed on the session token — and every SDK's evicted process reconnected ~1.1 s later under a FRESH token, so the terminal rung was unreachable from a verdict on every SDK; it had only ever fired from the drill's hand call. (2) The unbounded wait is `PollCore::with_entity_exclusive`, reached from `finish_disconnect` → `run_active_graceful_shutdown` → `serialize_slot`, on every `flz_core` SDK (a restart order to a wedged rust runner: ack, no exit in 45 s). php was only where nothing else ended the process.
+- **Resolved**: `57135d69` (the core: `try_with_entity_exclusive` at 5 s, the host-command wait during a ship at 5 s, `entity_busy:` refusal — a named-Entity live read refuses, the walks omit) and the convergence commit after it (the ladder inverted: `restart_runner` first on the session the verdict named, `evict_runner` for a process that did not exit; the Elixir SDK's RunnerServer no longer restarted after the terminal disconnect, KI-131). The drill `3 passed` on all seven runtimes with no process left behind; php `3 passed` three times.
+
+### KI-131 · The Elixir SDK's RunnerServer is restarted by its supervisor after a terminal disconnect and re-registers the process the controller just ended — RESOLVED
+
+- **Severity**: P2 · KI-126's Elixir twin: after `RunnerDisconnect{terminal}` the standalone
+  `RunnerServer` returned `{:stop, :normal, _}` once `System.stop(70)` was called, and
+  `Flezha.SDK.child_spec/1`'s `restart: :permanent` supervisor started a fresh server, which
+  connected under the same stable id until `:init.stop` took the tree down — the ended process
+  was placeable again for the window. · Found by the R5.1 worker on 2026-09-02 when the wedge
+  drill's first test asserted `active_runners == [runner_b]` under `FLEZHA_E2E_RUNTIME=elixir`
+  and read `2/3 passed` at `:137`.
+- **Where**: `lib/flezha/sdk/runner_server.ex` `dispatch({:runner_disconnect, %{terminal: true}}, …)`,
+  the non-`:native` branch.
+- **Fix**: the branch returns `{:noreply, %{s | disconnecting?: true}}` after `System.stop/1`, so
+  the server stays up until the application shutdown ends the VM; the `:native` (in-node)
+  branch keeps its `{:stop, :normal, …}`. Elixir drill after: `3 passed` on three consecutive
+  runs. Landed with `end-a-wedged-runner-on-terminal-disconnect` as the change's Cross-SDK
+  obligation.
+
 
 ### KI-127 · The Java `store_input` twin serialises its state with camelCase keys, and the Node sugar twin does too — RESOLVED
 

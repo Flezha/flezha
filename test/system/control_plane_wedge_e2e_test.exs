@@ -76,7 +76,8 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     dupes = attach_collector(parent, [:flezha, :boot, :reconcile_duplicate], :duplicate)
     on_exit(fn -> Enum.each([heals, verdicts, dupes], &:telemetry.detach/1) end)
 
-    {operative_id, port_a, runner_a} = probe_on_its_own_runner(namespace, "wedged")
+    {operative_id, port_a, runner_a} =
+      probe_on_its_own_runner(namespace, "wedged", port_opts: [:exit_status])
 
     # --- Phase 0: the operative produces on runner A -------------------------
     assert produces?(operative_id, namespace, "one", "ok:one", 60_000),
@@ -116,15 +117,25 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
 
     assert_receive {:verdict, %{layer: :runner_pool_wedged, runner_id: ^runner_a}}, 60_000
 
-    assert_receive {:heal, %{primitive: :evict_runner, target: ^runner_a}}, 60_000
+    # The first rung is the terminal one: the process the verdict named is
+    # ended on the session it was proved on. An eviction first would close that
+    # session, the same process would reconnect under a fresh id and become a
+    # placement candidate again, and no later tick could reach it.
+    assert_receive {:heal, %{primitive: :restart_runner, target: ^runner_a}}, 60_000
+
+    # --- Phase 2: the wedged runner exits; the operative rebinds -------------
+    # Its pool is dead for good, so the process is replaced rather than reused:
+    # a wedged Entity cannot hold the graceful ship, and the exit is NON-ZERO
+    # so the orchestrator brings the runner back.
+    assert_receive {^port_a, {:exit_status, status}}, 60_000
+    assert status != 0, "a proved-wedged runner must exit non-zero, got #{status}"
+    send(feeder, :stop)
 
     assert wait_until(fn -> runner_a not in FleetManager.active_runners(namespace) end, 30_000),
-           "a classifier-proved wedge must evict the runner despite its socket being open"
+           "a terminally disconnected runner must leave the active set"
 
-    # --- Phase 2: the wedged runner goes away; the operative rebinds ---------
-    # Its pool is dead for good, so the process is replaced rather than reused.
-    send(feeder, :stop)
-    close_port(port_a)
+    assert FleetManager.active_runners(namespace) == [runner_b],
+           "the process that exited cannot be back under another id"
 
     assert wait_until(fn -> bound_runner(namespace, operative_id) == runner_b end, 120_000),
            "the operative never rebound onto the replacement runner"
@@ -143,11 +154,12 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
                     "a duplicate binding alarm fired while convergence was churning"
   end
 
-  # Eviction moves a wedged runner's operatives but leaves the process running
-  # and connected, so it becomes a placement candidate again and wedges again —
-  # evict, reconnect, take work, wedge. The terminal rung is the only remedy
-  # that clears the process, and the exit has to be NON-ZERO: a zero exit reads
-  # as a clean stop and the orchestrator would not bring the runner back.
+  # The terminal rung, on the runner it exists for: one whose Entity is inside
+  # an activation that never returns. The exit has to be NON-ZERO — a zero exit
+  # reads as a clean stop and the orchestrator would not bring the runner back
+  # — and it has to happen at all: a graceful ship that waited for the wedged
+  # Entity would hold the process for ever.
+  @tag capability: :pool_wedge, skip: FlezhaTest.SystemCase.deferral(:pool_wedge)
   @tag timeout: 180_000
   test "a terminally disconnected runner exits non-zero and its operatives reroute",
        %{namespace: namespace} do
@@ -158,6 +170,19 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
            "the operative never produced before the restart " <>
              "(bound=#{inspect(bound_runner(namespace, operative_id))} " <>
              "active=#{inspect(FleetManager.active_runners(namespace))})"
+
+    # Wedged first: the rung exists for a runner that cannot finish its work,
+    # so the graceful ship it runs must not wait on the Entity that never will.
+    OperativeManager.send_io(operative_id, namespace, "wedge", %{"input_type" => "2"})
+
+    assert wait_until(
+             fn ->
+               LivenessCounters.snapshot_all().channels
+               |> Enum.any?(&(&1.runner_id == doomed and Map.get(&1, :hb_inflight, 0) >= 1))
+             end,
+             30_000
+           ),
+           "the wedge input never reached a pool worker"
 
     # The replacement the orchestrator would bring back, up first: the reroute
     # this drill asserts is the existing disconnect path's, not the Loop's.

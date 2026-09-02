@@ -121,3 +121,13 @@ The min-watermark advance that drains the ledger SHALL be computed by the input-
 
 - **WHEN** an adapter feeds two Operatives and only one has a frozen min-watermark
 - **THEN** only the starved Operative's dispatch parks; the healthy Operative keeps receiving input
+
+### Requirement: A stream close clears the credit flag on the channel's own counters and nothing else
+
+A data channel's liveness counters SHALL be one `:counters` array for the life of the channel process, registered once at init and read back by `{runner_id, name}`; a stream close SHALL clear `credit_active` and `credit_ledger_level` on that same array and SHALL leave `credit_overrun_total` — the count of frames shed over the channel's whole life — and the heartbeat-mirrored `hb_credit_parked` as they were, so a reader that named the channel at the handshake reads the burst's overrun count after any later close or re-bind rather than finding no credit-speaking row.
+
+#### Scenario: The burst's channel is read by name after a close
+
+- **WHEN** a credit-speaking secondary stream carried a burst and its socket then closed before the next state frame, so the credit reset ran with no handshake after it
+- **THEN** the row named at the handshake reports `credit_active` 0 and the burst's `credit_overrun_total` and `hb_credit_parked`, while a search for a row with `credit_active == 1` finds none until the next state frame re-runs the handshake
+

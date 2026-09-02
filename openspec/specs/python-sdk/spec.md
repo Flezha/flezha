@@ -175,3 +175,16 @@ The SDK SHALL emit its diagnostics through the standard library `logging` module
 - **WHEN** a user calls the opt-in diagnostics helper
 - **THEN** the SDK's loggers SHALL emit at a documented default level to a documented default destination
 
+### Requirement: A stopped runner exits cleanly
+
+A runner stopped by a signal, by end of file on standard input, or by the controller's own close SHALL let the process exit with status 0 once its drain completes, whether standard input is a pipe or a terminal. The standard-input watcher SHALL take no interpreter-level lock across its blocking read — it reads the descriptor unbuffered — so the interpreter's finalisation never waits on, or aborts over, a thread parked in that read.
+
+#### Scenario: SIGTERM with a piped standard input
+- **GIVEN** a started runner whose standard input is a pipe the other end keeps open
+- **WHEN** the process receives SIGTERM
+- **THEN** the runner SHALL drain and the process SHALL exit with status 0, with no finalisation abort on standard error
+
+#### Scenario: End of file still stops the runner
+- **WHEN** the other end of standard input closes
+- **THEN** the watcher SHALL observe end of file, the runner SHALL drain, and the process SHALL exit with status 0
+

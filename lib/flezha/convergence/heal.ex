@@ -157,7 +157,8 @@ defmodule Flezha.Convergence.Heal do
   end
 
   # Forcibly drop a dead/orphaned runner binding so its operatives become
-  # misbound and rebind onto a live runner next tick.
+  # misbound and rebind onto a live runner next tick. For a proved wedge this is
+  # the rung above the restart: a process that did not exit.
   defp apply_primitive(:evict_runner, %{target: runner_id} = op) when is_binary(runner_id) do
     case FleetManager.evict_runner(runner_id, proved_wedged: Planner.proved_wedged?(op)) do
       :ok -> :ok
@@ -166,9 +167,9 @@ defmodule Flezha.Convergence.Heal do
   end
 
   # Terminal disconnect: the SDK shuts down gracefully and exits non-zero so its
-  # orchestrator restarts the process. Reached only after `evict_runner` has
-  # already been applied to this runner and the classifier still proves it
-  # wedged — the Planner's rung, gated on `proved_wedged?/1`.
+  # orchestrator restarts the process. The first rung for a runner the
+  # classifier proves wedged, gated on `proved_wedged?/1`: its session closes
+  # with the process, and the disconnect reroute moves its operatives.
   defp apply_primitive(:restart_runner, %{target: runner_id, args: args} = op)
        when is_binary(runner_id) do
     if Planner.proved_wedged?(op) do

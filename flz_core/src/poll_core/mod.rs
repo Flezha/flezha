@@ -540,6 +540,16 @@ impl PollCore {
         slot: &Arc<EntitySlot>,
         kind: crate::schema::ActivationKind,
     ) -> Result<crate::schema::ActivationOutcome, Error> {
+        self.host_command_within(slot, kind, HOST_COMMAND_TIMEOUT)
+    }
+
+    /// [`Self::host_command`] with the wait chosen by the caller.
+    pub fn host_command_within(
+        &self,
+        slot: &Arc<EntitySlot>,
+        kind: crate::schema::ActivationKind,
+        wait: Duration,
+    ) -> Result<crate::schema::ActivationOutcome, Error> {
         let describe = command_kind_name(&kind);
         if self.shutting_down.load(Ordering::Acquire) {
             return Err(Error::HostCrossing(format!(
@@ -554,12 +564,12 @@ impl PollCore {
             kind,
             reply,
         });
-        match rx.recv_timeout(HOST_COMMAND_TIMEOUT) {
+        match rx.recv_timeout(wait) {
             Ok(outcome) => Ok(outcome),
             Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
                 Err(Error::HostCrossing(format!(
                     "{describe}: host did not complete the activation within {}s",
-                    HOST_COMMAND_TIMEOUT.as_secs()
+                    wait.as_secs()
                 )))
             }
             Err(crossbeam::channel::RecvTimeoutError::Disconnected) => Err(Error::HostCrossing(
@@ -571,9 +581,25 @@ impl PollCore {
     /// Run `f` under the entity's handout exclusivity: it waits out any
     /// outstanding activation and none is handed out while it runs.
     pub fn with_entity_exclusive<R>(&self, slot: &Arc<EntitySlot>, f: impl FnOnce() -> R) -> R {
+        self.try_with_entity_exclusive(slot, Duration::MAX, f)
+            .expect("a wait of Duration::MAX never elapses")
+    }
+
+    /// [`Self::with_entity_exclusive`] with a bound: `None` when the
+    /// outstanding activation is still running at `wait`, and the gate — not
+    /// won — is left to whoever holds it.
+    pub fn try_with_entity_exclusive<R>(
+        &self,
+        slot: &Arc<EntitySlot>,
+        wait: Duration,
+        f: impl FnOnce() -> R,
+    ) -> Option<R> {
         let started = Instant::now();
         let mut warned = false;
         while slot.drain_active.swap(true, Ordering::AcqRel) {
+            if started.elapsed() >= wait {
+                return None;
+            }
             if !warned && started.elapsed() > Duration::from_secs(5) {
                 warned = true;
                 tracing::warn!(
@@ -589,7 +615,7 @@ impl PollCore {
         // meanwhile to a fresh round (a serve task that lost the gate to us
         // left its inflight token for us to release).
         self.release_and_rearm(slot);
-        result
+        Some(result)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -601,7 +627,7 @@ impl PollCore {
 }
 
 /// How long a command thread waits for the host's answer.
-const HOST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const HOST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn command_kind_name(kind: &crate::schema::ActivationKind) -> &'static str {
     use crate::schema::ActivationKind;

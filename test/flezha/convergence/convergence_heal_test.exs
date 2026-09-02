@@ -45,18 +45,18 @@ defmodule Flezha.Convergence.HealTest do
       |> Planner.plan(Backoff.new())
     end
 
-    test "a wedged runner pool is evicted" do
-      assert [%{primitive: :evict_runner, target: "e_live", args: args}] =
+    test "a wedged runner pool is restarted terminally" do
+      assert [%{primitive: :restart_runner, target: "e_live", args: args}] =
                plan_for({:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}})
 
       assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
     end
 
-    test "a runner that stopped consuming is evicted, resolved through its data transport" do
+    test "a runner that stopped consuming is restarted, resolved through its data transport" do
       verdict =
         {:runner_not_consuming, %{transport: {:uds_data, "e_live", :primary}, stream_id: 1}}
 
-      assert [%{primitive: :evict_runner, target: "e_live"}] = plan_for(verdict)
+      assert [%{primitive: :restart_runner, target: "e_live"}] = plan_for(verdict)
     end
 
     test "a wedged channel resyncs every operative on that runner, in place" do
@@ -107,17 +107,22 @@ defmodule Flezha.Convergence.HealTest do
              |> Planner.plan(backoff) == []
     end
 
-    # Eviction moves a wedged runner's operatives but leaves the process
-    # connected and placeable, so it takes work and wedges again. Only the
-    # process going away clears it — and only after eviction has been tried.
-    test "a runner still proved wedged after eviction is restarted terminally" do
+    # The terminal order goes to the session the verdict named: eviction ends
+    # that session, the same process reconnects under a fresh id — a target no
+    # ladder keyed on the session could reach again — and is placeable once
+    # more. Eviction is the rung above, for a process that did not exit.
+    test "a proved-wedged runner is restarted terminally first, and evicted only if it survives" do
       verdict = {:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}}
       now = System.monotonic_time(:millisecond)
 
-      assert [%{primitive: :evict_runner, target: "e_live"}] = plan_for(verdict)
+      assert [%{primitive: :restart_runner, namespace: :ns, target: "e_live", args: args}] =
+               plan_for(verdict)
+
+      assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
+      assert Planner.proved_wedged?(%{args: args}), "the restart rung is gated on proved evidence"
 
       # The rung is read off the wedge ladder's own cooldown attempt count, so
-      # the tick that applied the eviction is what reaches the restart.
+      # the tick that applied the restart is what reaches the eviction.
       backoff =
         Backoff.update(
           Backoff.new(),
@@ -126,13 +131,10 @@ defmodule Flezha.Convergence.HealTest do
           now - 60_000
         )
 
-      assert [%{primitive: :restart_runner, namespace: :ns, target: "e_live", args: args}] =
+      assert [%{primitive: :evict_runner, namespace: :ns, target: "e_live", args: ^args}] =
                wedge_intent()
                |> Diff.compute(wedge_reality(), %{verdict: verdict})
                |> Planner.plan(backoff)
-
-      assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
-      assert Planner.proved_wedged?(%{args: args}), "the restart rung is gated on proved evidence"
     end
 
     test "a runner with no wedge verdict is never restarted" do

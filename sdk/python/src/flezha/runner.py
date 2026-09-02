@@ -319,10 +319,13 @@ class Runner:
         """
 
         def watch() -> None:
-            stream = getattr(sys.stdin, "buffer", sys.stdin)
+            # Unbuffered on purpose: a read through `sys.stdin.buffer` holds
+            # the reader's lock for as long as it blocks, and the interpreter's
+            # finalisation aborts the process rather than wait on a daemon
+            # thread for it. A raw read holds nothing finalisation needs.
             while True:
                 try:
-                    if stream.read(1) == b"":
+                    if os.read(sys.stdin.fileno(), 1) == b"":
                         break
                 except (BlockingIOError, InterruptedError):
                     continue

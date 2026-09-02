@@ -578,6 +578,167 @@ KI-124, KI-125, KI-128, KI-129, KI-130 filed. Every capability flipped is proved
 scenarios on the runtime, red half recorded first, all three arms re-run by the supervisor at
 every segment.
 
+**Committed as `f0767427` (S5) and `91e59b66` (close-out). R5 worker RETIRED 01:42** after
+S0-to-S5's worker (one `general-purpose`, 3 h 40 m, ~935 k tokens, 14 commits verified from
+its reports). `ListAgents` must show no subagent before the next spawn. **Next: R5.1 = KI-130**,
+fresh worker, two-step (proposal → my ruling on the shape → implement).
+
+**R5.1 worker spawned 2026-09-02 01:48** — KI-130, fresh `general-purpose`, change id
+`end-a-wedged-runner-on-terminal-disconnect`, two-step. Brief: reproduce the php drill ≥ 3× at
+HEAD with rust/node controls and kill each leftover by pid; find the unbounded wait at the
+function and the core's existing time-limited or try variants (RULE #1); establish what the controller
+knows about a returning evicted process; write the change with the three halves priced — (a)
+core: `exit_terminally` never waits unboundedly on a wedged Entity, (b) controller: do not
+place on a process evicted as wedged, (c) php: its posture stands unless something cheap and
+honest exists — recommend which land now, red-first per half (the drill by rate; an ExUnit
+test against the real collaborator), the Cross-SDK statement including the Elixir SDK, gates
+of every area touched. STOP for my ruling before code.
+
+**R5.1 last seen 01:52 (+10m, step 1).** Three php drill logs, one node control, a probe test
+and a `leftovers.txt` pid log under `$SCRATCH/ki130/`; one wedged `runner.php wedge_e2e_…` alive
+2 min (its run's, tracked by its log — left for it to kill). No change dir yet. Load 1.05.
+
+### R5.1 SURVEY VERIFIED AND APPROVED 02:10 — the survey corrected KI-130's mechanism, and I checked the correction
+
+`openspec/changes/end-a-wedged-runner-on-terminal-disconnect/` — proposal, design, tasks, two
+MODIFIED deltas on `convergence-self-healing` (14 scenarios carried, to be machine-diffed at the
+checkpoint) and one ADDED on `runner-controller-connection-healing`; `--strict` valid; no code.
+Step 1 cost 21 min / 312 k tokens / 114 tool uses. **Rate at HEAD**: 1 red in 8 php runs today
+(the entry's 3 in 5), every php run leaving one wedged `runner.php`; rust, node, elixir 1/1.
+
+**The correction, verified by me at the code**: (1) `Planner.wedge_ops/2` (`planner.ex:153`)
+runs `evict_runner` FIRST and `restart_runner` second, keyed on the session token — and every
+SDK's evicted process reconnects ~1.1 s later under a FRESH token (`Coordinator::handle_reconnect`),
+so the spec's "restart only if the SAME runner is still wedged" is unreachable for every SDK:
+the terminal rung has never fired from a verdict, only from the drill's hand call. (2) The
+unbounded wait is `PollCore::with_entity_exclusive` (`poll_core/mod.rs:573-586`: 1 ms spin,
+one warning at 5 s, no bound), reached from `finish_disconnect` (`command/mod.rs:247-255`) →
+`run_active_graceful_shutdown` → `serialize_slot` (`entity_state.rs:301`) — on EVERY `flz_core`
+SDK, proved by the worker's probe 2 (a `restart_runner` order to a wedged rust/php/node runner:
+ack `:ok`, no exit in 45 s). What is php-specific is only that nothing ELSE ends the process
+(rust's test app exits on stdin EOF, node after 5 s). In production nothing closes stdin, so every
+SDK flaps evict → reconnect → take work → wedge. **KI-130's entry is amended at the checkpoint.**
+
+**RULED — both halves land; php unchanged.** (a) `try_with_entity_exclusive` bounded at 5 s over
+the one existing loop, `serialize_slot` on it for both purposes, `entity_busy:` refusal,
+`collect_procedure` omits; **plus my addition**: the `migration_serialize` host command during a
+graceful ship waits the same 5 s, not `HOST_COMMAND_TIMEOUT` 30 s — the spec's own "MUST NOT
+block the grace period" clause is broken at N × 30 s for a multi-Entity wedged single-loop host,
+which the survey named as a risk and left; threaded as a parameter through `state_json_locked`
+(RULE #1), live reads unchanged. (b) **the ladder inverted** — `restart_runner` first (the
+terminal order goes to the session the verdict named, the only moment the process is
+identifiable; the SDK ships what it can, exits 70, a `Stopped` core cannot reconnect),
+`evict_runner` second with a real trigger (a process that did not obey). **A DECISION TAKEN FOR
+THE USER, recorded here**: this changes the convergence design's stated order; the alternatives
+(a wedged-stable-id set + per-process nonce on the wire; refusing at admission; evicting after
+the ack) are priced in the proposal and each is worse. Cost accepted: a false-positive verdict
+now costs an orchestrator restart instead of a session — the fed precondition is the guard.
+(c) php's single-loop posture stands: `process::exit(70)` from the core's thread needs nothing
+of the PHP loop. **4.3 is every runtime** (rust, node, elixir, ruby, python, java — each rebuilt
+first), not "if the box allows": (a) is a `flz_core` change and the Cross-SDK rule is proved by
+the drill on each. Two commits at the checkpoint: core half, controller half.
+
+**R5.1 last seen 02:16 (+11m into step 2).** Both halves written — `poll_core/mod.rs`,
+`command/entity_state.rs`, `host/commands.rs` (the host-command wait threaded), the unit test
+support, `planner.ex`, `heal.ex`, both ExUnit files, the dev note — 11 files, +417/−206; a
+`cargo build --release -p flz_core_ffi` in flight (the veneer rebuild). Load 1.66. **02:23 (+18m)**: the worker parked twice on background batches (the elixir drills +
+full `mix test` + metrics, then the final batch: core suites, seven rebuilt arms, gates); the
+second is running (`cargo build` of `rust_runner`, 2 s old). Its own notification wakes it.
+
+### R5.1 CHECKPOINT VERIFIED 02:40 — one more box, then two commits
+
+Worker's report: red-first on all four fronts verbatim (the core unit test `Timeout`; the rust
+drill's test 2 no exit in 60 s; the planner test's first plan `evict_runner`; the drill's test 1
+no `restart_runner` heal, `1/3 passed` at HEAD); after: `cargo test -p flz_core` 149, clippy 0,
+ABI scenario 2, convergence 64, `mix test` 1962; **the drill `3 passed` on ALL SEVEN runtimes**
+rebuilt through their manifests, each log carrying the two `exiting 70` lines, **no leftover
+process 6 s after any arm — the php zombie is gone**. **Found and fixed in the box**: the Elixir
+SDK's `:permanent` RunnerServer restarted after the terminal disconnect and re-registered
+(elixir arm `2/3` at `:137` → `3/3` ×3) — KI-126's twin, filed by me as **KI-131** resolved; the
+change's own Cross-SDK obligation, accepted though the worker fixed before the verdict.
+**My runs**: core 149, drill rust 3/3 and php 3/3 twice with nothing left, convergence 64; every
+diff read — one loop with `Duration::MAX` through it, `host_command_within` + the `wait`
+parameter, `SERIALIZE_GATE_WAIT` 5 s for both waits during a ship, the planner argument swap,
+the Elixir `{:noreply, …}`.
+
+**Rulings**: `flz_core prod_loc 12812 → 12851` (+39, a first cut was +78) and `lib/flezha/sdk
++1` are a fix's cost — re-recorded with audit at commit. The kind gate's one hit was MY board
+line (`bounded/try variants`) — reworded, gate OK. **Not accepted**: a single-Entity live read
+of a busy Entity answering `{}` after 5 s (the worker flagged it as the honesty gap) — RULED a
+refusal naming `entity_busy` when the selector names one Entity, the walks keep omitting;
+red-first unit test, then the live-read e2e modules once. Two commits after that box: the core
+half, then the controller half with the Elixir SDK line, the tests, the dev note, the archive's
+spec sync, the baseline and the defect record.
+
+### R5.1 IS DONE — KI-130 closed by two commits, the change archived, the spec's ladder rewritten
+
+The last box (a named-Entity read refuses with `entity_busy` — red first `{"p0":{}}`, then
+green; 150 core tests; the ten live-read modules 46 + 11 passed) verified by me: core suite 150,
+fmt 0 diffs, the `Some(wanted)` arm propagates with `?`. Archived (`convergence-self-healing`
+now says `restart_runner` is the FIRST rung; 73 → 74 scenarios; the healing spec gains the
+5 s ship clause). Baseline re-recorded at `91e59b66`, audited: `flz_core prod_loc 12812 → 12853`
+(+41) and `lib/flezha/sdk 1745 → 1746` — both a fix's cost, ruled; the rest `test_loc`.
+`--check --lint` 0 regressions.
+
+| commit | what |
+|---|---|
+| `57135d69` | the core: one time-limited gate, the ship's host wait, the refusal |
+| this commit | the convergence ladder inverted, the Elixir RunnerServer, the drill, the dev note, the spec sync, the baseline |
+
+**Decision taken for the user, restated**: the convergence design's wedge ladder now restarts
+first and evicts second. KI-130 and KI-131 → *Resolved*. Index lines for the dev note OWED with
+R5's (same reason). **Next: R5.2 = KI-125** (python exit abort), fresh worker.
+
+**Committed `57135d69` + `0edac02f`; tree clean at 02:40. R5.2 worker spawned 02:41** — KI-125,
+fresh `general-purpose`, change id `exit-cleanly-after-sigterm-in-python`, ONE step (write the
+change and the fix together, red-first subprocess test in `sdk/python/tests/`, the fix chosen by
+the reuse order among the three the entry names, the Cross-SDK statement for ruby/node/php's
+stdin watchers, python arms + `--check --lint`), STOP at the checkpoint. `ListAgents` showed no
+subagent before the spawn; machine clean (no zombies/leaks/containers, scratchpad 3.8 MB).
+**R5.2 last seen 02:51 (+10m)**: `runner.py` + `test_runner.py` edited, dev note and change dir
+written, probes for node/ruby/python watchers and the metrics log under `$SCRATCH/ki125/`;
+nothing running, load 2.68 (a run just ended). Report imminent.
+
+### R5.2 IS DONE — KI-125 closed by one call
+
+Worker's report verified by me: the fix is `stream.read(1)` → `os.read(sys.stdin.fileno(), 1)`
+with a four-line invariant comment (reuse: extends `_watch_stdin_eof`; the two alternatives
+priced — ending the watcher needs a self-pipe + `select` loop because CPython cannot wake a
+thread in `read(2)`, and `os._exit` skips every finaliser on every stop path); the test keeps
+stdin OPEN and settles on the child's `up` line under `select` (no sleep) — `-6 == 0` at HEAD,
+`1 passed` on my run; my bare reproduction with the fix's call exits 0; pytest `162 passed`;
+`ruff format --check` and pyright clean; python e2e `3 passed` + smoke `21 passed`; e2e probe
+exit 134 → 0 (node and ruby 0 unchanged, php has no thread — nothing owed cross-SDK);
+`--check --lint` 0 regressions (`sdk/python prod_loc` 2901 → 2900). ADDED requirement in
+`python-sdk` ("A stopped runner exits cleanly"), archived and synced. One commit. Index lines
+OWED with the others. **Next: R5.3 = KI-128** (the `credit_flow` read), fresh worker.
+
+**R5.2 committed `9d28c790`; tree clean 02:58. R5.3 worker spawned 02:59** — KI-128, fresh
+`general-purpose`, change id `harden-credit-flow-verdict-read`, ONE step, test-only: establish
+what a captured row still tells the test after a re-attach (the `:counters` ref's lifetime),
+induce the mechanism deterministically through the real collaborator for the red-first (the old
+assertion must fail with KI-128's exact message on the induced state; the new one must pass),
+harden the read + dump the rows on failure, prove with rust/php ×3/node arms, gate, `--check
+--lint`. Spec delta only if a spec honestly owns the rule; else delta-less and I rule.
+`ListAgents`: no subagent before the spawn.
+**R5.3 last seen 03:05 (+10m)**: `credit_flow_e2e_test.exs` + `credit_test_helper.ex` edited,
+change dir written, an induced red-first probe log, php ×3 + rust arm logs and the format log
+under `$SCRATCH/ki128/`; nothing running, load 1.45. Report imminent.
+
+### R5.3 IS DONE — KI-128 hardened, and the entry's own fix sketch was wrong on both halves
+
+Verified by me: `channel_rows/1` is the shared core three readers now derive from (net helper
+size unchanged); the test keeps the settled row and reads the verdict by its NAME through
+`counters_row/2`, every credit assertion dumping the runner's rows; rust `1 passed`, php
+`1 passed` (worker ×3), gate 20, `--check --lint` 0 regressions with the `test` row unmoved
+(`sleeps 2`, `refutes 16`, `async_f 0.774`). **What the worker established**: a liveness row is
+a VALUE map (a captured row holds the handshake's numbers, never the burst's — the key is the
+handle); the counters array is per channel PROCESS, not per attach; the driver's own close
+delivers no `{:flz_closed}`, so the red-first was induced by sending the driver's tuple to the
+settled channel — the old assertion failed with KI-128's exact message, the new read is green on
+the same state. Test-only, no production line. ADDED requirement in `credit-grant-flow-control`
+(the guarantee the by-name read leans on), archived and synced. One commit.
+
 **S2 in total**: 18 fixture implementations in three apps, three manifests flipped, the five
 `state_persistence` scenarios green under node, ruby and php (23 passed / 5 skipped each, all
 three arms run by me too), full `mix test` 1962 passed, five naming gates exit 0, format gate
@@ -5041,9 +5202,9 @@ verifies and commits, §4 checkpoint each time.
 | **R3** | **`connect_discovery` into `@required_capabilities`** (`test/helpers/node_test_helper.ex:293`). All seven already carry it. | One line, zero SDK work, makes one capability un-regressable today |
 | **R4** | **Identity stamps in node/ruby/php** — `flz.entity`/`flz.seq`/`flz.key` on a non-tier keyed plugin emit. Reference: `emit_sink.rs:357-378`, Java `EmitContext.java:283-285`, Python `ctx.py:267-280`, ~15 lines each. Then `keyed_channels` fixtures. | Mechanism gap, small, proof already written in two SDKs |
 | **R5** | **DONE 2026-09-02** — 42 fixture implementations over six segments (S0 `95b6590c` … S5 close), both changes archived; see *R5 IS DONE*. The row's true size was 42, not 18 | — |
-| **R5.1** | **KI-130 — a wedged php runner cannot die, reconnects under a fresh id and wins the rebind.** Bound `exit_terminally`'s graceful wait for a wedged Entity (core, every SDK) and stop the controller placing on a runner it evicted as wedged. Red-first: `control_plane_wedge_e2e_test.exs` under php, 3 in 5 | Found by R5's close-out; the convergence ladder's last rung does not end the process it targets |
-| **R5.2** | **KI-125 — a python runner aborts (exit 134) at interpreter exit after SIGTERM** (a daemon thread on stdin holds the buffer lock at finalisation). Python-only, ~3 lines, red-first: a subprocess test asserting exit 0 | Found by R5 S2; an orchestrator reads a crash after every graceful stop |
-| **R5.3** | **KI-128 — `credit_flow_e2e_test` reads the credit flag at a point in time**: read the verdict from the row captured at `:109`, dump rows on failure. Small, test-only | 1 in 20 php arms; the failure names the wrong cause |
+| **R5.1** | **DONE 2026-09-02** — KI-130 (`57135d69` + the convergence commit): the ship's gate and host waits are 5 s, a named-Entity read refuses, the wedge ladder is inverted (restart first), the Elixir RunnerServer no longer re-registers (KI-131). Drill green on seven runtimes, no zombie | — |
+| **R5.2** | **DONE 2026-09-02** — KI-125: the stdin watcher reads unbuffered; a signalled python runner exits 0 (was 134); red-first subprocess test; ruby/node/php measured clean | — |
+| **R5.3** | **DONE 2026-09-02** — KI-128 hardened: the verdict is read by the settled row's name, rows dumped on failure; red-first induced through the real channel | — |
 | **R6** | **Elixir SDK — build the nine.** Its SDK is its own core and inherits nothing from `flz_core`: it defers the SURFACE, raising `UndefinedFunctionError`. This is feature work (WAL fold, restore, timers, clock/window, keyed stamps, dynamic entity, schema version, workflow), not a fixture port. **Budget it separately from R5.** | The user's instruction includes Elixir; it is the largest row |
 | **R7** | **`workflow` across all veneers** — owes two builder surfaces everywhere: an inter-proc `codec()` and a hybrid `sink().into()` that returns the edge. 18 of the reference's 19 fixtures need one or both. | Largest single mechanism; separate change per the audit |
 | **R8** | **Move each capability into `@required_capabilities` as it becomes universal.** | This is what makes parity un-regressable; the point of the whole row |

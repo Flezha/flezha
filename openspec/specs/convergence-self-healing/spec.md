@@ -339,7 +339,7 @@ When an SDK runner process restarts and presents `previous_runner_id`, the contr
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
 
-The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `evict_runner` (planner ordering already rebinds an evicted runner's operatives); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `entity_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its operatives; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `entity_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
 
 `entity_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged entity and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
 
@@ -350,9 +350,9 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 
 A close the controller itself initiated SHALL NOT mint an `output_stall` for the operatives mapped to the closing stream, so a planned teardown SHALL NOT enter the loop as a divergence to heal. An unexpected close SHALL continue to emit it unchanged.
 
-#### Scenario: A wedged runner pool is evicted from a classifier verdict
+#### Scenario: A wedged runner pool is restarted from a classifier verdict
 - **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch counter frozen) for a runner that remains in the active set
-- **THEN** the same tick's plan issues an `evict_runner` op with the verdict as reason, the runner's operatives are rebound by the existing planner ordering, and repeats are backoff-throttled on the standard ladder
+- **THEN** the same tick's plan issues a `restart_runner` op with the verdict as reason, the runner exits non-zero and its operatives are rerouted by the existing disconnect path and planner ordering, and repeats are backoff-throttled on the standard ladder
 
 #### Scenario: A wedged channel is resynced, a wedged operative is rebound
 - **WHEN** the classifier reports `channel_not_sending` for a fed channel, and on a later tick `operative_not_forwarding` for a fed operative
@@ -487,12 +487,16 @@ eligible for the next convergence tick.
 
 ### Requirement: A runner the classifier proves wedged is terminally restarted, not only evicted
 
-`restart_runner` SHALL join the heal primitives as the rung **above**
-`evict_runner` on the existing per-target backoff ladder. It SHALL be planned
-only when eviction has already been applied to that runner and the classifier
-still proves it wedged, and it SHALL be gated on the same `proved_wedged?/1`
-evidence that waives the healthy-target guards. A runner that is merely slow,
-idle, or unfed SHALL never reach the rung.
+`restart_runner` SHALL be the FIRST rung of the runner-scoped wedge ladder on the existing
+per-target backoff, and `evict_runner` the rung above it. The terminal disconnect is ordered
+on the session the verdict named, because eviction ends that session: the SDK reconnects the
+same process under a fresh session token, a ladder keyed on the token never reaches a later
+rung for it, and the returned process is a placement candidate again. Eviction SHALL be
+planned only when a restart has already been applied to that session and the classifier
+still proves it wedged — a process that did not exit — and a core that has acknowledged a
+terminal disconnect SHALL NOT reconnect, so an evicted one cannot return. Both rungs SHALL be
+gated on the same `proved_wedged?/1` evidence that waives the healthy-target guards. A runner
+that is merely slow, idle, or unfed SHALL never reach either rung.
 
 The primitive SHALL send a terminal disconnect reason over the control channel.
 On receiving it the SDK SHALL run its graceful shutdown and then exit the
@@ -505,10 +509,15 @@ Every issued restart SHALL be logged and emitted as telemetry naming the
 namespace, runner, the verdict that proved the wedge, and the ladder rung, so a
 runner restarting repeatedly is visible rather than mysterious.
 
-#### Scenario: Eviction first, restart only if the wedge survives it
+#### Scenario: Restart first, eviction only if the process survives it
 - **GIVEN** a runner the classifier reports `runner_pool_wedged` for
 - **WHEN** the first tick plans a remedy
-- **THEN** it SHALL plan `evict_runner`; and only if a later tick still proves the same runner wedged SHALL it plan `restart_runner`
+- **THEN** it SHALL plan `restart_runner`; and only if a later tick still proves the same session wedged — the process did not exit — SHALL it plan `evict_runner`
+
+#### Scenario: The process the verdict named cannot come back
+- **GIVEN** a runner that acknowledged a terminal disconnect
+- **WHEN** its session closes, or it is evicted on the later rung
+- **THEN** it SHALL open no new control connection, so no placement can choose it; the orchestrator's fresh process presents the same stable identity and is bound as any reconnect is
 
 #### Scenario: The restarted runner exits non-zero
 - **WHEN** a runner receives the terminal disconnect reason
@@ -519,7 +528,7 @@ runner restarting repeatedly is visible rather than mysterious.
 - **THEN** no `restart_runner` op SHALL be planned for it
 
 #### Scenario: Repeats are throttled and visible
-- **WHEN** a runner is restarted and wedges again after reconnecting
+- **WHEN** a restarted runner's fresh process wedges again after the orchestrator brings it back
 - **THEN** the next restart SHALL be delayed by the standard per-target backoff, and each issued restart SHALL be logged and emitted with the verdict and rung
 
 ## Removed Requirements

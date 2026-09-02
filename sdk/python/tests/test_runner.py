@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import select
+import signal
+import subprocess
+import sys
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -265,6 +270,52 @@ def test_the_drain_frees_the_context(runner: Any) -> None:
     r.drain()
     assert core.shut_down
     assert core.freed
+
+
+#: A runner as an orchestrator or the e2e harness runs one: started, told it is
+#: up, then waiting to be stopped — with standard input a pipe, never a tty.
+_SIGNALLED_RUNNER = """
+import flezha
+from conftest import FakeCore
+
+runner = flezha.create_runner("signalled").start(core=FakeCore())
+print("up", flush=True)
+runner.await_termination()
+"""
+
+
+def test_a_signalled_runner_with_a_piped_stdin_exits_cleanly() -> None:
+    """A stop by signal, with standard input a pipe that stays open.
+
+    The watcher on standard input must hold nothing the interpreter's
+    finalisation waits on: a daemon thread parked inside a buffered read owns
+    the reader's lock, and finalisation aborts the process rather than take it.
+    """
+    child = subprocess.Popen(
+        [sys.executable, "-c", _SIGNALLED_RUNNER],
+        cwd=Path(__file__).parent,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert child.stdout is not None and child.stderr is not None
+    try:
+        ready, _, _ = select.select([child.stdout], [], [], 20)
+        assert ready and child.stdout.readline() == "up\n", child.stderr.read()
+        child.send_signal(signal.SIGTERM)
+        # Standard input stays open until the exit: closing it would end the
+        # watcher by end of file, which is not the path under test.
+        child.wait(timeout=20)
+        stderr = child.stderr.read()
+    finally:
+        if child.poll() is None:
+            child.kill()
+        for stream in (child.stdin, child.stdout, child.stderr):
+            if stream is not None:
+                stream.close()
+        child.wait()
+    assert child.returncode == 0, stderr
 
 
 def test_a_quiet_library_installs_no_handler() -> None:

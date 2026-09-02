@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 
@@ -27,6 +28,11 @@ pub const ENTITY_KEY_WITHOUT_PROCEDURE: &str = "entity_key_without_procedure";
 pub const PROCEDURE_NOT_FOUND: &str = "procedure_not_found";
 pub const ENTITY_NOT_FOUND: &str = "entity_not_found";
 pub const ENTITY_EVICTED: &str = "entity_evicted";
+pub const ENTITY_BUSY: &str = "entity_busy";
+
+/// A serialize's wait for the Entity gate, and a graceful ship's for a host's
+/// answer: inside the 10 s serializer ceiling and the container's grace period.
+pub const SERIALIZE_GATE_WAIT: Duration = Duration::from_secs(5);
 
 /// Which Entities a read covers; both absent is the whole-operative walk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,7 +115,8 @@ pub fn serialize_operative_state(instance: &Arc<StreamInstance>) -> Vec<u8> {
 
 /// `{"<procedure>": <state>}` for single mode, `{"<procedure>": {"<key>":
 /// <state>}}` for keyed, narrowed by `selector`. The seq is `Some` only for
-/// exactly one Entity; a failing Entity is logged and omitted.
+/// exactly one Entity. In a walk a failing Entity is logged and omitted; a
+/// read that names one Entity answers its failure, never an empty object.
 pub fn serialize_selected_state(
     instance: &Arc<StreamInstance>,
     selector: StateSelector<'_>,
@@ -197,7 +204,9 @@ fn collect_procedure(
                     wanted,
                 ));
             };
-            collect(procedure_desc, &slot, wanted, purpose, &mut inner, seqs);
+            let (value, seq) = serialize_slot(procedure_desc, &slot, purpose)?;
+            inner.insert(wanted.to_string(), value);
+            seqs.push(seq);
         }
         None => {
             for (key, slot) in keyed.pairs() {
@@ -295,18 +304,35 @@ fn serialize_slot(
     slot: &Arc<EntitySlot>,
     purpose: StatePurpose,
 ) -> Result<(Value, u64), Error> {
+    // A graceful ship is inside a grace period, so it waits for a host's
+    // answer only as long as for the gate; a live read keeps the command wait.
+    let migration = purpose == StatePurpose::Migration;
+    let host_wait = if migration {
+        SERIALIZE_GATE_WAIT
+    } else {
+        crate::poll_core::HOST_COMMAND_TIMEOUT
+    };
     // Under the entity's handout exclusivity: a live read (or a migration
     // serialize, which shares this seam) never observes a half-applied
-    // activation.
-    crate::poll_core::global().with_entity_exclusive(slot, || {
-        if slot.dispatcher.host_facts().is_some() {
-            return crate::host::state_json_locked(slot, purpose == StatePurpose::Migration);
-        }
-        let state_guard = slot.state.lock_recover();
-        let value = (procedure_desc.serialize_state)(&state_guard).map_err(Error::State)?;
-        let seq = slot.change_seq.load(Ordering::Relaxed);
-        Ok((value, seq))
-    })
+    // activation. An Entity still inside one at the gate wait has nothing
+    // newer than its last completed activation, and is omitted.
+    crate::poll_core::global()
+        .try_with_entity_exclusive(slot, SERIALIZE_GATE_WAIT, || {
+            if slot.dispatcher.host_facts().is_some() {
+                return crate::host::state_json_locked(slot, migration, host_wait);
+            }
+            let state_guard = slot.state.lock_recover();
+            let value = (procedure_desc.serialize_state)(&state_guard).map_err(Error::State)?;
+            let seq = slot.change_seq.load(Ordering::Relaxed);
+            Ok((value, seq))
+        })
+        .unwrap_or_else(|| {
+            Err(Error::State(format!(
+                "{ENTITY_BUSY}: Entity `{}` is inside an activation older than {}s",
+                slot.dispatcher.entity_label(),
+                SERIALIZE_GATE_WAIT.as_secs()
+            )))
+        })
 }
 
 /// Evicted and never-existed serve the same absence; the diagnosis differs.
@@ -481,5 +507,80 @@ fn value_kind(v: &Value) -> &'static str {
         Value::String(_) => "string",
         Value::Array(_) => "array",
         Value::Object(_) => "object",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The graceful ship's per-Entity serialize against an Entity whose
+    //! handout never completes: the wait ends at the gate bound and the Entity is
+    //! omitted.
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::test_support::host_class;
+
+    #[test]
+    fn a_wedged_entity_is_omitted_from_the_ship_within_the_bound() {
+        let instance = host_class::instance("busy_ship", &[], &[1]);
+        let slot = Arc::clone(&instance.entities[0][0]);
+        // The flag `try_assemble` sets for a handout, held for ever: the
+        // host took the activation and never answered it.
+        assert!(!slot.drain_active.swap(true, Ordering::AcqRel));
+
+        let (tx, rx) = mpsc::channel();
+        let started = std::time::Instant::now();
+        std::thread::spawn(move || {
+            let _ = tx.send(serialize_operative_state(&instance));
+        });
+        // The wedged Entity costs the gate bound; the consumer, healthy but
+        // with no poller to answer its migration serialize, costs the host
+        // bound — the same figure, by design.
+        let payload = rx
+            .recv_timeout(2 * SERIALIZE_GATE_WAIT + Duration::from_secs(2))
+            .expect("the ship must return within the gate bound");
+        assert!(
+            started.elapsed() >= SERIALIZE_GATE_WAIT,
+            "the busy Entity is waited for up to the bound, not skipped"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&payload),
+            "{}",
+            "a busy Entity is omitted, not waited for"
+        );
+        assert!(
+            slot.drain_active.load(Ordering::Acquire),
+            "a gate the ship did not win is not released by it"
+        );
+    }
+
+    #[test]
+    fn a_read_naming_one_busy_entity_is_refused_not_answered_empty() {
+        let instance = host_class::instance("busy_read", &["k1"], &[1]);
+        let slot = Arc::clone(&instance.entities[0][0]);
+        assert!(!slot.drain_active.swap(true, Ordering::AcqRel));
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let selector = StateSelector {
+                procedure: Some("p0"),
+                entity_key: Some("k1"),
+            };
+            let _ = tx.send(serialize_selected_state(
+                &instance,
+                selector,
+                StatePurpose::LiveRead,
+            ));
+        });
+        let answer = rx
+            .recv_timeout(SERIALIZE_GATE_WAIT + Duration::from_secs(2))
+            .expect("the read must return within the gate bound");
+        let refusal = answer.expect_err("a read that names a busy Entity is refused");
+        assert!(
+            refusal.to_string().starts_with(ENTITY_BUSY),
+            "the refusal names the Entity as busy: {refusal}"
+        );
     }
 }

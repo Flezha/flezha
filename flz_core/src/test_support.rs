@@ -35,3 +35,53 @@ pub(crate) fn saturate<P: Send + 'static>(mailbox: &Mailbox<P>, item: P) {
     assert!(mailbox.try_push(item).is_ok());
     assert!(mailbox.is_full());
 }
+
+/// A host class registered from JSON, shared by the command and activation
+/// tests.
+#[cfg(test)]
+pub(crate) mod host_class {
+    use std::sync::Arc;
+
+    use crate::operative::instance::StreamInstance;
+
+    /// A tier class: one entry channel into `p0` — static-keyed by `keys`
+    /// when there are any — one inter-procedure channel from `p0` to every
+    /// consumer in `consumers`, each with a one-slot mailbox so it is full
+    /// after a single push.
+    pub(crate) fn instance(id: &str, keys: &[&str], consumers: &[u32]) -> Arc<StreamInstance> {
+        let consumer_list = consumers
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let p0 = if keys.is_empty() {
+            r#"{"name":"p0"}"#.to_string()
+        } else {
+            let key_list = keys
+                .iter()
+                .map(|k| format!("\"{k}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(r#"{{"name":"p0","entity_mode":"static","entity_keys":[{key_list}]}}"#)
+        };
+        let procs = std::iter::once(p0)
+            .chain(
+                consumers
+                    .iter()
+                    .map(|c| format!(r#"{{"name":"p{c}","mailbox_capacity":1}}"#)),
+            )
+            .collect::<Vec<_>>()
+            .join(",");
+        let json = format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"effectively_once":true,
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
+                             {{"name":"mid","kind":"inter_proc","producer":0,
+                               "consumers":[{consumer_list}]}},
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                 "procedures":[{procs}]}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+        let topology = crate::operative::registry::get_class(id).expect("class registered");
+        StreamInstance::new(topology, Arc::from(format!("{id}_inst").as_str()))
+    }
+}
