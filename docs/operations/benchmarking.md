@@ -14,6 +14,10 @@ gate.
 - The recorded floors are the two literal lines under
   [Recorded floors](#recorded-floors); `mix bench.floor` and CI parse them
   from this file.
+- Two different kinds of floor live here: the **absolute** floors CI gates
+  against, under [Recorded floors](#recorded-floors), and the **measured
+  run-to-run spreads** that decide whether a row can resolve an effect at all,
+  under [What a row can resolve](#what-a-row-can-resolve).
 
 ## Quick start
 
@@ -311,6 +315,8 @@ Every recorded number, on any instrument:
 4. **Say whether the row can gate at all.** Settling removes the warm-up; it does
    not shrink the noise floor. A row whose floor exceeds the effect being claimed
    is a *direction* and blocks nothing — the floors are below.
+5. **If the comparison crosses runtimes, size its warm-up for the slowest-warming
+   one** and use that value on every arm — see *Comparing two runtimes*.
 
 | Instrument | First run | Discard | The measurement behind it |
 | --- | --- | --- | --- |
@@ -336,27 +342,75 @@ rule is the same either way.
 
 ### What a row can resolve
 
-Measured on the reference box (i7-8650U, `powersave`, on mains). A row whose
-floor exceeds the effect being claimed is a direction, not a gate: do not run it
-as one, and do not report its single-run number as a verdict.
+Every floor below is a measured run-to-run spread on the reference box
+(i7-8650U, `powersave`, on mains), and it is the number that decides whether a
+result from that row means anything. A row whose floor exceeds the effect being
+claimed is a direction, not a gate: do not run it as one, and do not report its
+single-run number as a verdict.
 
-| Row | Floor | Verdict |
-| --- | --- | --- |
-| Rust typed dispatch | 0.33 % | gate |
-| Rust entity stress | 0.95 % | gate |
-| `throughput_effectively_once_tiers`, tier off / on | 9.04 % / 6.01 % | direction only |
-| `host_loop` (erased) | 4.13 % | guard |
-| whole-system round trip | ~18 % | direction only |
-| veneer round trip (node) | 11.89 % | paired rounds only |
-| `bench-regression` receive window / end-to-end | 12.1 % / 5.1 % | see below |
+| Row | Floor | Verdict | Runs / measured |
+| --- | --- | --- | --- |
+| Rust typed dispatch | 0.33 % | gate, on a cold box only | run count unrecorded, 2026-08-28 |
+| Rust entity stress | 0.95 % | gate, on a cold box only | run count unrecorded, 2026-08-28 |
+| `throughput_effectively_once_tiers`, tier off / on | 9.04 % / 6.01 % | direction only | unrecorded |
+| `host_loop` (erased) | 4.13 % | guard | unrecorded |
+| whole-system round trip | ~18 % | direction only | 5 s runs within one arm, no settled floor |
+| veneer round trip (node) | 11.89 % | paired rounds only | single-run floor |
+| `bench-regression` receive window / end-to-end | 12.1 % / 5.1 % | see below | 5 runs, 2026-08-30; confirmed 2026-09-03 |
 
-The last row is the one to read carefully: `bench.yml` sets
+**The two gate floors hold on a cold box and not on a working one.** Both were
+taken on an idle machine, and they did not survive a session that had just run
+two workspace test passes and a system suite: two arms carrying *identical*
+production code separated **1.93 %** on the typed-dispatch row in interleaved
+rounds, and one arm spanned 5.6 % within itself. So a 0.33 % floor is not a
+licence to act on a 1 % difference measured mid-session. Either measure on a
+cold box, or carry a same-code control arm and read the effect against that.
+
+**That last row is the one to read carefully.** `bench.yml` sets
 `REGRESSION_TOLERANCE: "0.9"`, a 10 % band, on the **receive** window, which
-spreads 12.1 % run-to-run here. The gate passes with margin only because it
-compares against a floor of 480 000 while the slowest local run read 518 872 — a
-box nearer the floor would flip on scheduling alone. The end-to-end window is
-less than half as noisy on the same workload, which is the opposite of what the
-gate's choice of metric suggests.
+spreads 12.1 % run-to-run here — the band is narrower than the noise it gates.
+The end-to-end window is less than half as noisy on the same workload, which is
+the opposite of what the gate's choice of metric suggests. And the margin is not
+dependable: this box read 518 872 at its slowest on 2026-08-30 and every one of
+fourteen runs on 2026-09-03 came in below the 432 000 fail line, so the gate's
+verdict on this row is a statement about the host it ran on and not about the
+tree.
+
+**The last row was re-derived once and held.** Five `-w 1000` runs of the rust
+arm on 2026-09-03, taken while the box was working rather than idle, spread
+**11.21 %** on the receive window and **4.18 %** on the end-to-end window —
+inside the floors recorded three days earlier from an independent five-run
+series.
+
+**A blank in the last column is a gap, not a small number.** Those floors are
+inherited from the campaigns that measured them; the run count and date were
+never written down, so nobody can tell a five-run floor from a two-run one.
+Re-deriving each needs its own paired campaign, and a row is re-recorded here
+with its runs and its date when one is taken.
+
+### Comparing two runtimes
+
+**Report every window and let the resolvable one decide.** The floor rule above
+applies to an arm-to-arm difference exactly as it does to a gate, and on this
+workload that means the gated window is the one that cannot decide. Which window
+is quieter is a measured property of the workload, not of what the window means,
+so read it off the table rather than guessing.
+
+**Warm up for the slowest-warming runtime, and use the same value on both
+arms.** The `-w` / `--warmup` row of *Axes* above says warm-up exists so "runner
+cold start (class loading, JIT, lazy codec init) stays out of the numbers", and
+the default is ten untimed messages per operative
+(`lib/mix/tasks/bench.ex:93`). Ten activations do that for a natively compiled
+runner and cannot do it for a JVM, whose hottest tier does not engage until
+thousands of invocations — so the default warms a `rust` arm fully and a `java`
+arm barely, and reports the difference as though it were the effect. Pass
+`-w 1000` to both arms.
+
+The dimensions carry the same asymmetry. At `-n 100 -m 10000` an un-warmed
+prefix is a small share of a million measured messages; at the CI default of
+`-m 100` it dominates. **A cross-runtime comparison is never taken at the CI
+default dimensions.**
+
 
 ## Floor-update protocol
 

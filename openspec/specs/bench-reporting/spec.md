@@ -126,16 +126,18 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 ### Requirement: A series' settling SHALL be stated per instrument, and a floor SHALL NOT be computed from a series containing its own warm-up
 
-`docs/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure.
+`docs/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure, as SHALL the number of runs discarded before the plateau.
 
 The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.workflow --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
 
 Discarding a warm-up SHALL NOT be read as making a row comparable. A row whose measured noise floor exceeds the effect being claimed is a direction and SHALL NOT be run as a gate, and a document that states a settling protocol SHALL say so beside it.
 
+Every measured noise floor SHALL be recorded in tracked repository documentation beside the absolute gate floors, each naming the box it was taken on, the number of runs behind it and the date. A row whose run count or date was never recorded SHALL say so rather than appear beside a fully attributed row as though it were one. A floor that lives only in an untracked working file cannot be read by anyone the repository ships to, and a reader who cannot find it will act on a row that resolves nothing.
+
 #### Scenario: A worker records a floor for an instrument
 
 - **WHEN** a floor is recorded for any bench instrument
-- **THEN** the series discards samples until the instrument's plateau, the arms are interleaved, and the recorded figure names how many plateau samples it came from
+- **THEN** the series discards samples until the instrument's plateau, the arms are interleaved, and the recorded figure names how many plateau samples it came from and how many runs were discarded
 
 #### Scenario: An instrument with no warm-up transient
 
@@ -148,4 +150,28 @@ Discarding a warm-up SHALL NOT be read as making a row comparable. A row whose m
 - **GIVEN** a row whose measured noise floor exceeds the effect a change is claiming
 - **WHEN** its result is reported
 - **THEN** it is reported as a direction, and no merge or verdict rests on it
+
+#### Scenario: The spread is findable in the shipped repository
+
+- **WHEN** a reader looks for whether a bench row can resolve a given effect
+- **THEN** the row's measured spread SHALL be present in tracked documentation beside the absolute floors, with its box, its run count and its date, or with those last two marked unrecorded
+
+### Requirement: A cross-runtime comparison SHALL state its warm-up and decide on a window that resolves it
+
+A comparison between two runtimes SHALL use one untimed warm-up value on every arm, sized so the slowest-warming runtime in the comparison reaches steady state, and SHALL state that value and its dimensions in the report. A warm-up sized for a runtime that starts cold in microseconds measures a just-in-time-compiled runtime before its hottest tier engages and reports that difference as though it were the effect being claimed — a failure mode a same-runtime A/B cannot have, because there the warm-up is symmetric whatever its value.
+
+The harness default is ten untimed messages per operative (`lib/mix/tasks/bench.ex`), sized for a natively compiled runner, and the merge gate's dimensions are chosen to gate rather than to compare. A cross-runtime comparison SHALL therefore state its own warm-up and dimensions rather than inherit either.
+
+Where a workload carries more than one throughput window, the comparison SHALL report every window and SHALL take its verdict only from a window whose measured spread is smaller than the difference claimed — including when that is not the window CI gates. Which window is the quieter one is a measured property of the workload, not a property of what the window means.
+
+#### Scenario: A cross-runtime comparison warms both arms for the slower one
+
+- **WHEN** a comparison is taken between a natively compiled runtime and a just-in-time compiled one
+- **THEN** both arms SHALL run with the same untimed warm-up, sized so the just-in-time runtime reaches steady state, and the report SHALL state the value used and the dimensions it was taken at
+
+#### Scenario: The gated window cannot resolve the difference
+
+- **GIVEN** a workload whose gated window spreads wider run-to-run than the arm-to-arm difference being claimed, while another of its windows spreads narrower
+- **WHEN** the comparison is reported
+- **THEN** both windows SHALL be reported, the verdict SHALL rest on the narrower window only, and the gated window SHALL be marked as deciding nothing
 
