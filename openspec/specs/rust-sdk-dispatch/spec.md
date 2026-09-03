@@ -649,3 +649,23 @@ consumer.
 - **THEN** the reader parks on the consumer's parker until the pool pops a
   slot, and no procedure runs on the reader thread
 
+### Requirement: A workflow output whose write fails SHALL be held for the reconnect ring
+
+A plugin-bound workflow output whose write to the secondary stream fails SHALL be
+held in the same reconnect ring a failed plugin-emit write uses, and SHALL be
+replayed when a stream is next bound. It SHALL NOT be reported only to stderr and
+discarded, and a write the host cannot hold SHALL be counted where an operator
+reads counts, never dropped in silence.
+
+#### Scenario: The secondary stream is closed when a workflow emits
+
+- **WHEN** `write_workflow_output` finds no stream, or its write returns an error
+- **THEN** the framed output SHALL enter the reconnect ring rather than being
+  printed and dropped, and SHALL be delivered once a stream binds
+
+#### Scenario: A held output keeps the identity it was framed with
+
+- **WHEN** a held workflow output is replayed after a rebind
+- **THEN** it SHALL carry the metadata it was framed with, so a keyed or
+  identity-stamped output is not replayed with an empty metadata map
+

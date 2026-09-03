@@ -150,3 +150,24 @@ while the node stays up.
 - **THEN** the caller SHALL receive the same value it receives for a hub that was already
   down, and the containment SHALL be reported rather than swallowed
 
+### Requirement: Recovery-hook registration SHALL refuse a hub failure, never raise into a node-wide process
+
+Registering a namespace's recovery hooks SHALL treat an unavailable, terminating or
+raising hub as a refusal returned to its caller. It SHALL NOT allow the failure to
+escape as an exit inside a process the whole node shares, because a hub that dies
+inside the start-to-hooks window would otherwise take the node's runner acceptor
+with it.
+
+#### Scenario: The hub dies between start and hook registration
+
+- **WHEN** `Boot.RecoveryHooks.register/1` calls a hub that is unavailable or
+  terminating
+- **THEN** the call SHALL answer an error for that namespace and every other
+  namespace on the node SHALL keep running
+
+#### Scenario: The refusal names the namespace it belongs to
+
+- **WHEN** recovery-hook registration is refused
+- **THEN** the refusal SHALL identify the namespace, so an operator can tell one
+  namespace's failure from a node-wide one
+

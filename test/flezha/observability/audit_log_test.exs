@@ -142,6 +142,23 @@ defmodule Flezha.Observability.AuditLogTest do
                ])
     end
 
+    test "a non-UTF-8 binary in metadata is written, not raised on" do
+      # The audit record is produced by the same call that writes it: a value
+      # the typed rule lets through is a record that is never written at all.
+      bad = <<255, 0, 254>>
+
+      signal =
+        Signal.new(%{
+          kind: :event,
+          source: :observability_service,
+          name: :bad_binary,
+          metadata: %{payload: bad}
+        })
+
+      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+      assert decoded["metadata"]["payload"] == Signal.metadata_text(bad)
+    end
+
     test "a key past inspect's default limit is rendered whole, not elided" do
       # The shared rule inspects with `limit: :infinity, printable_limit:
       # :infinity`; the deleted `stringify_key/1` used bare `inspect/1`, whose

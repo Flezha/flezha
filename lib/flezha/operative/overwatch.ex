@@ -25,6 +25,7 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
@@ -133,6 +134,38 @@ defmodule Flezha.Operative.Overwatch do
   @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream | :send_buffer_full}
   def deliver(%__MODULE__{} = state, payload),
     do: StreamChannel.io_in(state.channel, state.id, payload)
+
+  # Every plugin verb is one bounded call into a running Overwatch. The bound
+  # belongs here rather than to each caller: an Overwatch busy folding an entry
+  # is the normal case, and a caller that inherits its exit takes down a
+  # node-wide service (`PluginManager`) or a convergence tick.
+  @plugin_call_timeout_ms 2_000
+
+  @doc """
+  Subscribe `plugin` to a running Overwatch — the client side of
+  `handle_call({:plugin_subscribe, …})`.
+  """
+  @spec plugin_subscribe(pid(), binary(), Plugin.t()) :: :ok | {:error, term()}
+  def plugin_subscribe(pid, plugin_id, %Plugin{} = plugin),
+    do: plugin_call(pid, {:plugin_subscribe, plugin_id, plugin})
+
+  @doc "Drop `plugin_id`'s subscription from a running Overwatch."
+  @spec plugin_unsubscribe(pid(), binary()) :: :ok | {:error, term()}
+  def plugin_unsubscribe(pid, plugin_id),
+    do: plugin_call(pid, {:plugin_unsubscribe, plugin_id})
+
+  @doc "Re-subscribe `plugin_id` on a running Overwatch, replacing its instance."
+  @spec plugin_restart(pid(), binary(), Plugin.t()) :: :ok | {:error, term()}
+  def plugin_restart(pid, plugin_id, %Plugin{} = plugin),
+    do: plugin_call(pid, {:plugin_restart, plugin_id, plugin})
+
+  defp plugin_call(pid, request) do
+    case SafeCall.bounded(pid, request, @plugin_call_timeout_ms) do
+      {:ok, :ok} -> :ok
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, _} = err -> err
+    end
+  end
 
   @doc """
   Time a known-blocking procedure and surface a `[Overwatch] proc_slow` warning

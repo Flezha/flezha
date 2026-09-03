@@ -1,8 +1,9 @@
 //! The process-global send path for durable records, and the holding pen every
 //! writer on the outbound wire shares: [`send`] resolves the live sink on every
 //! call, a frame that cannot be written goes into a drop-oldest ring — through
-//! [`send`] for a record, through [`hold_failed_frame`] for a writer that
-//! framed its own payload — and [`install_global_sink`] replays the ring onto
+//! [`send`] for a record, through [`write_or_hold`] for a writer that framed its
+//! own payload and [`hold_failed_frame`] for one with no stream to try — and
+//! [`install_global_sink`] replays the ring onto
 //! the stream a reconnect wires, so nothing produced mid-reconnect is lost. A
 //! sustained run of write failures is a dead data stream under a live control
 //! channel, and asks the coordinator for a full reconnect. An eviction is the
@@ -242,10 +243,20 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
     drive_reconnect_if(should_reconnect);
 }
 
+/// Write a framed payload to `stream`, or hold it — the whole posture a writer
+/// on this wire takes, so none of them re-implements the failure half. `kind`
+/// names the writer in the burst's first line.
+pub fn write_or_hold(kind: &str, stream: &FlezhaStream, frame: Vec<u8>) {
+    let mut w: &FlezhaStream = stream;
+    if let Err(e) = w.write_all(&frame) {
+        hold_failed_frame(kind, frame, &e);
+    }
+}
+
 /// Hold a frame a writer framed itself and could not write — `kind` names that
 /// writer in the burst's first line. The same ring, the same flood ladder and
 /// the same reconnect request [`send`] uses: one wire, one policy for a failed
-/// write.
+/// write. [`write_or_hold`] is the form to reach for with a stream in hand.
 pub fn hold_failed_frame(kind: &str, frame: Vec<u8>, error: &dyn std::fmt::Display) {
     let should_reconnect = {
         let mut st = STATE.lock().expect("state_sink lock poisoned");
@@ -330,9 +341,21 @@ pub fn send_compensation_record(payload_id: &str, entity_identity: &[u8]) {
 }
 
 /// Serializes every test that installs the process-global sink, in this
-/// crate and downstream.
+/// crate and downstream. Take it through [`test_guard`], never directly.
 #[doc(hidden)]
 pub static SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Take [`SINK_TEST_LOCK`] for the calling test, tolerating a lock a panicking
+/// test poisoned: the state it guards is reset by the next `reset_for_test`, so
+/// unwrapping the poison would turn one failure into a failure in every test
+/// that runs after it. Every `*_for_test` accessor below reads through the same
+/// tolerance.
+#[doc(hidden)]
+pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    SINK_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Clear the process-global sink state; hold [`SINK_TEST_LOCK`].
 #[cfg(test)]
@@ -391,7 +414,7 @@ mod tests {
 
     #[test]
     fn frames_with_no_sink_buffer_and_replay_on_install() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         reset_state();
 
         send(PID, b"a".to_vec());
@@ -410,7 +433,7 @@ mod tests {
 
     #[test]
     fn live_sink_sends_directly_without_buffering() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         reset_state();
 
         let (sink, seen) = recording_sink(Arc::new(AtomicBool::new(false)));
@@ -427,7 +450,7 @@ mod tests {
 
     #[test]
     fn failed_writes_buffer_then_replay_when_stream_recovers() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         reset_state();
 
         let fail = Arc::new(AtomicBool::new(true));
@@ -449,7 +472,7 @@ mod tests {
 
     #[test]
     fn ring_drops_oldest_beyond_capacity() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         std::env::set_var(ENV_RING_CAPACITY, "3");
         reset_state();
 
@@ -481,9 +504,7 @@ mod tests {
     /// already reported.
     #[test]
     fn a_ring_eviction_counts_as_a_drop_oldest_shed() {
-        let _g = super::SINK_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _g = super::test_guard();
         std::env::set_var(ENV_RING_CAPACITY, "1");
         reset_state();
 
@@ -507,7 +528,7 @@ mod tests {
 
     #[test]
     fn broken_pipe_flood_crosses_threshold_once_per_window() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         std::env::set_var(ENV_FLOOD_THRESHOLD, "3");
         std::env::set_var(ENV_FLOOD_WINDOW_MS, "60000");
         reset_state();
@@ -532,7 +553,7 @@ mod tests {
         // Exercises send()'s flood path end-to-end: a failing sink past the
         // threshold returns `should_reconnect`, and the request_reconnect
         // call is a safe no-op when no coordinator trigger is installed.
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         std::env::set_var(ENV_FLOOD_THRESHOLD, "3");
         std::env::set_var(ENV_FLOOD_WINDOW_MS, "60000");
         reset_state();
@@ -554,7 +575,7 @@ mod tests {
     /// forever: the ring would absorb every later record silently.
     #[test]
     fn unanswered_reconnect_request_rearms_so_the_stall_cannot_be_permanent() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         std::env::set_var(ENV_FLOOD_THRESHOLD, "3");
         std::env::set_var(ENV_FLOOD_WINDOW_MS, "60000");
         reset_state();
@@ -583,7 +604,7 @@ mod tests {
 
     #[test]
     fn stale_broken_pipes_age_out_of_window() {
-        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        let _g = super::test_guard();
         std::env::set_var(ENV_FLOOD_THRESHOLD, "2");
         std::env::set_var(ENV_FLOOD_WINDOW_MS, "100");
         reset_state();

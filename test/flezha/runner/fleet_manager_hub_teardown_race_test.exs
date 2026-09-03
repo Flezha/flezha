@@ -17,6 +17,7 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
 
   import ExUnit.CaptureLog
 
+  alias Flezha.Boot.RecoveryHooks
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -87,6 +88,54 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
     assert log =~ "Rejected runner connect"
 
     assert_received {:rejected, %{count: 1}, %{reason: {:hub_unavailable, ^ns}, transport: :uds}}
+  end
+
+  test "recovery-hook registration racing the hub teardown refuses instead of exiting its caller" do
+    ns = "ki178_race_#{System.unique_integer([:positive])}"
+    hub_id = Identificator.hub(ns)
+
+    {:ok, _} = HubManager.start_hub(ns)
+    on_exit(fn -> HubManager.stop_hub(ns) end)
+
+    # Armed only now: `config/test.exs` holds auto-restore off, and a hub started
+    # with it on boots into `:recovering` and holds there. `register/1` is a
+    # no-op while it is off, so the call under test needs it on.
+    previous = Application.get_env(:flezha, :auto_restore_enabled)
+    Application.put_env(:flezha, :auto_restore_enabled, true)
+    on_exit(fn -> Application.put_env(:flezha, :auto_restore_enabled, previous) end)
+
+    hub_pid = Process.whereis(hub_id)
+    assert is_pid(hub_pid)
+
+    # `register/1` runs inside `FleetManager`'s own `handle_call`, so an exit
+    # here takes the node's runner roster and its acceptor with it. The stand-in
+    # is a monitored caller: what must survive is the process that called.
+    :ok = :sys.suspend(hub_pid)
+
+    test = self()
+    MessageTestHelper.forward_telemetry([:flezha, :hub, :unavailable], :hub_unavailable)
+
+    {caller, caller_ref} =
+      spawn_monitor(fn -> send(test, {:registered, RecoveryHooks.register(hub_id)}) end)
+
+    assert wait_for_queued_call(hub_pid), "the registration never reached the hub coordinator"
+
+    HubManager.stop_hub(ns)
+
+    receive do
+      {:DOWN, ^caller_ref, :process, ^caller, reason} ->
+        flunk("register/1 exited its caller on a dying hub: #{inspect(reason)}")
+
+      {:registered, answer} ->
+        assert answer == {:error, {:hub_unavailable, ns}},
+               "a dying hub must be the caller's answer, got #{inspect(answer)}"
+    after
+      10_000 -> flunk("register/1 neither answered nor died")
+    end
+
+    # A containment is loud: the namespace's own failure is reported as one, so
+    # it reads apart from a node-wide fault.
+    assert_receive {:hub_unavailable, %{count: 1}, %{hub_id: ^hub_id}}, 1_000
   end
 
   defp wait_for_queued_call(pid, attempts \\ 200)

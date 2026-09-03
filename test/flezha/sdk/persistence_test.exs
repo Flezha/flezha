@@ -722,10 +722,7 @@ defmodule Flezha.SDK.PersistenceTest do
       Inbox.input(op, "in", "1", %{})
       [_, _] = frames(2)
 
-      {sdk_sec, ctrl_sec} = Flezha.Transport.Local.Stream.open()
-      :ok = Flezha.Transport.Stream.controlling_process(ctrl_sec, self())
-      :ok = Flezha.Transport.Stream.set_active(ctrl_sec)
-      send(op, {:secondaries, [sdk_sec]})
+      ctrl_sec = rebind_secondary(op)
       Inbox.input(op, "in", "2", %{})
 
       assert_receive {:flz_data, id, "entity_state_change", _, _}, 2_000

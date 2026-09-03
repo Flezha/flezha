@@ -88,7 +88,7 @@ fn handle_scale(args: &[String]) {
     }
 
     let group_id = &args[1];
-    let partitions = &args[2];
+    let partitions = args::or_refuse(args::read_number::<u64>("<partitions>", &args[2]));
 
     let mut opts: Vec<(String, String)> = Vec::new();
     if let Some(timeout_ms) = args::or_refuse(args::number::<u64>(&args[3..], "--timeout", "-t")) {

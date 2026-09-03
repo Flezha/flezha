@@ -683,3 +683,21 @@ A refusal produced this way SHALL travel the path a refused enable already trave
 - **THEN** the restart SHALL be recorded as failed and the failure logged
 - **AND** the exception SHALL NOT escape into the host process
 
+### Requirement: A provider worker handed to a caller SHALL have passed the reusability check
+
+`ensure_worker/4` SHALL NOT answer a worker that its own reusability check has
+rejected. Every arm that returns an existing worker SHALL be gated on the same
+check, so the rule that a stale provider process is never reused holds on all of
+them and not only on the arm that happens to consult it.
+
+#### Scenario: A cached worker fails the reusability check
+
+- **WHEN** a caller asks for a worker whose cached entry no longer satisfies
+  `reusable?`
+- **THEN** a fresh worker SHALL be started and the stale one SHALL NOT be returned
+
+#### Scenario: Every returning arm asks the same question
+
+- **WHEN** any arm of `ensure_worker/4` answers with an existing worker
+- **THEN** that answer SHALL have passed the same reusability check as every other arm
+

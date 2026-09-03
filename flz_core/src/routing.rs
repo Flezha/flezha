@@ -8,7 +8,6 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -321,13 +320,10 @@ pub fn send_plugin_frame(
     bytes: &[u8],
     metadata: &HashMap<String, String>,
 ) {
+    // The wire's other writer holds a frame it could not send and drives the
+    // reconnect that replays it; an output is not worth less than a record.
     let frame = payloader::build_from_binary(instance_id, bytes, metadata.clone());
-    if let Err(e) = (&**stream).write_all(&frame) {
-        // The wire's other writer holds a frame it could not send and drives
-        // the reconnect that replays it; an output is not worth less than a
-        // record.
-        crate::state_sink::hold_failed_frame("plugin output", frame, &e);
-    }
+    crate::state_sink::write_or_hold("plugin output", stream, frame);
 }
 
 /// The stream readers' handle onto the live instance registry.
@@ -586,9 +582,7 @@ mod tests {
 
     #[test]
     fn a_plugin_frame_whose_write_fails_is_held_for_replay() {
-        let _guard = state_sink::SINK_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = state_sink::test_guard();
         state_sink::reset_for_test();
 
         send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &sink_metadata());
@@ -603,9 +597,7 @@ mod tests {
 
     #[test]
     fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
-        let _guard = state_sink::SINK_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = state_sink::test_guard();
         state_sink::reset_for_test();
 
         let metadata = sink_metadata();

@@ -19,9 +19,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   @doc "Start `op_module` as operative `op-1` (override with `:operative_id`, `:range`, `:runner`, `:credit`)."
   def start_operative(op_module, opts \\ []) do
     {:ok, topo} = Topology.build(op_module)
-    {sdk_sec, ctrl_sec} = Local.Stream.open()
-    :ok = Flezha.Transport.Stream.controlling_process(ctrl_sec, self())
-    :ok = Flezha.Transport.Stream.set_active(ctrl_sec)
+    {sdk_sec, ctrl_sec} = own_secondary()
 
     counters = Counters.new()
 
@@ -37,6 +35,39 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
       )
 
     %{op: pid, counters: counters, ctrl_secondary: ctrl_sec, sdk_secondary: sdk_sec}
+  end
+
+  @doc """
+  A fresh secondary whose controller side the calling process owns and reads:
+  `{sdk_handle, controller_handle}`. What a runner's rebind hands the Operative.
+  """
+  def own_secondary do
+    {sdk_sec, ctrl_sec} = Local.Stream.open()
+    :ok = Flezha.Transport.Stream.controlling_process(ctrl_sec, self())
+    :ok = Flezha.Transport.Stream.set_active(ctrl_sec)
+    {sdk_sec, ctrl_sec}
+  end
+
+  @doc """
+  Close a secondary and wait for its stream process to be gone.
+
+  `Flezha.Transport.Stream.close/1` returns as soon as the stream replies, one
+  step before it terminates — so a write issued straight after can still find it
+  alive and be delivered. Waiting for the exit is what makes "the wire is gone"
+  true for the next write instead of merely likely.
+  """
+  def close_secondary(%Local.Stream{pid: pid} = handle) do
+    ref = Process.monitor(pid)
+    :ok = Flezha.Transport.Stream.close(handle)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
+    :ok
+  end
+
+  @doc "Rebind `op` onto a fresh secondary this process owns; the controller handle."
+  def rebind_secondary(op) do
+    {sdk_sec, ctrl_sec} = own_secondary()
+    send(op, {:secondaries, [sdk_sec]})
+    ctrl_sec
   end
 
   @doc "The next `n` frames off the stream, in arrival order, as `{payload_id, frame, metadata}`."

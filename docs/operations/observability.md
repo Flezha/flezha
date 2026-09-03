@@ -121,11 +121,17 @@ arbitrary Elixir terms — `TelemetryBridge` forwards a third-party `:telemetry`
 verbatim — and a malformed exposition is worse than a missing one: Prometheus fails the *whole
 scrape*, so one bad key blinds every metric the controller has.
 
-*Values* take `Flezha.Observability.Signal.metadata_text/1`, the one rule both exporters and the
-audit log share: a UTF-8 binary passes through, an atom (`nil` reads `"nil"`), integer or float takes
-its `String.Chars` rendering, and everything else — a map, a tuple, a pid, a list, a binary that is
-not valid UTF-8 — is inspected in full. So a charlist value reads `~c"lib/x.ex"` rather than
-`lib/x.ex`: at the source you know a charlist is text, at the exporter you do not.
+*Values* take `Flezha.Observability.Signal.metadata_text/1`: a UTF-8 binary passes through, an atom
+(`nil` reads `"nil"`), integer or float takes its `String.Chars` rendering, and everything else — a
+map, a tuple, a pid, a list, a binary that is not valid UTF-8 — is inspected in full. So a charlist
+value reads `~c"lib/x.ex"` rather than `lib/x.ex`: at the source you know a charlist is text, at the
+exporter you do not.
+
+The audit log's JSON lines and `flz observe tail --json` take the companion rule,
+`Signal.metadata_json/1`, which keeps what JSON can hold typed — a null, an array, an object — and
+asks `metadata_text/1` for everything it cannot, **binaries included**. JSON has no bytes type, so a
+binary that is not valid UTF-8 is inspected rather than carried: that decision is written once, and
+the two renderers cannot answer differently for the same term.
 
 *Names* are then sanitized into Prometheus's `[a-zA-Z_][a-zA-Z0-9_]*`:
 

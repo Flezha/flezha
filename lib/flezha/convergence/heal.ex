@@ -55,7 +55,6 @@ defmodule Flezha.Convergence.Heal do
 
   @operative_call_timeout_ms 1_000
   @migrate_timeout_ms 2_000
-  @plugin_call_timeout_ms 2_000
 
   @primitives ~w(rebind_operative replace_operative resync_runner start_plugin stop_plugin restart_plugin evict_runner restart_runner)a
 
@@ -141,19 +140,19 @@ defmodule Flezha.Convergence.Heal do
   # the same `{:plugin_subscribe, ...}` path `flz plugin enable` uses (which
   # activates immediately since the SDK is already up).
   defp apply_primitive(:start_plugin, %{namespace: ns, target: rid, args: args}) do
-    plugin_call(ns, rid, {:plugin_subscribe, args.plugin_id, args.plugin})
+    plugin_call(ns, rid, &Overwatch.plugin_subscribe(&1, args.plugin_id, args.plugin))
   end
 
   # Unsubscribe a plugin that is running but not declared in the cspec.
   defp apply_primitive(:stop_plugin, %{namespace: ns, target: rid, args: args}) do
-    plugin_call(ns, rid, {:plugin_unsubscribe, args.plugin_id})
+    plugin_call(ns, rid, &Overwatch.plugin_unsubscribe(&1, args.plugin_id))
   end
 
   # Tear down + re-subscribe a declared plugin whose provider self-reported
   # unhealthy. On failure the plugin is left unsubscribed and the next tick
   # retries it through `start_plugin` (it diffs as missing) under Backoff.
   defp apply_primitive(:restart_plugin, %{namespace: ns, target: rid, args: args}) do
-    plugin_call(ns, rid, {:plugin_restart, args.plugin_id, args.plugin})
+    plugin_call(ns, rid, &Overwatch.plugin_restart(&1, args.plugin_id, args.plugin))
   end
 
   # Forcibly drop a dead/orphaned runner binding so its operatives become
@@ -267,11 +266,13 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
-  # The three plugin primitives differ only in the message they send.
-  defp plugin_call(namespace, operative_id, message) do
+  # The three plugin primitives differ only in the verb they send; the call and
+  # its bound belong to `Overwatch`. A heal reports `:ok | :error` — the reason
+  # is already logged by the bounded call.
+  defp plugin_call(namespace, operative_id, verb) do
     on_operative(namespace, operative_id, fn pid ->
-      case SafeCall.bounded(pid, message, @plugin_call_timeout_ms) do
-        {:ok, :ok} -> :ok
+      case verb.(pid) do
+        :ok -> :ok
         _ -> :error
       end
     end)

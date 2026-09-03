@@ -8,6 +8,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Plugin.Provider.Kafka.ProducerSup
+  alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -123,6 +124,25 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
     assert fresh != dead
     assert Process.alive?(fresh)
     assert [{^fresh, _}] = Registry.lookup(ProducerSup.registry_name(), key)
+  end
+
+  test "a worker the reuse policy rejected is never handed back" do
+    o = opts("ps_foreign")
+    key = {"ps_foreign", "t", 0}
+
+    # Registered under the family's key by a process the family's
+    # DynamicSupervisor did not start, so the reap's `terminate_child/2` finds
+    # no such child and the parked worker stays alive and registered.
+    {:ok, parked} = ParkedStub.start_link(o)
+    on_exit(fn -> if Process.alive?(parked), do: Process.exit(parked, :kill) end)
+
+    assert {:error, :not_found} =
+             DynamicSupervisor.terminate_child(ProducerSup.dyn_sup_name(), parked)
+
+    refute ProducerWorker.reusable?(parked)
+    assert [{^parked, _}] = Registry.lookup(ProducerSup.registry_name(), key)
+
+    refute match?({:ok, ^parked}, ProducerSup.ensure_worker(o))
   end
 
   test "a forced worker death is answered with a fresh, registered worker" do

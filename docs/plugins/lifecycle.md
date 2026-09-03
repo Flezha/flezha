@@ -198,7 +198,7 @@ Providers that buffer records towards a slow destination (`Postgres.SinkWorker`,
 
 | Helper | Purpose |
 | --- | --- |
-| `Flezha.Plugin.Provider.WorkerSup` | Registry + DynamicSupervisor per provider family: `ensure_worker/4` (reuse while `reusable?` holds, else reap and restart), `stop_worker/2` |
+| `Flezha.Plugin.Provider.WorkerSup` | Registry + DynamicSupervisor per provider family: `ensure_worker/4` (reuse while `reusable?` holds, else reap and restart; an existing worker that still fails the check is `{:error, {:not_reusable, pid}}`, never handed back), `stop_worker/2` |
 | `retry_backoff_ms/3` | `base × 2^(attempt-1)`, capped; `attempt` counts from 1 |
 | `saturated?/1`, `park_or_reply/2`, `release_waiters/1` | the "delay, never loss" overflow policy over `:buffer_len`, `:queue_max`, `:waiters` in the worker state |
 | `worker_health/3` | the `health/1` preamble: absent / dead verdicts, else the provider's verdict computed off the caller under the probe budget |

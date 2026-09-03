@@ -119,18 +119,23 @@ defmodule Flezha.Observability.Signal do
   The companion to `metadata_text/1`, and the reason there are two: a wire that
   can only hold text has to render `nil` as `"nil"` and a list by inspection,
   while JSON has a null, an array and an object and loses nothing by keeping
-  them. A binary, a number and a boolean pass through; an atom takes its own
-  name; a list and a plain map recurse, a map's keys through `metadata_text/1`
-  because a key is text in either format. Everything else — a struct, a tuple,
-  a pid — is inspected, exactly as `metadata_text/1` inspects it.
+  them. A number and a boolean pass through; an atom takes its own name; a
+  list and a plain map recurse, a map's keys through `metadata_text/1` because
+  a key is text in either format. Everything else — a struct, a tuple, a pid —
+  is inspected, exactly as `metadata_text/1` inspects it.
+
+  A binary goes through `metadata_text/1` itself: JSON has no bytes type, so a
+  binary that is not valid UTF-8 has to be rendered rather than carried, and
+  the check that decides belongs to the one function both renderers ask.
 
   One rule, so two renderers of one format cannot answer differently for the
   same term.
   """
   @spec metadata_json(term()) :: term()
-  def metadata_json(term)
-      when is_binary(term) or is_number(term) or is_boolean(term) or is_nil(term),
-      do: term
+  def metadata_json(term) when is_binary(term), do: metadata_text(term)
+
+  def metadata_json(term) when is_number(term) or is_boolean(term) or is_nil(term),
+    do: term
 
   def metadata_json(term) when is_atom(term), do: Atom.to_string(term)
   def metadata_json(term) when is_list(term), do: Enum.map(term, &metadata_json/1)

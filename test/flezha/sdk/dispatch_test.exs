@@ -213,6 +213,19 @@ defmodule Flezha.SDK.DispatchTest do
   # --- helpers ---
 
   defdelegate start_operative(op_module, opts \\ []), to: SdkOperativeHarness
+  defdelegate rebind_secondary(op), to: SdkOperativeHarness
+  defdelegate close_secondary(handle), to: SdkOperativeHarness
+
+  # The property both ways of losing a wire have to satisfy: an output produced
+  # while it is down is held, and lands once a stream is bound again.
+  defp assert_held_then_replayed(op, value) do
+    Inbox.input(op, "in", value, %{})
+    refute_receive {:flz_data, _id, "op-1", _, _}, 200
+
+    rebind_secondary(op)
+
+    assert_receive {:flz_data, _id, "op-1", ^value, %{"channel" => "e"}}, 2_000
+  end
 
   # --- tests ---
 
@@ -221,6 +234,41 @@ defmodule Flezha.SDK.DispatchTest do
     Inbox.input(op, "in", "hello", %{})
     # The frame names the producing node's channel, never the plugin.
     assert_receive {:flz_data, _id, "op-1", "hello", %{"channel" => "e"}}, 1_000
+  end
+
+  test "an output whose write fails is held, and reaches the stream the rebind wires" do
+    %{op: op, sdk_secondary: sdk} = start_operative(EchoOp)
+    # The wire goes: the stream process stops, so every `send_frame` on the
+    # handle the Operative holds refuses.
+    :ok = close_secondary(sdk)
+
+    assert_held_then_replayed(op, "held")
+  end
+
+  test "an output emitted with no secondary at all is held, not silently dropped" do
+    %{op: op} = start_operative(EchoOp)
+    # The other way a wire goes: the runner hands the Operative no stream at all.
+    send(op, {:secondaries, []})
+
+    assert_held_then_replayed(op, "orphan")
+  end
+
+  test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
+    System.put_env("FLEZHA_RECONNECT_RING_CAPACITY", "2")
+    on_exit(fn -> System.delete_env("FLEZHA_RECONNECT_RING_CAPACITY") end)
+
+    %{op: op, counters: counters, sdk_secondary: sdk} = start_operative(EchoOp)
+    :ok = close_secondary(sdk)
+    for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
+
+    rebind_secondary(op)
+
+    # Drop-oldest: the last two survive, and the three shed are counted rather
+    # than lost in silence.
+    assert_receive {:flz_data, _id, "op-1", "v4", _}, 2_000
+    assert_receive {:flz_data, _id, "op-1", "v5", _}, 2_000
+    refute_receive {:flz_data, _id, "op-1", "v1", _}, 200
+    assert Counters.drops_oldest(counters) == 3
   end
 
   test "an unnamed node's frame carries its procedure name, and user metadata rides it" do

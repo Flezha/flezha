@@ -72,10 +72,17 @@ pub(crate) fn number<T: FromStr>(
         return Ok(None);
     };
 
+    read_number(long_key, &written).map(Some)
+}
+
+/// One number, one refusal, whichever way the operator spelled it. A value
+/// standing in a positional slot is the same request as one behind a flag, and
+/// a verb that reads only the flag answers one typo two ways; `key` is what the
+/// verb's usage line calls the argument, so the refusal names what was typed.
+pub(crate) fn read_number<T: FromStr>(key: &str, written: &str) -> Result<T, String> {
     written
         .parse()
-        .map(Some)
-        .map_err(|_| format!("Error: invalid {} value '{}'", long_key, written))
+        .map_err(|_| format!("Error: invalid {} value '{}'", key, written))
 }
 
 /// A refusal the operator sees, and the exit that follows it: the one place a

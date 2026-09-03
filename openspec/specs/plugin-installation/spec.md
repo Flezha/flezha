@@ -3,9 +3,7 @@
 ## Purpose
 
 The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`app_data/recovery/installed_plugins.dets`), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Service.PluginManager` starts, so no operative bind can replay a persisted subscription against a module that is not loaded. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
-
 ## Requirements
-
 ### Requirement: Plugin package format
 
 A plugin package SHALL be a gzip-compressed tar archive with the conventional extension `.fpz`. The archive MUST contain, at its root:
@@ -470,3 +468,31 @@ The plugin settings payload (the JSON serialized at `cli_manager.ex` and on disk
 #### Scenario: Legacy field names rejected
 - **WHEN** an on-disk settings file contains a field named `processor_id` or `compute_engine_id`
 - **THEN** the loader MUST return an error identifying the offending field; the operator is expected to re-author the settings
+
+### Requirement: Disabling an operative's plugins SHALL bound every call it makes and SHALL NOT exit
+
+`PluginManager` SHALL treat a call into an operative's process as bounded and
+failable: a timeout, a dead target or any other exit SHALL be a value the handler
+acts on, and SHALL NOT terminate `PluginManager` itself. A teardown walking many
+operatives SHALL continue past one that cannot be reached, and SHALL report which
+ones it could not disable.
+
+#### Scenario: An operative is too busy to answer its unsubscribe
+
+- **WHEN** an operative's process does not answer `plugin_unsubscribe` inside the bound
+- **THEN** `PluginManager` SHALL stay alive, SHALL record that operative as not
+  disabled, and SHALL continue with the rest
+
+#### Scenario: A teardown of many operatives finishes its walk
+
+- **WHEN** `stop_all_operatives/1` disables plugins for every operative in a namespace
+  and one of them cannot be reached
+- **THEN** every other operative SHALL still be stopped and its state directory
+  handled, and the walk SHALL NOT abandon the remainder
+
+#### Scenario: The durable row and the in-memory table do not disagree on a failure
+
+- **WHEN** disabling a plugin fails after the durable disable has been written
+- **THEN** the two SHALL be reconciled rather than left in disagreement, so a
+  restart does not read a plugin as both disabled and installed
+

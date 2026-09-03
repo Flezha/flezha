@@ -245,3 +245,32 @@ not the change under test.
   repeatedly against the same binary
 - **THEN** every run SHALL produce the same `CliManager` expression, byte for byte
 
+### Requirement: A numeric positional argument SHALL be refused when its value is not a number
+
+A positional argument the CLI reads as a number SHALL be refused by the same
+reader every numeric option goes through, and SHALL NOT be forwarded to the
+controller unread. A verb SHALL NOT answer the same typo two ways depending on
+whether the operator wrote the value as an option or as a positional.
+
+#### Scenario: A word is written where a positional number is expected
+
+- **WHEN** an operator writes a non-numeric word in a positional slot the verb
+  reads as a number
+- **THEN** the CLI SHALL refuse it locally, naming the argument and the value, and
+  SHALL NOT reach the controller
+
+#### Scenario: A positional and an option are refused by one sentence
+
+- **WHEN** a non-numeric value is written in a positional slot, and the same value
+  is written behind a numeric option
+- **THEN** both SHALL be refused by one sentence naming the argument and the
+  value, differing only in what the argument is called — the flag for an option,
+  and the name the verb's own usage line gives for a positional
+
+#### Scenario: One verb refuses both spellings in one invocation
+
+- **WHEN** an operator writes an unreadable number as a positional and as an
+  option in the same invocation
+- **THEN** the verb SHALL refuse rather than refuse the option and forward the
+  positional
+

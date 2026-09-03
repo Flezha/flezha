@@ -80,6 +80,29 @@ defmodule Flezha.Observability.SignalTest do
     end
   end
 
+  describe "metadata_json/1" do
+    test "a binary that is not valid UTF-8 is rendered, not passed through" do
+      bad = <<255, 0, 254>>
+      refute String.valid?(bad)
+
+      rendered = Signal.metadata_json(bad)
+      assert rendered == Signal.metadata_text(bad)
+      assert String.valid?(rendered)
+    end
+
+    test "a valid binary still passes through unchanged" do
+      assert Signal.metadata_json("ok") == "ok"
+    end
+
+    test "the rule reaches a binary nested in a list or a map" do
+      bad = <<255, 254>>
+      rendered = Signal.metadata_text(bad)
+
+      assert Signal.metadata_json([bad]) == [rendered]
+      assert Signal.metadata_json(%{k: bad}) == %{"k" => rendered}
+    end
+  end
+
   describe "metadata_text/1" do
     test "nil renders as its name, not as the empty string" do
       # `to_string(nil)` is "", which as a key means no name at all and

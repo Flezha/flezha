@@ -195,6 +195,41 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     # No completion record → the class dir is deleted as before.
     refute File.dir?(Paths.class_dir(proc_id))
   end
+
+  test "a teardown steps over an operative whose plugins could not be disabled" do
+    test_pid = self()
+    ids = Enum.map(1..3, fn _ -> unique_id() end)
+    [_, wedged, _] = ids
+
+    HubManager
+    |> stub(:get_all_operatives, fn @namespace -> Enum.map(ids, &{&1, self()}) end)
+
+    PluginManager
+    |> stub(:disable_operative_plugins, fn @namespace, id ->
+      if id == wedged, do: {:error, {:undisabled, ["p_" <> id]}}, else: :ok
+    end)
+
+    ProcessHub
+    |> stub(:stop_children, fn _hub_id, stopped, _opts ->
+      send(test_pid, {:hub_stop_all, stopped})
+      {:awaitable, stopped}
+    end)
+
+    ProcessHub.Future
+    |> stub(:await, fn {:awaitable, stopped} ->
+      %ProcessHub.StopResult{
+        status: :ok,
+        stopped: Enum.map(stopped, &{&1, [node()]}),
+        errors: []
+      }
+    end)
+
+    assert :ok = OperativeManager.stop_all_operatives(@namespace)
+
+    # Every operative reaches the stop, including the ones behind the wedge.
+    assert_receive {:hub_stop_all, stopped}, 1_000
+    assert Enum.sort(stopped) == Enum.sort(ids)
+  end
 end
 
 defmodule StubOverwatch do

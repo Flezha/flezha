@@ -436,6 +436,26 @@ const CASES: &[(&[&str], Want)] = &[
         &["operative", "scale", "g", "2", "--timeout", "abc"],
         Refused("invalid --timeout value 'abc'"),
     ),
+    // A number written as a POSITIONAL is the same request as one written as
+    // an option, and was the one spelling KI-176's reader never saw. Until it
+    // did, `flz operative scale g abc --timeout abc` refused the flag and
+    // forwarded the word — one verb answering one typo two ways.
+    (
+        &["operative", "scale", "g", "abc"],
+        Refused("invalid <partitions> value 'abc'"),
+    ),
+    (
+        &["operative", "scale", "g", "abc", "--timeout", "abc"],
+        Refused("invalid <partitions> value 'abc'"),
+    ),
+    (
+        &["state", "retention", "MyClass", "2"],
+        Rpc("Flezha.Service.CliManager.state_retention(\"MyClass\", \"2\")"),
+    ),
+    (
+        &["state", "retention", "MyClass", "abc"],
+        Refused("invalid <hours> value 'abc'"),
+    ),
     // The five readers that already refused a bad number, each in its own
     // words. They answer the shared sentence now, so the rule cannot depend on
     // which verb was typed.

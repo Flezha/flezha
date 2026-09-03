@@ -42,9 +42,13 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
 
   @doc """
   Start (or look up) the worker registered under `key`, naming the child
-  `via(family, key)`. Returns `{:ok, pid}` either way; a registered worker is
-  shared while `reusable?.(pid)` holds, else it is reaped first so the caller
-  gets a fresh, healthy one.
+  `via(family, key)`. A registered worker is shared while `reusable?.(pid)`
+  holds, else it is reaped first so the caller gets a fresh, healthy one.
+
+  Every arm that answers an *existing* worker asks `reusable?` first, so a
+  worker the check has rejected is never handed back: an existing worker the
+  reap could not remove answers `{:error, {:not_reusable, pid}}` rather than
+  the pid itself.
   """
   @spec ensure_worker(module(), term(), {module(), keyword()}, (pid() -> boolean())) ::
           {:ok, pid()} | {:error, term()}
@@ -53,10 +57,13 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
 
     case Registry.lookup(registry_name(family), key) do
       [{pid, _}] ->
-        if reusable?.(pid), do: {:ok, pid}, else: reap_and_start(family, pid, child)
+        case gate(pid, reusable?) do
+          {:ok, pid} -> {:ok, pid}
+          {:error, _} -> reap_and_start(family, pid, child, reusable?)
+        end
 
       [] ->
-        start_worker(family, child)
+        start_worker(family, child, reusable?)
     end
   end
 
@@ -69,21 +76,32 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
     end
   end
 
-  defp start_worker(family, child) do
+  # `{:ok, pid}` is a worker this call started; `{:already_started, pid}` is an
+  # existing one, and an existing one answers only if it passes the same check
+  # the lookup arm applies — otherwise the caller is handed the worker
+  # `reusable?` has already refused.
+  defp start_worker(family, child, reusable?) do
     case DynamicSupervisor.start_child(dyn_sup_name(family), child) do
       {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> gate(pid, reusable?)
       {:error, _} = err -> err
     end
+  end
+
+  # The one place an existing worker is asked whether it may be answered.
+  defp gate(pid, reusable?) do
+    if reusable?.(pid), do: {:ok, pid}, else: {:error, {:not_reusable, pid}}
   end
 
   # Terminate, then start: nothing is waited for in between. `terminate_child/2`
   # monitors the child and returns only after its `:DOWN`, and `Registry`
   # deletes an entry whose pid is dead when the fresh worker registers over it —
   # so a stale entry can neither delay the start nor be handed back as
-  # `{:already_started, dead_pid}`.
-  defp reap_and_start(family, pid, child) do
+  # `{:already_started, dead_pid}`. A worker the terminate did not reach — it
+  # is not this family's child — survives registered, and `start_worker/3`
+  # refuses it rather than answering the pid this arm was reached to replace.
+  defp reap_and_start(family, pid, child, reusable?) do
     _ = DynamicSupervisor.terminate_child(dyn_sup_name(family), pid)
-    start_worker(family, child)
+    start_worker(family, child, reusable?)
   end
 end

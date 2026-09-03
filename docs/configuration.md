@@ -234,7 +234,7 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | on | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
 | `FLEZHA_REAP_INTERVAL_MS` | `min(entity_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operative — idle-Entity reaper cadence |
-| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` — frames buffered while no sink is installed |
+| `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and the Elixir SDK's Operative — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow. In `flz_core` one ring holds persistence records and plugin/workflow output frames alike; the Elixir SDK holds its plugin-bound outputs in the Operative and its records not at all |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` — write failures inside the window that request a reconnect |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | `30000` | `flz_core::state_sink` |
 | `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS` | `30000` | `flz_core::workflow::driver` — proc-commit ack deadline |

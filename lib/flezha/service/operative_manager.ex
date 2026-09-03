@@ -18,6 +18,8 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.Service.PluginManager
   alias Flezha.State.Paths
 
+  require Logger
+
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
   defdelegate await_runner(arg1, arg2, arg3, arg4, arg5 \\ fn _ -> true end), to: Placement
   defdelegate pick_runner(arg1, arg2), to: Placement
@@ -326,13 +328,30 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
+  @doc """
+  Stop every operative in `namespace` and hand its state directory to
+  `Teardown`.
+
+  The walk is the whole point: an operative whose plugins cannot be disabled —
+  a wedged Overwatch, a manager too busy to answer — is named in the log and
+  stepped over, never a reason to abandon the operatives behind it.
+  """
   def stop_all_operatives(namespace) do
     operatives = HubManager.get_all_operatives(namespace)
     operative_ids = Enum.map(operatives, fn {id, _pid} -> id end)
 
-    Enum.each(operative_ids, fn operative_id ->
-      _ = PluginManager.disable_operative_plugins(namespace, operative_id)
-    end)
+    undisabled =
+      Enum.reject(operative_ids, fn operative_id ->
+        PluginManager.disable_operative_plugins(namespace, operative_id) == :ok
+      end)
+
+    if undisabled != [] do
+      Logger.warning(
+        "[operative_manager] teardown of #{namespace} could not disable plugins for " <>
+          "#{length(undisabled)} of #{length(operative_ids)} operative(s): " <>
+          "#{inspect(undisabled)}; stopping them anyway"
+      )
+    end
 
     if operative_ids != [] do
       _ = Teardown.hub_stop_children(namespace, operative_ids, 15_000)

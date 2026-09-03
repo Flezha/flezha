@@ -3,9 +3,7 @@
 ## Purpose
 
 The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_installer` (security-relevant plugin lifecycle). The sink writes one structured JSON Lines record per accepted signal to disk under `app_data/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and a `Flezha.Service.AuditLog` service-API module callable from both the CLI (`flz audit list | read | tail | stats | rotate`) and the planned Phoenix UI directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
-
 ## Requirements
-
 ### Requirement: Durable append-only audit sink
 
 The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implements the foundation's `Flezha.Observability.Sink` behaviour and writes one durable record per accepted signal to an append-only file on disk under the configured audit directory. The sink SHALL use the foundation's `:block` overflow policy. The sink SHALL register with the foundation Registry only when the `:audit_log, :enabled` config flag is `true`, AND when the master `:observability, :enabled` flag is also `true`.
@@ -257,3 +255,21 @@ The graceful-shutdown coordinator SHALL call into `Flezha.Observability.AuditLog
 #### Scenario: Post-close signals are discarded
 - **WHEN** a signal arrives at the sink after the writer's `close/0` has returned
 - **THEN** the signal SHALL be discarded, a per-sink `:post_close_dropped` counter SHALL increment, AND no exception SHALL propagate to the producer
+
+### Requirement: A record the audit log produced SHALL never raise when the audit log writes it
+
+Metadata SHALL be rendered by one rule for every sink, and a binary that is not
+valid UTF-8 SHALL be rendered rather than passed through to an encoder that raises
+on it. The audit log SHALL NOT be able to fail on a record it produced itself.
+
+#### Scenario: An operative's metadata carries a non-UTF-8 binary
+
+- **WHEN** a signal's metadata holds a binary for which `String.valid?/1` is false
+- **THEN** the shared typed rule SHALL render it the way the text renderer already
+  does, and the JSON encoder SHALL NOT be handed a value it cannot encode
+
+#### Scenario: The text and JSON renderings agree on what a binary is
+
+- **WHEN** the same metadata is rendered for the text sink and for the audit log
+- **THEN** neither SHALL accept a value the other refuses
+

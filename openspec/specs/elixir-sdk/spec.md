@@ -613,3 +613,23 @@ The Elixir SDK SHALL implement late-input correction in its own runner core, whi
 #### Scenario: A replayed member is not re-classified as late
 - **WHEN** a slice member whose event time is behind the Entity's high-water is dispatched from the ordered flush
 - **THEN** it runs, it advances the high-water, and no `correction_request` is sent for it
+
+### Requirement: The Elixir SDK SHALL hold a failed plugin-bound output rather than logging it
+
+A plugin-bound output whose write fails SHALL be held and retried on the next
+bound stream, on the same terms the FFI hosts hold theirs. Logging the failure and
+returning SHALL NOT be the whole handling, because the caller has no way to learn
+the output was lost and no counter records it.
+
+#### Scenario: An emit fails while the data stream is down
+
+- **WHEN** the Elixir SDK's `emit_output/3` cannot write a plugin-bound output
+- **THEN** the output SHALL be held for replay and SHALL NOT be discarded after a
+  log line
+
+#### Scenario: The hold is bounded and says so when it overflows
+
+- **WHEN** more outputs are held than the bound allows
+- **THEN** the SDK SHALL count what it sheds, so a silent loss cannot be mistaken
+  for a delivery
+

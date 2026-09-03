@@ -438,9 +438,13 @@ impl Coordinator {
 }
 
 /// A workflow's output on any one secondary stream, tagged with its
-/// `operative_id`. Fire-and-forget: the controller's teardown flushes the
-/// stream channels rather than counting what was written here, so a failed
-/// write is reported and nothing is owed.
+/// `operative_id`. An output the wire cannot take is held for the reconnect on
+/// the ring every writer on this wire shares, never printed and dropped.
+///
+/// An absent stream takes the same route as a refused write, and arms the same
+/// flood ladder: `heartbeat_tick` already reads an empty map as a transport
+/// failure, and a second policy inside one function is how a wire ends up with
+/// two answers to one question.
 fn write_workflow_output(
     io_streams: &RwLock<HashMap<u32, FlezhaStream>>,
     operative_id: &str,
@@ -448,19 +452,14 @@ fn write_workflow_output(
 ) {
     let frame = payloader::build_from_binary(operative_id, payload, HashMap::new());
     let streams = io_streams.read().unwrap();
+    // Held framed, not as a record: the ring re-frames a record with empty
+    // metadata, which would strip a stamped output of its identity.
     match streams.values().next() {
-        Some(stream) => {
-            let mut w: &FlezhaStream = stream;
-            if let Err(e) = w.write_all(&frame) {
-                eprintln!(
-                    "[flezha] workflow {} output write failed: {}",
-                    operative_id, e
-                );
-            }
-        }
-        None => eprintln!(
-            "[flezha] workflow {} output dropped: no secondary stream available",
-            operative_id
+        Some(stream) => crate::state_sink::write_or_hold("workflow output", stream, frame),
+        None => crate::state_sink::hold_failed_frame(
+            "workflow output",
+            frame,
+            &"no secondary stream available",
         ),
     }
 }
@@ -650,7 +649,7 @@ mod heartbeat_tests {
     /// reaches no stream must ask for a reconnect, or the stall is silent.
     #[test]
     fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
-        let _g = crate::state_sink::SINK_TEST_LOCK.lock().unwrap();
+        let _g = crate::state_sink::test_guard();
         std::env::set_var("FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD", "3");
         std::env::set_var("FLEZHA_BROKEN_PIPE_WINDOW_MS", "60000");
         crate::state_sink::reset_for_test();
@@ -670,5 +669,90 @@ mod heartbeat_tests {
         std::env::remove_var("FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD");
         std::env::remove_var("FLEZHA_BROKEN_PIPE_WINDOW_MS");
         crate::state_sink::reset_for_test();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod workflow_output_tests {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::flusher::SendFrameFn;
+    use crate::state_sink;
+
+    const OPERATIVE: &str = "op-workflow-emit";
+    const BODY: &[u8] = b"the workflow's only output";
+
+    /// The stream map a runner holds between a closed secondary and the
+    /// rebind that replaces it.
+    fn no_streams() -> RwLock<HashMap<u32, FlezhaStream>> {
+        RwLock::new(HashMap::new())
+    }
+
+    /// One stream whose peer is gone: every write on it fails.
+    fn dead_stream_map() -> RwLock<HashMap<u32, FlezhaStream>> {
+        let (near, far) = UnixStream::pair().expect("a socket pair");
+        drop(far);
+        RwLock::new(HashMap::from([(0u32, FlezhaStream::Unix(near))]))
+    }
+
+    #[test]
+    fn a_workflow_output_with_no_secondary_is_held_not_dropped() {
+        let _g = state_sink::test_guard();
+        state_sink::reset_for_test();
+
+        write_workflow_output(&no_streams(), OPERATIVE, BODY);
+
+        assert_eq!(
+            state_sink::ring_len_for_test(),
+            1,
+            "a workflow output with no stream to take it must be held, not printed and dropped"
+        );
+        state_sink::reset_for_test();
+    }
+
+    #[test]
+    fn a_workflow_output_whose_write_fails_is_held_not_dropped() {
+        let _g = state_sink::test_guard();
+        state_sink::reset_for_test();
+
+        write_workflow_output(&dead_stream_map(), OPERATIVE, BODY);
+
+        assert_eq!(
+            state_sink::ring_len_for_test(),
+            1,
+            "a workflow output the wire refused must be held for the reconnect"
+        );
+        state_sink::reset_for_test();
+    }
+
+    /// The ring replays a record by re-framing it with empty metadata, so a
+    /// held output must be the framed bytes — otherwise a stamped output comes
+    /// back stripped of the identity it was framed with.
+    #[test]
+    fn a_held_workflow_output_replays_exactly_as_it_was_framed() {
+        let _g = state_sink::test_guard();
+        state_sink::reset_for_test();
+
+        let expected = payloader::build_from_binary(OPERATIVE, BODY, HashMap::new());
+        write_workflow_output(&no_streams(), OPERATIVE, BODY);
+
+        let (near, mut far) = UnixStream::pair().expect("a socket pair");
+        far.set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("a read deadline, so a lost frame fails instead of hanging");
+        state_sink::set_secondary_stream(Some(Arc::new(FlezhaStream::Unix(near))));
+        let sink: SendFrameFn = Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(()));
+        state_sink::install_global_sink(sink);
+
+        let mut seen = vec![0u8; expected.len()];
+        far.read_exact(&mut seen)
+            .expect("the held output must reach the stream the reconnect wires");
+        assert_eq!(seen, expected, "replayed exactly as it was framed");
+        assert_eq!(state_sink::ring_len_for_test(), 0, "the ring is drained");
+
+        state_sink::set_secondary_stream(None);
+        state_sink::reset_for_test();
     }
 }

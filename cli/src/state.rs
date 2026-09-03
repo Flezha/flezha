@@ -60,10 +60,12 @@ fn handle_retention(args: &[String]) {
         exit(1);
     }
 
+    let hours = args::or_refuse(args::read_number::<u64>("<hours>", &args[2]));
+
     rpc::run(
         format!(
             "Flezha.Service.CliManager.state_retention(\"{}\", \"{}\")",
-            &args[1], &args[2],
+            &args[1], hours,
         ),
         rpc::PROPAGATE,
     );

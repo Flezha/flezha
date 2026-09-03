@@ -24,6 +24,7 @@ defmodule Flezha.Service.PluginManagerTest do
   alias Flezha.Plugin
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
 
   setup :verify_on_exit!
@@ -223,6 +224,41 @@ defmodule Flezha.Service.PluginManagerTest do
 
     test "is a no-op (returns error) when the plugin_id is not in the cspec" do
       assert {:error, "plugin not found"} = PluginManager.disable_plugin("never_enabled")
+    end
+  end
+
+  describe "an operative that does not answer" do
+    test "an unsubscribe that never answers leaves the manager alive and names the plugin",
+         %{overwatch: overwatch, store: store} do
+      plugin = build_plugin("pm_wedged", topic: "w")
+      assert {:ok, _} = PluginManager.enable_plugin("pm_wedged", plugin)
+
+      manager = Process.whereis(PluginManager)
+      send(overwatch, :go_silent)
+
+      assert {:error, {:undisabled, ["pm_wedged"]}} =
+               PluginManager.disable_operative_plugins(@namespace, @operative_id)
+
+      assert Process.whereis(PluginManager) == manager
+
+      # The durable row and the table agree — both say disabled — so a restart
+      # cannot read the plugin as disabled and installed at once.
+      assert [] = read_plugins(store)
+      refute Map.has_key?(PluginManager.get_plugins(), "pm_wedged")
+    end
+
+    test "an enable whose subscribe never answers releases its claim",
+         %{overwatch: overwatch} do
+      # The claim is taken before the subscribe; an exit there would skip the
+      # release, and the id then reads as enabled for ever — refused by a later
+      # enable and excluded from healing by `Convergence.Loop`.
+      send(overwatch, :go_silent)
+      plugin = build_plugin("pm_enable_wedged", topic: "w")
+
+      assert {:error, :timeout} = PluginManager.enable_plugin("pm_enable_wedged", plugin)
+
+      assert PluginManager.pending_ids() == MapSet.new()
+      refute Map.has_key?(PluginManager.get_plugins(), "pm_enable_wedged")
     end
   end
 
@@ -451,6 +487,10 @@ defmodule Flezha.Service.PluginManagerTest do
       {:dump_unsubscribes, caller} ->
         send(caller, {:unsubscribes, unsubs})
         fake_overwatch_loop(rejects, unsubs)
+
+      # A busy Overwatch: it receives, and answers nothing.
+      :go_silent ->
+        NodeTestHelper.park()
 
       _ ->
         fake_overwatch_loop(rejects, unsubs)

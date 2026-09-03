@@ -12,6 +12,11 @@ defmodule Flezha.Service.PluginManager do
   and touches no runtime, so the caller may retry; a failed runtime call
   returns its own error with the durable record in place, and the next
   `Overwatch.init/1` reconciles it.
+
+  Every call this manager makes into an operative it does not own carries a
+  bound, because the manager is a node-wide singleton whose table starts empty:
+  an exit taken from a busy Overwatch would forget every plugin on the node. A
+  disable that could not reach its operative names the plugins it could not drop.
   """
 
   use GenServer
@@ -21,12 +26,20 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.SafeCall
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate
   alias ProcessHub.Service.ProcessRegistry
 
   @no_response_retry_attempts 8
   @no_response_retry_initial_ms 150
+
+  # This manager is a node-wide singleton and its table does not survive it:
+  # `init/1` starts empty, so an exit here forgets every plugin enabled on the
+  # node, not just the one being disabled. The calls it makes into an operative
+  # carry `Overwatch`'s own bound, which is the smaller of the two so the
+  # manager answers before the caller waiting on it stops waiting.
+  @service_call_timeout_ms 5_000
 
   ## Public API
 
@@ -59,7 +72,7 @@ defmodule Flezha.Service.PluginManager do
   defp enable_claimed(plugin_id, plugin) do
     with :ok <- write_enable_to_cspec(plugin, plugin_id),
          {:ok, pid} <- resolve_operative(plugin),
-         :ok <- forward_subscribe(pid, plugin_id, plugin) do
+         :ok <- Overwatch.plugin_subscribe(pid, plugin_id, plugin) do
       GenServer.cast(__MODULE__, {:confirm, plugin_id})
       {:ok, "plugin enabled"}
     else
@@ -147,11 +160,11 @@ defmodule Flezha.Service.PluginManager do
 
   def disable_operative_plugins(namespace, operative_id)
       when is_binary(namespace) and is_binary(operative_id) do
-    GenServer.call(__MODULE__, {:disable_operative_plugins, namespace, operative_id})
+    call_service({:disable_operative_plugins, namespace, operative_id})
   end
 
   def disable_namespace_plugins(namespace) when is_binary(namespace) do
-    GenServer.call(__MODULE__, {:disable_namespace_plugins, namespace})
+    call_service({:disable_namespace_plugins, namespace})
   end
 
   def register_plugin(plugin_id, info) do
@@ -242,14 +255,8 @@ defmodule Flezha.Service.PluginManager do
       {namespace, operative_id} ->
         case write_disable_to_cspec(namespace, operative_id, plugin_id) do
           :ok ->
-            case OperativeManager.get_operative_pid(namespace, operative_id) do
-              {:ok, pid} ->
-                _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
-                {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
-
-              _ ->
-                {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
-            end
+            _ = unsubscribe(namespace, operative_id, plugin_id)
+            {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
 
           {:error, :operative_not_found} ->
             {:reply, {:ok, "plugin disabled"}, Map.delete(state, plugin_id)}
@@ -260,49 +267,36 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  # The namespace is going away wholesale, so there is nothing to unsubscribe
+  # from and no cspec left to write: the entries are simply dropped.
   def handle_call({:disable_namespace_plugins, namespace}, _from, state) do
-    matching =
-      state
-      |> Enum.filter(fn
-        {_id, {ns, _rid}} -> ns == namespace
-        _ -> false
-      end)
-      |> Enum.map(fn {id, _} -> id end)
-
-    new_state =
-      Enum.reduce(matching, state, fn plugin_id, acc -> Map.delete(acc, plugin_id) end)
-
-    {:reply, :ok, new_state}
+    ids = for {id, _ns, _rid} <- targets(state, fn ns, _rid -> ns == namespace end), do: id
+    {:reply, :ok, Map.drop(state, ids)}
   end
 
   def handle_call({:disable_operative_plugins, namespace, operative_id}, _from, state) do
-    matching =
-      state
-      |> Enum.filter(fn
-        {_id, {ns, rid}} -> ns == namespace and rid == operative_id
-        _ -> false
-      end)
-      |> Enum.map(fn {id, _} -> id end)
+    matching = targets(state, fn ns, rid -> ns == namespace and rid == operative_id end)
 
-    new_state =
-      Enum.reduce(matching, state, fn plugin_id, acc ->
-        case Map.get(acc, plugin_id) do
-          nil ->
-            acc
+    {new_state, undisabled} =
+      Enum.reduce(matching, {state, []}, fn {plugin_id, ns, rid}, {acc, failed} ->
+        _ = write_disable_to_cspec(ns, rid, plugin_id)
 
-          {ns, rid} ->
-            _ = write_disable_to_cspec(ns, rid, plugin_id)
+        failed =
+          case unsubscribe(ns, rid, plugin_id) do
+            :ok -> failed
+            {:error, _} -> [plugin_id | failed]
+          end
 
-            case OperativeManager.get_operative_pid(ns, rid) do
-              {:ok, pid} -> _ = GenServer.call(pid, {:plugin_unsubscribe, plugin_id})
-              _ -> :ok
-            end
-
-            Map.delete(acc, plugin_id)
-        end
+        {Map.delete(acc, plugin_id), failed}
       end)
 
-    {:reply, :ok, new_state}
+    reply =
+      case Enum.reverse(undisabled) do
+        [] -> :ok
+        ids -> {:error, {:undisabled, ids}}
+      end
+
+    {:reply, reply, new_state}
   end
 
   @impl true
@@ -329,6 +323,14 @@ defmodule Flezha.Service.PluginManager do
   defp pending?({_ns, _rid, :pending}), do: true
   defp pending?(_entry), do: false
 
+  # Every enabled plugin whose target satisfies `match?`, as
+  # `{plugin_id, namespace, operative_id}`. A pending entry is a three-tuple
+  # and matches nothing here, which is what keeps an enable in flight out of
+  # every bulk disable.
+  defp targets(state, match?) do
+    for {id, {ns, rid}} <- state, match?.(ns, rid), do: {id, ns, rid}
+  end
+
   defp target({ns, rid}), do: {ns, rid}
   defp target({ns, rid, :pending}), do: {ns, rid}
 
@@ -350,10 +352,23 @@ defmodule Flezha.Service.PluginManager do
     OperativeManager.get_operative_pid(ns, pid_id)
   end
 
-  defp forward_subscribe(pid, plugin_id, plugin) do
-    case GenServer.call(pid, {:plugin_subscribe, plugin_id, plugin}) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
+  # A bounded call into the manager itself, so a caller tearing a namespace
+  # down inherits a busy manager as a value rather than as its own exit.
+  defp call_service(request) do
+    case SafeCall.bounded(__MODULE__, request, @service_call_timeout_ms) do
+      {:ok, reply} -> reply
+      {:error, _} = err -> err
+    end
+  end
+
+  # The runtime half of a disable. The cspec write has already recorded the
+  # intent, so an operative that cannot be reached loses the subscription at
+  # its next `Overwatch.init/1`; what this answers is whether the live process
+  # dropped it now. An operative that is gone has nothing to drop.
+  defp unsubscribe(namespace, operative_id, plugin_id) do
+    case OperativeManager.get_operative_pid(namespace, operative_id) do
+      {:ok, pid} -> Overwatch.plugin_unsubscribe(pid, plugin_id)
+      _ -> :ok
     end
   end
 

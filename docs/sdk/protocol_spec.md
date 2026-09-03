@@ -762,15 +762,19 @@ the poll core's job ([`poll_core.md`](poll_core.md)).
 payload id = the emitting instance's id, the output bytes as the message, and
 metadata = user metadata + `channel` (+ the `flz.*` identity stamps on
 `.keyed()` channels). Outputs are batched into one write syscall where possible
-(`payloader::build_from_binary_into`). On the effectively-once tier plugin
-emits never ride this path: they travel inside the effect record (§11) and the
-controller dispatches them only after the record's fsync.
+(`payloader::build_from_binary_into`). An output whose write the stream refuses,
+or that finds no stream at all, is held for the next bound one rather than
+dropped — the same ring the state sink uses below. On the effectively-once tier
+plugin emits never ride this path: they travel inside the effect record (§11) and
+the controller dispatches them only after the record's fsync.
 
-**Reliable state sink.** Persistence frames (§11) go through a reliable sink:
-frames produced while no secondary stream is installed, or whose write failed,
-are queued in a ring of `FLEZHA_RECONNECT_RING_CAPACITY` (default 1024; the
-oldest is dropped on overflow) and replayed under their own payload id once a
-stream is back. `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` (10) write failures
+**Reliable state sink.** Persistence frames (§11) and plugin-bound outputs alike
+go through a reliable sink: frames produced while no secondary stream is
+installed, or whose write failed, are queued in a ring of
+`FLEZHA_RECONNECT_RING_CAPACITY` (default 1024; the oldest is dropped on
+overflow, counted as a drop-oldest shed) and replayed once a stream is back — a
+record re-framed under its own payload id, a frame a writer built itself replayed
+byte for byte so its `flz.*` stamps survive. `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` (10) write failures
 inside `FLEZHA_BROKEN_PIPE_WINDOW_MS` (5000) request a control reconnect with
 reason `broken_pipe_flood`, re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS`
 (30000) if unanswered.
