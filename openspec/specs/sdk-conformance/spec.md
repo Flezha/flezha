@@ -213,7 +213,7 @@ The smoke tier SHALL bind one fixture per declaration key the controller reads (
 
 A test app SHALL take its namespace from the first command-line argument; SHALL end its own OS process when the port the harness manages it by goes away, whether that reaches it as end-of-file on standard input or as a standard-input read that can no longer answer one — a read error is the close arriving by another road, never a reason to stop watching; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, suspend the parked activation **without occupying the host's dispatch capacity** until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
 
-The parked activation's obligation is the same on every host and its spelling is not: a host whose manifest declares a worker-pool dispatch model SHALL park a pool worker and SHALL NOT park the driver thread, while a host whose manifest declares an event-loop dispatch model SHALL suspend the activation and yield the loop. A synchronous hold on an event-loop host is a violation of this requirement, not an implementation of it: it freezes every other activation the loop owns, which is the wedge signature a different capability's fixture exists to produce. In both cases the runner SHALL keep answering control pings while a fixture is parked, and a sibling procedure the driver has not yet reached SHALL remain dispatchable.
+The parked activation's obligation is the same on every host and its spelling is not: a host whose manifest declares a worker-pool dispatch model SHALL park a pool worker and SHALL NOT park the driver thread; a host whose manifest declares an event-loop dispatch model SHALL suspend the activation and yield the loop; and a host whose manifest declares a process-per-entity dispatch model SHALL block the parked Entity's own process, which occupies no shared capacity because the host schedules one process per Entity and the driver is a process of its own. A synchronous hold on an event-loop host is a violation of this requirement, not an implementation of it: it freezes every other activation the loop owns, which is the wedge signature a different capability's fixture exists to produce. In every case the runner SHALL keep answering control pings while a fixture is parked, and a sibling procedure the driver has not yet reached SHALL remain dispatchable.
 
 An app whose runtime reads standard input through a device it also writes standard output through — the Elixir runner's `user` process is the only one — SHALL address its watch at that device rather than at a relay in front of it, so the device's death is reported to the read instead of leaving it unanswered, and SHALL treat that death as the close. It SHALL do so only while the runtime reports itself started: during start-up and during shutdown the device dies as part of that, and ending the process there would race the shutdown and replace the report and exit status the runtime had chosen with its own.
 
@@ -250,6 +250,11 @@ A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUI
 #### Scenario: The retired QUIC variable is not honoured
 - **WHEN** a test app's connect path is checked against the pinned environment fixture
 - **THEN** an app reading `FLEZHA_QUIC_ADDRESS` fails the gate naming the app and the replacement
+
+#### Scenario: A process-per-entity host parks the Entity's own process
+
+- **WHEN** a test app whose manifest declares the `process-per-entity` dispatch model reaches the release gate in a workflow fixture and the variable is absent
+- **THEN** the parked Entity's own process blocks with no timer and no spin, and the runner keeps answering control pings while its driver dispatches a sibling procedure the parked one does not feed — a host that instead parked the driver would stall every stage of the chain
 
 ### Requirement: The suite has a smoke tier and a full tier
 
@@ -437,4 +442,38 @@ An SDK whose reader takes the version directly from its own build system — whe
 #### Scenario: A builder that cannot spell the version key fails its own suite
 - **WHEN** the declaration key list gains the version key and one SDK's builder does not emit it
 - **THEN** that SDK's declaration-key test SHALL fail naming the key, and every other SDK's SHALL stay green
+
+### Requirement: The Elixir SDK carries the workflow kind
+
+The Elixir SDK SHALL accept a class declared with `kind: :workflow` and drive it to
+completion, and its conformance manifest SHALL defer no capability. The Elixir SDK is
+its own core and inherits nothing from `flz_core`, so it re-expresses the workflow
+mechanism rather than binding to it; the observable contract is nonetheless identical to
+every other SDK's, because the same `test/system/` scenarios prove all of them.
+
+The manifest flip is the last act of the port: a manifest that declares a capability its
+fixtures cannot drive is a declaration the gate believes and no scenario checks.
+
+#### Scenario: A workflow class is accepted rather than refused
+
+- **WHEN** the controller sends `AddOperative` with `kind: "workflow"` to an Elixir runner
+- **THEN** the runner registers the class and drives it, where today it answers
+  `{:error, "workflow kind is not supported by the Elixir stream SDK"}`
+
+#### Scenario: The Elixir manifest defers nothing
+
+- **WHEN** `test/sdk_conformance/gate_test.exs` compares `test/apps/elixir_runner/conformance.json`
+  against the reference manifest
+- **THEN** its `deferred` list is empty and its fixture ids are the reference's nineteen
+  workflow ids in the reference's order, so every `capability: :workflow` scenario runs
+  under `FLEZHA_E2E_RUNTIME=elixir` rather than skipping by name
+
+#### Scenario: A fan-out reaches every consumer on the durable path
+
+- **WHEN** an Elixir workflow class declares one producing procedure whose output channel
+  carries two consumers, and `workflow_crash_resume_e2e_test.exs:180` drives it
+- **THEN** all five payloads are delivered, and removing either arm of the fan-out makes
+  that test fail with three payloads where five are asserted — the negative control every
+  other SDK's port ran, which is what distinguishes a fan-out that works from one that is
+  merely declared
 

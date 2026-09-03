@@ -77,7 +77,11 @@
 # is safe for the same reason the whole rule is: the kind-sense patterns match
 # the word bound to `operative`/`kind`/`class`/`factory` through separators
 # that include `_`, so `bounded_operative` stays caught however this reads.
-*:(?<![A-Za-z0-9_])(?:[Uu]n|UN)?(?:[Bb]ounded|BOUNDED)[ \-_][A-Za-z0-9`"(]
+# A closing emphasis marker sits between the word and its noun in prose that
+# stresses it (`a *bounded* run`). Emphasis is orthogonal to the sense, and a
+# kind-sense use written the same way stays caught: the kind-sense patterns
+# already step over `*` on their way to `operative`/`kind`/`class`/`factory`.
+*:(?<![A-Za-z0-9_])(?:[Uu]n|UN)?(?:[Bb]ounded|BOUNDED)[*_]?[ \-_][A-Za-z0-9`"(]
 
 # The word MENTIONED as a token rather than used — quoted or in a code span,
 # as prose about the naming itself does. A kind atom (`:bounded`) keeps its

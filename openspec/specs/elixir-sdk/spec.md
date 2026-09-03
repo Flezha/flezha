@@ -633,3 +633,76 @@ the output was lost and no counter records it.
 - **THEN** the SDK SHALL count what it sheds, so a silent loss cannot be mistaken
   for a delivery
 
+### Requirement: The Elixir SDK authors and drives workflow operatives in its own core
+
+The Elixir SDK SHALL carry a `Flezha.SDK.WorkflowOperative` behaviour whose class declares
+either a run-sugar `run/2` body or a structured `procedures/1` DAG on the same builder token
+`channels/1` uses, plus the optional knobs `max_duration_ms/0`, `self_terminating?/0`,
+`loop_mode/0` (`:once` | `:per_input` | `:chained`), `wake_after_ms/0`, `retry_attempts/0`,
+`retry_backoff_ms/0`, `barrier_retry_attempts/0`, `rollback_mode/0` (`:all_or_nothing` |
+`:keep_progress`), `persistence_enabled/0` and `sync_durability/0`, each reading a default when
+the class is silent. `Flezha.SDK.define_workflow/2` SHALL declare such a class onto the same
+runner handle `define_stream/2` uses, because the controller places by factory id and learns
+the kind from the `AddOperative` it sends rather than from the advertisement.
+
+Registration SHALL accumulate refusals into `{:error, {:invalid_workflow, issues}}` (never a
+raise) using the reference's names: `NoWorkflowBody`, `ExternalStopOnly` (not self-terminating
+and no duration cap), `ZeroRetryBackoff`, `LoopWithoutChain` (a loop mode on a run-sugar body),
+`NoEntryChannel`, `EntryRoot` (an entry feeding more than one procedure),
+`MergeFromEntryChannel`, `DynamicEntities` and `BranchingChainedLoop`. A refusal the shared
+topology already raises SHALL be carried through as `{:Topology, issue}` rather than restated,
+and the reference's `Cycle`, `Disconnected`, `MultipleOutputChannels` and
+`MissingInterProcCodec` SHALL NOT exist here: the first two are unreachable because the shared
+topology refuses a cycle first and a node exists only where an `into` created it, and the last
+two are unreachable because a node owns exactly one output channel and every inter-procedure
+value has a serialization.
+
+A structured class SHALL drive its DAG frontier by frontier: a procedure becomes runnable only
+once every producer feeding it has committed, so a fan-out interleaves independently and a
+fan-in is dispatched exactly once with the accumulated batch of all its producers. Each stage
+SHALL be committed durably before the next begins, its plugin-bound output SHALL be staged into
+that commit rather than shipped, and the class's leaf and compensable positions SHALL be
+declared to the controller in the `AddOperative` response.
+
+#### Scenario: A structured class is refused for every fault at once
+
+- **WHEN** a class declares a chained loop on a run-sugar body, a zero retry backoff and no
+  terminal condition
+- **THEN** registration answers `{:error, {:invalid_workflow, issues}}` naming
+  `LoopWithoutChain`, `ZeroRetryBackoff` and `ExternalStopOnly` together, not the first alone
+
+#### Scenario: A stage's Entities are the SDK's own, not a second mechanism
+
+- **WHEN** a workflow stage dispatches a batch
+- **THEN** it runs on `Flezha.SDK.Entity` processes with the same state, records, timers and
+  retry ladder a stream operative's Entities have, differing only in that the ladder's bounds
+  come from the class's `retry_attempts`/`retry_backoff_ms` and that an exhausted ladder fails
+  the procedure instead of parking the input to the dead-letter queue
+
+#### Scenario: A stage's plugin output reaches nothing before its commit is durable
+
+- **WHEN** a procedure on a hybrid channel emits while the class journals
+- **THEN** the output is carried in that stage's `ProcCommit` outbox and reaches the plugin only
+  after the controller has journalled and acknowledged the commit, and a class that journals
+  nothing stages none
+
+### Requirement: One plugin sink per channel and plugin
+
+`sink/2` and `sink_with/3` SHALL refuse a second sink declared on the same channel to the same
+plugin with `DuplicatePluginSink`, naming both. Neither half alone is the duplicate: one channel
+MAY reach several plugins — a keyed wire beside a plain one — and one plugin MAY be fed by
+several channels, which is how a chain reports every stage to one place with a different encoder
+each time. This is a deliberate departure from the reference, whose `sink` closes its channel
+and therefore refuses per channel alone.
+
+#### Scenario: The same channel and plugin twice is refused
+
+- **WHEN** a class declares `sink(s, "out")` twice on one handle
+- **THEN** registration fails with `DuplicatePluginSink` naming the channel and the plugin
+
+#### Scenario: A plugin fed by several channels is not a duplicate
+
+- **WHEN** two named channels of one class each declare a sink to the plugin `"branch_sink"`
+  with different encoders
+- **THEN** registration succeeds and each channel's frames carry its own encoder's bytes
+

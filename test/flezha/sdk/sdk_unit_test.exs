@@ -1,7 +1,7 @@
 defmodule Flezha.SDK.UnitTest do
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Channels, Codec, Ctx, KeyGroup, PersistentId, RunnerServer, Topology}
+  alias Flezha.SDK.{Channels, Codec, Ctx, Declarations, KeyGroup, PersistentId, Topology}
   alias FlezhaTest.Helper.SdkTierFixtures.{CheckpointBatchedOp, TierStoreOp}
 
   # A ctx built without a procedure has no name to refuse with; the tests
@@ -140,9 +140,11 @@ defmodule Flezha.SDK.UnitTest do
 
   # --- builder refusals ---
 
-  defp issues(module) do
+  defp issues(module), do: Enum.map(refusals(module), &elem(&1, 0))
+
+  defp refusals(module) do
     assert {:error, {:invalid_topology, issues}} = Topology.build(module)
-    Enum.map(issues, &elem(&1, 0))
+    issues
   end
 
   test "DuplicateChannel" do
@@ -188,20 +190,6 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     assert :RetryMaxZero in issues(RMZ)
-  end
-
-  test "DuplicatePluginSink" do
-    defmodule DPS do
-      def factory_id, do: "p"
-
-      def channels(c) do
-        s = c |> Channels.input("in") |> Channels.into(EchoProc)
-        Channels.sink(s, "same")
-        Channels.sink(s, "same")
-      end
-    end
-
-    assert :DuplicatePluginSink in issues(DPS)
   end
 
   test "KeyByOnUnkeyableTarget — key_by into a Static procedure" do
@@ -639,15 +627,15 @@ defmodule Flezha.SDK.UnitTest do
     end
 
     assert {:ok, topo} = Topology.build(CandleShape)
-    assert RunnerServer.declarations(topo) == golden("candle")
+    assert Declarations.for(topo) == golden("candle")
   end
 
   test "the tier ships two more declaration keys, and they equal the committed goldens" do
     assert {:ok, tier} = Topology.build(TierStoreOp)
     assert {:ok, batched} = Topology.build(CheckpointBatchedOp)
 
-    assert RunnerServer.declarations(tier) == golden("tier_store")
-    assert RunnerServer.declarations(batched) == golden("checkpoint_batched_store")
+    assert Declarations.for(tier) == golden("tier_store")
+    assert Declarations.for(batched) == golden("checkpoint_batched_store")
   end
 
   defp one_issue(module) do

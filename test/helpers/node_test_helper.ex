@@ -310,7 +310,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :schema_evolution,
     :entity_timers,
     :effectively_once,
-    :correction_window
+    :correction_window,
+    :workflow
   ]
 
   def capabilities, do: @capabilities

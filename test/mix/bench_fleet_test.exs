@@ -39,31 +39,16 @@ defmodule Mix.Tasks.Bench.FleetTest do
           "workflow" not in (PortPilot.manifest(runtime)["deferred"] || [])
         end)
 
-      assert Enum.sort(accepted) == [:java, :node, :php, :python, :ruby, :rust]
+      assert Enum.sort(accepted) == [:elixir, :java, :node, :php, :python, :ruby, :rust]
 
       for runtime <- accepted do
         assert Fleet.parse_runtime(Atom.to_string(runtime), :workflow) == runtime
       end
 
-      for runtime <- refused do
-        %Mix.Error{message: message} =
-          assert_raise(Mix.Error, fn ->
-            Fleet.parse_runtime(Atom.to_string(runtime), :workflow)
-          end)
-
-        assert message =~ "defers workflow"
-        assert message =~ PortPilot.manifest_path(runtime)
-      end
-    end
-
-    test "the caller names what asked for the capability" do
-      %Mix.Error{message: message} =
-        assert_raise(Mix.Error, fn ->
-          Fleet.parse_runtime("elixir", :workflow, "--durability on")
-        end)
-
-      assert message =~ "carries no --durability on"
-      assert message =~ "defers workflow"
+      # Every SDK now carries every capability, so the deferral refusal has no
+      # live input from the manifests. It is kept — and `@required_capabilities`
+      # is what fails the build if a future manifest defers one silently.
+      assert refused == []
     end
   end
 end
