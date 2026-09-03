@@ -274,7 +274,7 @@ The interface SHALL declare lifecycle methods:
 #### Scenario: User-defined Config ships through Jackson deserialization
 
 - **WHEN** a Java Procedure declares `Config = MyConfig` (a Jackson-deserializable POJO/record) and overrides `fromConfig(MyConfig cfg)`
-- **THEN** the runtime SHALL deserialize the agent-shipped JSON config bytes via Jackson into `MyConfig` and SHALL invoke `procedure.fromConfig(cfg)` to construct the Procedure at Entity init; deserialization failure SHALL throw `OperativeConfigurationException("Config deserialize failed: " + procedureName)`
+- **THEN** the runtime SHALL deserialize the agent-shipped JSON config bytes via Jackson into `MyConfig` and SHALL invoke `procedure.fromConfig(cfg)` to construct the Procedure at Entity init; deserialization failure SHALL throw `StreamOperativeConfigurationException("Config deserialize failed: " + procedureName)`
 
 ### Requirement: Procedure.run receives StateHandle, not direct State reference
 
@@ -304,10 +304,10 @@ The Java SDK's `Procedure.run` signature SHALL be `void run(Input input, StateHa
 The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk.state.Clock` as a generic parameter, defaulting to `com.flezha.sdk.state.WallClock`. `Clock` SHALL be a sealed Java interface with `permits WallClock, LogicalClock, EventTimeFrom`. The runtime SHALL evaluate the declared clock **once per invocation**, before entering `run`, and serve that single value from `ctx.now()`:
 
 - `WallClock` — epoch milliseconds at dispatch entry.
-- `EventTimeFrom` — the event time extracted from the current input. Because Java's erasure precludes Rust's compile-enforced `TimeExtractor<Input>` bound, a Procedure declaring `EventTimeFrom` SHALL override `default OptionalLong eventTime(Input input)`; failing to do so SHALL fail Operative registration with `OperativeConfigurationException` naming the Procedure and the missing override.
-- `LogicalClock` — the raw durable `change_seq`, re-armed to `terminal + 1` on restore. A Procedure declaring `LogicalClock` with `Change = NoChange` SHALL fail registration with `OperativeConfigurationException` carrying the Rust error name `UnservableClock`, since there is no durable seq to serve.
+- `EventTimeFrom` — the event time extracted from the current input. Because Java's erasure precludes Rust's compile-enforced `TimeExtractor<Input>` bound, a Procedure declaring `EventTimeFrom` SHALL override `default OptionalLong eventTime(Input input)`; failing to do so SHALL fail Operative registration with `StreamOperativeConfigurationException` naming the Procedure and the missing override.
+- `LogicalClock` — the raw durable `change_seq`, re-armed to `terminal + 1` on restore. A Procedure declaring `LogicalClock` with `Change = NoChange` SHALL fail registration with `StreamOperativeConfigurationException` carrying the Rust error name `UnservableClock`, since there is no durable seq to serve.
 
-`OperativeConfigurationException::ClockNotImplementedYet` SHALL NOT be thrown for any member of the sealed hierarchy.
+`StreamOperativeConfigurationException::ClockNotImplementedYet` SHALL NOT be thrown for any member of the sealed hierarchy.
 
 #### Scenario: Default Clock is WallClock
 
@@ -322,7 +322,7 @@ The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: EventTimeFrom without an eventTime override fails registration
 
 - **WHEN** a Java Procedure declares `Clock = EventTimeFrom` but does not override `eventTime(Input)`
-- **THEN** `registerStream(...)` SHALL throw `OperativeConfigurationException` naming the Procedure and the missing `eventTime` override
+- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` naming the Procedure and the missing `eventTime` override
 
 #### Scenario: LogicalClock serves the durable change seq and re-arms on restore
 
@@ -332,7 +332,7 @@ The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: LogicalClock with NoChange fails registration
 
 - **WHEN** a Java Procedure declares `Clock = LogicalClock` and `Change = NoChange`
-- **THEN** `registerStream(...)` SHALL throw `OperativeConfigurationException` whose message carries the error name `UnservableClock`
+- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` whose message carries the error name `UnservableClock`
 
 ### Requirement: Operative declares persistenceEnabled default-method, frozen at instance start
 
@@ -484,7 +484,7 @@ Declaring `.keyed()` SHALL be required on every plugin-bound channel of a tier-e
 #### Scenario: A tier class with a non-keyed plugin channel fails registration
 
 - **WHEN** a class declares `c.effectivelyOnce()` and a plugin-bound channel without `.keyed()`
-- **THEN** registration SHALL throw `OperativeConfigurationException` naming the channel
+- **THEN** registration SHALL throw `StreamOperativeConfigurationException` naming the channel
 
 ### Requirement: Java SDK implements checkpoint ack granularity
 
@@ -505,7 +505,7 @@ The per-Entity flush buffer SHALL carry a third `staged` list holding the open i
 #### Scenario: checkpointAck without the tier is refused
 
 - **WHEN** a class declares `c.checkpointAck()` without `c.effectivelyOnce()`
-- **THEN** registration SHALL throw `OperativeConfigurationException` carrying the error name `CheckpointAckWithoutTier`
+- **THEN** registration SHALL throw `StreamOperativeConfigurationException` carrying the error name `CheckpointAckWithoutTier`
 
 #### Scenario: A park closes the open interval
 
@@ -543,7 +543,7 @@ A replay SHALL NOT lower the event-time high-water mark.
 #### Scenario: A correction window without the tier is refused
 
 - **WHEN** a class declares `c.correctionWindow(60_000)` without `c.effectivelyOnce()`
-- **THEN** registration SHALL throw `OperativeConfigurationException` naming the missing tier declaration
+- **THEN** registration SHALL throw `StreamOperativeConfigurationException` naming the missing tier declaration
 
 #### Scenario: Beyond-window default is process-as-arrival
 
@@ -718,19 +718,19 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 ### Requirement: Operative Type Declaration
 
-The Java SDK SHALL provide `RunnerBuilder.defineStream(Class<? extends StreamOperative>)` and `RunnerBuilder.defineWorkflow(Class<? extends WorkflowOperative>)` as chainable builder methods, called **before** `.start()`/`.run()`. For each declared StreamOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Procedures' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `.start()` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `FlezhaRunner.defineStream(Class<? extends StreamOperative>)` and `FlezhaRunner.defineWorkflow(Class<? extends WorkflowOperative>)` as chainable builder methods, callable **before and after** `.start()`/`.run()`. For each declared StreamOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Procedures' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry SHALL stay mutable after `.start()`: `defineStream`/`defineWorkflow` and their `removeStream`/`removeWorkflow` inverses are legal on a started runner, and every post-start change SHALL re-sync the runner's full current factory set rather than a delta — the set the next connect/reconnect init frame carries to the controller. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
 
 Dynamic entity mode SHALL be supported: a Procedure reached by a consumer edge declaring `keyBy`, returning an empty list from `entityKeys()`, SHALL be declared successfully and create Entities lazily per key at dispatch time, per the `operative-state-persistence` dynamic-entity behaviour. Eviction SHALL be off by default (`entityIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Procedure reaper SHALL evict idle Entities destructively by shipping `delete_entity_state`, and a recreated Entity SHALL cold-start fresh rather than restore from disk.
 
-Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `BuildTopologyError` variant.
+Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `StreamOperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `TopologyIssue` variant.
 
 #### Scenario: Declaring a stream operative class before start() succeeds
-- **WHEN** user code calls `Flezha.newRunner("my_app").defineStream(MarketOperative.class).start()`
+- **WHEN** user code calls `Flezha.createRunner("my_app").defineStream(MarketOperative.class).start()`
 - **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `StreamOperativeInstance`
 
-#### Scenario: Declaring an operative type after start() is rejected
-- **WHEN** user code calls `.defineStream(...)` on a `RunnerBuilder` whose `.start()` has already returned
-- **THEN** the SDK SHALL throw an `IllegalStateException`
+#### Scenario: Declaring an operative type after start() is accepted
+- **WHEN** user code calls `.defineStream(...)` on a started `FlezhaRunner` already declaring `"market"`, for a class whose `factoryId()` returns `"orders"`
+- **THEN** the call SHALL succeed and return the runner, the new class SHALL be declared to the core immediately, and the runner's declared set SHALL become the full set `{"market", "orders"}` the next connect/reconnect init frame carries
 
 #### Scenario: Duplicate factoryId across two stream operative classes is rejected
 - **WHEN** two distinct StreamOperative classes both return `"market"` from `factoryId()` and both are declared on the same builder
@@ -738,7 +738,7 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
 - **WHEN** an Operative wires `.into(OhlcProcedure.class)` onto `ParseProcedure`'s output stream but `ParseProcedure.outputType()` returns `Trade.class` while `OhlcProcedure.inputType()` returns `Candle.class`
-- **THEN** `.defineStream(...)` SHALL throw `OperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
+- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
 
 #### Scenario: Typed entry channel deserializes at the edge
 - **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseProcedure.class)` and a JSON-encoded Trade arrives
@@ -746,11 +746,11 @@ Because Java's type erasure precludes Rust's compile-time topology refusals, eve
 
 #### Scenario: Unreachable node fails declaration
 - **WHEN** an Operative's `channels(c)` wires a Procedure that is not reachable from the entry channel
-- **THEN** `.defineStream(...)` SHALL throw `OperativeConfigurationException` naming the unreachable Procedure
+- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` naming the unreachable Procedure
 
 #### Scenario: Static-mode procedure without entitiesForOverridden is rejected
 - **WHEN** a Procedure returns a non-empty list from `entityKeys()` but its `entitiesForOverridden()` returns the default `false`
-- **THEN** `.defineStream(...)` SHALL throw `OperativeConfigurationException` naming the Procedure and stating that static-mode procedures must override `entitiesFor` and `entitiesForOverridden`
+- **THEN** `.defineStream(...)` SHALL throw `StreamOperativeConfigurationException` naming the Procedure and stating that static-mode procedures must override `entitiesFor` and `entitiesForOverridden`
 
 #### Scenario: Dynamic-mode procedure declares and creates entities lazily
 - **WHEN** a Procedure returning an empty `entityKeys()` is wired through an edge declaring `keyBy`, and two inputs arrive whose key function returns `"BTC"` and `"ETH"`

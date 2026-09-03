@@ -501,7 +501,7 @@ The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Opt
 
 #### Scenario: Calling sink_with twice on the same channel is a topology error
 - **WHEN** a Operative chains `.sink_with("p1", f1).sink_with("p2", f2)` on one stream
-- **THEN** registration SHALL fail with `BuildTopologyError::DuplicatePluginSink { channel }` naming the channel
+- **THEN** registration SHALL fail with `TopologyIssue::DuplicatePluginSink { channel }` naming the channel
 
 #### Scenario: nothing chains after sealed
 - **WHEN** a Operative attempts `.sink("p").sealed().into::<S>()`
@@ -564,11 +564,11 @@ On a pure-`InterProcedure` channel with no plugin sink, `emit_with_meta` SHALL c
 - **WHEN** a producer calls `ctx.emit_with_meta(value, {"channel": "spoof", "trace_id": "abc"})` on a hybrid channel
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
-### Requirement: New BuildTopologyError variant — `DuplicatePluginSink`
-`BuildTopologyError` (in `sdk/rust/src/channel/builder/issue.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_stream::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_stream::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
+### Requirement: New TopologyIssue variant — `DuplicatePluginSink`
+`TopologyIssue` (in `sdk/rust/src/channel/builder/issue.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_stream::<R>()` time when `sink_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_stream::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `TopologyIssue`.
 
-#### Scenario: Second also_to_plugin_with call is rejected at registration
-- **WHEN** a Operative's `channels(c)` method calls `also_to_plugin_with("p1", f1)` followed by `also_to_plugin_with("p2", f2)` on the same channel
+#### Scenario: Second sink_with call is rejected at registration
+- **WHEN** a Operative's `channels(c)` method calls `sink_with("p1", f1)` followed by `sink_with("p2", f2)` on the same channel
 - **THEN** `register_stream::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
 - **AND** the registered topology SHALL be discarded
 
@@ -656,12 +656,12 @@ On a pure-`INTER_PROCEDURE` channel with no plugin sink, `emitWithMeta` SHALL co
 - **WHEN** a producer calls `ctx.emitWithMeta(value, Map.of("channel", "spoof", "trace_id", "abc"))` on a hybrid channel
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
-### Requirement: New OperativeConfigurationException factory — `duplicatePluginSink` (Java SDK)
-`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerStream(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerStream(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
+### Requirement: New StreamOperativeConfigurationException factory — `duplicatePluginSink` (Java SDK)
+`StreamOperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `FlezhaRunner.defineStream(...)` time when `sink` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `FlezhaRunner.defineStream(...)` validation SHALL throw a `StreamOperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
 
-#### Scenario: Second alsoToPluginWith call is rejected at registration (Java)
-- **WHEN** a Operative's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).alsoToPluginWith("p1", f1).alsoToPluginWith("p2", f2)`
-- **THEN** `OperativeRegistry.registerStream(R.class)` SHALL throw `OperativeConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
+#### Scenario: Second sink call is rejected at registration (Java)
+- **WHEN** a Operative's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).sink("p1", f1).sink("p2", f2)`
+- **THEN** `FlezhaRunner.defineStream(R.class)` SHALL throw `StreamOperativeConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New ProcedureException subclass — `PluginSerializerFailure` (Java SDK)
