@@ -246,9 +246,6 @@ struct Coordinator {
     otx_arc: Arc<Mutex<Sender<RunnerMessage>>>,
     ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>,
     shutdown_bridge: Arc<ShutdownBridge>,
-    /// Direct outputs written per workflow instance — the count a completion
-    /// carries so the controller can wait for them.
-    direct_outputs: HashMap<String, u32>,
 }
 
 pub fn start(
@@ -327,7 +324,6 @@ impl Coordinator {
             otx_arc,
             ctx_arc,
             shutdown_bridge,
-            direct_outputs: HashMap::new(),
         };
         (coordinator, timers)
     }
@@ -358,9 +354,7 @@ impl Coordinator {
                 operative_id,
                 payload,
             } => {
-                if write_workflow_output(&self.runner.shared_io_streams, &operative_id, &payload) {
-                    *self.direct_outputs.entry(operative_id).or_insert(0) += 1;
-                }
+                write_workflow_output(&self.runner.shared_io_streams, &operative_id, &payload);
             }
             RunnerMessage::EmitWorkflowCompleted {
                 operative_id,
@@ -420,7 +414,6 @@ impl Coordinator {
                 status,
                 error,
                 result,
-                direct_outputs: self.direct_outputs.remove(&operative_id).unwrap_or(0),
             }),
         );
         if let Err(e) = (&*self.control_stream).write_all(&frame) {
@@ -445,36 +438,30 @@ impl Coordinator {
 }
 
 /// A workflow's output on any one secondary stream, tagged with its
-/// `operative_id`; `true` only when it reached the stream, since only a
-/// written output can be waited for.
+/// `operative_id`. Fire-and-forget: the controller's teardown flushes the
+/// stream channels rather than counting what was written here, so a failed
+/// write is reported and nothing is owed.
 fn write_workflow_output(
     io_streams: &RwLock<HashMap<u32, FlezhaStream>>,
     operative_id: &str,
     payload: &[u8],
-) -> bool {
+) {
     let frame = payloader::build_from_binary(operative_id, payload, HashMap::new());
     let streams = io_streams.read().unwrap();
     match streams.values().next() {
         Some(stream) => {
             let mut w: &FlezhaStream = stream;
-            match w.write_all(&frame) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!(
-                        "[flezha] workflow {} output write failed: {}",
-                        operative_id, e
-                    );
-                    false
-                }
+            if let Err(e) = w.write_all(&frame) {
+                eprintln!(
+                    "[flezha] workflow {} output write failed: {}",
+                    operative_id, e
+                );
             }
         }
-        None => {
-            eprintln!(
-                "[flezha] workflow {} output dropped: no secondary stream available",
-                operative_id
-            );
-            false
-        }
+        None => eprintln!(
+            "[flezha] workflow {} output dropped: no secondary stream available",
+            operative_id
+        ),
     }
 }
 

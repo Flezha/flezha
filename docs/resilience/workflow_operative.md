@@ -39,10 +39,14 @@ teardown, `OperativeManager.request_stop/3`).
 
 Every trigger converges on one `WorkflowCompleted` (`status` `ok | error | cancelled`, `error`,
 `result`). The controller writes the completion record, then tears down off the control-channel
-reader, **draining the owed outbox first**: `ControlChannel.drain_owed_outputs/4` waits up to
-60 s, re-driving `ProcJournal.flush_pending/1`, until `ProcJournal.pending_entries/1` is empty
-and the Overwatch has run the `WorkflowCompleted.direct_outputs` an opted-out or `run`-sugar
-class wrote straight to the data stream. A deadline hit is logged (`... still owed`) and the
+reader, **settling both output debts first** (`ControlChannel.drain_owed_outputs/2`). They are
+settled differently. The data stream is *flushed*: `Placement.flush_stream_channels/1` issues one
+bounded call per stream channel of the runner, and a channel answers only after every frame
+already in its mailbox has been routed to an Overwatch — so an opted-out or `run`-sugar class's
+last direct output is run before its Overwatch is stopped, however the two sockets interleave on
+arrival, and even when an output of that run was lost rather than delivered. The journal is
+*waited for*: up to 60 s, re-driving `ProcJournal.flush_pending/1`, until
+`ProcJournal.pending_entries/1` is empty. A deadline hit is logged (`... still owed`) and the
 retained journal keeps the debt. `status = "error"` tears down identically — there is no
 platform retry of a failed procedure. A `run`-sugar body may `recv()` input after it starts; a
 frame addressed to a running instance is routed to its inbox, never dropped.

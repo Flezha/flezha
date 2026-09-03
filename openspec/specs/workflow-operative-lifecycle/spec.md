@@ -71,7 +71,7 @@ The SDK SHALL provide a loop construct usable inside a Procedure/`run` that repe
 
 ### Requirement: All exit triggers converge on one terminal teardown
 
-Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; the completion SHALL carry the count of outputs written before it and the teardown SHALL wait (bounded) until the Controller has run that many.
+Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; before deregistering it the teardown SHALL flush the runner's stream channels synchronously, so every output frame the transport has already delivered is routed and run first, and it SHALL NOT hold the teardown against a count of outputs the runner reports having written.
 
 #### Scenario: Teardown is identical across triggers
 
@@ -88,10 +88,20 @@ Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown,
 - **WHEN** an opted-out chain writes its final output to the data stream and completes immediately after
 - **THEN** the Controller SHALL run that output's plugin chain before the instance is deregistered, however the two frames interleave on arrival
 
+#### Scenario: A teardown ends without waiting out a bound for an output that cannot arrive
+
+- **WHEN** an opted-out instance completes after an output of its run was lost rather than delivered
+- **THEN** the teardown SHALL still complete promptly once the stream channels report themselves flushed and the journal owes nothing, rather than waiting out a bound that only expiry can end
+
 #### Scenario: An output that beats the stream's routing is still delivered
 
 - **WHEN** a chain emits within its first milliseconds, before the registry hook has seeded the data stream's routing for it
 - **THEN** the stream SHALL route the frame through the Overwatch the class registered before its SDK start; a frame for an operative neither knows SHALL be counted as a drop, never discarded silently
+
+#### Scenario: An output for a replaced Overwatch is still delivered
+
+- **WHEN** an operative's Overwatch is replaced — by a crash-resume, a rebind, or a supervisor restart — while its runner is still writing that operative's outputs to the data stream
+- **THEN** the stream SHALL route those frames to the live Overwatch rather than to the replaced one, and SHALL NOT deliver a frame to a process that is no longer alive
 
 #### Scenario: Completion carries a result/error payload
 

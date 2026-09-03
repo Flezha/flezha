@@ -1,6 +1,7 @@
 defmodule Flezha.Runner.StreamChannel.Records do
   @moduledoc """
-  The durable-record fan-out and the credit handshake.
+  The operative route cache, the durable-record fan-out and the credit
+  handshake.
 
   Every frame a runner sends on an Entity's write path arrives here: state
   changes, snapshots, deletions, compensation records, corrections and parks.
@@ -10,6 +11,10 @@ defmodule Flezha.Runner.StreamChannel.Records do
   Invariant: credit is granted per window and debited per record, so a runner
   that outruns its grant is reported once and throttled, never silently
   dropped.
+
+  Invariant: every pid the route cache holds is monitored, so a cached
+  Overwatch that dies cannot keep winning against the liveness-checked
+  registry behind it.
   """
 
   alias Flezha.Dlq.Store, as: DlqStore
@@ -29,6 +34,80 @@ defmodule Flezha.Runner.StreamChannel.Records do
   require Logger
 
   @credit_handshake_timeout_ms 10_000
+
+  @doc """
+  Write one operative's route into the cache: `operative_mapping` is what
+  `route/2` reads first, in front of `ClassRegistry` — which refuses a dead
+  pid. A cache that is not invalidated by the death of the process it caches
+  always wins that race, so the frame is cast into a dead process and lost
+  with no drop counted. Every writer goes through here or `drop_route/2`,
+  which monitor what the cache gains and demonitor what it loses.
+  """
+  def put_route(state, operative_id, pids) do
+    state = drop_route(state, operative_id)
+
+    %{
+      state
+      | operative_mapping: Map.put(state.operative_mapping, operative_id, pids),
+        route_monitors: Enum.reduce(pids, state.route_monitors, &watch(&2, &1, operative_id))
+    }
+  end
+
+  @doc "Forget one operative's route, releasing the monitors only it held."
+  def drop_route(state, operative_id) do
+    {pids, mapping} = Map.pop(state.operative_mapping, operative_id, [])
+
+    %{
+      state
+      | operative_mapping: mapping,
+        route_monitors: Enum.reduce(pids, state.route_monitors, &unwatch(&2, &1, operative_id))
+    }
+  end
+
+  @doc """
+  A cached Overwatch died: forget every operative routing to it, so the next
+  frame resolves through `ClassRegistry` and reaches the live replacement.
+
+  Frames enqueued after the death sit behind the `:DOWN` in the same mailbox,
+  so they see a clear cache; one enqueued before it was routed while the
+  target was still alive, which no design can save.
+  """
+  def forget_pid(state, pid) do
+    case Map.pop(state.route_monitors, pid) do
+      {nil, _monitors} ->
+        state
+
+      {{_ref, ids}, monitors} ->
+        Enum.reduce(ids, %{state | route_monitors: monitors}, &drop_route(&2, &1))
+    end
+  end
+
+  # One monitor per pid however many operatives name it, so a `:DOWN` arrives
+  # once and the demonitor waits for the last of them to leave. A route that is
+  # not a pid raises here rather than entering the cache unmonitored.
+  defp watch(monitors, pid, operative_id) do
+    case monitors do
+      %{^pid => {ref, ids}} -> Map.put(monitors, pid, {ref, MapSet.put(ids, operative_id)})
+      _ -> Map.put(monitors, pid, {Process.monitor(pid), MapSet.new([operative_id])})
+    end
+  end
+
+  defp unwatch(monitors, pid, operative_id) do
+    case monitors do
+      %{^pid => {ref, ids}} ->
+        ids = MapSet.delete(ids, operative_id)
+
+        if MapSet.size(ids) == 0 do
+          Process.demonitor(ref, [:flush])
+          Map.delete(monitors, pid)
+        else
+          Map.put(monitors, pid, {ref, ids})
+        end
+
+      _ ->
+        monitors
+    end
+  end
 
   # Emit `output_stall` for each mapped operative whose kind runs the output-stall
   # watchdog. A kind without it (a durable workflow operative) legitimately goes

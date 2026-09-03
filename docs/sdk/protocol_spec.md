@@ -572,9 +572,9 @@ lets in-flight work unwind, runs any saga compensation, then emits the normal
 
 ### WorkflowCompleted
 
-`WorkflowCompleted { operative_id, status, error, result: bytes,
-direct_outputs: uint32 }` travels runner → controller, one-way, when a
-workflow instance reaches an exit trigger. `status` is `"ok"`, `"error"` (with
+`WorkflowCompleted { operative_id, status, error, result: bytes }` travels
+runner → controller, one-way, when a workflow instance reaches an exit
+trigger. `status` is `"ok"`, `"error"` (with
 `error`) or `"cancelled"`; `result` is the terminal payload. The controller
 drives the single stop/teardown path (deregister-on-completion) so a finished
 instance leaves the durable registry and is never replayed on boot; an errored
@@ -582,13 +582,17 @@ one is torn down identically (terminal — the platform never re-runs it; a
 structured chain's per-Entity retry ladder runs *inside* the run) and surfaced
 via `[:flezha, :workflow, :failed]`.
 
-`direct_outputs` counts the plugin-bound outputs an opted-out (or `run`-sugar)
-instance wrote straight to the data stream before completing: the two frames
-travel different sockets, so the controller holds the teardown until its
-Overwatch has run that many outputs (60 s drain deadline). A durable class's
-outputs ride the journaled outbox and are not counted. A workflow instance's
-direct output is a frame whose payload id is the instance id, on a secondary
-stream.
+An opted-out (or `run`-sugar) instance writes its plugin-bound outputs straight
+to the data stream — a frame whose payload id is the instance id, on a
+secondary stream — so those outputs and this completion travel different
+sockets. Before deregistering the instance the controller **flushes** the
+runner's stream channels: one bounded synchronous call per channel, which is
+answered only after every frame already in that channel's mailbox has been
+routed onward. Nothing is counted, because a count of what the runner wrote is
+decidable only while nothing is ever lost. A durable class's outputs ride the
+journaled outbox instead, and that debt — exact and durable — is still waited
+for, re-driven, under a 60 s bound. Field 5 was a `direct_outputs` count and is
+reserved; a runner that still sets it is simply not read.
 
 ### EntityState
 

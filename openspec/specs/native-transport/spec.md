@@ -4,7 +4,16 @@
 TBD - created by archiving change elixir-sdk-native-transport. Update Purpose after archive.
 ## Requirements
 ### Requirement: Native stream handles satisfy the existing stream contract through one polymorphic seam
-The system SHALL provide a native stream handle type (`%Flezha.Transport.Local.Stream{}` — one process per stream, carrying a `:controller` and an `:sdk` side) and a dispatch seam (`Flezha.Transport.Stream`) such that `send_frame/4`, `set_active/1`, `close/1`, `controlling_process/2`, and `stream_id/1` work on both NIF stream resources and native handles, with the NIF arm delegating to `Flezha.Transport.Native` unchanged. The five modules that call per-stream NIF operations today (`transport/server.ex`, `stream_acceptor.ex`, `control_channel.ex`, `stream_channel.ex`, `fleet_manager.ex`) SHALL go through the seam; after the switch, no per-stream `Native.` call SHALL remain outside `native.ex` and the seam. The control channel SHALL write through `send_frame/4` (payload-ids `control_command` / `control_ping`) rather than pre-framing in Elixir — `send_data/2` is not part of the seam and `Flezha.Service.Payloader.build_from_bin/3` is removed; the wire bytes are unchanged because the NIF frames in Rust. Server-lifecycle NIFs (`start_uds_server/2`, `start_quic_server/5`, `stop_server/1`, `driver_stats/1`) are out of the seam's scope. `send_frame/4` on a native handle SHALL deliver `{:flz_data, stream_id, payload_id, message, metadata}` to the other side's current owner process through the stream process, without serialization or framing, preserving per-stream order, and no native-transport code SHALL assume `message` is a binary.
+
+The system SHALL provide a native stream handle type (`%Flezha.Transport.Local.Stream{}` — one process per stream, carrying a `:controller` and an `:sdk` side) and a dispatch seam (`Flezha.Transport.Stream`) such that `send_frame/4`, `set_active/1`, `close/1`, `controlling_process/2`, and `stream_id/1` work on both NIF stream resources and native handles, with the NIF arm delegating to `Flezha.Transport.Native` unchanged.
+
+The five modules that call per-stream NIF operations (`transport/server.ex`, `stream_acceptor.ex`, `control_channel.ex`, `stream_channel.ex`, `fleet_manager.ex`) SHALL go through the seam; no per-stream `Native.` call SHALL remain outside `native.ex` and the seam.
+
+The control channel SHALL write through `send_frame/4` (payload-ids `control_command` / `control_ping`) rather than pre-framing in Elixir — `send_data/2` is not part of the seam; the wire bytes are unchanged because the NIF frames in Rust.
+
+<!-- docs-citation-record:begin -->The Elixir-side pre-framing helper `Flezha.Payloader.build_from_bin/3` is removed, and naming it here is the record of that removal.<!-- docs-citation-record:end -->
+
+Server-lifecycle NIFs (`start_uds_server/2`, `start_quic_server/5`, `stop_server/1`, `driver_stats/1`) are out of the seam's scope. `send_frame/4` on a native handle SHALL deliver `{:flz_data, stream_id, payload_id, message, metadata}` to the other side's current owner process through the stream process, without serialization or framing, preserving per-stream order, and no native-transport code SHALL assume `message` is a binary.
 
 #### Scenario: Data frame delivered as a plain message
 - **WHEN** a process calls `Flezha.Transport.Stream.send_frame(native_handle, "operative-1", message, metadata)`

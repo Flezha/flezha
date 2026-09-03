@@ -5,8 +5,8 @@ defmodule Flezha.Runner.StreamChannel do
 
   The two mechanisms it drives live beside it —
   `Flezha.Runner.StreamChannel.Gate` (the send gate and the bind-waiter set)
-  and `Flezha.Runner.StreamChannel.Records` (the durable-record fan-out and
-  the credit handshake).
+  and `Flezha.Runner.StreamChannel.Records` (the operative route cache, the
+  durable-record fan-out and the credit handshake).
 
   Invariant: the published stream ref lives in a `:persistent_term` under this
   module's name, written at init, bind and close only — `io_in/3` reads it
@@ -98,6 +98,11 @@ defmodule Flezha.Runner.StreamChannel do
         type: type,
         stream_ref: nil,
         operative_mapping: %{},
+        # Every pid `operative_mapping` caches, keyed by pid so a `:DOWN`
+        # resolves in one lookup: `%{pid => {monitor_ref, MapSet of the
+        # operative ids naming it}}`. Written only by `Records.put_route/3`,
+        # `Records.drop_route/2` and `Records.forget_pid/2`.
+        route_monitors: %{},
         name: name,
         last_seen: System.monotonic_time(:millisecond),
         liveness_ref: liveness_ref,
@@ -159,31 +164,21 @@ defmodule Flezha.Runner.StreamChannel do
 
   @impl true
   def handle_call({:operative_pid_update, operative_id, updated_pids}, _from, state) do
-    operative_mapping = Map.put(state[:operative_mapping], operative_id, updated_pids)
-
-    {:reply, :ok, Map.put(state, :operative_mapping, operative_mapping)}
+    {:reply, :ok, Records.put_route(state, operative_id, updated_pids)}
   end
 
   @impl true
   def handle_call({:operative_pid_remove, operative_id}, _from, state) do
-    operative_mapping = Map.delete(state[:operative_mapping], operative_id)
-
-    {:reply, :ok, Map.put(state, :operative_mapping, operative_mapping)}
-  end
-
-  @impl true
-  def handle_call({:operative_bulk_insert, operatives}, _from, state) do
-    operative_mapping =
-      Enum.reduce(operatives, state.operative_mapping, fn {operative_id, updated_pids}, acc ->
-        Map.put(acc, operative_id, updated_pids)
-      end)
-
-    {:reply, :ok, Map.put(state, :operative_mapping, operative_mapping)}
+    {:reply, :ok, Records.drop_route(state, operative_id)}
   end
 
   # Probe used by acceptors to find rebindable channels. Returns the current
   # stream_ref (or nil if unbound). Snapshot only — the acceptor must then
   # call {:bind, ref} to atomically claim a nil-ref channel.
+  #
+  # Also the teardown barrier's question (`StreamPool.flush_channels/1`), which
+  # wants nothing but an answer: a reply proves every frame ahead of the call in
+  # this mailbox has been routed.
   @impl true
   def handle_call(:stream_ref_status, _from, state) do
     {:reply, state.stream_ref, state}
@@ -465,6 +460,12 @@ defmodule Flezha.Runner.StreamChannel do
     state = Gate.wake_waiters(state, :send_gate, {:send_gate, state.name, :closed})
 
     {:noreply, %{state | stream_ref: nil} |> Records.reset_credit()}
+  end
+
+  # The only monitors this process holds are the route cache's, so a `:DOWN`
+  # is always a cached Overwatch dying.
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    {:noreply, Records.forget_pid(state, pid)}
   end
 
   def handle_info(msg, state) do

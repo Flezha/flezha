@@ -820,11 +820,13 @@ dependencies are resolved by the ecosystem's resolver and are out of scope.
 
 ### Requirement: A document's citation of code SHALL be verified by a gate
 
-A citation a document makes SHALL resolve in the tree, and a gate SHALL check that it does. A citation is a pointer with a decidable answer — an Elixir module, an Elixir function, a repository path with an optional line, an environment variable, a telemetry event — and the gate SHALL fail a citation the tracked tree cannot answer. A prose claim about behaviour SHALL NOT be checked: a gate that reports a correct sentence gets turned off, and rewording correct prose to satisfy it is a defeat, not a fix.
+A citation a document makes SHALL resolve in the tree, and a gate SHALL check that it does. A citation is a pointer with a decidable answer — an Elixir module, an Elixir function, a repository path with an optional line, an environment variable, a telemetry event, a build module the reactor registers — and the gate SHALL fail a citation the tracked tree cannot answer. A prose claim about behaviour SHALL NOT be checked: a gate that reports a correct sentence gets turned off, and rewording correct prose to satisfy it is a defeat, not a fix.
 
 The gate SHALL judge only citations whose answer the tree carries. A pointer with no directory component, a path rooted where the repository tracks nothing, and a path the repository ignores by policy SHALL be left unjudged rather than reported, and each such exclusion SHALL be a rule about the shape of the citation rather than a list of the instances that trip it.
 
-A normative specification SHALL be out of the gate's scope, because a requirement states what SHALL hold and may name a helper or a variable the code still owes; reading a mandate as a citation of present fact would fail a correct, unimplemented requirement. A changelog SHALL be out of scope for the different reason that it is a dated record, whose removal entries name what no longer exists because that is what they record.
+A published specification SHALL be in the gate's scope, on the same terms as any other document. **The gate judges a citation, never the sentence around it.** Whether a pointer stands in a mandate or in a report is not decidable from the text — a requirement body places both in one sentence — so a specification that names something this tree does not carry SHALL declare that by an explicit marker rather than leave the gate to infer it from a modal verb. Working material the repository keeps out of version control SHALL stay out of scope, because a citation into it has no answer here. A changelog SHALL be out of scope for the different reason that it is a dated record, whose removal entries name what no longer exists because that is what they record.
+
+A requirement that mandates a rename, or that records a removal, SHALL keep naming the retired name, and SHALL carry it inside a recorded-citation marker pair standing on a line of its own. The exemption covers the lines the markers delimit, so a deliberate mention SHALL NOT be wrapped around prose that carries live citations: the whole line would stop being read.
 
 A citation this repository makes on purpose to something it does not carry — a removal quoted as a record, a coordinate in another repository — SHALL be exempted by an explicit recorded-citation marker, and SHALL NOT be deleted or reworded to satisfy the gate.
 
@@ -854,11 +856,23 @@ The gate SHALL report how much it read beside its verdict, so a green that means
 - **WHEN** the gate runs
 - **THEN** those lines SHALL be exempt, and the prose SHALL be unchanged by the exemption
 
-#### Scenario: A normative requirement may name what the code still owes
+#### Scenario: A stale coordinate inside a published specification is caught
 
-- **GIVEN** a specification requiring an environment variable or a helper file that does not exist yet
+- **GIVEN** a requirement citing a source file or a `file:line` coordinate the tree no longer carries
 - **WHEN** the gate runs
-- **THEN** it SHALL NOT report that requirement, because a mandate is not a citation of present fact
+- **THEN** it SHALL exit non-zero naming the specification, the line and the citation, whether or not the sentence carrying it uses SHALL or MUST
+
+#### Scenario: A requirement that names a retired name declares it
+
+- **GIVEN** a requirement that mandates a rename, and so must keep naming the retired name, with that clause on its own line inside a recorded-citation marker pair
+- **WHEN** the gate runs
+- **THEN** that line SHALL be exempt, every other line of the requirement SHALL still be judged, and the requirement's wording SHALL be unchanged by the exemption
+
+#### Scenario: A build module the reactor no longer lists is caught
+
+- **GIVEN** a document or a specification naming a Java SDK Maven module that `sdk/java/pom.xml` does not list
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero naming the document, the line, the module and the file that holds the registry
 
 #### Scenario: The gate says how much it read
 
@@ -867,7 +881,7 @@ The gate SHALL report how much it read beside its verdict, so a green that means
 
 #### Scenario: The gate is proved able to fail before it is trusted
 
-- **WHEN** the gate is added
+- **WHEN** the gate is added, or its scope or its set of citation kinds is widened
 - **THEN** a dead citation of each kind it checks SHALL be introduced into more than one document, the gate SHALL be shown to exit non-zero naming every one, and it SHALL be shown to exit zero once the documents are restored
 
 ### Requirement: Tracked material SHALL identify this checkout by what it declares

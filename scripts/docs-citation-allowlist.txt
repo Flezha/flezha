@@ -8,9 +8,8 @@
 #
 # 1. THE SCRIPT'S OWN RULES decide what can be judged at all — a citation with
 #    no directory component, a path rooted where the repository tracks nothing,
-#    a path the repository ignores by policy, `openspec/specs/` (normative, so a
-#    name there may be a mandate rather than a citation) and the changelogs
-#    (dated records of what was removed). Those are stated in the script,
+#    a path the repository ignores by policy, and the changelogs (dated records
+#    of what was removed). Those are stated in the script,
 #    because they are the gate's shape rather than exceptions to it. Widening
 #    the script is how the gate gets stronger; adding entries here is how it
 #    gets quieter.

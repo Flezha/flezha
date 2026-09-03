@@ -19,6 +19,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
@@ -435,8 +436,7 @@ defmodule Flezha.Runner.ControlChannel do
       operative_id: operative_id,
       status: status,
       error: error,
-      result: result,
-      direct_outputs: direct_outputs
+      result: result
     } = completed
 
     :telemetry.execute(
@@ -467,7 +467,7 @@ defmodule Flezha.Runner.ControlChannel do
         finished_at: System.system_time(:second)
       })
 
-    deregister_on_completion(namespace, operative_id, direct_outputs)
+    deregister_on_completion(state, operative_id)
   end
 
   defp report_workflow_failure(state, operative_id, error) do
@@ -486,9 +486,9 @@ defmodule Flezha.Runner.ControlChannel do
   # Tear down off the control-channel process: `stop_operative` drives a
   # RemOperative round-trip whose CommandResponse returns on THIS control
   # stream, so calling it inline would deadlock the reader.
-  defp deregister_on_completion(namespace, operative_id, direct_outputs) do
+  defp deregister_on_completion(%{namespace: namespace, runner_id: runner_id}, operative_id) do
     Task.start(fn ->
-      drain_owed_outputs(namespace, operative_id, direct_outputs)
+      drain_owed_outputs(runner_id, operative_id)
 
       case OperativeManager.stop_operative(namespace, operative_id) do
         :ok ->
@@ -515,55 +515,43 @@ defmodule Flezha.Runner.ControlChannel do
   # A completion must not tear the Overwatch down under output still on its
   # way: a durable class's last outbox is flushed after its commit ack on this
   # channel, and an opted-out class's direct outputs travel the data stream
-  # while the completion travels this one. Wait until the journal owes nothing
-  # and the Overwatch has run the `direct_outputs` the completion counted,
-  # bounded so a sink that never confirms cannot hold the teardown — the
-  # retained journal keeps an outbox debt. Under a start storm the flush
-  # itself queues behind the channel for tens of seconds, and the instance is
-  # retained either way.
+  # while the completion travels this one. Two debts, settled differently:
+  #
+  #   * the data stream is FLUSHED, once, by a barrier across the runner's
+  #     stream channels. Nothing is counted — counting what the runner wrote
+  #     against what the controller ran is decidable only while nothing is
+  #     ever lost, and a frame routed to an Overwatch that has since been
+  #     replaced is exactly that loss.
+  #   * the journal is WAITED for, unchanged: `pending_entries/1` is an exact,
+  #     durable, re-drivable debt, and `@drain_owed_ms` keeps a sink that never
+  #     confirms from holding the teardown — the retained journal keeps the
+  #     debt. Under a start storm the flush itself queues behind the channel
+  #     for tens of seconds, and the instance is retained either way.
   @drain_owed_ms 60_000
 
-  defp drain_owed_outputs(namespace, operative_id, direct_outputs) do
-    deadline = System.monotonic_time(:millisecond) + @drain_owed_ms
-    drain_owed_outputs(namespace, operative_id, direct_outputs, deadline)
+  defp drain_owed_outputs(runner_id, operative_id) do
+    StreamPool.flush_channels(runner_id)
+    await_owed_journal(operative_id, System.monotonic_time(:millisecond) + @drain_owed_ms)
   end
 
-  defp drain_owed_outputs(namespace, operative_id, direct_outputs, deadline) do
+  defp await_owed_journal(operative_id, deadline) do
     pending = ProcJournal.pending_entries(operative_id)
 
-    owed_direct =
-      case direct_outputs_seen(namespace, operative_id) do
-        :gone -> 0
-        seen -> max(direct_outputs - seen, 0)
-      end
-
     cond do
-      pending == [] and owed_direct == 0 ->
+      pending == [] ->
         :ok
 
       System.monotonic_time(:millisecond) >= deadline ->
         Logger.warning(
           "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
-            "#{length(pending)} outbox entries and #{owed_direct} direct outputs still owed"
+            "#{length(pending)} outbox entries still owed"
         )
 
       true ->
-        if pending != [], do: ProcJournal.flush_pending(operative_id)
+        ProcJournal.flush_pending(operative_id)
         Process.sleep(50)
-        drain_owed_outputs(namespace, operative_id, direct_outputs, deadline)
+        await_owed_journal(operative_id, deadline)
     end
-  end
-
-  # An Overwatch that is already gone has nothing more to run.
-  defp direct_outputs_seen(namespace, operative_id) do
-    with {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_id),
-         %{direct_outputs_seen: seen} <- GenServer.call(pid, :get_overwatch_state, 5_000) do
-      seen
-    else
-      _ -> :gone
-    end
-  catch
-    :exit, _ -> :gone
   end
 
   defp emit_runner_shutdown_ack(state, operative_id, reference_id) do

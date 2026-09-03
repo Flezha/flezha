@@ -477,13 +477,11 @@ message WorkflowCompleted {
     string status = 2;
     string error = 3;
     bytes result = 4;
-    // Plugin-bound outputs this instance wrote straight to the data stream
-    // (an opted-out class, or `run`-sugar) before this completion. They and
-    // the completion travel different sockets; the Controller holds the
-    // teardown until it has run that many, so the last output is not torn
-    // down under. A durable class's outputs ride the journaled outbox and
-    // are not counted here.
-    uint32 direct_outputs = 5;
+    // 5 was `direct_outputs`, a count of the plugin-bound outputs an opted-out
+    // instance wrote straight to the data stream. Nothing reads it: the
+    // teardown flushes the runner's stream channels instead of counting, which
+    // holds even when an output was lost rather than delivered.
+    reserved 5;
 }
 
 // Controller -> SDK. Offers credit-grant flow control for the runner's

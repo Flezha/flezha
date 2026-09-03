@@ -151,7 +151,8 @@ pub struct AddOperative {
     pub key_group_to: u32,
     /// Inbox items the Controller forwards after this bind (the journaled,
     /// undelivered tail of a durable loop). The loop's park-idle clock starts
-    /// only once they have arrived.
+    /// only once they have arrived: forwarded after the bind under load, they
+    /// would otherwise reach a driver that has already parked and be dropped.
     #[prost(uint32, tag = "11")]
     pub inbox_tail_count: u32,
 }
@@ -165,8 +166,10 @@ pub struct AddOperative {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AddOperativeResponse {
     #[prost(map = "string, string", tag = "1")]
-    pub metadata:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemOperative {
@@ -187,6 +190,12 @@ pub struct MigrationDeserialization {
     #[prost(bytes = "vec", tag = "3")]
     pub serialized_state: ::prost::alloc::vec::Vec<u8>,
 }
+/// Serialize live in-memory Entity state as JSON. Both selector fields are
+/// optional (empty = absent): absent selector covers every Procedure of the
+/// Operative (the migration/handover shape), `procedure` narrows to one
+/// Procedure's Entities, `procedure` + `entity_key` to one Entity. An
+/// `entity_key` without a `procedure` is refused — an Entity key is unique
+/// only within its Procedure.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EntityState {
     #[prost(string, tag = "1")]
@@ -198,8 +207,15 @@ pub struct EntityState {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RunnerDisconnect {
+    /// Terminal disconnect: the runner runs its graceful shutdown and then
+    /// exits NON-ZERO, so the orchestrator that owns process lifecycle
+    /// restarts it. Default (false) is the existing cooperative disconnect,
+    /// which leaves the process running and reconnectable. A zero exit would
+    /// read as a clean stop and the runner would not come back — which is
+    /// exactly the flap the terminal rung exists to end.
     #[prost(bool, tag = "1")]
     pub terminal: bool,
+    /// Why, for the runner's own log. Never interpreted by the SDK.
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
 }
@@ -604,11 +620,6 @@ pub struct WorkflowCompleted {
     pub error: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub result: ::prost::alloc::vec::Vec<u8>,
-    /// Plugin-bound outputs this instance wrote straight to the data stream
-    /// before this completion; the Controller holds the teardown until it
-    /// has run that many.
-    #[prost(uint32, tag = "5")]
-    pub direct_outputs: u32,
 }
 /// Controller -> SDK. Offers credit-grant flow control for the runner's
 /// state stream. `stream_id` is an opaque credit-session id minted fresh per
@@ -668,6 +679,13 @@ pub struct FactoryDecl {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub description: ::prost::alloc::string::String,
+    /// The SDK language of the class registered under this id — the value the
+    /// SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0
+    /// of every durable record it writes (1 Rust, 2 Java, 3 Elixir; the
+    /// allocation table of record is `flz_core::header`). The Controller places
+    /// an operative only on a runner advertising its factory's established
+    /// language, because the State/Change bodies below the shared envelope are
+    /// per-SDK. 0 (absent) is "unspecified" and never places.
     #[prost(uint32, tag = "3")]
     pub sdk_lang: u32,
 }

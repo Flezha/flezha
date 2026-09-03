@@ -275,9 +275,11 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
     # proc-commit handshake entirely — no journal, no WAL — and a crash-resume
     # keeps the re-run-from-top contract: with nothing restored and nothing
     # journaled, the only way the chain completes on the replacement is a
-    # fresh run of proc A feeding proc B. (Proc A's sink marker is used only as the
-    # pre-crash mid-run signal — plain workflow outputs are best-effort during
-    # a rebind, so the resumed run's marker delivery is not asserted.)
+    # fresh run of proc A feeding proc B. Proc A's sink marker is both the
+    # pre-crash mid-run signal and the proof of that re-run: one marker per
+    # run, and the second one is owed BEFORE the completed instance is
+    # deregistered — the teardown flushes the runner's stream channels, so an
+    # output the transport has already delivered is never torn down under.
     test "opted-out workflow writes no journal and re-runs from the top", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
@@ -291,6 +293,15 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           end,
           plugins: [forward_sink("optout_sink", collector)]
         )
+
+      # `drive_crash_resume/5` has already seen the instance deregistered, so
+      # both runs' markers must be in hand by now: the first run's (the mid-run
+      # signal) and the resumed run's.
+      markers = Enum.filter(collected(collector), &String.starts_with?(&1, "a-ran:"))
+
+      assert length(markers) == 2,
+             "the sink must see proc A's marker once per run, both delivered " <>
+               "before the teardown: #{inspect(markers)}"
 
       assert {:ok, []} = ProcJournal.read(operative_id)
       refute File.exists?(Paths.journal_path(operative_id))

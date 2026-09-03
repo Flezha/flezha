@@ -24,7 +24,6 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.Runner.FleetSupervisor
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.StreamPool
-  alias Flezha.SafeCall
   alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
@@ -127,20 +126,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   # block the connect; its late-flushed frames are refused by the mark instead.
   def fence_superseded_session(old_session) do
     Marks.mark_session_superseded(old_session)
-
-    Enum.each(stream_channel_pids(old_session), fn pid ->
-      _ = SafeCall.bounded(pid, :fence_write_path, 1_000)
-    end)
-  end
-
-  # Resolve the session's fixed channel-name set (the same one `StreamSup`
-  # spawns); a dead/unregistered channel forwards nothing, so it is skipped.
-  def stream_channel_pids(session_token) do
-    for type <- [:primary, :secondary],
-        name <- StreamPool.stream_ids(session_token, type),
-        pid = GenServer.whereis(name),
-        is_pid(pid),
-        do: pid
+    StreamPool.call_channels(old_session, :fence_write_path)
   end
 
   # Re-tag every operative still bound to `old_session` onto `new_session` and

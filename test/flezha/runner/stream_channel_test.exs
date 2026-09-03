@@ -320,8 +320,73 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
   end
 
+  describe "route cache invalidation" do
+    setup do
+      TestHelpers.tmp_app_data_dir()
+      ClassRegistry.ensure_table()
+
+      :ok
+    end
+
+    test "a frame for an operative whose cached Overwatch died routes through the registry",
+         %{pid: pid} do
+      class = "route_dead_#{System.unique_integer([:positive])}"
+      on_exit(fn -> ClassRegistry.delete(class) end)
+
+      # The cache names the Overwatch that is about to die; the class registry
+      # names the live replacement — the crash-resume shape, in one process.
+      test_pid = self()
+      dead = spawn(fn -> Process.sleep(:infinity) end)
+
+      # A stand-in Overwatch: forwards the cast the channel routes to it, so a
+      # delivered frame is observable from the test process.
+      live =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_cast", {:io_out, message, _md}} -> send(test_pid, {:io_out, message})
+          end
+        end)
+
+      :ok = GenServer.call(pid, {:operative_pid_update, class, [dead]})
+      ClassRegistry.put(class, :workflow)
+      ClassRegistry.put_overwatch(class, live)
+
+      Process.exit(dead, :kill)
+
+      assert NodeTestHelper.wait_until(
+               fn -> not Map.has_key?(:sys.get_state(pid).operative_mapping, class) end,
+               1_000
+             ),
+             "the cached pid outlived the process it cached"
+
+      send(pid, {:flz_data, :ref_dead, class, "out-after-death", %{}})
+
+      # Reaching the live pid at all is the proof: had the cache won, the frame
+      # would have been cast into a dead process and lost with no drop counted.
+      assert_receive {:io_out, "out-after-death"}, 1_000
+    end
+
+    test "a cached pid is monitored while cached and demonitored when it leaves", %{pid: pid} do
+      class = "route_gone_#{System.unique_integer([:positive])}"
+      holder = spawn(fn -> Process.sleep(:infinity) end)
+
+      :ok = GenServer.call(pid, {:operative_pid_update, class, [holder]})
+      assert {:process, holder} in monitors_of(pid)
+
+      :ok = GenServer.call(pid, {:operative_pid_remove, class})
+      refute {:process, holder} in monitors_of(pid)
+
+      Process.exit(holder, :kill)
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
   defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
+
+  defp monitors_of(pid) do
+    {:monitors, monitors} = Process.info(pid, :monitors)
+    monitors
+  end
 
   # The output_stall event is global: real channels elsewhere in the suite can
   # flag leftovers of other tests' operatives mid-refute-window. Forward only

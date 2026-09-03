@@ -2,16 +2,17 @@
 # Fails when documentation cites a name this repository no longer carries.
 #
 # Documentation points at code: a module, a function, a file, a `file:line`
-# coordinate, an environment variable, a telemetry event. Code moves and the
-# pointer stays, so the citation rots in silence — `mix compile` never reads a
-# document, and neither does any suite. This gate is the layer that does.
+# coordinate, an environment variable, a telemetry event, a Java SDK Maven
+# module. Code moves and the pointer stays, so the citation rots in silence —
+# `mix compile` never reads a document, and neither does any suite. This gate is
+# the layer that does.
 #
 # It checks only what has a decidable answer in the tree. A prose claim about
 # how something behaves is out of scope by design: a gate with false positives
 # gets turned off, and the repository has already paid for one that went red on
 # correct prose.
 #
-# Five citation kinds, each judged against the tracked tree:
+# Six citation kinds, each judged against the tracked tree:
 #
 #   module     `Flezha.A.B` — live when the tracked Elixir source names it, or
 #              names something below it. `#{__MODULE__}` is resolved first, so a
@@ -24,6 +25,9 @@
 #              citing document, or when a tracked path ends with it (an SDK's
 #              own root, `.../` elision). `:line` must be a line the file has.
 #   env var    `FLEZHA_*` — live when any tracked non-document file names it.
+#   maven      `flezha-sdk…` — live when `sdk/java/pom.xml` lists it as a
+#              `<module>`. A Maven module is a directory, and every path pattern
+#              here requires an extension, so nothing else can see one.
 #   telemetry  `[:flezha, …]` — live when the source carries the literal, or
 #              carries the prefix and the final atom, which is how an event
 #              assembled from a variable is written.
@@ -39,16 +43,19 @@
 #   `docs/dev_notes/`): those directories are working material kept out of git,
 #   and a citation into one is unresolvable here rather than wrong.
 #
-#   `openspec/specs/` is NORMATIVE. A requirement states what SHALL hold, which
-#   may name a helper nobody has written yet — `cli/src/utils.rs (or
-#   equivalent)` — or an environment variable the code still owes. Reading a
-#   mandate as a citation of present fact fails correct, unimplemented
-#   requirements, and conflates spec drift (its own workflow: measure which side
-#   is wrong, then amend) with documentation rot.
-#
 #   A changelog is a dated record. Its removal entries necessarily name what no
 #   longer exists, every release adds more, and the entry is anchored to the
 #   release that wrote it — the history that is never edited.
+#
+# A SPECIFICATION IS IN SCOPE, and is judged exactly as a document is. The gate
+# judges a citation, never a sentence: whether the prose around a pointer is a
+# mandate ("SHALL live at") or a report ("lives at") is not decidable from the
+# text, and this repository's requirement bodies routinely carry both in one
+# sentence. So a name a specification carries on purpose — a rename mandate, a
+# removal record, a mandate the code has yet to satisfy — is declared by its
+# author with a marker pair rather than inferred from the sentence. That is the
+# mechanism the module-, kind- and overflow-naming gates already use inside that
+# tree.
 #
 # Deliberate mentions inside a document in scope take a
 # `docs-citation-record:begin` / `:end` marker pair, which exempts the lines it
@@ -93,6 +100,24 @@ for _path in TRACKED:
         SUFFIXES.add("/".join(_parts[_i:]))
 TOP_LEVEL = {p.split("/", 1)[0] for p in TRACKED}
 
+# The one registry this repository keeps for a build artifact that is a
+# directory rather than a file. A registry that came back empty would turn the
+# check into an accusation against every Maven citation in the tree, so a pom
+# that cannot be read or lists nothing exits 2 — the gate is broken, which is a
+# different answer from the tree being dirty. Names are stripped because the
+# entry is XML: reindenting the pom must not silently invalidate every citation.
+MAVEN_POM = "sdk/java/pom.xml"
+try:
+    with open(MAVEN_POM, encoding="utf-8") as _fh:
+        MAVEN_MODULES = {m.strip() for m in re.findall(r"<module>([^<]+)</module>", _fh.read())}
+except OSError as exc:
+    print(f"cannot read {MAVEN_POM}, so no Maven module can be judged: {exc}", file=sys.stderr)
+    sys.exit(2)
+if not MAVEN_MODULES:
+    print(f"{MAVEN_POM} lists no <module> entries, so no Maven module can be judged",
+          file=sys.stderr)
+    sys.exit(2)
+
 SOURCE_EXT_SKIP = {".md"}
 NAME = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Za-z0-9_.]+)")
@@ -100,6 +125,11 @@ DEF = re.compile(r"^\s*(?:def|defp|defmacro|defmacrop|defdelegate)\s+([a-z_][A-Z
 ATOM = re.compile(r":([a-z_][A-Za-z0-9_]*)")
 ENV = re.compile(r"\bFLEZHA_[A-Z0-9_]+\b")
 EVENT = re.compile(r"\[\s*:flezha(?:\s*,\s*:?[A-Za-z0-9_]+)*\s*\]")
+# The closing backtick is required: without it `flezha-sdk-0.1.0.jar` reads as
+# module `flezha-sdk-0`. The prefix stays `flezha-sdk`, never `flezha-`, because
+# that is the only family with a registry — `flezha-certs`, `flezha-reaper` and
+# ten more are Kubernetes resources, volumes and thread names.
+MAVEN = re.compile(r"`(flezha-sdk(?:-[a-z0-9]+)*)`")
 
 elixir_names = set()      # every `Flezha.…` the source names
 module_file = {}          # module -> the file whose `defmodule` opens it
@@ -259,6 +289,13 @@ def check_env(line):
             for name in named if name not in source_envs]
 
 
+def check_maven_modules(line):
+    named = MAVEN.findall(line)
+    tally["citations"] += len(named)
+    return [f"names Maven module `{name}`, which `{MAVEN_POM}` does not list"
+            for name in named if name not in MAVEN_MODULES]
+
+
 def check_telemetry(line):
     out = []
     for cited in EVENT.findall(line):
@@ -286,11 +323,12 @@ def check(rel, line):
     tally["documents"].add(rel)
     for rule in scoped[rel]:
         line = rule.sub("", line)
-    return check_paths(rel, line) + check_elixir(line) + check_env(line) + check_telemetry(line)
+    return (check_paths(rel, line) + check_elixir(line) + check_env(line)
+            + check_maven_modules(line) + check_telemetry(line))
 
 
 def in_scope(rel):
-    return (not rel.startswith("openspec/")
+    return (not rel.startswith("openspec/changes/")
             and os.path.basename(rel) != "CHANGELOG.md")
 
 

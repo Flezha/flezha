@@ -138,7 +138,7 @@ The walk that computes file counts and bytes SHALL be the same in dry-run and ap
 
 `flz reset` SHALL resolve the `app_data/` root using, in order: the explicit `--app-data-root <PATH>` flag if given; the `FLEZHA_APP_DATA_ROOT` environment variable if set; otherwise the default `./app_data` relative to the current working directory.
 
-This resolution SHALL be implemented in a shared helper in `cli/src/utils.rs` (or equivalent) so other CLI subcommands that touch `app_data/` agree on the location.
+This resolution SHALL live in one shared helper — `cli/src/args.rs`, `app_data_root/1` over `resolve_app_data_root` — so every CLI subcommand that touches `app_data/` agrees on the location, and SHALL NOT be re-derived at a call site.
 
 #### Scenario: Explicit flag wins over env var
 

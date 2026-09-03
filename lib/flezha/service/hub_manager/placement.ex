@@ -4,8 +4,7 @@ defmodule Flezha.Service.HubManager.Placement do
   the refusals an unplaceable runner earns, and the runner-assignment wait.
   """
 
-  alias Flezha.Identificator
-  alias Flezha.SafeCall
+  alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate
@@ -43,15 +42,6 @@ defmodule Flezha.Service.HubManager.Placement do
         ]
       )
     end)
-  end
-
-  # Live stream-channel children (primary + secondary) for a runner; `[]`
-  # if the supervisors are gone.
-  defp stream_channels_for_runner(runner_id) do
-    Supervisor.which_children(Identificator.stream_sup_primary(runner_id)) ++
-      Supervisor.which_children(Identificator.stream_sup_secondary(runner_id))
-  catch
-    :exit, _ -> []
   end
 
   @spec unregister_handler(binary(), binary()) :: :ok | {:error, term()}
@@ -115,6 +105,10 @@ defmodule Flezha.Service.HubManager.Placement do
   # The route is operative_id -> local Overwatch pid, so seeding it into a
   # non-owning runner's channels is inert: any runner's channel resolves the
   # same process, and only the owner ever emits frames for this operative.
+  #
+  # This and `hook_remove_pid/2` run inside the `child_registered` hook, where
+  # an exit aborts the registry write that dispatched it — which is why the
+  # fan-out is bounded and never raises.
   def hook_insert_pid(runner_id, %{child_id: operative_id} = hook_data) do
     curr_node = node()
 
@@ -128,16 +122,7 @@ defmodule Flezha.Service.HubManager.Placement do
         nil
 
       _ ->
-        # A wedged or not-yet-started StreamChannel must not crash the caller:
-        # this runs inside the `child_registered` hook, where an exit aborts
-        # the registry write that dispatched it.
-        Enum.each(stream_channels_for_runner(runner_id), fn
-          {_, pid, _, _} when is_pid(pid) ->
-            _ = SafeCall.bounded(pid, {:operative_pid_update, operative_id, updated_pids}, 1_000)
-
-          _ ->
-            :ok
-        end)
+        StreamPool.call_channels(runner_id, {:operative_pid_update, operative_id, updated_pids})
     end
   end
 
@@ -187,13 +172,7 @@ defmodule Flezha.Service.HubManager.Placement do
   already-gone runner.
   """
   def hook_remove_pid(runner_id, %{child_id: operative_id}) do
-    Enum.each(stream_channels_for_runner(runner_id), fn
-      {_, pid, _, _} when is_pid(pid) ->
-        _ = SafeCall.bounded(pid, {:operative_pid_remove, operative_id}, 1_000)
-
-      _ ->
-        :ok
-    end)
+    StreamPool.call_channels(runner_id, {:operative_pid_remove, operative_id})
 
     :telemetry.execute(
       [:flezha, :hub, :pid_removed],

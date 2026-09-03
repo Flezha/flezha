@@ -412,6 +412,32 @@ prefix is a small share of a million measured messages; at the CI default of
 default dimensions.**
 
 
+### Two ways an A/B harness reports its own shape as an effect
+
+Both were measured on `bench-regression` while comparing two controller trees, and
+both produced a *consistent, statistically strong* reading of an effect that could
+not exist.
+
+**Keep the build out of the timed run.** A harness that switches arms by editing a
+source file and then calls `./scripts/bench.sh` puts `mix compile` inside the run's
+wall clock. Under the `powersave` governor sustained load *raises* the clock, so the
+arm whose source file is larger warms the CPU more immediately before measuring and
+reads faster. One arm 66 source lines larger measured **+11.0 % in 6 of 6 rounds**
+(sign test p ≈ 0.0014) for a change that adds no work to the measured path. Compiling
+before the run and settling a fixed idle first dropped the same comparison to +5.8 %,
+and swapping the arms' *whole* file set rather than one file dropped it to **+0.1 %**.
+
+**A three-run round gives its majority arm two of the three positions.** Position
+dominates this workload — the runs inside a round are not exchangeable — so pooling
+an `A B A` / `B A B` design credits the majority arm with the position effect.
+Compare position-matched, or use two-run rounds with strict alternation.
+
+**Carry a same-code control inside each round**, per *What a row can resolve* above.
+Two runs of byte-identical code inside one round spread **0.6 %–7.3 %** at
+`-n 100 -m 2000` and **1.3 %–2.4 %** at `-n 1000` (2026-09-03, on battery under
+`powersave`). Any arm-to-arm gap smaller than that band is not an effect, whatever
+its sign or consistency.
+
 ## Floor-update protocol
 
 When a change intentionally moves the floor:
