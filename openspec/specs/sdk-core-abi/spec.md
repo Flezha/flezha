@@ -20,6 +20,14 @@ activation exactly once — `complete`, the failure path, or `abandon` — and S
 make that structural in its own language (a `finally`, a destructor, a scope
 guard), not a discipline at each return site.
 
+A context handle SHALL be dead from the moment the destroy entry point is called on it.
+No veneer SHALL pass a destroyed handle back into any ABI entry point, `last_error`
+included, and each veneer SHALL make that structural in its own language rather than a
+discipline at each call site — by dropping the handle it stores, by an owned object whose
+accessor refuses once freed, or by a guard on the shared handle — so a host call arriving
+after the destroy is refused in the host's own vocabulary instead of dereferencing freed
+memory.
+
 #### Scenario: Shutdown wakes blocked pollers
 - **WHEN** host workers are blocked in `poll` and shutdown is requested
 - **THEN** every blocked `poll` SHALL return promptly with a distinguishable "shutting down" result, and no activation SHALL be lost (unpolled work follows the existing durability rules)
@@ -35,6 +43,10 @@ guard), not a discipline at each return site.
 #### Scenario: An unknown or already-answered token is rejected, not silently accepted
 - **WHEN** `abandon` or `complete` is called with a token that was never handed out, or that was already answered
 - **THEN** the call SHALL return an error retrievable through `last_error`, and SHALL NOT disturb any live handout
+
+#### Scenario: A host call after the context is destroyed is refused, not dereferenced
+- **WHEN** host code reaches a context-taking entry point through a veneer — a class declaration, a poll, a completion — after that veneer has destroyed its context
+- **THEN** the veneer SHALL raise its own language's refusal naming the freed context, and SHALL NOT call the ABI with the destroyed handle
 
 ### Requirement: Versioned activation schema with boot-time refusal
 

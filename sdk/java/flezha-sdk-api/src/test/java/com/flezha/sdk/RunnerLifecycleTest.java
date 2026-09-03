@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.StreamOperative;
+import com.flezha.sdk.workflow.WorkflowOperative;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -55,6 +56,13 @@ class RunnerLifecycleTest {
 
         @Override
         public void channels(ChannelBuilder c) {}
+    }
+
+    public static final class WorkflowD implements WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "lifecycle_d";
+        }
     }
 
     @BeforeEach
@@ -135,7 +143,7 @@ class RunnerLifecycleTest {
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.LAST_DECLARED_SUPPLIER.get())
                 .containsExactly("lifecycle_a");
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.SYNCED_SETS)
-                .as("pre-start mutations ship no UpdateFactories")
+                .as("pre-start mutations ship nothing")
                 .isEmpty();
     }
 
@@ -225,6 +233,36 @@ class RunnerLifecycleTest {
         assertThat(Flezha.currentRunner())
                 .as("a never-started runner never appears")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("define/remove on a closed runner are refused and never reach the runtime")
+    void mutatingAClosedRunnerIsRefused() {
+        FlezhaRunner runner =
+                Flezha.createRunner("ns_closed").defineStream(OperativeA.class).start();
+        runner.close();
+
+        // close() destroys the core context; a mutation that got through would
+        // carry the freed handle back across the JNI boundary.
+        assertThatThrownBy(() -> runner.defineStream(OperativeB.class))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ns_closed");
+        assertThatThrownBy(() -> runner.defineWorkflow(WorkflowD.class))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ns_closed");
+        assertThatThrownBy(() -> runner.removeStream(OperativeA.class))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ns_closed");
+        assertThatThrownBy(() -> runner.removeWorkflow(WorkflowD.class))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ns_closed");
+
+        assertThat(com.flezha.sdk.runtime.FlezhaImpl.SYNCED_SETS)
+                .as("a refused mutation must not reach the runtime")
+                .isEmpty();
+        assertThat(com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.registeredIds())
+                .as("a refused define must not register the class")
+                .doesNotContain("lifecycle_b");
     }
 
     @Test

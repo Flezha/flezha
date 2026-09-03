@@ -39,9 +39,10 @@ public interface RunnerHandle {
     void removeType(@Nonnull String factoryId);
 
     /**
-     * Ship the runner's FULL current factory set to the controller
-     * ({@code UpdateFactories}, fire-and-forget) after a post-start
-     * define/remove.
+     * Declare the runner's FULL current factory set to the core after a
+     * post-start define/remove. The set reaches the controller on the next
+     * connect/reconnect init frame; the ABI has no entry point that pushes it
+     * to a live controller.
      */
     void syncFactories(@Nonnull List<String> factoryIds);
 }

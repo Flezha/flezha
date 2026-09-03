@@ -21,9 +21,10 @@ import javax.annotation.Nonnull;
  * This JVM's runner: create → mutate ({@code define*} / {@code remove*}) →
  * start on one object, returned by {@link Flezha#createRunner(String)}.
  * Operative types may be declared and removed before AND after
- * {@link #start()}; a post-start change ships the runner's full factory set
- * to the controller ({@code UpdateFactories} — the reconnect init frame stays
- * the resync of record).
+ * {@link #start()}, until the started runner is closed; a post-start change
+ * is declared to the core immediately and reaches the controller on the next
+ * connect/reconnect init frame, which carries the runner's full factory set.
+ * A closed runner refuses every declaration and removal.
  *
  * <p>At most one runner is started per JVM (the slot is claimed by CAS inside
  * {@link #start()}); reach the active one from code that does not control
@@ -64,6 +65,14 @@ public final class FlezhaRunner implements AutoCloseable {
     /** Set once by the first {@link #start()}; a second start() is rejected forever. */
     private final AtomicBoolean everStarted = new AtomicBoolean(false);
 
+    /**
+     * Set by {@link #close()} on a started runner, whose core context the
+     * shutdown then frees; every later declaration and removal is refused
+     * rather than carried to it. A never-started runner has no context, so
+     * closing one leaves it mutable.
+     */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+
     FlezhaRunner(@Nonnull String namespace) {
         this.namespace = namespace;
     }
@@ -83,12 +92,11 @@ public final class FlezhaRunner implements AutoCloseable {
      * {@code StreamOperativeConfigurationException}.
      *
      * @throws IllegalArgumentException on a duplicate factory id.
+     * @throws IllegalStateException on a closed runner.
      */
     @Nonnull
     public FlezhaRunner defineStream(@Nonnull Class<? extends StreamOperative> operativeClass) {
-        stream.register(operativeClass);
-        syncFactoriesIfStarted();
-        return this;
+        return define(stream, "defineStream()", operativeClass);
     }
 
     /**
@@ -97,12 +105,11 @@ public final class FlezhaRunner implements AutoCloseable {
      * the declaring call site.
      *
      * @throws IllegalArgumentException on a factory id colliding with any declared class.
+     * @throws IllegalStateException on a closed runner.
      */
     @Nonnull
     public FlezhaRunner defineWorkflow(@Nonnull Class<? extends WorkflowOperative> workflowClass) {
-        workflow.register(workflowClass);
-        syncFactoriesIfStarted();
-        return this;
+        return define(workflow, "defineWorkflow()", workflowClass);
     }
 
     /**
@@ -113,19 +120,28 @@ public final class FlezhaRunner implements AutoCloseable {
      *     currently defined on this runner.
      * @throws OperativeTypeInUseException if the runner is started and live
      *     operative instances of the factory exist — the type stays defined.
+     * @throws IllegalStateException on a closed runner.
      */
     @Nonnull
     public FlezhaRunner removeStream(@Nonnull Class<? extends StreamOperative> operativeClass) {
-        return remove(stream, operativeClass);
+        return remove(stream, "removeStream()", operativeClass);
     }
 
     /** Remove a declared {@link WorkflowOperative} class. Sibling of {@link #removeStream(Class)}. */
     @Nonnull
     public FlezhaRunner removeWorkflow(@Nonnull Class<? extends WorkflowOperative> workflowClass) {
-        return remove(workflow, workflowClass);
+        return remove(workflow, "removeWorkflow()", workflowClass);
     }
 
-    private <C extends Computation> FlezhaRunner remove(RegistryCore<C> core, Class<? extends C> cls) {
+    private <C extends Computation> FlezhaRunner define(RegistryCore<C> core, String what, Class<? extends C> cls) {
+        open(what);
+        core.register(cls);
+        syncFactoriesIfStarted();
+        return this;
+    }
+
+    private <C extends Computation> FlezhaRunner remove(RegistryCore<C> core, String what, Class<? extends C> cls) {
+        open(what);
         String factoryId = core.definedFactoryIdOf(cls);
         RunnerHandle h = handle.get();
         if (h != null) {
@@ -280,6 +296,9 @@ public final class FlezhaRunner implements AutoCloseable {
     public void close() {
         RunnerHandle h = handle.get();
         if (h != null) {
+            // Marked before the shutdown runs: the sequence ends in
+            // contextFree, and nothing may declare into the context after it.
+            closed.set(true);
             h.close();
         }
         // Observers are per-runner: a second runner in this JVM must not
@@ -296,6 +315,18 @@ public final class FlezhaRunner implements AutoCloseable {
         return h;
     }
 
+    /**
+     * Refuse a declaration or removal on a closed runner. {@link #close()}
+     * destroys the core context, so carrying the change to the handle would
+     * hand a freed pointer back across the JNI boundary.
+     */
+    private void open(String what) {
+        if (closed.get()) {
+            throw new IllegalStateException(what + " on the closed runner for namespace '" + namespace
+                    + "'; a closed runner declares nothing — create a new one");
+        }
+    }
+
     /** This runner's full current factory set: stream first, then workflow. */
     private List<String> declaredFactoryIds() {
         List<String> ids = new ArrayList<>(stream.factoryIds());
@@ -304,9 +335,10 @@ public final class FlezhaRunner implements AutoCloseable {
     }
 
     /**
-     * Ship the FULL current factory set to the controller after a post-start
-     * define/remove — fire-and-forget; full-set semantics make redelivery
-     * idempotent. A no-op on a never-started runner.
+     * Declare the FULL current factory set to the core after a post-start
+     * define/remove — full-set semantics make a redeclaration idempotent, and
+     * the core carries the set to the controller on the next
+     * connect/reconnect init frame. A no-op on a never-started runner.
      */
     private void syncFactoriesIfStarted() {
         RunnerHandle h = handle.get();
