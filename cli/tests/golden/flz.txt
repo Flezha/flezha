@@ -22,6 +22,10 @@ COMMANDS:
     role           Principal → role bindings (bind, unbind, list)
     help           Show this help message
 
+OUTPUT FORMAT:
+    Every verb that renders takes --json, or the same request spelled
+    --output json / -o json. Any other format is refused, not rendered as text.
+
 Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:

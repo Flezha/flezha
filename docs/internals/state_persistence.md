@@ -364,7 +364,8 @@ workflow handoff uses; there is no separate key. Over it the read is refused nam
 and the narrowing selector: `state get: the selected state is 20971520 bytes, over the
 :wal_high_watermark_bytes ceiling — narrow the read with <operative>/<procedure>/<entity_key>`.
 
-**Output.** Text prints `change_seq:` and `state:`; `--output json` prints
+**Output.** Text prints `change_seq:` and `state:`; `--output json` (or its switch spelling
+`--json`) prints
 `{"change_seq":412,"path":"ohlc/candle/BTCUSD@1m","state":{...}}`. A whole-Procedure read names
 no single version and prints `change_seq: -` (JSON `null`).
 

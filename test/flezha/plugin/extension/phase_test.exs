@@ -8,6 +8,8 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   callback. Plugins without an `activate/1` callback transition silently.
   """
 
+  alias Flezha.Operative.Overwatch
+  alias Flezha.Operative.Plugins
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
@@ -86,6 +88,16 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     def init_provider(opts), do: {:ok, opts}
     def activate(_), do: :ok
     def health(_opts), do: {:unhealthy, :upstream_down}
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  defmodule ReportingInitProvider do
+    @moduledoc "Reports from `init_provider/1` — evidence that phase 1 reached it."
+    def init_provider(%{report_to: pid, marker: m} = opts) do
+      send(pid, {:init_provider, m})
+      {:ok, opts}
+    end
+
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
@@ -314,6 +326,60 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       {table, []} = activate_quietly(subscribed(UncertainHealthProvider, id))
       assert Table.health(table) == %{id => :healthy}
       assert_receive {:fail_open, %{count: 1}, %{plugin_id: ^id, reason: :probe_timeout}}
+    end
+  end
+
+  describe "a plugin phase 1 cannot prepare" do
+    setup do
+      orphan = %Plugin{
+        id: "orphan",
+        provider: MyOrg.UninstalledProvider,
+        subscriptions: [{:on_input, [position: 0]}]
+      }
+
+      healthy = %Plugin{
+        id: "healthy",
+        provider: ReportingInitProvider,
+        opts: %{report_to: self(), marker: :healthy},
+        subscriptions: [{:on_input, [position: 1]}]
+      }
+
+      %{entries: [{"orphan", orphan}, {"healthy", healthy}]}
+    end
+
+    test "bulk_subscribe names the plugin that failed and the rows it left unattempted",
+         %{entries: entries} do
+      {result, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          Table.bulk_subscribe(Table.new(@catalog), entries)
+        end)
+
+      assert {:error, {"orphan", {:module_not_loaded, MyOrg.UninstalledProvider}}} = result
+
+      assert log =~ "plugin_id=orphan"
+      assert log =~ "MyOrg.UninstalledProvider"
+      assert log =~ "healthy"
+    end
+
+    test "prepare/2 carries the failing plugin id into the reason the operative parks on",
+         %{entries: entries} do
+      state = %Overwatch{id: "op1", namespace: "default", extensions: Table.new(@catalog)}
+
+      {result, _log} = ExUnit.CaptureLog.with_log(fn -> Plugins.prepare(state, entries) end)
+
+      assert {:error, {:plugin_prepare_failed, plugin_id, reason}} = result
+      assert plugin_id == "orphan"
+      assert reason == {:module_not_loaded, MyOrg.UninstalledProvider}
+    end
+
+    test "the fold still halts: the row after the failure is never attempted",
+         %{entries: entries} do
+      {_result, _log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          Table.bulk_subscribe(Table.new(@catalog), entries)
+        end)
+
+      refute_received {:init_provider, :healthy}
     end
   end
 end

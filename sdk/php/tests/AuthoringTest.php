@@ -127,6 +127,77 @@ final class AuthoringTest extends TestCase
             }),
             'must opt in with keyed',
         ];
+        // The refusal both references carry by name — Rust's
+        // `TopologyIssue::DanglingTransformChain` and Java's
+        // `danglingTransformChain`. A transform lives on the consumer edge it
+        // terminates in, so one no `into(...)` closed has nowhere to run.
+        yield 'a transform chain no into(...) closes' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $c->input('in')->into(Echoer::class)
+                    ->map(static fn (mixed $v): mixed => $v)
+                    ->sink('s');
+            }),
+            'echoer: DanglingTransformChain: declares a transform or keyBy(...)',
+        ];
+        // A key dangles the same way. Declared on a channel another edge
+        // consumes, so no other refusal reaches the declaration first.
+        yield 'a key no into(...) closes' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $edge = $c->input('in');
+                $edge->into(Echoer::class);
+                $edge->keyBy(static fn (mixed $v): string => 'k');
+            }),
+            'in: DanglingTransformChain',
+        ];
+        // The three refusals both references raise from their own
+        // `extend_pending` — Rust's `TopologyIssue::{DuplicateKeyBy,
+        // TransformAfterKeyBy, TransformAfterTerminal}` and Java's factory
+        // methods of the same names. Each shape was ACCEPTED here before this:
+        // a second `keyBy` overwrote the author's first without a word, and
+        // neither a prior key nor an attached sink was inspected at all.
+        yield 'a second keyBy over the first' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $c->input('in')
+                    ->keyBy(static fn (mixed $v): string => 'a')
+                    ->keyBy(static fn (mixed $v): string => 'b')
+                    ->into(Keyed::class);
+            }),
+            'in: DuplicateKeyBy: declares keyBy(...) twice before one into(...)',
+        ];
+        // The key is evaluated on the final post-transform value, so it must be
+        // the last link before the `into(...)` that closes the chain.
+        yield 'a transform after the key it would feed' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $c->input('in')
+                    ->keyBy(static fn (mixed $v): string => 'a')
+                    ->map(static fn (mixed $v): mixed => $v)
+                    ->into(Keyed::class);
+            }),
+            'in: TransformAfterKeyBy: declares a transform after keyBy(...)',
+        ];
+        // The sink serializes the channel's own value, so nothing declared
+        // behind it can reshape what it already wrote. `flatMap` is one `map`,
+        // so it is refused by the same link.
+        yield 'a transform behind a plugin sink' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $c->input('in')->into(Echoer::class)->sink('s')
+                    ->flatMap(static fn (mixed $v): array => [$v])
+                    ->into(Echoer::class, 'tail');
+            }),
+            'echoer: TransformAfterTerminal: declares a transform or keyBy(...) after a plugin sink',
+        ];
+        // The refusal both references raise from consumer wiring rather than
+        // chain extension — Rust's `attach_consumer` and Java's `attachEdge`.
+        // Both shapes were ACCEPTED here before this, leaving two consumer
+        // edges naming one procedure, so the value reached it twice.
+        yield 'an edge re-declared carrying a transform' => [
+            static fn (): mixed => self::validate(static function (Builder $c): void {
+                $edge = $c->input('in');
+                $edge->into(Echoer::class);
+                $edge->map(static fn (mixed $v): mixed => $v)->into(Echoer::class);
+            }),
+            'in: EdgeAlreadyWired: already feeds procedure `echoer`; an edge carries exactly one',
+        ];
         yield 'a zero retry budget' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
                 $c->input('in')->retryMax(0)->into(Echoer::class)->sink('out');
@@ -324,6 +395,7 @@ final class AuthoringTest extends TestCase
             syncDurability: $builder->syncDurability,
             procedures: $builder->procedures,
             channels: $builder->channels,
+            chainIssues: $builder->chainIssues(),
         ));
 
         return null;
@@ -360,6 +432,27 @@ final class AuthoringTest extends TestCase
             [['in', 'entry', null, [0]], ['counter', 'inter_proc', 0, [1, 2]]],
             self::channelsOf($spec),
         );
+    }
+
+    /**
+     * A re-declaration carrying neither transform nor key is the fan-in /
+     * repeated-`into` case both references make a true no-op: one consumer
+     * edge, not two, and not a refusal.
+     */
+    public function testABareReDeclaredEdgeIsANoOpNotASecondEdge(): void
+    {
+        $builder = null;
+        self::validate(static function (Builder $c) use (&$builder): void {
+            $edge = $c->input('in');
+            $edge->into(Echoer::class);
+            $edge->into(Echoer::class);
+            $builder = $c;
+        });
+
+        self::assertSame([[0, 0]], array_map(
+            static fn ($edge): array => [$edge->procedure, count($edge->transforms)],
+            $builder->channels[0]->consumers,
+        ));
     }
 
     public function testBranchAndTwoIntoStatementsBuildTheIdenticalDeclaration(): void

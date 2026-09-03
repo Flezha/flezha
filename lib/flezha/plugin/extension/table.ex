@@ -101,17 +101,36 @@ defmodule Flezha.Plugin.Extension.Table do
   @doc """
   Bulk-subscribe a list of `{plugin_id, %Flezha.Plugin{}}` tuples. The list
   is applied in order; on first failure the table is returned unchanged and
-  the error is reported.
+  the error is reported, naming the plugin that refused and the rows the halt
+  left unattempted.
   """
   @spec bulk_subscribe(t(), [{binary(), Plugin.t()}]) ::
           {:ok, t()} | {:error, {binary(), term()}}
   def bulk_subscribe(%__MODULE__{} = table, plugins) when is_list(plugins) do
-    Enum.reduce_while(plugins, {:ok, table}, fn {plugin_id, plugin}, {:ok, acc} ->
+    plugins
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, table}, fn {{plugin_id, plugin}, index}, {:ok, acc} ->
       case subscribe(acc, plugin_id, plugin) do
-        {:ok, new_table} -> {:cont, {:ok, new_table}}
-        {:error, reason} -> {:halt, {:error, {plugin_id, reason}}}
+        {:ok, new_table} ->
+          {:cont, {:ok, new_table}}
+
+        {:error, reason} ->
+          log_halt(plugin_id, plugin, reason, Enum.drop(plugins, index + 1))
+          {:halt, {:error, {plugin_id, reason}}}
       end
     end)
+  end
+
+  # The halt is the only point holding all three facts an operator needs: which
+  # plugin refused, what its provider was, and which rows the halt therefore
+  # left unattempted. `invoke_activate/4` already reports phase 2 this way;
+  # phase 1 reported nothing at all, so a parked operative named no plugin.
+  defp log_halt(plugin_id, %Plugin{provider: provider}, reason, unattempted) do
+    Logger.error(
+      "[Extension.Table] prepare failed for plugin_id=#{plugin_id} " <>
+        "provider=#{inspect(provider)}: #{inspect(reason)}; not attempted: " <>
+        inspect(Enum.map(unattempted, &elem(&1, 0)))
+    )
   end
 
   @doc """

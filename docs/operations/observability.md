@@ -85,8 +85,9 @@ unregistered-source path (no cardinality check, not disable-able).
 ### `flz observe` CLI
 
 Every verb rides the sibling `flzvm rpc` into `Flezha.Service.CliManager.observability_render_*` with a
-`caller_context` of `source: :cli`, so the service API's authz gates apply. `-o=json` equals
-`--json`; every verb fails with `observability is disabled` under the master flag.
+`caller_context` of `source: :cli`, so the service API's authz gates apply. `--json`,
+`--output json`, `--output=json`, `-o json` and `-o=json` are one request read by one
+reader; every verb fails with `observability is disabled` under the master flag.
 
 | Verb                                                   | Effect                                                                                   |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |

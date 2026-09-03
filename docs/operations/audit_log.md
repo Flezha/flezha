@@ -108,7 +108,9 @@ flz audit stats [--json]                   current file, bytes, totals, oldest t
 flz audit rotate [--json]                  force a rotation of the active file
 ```
 
-`--json` emits NDJSON for `read` and `tail`. When the subsystem is disabled
+`--json` emits NDJSON for `read` and `tail`; `--output json` / `-o json` is the
+same request, and a format nobody recognises is refused rather than rendered as
+text. When the subsystem is disabled
 every verb exits non-zero with `error: audit log is disabled; set
 FLEZHA_AUDIT_ENABLED=true or :audit_log, :enabled: true in config`.
 

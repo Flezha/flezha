@@ -35,6 +35,7 @@ final class Validate
         self::workflow($spec);
         self::tier($spec);
         self::window($spec);
+        self::chainIssues($spec);
         self::channels($spec);
         self::procedures($spec);
         self::keying($spec);
@@ -44,6 +45,43 @@ final class Validate
     private static function refuse(ClassSpec $spec, ?string $handler, string $defect): never
     {
         throw new DeclarationException($spec->factoryId, $handler, $defect);
+    }
+
+    /**
+     * What each transform-chain refusal says, under the reference's own name. A
+     * chain is stored on the consumer edge it terminates in, which is why every
+     * one of these is a link the runtime would otherwise drop or overwrite in
+     * silence.
+     *
+     * @var array<string, string>
+     */
+    private const CHAIN_DEFECTS = [
+        'DuplicateKeyBy' => 'declares keyBy(...) twice before one into(...)',
+        'TransformAfterTerminal' => 'declares a transform or keyBy(...) after a plugin sink; '
+            . "the sink serializes the channel's own value, so nothing downstream of it can be "
+            . 'reshaped',
+        'TransformAfterKeyBy' => 'declares a transform after keyBy(...); the key is evaluated '
+            . 'on the final post-transform value, so it must be the last link before into(...)',
+        'DanglingTransformChain' => 'declares a transform or keyBy(...) that is never closed by '
+            . 'into(...); a transform chain is stored on the consumer edge it terminates in, so '
+            . 'a dangling one would silently do nothing',
+    ];
+
+    /**
+     * Refuse every defect a transform/key chain declared, in the order the
+     * references collect them: what a link refused as it was declared, then the
+     * tips no `into(...)` closed. Only a tip is reported as dangling — every
+     * earlier link was superseded by the next.
+     */
+    private static function chainIssues(ClassSpec $spec): void
+    {
+        foreach ($spec->chainIssues as $issue) {
+            self::refuse(
+                $spec,
+                $issue['channel'],
+                $issue['issue'] . ': ' . self::CHAIN_DEFECTS[$issue['issue']]
+            );
+        }
     }
 
     private static function channels(ClassSpec $spec): void

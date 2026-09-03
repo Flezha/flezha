@@ -67,7 +67,8 @@ module Flezha
           beyond_window_policy: builder.beyond_window_policy_value,
           compact_after_bytes: builder.compact_after_bytes_value,
           sync_durability: builder.sync_durability_flag,
-          procedures: builder.procedures, channels: builder.channels
+          procedures: builder.procedures, channels: builder.channels,
+          chain_issues: builder.chain_issues
         )
       end
     end
@@ -103,6 +104,7 @@ module Flezha
           checkpoint_outputs: :as_produced, beyond_window_policy: :process_as_arrival,
           sync_durability: sync_durability_declared?,
           procedures: builder.procedures, channels: builder.channels,
+          chain_issues: builder.chain_issues,
           workflow: {
             loop_mode: (loop_mode || :once).to_sym,
             rollback_mode: (rollback_mode || :all_or_nothing).to_sym,

@@ -40,13 +40,29 @@ The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the
 
 ### Requirement: Prod image SHALL be buildable for `linux/amd64` and `linux/arm64` only
 
-`make docker-build-multiarch` SHALL produce manifests for exactly `linux/amd64` and `linux/arm64`. The Dockerfile SHALL NOT contain branches for any other Linux architecture. The protoc-download arch-detection block SHALL accept exactly `x86_64` and `aarch64` machine types and SHALL exit non-zero with `Unsupported architecture: <arch>` for anything else.
+The controller image SHALL be published for exactly `linux/amd64` and `linux/arm64`,
+one architecture per publishing host. `make docker-publish` runs
+`scripts/publish-image.sh`, which builds the HOST architecture natively — no QEMU,
+no `buildx --platform` — pushes the per-arch tag `alfetahe/flezha:<family>-<arch>`,
+and then rebuilds the `<family>` manifest list from whichever of the `amd64` and
+`arm64` per-arch tags exist on Docker Hub, so publishing one architecture never
+overwrites the other. The script SHALL refuse any other `uname -m` before it builds.
+`.github/workflows/docker.yml` builds the images on pull requests for the size gate
+and SHALL NOT push, keeping the script the single publisher of the manifest list.
 
-#### Scenario: Multi-arch buildx succeeds for amd64 + arm64
+The Dockerfile SHALL NOT contain branches for any other Linux architecture. The protoc-download arch-detection block SHALL accept exactly `x86_64` and `aarch64` machine types and SHALL exit non-zero with `Unsupported architecture: <arch>` for anything else.
 
-- **GIVEN** Docker buildx is available with the `docker-container` driver
-- **WHEN** `VERSION=test docker buildx build --platform linux/amd64,linux/arm64 -f docker/prod/Dockerfile.controller --output=type=cacheonly .` is run
-- **THEN** the build completes successfully for both platforms with no "unsupported architecture" errors
+#### Scenario: A publish assembles the manifest from the per-arch tags
+
+- **GIVEN** `alfetahe/flezha:latest-amd64` is already published and the operator is on an arm64 host
+- **WHEN** `make docker-publish` runs
+- **THEN** `scripts/publish-image.sh` builds and pushes `alfetahe/flezha:latest-arm64` natively, then rebuilds the `alfetahe/flezha:latest` manifest list from exactly the `amd64` and `arm64` per-arch tags that exist, leaving the amd64 variant intact
+
+#### Scenario: Publishing from an unsupported host arch fails before the build
+
+- **GIVEN** a publishing host whose `uname -m` reports `riscv64`
+- **WHEN** `scripts/publish-image.sh --prod` is run
+- **THEN** it exits 1 with `ERROR: unsupported architecture riscv64` on stderr and no image is built
 
 #### Scenario: Build on a non-supported arch fails fast
 

@@ -78,6 +78,9 @@ defmodule Flezha.Operative.Plugins do
 
   Idempotent on repeat — `Table.bulk_subscribe/2` rejects duplicate plugin_ids,
   so a retry-driven re-entry skips without re-init.
+
+  A failure answers `{:error, {:plugin_prepare_failed, plugin_id, reason}}`:
+  the operative parks on that reason, so it has to name the plugin.
   """
   @spec prepare(Overwatch.t(), list()) :: {:ok, Overwatch.t()} | {:error, term()}
   def prepare(%Overwatch{} = state, plugins) do
@@ -97,8 +100,15 @@ defmodule Flezha.Operative.Plugins do
         end)
 
       case Table.bulk_subscribe(state.extensions, entries) do
-        {:ok, table} -> {:ok, %{state | extensions: table}}
-        {:error, {_plugin_id, reason}} -> {:error, reason}
+        {:ok, table} ->
+          {:ok, %{state | extensions: table}}
+
+        # The id is the only thing naming WHICH plugin parked the operative. It
+        # rides `init_error` out through `:registry_runner_set` to whoever asked
+        # for the start, so discarding it here left the caller with a bare
+        # `{:module_not_loaded, Provider}` and no row to blame.
+        {:error, {plugin_id, reason}} ->
+          {:error, {:plugin_prepare_failed, plugin_id, reason}}
       end
     end
   end

@@ -91,20 +91,28 @@ A closure that panics or throws does not take the routing thread with it.
 
 ## Refusals
 
-Build-time, same names in every SDK (Elixir reports all but `EdgeAlreadyWired`):
+Build-time. **Where** column: *by name* means the SDK raises the reference's own
+name and sentence; *own words* means it refuses the same shape without the name.
 
-| Name | Fires when |
-| --- | --- |
-| `KeyByOnUnkeyableTarget` | a `key_by` edge wires a Procedure declaring a non-empty `entity_keys()` |
-| `DuplicateKeyBy` | two `key_by` on one edge (or on one merge) |
-| `TransformAfterTerminal` | a transform or key declared on a handle already closed by a plugin sink |
-| `TransformAfterKeyBy` | a transform declared after the key it would feed |
-| `DanglingTransformChain` | a transform chain no `.into(...)` ever closed |
-| `UnkeyedEdgeIntoDynamicProcedure` | a keyless edge feeds a Procedure another edge keyed into dynamic mode |
-| `EdgeAlreadyWired` | a consumer edge re-declared where either side carries a transform or a key |
+| Name | Fires when | Where |
+| --- | --- | --- |
+| `DuplicateKeyBy` | two `key_by` on one edge (or on one merge) | every SDK, by name |
+| `TransformAfterTerminal` | a transform or key declared on a handle already closed by a plugin sink | every SDK, by name |
+| `TransformAfterKeyBy` | a transform declared after the key it would feed | every SDK, by name |
+| `DanglingTransformChain` | a transform chain no `.into(...)` ever closed | every SDK, by name |
+| `KeyByOnUnkeyableTarget` | a `key_by` edge wires a Procedure declaring a non-empty `entity_keys()` | Rust, Java, Elixir by name; Node/Python/Ruby/PHP in their own words |
+| `UnkeyedEdgeIntoDynamicProcedure` | a keyless edge feeds a Procedure another edge keyed into dynamic mode | Rust, Java, Elixir by name; Node/Python/Ruby/PHP in their own words |
+| `EdgeAlreadyWired` | a consumer edge re-declared where either side carries a transform or a key | Rust, Java, Node, Python, Ruby, PHP by name; **not the Elixir SDK** |
 
-A re-declaration carrying neither stays the legal fan-in / repeated-`.into`
-no-op. A workflow operative also refuses any closure on an **entry** channel
+`TransformAfterTerminal` makes the declaration order load-bearing where a
+channel carries both a sink and a transformed consumer: close the transform on
+its `.into(...)` first, then attach the sink to the held handle.
+
+A re-declaration carrying neither transform nor key is the legal fan-in /
+repeated-`.into` no-op — one consumer edge, not two — in every SDK but Elixir,
+whose `do_into` (`lib/flezha/sdk/channels.ex`) still appends unconditionally, so
+both shapes leave the procedure wired twice there. A workflow operative also
+refuses any closure on an **entry** channel
 (`BuildWorkflowError::MergeFromEntryChannel`): the workflow seed bypasses the
 routing seam, so the closure could never be selected.
 

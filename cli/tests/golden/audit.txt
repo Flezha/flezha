@@ -11,4 +11,5 @@ COMMANDS:
     rotate    Force an immediate rotation of the active file
 
 OPTIONS:
-    --json    Emit machine-readable output (NDJSON for tail/read)
+    --json    Emit machine-readable output (NDJSON for tail/read).
+              --output json is the same request.

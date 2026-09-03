@@ -184,6 +184,10 @@ class AuthoringTest < Minitest::Test
     Flezha::Graph.validate(klass.spec)
 
     assert_equal 2, klass.spec.procedures.size
+    # And one edge: `named` renames the one channel `upstream` produces on, so
+    # the second bare mention re-declares the first rather than wiring `shared`
+    # a second time off it.
+    assert_equal [1], klass.spec.channels[1].consumers.map(&:procedure)
   end
 
   def test_a_second_procedure_claiming_one_node_identity_is_refused
@@ -319,6 +323,110 @@ class AuthoringTest < Minitest::Test
 
     assert_equal [[1, 1], [2, 0]],
                  klass.spec.channels[1].consumers.map { |e| [e.procedure, e.transforms.size] }
+  end
+
+  # The refusal both references carry by name — Rust's
+  # `TopologyIssue::DanglingTransformChain` and Java's `danglingTransformChain`.
+  # A transform lives on the consumer edge it terminates in, so one no
+  # `into(...)` closed has nowhere to run and would be discarded without a word.
+  def test_a_transform_chain_no_into_closes_is_refused
+    klass = operative("dangling") do |c|
+      c.input("in").into(pass_through("validate")).map { |value| "#{value}!" }.sink("s")
+    end
+
+    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
+                    "validate: DanglingTransformChain: declares a transform or key_by(...)"
+
+    # A key dangles the same way. Declared on a channel another edge consumes,
+    # so no other refusal reaches the declaration first.
+    keyed = operative("dangling_key") do |c|
+      edge = c.input("in")
+      edge.into(pass_through("kept"))
+      edge.key_by(&:to_s)
+    end
+
+    assert_includes refusal { Flezha::Graph.validate(keyed.spec) }.message,
+                    "in: DanglingTransformChain"
+  end
+
+  # The three refusals both references raise from their own `extend_pending` —
+  # Rust's `TopologyIssue::{DuplicateKeyBy, TransformAfterKeyBy,
+  # TransformAfterTerminal}` and Java's factory methods of the same names. Each
+  # shape was ACCEPTED here before this: a second `key_by` overwrote the
+  # author's first without a word, and neither a prior key nor an attached sink
+  # was inspected at all.
+  def keyed_procedure
+    Class.new(Flezha::Procedure) do
+      procedure_name "keyed"
+      dynamic_entities
+      def process(input, _ctx) = input
+    end
+  end
+
+  def test_a_second_key_by_is_refused_rather_than_overwriting_the_first
+    target = keyed_procedure
+    klass = operative("dup_key_by") do |c|
+      c.input("in").key_by { "a" }.key_by { "b" }.into(target)
+    end
+
+    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
+                    "in: DuplicateKeyBy: declares key_by(...) twice before one into(...)"
+  end
+
+  # The key is evaluated on the final post-transform value, so it must be the
+  # last link before the `into(...)` that closes the chain.
+  def test_a_transform_after_key_by_is_refused
+    target = keyed_procedure
+    klass = operative("transform_after_key_by") do |c|
+      c.input("in").key_by { "a" }.map { |value| "#{value}!" }.into(target)
+    end
+
+    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
+                    "in: TransformAfterKeyBy: declares a transform after key_by(...)"
+  end
+
+  # The sink serializes the channel's own value, so nothing declared behind it
+  # can reshape what it already wrote.
+  def test_a_transform_after_a_plugin_sink_is_refused
+    klass = operative("transform_after_terminal") do |c|
+      c.input("in").into(pass_through("emit")).sink("s").map { |value| "#{value}!" }
+       .into(pass_through("tail"))
+    end
+
+    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
+                    "emit: TransformAfterTerminal: declares a transform or key_by(...) after a plugin sink"
+  end
+
+  # The refusal both references raise from consumer wiring rather than chain
+  # extension — Rust's `attach_consumer` and Java's `attachEdge`. Both shapes
+  # were ACCEPTED here before this, leaving two consumer edges naming one
+  # procedure, so the value reached it twice.
+  def test_a_re_declared_edge_carrying_a_transform_is_refused
+    target = pass_through("target")
+    klass = operative("edge_already_wired") do |c|
+      edge = c.input("in")
+      edge.into(target)
+      edge.map { |value| "#{value}!" }.into(target)
+    end
+
+    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
+                    "in: EdgeAlreadyWired: already feeds procedure `target`; an edge carries exactly one"
+  end
+
+  # A re-declaration carrying neither transform nor key is the fan-in /
+  # repeated-`into` case both references make a true no-op: one consumer edge,
+  # not two, and not a refusal.
+  def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge
+    target = pass_through("target")
+    klass = operative("edge_redeclared_bare") do |c|
+      edge = c.input("in")
+      edge.into(target)
+      edge.into(target)
+    end
+    Flezha::Graph.validate(klass.spec)
+
+    assert_equal [[0, 0]],
+                 klass.spec.channels[0].consumers.map { |e| [e.procedure, e.transforms.size] }
   end
 
   # The reference declares exactly this — `tier_commit_block_workflow` opens

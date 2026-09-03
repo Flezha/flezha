@@ -98,6 +98,7 @@ abstract class Operative
             channels: $builder->channels,
             workflow: $workflow,
             run: $run,
+            chainIssues: $builder->chainIssues(),
         );
     }
 

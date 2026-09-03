@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`app_data/recovery/installed_plugins.dets`), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Recovery.Coordinator` runs its plugin-recovery phase. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
+The plugin-installation capability gives runners a Jenkins-style runtime plugin lifecycle for Flezha: install from a signed/checksummed archive, compile and hot-load on the running agent, enable, disable, upgrade, and uninstall — all without rebuilding the release. A plugin package (`*.fpz`) ships `manifest.exs`, `src/*.ex` or `src/*.erl`, a `CHECKSUMS.sha256` file, and an optional detached Ed25519 signature; the agent compiles and loads modules exactly once at install time, persists the installed catalog in DETS (`app_data/recovery/installed_plugins.dets`), and re-hydrates every `:enabled`/`:disabled` package's modules into the VM before `Flezha.Service.PluginManager` starts, so no operative bind can replay a persisted subscription against a module that is not loaded. The capability defines the package format, manifest schema, checksum and signature verification rules, install/upgrade/uninstall/enable/disable semantics, dependency resolution, module-collision guards, on-disk layout, catalog persistence, boot-time hydration ordering, the `Flezha.Plugin.Installer` public service API shared by CLI and the planned Phoenix UI, recovery interaction, supervision tree ordering, and the configuration surface (`:flezha, :plugin_installer`).
 
 ## Requirements
 
@@ -246,11 +246,18 @@ The system SHALL maintain a DETS-backed catalog at `app_data/recovery/installed_
 
 ### Requirement: Boot-time module loading
 
-On agent startup, `Flezha.Plugin.Installer.Loader` SHALL iterate every row in `Flezha.Plugin.Installer.Store` and load every `.beam` file in each row's `ebin/` directory via `:code.load_binary/3`. Loading MUST complete before `Flezha.Recovery.Coordinator.start_link/1` completes its plugin-recovery phase. A plugin whose `ebin/` is missing or whose `.beam` fails to load MUST have its catalog row's `status` updated to `:load_failed` but MUST NOT prevent other plugins from loading.
+On agent startup `Flezha.Plugin.Installer.Loader.init/1` SHALL iterate every row in
+`Flezha.Plugin.Installer.Store` and load every `.beam` file in each row's `ebin/`
+directory via `:code.load_binary/3`. Hydration runs synchronously inside `init/1`, so
+it MUST complete before `Flezha.Plugin.Installer` starts and therefore before
+`Flezha.Service.PluginManager` — the first process through which a persisted
+subscription can be replayed — is started by `Flezha.Application.controller_children/0`.
+A plugin whose `ebin/` is missing or whose `.beam` fails to load MUST have its catalog
+row's `status` updated to `:load_failed` but MUST NOT prevent other plugins from loading.
 
-#### Scenario: Enabled plugin's modules loaded before recovery
-- **WHEN** the agent starts with one `:enabled` plugin in the catalog and a corresponding live row in `Flezha.Recovery.PluginStore`
-- **THEN** the plugin's modules MUST be present in the VM before `Recovery.Coordinator` calls `PluginManager.enable_plugin/2` to re-subscribe the persisted plugin
+#### Scenario: Enabled plugin's modules loaded before any subscription replay
+- **WHEN** the agent starts with one `:enabled` plugin in the catalog and a persisted subscription for it in the owning operative's ProcessHub child spec
+- **THEN** the plugin's modules MUST be present in the VM before `Flezha.Operative.Plugins.prepare/2` re-subscribes that entry at the operative's bind
 
 #### Scenario: Disabled plugin's modules loaded at boot
 - **WHEN** the agent starts with one `:disabled` plugin in the catalog
@@ -390,11 +397,19 @@ The system SHALL expose a single config key `:flezha, :plugin_installer` as a ke
 
 ### Requirement: Supervision tree ordering
 
-The Installer subsystem SHALL be started as a single supervisor subtree under `Flezha.Supervisor`, placed BEFORE `Flezha.Recovery.Coordinator` in the children list. The subtree SHALL start three children in strict order: `Flezha.Plugin.Installer.Store` (DETS opener), `Flezha.Plugin.Installer.Loader` (in-VM registry, depends on Store), and `Flezha.Plugin.Installer` (service GenServer, depends on Loader).
+The Installer subsystem SHALL be started as a single supervisor subtree
+(`Flezha.Plugin.Installer.Supervisor`) under `Flezha.Supervisor`, placed ahead of
+`Flezha.Service.PluginManager` in `Flezha.Application.controller_children/0`. The
+subtree SHALL start three children in strict `:rest_for_one` order:
+`Flezha.Plugin.Installer.Store` (DETS opener), `Flezha.Plugin.Installer.Loader` (in-VM
+registry, depends on Store), and `Flezha.Plugin.Installer` (service GenServer, depends
+on Loader). The subtree is gated by `:flezha, :plugin_installer_enabled`, which
+defaults to `false`; with the flag off no installer child is started and only
+compiled-in plugins exist.
 
-#### Scenario: Installer ready before recovery
-- **WHEN** the agent is starting
-- **THEN** every `:enabled` and `:disabled` plugin's modules MUST be loaded into the VM (or marked `:load_failed`) BEFORE `Flezha.Recovery.Coordinator` begins its plugin-recovery phase
+#### Scenario: Installer ready before any subscription replay
+- **WHEN** the agent is starting with `plugin_installer_enabled: true`
+- **THEN** every `:enabled` and `:disabled` plugin's modules MUST be loaded into the VM (or marked `:load_failed`) BEFORE `Flezha.Service.PluginManager` starts, so no operative bind can replay a subscription against a module that has not been loaded yet
 
 #### Scenario: Loader init failure prevents Installer start
 - **WHEN** `Loader.init/1` fails (e.g. because the Store is in a bad state)
@@ -402,15 +417,35 @@ The Installer subsystem SHALL be started as a single supervisor subtree under `F
 
 ### Requirement: Recovery interaction with installed plugins
 
-The Installer SHALL publish the set of known installed plugin ids via a queryable function (`Flezha.Plugin.Installer.installed_ids/0`). `Flezha.Recovery.Coordinator` SHALL consult this set before re-subscribing any plugin row from `Flezha.Recovery.PluginStore`, skipping persisted plugin rows whose provider module belongs to a plugin id that is not installed (or has been uninstalled since the agent was last running).
+The Installer SHALL publish the set of known installed plugin ids via a queryable
+function (`Flezha.Plugin.Installer.installed_ids/0`). A plugin enable is persisted by
+`Flezha.Service.PluginManager.enable_plugin/2` into the owning operative's ProcessHub
+child spec (`opts[:plugins]`) and replayed when that operative binds:
+`Flezha.Operative.Overwatch.init/1` → `handle_continue({:bind_runner, …})` →
+`Flezha.Operative.Lifecycle.complete_init/4` → `Flezha.Operative.Plugins.prepare/2` →
+`Flezha.Plugin.Extension.Table.bulk_subscribe/2`. `Flezha.Plugin.Installer.enable/2`
+drives its own enables through `enable_provisions/3`, one `%Flezha.Plugin{}` per
+manifest `provides` entry, so an installed package's subscriptions reach that same
+persistence path as a compiled-in plugin's.
 
-#### Scenario: Orphaned recovery row is skipped
-- **WHEN** `Recovery.PluginStore` has a row for plugin id `x` whose `%Flezha.Plugin{}.provider` is `MyOrg.X` and `Installer.installed_ids/0` does not contain `x`
-- **THEN** `Recovery.Coordinator` MUST NOT call `PluginManager.enable_plugin/2` for that row, MUST emit a `[:flezha, :recovery, :orphaned_plugin]` telemetry event with the plugin id, and MUST continue recovery with the remaining rows
+A persisted subscription whose provider module is not in the VM — the package was
+uninstalled while the controller was down, or its beams are `:load_failed` — MUST NOT
+be subscribed. `Flezha.Plugin.Extension.Table.run_init_provider/1` answers
+`{:error, {:module_not_loaded, provider}}`; `bulk_subscribe/2` halts at that entry, so
+entries after it in the same operative's list are not attempted; `Plugins.prepare/2`
+fails the bind, and `Flezha.Operative.Lifecycle.park/2` records the reason in the
+Overwatch's `init_error`, which `Flezha.Convergence.Probe` publishes as `parked?: true`.
+The operative stays alive and parked, holding no upstream resources, until the
+divergence is repaired. What the operator sees is that boolean: neither the plugin id
+nor the provider module reaches a log line or a telemetry event.
 
-#### Scenario: Installed plugin's recovery row re-subscribes normally
-- **WHEN** `Recovery.PluginStore` has a row for plugin id `k` whose provider is loaded (the plugin is `:enabled` in the installer catalog)
-- **THEN** `Recovery.Coordinator` MUST re-subscribe that row exactly as it does today for compiled-in plugins
+#### Scenario: Orphaned persisted subscription parks the operative
+- **WHEN** an operative's persisted child spec carries a subscription for plugin id `x` whose `%Flezha.Plugin{}.provider` is `MyOrg.X`, and `MyOrg.X` is not loaded (`Installer.installed_ids/0` does not contain `x`)
+- **THEN** `Table.bulk_subscribe/2` MUST answer `{:error, {"x", {:module_not_loaded, MyOrg.X}}}`, the entry MUST NOT be subscribed, entries after it MUST NOT be attempted, and the Overwatch MUST park with that reason in `init_error` (`Convergence.Probe` reports `parked?: true`)
+
+#### Scenario: Installed plugin's persisted subscription re-subscribes at bind
+- **WHEN** an operative's persisted child spec carries a subscription for plugin id `k` whose provider is loaded (the package is `:enabled` in the installer catalog)
+- **THEN** `Flezha.Operative.Plugins.prepare/2` MUST subscribe that entry at bind exactly as it does a compiled-in plugin's, and `Plugins.activate/1` MUST then transition it to `:running`
 
 ### Requirement: Hook subscription names use canonical Operative vocabulary
 

@@ -88,6 +88,9 @@ def test_two_unnamed_mentions_of_one_procedure_are_one_node() -> None:
 
     declare(diamond)
     assert [node.name for node in diamond.spec.procedures] == ["split", "join_a", "join_b"]
+    # And one edge: the second bare mention re-declares the first rather than
+    # wiring `split` a second time off the same channel.
+    assert [e.procedure for e in diamond.spec.channels[0].consumers] == [0]
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +558,124 @@ def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
     declare(per_edge_transform)
     channel = per_edge_transform.spec.channels[1]
     assert [(e.procedure, len(e.transforms)) for e in channel.consumers] == [(1, 1), (2, 0)]
+
+
+# The refusal both references carry by name — Rust's
+# `TopologyIssue::DanglingTransformChain` and Java's `danglingTransformChain`.
+# A transform lives on the consumer edge it terminates in, so one no `into(...)`
+# closed has nowhere to run and would be discarded without a word.
+def test_a_transform_chain_no_into_closes_is_refused() -> None:
+    @flezha.stream_operative("dangling")
+    def dangling(c: flezha.Channels) -> None:
+        c.input("in").into(echo).map(lambda value: f"{value}!").sink("s")
+
+    with pytest.raises(
+        DeclarationError,
+        match="echo: DanglingTransformChain: declares a transform or key_by",
+    ):
+        declare(dangling)
+
+    # A key dangles the same way. Declared on a channel another edge consumes,
+    # so no other refusal reaches the declaration first.
+    @flezha.stream_operative("dangling_key")
+    def dangling_key(c: flezha.Channels) -> None:
+        edge = c.input("in")
+        edge.into(echo)
+        edge.key_by(str)
+
+    with pytest.raises(DeclarationError, match="in: DanglingTransformChain"):
+        declare(dangling_key)
+
+
+# The three refusals both references raise from their own ``extend_pending`` —
+# Rust's ``TopologyIssue::{DuplicateKeyBy, TransformAfterKeyBy,
+# TransformAfterTerminal}`` and Java's factory methods of the same names. Each
+# shape was ACCEPTED here before this: a second ``key_by`` overwrote the
+# author's first without a word, and neither a prior key nor an attached sink
+# was inspected at all.
+def test_a_second_key_by_is_refused_rather_than_overwriting_the_first() -> None:
+    @flezha.procedure(dynamic_entities=True)
+    def keyed(value: str) -> str:
+        return value
+
+    @flezha.stream_operative("dup_key_by")
+    def dup(c: flezha.Channels) -> None:
+        c.input("in").key_by(lambda _: "a").key_by(lambda _: "b").into(keyed)
+
+    with pytest.raises(
+        DeclarationError,
+        match=r"in: DuplicateKeyBy: declares key_by\(\.\.\.\) twice before one into",
+    ):
+        declare(dup)
+
+
+# The key is evaluated on the final post-transform value, so it must be the last
+# link before the ``into(...)`` that closes the chain.
+def test_a_transform_after_key_by_is_refused() -> None:
+    @flezha.procedure(dynamic_entities=True)
+    def keyed(value: str) -> str:
+        return value
+
+    @flezha.stream_operative("transform_after_key_by")
+    def after_key(c: flezha.Channels) -> None:
+        c.input("in").key_by(lambda _: "a").map(lambda value: f"{value}!").into(keyed)
+
+    with pytest.raises(
+        DeclarationError,
+        match=r"in: TransformAfterKeyBy: declares a transform after key_by",
+    ):
+        declare(after_key)
+
+
+# The sink serializes the channel's own value, so nothing declared behind it can
+# reshape what it already wrote.
+def test_a_transform_after_a_plugin_sink_is_refused() -> None:
+    @flezha.procedure
+    def tail(value: str) -> str:
+        return value
+
+    @flezha.stream_operative("transform_after_terminal")
+    def after_sink(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("s").map(lambda value: f"{value}!").into(tail)
+
+    with pytest.raises(
+        DeclarationError,
+        match=r"echo: TransformAfterTerminal: declares a transform or key_by\(\.\.\.\) after a plugin sink",
+    ):
+        declare(after_sink)
+
+
+# The refusal both references raise from consumer wiring rather than chain
+# extension — Rust's ``attach_consumer`` and Java's ``attachEdge``. Both shapes
+# were ACCEPTED here before this, leaving two consumer edges naming one
+# procedure, so the value reached it twice.
+def test_a_re_declared_edge_carrying_a_transform_is_refused() -> None:
+    @flezha.stream_operative("edge_already_wired")
+    def already_wired(c: flezha.Channels) -> None:
+        edge = c.input("in")
+        edge.into(echo)
+        edge.map(lambda value: f"{value}!").into(echo)
+
+    with pytest.raises(
+        DeclarationError,
+        match=r"in: EdgeAlreadyWired: already feeds procedure `echo`; an edge carries exactly one",
+    ):
+        declare(already_wired)
+
+
+# A re-declaration carrying neither transform nor key is the fan-in /
+# repeated-``into`` case both references make a true no-op: one consumer edge,
+# not two, and not a refusal.
+def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
+    @flezha.stream_operative("edge_redeclared_bare")
+    def bare(c: flezha.Channels) -> None:
+        edge = c.input("in")
+        edge.into(echo)
+        edge.into(echo)
+
+    declare(bare)
+    channel = bare.spec.channels[0]
+    assert [(e.procedure, len(e.transforms)) for e in channel.consumers] == [(0, 0)]
 
 
 # The reference declares exactly this — `tier_commit_block_workflow` opens with

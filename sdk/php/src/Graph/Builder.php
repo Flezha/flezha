@@ -26,6 +26,24 @@ final class Builder
     public array $procedures = [];
     /** @var list<ChannelSpec> */
     public array $channels = [];
+    /**
+     * The transform/key chains declared on edges. Every `map` / `filter` /
+     * `flatMap` / `keyBy` opens a new one over the previous, which is what lets
+     * a shared prefix branch without the arms colliding.
+     *
+     * `superseded` is set when a later link built on this one, so only a tip
+     * can dangle; `consumed` when an `into(...)` closed it onto an edge;
+     * `keyed` once a `keyBy` link joined, so a later link knows it follows one.
+     *
+     * @var list<array{source: array{string, ChannelSpec|ProcNode}, superseded: bool, consumed: bool, keyed: bool}>
+     */
+    public array $chains = [];
+    /**
+     * What each link refused as it was declared, in declaration order.
+     *
+     * @var list<array{channel: string, issue: string}>
+     */
+    public array $linkIssues = [];
 
     public bool $effectivelyOnce = false;
     public AckGranularity $ackGranularity = AckGranularity::PerInput;
@@ -197,5 +215,107 @@ final class Builder
         $node->output = $channel;
 
         return $channel;
+    }
+
+    /**
+     * Extend the chain at `$base` (or open one on `$source`) with one more
+     * link, answering the new chain's id.
+     *
+     * The three refusals the references raise from their own `extend_pending`
+     * are raised here: a link declared behind a plugin sink, a transform
+     * declared after the key it would feed, and a second key — which without
+     * this would overwrite the author's first without a word.
+     *
+     * @param array{string, ChannelSpec|ProcNode} $source
+     */
+    public function extendChain(array $source, ?int $base, bool $key): int
+    {
+        $channel = $this->channelName($source);
+        if ($this->sinkAttached($source)) {
+            $this->linkIssues[] = ['channel' => $channel, 'issue' => 'TransformAfterTerminal'];
+        }
+        $priorKey = $base !== null && $this->chains[$base]['keyed'];
+        if ($base !== null) {
+            $this->chains[$base]['superseded'] = true;
+        }
+        // The key is evaluated on the final post-transform value, so a
+        // transform declared after it would hand it a value of a type it was
+        // never written against.
+        if ($priorKey && !$key) {
+            $this->linkIssues[] = ['channel' => $channel, 'issue' => 'TransformAfterKeyBy'];
+        }
+        if ($priorKey && $key) {
+            $this->linkIssues[] = ['channel' => $channel, 'issue' => 'DuplicateKeyBy'];
+        }
+        $this->chains[] = [
+            'source' => $source,
+            'superseded' => false,
+            'consumed' => false,
+            'keyed' => $key || $priorKey,
+        ];
+
+        return count($this->chains) - 1;
+    }
+
+    /** Mark a chain closed by an `into(...)`. A bare edge closes nothing. */
+    public function closeChain(?int $chain): void
+    {
+        if ($chain !== null) {
+            $this->chains[$chain]['consumed'] = true;
+        }
+    }
+
+    /**
+     * Every transform-chain defect this declaration carries: what each link
+     * refused as it was declared, then the tips no `into(...)` closed — the
+     * order the references report them in, so the sharper defect wins over the
+     * dangling one it also produces.
+     *
+     * @return list<array{channel: string, issue: string}>
+     */
+    public function chainIssues(): array
+    {
+        $issues = $this->linkIssues;
+        foreach ($this->chains as $chain) {
+            if (!$chain['superseded'] && !$chain['consumed']) {
+                $issues[] = [
+                    'channel' => $this->channelName($chain['source']),
+                    'issue' => 'DanglingTransformChain',
+                ];
+            }
+        }
+
+        return $issues;
+    }
+
+    /**
+     * The name of the channel an edge's values leave on: the entry's own, or
+     * the producing node's — its materialised channel when one exists, since a
+     * `named(...)` override lives there, and the name it would derive otherwise.
+     *
+     * @param array{string, ChannelSpec|ProcNode} $source
+     */
+    public function channelName(array $source): string
+    {
+        $from = $source[1];
+        if ($source[0] === 'entry' || !($from instanceof ProcNode)) {
+            return $from->name;
+        }
+
+        return $from->output?->name ?? $from->name;
+    }
+
+    /**
+     * Whether the channel an edge's values leave on already has a plugin sink.
+     * Only a procedure's can: `sink(...)` refuses an entry edge, and a node's
+     * channel is created on first use, so one without a channel has no sink.
+     *
+     * @param array{string, ChannelSpec|ProcNode} $source
+     */
+    private function sinkAttached(array $source): bool
+    {
+        $from = $source[1];
+
+        return $from instanceof ProcNode && $from->output?->sink !== null;
     }
 }

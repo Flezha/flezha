@@ -179,6 +179,10 @@ final class FanTarget extends Procedure
  * channel are two procedures. The `flatMap` arm fans onto a CONSUMER edge,
  * which is where a transform chain lives: the plugin frame is serialized once
  * per emit from the value as emitted, in every SDK.
+ *
+ * The sink is attached last, on the held handle. A transform declared behind an
+ * attached sink is `TransformAfterTerminal` in every SDK — the sink serializes
+ * the channel's own value, so the order says which value that is.
  */
 #[Operative(factoryId: 'mixed_stamp_operative')]
 final class MixedStampOperative extends StreamOperative
@@ -190,10 +194,12 @@ final class MixedStampOperative extends StreamOperative
             ->branch(
                 static fn (Edge $e) => $e->into(PlainEmitter::class)->named('plain_out')
                     ->sink('plain_out'),
-                static fn (Edge $e) => $e->into(StampEmitter::class)->named('keyed_out')
-                    ->keyed()->sink('keyed_out')
-                    ->flatMap(static fn (mixed $v): array => [$v . '1', $v . '2'])
-                    ->into(FanTarget::class),
+                static function (Edge $e): void {
+                    $keyed = $e->into(StampEmitter::class)->named('keyed_out')->keyed();
+                    $keyed->flatMap(static fn (mixed $v): array => [$v . '1', $v . '2'])
+                        ->into(FanTarget::class);
+                    $keyed->sink('keyed_out');
+                },
             );
     }
 }

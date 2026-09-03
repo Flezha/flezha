@@ -31,7 +31,7 @@ OPTIONS:
     --all                     Equivalent to --include-certs --include-sockets
     --app-data-root <PATH>    Override the `app_data/` root (else FLEZHA_APP_DATA_ROOT or ./app_data)
     --probe-timeout-ms <N>    Live-node probe timeout (default 1000)
-    --json                    Machine-readable output
+    --json                    Machine-readable output (--output json is the same request)
     --help, -h, help          Show this help message
 
 EXIT CODES:

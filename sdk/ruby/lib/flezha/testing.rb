@@ -49,7 +49,7 @@ module Flezha
           factory_id: "<harness>", kind: :stream, persistent: true, effectively_once: false,
           ack_granularity: :per_input, checkpoint_outputs: :as_produced,
           beyond_window_policy: :process_as_arrival, sync_durability: false,
-          procedures: [@node], channels: [@channel]
+          procedures: [@node], channels: [@channel], chain_issues: []
         )
         # The dispatcher's own entity store, so the state this harness reports
         # is the state a runner would hold.

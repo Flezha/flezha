@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use crate::args::{
-    extract_extension_flags, extract_opts, extract_x_flags, filter_out_extension_entries,
+    self, extract_extension_flags, extract_opts, extract_x_flags, filter_out_extension_entries,
     serialize_flags,
 };
 use crate::dispatch::Command;
@@ -223,14 +223,20 @@ fn handle_help(args: &[String]) {
     );
 }
 
+/// Two collections, and two flags that must not do each other's job:
+/// `--installed` chooses which list, the output format chooses how it is
+/// rendered. The provider registry has one rendering, so asking it for JSON is
+/// refused rather than silently answered with the other collection.
 fn handle_list(args: &[String]) {
-    let want_json = args.iter().any(|a| a == "--json");
+    let format = args::output_format(args);
     let installed = args.iter().any(|a| a == "--installed");
 
-    // Default is the provider registry (legacy behaviour). `--json` reaches
-    // the installed list either way, so the old command holds no surprise.
-    let rpc_command = if installed || want_json {
-        let format = if want_json { "json" } else { "text" };
+    if !installed && format == "json" {
+        eprintln!("Error: the provider registry is rendered as text only. Add --installed to list the installed plugins as JSON.");
+        exit(1);
+    }
+
+    let call = if installed {
         format!(
             "Flezha.Service.CliManager.list_installed_plugins(\"{}\")",
             format
@@ -239,7 +245,7 @@ fn handle_list(args: &[String]) {
         "Flezha.Service.CliManager.list_plugins()".to_string()
     };
 
-    rpc::run(rpc_command, rpc::REFUSED);
+    rpc::run(call, rpc::REFUSED);
 }
 
 // Serialize a `"extensions": [{"name": "...", "opts": {...}}, ...]` list into

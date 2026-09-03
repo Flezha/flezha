@@ -678,6 +678,113 @@ re-run by the supervisor before they were written here.**
 - **Verdict (supervisor, 2026-09-02)**: **real, and it is R7 change 1's whole subject** — `unify-veneer-procedure-output-channel`, approved and running. Not a separate change. **This is R11's category found by a different route**: a published requirement four SDKs violate, which is why the survey was told to check the board's description rather than trust it.
 
 
+### KI-154 · `flz operative info` reports a PARKED operative as `Phase: running`, and two operator surfaces disagree
+
+- **Severity**: P2 · **a wrong state, not a missing one**, and it holds for every park reason, not only plugins. Found by the KI-152 worker, 2026-09-03; **verified by the supervisor in the source**.
+- **Where**: `lib/flezha/service/cli/info.ex:249-250`.
+
+  ```elixir
+  defp operative_phase(%{suspended: true}), do: "suspended"
+  defp operative_phase(_state), do: "running"
+  ```
+
+- **Mechanism, named to the function**: `operative_phase/1` consults `suspended` and nothing else, and **`init_error` appears nowhere in that file** (`grep -c init_error lib/flezha/service/cli/info.ex` → **0**). Both the text and the JSON renderers therefore print `running` for a parked operative.
+- **Two operator surfaces disagree about the same operative**: `Convergence.Loop.Summary.operative_health_map/3` classifies it `:degraded` for `flz operative list` and `flz cluster status`, while `flz operative info` calls it `running`.
+- **Sharper for a plugin park specifically**: a plugin-parked operative has an unchanged extension table, so `info` also prints `Plugins: (none)` — indistinguishable from an operative that legitimately has none.
+- **A fix must** make `operative_phase/1` read the park state, and the two surfaces agree. It is a CLI rendering change, not a state change.
+- **Verdict (supervisor, 2026-09-03)**: **real, filed not fixed.** Source-verified, not driven live — a live drive needs a controller, a runner and a parked operative. It is a natural companion to KI-152's policy half, since both are about what an operator can see when an operative parks.
+
+
+### KI-153 · `EdgeAlreadyWired` is absent from all four veneers AND from Elixir, and the shape the docs call a legal no-op wires the procedure twice
+
+- **Severity**: P2 · **behavioural, not cosmetic** — the duplicate delivery is real, not merely an unraised warning. Found by the KI-149 worker, 2026-09-03, while measuring what `stream_transforms.md` actually claimed.
+- **Where**: every veneer's `into` — `sdk/python/src/flezha/builder.py:392`, `sdk/node/src/authoring.ts:439`, `sdk/ruby/lib/flezha/builder.rb:263`, `sdk/php/src/Graph/Edge.php:123` — **and the Elixir SDK's** `do_into` (`lib/flezha/sdk/channels.ex:281`), whose `build_routes` (`topology.ex:86`) does no dedupe either.
+- **Reproduced, both shapes, all four veneers**:
+
+  ```
+  edge.into(P); edge.map(f).into(P)   ACCEPTED  [[0,0],[0,1]]
+  edge.into(P); edge.into(P)          ACCEPTED  [[0,0],[0,0]]
+  ```
+
+  Both leave the channel with **two consumer edges naming one procedure**, so it is wired twice and the value is delivered twice.
+- **Mechanism, named to the function**: Rust's `BuilderState::attach_consumer` (`sdk/rust/src/channel/builder/state.rs:268`) does `entry.consumers.iter().find(|e| e.procedure == consumer)`, pushes `TopologyIssue::EdgeAlreadyWired` when either side carries a closure, and `Some(_) => {}` — a true no-op — for the bare re-declaration. Java's `attachEdge` is the same. **No `find` exists in any of the other five.** They append unconditionally.
+- **This is a different seam from KI-149's.** Those three are chain extension; this is consumer wiring, and it reaches **five** SDKs including Elixir, which shares no core with the others.
+- **A fix must** add the `find` to the wiring seam in all five, refusing the closure-carrying case with the reference's name and message and making the bare re-declaration the no-op it is documented to be — and the Elixir half is the owner's, since the Elixir SDK left the supervisor's work list on 2026-09-02.
+- **Verdict (supervisor, 2026-09-03)**: **real, filed not fixed.** It blocks nothing in flight, it spans five SDKs across two cores, and one of those cores is now the owner's. It belongs beside `carry-workflow-in-elixir` rather than in tonight's batch.
+- **VENEER HALF FIXED 2026-09-03**, `f7a1aa6b`, in all four with the reference's three-way split intact. **The middle arm was the whole risk**: the bare re-declaration stays a TRUE no-op, and a veneer that refused it would have broken behaviour this repo's own fixtures rely on. Pinned by a test per language, both halves.
+- **The no-op arm was not hypothetical.** A grep cannot see this shape, so the arm was instrumented in all four veneers and every suite plus all 208 runner-app specs re-run: it named **two pre-existing fixtures that were silently double-wiring** — `test_authoring.py`'s `diamond` (`entry.into(split)` twice on one entry channel) and `authoring_test.rb`'s (`named("left")`/`named("right")` renaming the ONE channel `upstream` produces on). Neither is findable by grep because neither spells anything twice on one line.
+- **Elixir is deferred BY NAME** to `carry-workflow-in-elixir`, which is what the Cross-SDK rule requires instead of silence: `do_into` has the identical gap and `build_routes` de-duplicates nothing.
+
+
+### KI-152 · One uninstalled plugin parks the whole operative and silently disarms every plugin after it
+
+- **Severity**: P1 · **silent loss of function with no log, no telemetry and no plugin id.** Found by the R11 spec worker, 2026-09-03, answering the question KI-115 left open; **mechanism verified by the supervisor in the source before ruling**.
+- **Where**: `lib/flezha/plugin/extension/table.ex:109-115` `bulk_subscribe/2`, and `lib/flezha/operative/plugins.ex:99-101` `prepare/2`.
+- **Mechanism, named to the function.** `Table.run_init_provider/1` answers `{:error, {:module_not_loaded, provider}}` for a package that is uninstalled or failed to load. `bulk_subscribe/2` folds with `Enum.reduce_while` and **halts** on that:
+
+  ```elixir
+  {:error, reason} -> {:halt, {:error, {plugin_id, reason}}}
+  ```
+
+  so **every plugin after the bad one in that operative's list is never attempted**. Then `Plugins.prepare/2` throws the identity away:
+
+  ```elixir
+  {:error, {_plugin_id, reason}} -> {:error, reason}
+  ```
+
+  The plugin id is captured and explicitly discarded. `Lifecycle.bind/3:75` calls `park/2`, which only sets `init_error`.
+- **All three clauses of the requirement this replaced were false**: the row is not skipped, the remaining rows are **not** attempted, and nothing is emitted. Reproduced by the worker: with a healthy row after an orphan, `bulk_subscribe` halts at the orphan and *"the healthy row is never reached: true"*.
+- **What an operator sees**: `parked?: true` from `Convergence.Probe` (`lib/flezha/convergence/probe.ex:83`). No log line, no telemetry, and nothing names the plugin id or the provider module.
+- **A fix must** decide two things that are behaviour changes and therefore not a worker's to take: whether one unloadable package should park the operative at all or be skipped with the rest continuing, and what it reports. **At minimum the identity must survive** — `prepare/2` discarding `plugin_id` is a defect on its own terms whatever the parking policy turns out to be.
+- **Also stale, same dead name**: `config/config.exs:39` still says that with the installer flag off *"the `Recovery.Coordinator` falls back to its pre-existing behaviour"*. It is the only remaining occurrence outside this ledger and the CHANGELOG.
+- **Verdict (supervisor, 2026-09-03)**: **real, P1, filed not fixed.** It blocks nothing in flight and the parking policy is the owner's call, so it goes to the queue rather than tonight's work. The identity half is small and should not wait for the policy half.
+- **IDENTITY HALF FIXED 2026-09-03**, `7fbff61b`. `prepare/2` answers `{:error, {:plugin_prepare_failed, plugin_id, reason}}` — the discarded id put back — and `bulk_subscribe/2` logs at the halt, naming the plugin, the provider and **the rows it left unattempted**. Before, there was no log at all. **The parking policy is untouched and pinned by a test**: the same plugin parks, the fold still halts, the rows after it are still never attempted. That decision remains the owner's.
+- **A correction to this entry's own mechanism text**: for an uninstalled provider the halt does NOT come from `run_init_provider/1`. `Table.Subscription.validate_callback/3` (`subscription.ex:240`) hits `Code.ensure_loaded?` first and returns the identical `{:module_not_loaded, provider}` through `subscribe/3`'s `with`, never reaching the `:init_provider_failed` throw. Same tuple, same halt — but it is why the log belongs in the fold rather than in `subscribe/3`'s catch clause.
+- **`Convergence.Probe` was deliberately NOT widened**: its map is reduced to a health atom by `Diff` and `Loop.Summary`, a parked operative already reads `:degraded`, and carrying a reason further would mean widening `Snapshot.publish/1` — a published schema read by `/healthz`, the CLI and telemetry.
+
+
+### KI-149 · Three more reference refusals are absent from all four veneers, and `DuplicateKeyBy` discards the author's key
+
+- **Severity**: P2 · silent wrong behaviour in one of the three; the other two accept a shape the references call broken. Found by the KI-142 worker, 2026-09-03, while adding the fourth refusal.
+- **Where**: `sdk/python/src/flezha/builder.py` `Edge.key_by` → `_with(key_by=…)`, and the identical `with(...)` in node, ruby and php; neither `_relink` nor `_channel` inspects a prior key or an attached sink.
+- **Reproduced live in two languages, same output both**:
+
+  ```
+  DuplicateKeyBy       (.key_by(a).key_by(b)):              ACCEPTED
+  TransformAfterKeyBy  (.key_by(k).map(f)):                 ACCEPTED
+  TransformAfterTerminal (.sink('s').map(f).into(P)):       ACCEPTED
+  ```
+
+- **Mechanism, named to the function**: Rust's `extend_pending` pushes `DuplicateKeyBy`, `TransformAfterKeyBy` and `TransformAfterTerminal`; the veneers' `_with`/`with` **silently overwrites** the previous key and inspects neither a prior key nor an attached sink.
+- **`DuplicateKeyBy` is the sharp one** — a second `key_by` discards the author's first key with no word, which is the same class of silent loss as KI-142 itself.
+- **A fix must** carry all three into the four veneers, in the same `validate()` seam KI-142's refusal now occupies, with the reference's names and messages and a red per language. It is one change, not three.
+- **Verdict (supervisor, 2026-09-03)**: **filed, not fixed** — the deadline rule defers a found defect that blocks nothing in flight. It is the natural successor to KI-142 and should be taken as one change with [[KI-150]] and [[KI-151]], which are the same family.
+- ****FIXED 2026-09-03**, `681669d9`, all three in all four veneers with the reference's own names and sentences. `DuplicateKeyBy` was MEASURED rather than asserted: on `key_by(→"FIRST").key_by(→"SECOND")` the wired edge answers `SECOND`. **Two facts about the reference are load-bearing**: `TransformAfterTerminal` reads the CHANNEL, not the chain, so `handle.map(f).into(P); handle.sink("s")` is legal while `handle.sink("s").map(f).into(P)` is refused — the same topology in two declaration orders; and a transform after a key is refused while a key after a transform is not. KI-142's `danglingChains` GENERALISED into one `chainIssues()` rather than gaining three siblings, and the ORDER is the message: `.key_by(a).key_by(b)` with no `into` produces both a `DuplicateKeyBy` and a dangling tip, so dangling-first would hide the sharp defect behind the vague one.
+
+
+### KI-150 · `docs/sdk/stream_transforms.md` claims seven refusal names are "the same in every SDK"; the veneers carry one
+
+- **Severity**: P3 · a documentation claim that is false in the direction that misleads — it tells an author a check exists.
+- **Where**: `docs/sdk/stream_transforms.md:92`, *"Build-time, same names in every SDK"*.
+- **Evidence**: `grep -rl` over `sdk/{node,python,ruby,php}` gives `DanglingTransformChain: 4/4` — the one [[KI-142]] just added — and **every other name 0/4**. Three of the remaining six are behaviourally present under different wording; three are absent outright and are [[KI-149]].
+- **A fix must** correct the table to say what each SDK actually carries, or land KI-149 and make the claim true. The second is better and they belong together.
+- **Verdict (supervisor, 2026-09-03)**: filed, not fixed. Fold into KI-149's change.
+- ****FIXED 2026-09-03**, `681669d9`. The table gained a **Where** column measured across all six SDKs: four names carried everywhere, two carried by name in Rust/Java/Elixir and in their own words by the veneers, and one — `EdgeAlreadyWired` — in **Rust and Java only**. The old sentence about a re-declaration being a legal no-op was true of Rust and Java alone and now says so.
+
+
+### KI-151 · `stream-transforms` SHALLs a terminator no SDK implements, and is scoped to two SDKs that predate the veneers
+
+- **Severity**: P3 · a published requirement describing behaviour that exists nowhere.
+- **Where**: `openspec/specs/stream-transforms/spec.md:18`.
+- **What it says**: a chain not terminated by *"`.into(<procedure>)` **or a plugin sink**"* SHALL fail. **A plugin sink closes no chain in either reference** — `.map(f).sink('s')` is refused by Rust and Java and now by all four veneers — so the "or a plugin sink" clause describes a terminator nothing implements.
+- **It is also scoped "Both SDKs"** (Rust and Java) and predates the veneers, which is the same category [[KI-141]] recorded: a published SHALL that says nothing about four of the six SDKs that now carry the surface.
+- **KI-142's fix does not violate it** — the requirement constrains only the failing case, and the veneers now fail more, not less.
+- **A fix must** delete the false clause and widen the scope to every SDK. One delta.
+- **Verdict (supervisor, 2026-09-03)**: filed, not fixed. Fold into KI-149's change with [[KI-150]].
+- ****FIXED 2026-09-03**, `681669d9`. The false *"or a plugin sink"* terminator is deleted and the requirement widened from *"Both SDKs"* to every SDK. **4 scenarios → 7**, all four original titles carried verbatim.
+- **CORRECTION 2026-09-03**: this entry was marked FIXED at `681669d9` and **the published requirement was unchanged** — that change was archived without its delta reaching `openspec/specs/`, so the false *"or a plugin sink"* terminator and the "Both SDKs" scope survived while the ledger and `docs/sdk/stream_transforms.md` both claimed otherwise. **The supervisor's own miss**, caught by the next worker because it read the published spec instead of trusting the ledger. Applied at `f7a1aa6b` with the scenario-drop guard: **4 → 7, none dropped**, `openspec validate --specs` 101 passed.
+
+
 ### KI-142 · No veneer refuses a dangling transform chain, so `.map(f).sink('s')` silently drops the transform
 
 - **Severity**: P2 · **latent, not live** — verified by the R7 change-1 worker across every veneer fixture and SDK test: nothing declares a transform or `keyBy` that is not closed by an `into`, and the six candidates are all entry-handle calls before `.into(...)`. It becomes live the first time an author writes one.
@@ -686,6 +793,7 @@ re-run by the supervisor before they were written here.**
 - **A fix must** add that refusal to the four veneers, red-first per language, with the reference's issue name and message. It is a **cross-SDK authoring-surface change** and belongs in its own change, not folded into R7 change 1.
 - **CORRECTION to this entry's own evidence, by the worker that filed it (2026-09-02).** The claim "nothing in any veneer fixture or SDK test declares an unclosed chain" was **wrong**: the audit grepped `map(`, `filter(` and `keyBy(`, and php spells it **`flatMap`**. `sdk/php/tests/Fixture.php` declared exactly the dangling shape — `$e->flatMap(...)->keyed()->sink('fanned_out')` — and a test asserted it produced **two plugin frames from one emit**, which the reference cannot do (`Stream::sink_with`: *"The serializer runs once per emit regardless of consumer count"*). So php's own fixture was the live instance, in a unit test rather than on the wire. It is rewritten to assert the reference's shape (two edge frames, one plugin frame). **The claim that still holds is the one that matters**: no `test/apps/*_runner` e2e fixture in any of the four languages declares an unclosed chain, re-audited across all four sets, so nothing reaches the wire. **KI-142 is more owed than it first looked, and the php case is its concrete example.**
 - **Verdict (supervisor, 2026-09-02)**: **real, latent, and deliberately NOT fixed in R7 change 1** — adding a refusal in four languages is a change with its own proof obligation, and change 1 is already restructuring four builders. Queued as a follow-up; named in change 1's dev note so it is not lost. **Found by the worker, not by the survey**, while implementing the model the survey designed.
+- **FIXED 2026-09-03**, `732cb6e9`, in all four veneers with the reference's own name and sentence. Red first in each language — the producing channel ACCEPTED with no consumers, so the map had nowhere to run. **No fixture declared the shape**, checked by EXECUTION over every runner app's registry (node 65, python 62, ruby 52, php 52 specs, all clean) rather than by grep alone — which matters because this entry's own first audit missed php's `flatMap` spelling. The mechanism is the reference's: a pending chain record per link, superseded by the next and consumed ONLY by consumer wiring; that a plugin sink closes no chain was verified in BOTH references, which is why `.map(f).sink('s')` is the honest probe.
 
 
 ### KI-143 · Python's `partition_relay` fixture depends on a naming behaviour R7 change 1 removes
@@ -743,6 +851,7 @@ re-run by the supervisor before they were written here.**
 - **This is NOT covered by KI-80's remedy.** Accepting both spellings everywhere would still leave `--json` selecting a different collection; the overload has to come apart first.
 - **A fix must** separate the two meanings — the format flag selects rendering only, and an explicit `--installed` selects the collection — and fold this site into whatever single reader KI-80's change lands, so the CLI stops carrying three.
 - **Verdict (supervisor, 2026-09-02)**: **filed, not fixed.** It belongs to R9 (the CLI flag row) with KI-80, which is the change that already owes the CLI one output-format reader instead of three.
+- ****FIXED 2026-09-03**, `82fe8fad`, in the same change as KI-80 rather than after it — accepting both spellings everywhere would have preserved this one, because the overload had to come apart first. `plugin list` now takes `--installed` for the collection and the format flag for the format; `plugin list --json` is REFUSED with a message naming the fix (*"Add --installed to list the installed plugins as JSON"*). That spelling used to work and is dropped deliberately: keeping it preserves the bug, nothing in the repo calls it, and the library is unpublished. **Owed, not a defect**: `CliManager.list_plugins/0` is text-only and arity-0, so the provider registry has no JSON rendering to offer — the CLI refuses loudly rather than pretending.
 
 
 ### KI-147 · Every veneer emits `effectively_once` on a WORKFLOW class, which the core refuses — the runner dies at boot
@@ -909,6 +1018,7 @@ is missing, that is a code defect and the spec is right. If the whole mechanism 
 replaced, the spec is stale like A. **Do not amend the spec until that is measured** —
 amending it to match the code would ratify a silence the spec deliberately forbade.
 - **TRIAGE 2026-09-02 (supervisor round over every open entry)**: **TRIAGE 2026-09-02 — half B changes shape, and the question this entry demanded be answered is now answered.** The entry said *"either the skip behaviour exists without its observability (a code defect) or the mechanism was replaced (a stale spec) — do not amend until measured."* Measured: `grep -rn 'defmodule Flezha.Recovery' lib/` → **exit 1**. `Recovery.Coordinator` and `Recovery.PluginStore` **do not exist anywhere** in `lib/` or `test/`. Plugin subscriptions now persist into the ProcessHub child spec and are replayed by `Overwatch.init/1`. So **half B is stale like half A** — it cannot be a missing-telemetry code defect, because the modules the requirement addresses are gone. **R11 narrows from "unknown which side" to two stale specs.** The residual question worth carrying: does `Overwatch.init/1` skip a subscription whose installed plugin is gone, and is that reported?
+- **RESOLVED 2026-09-03**, `e3ad6b43`. **Both halves were stale specs**, and the entry was right to forbid guessing: `grep -n 'docker-build-multiarch' Makefile` → exit 1, `grep -rn 'defmodule Flezha.Recovery' lib/` → exit 1. `Recovery.Coordinator` and `Recovery.PluginStore` exist nowhere, so half B could never have been a missing-telemetry code defect. **Two further sentences of half A were false too**, not just the target name — `.github/workflows/docker.yml:10` says multi-arch images are never cross-compiled, so the old scenario's `buildx --platform linux/amd64,linux/arm64` describes a path this project deliberately rejects. Scenario counts 38 → 39 and 81 → 81, none dropped; the delta reaches two further requirements and the Purpose paragraph, because they named the same dead module.
 
 
 ### KI-140 · A third published spec mandates telemetry that no SDK emits — RESOLVED (requirement removed on the owner's ruling)
@@ -2156,6 +2266,7 @@ erased the only record of them, so they are written down here rather than lost:
 **Neither is a defect and neither is work owed.** They are coverage observations, and a
 coverage gap is only worth closing when someone can say what a new test would catch that
 the existing tier does not.
+- ****FIXED 2026-09-03**, `82fe8fad`. Four readers became one (`args::parse_output_format`); `json_or_text`, plugin.rs's inline predicate and reset's own `--json` switch row are gone. Every verb now takes `--json`, `--output json`, `-o json` and `--output=json` alike, and an unknown format REFUSES with exit 1 where it used to fall through to text with exit 0. Red first: a 33-invocation matrix through an echoing `flzvm` shim, **17 wrong at HEAD**, every row of this entry's evidence reproduced byte-identically. **A correction to this entry**: it was one step stale — `refactor-6-cli` had already folded the two byte-identical `want_json` copies and both `controller.rs` inlines into `args::json_or_text`, so the deletion available was smaller than filed. Landed +68 in `cli/src`, of which 23 is test code and 9 help text.
 
 
 Each of these was triaged and found correct. None is a defect: they are

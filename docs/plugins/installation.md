@@ -140,7 +140,7 @@ flz plugin upgrade <plugin_id> <path-to-.fpz>
 flz plugin uninstall <plugin_id>
 flz plugin enable <plugin_id>             # installed plugin — no provider id, no --X flags
 flz plugin disable <plugin_id>
-flz plugin list [--installed] [--json]
+flz plugin list [--installed] [--json | --output json]
 flz plugin info <plugin_id>
 flz plugin help [<provider_id>]
 ```
@@ -148,8 +148,10 @@ flz plugin help [<provider_id>]
 - The `.fpz` path is read by the controller node the CLI is attached to.
 - `enable` / `disable` route through the installer when the id is in the catalog, and
   through the compile-time provider path otherwise.
-- `list` shows the compile-time provider registry; `--installed` the catalog; `--json`
-  always renders the catalog as JSON.
+- `list` shows the compile-time provider registry; `--installed` selects the catalog
+  instead. The output format never selects the collection: the registry renders as text
+  only, so `flz plugin list --json` without `--installed` is refused rather than answered
+  with the other list.
 - Installer verbs authorize on the `_system` namespace with actions `plugin.install`,
   `plugin.upgrade`, `plugin.uninstall`, `plugin.enable`, `plugin.disable`; pass
   `--token <token>` when enforcement is on.

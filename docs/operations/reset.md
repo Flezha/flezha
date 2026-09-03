@@ -88,9 +88,10 @@ flz reset [OPTIONS]
 | `--all`                  | `--include-certs --include-sockets`.                                           |
 | `--app-data-root <PATH>` | Override the `app_data/` root (precedence over `FLEZHA_APP_DATA_ROOT`).        |
 | `--probe-timeout-ms <N>` | Live-node probe timeout in ms (default `1000`).                                |
-| `--json`                 | Machine-readable single-object output.                                         |
+| `--json`                 | Machine-readable single-object output (`--output json` is the same request).   |
 
-`--yes` together with `--dry-run` is a usage error; so is any unknown argument.
+`--yes` together with `--dry-run` is a usage error; so is any unknown argument —
+`--output` with a value other than `text` or `json` included.
 
 ## Live-node guard
 

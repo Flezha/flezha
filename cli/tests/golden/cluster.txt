@@ -10,6 +10,7 @@ SUBCOMMANDS:
 OPTIONS:
     -n, --namespace <NS>   Namespace (default: "default")
     -o, --output <FMT>     Output format: text (default) or json
+        --json             The switch spelling of --output json
 
 EXAMPLES:
     flz cluster status

@@ -104,6 +104,7 @@ class Operative:
             beyond_window_policy=builder.beyond_window_policy_value,
             compact_after_bytes=builder.compact_after_bytes_value,
             sync_durability=builder.sync_durability_flag,
+            chain_issues=builder.chain_issues(),
         )
 
     def _workflow_spec(self, persistent: bool, options: dict[str, Any]) -> ClassSpec:
@@ -118,6 +119,7 @@ class Operative:
             effectively_once=builder.effectively_once_flag,
             sync_durability=bool(options.pop("sync_durability", False))
             or builder.sync_durability_flag,
+            chain_issues=builder.chain_issues(),
             workflow={
                 "loop_mode": options.pop("loop_mode", "once"),
                 "rollback_mode": options.pop("rollback_mode", "all_or_nothing"),

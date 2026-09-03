@@ -93,6 +93,8 @@ export interface ClassSpec {
   syncDurability: boolean;
   procedures: ProcNode[];
   channels: ChannelSpec[];
+  /** Every transform-chain defect, on the channel whose chain declared it. */
+  chainIssues: ChainIssue[];
   workflow?: WorkflowSpec;
   run?: WorkflowDefinition['run'];
 }
@@ -159,11 +161,42 @@ interface PendingEdge {
   retryMax?: number;
   retryBackoffMs?: number;
   keyed?: boolean;
+  /** This handle's transform/key chain, absent on a handle that declared none. */
+  chain?: number;
+}
+
+/**
+ * A transform/key chain declared on a handle but not yet closed by
+ * `.into(...)`. Every `map` / `filter` / `keyBy` opens a new one over the
+ * previous, which is what lets a shared prefix branch without the arms
+ * colliding.
+ */
+interface Chain {
+  from: Source;
+  /** Set when a later link built on this one, so only a tip can dangle. */
+  superseded: boolean;
+  /** Set when `.into(...)` closed the chain onto an edge. */
+  consumed: boolean;
+  /** Set once a `keyBy` link joined, so a later link knows it follows one. */
+  keyed: boolean;
+}
+
+/** The reference error names a transform chain can be refused under. */
+export type ChainIssueName =
+  'DuplicateKeyBy' | 'TransformAfterTerminal' | 'TransformAfterKeyBy' | 'DanglingTransformChain';
+
+/** One transform-chain defect, on the channel whose chain declared it. */
+export interface ChainIssue {
+  channel: string;
+  issue: ChainIssueName;
 }
 
 class Builder implements ChannelBuilder {
   readonly procedures: ProcNode[] = [];
   readonly channels: ChannelSpec[] = [];
+  readonly chains: Chain[] = [];
+  /** What each link refused as it was declared, in declaration order. */
+  readonly linkIssues: ChainIssue[] = [];
   effectivelyOnceFlag = false;
   ackGranularity: 'per_input' | 'checkpoint' = 'per_input';
   checkpointEveryValue?: number;
@@ -289,6 +322,52 @@ class Builder implements ChannelBuilder {
     node.output = channel;
     return channel;
   }
+
+  /**
+   * Extend the chain at `base` (or open one on this source) with one more
+   * link, answering the new chain's id.
+   *
+   * The three refusals the references raise from their own `extend_pending` are
+   * raised here: a link declared behind a plugin sink, a transform declared
+   * after the key it would feed, and a second key — which without this would
+   * overwrite the author's first without a word.
+   */
+  extendChain(from: Source, base: number | undefined, key: boolean): number {
+    const channel = sourceName(from);
+    if (sinkAttached(from)) this.linkIssues.push({ channel, issue: 'TransformAfterTerminal' });
+    const priorKey = base !== undefined && (this.chains[base] as Chain).keyed;
+    if (base !== undefined) (this.chains[base] as Chain).superseded = true;
+    // The key is evaluated on the final post-transform value, so a transform
+    // declared after it would hand it a value of a type it was never written
+    // against.
+    if (priorKey && !key) this.linkIssues.push({ channel, issue: 'TransformAfterKeyBy' });
+    if (priorKey && key) this.linkIssues.push({ channel, issue: 'DuplicateKeyBy' });
+    this.chains.push({ from, superseded: false, consumed: false, keyed: key || priorKey });
+    return this.chains.length - 1;
+  }
+
+  /** Mark a chain closed by an `.into(...)`. A bare handle closes nothing. */
+  closeChain(chain?: number): void {
+    if (chain !== undefined) (this.chains[chain] as Chain).consumed = true;
+  }
+
+  /**
+   * Every transform-chain defect this declaration carries: what each link
+   * refused as it was declared, then the tips no `.into(...)` closed — the
+   * order the references report them in, so the sharper defect wins over the
+   * dangling one it also produces.
+   */
+  chainIssues(): ChainIssue[] {
+    return [
+      ...this.linkIssues,
+      ...this.chains
+        .filter((chain) => !chain.superseded && !chain.consumed)
+        .map((chain): ChainIssue => ({
+          channel: sourceName(chain.from),
+          issue: 'DanglingTransformChain',
+        })),
+    ];
+  }
 }
 
 /** Where a stream's values come from: an entry channel, or a procedure. */
@@ -305,19 +384,31 @@ class EdgeStream<T> implements Stream<T> {
     return new EdgeStream<T>(this.builder, this.from, { ...this.pending, ...next });
   }
 
+  /**
+   * This handle with one more chain link — the one place a transform's or a
+   * key's result handle is built, so every link is registered and a chain no
+   * `.into(...)` closes is reported rather than silently discarded.
+   */
+  private relink<U>(next: Partial<PendingEdge>): Stream<U> {
+    return new EdgeStream<U>(this.builder, this.from, {
+      ...this.pending,
+      ...next,
+      chain: this.builder.extendChain(this.from, this.pending.chain, next.keyBy !== undefined),
+    });
+  }
+
   named(name: string): Stream<T> {
     return this.with({ channelName: name });
   }
 
   map<U>(transform: (value: T) => U): Stream<U> {
-    return new EdgeStream<U>(this.builder, this.from, {
-      ...this.pending,
+    return this.relink<U>({
       transforms: [...this.pending.transforms, transform as (value: unknown) => unknown],
     });
   }
 
   filter(predicate: (value: T) => boolean): Stream<T> {
-    return this.with({
+    return this.relink<T>({
       transforms: [
         ...this.pending.transforms,
         (value: unknown) => (predicate(value as T) ? value : DROPPED),
@@ -326,7 +417,7 @@ class EdgeStream<T> implements Stream<T> {
   }
 
   keyBy(key: (value: T) => string): Stream<T> {
-    return this.with({ keyBy: key as (value: unknown) => string });
+    return this.relink<T>({ keyBy: key as (value: unknown) => string });
   }
 
   onFull(policy: OverflowPolicy): Stream<T> {
@@ -386,11 +477,30 @@ class EdgeStream<T> implements Stream<T> {
     // The transforms and the key belong to this edge, not to the channel: one
     // channel may feed several procedures, and a chain declared before one
     // `into` must not reach another.
-    this.channel().consumers.push({
-      procedure: node.index,
-      transforms: this.pending.transforms,
-      keyBy: this.pending.keyBy,
-    });
+    this.builder.closeChain(this.pending.chain);
+    const channel = this.channel();
+    const existing = channel.consumers.find((edge) => edge.procedure === node.index);
+    const declares = this.pending.transforms.length > 0 || this.pending.keyBy !== undefined;
+    if (existing === undefined) {
+      channel.consumers.push({
+        procedure: node.index,
+        transforms: this.pending.transforms,
+        keyBy: this.pending.keyBy,
+      });
+    } else if (existing.transforms.length > 0 || existing.keyBy !== undefined || declares) {
+      // Re-declaring one where either side carries a transform or a key is
+      // refused rather than silently dropped — the edge would otherwise keep
+      // whichever closure was declared first and deliver the wrong value, to
+      // the wrong Entity, forever. Re-declaring a bare edge is the fan-in /
+      // repeated `.into` case and stays a no-op.
+      throw new DeclarationError(
+        this.builder.factoryId,
+        channel.name,
+        `EdgeAlreadyWired: already feeds procedure \`${node.name}\`; an edge carries exactly ` +
+          'one transform and one key or neither, so a re-declaration where either side carries ' +
+          'one is refused rather than silently keeping the first',
+      );
+    }
 
     return new EdgeStream<TOut>(this.builder, { source: 'procedure', node }, { transforms: [] });
   }
@@ -420,8 +530,23 @@ class EdgeStream<T> implements Stream<T> {
   }
 }
 
+/**
+ * The name of the channel a handle's values leave on: the entry's own, or the
+ * producing node's — its materialised channel when one exists, since a
+ * `named(...)` override lives there, and the name it would derive otherwise.
+ */
 function sourceName(from: Source): string {
-  return from.source === 'entry' ? from.channel.name : from.node.name;
+  if (from.source === 'entry') return from.channel.name;
+  return from.node.output?.name ?? from.node.name;
+}
+
+/**
+ * Whether the channel a handle's values leave on already has a plugin sink.
+ * Only a procedure's can: `sink(...)` refuses an entry handle, and a node's
+ * channel is created on first use, so one without a channel has no sink.
+ */
+function sinkAttached(from: Source): boolean {
+  return from.source === 'procedure' && from.node.output?.sink !== undefined;
 }
 
 function applyPending(channel: ChannelSpec, pending: PendingEdge): void {
@@ -455,6 +580,7 @@ export function defineOperative(definition: OperativeDefinition): ClassSpec {
     syncDurability: builder.syncDurabilityFlag,
     procedures: builder.procedures,
     channels: builder.channels,
+    chainIssues: builder.chainIssues(),
   };
 }
 
@@ -488,6 +614,7 @@ export function defineWorkflow(definition: WorkflowDefinition): ClassSpec {
     syncDurability: definition.syncDurability ?? false,
     procedures: builder.procedures,
     channels: builder.channels,
+    chainIssues: builder.chainIssues(),
     workflow: {
       loopMode: definition.loopMode ?? 'once',
       rollbackMode: definition.rollbackMode ?? 'all_or_nothing',

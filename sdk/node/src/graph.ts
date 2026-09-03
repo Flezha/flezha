@@ -15,7 +15,7 @@
  * data moves.
  */
 
-import type { ChannelKind, ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
+import type { ChainIssueName, ChannelKind, ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
 import { DeclarationError } from './types.js';
 
 const MAX_MAILBOX_CAPACITY = 1_048_576;
@@ -50,6 +50,37 @@ function entityMode(node: ProcNode): 'single' | 'static' | 'dynamic' {
  */
 export function declaredKind(channel: ChannelSpec): ChannelKind {
   return channel.sink !== undefined && channel.consumers.length === 0 ? 'plugin' : channel.kind;
+}
+
+/**
+ * What each transform-chain refusal says, under the reference's own name. A
+ * chain is stored on the consumer edge it terminates in, which is why every one
+ * of these is a link the runtime would otherwise drop or overwrite in silence.
+ */
+const CHAIN_DEFECTS: Record<ChainIssueName, string> = {
+  DuplicateKeyBy: 'declares keyBy(...) twice before one into(...)',
+  TransformAfterTerminal:
+    "declares a transform or keyBy(...) after a plugin sink; the sink serializes the channel's " +
+    'own value, so nothing downstream of it can be reshaped',
+  TransformAfterKeyBy:
+    'declares a transform after keyBy(...); the key is evaluated on the final post-transform ' +
+    'value, so it must be the last link before into(...)',
+  DanglingTransformChain:
+    'declares a transform or keyBy(...) that is never closed by into(...); a transform chain ' +
+    'is stored on the consumer edge it terminates in, so a dangling one would silently do ' +
+    'nothing',
+};
+
+/**
+ * Refuse every defect a transform/key chain declared, in the order the
+ * references collect them: what a link refused as it was declared, then the
+ * tips no `into(...)` closed. Only a tip is reported as dangling — every
+ * earlier link was superseded by the next.
+ */
+function checkChainIssues(spec: ClassSpec): void {
+  for (const { channel, issue } of spec.chainIssues) {
+    refuse(spec, channel, `${issue}: ${CHAIN_DEFECTS[issue]}`);
+  }
 }
 
 function checkChannels(spec: ClassSpec): void {
@@ -405,6 +436,7 @@ export function validate(spec: ClassSpec): void {
   checkWorkflow(spec);
   checkTier(spec);
   checkWindow(spec);
+  checkChainIssues(spec);
   checkChannels(spec);
   checkProcedures(spec);
   checkKeying(spec);

@@ -36,7 +36,7 @@ fn render(args: &[String], screen: Help, rpc_fun: &str) {
         format!(
             "Flezha.Service.CliManager.{}(\"{}\")",
             rpc_fun,
-            args::json_or_text(given)
+            args::output_format(given)
         ),
         rpc::DIAGNOSED,
     );
@@ -78,7 +78,7 @@ fn handle_tail(args: &[String]) {
         format!(
             "Flezha.Service.CliManager.observability_render_tail(\"{}\", \"{}\", [duration_ms: {}])",
             source,
-            args::json_or_text(rest),
+            args::output_format(rest),
             duration_ms
         ),
         rpc::DIAGNOSED,

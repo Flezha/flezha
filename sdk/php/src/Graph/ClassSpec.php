@@ -35,6 +35,13 @@ final class ClassSpec
         public readonly array $channels,
         public readonly ?Workflow $workflow = null,
         public $run = null,
+        /**
+         * Every transform-chain defect, on the channel whose chain declared it,
+         * under the reference's own error name.
+         *
+         * @var list<array{channel: string, issue: string}>
+         */
+        public readonly array $chainIssues = [],
     ) {
     }
 }

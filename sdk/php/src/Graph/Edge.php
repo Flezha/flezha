@@ -39,7 +39,7 @@ final class Edge
     /** Transform every value on this edge. Evaluated producer-side. */
     public function map(callable $transform): self
     {
-        return $this->with(['transforms' => [...$this->transforms(), $transform]]);
+        return $this->relink(['transforms' => [...$this->transforms(), $transform]]);
     }
 
     /**
@@ -64,7 +64,7 @@ final class Edge
     /** Route by a computed key: the consumer becomes a dynamic keyed procedure. */
     public function keyBy(callable $key): self
     {
-        return $this->with(['keyBy' => $key]);
+        return $this->relink(['keyBy' => $key]);
     }
 
     public function onFull(Overflow $policy): self
@@ -123,15 +123,43 @@ final class Edge
     public function into(string $class, ?string $nodeName = null): self
     {
         $node = $this->builder->nodeFor($class, $nodeName);
+        $this->builder->closeChain($this->pending['chain'] ?? null);
 
         // The transforms and the key belong to this edge, not to the channel:
         // one channel may feed several procedures, and a chain declared before
         // one `into` must not reach another.
-        $this->channel()->consumers[] = new ConsumerEdge(
-            $node->index,
-            $this->transforms(),
-            $this->pending['keyBy'] ?? null,
-        );
+        $channel = $this->channel();
+        $existing = null;
+        foreach ($channel->consumers as $edge) {
+            if ($edge->procedure === $node->index) {
+                $existing = $edge;
+                break;
+            }
+        }
+        $declares = $this->transforms() !== [] || ($this->pending['keyBy'] ?? null) !== null;
+        if ($existing === null) {
+            $channel->consumers[] = new ConsumerEdge(
+                $node->index,
+                $this->transforms(),
+                $this->pending['keyBy'] ?? null,
+            );
+        } elseif ($existing->transforms !== [] || $existing->keyBy !== null || $declares) {
+            // Re-declaring one where either side carries a transform or a key
+            // is refused rather than silently dropped — the edge would
+            // otherwise keep whichever closure was declared first and deliver
+            // the wrong value, to the wrong Entity, forever. Re-declaring a
+            // bare edge is the fan-in / repeated `into` case and stays a no-op.
+            throw new DeclarationException(
+                $this->builder->factoryId,
+                $channel->name,
+                sprintf(
+                    'EdgeAlreadyWired: already feeds procedure `%s`; an edge carries exactly one '
+                    . 'transform and one key or neither, so a re-declaration where either side '
+                    . 'carries one is refused rather than silently keeping the first',
+                    $node->name,
+                ),
+            );
+        }
 
         return new self($this->builder, ['procedure', $node], []);
     }
@@ -203,9 +231,28 @@ final class Edge
         return new self($this->builder, $this->from, [...$this->pending, ...$next]);
     }
 
+    /**
+     * This edge with one more chain link — the one place a transform's or a
+     * key's result edge is built, so every link is registered and a chain no
+     * `into(...)` closes is reported rather than silently discarded.
+     *
+     * @param array<string, mixed> $next
+     */
+    private function relink(array $next): self
+    {
+        return $this->with([
+            ...$next,
+            'chain' => $this->builder->extendChain(
+                $this->from,
+                $this->pending['chain'] ?? null,
+                array_key_exists('keyBy', $next),
+            ),
+        ]);
+    }
+
     private function sourceName(): string
     {
-        return $this->from[1]->name;
+        return $this->builder->channelName($this->from);
     }
 
     private function applyPending(ChannelSpec $channel): void

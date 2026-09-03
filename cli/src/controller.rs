@@ -30,7 +30,7 @@ fn handle_mem_top(args: &[String]) {
     rpc::run(
         format!(
             "Flezha.Service.CliManager.controller_mem_top(\"{}\")",
-            args::json_or_text(args)
+            args::output_format(args)
         ),
         rpc::UNREACHABLE,
     );
@@ -44,7 +44,7 @@ fn handle_status(args: &[String]) {
     rpc::run(
         format!(
             "Flezha.Service.CliManager.controller_status(\"{}\")",
-            args::json_or_text(args)
+            args::output_format(args)
         ),
         rpc::UNREACHABLE,
     );

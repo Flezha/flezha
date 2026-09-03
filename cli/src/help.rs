@@ -44,7 +44,8 @@ COMMANDS:
     rotate    Force an immediate rotation of the active file
 
 OPTIONS:
-    --json    Emit machine-readable output (NDJSON for tail/read)"#;
+    --json    Emit machine-readable output (NDJSON for tail/read).
+              --output json is the same request."#;
 
 pub(crate) const AUTH: Help = r#"flz auth - Authentication bootstrap and identity
 
@@ -82,6 +83,7 @@ SUBCOMMANDS:
 OPTIONS:
     -n, --namespace <NS>   Namespace (default: "default")
     -o, --output <FMT>     Output format: text (default) or json
+        --json             The switch spelling of --output json
 
 EXAMPLES:
     flz cluster status
@@ -102,7 +104,8 @@ OUTPUT (default text format):
     :recon_alloc.memory(:allocated_types) allocator breakdown.
 
 FLAGS:
-    --json    Emit a single JSON document for machine consumption."#;
+    --json    Emit a single JSON document for machine consumption.
+              --output json is the same request."#;
 
 pub(crate) const CONTROLLER_START: Help = r#"flz controller start - Start the flezha controller
 
@@ -207,6 +210,10 @@ COMMANDS:
     role           Principal → role bindings (bind, unbind, list)
     help           Show this help message
 
+OUTPUT FORMAT:
+    Every verb that renders takes --json, or the same request spelled
+    --output json / -o json. Any other format is refused, not rendered as text.
+
 Use 'flz <COMMAND> help' for more information on a specific command.
 
 EXAMPLES:
@@ -255,7 +262,8 @@ Stream live signals from SOURCE via the PubSub sink. Requires
 :pubsub_sink_enabled to be true in :observability config.
 
 OPTIONS:
-    --json              Emit NDJSON (one JSON object per signal per line)
+    --json              Emit NDJSON (one JSON object per signal per line);
+                        --output json is the same request
     --duration-ms <N>   Stream for at most N milliseconds (default 30000)"#;
 
 pub(crate) const OBSERVE: Help = r#"flz observe - Observability foundation inspection
@@ -308,7 +316,8 @@ COMMANDS:
     uninstall  Remove an installed plugin
     enable     Enable a plugin (installed package or legacy provider)
     disable    Disable a plugin
-    list       List plugins: `--installed` (catalog) or providers (default)
+    list       List plugins: `--installed` (catalog, text or json) or
+               providers (default, text only)
     info       Show details for an installed plugin
     help       Show help for a specific plugin provider
 
@@ -358,7 +367,7 @@ OPTIONS:
     --all                     Equivalent to --include-certs --include-sockets
     --app-data-root <PATH>    Override the `app_data/` root (else FLEZHA_APP_DATA_ROOT or ./app_data)
     --probe-timeout-ms <N>    Live-node probe timeout (default 1000)
-    --json                    Machine-readable output
+    --json                    Machine-readable output (--output json is the same request)
     --help, -h, help          Show this help message
 
 EXIT CODES:

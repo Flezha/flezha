@@ -3,6 +3,7 @@
 
 use std::env;
 use std::path::PathBuf;
+use std::process::exit;
 
 /// `--long=value`, `--long value`, `-s=value` or `-s value` — the four forms
 /// every `flz` option accepts. The one scanner in this crate; every other
@@ -27,24 +28,37 @@ pub(crate) fn namespace(args: &[String]) -> String {
     extract_param(args, "--namespace", "-n").unwrap_or_default()
 }
 
-/// `--output` / `-o`. Anything that is not `json` is text, a value nobody
-/// recognises included.
-pub(crate) fn output_format(args: &[String]) -> String {
-    match extract_param(args, "--output", "-o").as_deref() {
-        Some("json") => "json",
-        _ => "text",
+/// The one output-format reader in this crate. `--json` is the switch spelling
+/// of `--output json`; `--output` / `-o` take their value in any of the four
+/// forms above. Every verb that renders reads this, so the two spellings can
+/// never mean different things on different verbs.
+pub(crate) fn output_format(args: &[String]) -> &'static str {
+    match parse_output_format(args) {
+        Ok(format) => format,
+        Err(refusal) => {
+            eprintln!("{}", refusal);
+            exit(1);
+        }
     }
-    .to_string()
 }
 
-/// The `--json` switch, as the verbs that take it rather than `--output`
-/// spell it. Two spellings of one question live in this tree; this is the one
-/// the audit, observe and controller verbs read.
-pub(crate) fn json_or_text(args: &[String]) -> &'static str {
-    if args.iter().any(|a| a == "--json" || a == "-o=json") {
-        "json"
-    } else {
-        "text"
+/// The reader without the process exit, for `flz reset` — which answers every
+/// argument refusal with its own exit code — and so the refusal is testable.
+/// A value nobody recognises is refused rather than rendered as text: silently
+/// answering a `--output yaml` with a human table is what a piped `jq` cannot
+/// diagnose.
+pub(crate) fn parse_output_format(args: &[String]) -> Result<&'static str, String> {
+    if args.iter().any(|a| a == "--json") {
+        return Ok("json");
+    }
+
+    match extract_param(args, "--output", "-o").as_deref() {
+        None | Some("text") => Ok("text"),
+        Some("json") => Ok("json"),
+        Some(other) => Err(format!(
+            "Error: unknown output format '{}'. Use 'text' or 'json'.",
+            other
+        )),
     }
 }
 
@@ -358,11 +372,35 @@ mod tests {
         let none: Vec<String> = v(&[]);
         assert_eq!(namespace(&none), "");
         assert_eq!(output_format(&none), "text");
-        assert_eq!(output_format(&v(&["--output", "yaml"])), "text");
         assert_eq!(output_format(&v(&["-o", "json"])), "json");
         assert_eq!(json(&none, "--init_values", "-iv"), "{}");
         assert_eq!(json(&v(&["-iv", ""]), "--init_values", "-iv"), "{}");
         assert_eq!(json(&v(&["-iv", "[1]"]), "--init_values", "-iv"), "[1]");
+    }
+
+    /// One reader, both spellings, five forms — and a value nobody recognises
+    /// refused instead of rendered as text.
+    #[test]
+    fn both_output_format_spellings_agree_and_a_third_is_refused() {
+        for form in [
+            v(&["--json"]),
+            v(&["--output", "json"]),
+            v(&["--output=json"]),
+            v(&["-o", "json"]),
+            v(&["-o=json"]),
+        ] {
+            assert_eq!(parse_output_format(&form), Ok("json"), "{:?}", form);
+        }
+
+        assert_eq!(parse_output_format(&v(&[])), Ok("text"));
+        assert_eq!(parse_output_format(&v(&["--output", "text"])), Ok("text"));
+
+        let refusal = parse_output_format(&v(&["--output", "yaml"])).unwrap_err();
+        assert!(
+            refusal.contains("unknown output format 'yaml'"),
+            "{}",
+            refusal
+        );
     }
 
     #[test]

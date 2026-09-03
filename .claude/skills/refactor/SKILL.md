@@ -85,6 +85,10 @@ the areas.
 
 ## 1. Invariants
 
+- **Everything written is English** — every commit message, every file in the tree,
+  every worker brief and every report back. Conversation with the owner may be in
+  another language; nothing that lands in the repository ever is.
+
 - **One worker at a time**, always. Shared working tree.
 - **Never end a session with a subagent alive.** Before you declare a handover
   point, report "nothing outstanding", or stop the loop, run `ListAgents` and

@@ -9,17 +9,24 @@ contract, and the build-time refusals.
 
 ### Requirement: Stream handles SHALL offer value transforms that are not Procedures
 
-Both SDKs SHALL offer `map`, `filter`, and `flat_map` (Rust) / `map`, `filter`,
-`flatMap` (Java) on the entry-stream and output-stream handles. Each SHALL take an
-author closure, SHALL return a stream handle carrying the post-transform payload
-type, and SHALL NOT create a Procedure, an Entity, a mailbox, or a dispatch hop.
-A transform SHALL be stored on the consumer edge that the chain terminates in, and
-a chain of transforms not terminated by `.into(<procedure>)` or a plugin sink
-SHALL fail definition with an error naming the dangling stream.
+Every SDK SHALL offer `map`, `filter`, and `flat_map` / `flatMap` on the
+entry-stream and output-stream handles. Each SHALL take an author closure, SHALL
+return a stream handle carrying the post-transform payload type, and SHALL NOT
+create a Procedure, an Entity, a mailbox, or a dispatch hop. A transform SHALL be
+stored on the consumer edge that the chain terminates in, and a chain of
+transforms not terminated by `.into(<procedure>)` SHALL fail definition with an
+error naming the dangling stream. A plugin sink SHALL NOT terminate a chain: it
+serializes the channel's own value and closes no consumer edge, so a chain
+followed only by a sink is dangling.
+
+Every SDK SHALL additionally refuse, naming the channel: a second edge key
+before one `.into(...)`; a transform declared after an edge key, the key being
+evaluated on the final post-transform value; and a transform or key declared on
+a handle whose channel already carries a plugin sink.
 
 #### Scenario: A filter costs no Procedure
 
-- **WHEN** an operative declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).into(CandleProcedure.class)` (Java) or the Rust equivalent
+- **WHEN** an operative declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).into(CandleProcedure.class)` (Java) or the equivalent in any other SDK
 - **THEN** registration SHALL succeed with a topology containing exactly ONE Procedure node (`CandleProcedure`), and inputs failing the predicate SHALL NOT reach it
 
 #### Scenario: A transform reshapes the channel's payload type
@@ -34,8 +41,23 @@ SHALL fail definition with an error naming the dangling stream.
 
 #### Scenario: A dangling transform chain is refused
 
-- **WHEN** a stream declares `.map(...)` and the resulting handle is never wired to a Procedure or a plugin sink
+- **WHEN** a stream declares `.map(...)` and the resulting handle is never wired to a Procedure, whether it is left unwired or is followed only by a plugin sink
 - **THEN** definition SHALL fail with an error naming the dangling stream
+
+#### Scenario: A second edge key is refused rather than replacing the first
+
+- **WHEN** a stream declares two edge keys before one `.into(...)`
+- **THEN** definition SHALL fail naming the channel, and SHALL NOT silently keep either key
+
+#### Scenario: A transform after the key it would feed is refused
+
+- **WHEN** a stream declares an edge key and then a transform, and wires the result into a Procedure
+- **THEN** definition SHALL fail naming the channel, because the key is evaluated on the final post-transform value and so must be the last link
+
+#### Scenario: A transform behind an attached plugin sink is refused
+
+- **WHEN** a stream attaches a plugin sink and then declares a transform or an edge key on the returned handle, even where that chain is closed by a later `.into(...)`
+- **THEN** definition SHALL fail naming the channel; declaring the transform and its `.into(...)` before attaching the sink SHALL succeed and SHALL produce the same topology
 
 ### Requirement: Entity keying SHALL be declared on the edge, not on the Procedure
 
@@ -119,13 +141,14 @@ chain SHALL be contained so the operative still terminates observably.
 
 ### Requirement: Transform and key declarations SHALL be validated at definition time
 
-Both SDKs SHALL refuse the following at topology build time with the same error
+Every SDK SHALL refuse the following at topology build time with the same error
 names: `KeyByOnUnkeyableTarget` — a `key_by` whose consumer declares a non-empty
 `entity_keys()`; `DuplicateKeyBy` — more than one `key_by` on one consumer edge;
 `TransformAfterTerminal` — a transform declared on a handle already closed by a
-plugin sink. Re-declaring an existing consumer edge SHALL be refused whenever
-either the existing or the new declaration carries a transform or a key; a
-declaration carrying neither SHALL remain the legal fan-in no-op.
+plugin sink; `EdgeAlreadyWired` — an existing consumer edge re-declared where
+either the existing or the new declaration carries a transform or a key, named
+by the channel and the procedure it already feeds. A re-declaration carrying
+neither SHALL remain the legal fan-in no-op.
 
 #### Scenario: Keying a static-mode consumer is refused
 
@@ -141,6 +164,11 @@ declaration carrying neither SHALL remain the legal fan-in no-op.
 
 - **WHEN** a consumer edge already carrying a key function is declared a second time with a different key function
 - **THEN** the build SHALL fail rather than keep either function
+
+#### Scenario: A closure on the second declaration is refused too
+
+- **WHEN** a channel already feeds a Procedure on a bare edge and the same Procedure is wired from that channel a second time, this time behind a transform or a key
+- **THEN** the build SHALL fail with `EdgeAlreadyWired` naming the channel and the Procedure, and SHALL NOT append a second consumer edge
 
 #### Scenario: Transform-free re-declaration stays legal
 

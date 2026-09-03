@@ -9,7 +9,8 @@ COMMANDS:
     uninstall  Remove an installed plugin
     enable     Enable a plugin (installed package or legacy provider)
     disable    Disable a plugin
-    list       List plugins: `--installed` (catalog) or providers (default)
+    list       List plugins: `--installed` (catalog, text or json) or
+               providers (default, text only)
     info       Show details for an installed plugin
     help       Show help for a specific plugin provider
 

@@ -4,42 +4,32 @@
 //! answers 0 after that spawn failed is reporting a success it did not earn,
 //! and a script cannot tell it from a success (KI-79).
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::process::Command;
+mod common;
 
-use tempfile::TempDir;
+use common::Shim;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
-/// A `flz` whose `flzvm` always refuses. `flz` resolves `flzvm` beside its own
-/// executable, so the shim has to sit next to a *copy* of the binary rather
-/// than on `PATH`. Exit 7 is chosen because no `flz` dialect produces it from
-/// anything but a propagated child code.
+/// A `flz` whose `flzvm` always refuses. Exit 7 is chosen because no `flz`
+/// dialect produces it from anything but a propagated child code.
 struct Refusing {
-    _tmp: TempDir,
-    flz: PathBuf,
+    shim: Shim,
 }
 
 impl Refusing {
     fn new() -> Self {
-        let tmp = TempDir::new().expect("tempdir");
-        let flz = tmp.path().join("flz");
-        fs::copy(FLZ_BIN, &flz).expect("copy the flz under test");
-        let shim = tmp.path().join("flzvm");
-        fs::write(&shim, "#!/bin/sh\nprintf 'flzvm: refused\\n' >&2\nexit 7\n")
-            .expect("write shim");
-        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod shim");
-        Refusing { _tmp: tmp, flz }
+        Refusing {
+            shim: Shim::new(
+                FLZ_BIN,
+                "#!/bin/sh\nprintf 'flzvm: refused\\n' >&2\nexit 7\n",
+            ),
+        }
     }
 
     fn code(&self, args: &[&str]) -> i32 {
-        let out = Command::new(&self.flz)
-            .args(args)
-            .output()
-            .expect("flz runs");
-        out.status
+        self.shim
+            .run(args)
+            .status
             .code()
             .expect("flz exits rather than being signalled")
     }

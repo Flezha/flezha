@@ -45,9 +45,42 @@ def validate(spec: ClassSpec) -> None:
     _check_workflow(spec)
     _check_tier(spec)
     _check_window(spec)
+    _check_chain_issues(spec)
     _check_channels(spec)
     _check_keying(spec)
     _check_topology(spec)
+
+
+#: What each transform-chain refusal says, under the reference's own name. A
+#: chain is stored on the consumer edge it terminates in, which is why every one
+#: of these is a link the runtime would otherwise drop or overwrite in silence.
+_CHAIN_DEFECTS = {
+    "DuplicateKeyBy": "declares key_by(...) twice before one into(...)",
+    "TransformAfterTerminal": (
+        "declares a transform or key_by(...) after a plugin sink; the sink serializes the "
+        "channel's own value, so nothing downstream of it can be reshaped"
+    ),
+    "TransformAfterKeyBy": (
+        "declares a transform after key_by(...); the key is evaluated on the final "
+        "post-transform value, so it must be the last link before into(...)"
+    ),
+    "DanglingTransformChain": (
+        "declares a transform or key_by(...) that is never closed by into(...); a transform "
+        "chain is stored on the consumer edge it terminates in, so a dangling one would "
+        "silently do nothing"
+    ),
+}
+
+
+def _check_chain_issues(spec: ClassSpec) -> None:
+    """Refuse every defect a transform/key chain declared.
+
+    Reported in the order the references collect them: what a link refused as it
+    was declared, then the tips no ``into(...)`` closed. Only a tip is reported
+    as dangling — every earlier link was superseded by the next.
+    """
+    for channel, issue in spec.chain_issues:
+        _refuse(spec, channel, f"{issue}: {_CHAIN_DEFECTS[issue]}")
 
 
 def _check_channels(spec: ClassSpec) -> None:

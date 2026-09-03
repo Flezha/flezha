@@ -35,8 +35,11 @@ config :flezha,
   # See `lib/flezha/plugin/installer/` and `docs/plugins/installation.md`.
   #
   # - `plugin_installer_enabled`: master feature flag. When `false`, the
-  #   `Flezha.Plugin.Installer.Supervisor` subtree is not started and the
-  #   `Recovery.Coordinator` falls back to its pre-existing behaviour.
+  #   `Flezha.Plugin.Installer.Supervisor` subtree is not started, so no
+  #   installed package is hydrated at boot and a plugin resolves only against
+  #   the `plugin_providers` catalog above. Enablement itself is unaffected: it
+  #   replays from the operative's ProcessHub child spec at bind, through
+  #   `Overwatch.init/1` -> `Lifecycle.complete_init/4` -> `Plugins.prepare/2`.
   # - `:plugin_installer` keyword list:
   #   - `plugin_root`: filesystem root for staging + installed plugins.
   #     `staging/<uuid>/` holds in-flight extractions;

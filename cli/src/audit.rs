@@ -34,7 +34,7 @@ fn handle_list(args: &[String]) {
     rpc::run(
         format!(
             "Flezha.Service.CliManager.audit_log_render_list(\"{}\")",
-            args::json_or_text(&args[1..])
+            args::output_format(&args[1..])
         ),
         rpc::DIAGNOSED,
     );
@@ -77,7 +77,7 @@ fn handle_read(args: &[String]) {
         format!(
             "Flezha.Service.CliManager.audit_log_render_read(\"{}\", \"{}\", {})",
             file,
-            args::json_or_text(rest),
+            args::output_format(rest),
             opts_kw
         ),
         rpc::DIAGNOSED,
@@ -95,7 +95,7 @@ fn handle_tail(args: &[String]) {
     rpc::run(
         format!(
             "Flezha.Service.CliManager.audit_log_render_tail(\"{}\", [duration_ms: {}])",
-            args::json_or_text(rest),
+            args::output_format(rest),
             duration_ms
         ),
         rpc::DIAGNOSED,
@@ -110,7 +110,7 @@ fn handle_stats(args: &[String]) {
     rpc::run(
         format!(
             "Flezha.Service.CliManager.audit_log_render_stats(\"{}\")",
-            args::json_or_text(&args[1..])
+            args::output_format(&args[1..])
         ),
         rpc::DIAGNOSED,
     );
@@ -124,7 +124,7 @@ fn handle_rotate(args: &[String]) {
     rpc::run(
         format!(
             "Flezha.Service.CliManager.audit_log_render_rotate(\"{}\")",
-            args::json_or_text(&args[1..])
+            args::output_format(&args[1..])
         ),
         rpc::DIAGNOSED,
     );

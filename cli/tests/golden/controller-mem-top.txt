@@ -14,3 +14,4 @@ OUTPUT (default text format):
 
 FLAGS:
     --json    Emit a single JSON document for machine consumption.
+              --output json is the same request.

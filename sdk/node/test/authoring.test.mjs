@@ -644,6 +644,156 @@ test('a transform declared before one into(...) reaches that consumer only', () 
   );
 });
 
+// The refusal both references carry by name — Rust's
+// `TopologyIssue::DanglingTransformChain` and Java's `danglingTransformChain`.
+// A transform lives on the consumer edge it terminates in, so one no `into(...)`
+// closed has nowhere to run and would be discarded without a word.
+test('a transform chain no into(...) closes is refused', () => {
+  const message = refusal(() =>
+    defineOperative({
+      factoryId: 'dangling',
+      channels: (c) => {
+        c.input('in')
+          .into(echo('validate'))
+          .map((value) => `${value}!`)
+          .sink('s');
+      },
+    }),
+  );
+  assert.match(
+    message,
+    /validate: DanglingTransformChain: declares a transform or keyBy\(\.\.\.\)/,
+  );
+
+  // A key dangles the same way. Declared on a channel another edge consumes, so
+  // no other refusal reaches the declaration first.
+  const keyed = refusal(() =>
+    defineOperative({
+      factoryId: 'dangling_key',
+      channels: (c) => {
+        const edge = c.input('in');
+        edge.into(echo('kept'));
+        edge.keyBy((value) => String(value));
+      },
+    }),
+  );
+  assert.match(keyed, /in: DanglingTransformChain:/);
+});
+
+// The three refusals both references raise from their own `extend_pending` —
+// Rust's `TopologyIssue::{DuplicateKeyBy, TransformAfterKeyBy,
+// TransformAfterTerminal}` and Java's factory methods of the same names. Each
+// shape was ACCEPTED here before this: a second `keyBy` overwrote the author's
+// first without a word, and neither a prior key nor an attached sink was
+// inspected at all.
+test('a second keyBy is refused rather than overwriting the first', () => {
+  const keyed = defineProcedure({
+    name: 'keyed',
+    dynamicEntities: { idleTtlMs: 60_000, maxEntities: 100 },
+    handle: (input) => input,
+  });
+  const message = refusal(() =>
+    defineOperative({
+      factoryId: 'dup_key_by',
+      channels: (c) => {
+        c.input('in')
+          .keyBy(() => 'a')
+          .keyBy(() => 'b')
+          .into(keyed);
+      },
+    }),
+  );
+  assert.match(
+    message,
+    /in: DuplicateKeyBy: declares keyBy\(\.\.\.\) twice before one into\(\.\.\.\)/,
+  );
+});
+
+// The key is evaluated on the final post-transform value, so it must be the
+// last link before the `into(...)` that closes the chain.
+test('a transform after keyBy is refused', () => {
+  const keyed = defineProcedure({
+    name: 'keyed',
+    dynamicEntities: { idleTtlMs: 60_000, maxEntities: 100 },
+    handle: (input) => input,
+  });
+  const message = refusal(() =>
+    defineOperative({
+      factoryId: 'transform_after_key_by',
+      channels: (c) => {
+        c.input('in')
+          .keyBy(() => 'a')
+          .map((value) => `${value}!`)
+          .into(keyed);
+      },
+    }),
+  );
+  assert.match(message, /in: TransformAfterKeyBy: declares a transform after keyBy\(\.\.\.\)/);
+});
+
+// The sink serializes the channel's own value, so nothing declared behind it
+// can reshape what it already wrote.
+test('a transform after a plugin sink is refused', () => {
+  const message = refusal(() =>
+    defineOperative({
+      factoryId: 'transform_after_terminal',
+      channels: (c) => {
+        c.input('in')
+          .into(echo('emit'))
+          .sink('s')
+          .map((value) => `${value}!`)
+          .into(echo('tail'));
+      },
+    }),
+  );
+  assert.match(
+    message,
+    /emit: TransformAfterTerminal: declares a transform or keyBy\(\.\.\.\) after a plugin sink/,
+  );
+});
+
+// The refusal both references raise from consumer wiring rather than chain
+// extension — Rust's `attach_consumer` and Java's `attachEdge`. Both shapes
+// were ACCEPTED here before this, leaving two consumer edges naming one
+// procedure, so the value reached it twice.
+test('a re-declared edge carrying a transform is refused', () => {
+  const target = echo('target');
+  const message = refusal(() =>
+    defineOperative({
+      factoryId: 'edge_already_wired',
+      channels: (c) => {
+        const edge = c.input('in');
+        edge.into(target);
+        edge.map((value) => `${value}!`).into(target);
+      },
+    }),
+  );
+  assert.match(
+    message,
+    /in: EdgeAlreadyWired: already feeds procedure `target`; an edge carries exactly one/,
+  );
+});
+
+// A re-declaration carrying neither transform nor key is the fan-in /
+// repeated-`into` case both references make a true no-op: one consumer edge,
+// not two, and not a refusal.
+test('a bare re-declared edge is a no-op, not a second edge', () => {
+  const target = echo('target');
+  const spec = defineOperative({
+    factoryId: 'edge_redeclared_bare',
+    channels: (c) => {
+      const edge = c.input('in');
+      edge.into(target);
+      edge.into(target);
+    },
+  });
+  validate(spec);
+  assert.deepEqual(
+    spec.channels[0].consumers.map((edge) => [edge.procedure, edge.transforms.length]),
+    [[0, 0]],
+  );
+});
+
 // The reference declares exactly this — `tier_commit_block_workflow` opens with
 // `c.effectively_once()` on a workflow class in Rust and Java — so the flag is
 // read where the workflow spec is assembled rather than written as `false`. It

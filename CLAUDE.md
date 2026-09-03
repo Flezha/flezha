@@ -11,6 +11,9 @@ Maintenance rule: when a change lands, write its notes to
 index below — one line, one screen width, no wrapping. This file is loaded whole
 every session, so the long abstract belongs in INDEX.md, never here.
 
+Language: all files, documents, commit messages and code comments in this
+repository are English.
+
 Cross-SDK rule: there is no such thing as a Rust-only SDK change. Any surface
 every SDK carries — the authoring/declaration surface, the `HostClassDecl`
 keys, the wire protocol, a default (overflow, retry ladder, mailbox, heartbeat

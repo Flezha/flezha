@@ -38,10 +38,39 @@ module Flezha
       check_workflow(spec)
       check_tier(spec)
       check_window(spec)
+      check_chain_issues(spec)
       check_channels(spec)
       check_procedures(spec)
       check_keying(spec)
       check_topology(spec)
+    end
+
+    # What each transform-chain refusal says, under the reference's own name. A
+    # chain is stored on the consumer edge it terminates in, which is why every
+    # one of these is a link the runtime would otherwise drop or overwrite in
+    # silence.
+    CHAIN_DEFECTS = {
+      DuplicateKeyBy: "declares key_by(...) twice before one into(...)",
+      TransformAfterTerminal:
+        "declares a transform or key_by(...) after a plugin sink; the sink serializes the " \
+        "channel's own value, so nothing downstream of it can be reshaped",
+      TransformAfterKeyBy:
+        "declares a transform after key_by(...); the key is evaluated on the final " \
+        "post-transform value, so it must be the last link before into(...)",
+      DanglingTransformChain:
+        "declares a transform or key_by(...) that is never closed by into(...); a transform " \
+        "chain is stored on the consumer edge it terminates in, so a dangling one would " \
+        "silently do nothing",
+    }.freeze
+
+    # Refuse every defect a transform/key chain declared, in the order the
+    # references collect them: what a link refused as it was declared, then the
+    # tips no `into(...)` closed. Only a tip is reported as dangling — every
+    # earlier link was superseded by the next.
+    def check_chain_issues(spec)
+      spec.chain_issues.each do |issue|
+        refuse(spec, issue.channel, "#{issue.issue}: #{CHAIN_DEFECTS.fetch(issue.issue)}")
+      end
     end
 
     def check_channels(spec)

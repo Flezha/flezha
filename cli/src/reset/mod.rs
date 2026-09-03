@@ -154,7 +154,6 @@ const SWITCHES: &[Switch] = &[
     ("--dry-run", |f| f.dry_run = true),
     ("--include-certs", |f| f.include_certs = true),
     ("--include-sockets", |f| f.include_sockets = true),
-    ("--json", |f| f.json = true),
     ("--all", |f| {
         f.include_certs = true;
         f.include_sockets = true;
@@ -170,7 +169,9 @@ fn parse_flags(args: &[String]) -> Result<Flags, (i32, String)> {
         dry_run: false,
         include_certs: false,
         include_sockets: false,
-        json: false,
+        // The output format is the CLI's one reader's answer here too, so
+        // `--json` and `--output json` cannot mean different things.
+        json: cli_args::parse_output_format(args).map_err(|refusal| (1, refusal))? == "json",
         probe_timeout_ms: DEFAULT_PROBE_TIMEOUT_MS,
         app_data_root: cli_args::app_data_root(args),
     };
@@ -195,7 +196,12 @@ fn parse_flags(args: &[String]) -> Result<Flags, (i32, String)> {
             // The value itself is read by `cli_args::app_data_root` above.
             value_after(args, i, "error: --app-data-root requires a path")?;
             i += 1;
-        } else if !arg.starts_with("--app-data-root=") {
+        } else if arg == "--output" || arg == "-o" {
+            // Likewise `cli_args::parse_output_format`: the walk only steps
+            // over the value it already read.
+            value_after(args, i, "error: --output requires a value (text or json)")?;
+            i += 1;
+        } else if !read_above(arg) {
             return Err((1, format!("error: unknown argument '{}'", arg)));
         }
 
@@ -210,6 +216,15 @@ fn parse_flags(args: &[String]) -> Result<Flags, (i32, String)> {
     }
 
     Ok(flags)
+}
+
+/// The arguments a reader above has already answered. The walk refuses
+/// everything it does not recognise, so it has to know these are not nobody's.
+fn read_above(arg: &str) -> bool {
+    arg == "--json"
+        || arg.starts_with("--output=")
+        || arg.starts_with("-o=")
+        || arg.starts_with("--app-data-root=")
 }
 
 fn value_after<'a>(args: &'a [String], i: usize, refusal: &str) -> Result<&'a str, (i32, String)> {
