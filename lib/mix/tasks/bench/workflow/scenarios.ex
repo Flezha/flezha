@@ -86,16 +86,16 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       "chain summary: #{cfg.factory}, n=#{cfg.n}, #{m.mode}",
       Report.kv([
         {"spawned",
-         "#{st.spawned} ok, #{st.spawn_errors} errors, in #{Report.ms_from_ns(m.spawn_window)} ms → #{Run.rate(cfg.n, m.spawn_window)} spawns/s"},
+         "#{st.spawned} ok, #{st.spawn_errors} errors, in #{Report.ms_from_ns(m.spawn_window)} ms → #{Report.decimal(Run.rate(cfg.n, m.spawn_window))} spawns/s"},
         {"start_operative call", Tally.latency_line(st.spawn)},
         {"seed → sink output", Tally.latency_line(st.out)},
         {"seed → completed", Tally.latency_line(st.done)},
         {"completed",
-         "#{st.completed - cfg.warmup} in #{Report.ms_from_ns(m.whole_window)} ms → #{Run.rate(cfg.n, m.whole_window)} workflows/s"},
+         "#{st.completed - cfg.warmup} in #{Report.ms_from_ns(m.whole_window)} ms → #{Report.decimal(Run.rate(cfg.n, m.whole_window))} workflows/s"},
         {"sink outputs",
          "#{st.out.received} measured, #{st.out.duplicates} dup, #{m.missing} missing, #{st.out.foreign} foreign"},
         {"proc commits",
-         "#{c1.proc - c0.proc} (#{Float.round((c1.proc - c0.proc) / max(cfg.n, 1), 2)}/workflow) → #{Run.rate(c1.proc - c0.proc, m.whole_window)} commits/s; failed=#{c1.failed - c0.failed}"},
+         "#{c1.proc - c0.proc} (#{Report.decimal((c1.proc - c0.proc) / max(cfg.n, 1), 2)}/workflow) → #{Report.decimal(Run.rate(c1.proc - c0.proc, m.whole_window))} commits/s; failed=#{c1.failed - c0.failed}"},
         {"state dir",
          "#{Tally.state_dir_summary(Run.namespace())}; fsync p99 #{Tally.fsync_p99_ms()} ms"},
         {"beam", "#{Run.mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes"},
@@ -189,13 +189,13 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
         [
           {"turn → reply", Tally.latency_line(st.out)},
           {"throughput",
-           "#{st.out.received} replies in #{Report.ms_from_ns(window)} ms → #{Run.rate(st.out.received, window)} turns/s"},
+           "#{st.out.received} replies in #{Report.ms_from_ns(window)} ms → #{Report.decimal(Run.rate(st.out.received, window))} turns/s"},
           {"integrity",
            "#{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign"},
           {"parks / wakes",
            "#{st.suspended} parked, #{st.rehydrating} rehydrated during the turns"},
           {"commits",
-           "#{c1.proc - c0.proc} proc (#{Float.round((c1.proc - c0.proc) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Float.round((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{Run.rate(c1.proc - c0.proc, window)} proc commits/s; failed=#{c1.failed - c0.failed}"}
+           "#{c1.proc - c0.proc} proc (#{Report.decimal((c1.proc - c0.proc) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Report.decimal((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{Report.decimal(Run.rate(c1.proc - c0.proc, window))} proc commits/s; failed=#{c1.failed - c0.failed}"}
         ] ++
           kill_rows(st) ++
           [
@@ -330,17 +330,17 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       "resting cost: #{n} suspended #{cfg.factory}",
       Report.kv([
         {"beam total",
-         "#{Run.mib(mem0.total)} → #{Run.mib(mem1.total)} MiB (+#{Float.round((mem1.total - mem0.total) / n / 1024, 1)} KiB/sleeper)"},
+         "#{Run.mib(mem0.total)} → #{Run.mib(mem1.total)} MiB (+#{Report.decimal((mem1.total - mem0.total) / n / 1024, 1)} KiB/sleeper)"},
         {"beam processes heap",
-         "#{Run.mib(mem0.processes)} → #{Run.mib(mem1.processes)} MiB (+#{Float.round((mem1.processes - mem0.processes) / n / 1024, 1)} KiB/sleeper)"},
+         "#{Run.mib(mem0.processes)} → #{Run.mib(mem1.processes)} MiB (+#{Report.decimal((mem1.processes - mem0.processes) / n / 1024, 1)} KiB/sleeper)"},
         {"beam ets", "#{Run.mib(mem0.ets)} → #{Run.mib(mem1.ets)} MiB"},
         {"processes",
-         "#{mem0.count} → #{mem1.count} (+#{Float.round((mem1.count - mem0.count) / n, 2)}/sleeper); #{Run.process_breakdown(sample)}"},
+         "#{mem0.count} → #{mem1.count} (+#{Report.decimal((mem1.count - mem0.count) / n, 2)}/sleeper); #{Run.process_breakdown(sample)}"},
         {"largest processes", Run.largest_processes(sample)},
         {"beam binary",
          "#{Run.mib(:erlang.memory(:binary))} MiB; an Overwatch heap: #{Run.overwatch_heap_kib()} KiB; its journal writer: #{Run.writer_heap_kib()} KiB"},
         {"state dir",
-         "#{div(bytes, 1024)} KiB (#{Float.round(bytes / n / 1024, 1)} KiB/sleeper), #{wals} wal, #{snaps} snap"},
+         "#{div(bytes, 1024)} KiB (#{Report.decimal(bytes / n / 1024, 1)} KiB/sleeper), #{wals} wal, #{snaps} snap"},
         {"convergence tick",
          "#{Enum.map_join(ticks, " / ", &"#{Report.ms_from_ns(&1 * 1_000)} ms")} (3 samples)"},
         {"commits so far", "#{c.proc} proc, #{c.iter} iter"}
@@ -399,7 +399,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       Report.kv(
         [
           {"casts out",
-           "#{Report.ms_from_ns(m.sent_dt)} ms; last reply #{Report.ms_from_ns(window)} ms after the first cast → #{Run.rate(n, window)} wakes/s"},
+           "#{Report.ms_from_ns(m.sent_dt)} ms; last reply #{Report.ms_from_ns(window)} ms after the first cast → #{Report.decimal(Run.rate(n, window))} wakes/s"},
           {"wake → reply", Tally.latency_line(st.out)},
           {"rehydrations",
            "#{st.rehydrating} (expect #{n}); replies #{st.out.received}, dup #{st.out.duplicates}, missing #{n - st.out.seen}"},

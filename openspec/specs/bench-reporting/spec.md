@@ -175,3 +175,40 @@ Where a workload carries more than one throughput window, the comparison SHALL r
 - **WHEN** the comparison is reported
 - **THEN** both windows SHALL be reported, the verdict SHALL rest on the narrower window only, and the gated window SHALL be marked as deciding nothing
 
+### Requirement: A number a bench prints SHALL be readable, whatever its magnitude
+
+Every float a bench report interpolates SHALL be formatted by the shared helper that
+keeps a value out of scientific notation, not only the values that happen to be
+durations. Rates, sizes and per-unit counts SHALL be as readable as the timings
+beside them.
+
+#### Scenario: A rate is small enough to reach scientific notation
+
+- **WHEN** a bench prints a rate, a per-sleeper size or a per-workflow count whose
+  float would render as `1.0e3`
+- **THEN** it SHALL be formatted by the same helper the duration fields use
+
+### Requirement: A shipped document SHALL NOT document a task the repository excludes
+
+A tracked operator document SHALL only document commands whose source ships. Where a
+task is deliberately kept out of the repository, the shipped documentation SHALL NOT
+instruct a reader to run it.
+
+#### Scenario: A bench task is excluded from the repository
+
+- **WHEN** a Mix task's source is excluded by `.git/info/exclude` or `.gitignore`
+- **THEN** no tracked document SHALL present it as a command the reader can run,
+  either by shipping the task or by removing the section
+
+### Requirement: Two sessions on one checkout SHALL NOT collide on a fixed port or state root
+
+A test or bench run SHALL derive its controller state root and its listening ports
+from something unique to the run. Two sessions working one checkout SHALL be able to
+run their suites at the same time without one failing on `EADDRINUSE` or reading the
+other's durable state.
+
+#### Scenario: Two suites run at once on one checkout
+
+- **WHEN** two sessions start a suite that binds the data-plane port
+- **THEN** neither SHALL fail to bind, and neither SHALL read state the other wrote
+

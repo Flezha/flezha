@@ -157,7 +157,7 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   # ---------- Per-signal encoders ----------
 
   defp signal_to_metric(%Signal{} = signal) do
-    metric_name = exposition_name(signal.source, signal.name)
+    metric_name = Signal.exposition_name(signal.source, signal.name, ".")
     data_point = build_number_data_point(signal)
 
     sum_msg =
@@ -297,10 +297,6 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   end
 
   defp signal_time_ns(_), do: System.system_time(:nanosecond)
-
-  defp exposition_name(source, name) do
-    Atom.to_string(source) <> "." <> Atom.to_string(name)
-  end
 
   # ---------- Common helpers ----------
 

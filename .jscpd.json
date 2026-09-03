@@ -1,5 +1,6 @@
 {
   "minTokens": 40,
+  "maxSize": "1mb",
   "minLines": 3,
   "mode": "weak",
   "format": ["rust", "elixir", "java", "typescript", "javascript", "python", "ruby", "php"],

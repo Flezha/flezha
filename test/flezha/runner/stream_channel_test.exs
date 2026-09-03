@@ -259,6 +259,55 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert row.hb_inflight_oldest_ms == 0
     end
 
+    # The comment above `@heartbeat_keys` says nine of the runner's twelve keys
+    # mirror. This is what makes that number checkable: the other three reach
+    # the controller and land nowhere, which is a gap with an owner, not a
+    # spelling mistake.
+    test "twelve reported keys mirror into nine slots, and three have none", %{
+      pid: pid,
+      name: name
+    } do
+      send(
+        pid,
+        {:flz_data, :ref_x, "data_heartbeat", "",
+         %{
+           "dispatches" => "1",
+           "credit_parked" => "2",
+           "blocked_parks" => "3",
+           "inflight" => "4",
+           "inflight_oldest_ms" => "5",
+           "drops_newest" => "6",
+           "drops_oldest" => "7",
+           "pending_pushes" => "8",
+           "pending_push_oldest_ms" => "9",
+           "restore_discarded_inputs" => "10",
+           "timers_armed" => "11",
+           "timers_fired" => "12"
+         }}
+      )
+
+      _ = GenServer.call(pid, :stream_ref_status)
+      row = channel_row(name)
+
+      for {slot, value} <- [
+            hb_dispatches: 1,
+            hb_credit_parked: 2,
+            hb_blocked_parks: 3,
+            hb_inflight: 4,
+            hb_inflight_oldest_ms: 5,
+            hb_drops_newest: 6,
+            hb_drops_oldest: 7,
+            hb_pending_pushes: 8,
+            hb_pending_push_oldest_ms: 9
+          ] do
+        assert Map.fetch(row, slot) == {:ok, value}, "#{slot} did not mirror"
+      end
+
+      for slot <- [:hb_restore_discarded_inputs, :hb_timers_armed, :hb_timers_fired] do
+        refute Map.has_key?(row, slot), "#{slot} has a slot now — the comment says it has none"
+      end
+    end
+
     defp channel_row(name) do
       LivenessCounters.snapshot_all().channels
       |> Enum.find(fn c -> c.runner_id == "ce_test" and c.name == name end)

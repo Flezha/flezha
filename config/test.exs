@@ -141,11 +141,18 @@ config :flezha,
     fn ->
       # A runtime directory, not `app_data/`, and a SHORT one: the resolved
       # socket path is absolute, and a UDS path must fit `SUN_LEN` (108 bytes) —
-      # a deep checkout plus a long stream-socket name does not.
+      # a deep checkout plus a long stream-socket name does not. The run token
+      # is the same one the state root and the data-plane port derive from
+      # (`config/runtime.exs`), so two suites on one checkout cannot meet here
+      # either — `node()` alone is `nonode@nohost` for both of them.
       Application.put_env(
         :flezha,
         :socket_files_path,
-        Path.join([System.tmp_dir!(), "flezha_sockets", "#{node()}"])
+        Path.join([
+          System.tmp_dir!(),
+          "flezha_sockets",
+          "#{node()}-#{Application.get_env(:flezha, :run_token) || System.pid()}"
+        ])
       )
     end
   ],

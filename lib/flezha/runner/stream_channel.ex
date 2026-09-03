@@ -72,9 +72,19 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
-  # them and backpressure would otherwise look like a runner doing nothing.
-  # Each reported key mirrors into the `hb_<key>` liveness slot, so the two
-  # sides cannot be spelled apart.
+  # The runner's self-report, and the nine keys of it this controller mirrors.
+  # `dispatches` frozen while the runner is alive is a wedged pool;
+  # `credit_parked` advancing while it freezes is fed-but-parked rather than
+  # frozen; `blocked_parks` says the same for the receive side (a producer held
+  # on a full entity mailbox); `inflight` and its oldest age are what make ONE
+  # wedged Entity visible while the rest keeps completing; the two drop counters
+  # are what a shedding operative loses, which nothing outside the runner could
+  # see before; `pending_pushes` and its oldest age are the producers a full
+  # consumer is withholding work from — they hold no handout, so `inflight` is
+  # blind to them and backpressure would otherwise look like a runner doing
+  # nothing. Each key below mirrors into its `hb_<key>` liveness slot. The
+  # runner also sends `restore_discarded_inputs`, `timers_armed` and
+  # `timers_fired`; nothing here holds a slot for them and they are dropped.
   @heartbeat_keys ~w(dispatches credit_parked blocked_parks inflight inflight_oldest_ms
                      drops_newest drops_oldest pending_pushes pending_push_oldest_ms)
   @heartbeat_slots for key <- @heartbeat_keys, do: {key, :"hb_#{key}"}

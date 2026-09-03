@@ -27,7 +27,7 @@ defmodule Flezha.Plugin.Provider.Filter do
     case String.downcase(value) do
       "true" -> {:ok, true}
       "false" -> {:ok, false}
-      _ -> {:error, "Invalid value for inverted: #{value}"}
+      _ -> ProviderBehaviour.refuse_value(:inverted, value)
     end
   end
 

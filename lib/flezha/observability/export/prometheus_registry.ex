@@ -415,7 +415,7 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
     table
     |> group_by_metric()
     |> Enum.map(fn {{source, name}, rows} ->
-      metric_name = exposition_name(source, name)
+      metric_name = Signal.exposition_name(source, name, "_")
 
       [
         "# HELP ",
@@ -486,10 +486,6 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
       fn {{_, _, labels}, value} -> {labels, value} end
     )
     |> Enum.sort_by(fn {key, _} -> key end)
-  end
-
-  defp exposition_name(source, name) do
-    Atom.to_string(source) <> "_" <> Atom.to_string(name)
   end
 
   defp render_labels([]), do: ""

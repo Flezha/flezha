@@ -174,6 +174,18 @@ defmodule Flezha.Observability.Signal do
 
   defp legal_name_tail?(_), do: false
 
+  @doc """
+  A metric's exposition name: its source and its name joined by the character
+  the exporter's wire uses — `"_"` for Prometheus, `"."` for OpenTelemetry.
+
+  One function, because two exporters must never disagree about which metric
+  they are naming. The joiner is the only thing that differs between them, so
+  it is a parameter rather than a second copy of the rule.
+  """
+  @spec exposition_name(atom(), atom(), binary()) :: String.t()
+  def exposition_name(source, name, joiner),
+    do: Atom.to_string(source) <> joiner <> Atom.to_string(name)
+
   defp validate_metric_name!(name) do
     if legal_exposition_name?(Atom.to_string(name)) do
       :ok

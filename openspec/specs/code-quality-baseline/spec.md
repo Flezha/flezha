@@ -1044,3 +1044,22 @@ the number of sites it names is large.
 - **THEN** the recorded reason SHALL describe what the code means, and SHALL NOT be the
   number of sites the rule reports
 
+### Requirement: A metric SHALL NOT report a file it silently skipped as measured
+
+Every duplication or quality scan SHALL either measure a file or report that it did
+not. A file skipped for its size, its permissions or a tool's own limit SHALL be
+named in the run's output, so a skipped file can never be read by the ratchet as an
+improvement.
+
+#### Scenario: A tracked file crosses a scanner's size limit
+
+- **WHEN** a scan skips a file because it exceeds the tool's maximum size
+- **THEN** the run SHALL report the skip, and the recorded metric SHALL NOT present
+  the remainder as a complete measurement
+
+#### Scenario: The skip is visible before it matters
+
+- **WHEN** no tracked file is near the limit
+- **THEN** the reporting SHALL still be in place, so the first file to cross it is
+  seen rather than silently dropped
+

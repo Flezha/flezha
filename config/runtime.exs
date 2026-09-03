@@ -16,6 +16,37 @@ external_processes =
     System.get_env("FLEZHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
   end
 
+# Two suites on one checkout must not collide. The controller claims its state
+# root exclusively and binds its data-plane port once, so a second session
+# taking the same defaults cannot boot at all: it refuses on the lock, then on
+# EADDRINUSE. In `:test` both derive from the OS process running the suite, so a
+# session isolates itself by existing rather than by remembering the variables.
+# An explicit variable still wins — CI sets them, and a scenario that needs a
+# known address says so.
+run_token = if config_env() == :test, do: System.pid()
+
+# 20000-29999 is clear of the ports the fixtures use and below the ephemeral
+# range Linux allocates from, so nothing else on the box competes for it. Two
+# pids exactly 10 000 apart still collide, and that run fails loudly on
+# EADDRINUSE exactly as it does today.
+quic_listen_address =
+  System.get_env("FLEZHA_QUIC_LISTEN_ADDRESS") ||
+    if run_token,
+      do: "0.0.0.0:#{20_000 + rem(String.to_integer(run_token), 10_000)}",
+      else: "0.0.0.0:4433"
+
+# `Paths.state_root/0` prefers this key over `FLEZHA_STATE_DIR`, so the variable
+# is read here rather than shadowed by the derived default. `run_token` is
+# published so the socket directory (`config/test.exs`) derives from the same
+# one and the three cannot drift apart.
+if run_token do
+  config :flezha,
+    run_token: run_token,
+    state_root:
+      System.get_env("FLEZHA_STATE_DIR") ||
+        Path.join([System.tmp_dir!(), "flezha_test_state", run_token])
+end
+
 # Transport whitelist. Kept a local closure — never a project module — because
 # runtime.exs is evaluated before lib/ compiles on a cold checkout. `native` is
 # the in-node BEAM SDK transport; it is accepted here but never a default.
@@ -164,7 +195,7 @@ config :flezha,
      end),
 
   # QUIC transport settings.
-  quic_listen_address: System.get_env("FLEZHA_QUIC_LISTEN_ADDRESS", "0.0.0.0:4433"),
+  quic_listen_address: quic_listen_address,
   ca_cert_path: System.get_env("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem"),
   server_cert_path: System.get_env("FLEZHA_SERVER_CERT_PATH", "app_data/certs/server.pem"),
   server_key_path: System.get_env("FLEZHA_SERVER_KEY_PATH", "app_data/certs/server.key"),

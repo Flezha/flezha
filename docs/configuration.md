@@ -40,7 +40,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds`, `quic` or `native` (the in-node Elixir SDK transport, never chosen implicitly); any other value is refused at boot |
 | `FLEZHA_TRANSPORTS` | the value of `FLEZHA_TRANSPORT` (`uds,quic` in test) | `:transports`, comma list validated against the same three names |
 | `FLEZHA_TRANSPORT_AUTH` | required | `:transport_auth_required`; `off`/`false`/`0`/`no` disables peer authentication and is warned on every boot |
-| `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, below) |
+| `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` (`:test` derives the port from the run) | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, below) |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `:ca_cert_path` |
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/server.pem` | `:server_cert_path` |
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.key` | `:server_key_path` |
@@ -52,6 +52,12 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_CONCURRENT_CHANNEL_COUNT` | `0` | `:concurrent_channel_count` |
 | `FLEZHA_EXTERNAL_PROCESSES` | `""` | `:external_processes`, comma list of commands the controller spawns (test mode hard-codes the Rust test runner) |
 | `FLEZHA_CONTROLLER_ENABLED` | `true` | `:controller_enabled`; `false`/`0`/`no`/`off` boots a runner-only node with no controller tree |
+
+> **Two suites on one checkout.** In `:test` the state root, the UDS socket
+> directory and the QUIC listen port all derive from the OS process running the
+> suite, so a second session isolates itself by existing. Setting
+> `FLEZHA_STATE_DIR` or `FLEZHA_QUIC_LISTEN_ADDRESS` still wins, which is how a
+> scenario that needs a known address asks for one.
 
 ### Cluster and nodes
 
@@ -83,7 +89,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 
 | Variable | Default | Sets / notes |
 |---|---|---|
-| `FLEZHA_STATE_DIR` | `app_data/state` | the state root, read at runtime by `Flezha.State.Paths.state_root/0` when `:state_root` is unset |
+| `FLEZHA_STATE_DIR` | `app_data/state` (`:test` derives a root per run) | the state root, read at runtime by `Flezha.State.Paths.state_root/0` when `:state_root` is unset |
 | `FLEZHA_COMPACT_AFTER_BYTES` | `8388608` | `:default_compact_after_bytes` |
 | `FLEZHA_COMPACT_AFTER_AGE_MS` | `300000` (`0` in test) | `:compact_after_age_ms`; `0` disables the age trigger |
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms` — a floor; a declared `correction_window` raises its own hold above it |
@@ -380,7 +386,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 
 | Key | Default | Read in |
 |---|---|---|
-| `:state_root` | `FLEZHA_STATE_DIR`, else `"app_data/state"` (derived) | `lib/flezha/state/paths.ex` |
+| `:state_root` | `FLEZHA_STATE_DIR`, else `"app_data/state"` (derived; set per run in `:test`) | `lib/flezha/state/paths.ex` |
 | `:default_compact_after_bytes` | `8 * 1024 * 1024` | `lib/flezha/state/persistence_resolver.ex` |
 | `:compact_after_age_ms` | `300_000` | `lib/flezha/state/persistence_resolver.ex` |
 | `:compaction_timeout_ms` | `30_000` | `lib/flezha/state/persistence_resolver.ex`; `0` disables the compaction-timeout sweep |

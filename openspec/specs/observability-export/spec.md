@@ -363,3 +363,22 @@ under the condition it reports is not observability.
 - **WHEN** they are recorded
 - **THEN** the export supervisor and all its children SHALL remain alive
 
+### Requirement: One exposition name SHALL be produced by one function
+
+A metric's exposition name SHALL be produced by a single function shared by every
+exporter, with the joining character a parameter of the exporter rather than a
+second copy of the rule. Two exporters SHALL NOT be able to disagree about the name
+of the same metric.
+
+#### Scenario: The same source and name reach two exporters
+
+- **WHEN** the OTLP and Prometheus exporters render the same `{source, name}` pair
+- **THEN** both SHALL derive it from the one shared function, each applying its own
+  joining character
+
+#### Scenario: A refusal sentence is written once
+
+- **WHEN** a provider value is refused by a filter and by the provider behaviour
+- **THEN** both SHALL produce the refusal through `refuse_value/2` rather than one
+  restating the other's sentence
+

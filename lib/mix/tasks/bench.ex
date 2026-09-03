@@ -229,6 +229,9 @@ defmodule Mix.Tasks.Bench do
     throughputs = Enum.map(results, fn {_pool, m} -> m.throughput_msg_per_sec end)
 
     ratio = Report.ratio(throughputs)
+    # The report ships the float; the line prints it, so a round 1000.0 does not
+    # reach a terminal as `1.0e3`.
+    ratio_text = (ratio && Report.decimal(ratio, 2)) || "n/a (single pool size)"
 
     Report.section(
       "scaling (end-to-end window)",
@@ -238,7 +241,7 @@ defmodule Mix.Tasks.Bench do
           [Integer.to_string(pool), Report.rate(m.throughput_msg_per_sec)]
         end),
         [:right, :right]
-      ) <> "\n\nratio (max/min): #{ratio || "n/a (single pool size)"}"
+      ) <> "\n\nratio (max/min): #{ratio_text}"
     )
 
     ratio

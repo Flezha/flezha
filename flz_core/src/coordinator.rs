@@ -507,15 +507,17 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool 
     delivered
 }
 
-/// The heartbeat's self-report; its keys are a cross-SDK contract the
-/// controller mirrors slot for slot.
+/// The heartbeat's self-report; its keys are a cross-SDK contract, and the
+/// controller mirrors all but three of them.
 fn heartbeat_metadata() -> HashMap<String, String> {
     let core = crate::poll_core::global();
     // The runner's whole self-report, as one table. The heartbeat thread
     // outlives a wedged dispatch pool, so these counters are what tell "alive
-    // but frozen" from "healthy" — and every key here is mirrored slot for slot
-    // by the controller (`Flezha.Runner.StreamChannel`), so the set is a
-    // cross-SDK contract, not a convenience.
+    // but frozen" from "healthy". The key set is a cross-SDK contract, not a
+    // convenience: every SDK sends these names. The controller
+    // (`Flezha.Runner.StreamChannel`) holds a liveness slot for nine of them;
+    // `restore_discarded_inputs`, `timers_armed` and `timers_fired` arrive and
+    // are dropped, so a key added here stays invisible until it gains a slot.
     [
         // Dispatch progress: frozen with the runner alive is a wedged pool.
         ("dispatches", crate::entity::dispatches_completed()),
@@ -610,8 +612,8 @@ fn handle_reconnect(
 mod heartbeat_tests {
     use super::*;
 
-    /// The heartbeat's keys are a cross-SDK contract `stream_channel.ex`
-    /// mirrors slot for slot; a rename silently blinds the controller.
+    /// The heartbeat's keys are a cross-SDK contract; `stream_channel.ex`
+    /// mirrors nine of them, and a rename silently blinds the controller.
     #[test]
     fn the_heartbeat_carries_every_overflow_counter() {
         let before = super::heartbeat_metadata();

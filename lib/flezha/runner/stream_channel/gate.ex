@@ -127,16 +127,6 @@ defmodule Flezha.Runner.StreamChannel.Gate do
     end
   end
 
-  # The runner's self-report, mirrored slot for slot. `dispatches` frozen while
-  # the runner is alive is a wedged pool; `credit_parked` advancing while it
-  # freezes is fed-but-parked rather than frozen; `blocked_parks` says the same
-  # for the receive side (a producer held on a full entity mailbox);
-  # `inflight` and its oldest age are what make ONE wedged Entity visible while
-  # the rest keeps completing; the two drop counters are what a shedding
-  # operative loses, which nothing outside the runner could see before;
-  # `pending_pushes` and its oldest age are the producers a full consumer is
-  # withholding work from — they hold no handout, so `inflight` is blind to
-
   # One waiter set per event, so the bind hold and the send-gate hold are one
   # mechanism rather than two that can drift.
   def record_waiter(state, event, pid),

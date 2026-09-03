@@ -149,7 +149,7 @@ defmodule Mix.Tasks.Bench.Report do
         _, acc -> {:cont, acc}
       end)
 
-    "#{:erlang.float_to_binary(value, decimals: 1)} #{unit}"
+    "#{decimal(value, 1)} #{unit}"
   end
 
   # -------------------------------------------------------------- lifecycle --

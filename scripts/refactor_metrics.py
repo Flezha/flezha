@@ -15,9 +15,12 @@ adds files and a walk over the index alone can only leave source out, which can 
 every count look better than the tree is; `repo.untracked_scanned` says how much of a run
 was not committed and `repo.unreadable` names a file that is THERE and could not be opened —
 counted nowhere, skipped by jscpd too, and told from a tracked file deleted from disk, which
-is correctly absent and is not reported. Duplicates are jscpd's (`.jscpd.json`),
-cycles `mix xref graph --format cycles`, lint counts credo and clippy under `--lint` (slow,
-opt-in). A ratcheted metric must never rise; timings tolerate 5 % and compare only on the
+is correctly absent and is not reported. Duplicates are jscpd's (`.jscpd.json`), where a
+file over its `maxSize` is counted by every other metric but dropped from that scan with no
+mention and no non-zero exit — so `repo.jscpd_skipped` names it and `duplicate_pairs` is left
+unmeasured rather than reported short, which a ratchet would read as an improvement. Cycles are
+`mix xref graph --format cycles`, lint counts credo and clippy under `--lint` (slow, opt-in).
+A ratcheted metric must never rise; timings tolerate 5 % and compare only on the
 recording box; an area under `blocking` in the baseline fails `--check`, the rest only report.
 `duplicate_pairs` counts pairs among the files scanned, so a recording names its area set and
 `--check` refuses a baseline recorded under a different one instead of differencing the two.
@@ -473,6 +476,18 @@ def _async_case(lines):
     return None if not m else "async: true" in m.group(1)
 
 
+def jscpd_max_size():
+    """jscpd's size limit, from the config the tool itself reads. A file over it
+    is dropped from the scan with no mention in the report and no non-zero exit,
+    so the number has to be readable here for a skip to be reportable at all."""
+    with open(os.path.join(ROOT, ".jscpd.json"), encoding="utf-8") as fh:
+        raw = str(json.load(fh).get("maxSize", "1mb")).strip().lower()
+    m = re.fullmatch(r"(\d+)(b|kb|mb|gb)?", raw)
+    if not m:
+        raise ValueError(f".jscpd.json maxSize is unparseable: {raw!r}")
+    return int(m[1]) * {None: 1, "b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3}[m[2]]
+
+
 def jscpd_pairs(roots):
     """Cross-file duplicate pairs from jscpd, as (a, b, 'a:s-e <-> b:s-e')."""
     binary = os.path.join(ROOT, JSCPD)
@@ -616,15 +631,20 @@ def measure(area_filter=None, lint=False):
     """Every area's metrics plus the repo-wide facts they were derived from."""
     table = {k: v for k, v in areas().items() if not area_filter or k in area_filter}
     tracked, untracked = working_tree_files()
-    per_file, blind = {}, []
+    per_file, blind, oversized = {}, [], []
+    max_size = jscpd_max_size()
     for path in tracked + untracked:
         scanned = any(in_area(path, r, e) for r, e in table.values())
         m = measure_file(path) if scanned else None
         if m:
             per_file[path] = m
+            if os.path.getsize(os.path.join(ROOT, path)) > max_size:
+                oversized.append(path)
         elif scanned and unreadable(path):
             blind.append(path)
-    pairs = jscpd_pairs([r for roots, _ in table.values() for r in roots])
+    # A file jscpd skipped removes every pair it was half of, and the tool says
+    # nothing and exits 0 — so the remainder is not a measurement of this tree.
+    pairs = None if oversized else jscpd_pairs([r for roots, _ in table.values() for r in roots])
     cycles = xref_cycles() if any(k.startswith(("lib/", "test")) for k in table) else None
     credo = credo_warnings() if lint else None
     clippy = clippy_warnings() if lint else None
@@ -635,6 +655,7 @@ def measure(area_filter=None, lint=False):
     repo = {
         "untracked_scanned": sum(p in per_file for p in untracked),
         "unreadable": sorted(blind),
+        "jscpd_skipped": sorted(oversized),
         "cycles": len(cycles) if cycles is not None else None,
         "cycle_sizes": sorted((len(c) for c in cycles), reverse=True)
         if cycles is not None
@@ -699,6 +720,14 @@ def compare(current, baseline, timings=None, current_box=None):
         if then is not None and seconds > then["seconds"] * (1 + TIMING_TOLERANCE):
             regressions.append(("timings", name, then["seconds"], seconds, []))
     return regressions
+
+
+def report_blind_spot(paths, why):
+    """A way this run could not see a file, named. Silence here reads as a clean
+    tree, so every blind spot says which files it cost and what that costs the
+    metric below it."""
+    if paths:
+        print(f"{len(paths)} file(s) {why}: {', '.join(paths)}")
 
 
 def unmeasured(current, baseline):
@@ -976,6 +1005,34 @@ def self_test_unreadable():
             ROOT = saved
 
 
+def self_test_jscpd_limit():
+    """The size limit is jscpd's own, so it is read from the config the tool
+    obeys and never retyped here. A limit this script cannot parse is a run that
+    would silently report a partial scan as a whole one, so it raises."""
+    global ROOT
+    saved = ROOT
+    with tempfile.TemporaryDirectory() as tmp:
+        ROOT = tmp
+        try:
+            for raw, expected in (("1mb", 1024**2), ("512kb", 512 * 1024), ("2048", 2048)):
+                with open(os.path.join(tmp, ".jscpd.json"), "w", encoding="utf-8") as fh:
+                    json.dump({"maxSize": raw}, fh)
+                assert jscpd_max_size() == expected, raw
+            # No key at all is jscpd's documented default, not "no limit".
+            with open(os.path.join(tmp, ".jscpd.json"), "w", encoding="utf-8") as fh:
+                json.dump({"minTokens": 40}, fh)
+            assert jscpd_max_size() == 1024**2
+            with open(os.path.join(tmp, ".jscpd.json"), "w", encoding="utf-8") as fh:
+                json.dump({"maxSize": "one megabyte"}, fh)
+            try:
+                jscpd_max_size()
+                raise AssertionError("an unparseable limit must refuse, not guess")
+            except ValueError:
+                pass
+        finally:
+            ROOT = saved
+
+
 def self_test_baseline():
     measured = {"box": {"hostname": "here"}, "head": "new", "areas": {}}
     recorded = {
@@ -1055,12 +1112,16 @@ def check(data, baseline, args):
     loose = data["repo"].get("untracked_scanned") or 0
     if loose:
         print(f"{loose} untracked file(s) counted: this is the working tree, not {data['head']}")
-    blind = data["repo"].get("unreadable") or []
-    if blind:
-        print(
-            f"{len(blind)} file(s) present and unreadable, counted nowhere and skipped by "
-            f"jscpd too — every metric below is short by them: {', '.join(blind)}"
-        )
+    report_blind_spot(
+        data["repo"].get("unreadable"),
+        "present and unreadable, counted nowhere and skipped by jscpd too — every metric "
+        "below is short by them",
+    )
+    report_blind_spot(
+        data["repo"].get("jscpd_skipped"),
+        "over jscpd's size limit and dropped from its scan, so duplicate_pairs is unmeasured "
+        "this run rather than the lower number a partial scan would give",
+    )
     skipped = unmeasured(data, baseline)
     if skipped:
         named = ", ".join(f"{m} in {n} area(s)" for m, n in sorted(skipped.items()))
@@ -1078,6 +1139,7 @@ def main(argv):
         self_test_cycle_depth()
         self_test_walk()
         self_test_unreadable()
+        self_test_jscpd_limit()
         self_test_baseline()
         print("self-test OK")
         return 0

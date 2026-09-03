@@ -478,22 +478,12 @@ lowering the floor.
 If none of these explain it, widen the tolerance band rather than lowering the
 floor.
 
-## Round-trip bench (`mix bench.roundtrip`)
+## Round-trip bench
 
-A full Kafka round trip — generator → `in` topic → engine → `out` topic →
-collector, with the engine as the only variable so both are measured on one wire.
-
-`--runtime rust|java|elixir` picks the SDK serving the operatives, through the
-same manifest the e2e harness uses. **A number is a number for the runtime that
-produced it** — the "one change, every SDK" rule
-([`../architecture/runner.md`](../architecture/runner.md)) makes a claim that
-spans SDKs owe a run per SDK. `--runtime elixir` carries only `--durability off`
-and is refused otherwise, by name: that SDK's v1 defers the persistence family
-([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)).
-
-Interleave the arms inside each round (`--repeat N`) rather than running one
-runtime's grid then the next: warm-up and thermal drift are then shared by every
-arm instead of biasing whichever ran first.
+`mix bench.roundtrip` — the Kafka round trip that measures generator → `in`
+topic → engine → `out` topic → collector — is development material kept out of
+this repository, so a fresh clone carries neither the task nor the compose stack
+it drives.
 
 ## See also
 

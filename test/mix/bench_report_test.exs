@@ -11,6 +11,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
   alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
+  alias Mix.Tasks.Bench.Workflow.Run
 
   describe "table/3" do
     test "columns align to their widest cell and the rule matches" do
@@ -84,6 +85,26 @@ defmodule Mix.Tasks.Bench.ReportTest do
 
       refute line =~ ~r/\de\d/
       assert line =~ "max 1000.00 ms"
+    end
+
+    test "a rate and a per-unit size reach text through the helper, not by interpolation" do
+      # `Run.rate/2` feeds a printed line AND the `metrics:` block, so the
+      # rendering belongs at the interpolation while the value stays a float —
+      # a fixed-decimal string is not a number a summariser can take a median
+      # over. 100 000 in one second is the input that shows it: `1.0e5`.
+      rate = Run.rate(100_000, 1_000_000_000)
+
+      assert is_float(rate)
+      assert Report.decimal(rate) == "100000.0"
+
+      # The other two members of the family: a per-sleeper size and a
+      # per-workflow count, both of which land on a round thousand.
+      assert Report.decimal(1_024_000 / 1024, 1) == "1000.0"
+      assert Report.decimal(2000 / 2, 2) == "1000.00"
+
+      for text <- [Report.decimal(rate), Report.decimal(1_024_000 / 1024, 1)] do
+        refute text =~ ~r/\de\d/
+      end
     end
 
     test "a rate is a whole number with thousands separators" do
