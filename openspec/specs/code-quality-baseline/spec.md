@@ -928,3 +928,40 @@ Where a job is removed for this reason, the workflow SHALL record why in its own
 - **WHEN** the workflow is reviewed
 - **THEN** it SHALL be allowed to keep `continue-on-error`, because it reports a real verdict
 
+### Requirement: A build needing a host package no manifest declares SHALL be reachable through a guarded entry point
+
+A build that depends on a host package which no manifest of this project can declare SHALL be reachable through an entry point that inspects the box before the build starts and either supplies the equivalent from what the box does carry, or refuses naming the missing package and the remedy.
+
+The case this exists for is the Ruby veneer. `rb-sys` runs `bindgen` over `ruby.h`, and bindgen resolves `<stdarg.h>` from clang's builtin header directory, which `libclang` alone does not provide; the raw failure is a `'stdarg.h' file not found` reported against a Ruby header path, so it reads as a broken Ruby rather than a missing clang package. Where the guard cannot be reached — `rb-sys` is a dependency, so its build script runs and fails before any build script this repository owns exists — the entry point SHALL be named in a comment at the site a reader lands on, and the residue SHALL be stated rather than left silent. The prerequisite SHALL NOT be satisfied by committing a literal include path into cargo configuration: such a value encodes one box's compiler version, target triple and distribution layout, and on a box that does carry clang's builtin headers it makes bindgen prefer another compiler's freestanding headers over clang's own.
+
+#### Scenario: The veneer builds on a box without clang's builtin headers
+
+- **WHEN** a cargo command enabling the `ruby` or `ruby-embed` feature of `flz_core_ffi` is run through the guarded entry point on a box that has `libclang` but no clang builtin `stdarg.h`, with no bindgen include variable set
+- **THEN** the entry point SHALL derive the include path from the compiler the box does have, say which directory it chose, and the command SHALL succeed
+
+#### Scenario: A Ruby without development headers is diagnosed as itself
+
+- **WHEN** the same entry point runs against a Ruby on `PATH` that has no `ruby.h`
+- **THEN** it SHALL refuse before cargo starts, name the missing development headers, and state that this is not the include-path problem
+
+#### Scenario: Neither the builtin headers nor a substitute exists
+
+- **WHEN** the entry point runs on a box with no clang builtin `stdarg.h` and no compiler include directory carrying one
+- **THEN** it SHALL refuse naming the package to install, rather than letting the build fail inside a dependency
+
+### Requirement: A toolchain image SHALL carry the coverage driver its test runner needs
+
+A container image this repository builds for running an SDK's test suite SHALL carry the code-coverage driver that suite's runner requires, so a coverage report is producible in the image and not only in an ad-hoc environment.
+
+A coverage diff is how this project decides whether a test may be deleted, so an image that can run a suite but not measure it leaves that SDK unable to take the decision. Where the runner accepts more than one driver, the image SHALL carry the coverage-only one rather than a debugger whose coverage mode is a side effect, because measuring is what the driver is there for and the debugger's cost is paid by every test in the image.
+
+#### Scenario: A coverage report is produced inside the image
+
+- **WHEN** the PHP SDK's suite is run with `--coverage-text` in either PHP toolchain image
+- **THEN** the run SHALL report the driver in its runtime line and print a coverage summary, and SHALL NOT warn that no coverage driver is available
+
+#### Scenario: Both targets of a two-target image carry it
+
+- **WHEN** the non-thread-safe and thread-safe PHP targets are each inspected for loaded extensions
+- **THEN** both SHALL list the coverage driver
+

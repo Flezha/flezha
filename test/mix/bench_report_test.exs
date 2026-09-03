@@ -10,6 +10,7 @@ defmodule Mix.Tasks.Bench.ReportTest do
 
   alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.Report
+  alias Mix.Tasks.Bench.Tally
 
   describe "table/3" do
     test "columns align to their widest cell and the rule matches" do
@@ -54,6 +55,35 @@ defmodule Mix.Tasks.Bench.ReportTest do
       assert Report.ms(12_281_683.999999998) == "12281.7"
       assert Report.ms(0) == "0.0"
       assert Report.ms_from_ns(1_500_000) == "1.5"
+
+      # A window that lands on a round millisecond: Elixir renders a float of
+      # magnitude 1000 or more that lands on a round value as `1.0e3`.
+      assert Report.ms(1_000_000) == "1000.0"
+      assert Report.ms_from_ns(1_000_000_000) == "1000.0"
+    end
+
+    test "a row that needs more resolution asks for decimals, not its own rounding" do
+      assert Report.ms_from_ns(1_000_000_000, 2) == "1000.00"
+      assert Report.ms_from_ns(1_234_567, 3) == "1.235"
+      assert Report.ms(1_000_000, 3) == "1000.000"
+
+      # `decimal/2` is the same rule without the millisecond conversion: the
+      # `BENCH_RESULT` line carries floats that are not durations, beside
+      # atoms and integers that pass through.
+      assert Report.decimal(1000.0, 2) == "1000.00"
+      assert Report.decimal(0.35, 2) == "0.35"
+      assert Report.decimal(:clean, 2) == "clean"
+      assert Report.decimal(42, 2) == "42"
+    end
+
+    test "the workflow task's own latency line never falls into scientific notation" do
+      # `max` is the exact observation, not a bucket midpoint, so a round
+      # millisecond is reachable — which is the only input that shows this.
+      tally = Tally.record({0, 1_000_000_000}, Tally.new(1))
+      line = Tally.latency_line(tally)
+
+      refute line =~ ~r/\de\d/
+      assert line =~ "max 1000.00 ms"
     end
 
     test "a rate is a whole number with thousands separators" do
@@ -173,7 +203,10 @@ defmodule Mix.Tasks.Bench.ReportTest do
         ExUnit.CaptureIO.capture_io(fn ->
           Report.open("test bench", [{"runtime", "rust"}, {"shape", "regression"}])
           Report.emit(%{durability: "none"})
-          assert Report.finish(path, %{metrics: %{throughput_msg_per_sec: 150_348}}) == path
+
+          assert Report.finish(path, %{
+                   metrics: %{throughput_msg_per_sec: 150_348, first_out_ms: 1000.0}
+                 }) == path
         end)
 
       assert output =~ "=== test bench ==="
@@ -187,6 +220,9 @@ defmodule Mix.Tasks.Bench.ReportTest do
       assert decoded["run"]["runtime"] == "rust"
       assert decoded["system"]["cores"] == :erlang.system_info(:logical_processors)
       assert decoded["metrics"]["throughput_msg_per_sec"] == 150_348
+      # A measurement the report ships stays a JSON number: `summarize.py` takes
+      # a median over this field and a fixed-decimal string is not one.
+      assert decoded["metrics"]["first_out_ms"] === 1000.0
       # The run block's own context reaches the warnings.
       assert Enum.any?(decoded["warnings"], &(&1 =~ "durability"))
     end

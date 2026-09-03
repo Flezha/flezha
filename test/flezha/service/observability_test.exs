@@ -2,6 +2,7 @@ defmodule Flezha.Service.ObservabilityTest do
   # async: false: writes Application env; the observability registry.
   use ExUnit.Case, async: false
 
+  alias Flezha.Observability.AuditLog.Codec
   alias Flezha.Observability.Bus
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
@@ -162,6 +163,33 @@ defmodule Flezha.Service.ObservabilityTest do
       # the text rule would stringify every one of them.
       assert json["metadata"]["{:a, :b}"] == 1
       assert json["measurements"]["count"] == 1
+    end
+
+    test "observe tail --json and the audit log answer one JSON value rule", %{src: src} do
+      metadata = %{list: [1, 2, 3], nested: %{"a" => 1}, missing: nil, text: "t", n: 2}
+
+      signal =
+        Signal.new(%{
+          kind: :event,
+          source: src,
+          name: :tail_value_probe,
+          measurements: %{count: 1},
+          metadata: metadata
+        })
+
+      json = capture_tail_json(src, signal)
+
+      # JSON carries a null, an array and an object; rendering them as strings
+      # is the text rule leaking into a format that does not need it.
+      assert json["metadata"]["list"] == [1, 2, 3]
+      assert json["metadata"]["nested"] == %{"a" => 1}
+      assert json["metadata"]["missing"] == nil
+      assert json["metadata"]["text"] == "t"
+      assert json["metadata"]["n"] == 2
+
+      # One rule, so the two JSON renderers of the same metadata agree.
+      {:ok, audit} = Codec.decode(Codec.encode(signal))
+      assert audit["metadata"] == json["metadata"]
     end
   end
 

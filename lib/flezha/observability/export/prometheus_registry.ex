@@ -102,8 +102,8 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   end
 
   @doc """
-  Read the count of truncations for a given source. Used by tests
-  and `flz observe sources --json`.
+  Read the count of truncations for a given source. Read by the tests that
+  pin the truncation rule; no operator-facing surface renders it.
   """
   @spec truncation_count(atom()) :: non_neg_integer()
   def truncation_count(source) when is_atom(source) do
@@ -250,34 +250,17 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   # The leading `_` run collapses to one so no producer key can enter
   # Prometheus's reserved `__` namespace or forge this module's own
   # `__truncated__` marker.
-  # This runs per label per emit, and the overwhelming majority of names are
-  # already legal, so the common case is a scan that allocates nothing and
-  # hands back the binary it was given. Only a name that fails it is rewritten.
+  #
+  # The grammar itself is `Signal.legal_exposition_name?/1` — the same one a
+  # source name and a metric name are refused against. A label name is the half
+  # that is rewritten rather than refused, and that difference is the only one.
   #
   # The rewrite is one pass over the bytes, then the leading run — deliberately
   # not two `String.replace/3` regexes, which are equivalent on every input and
   # cost ~9.7 us per name against ~0.8 us here.
   defp sanitize_label_name(name) do
-    if legal_label_name?(name), do: name, else: rewrite_label_name(name)
+    if Signal.legal_exposition_name?(name), do: name, else: rewrite_label_name(name)
   end
-
-  # `[a-zA-Z_][a-zA-Z0-9_]*`, and not already inside the reserved `__`
-  # namespace, which the rewrite collapses.
-  defp legal_label_name?("__" <> _), do: false
-
-  defp legal_label_name?(<<c, rest::binary>>)
-       when c in ?a..?z or c in ?A..?Z or c == ?_,
-       do: legal_label_tail?(rest)
-
-  defp legal_label_name?(_), do: false
-
-  defp legal_label_tail?(<<>>), do: true
-
-  defp legal_label_tail?(<<c, rest::binary>>)
-       when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_,
-       do: legal_label_tail?(rest)
-
-  defp legal_label_tail?(_), do: false
 
   defp rewrite_label_name(name) do
     name

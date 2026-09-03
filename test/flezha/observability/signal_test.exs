@@ -37,6 +37,23 @@ defmodule Flezha.Observability.SignalTest do
       end
     end
 
+    test "rejects a metric name outside the Prometheus exposition grammar" do
+      for bad <- [:"3bad-name", :"has space", :"has.dot", :__reserved] do
+        assert_raise ArgumentError, ~r/exposition/, fn ->
+          Signal.new(%{kind: :metric, source: :s, name: bad})
+        end
+      end
+    end
+
+    test "the exposition grammar binds a metric name only" do
+      # Only a `:metric` name is rendered as a metric name; an event or a log
+      # name reaches no exposition.
+      for kind <- [:event, :log, :trace_span] do
+        assert %Signal{name: :"3bad-name"} =
+                 Signal.new(%{kind: kind, source: :s, name: :"3bad-name"})
+      end
+    end
+
     test "rejects non-atom name" do
       assert_raise ArgumentError, ~r/name must be an atom/, fn ->
         Signal.new(%{kind: :event, source: :s, name: "not_atom"})

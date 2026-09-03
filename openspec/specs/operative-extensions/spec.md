@@ -408,11 +408,24 @@ provider process. `Flezha.Plugin.Provider.Kafka.ProducerSup.ensure_worker/1` (an
 equivalent provider lookups) SHALL verify the looked-up pid is alive and not parked
 before reuse, and reap a dead/parked worker so a fresh one is started.
 
+Reaping SHALL NOT wait on the process registry. A registry entry that still names
+the reaped worker SHALL NOT delay, and SHALL NOT fail, the start of the fresh one:
+the supervisor's own termination already returns after the child has exited, and a
+registration over an entry naming a dead pid replaces it. A bounded poll in place
+of that is a fixed cost on every swap for a failure that cannot occur, and it is
+invisible to the sleep gate because that gate counts test files only.
+
 #### Scenario: Stale producer pid is reaped on recovery
 - **GIVEN** a recovered operative whose previous Kafka producer worker is dead or parked but still in the registry
 - **WHEN** `ensure_worker/1` runs during plugin re-application
 - **THEN** it SHALL reap the stale entry and start a fresh, healthy producer worker
 - **AND** the recovered operative SHALL produce rather than re-attach to the dead worker
+
+#### Scenario: A stale registry entry does not delay the fresh worker
+- **GIVEN** a reaped worker whose registry entry has not yet been cleared and still names it
+- **WHEN** `ensure_worker` starts the replacement
+- **THEN** a fresh, live worker SHALL be started and named by the registry
+- **AND** the swap SHALL complete without sleeping
 
 ### Requirement: Plugin enable SHALL be idempotent for an id already registered against the same target
 

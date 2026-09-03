@@ -91,13 +91,27 @@ defmodule Mix.Tasks.Bench.Report do
 
   # ------------------------------------------------------------- formatting --
 
-  @doc "Microseconds as milliseconds, one decimal. No raw float reaches output."
-  @spec ms(number()) :: String.t()
-  def ms(microseconds), do: :erlang.float_to_binary(microseconds / 1000, decimals: 1)
+  @doc """
+  A float as text with a fixed number of decimals; anything else passes
+  through. Nothing renders a measured float by interpolation: Elixir writes a
+  float of magnitude 1000 or more that lands on a round value in scientific
+  notation, so `1000.0` reaches a terminal and a `diff` as `1.0e3`.
+  """
+  @spec decimal(term(), pos_integer()) :: String.t()
+  def decimal(value, decimals \\ 1)
 
-  @doc "Nanoseconds as milliseconds, one decimal."
-  @spec ms_from_ns(number()) :: String.t()
-  def ms_from_ns(nanoseconds), do: ms(nanoseconds / 1000)
+  def decimal(value, decimals) when is_float(value),
+    do: :erlang.float_to_binary(value, decimals: decimals)
+
+  def decimal(value, _decimals), do: to_string(value)
+
+  @doc "Microseconds as milliseconds, one decimal unless the row needs more."
+  @spec ms(number(), pos_integer()) :: String.t()
+  def ms(microseconds, decimals \\ 1), do: decimal(microseconds / 1000, decimals)
+
+  @doc "Nanoseconds as milliseconds, one decimal unless the row needs more."
+  @spec ms_from_ns(number(), pos_integer()) :: String.t()
+  def ms_from_ns(nanoseconds, decimals \\ 1), do: ms(nanoseconds / 1000, decimals)
 
   @doc "A rate as a whole number with thousands separators."
   @spec rate(number()) :: String.t()

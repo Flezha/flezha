@@ -61,6 +61,18 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
       end
     end
 
+    test "a malformed JSON option is refused as a string, not as a decode struct" do
+      for field <- ["ws_opts", "payload_metadata", "subscription_headers", "post_connect"] do
+        assert {:error, message} = Websocket.build(%{"uri" => "wss://x", field => "{not json"})
+
+        assert is_binary(message),
+               "#{field} answered a non-binary refusal: #{inspect(message)}"
+
+        assert message =~ field
+        assert message =~ "{not json"
+      end
+    end
+
     test "a provider that declares no required fields is unchanged" do
       assert {:ok, %StdOut{}} = StdOut.build(%{})
     end

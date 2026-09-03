@@ -34,10 +34,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   @frame_types [:text, :binary]
 
-  # The value-guarded options. The `@ms_fields` and `:post_connect` clauses
-  # are total on their own, so listing them would generate a clause that
-  # never matches.
-  @converted_opts [:ws_opts, :payload_metadata, :subscription_headers]
+  # The JSON-object options: a CLI flag delivers each as a string. They are also
+  # the whole of `@converted_opts` — the `@ms_fields` and `:post_connect`
+  # clauses are total on their own, so listing them would generate a clause
+  # that never matches.
+  @json_opts [:ws_opts, :payload_metadata, :subscription_headers]
+  @converted_opts @json_opts
 
   @enforce_keys [:uri]
   defstruct @enforce_keys ++
@@ -99,12 +101,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl true
   def plugin_type(), do: :io_binding
 
-  defp convert_value(:ws_opts, value) when is_binary(value) do
-    Jason.decode(value)
-  end
-
-  defp convert_value(:payload_metadata, value) when is_binary(value) do
-    Jason.decode(value)
+  # A decode failure is refused in the shape every other option's is: a
+  # `Jason.DecodeError` is not the `String.t()` the callback promises, and the
+  # `:post_connect` clause below already answers this failure that way.
+  defp convert_value(field, value) when field in @json_opts and is_binary(value) do
+    with {:error, _decode_error} <- Jason.decode(value),
+         do: ProviderBehaviour.refuse_value(field, value)
   end
 
   # `handle_connect/3` indexes `state.post_connect["payload"]`, so the value must
@@ -129,10 +131,6 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   defp convert_value(:post_connect, value),
     do: ProviderBehaviour.refuse_value(:post_connect, value)
-
-  defp convert_value(:subscription_headers, value) when is_binary(value) do
-    Jason.decode(value)
-  end
 
   defp convert_value(:subscription_interval_ms, value) do
     ProviderBehaviour.parse_int(value, :subscription_interval_ms)

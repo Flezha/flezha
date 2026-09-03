@@ -43,7 +43,7 @@ defmodule Flezha.Observability.OtlpExportTest do
       :ok
     end
 
-    test "a signal from the real Logger bridge encodes, map and tuple readable" do
+    test "a signal from the real Logger bridge encodes, map typed and tuple readable" do
       message = "otlp-attribute-probe-#{:erlang.unique_integer([:positive])}"
 
       LoggerHandler.log(
@@ -65,30 +65,74 @@ defmodule Flezha.Observability.OtlpExportTest do
 
       attrs = log_attributes(OtlpCodec.encode_logs([signal]))
 
-      assert attrs["logger"] =~ "mfa:"
-      assert attrs["logger"] =~ "412"
-      assert String.starts_with?(attrs["mfa"], "{")
-      assert attrs["mfa"] =~ "probe"
-      assert attrs["message"] == message
+      # The map crosses as a nested KeyValueList, so a collector can index into
+      # it; the tuple has no OTLP shape and crosses as its inspection.
+      assert {:kvlist, logger} = attrs["logger"]
+      assert {:int, 412} = logger["line"]
+      assert {:string, mfa} = attrs["mfa"]
+      assert String.starts_with?(mfa, "{")
+      assert mfa =~ "probe"
+      assert {:string, ^message} = attrs["message"]
 
-      # `file:` is a charlist, and `to_string/1` rendered it indistinguishable
-      # from a binary carrying the same text.
-      assert attrs["file"] =~ "lib/probe.ex"
-      refute attrs["file"] == "lib/probe.ex"
+      # `file:` is a charlist, which is a list of integers and nothing else:
+      # the shared typed rule cannot tell it from `[108, 105, ...]`.
+      assert {:array, chars} = attrs["file"]
+      assert Enum.map(chars, fn {:int, c} -> c end) == ~c"lib/probe.ex"
     end
 
-    test "a list attribute reads as the list, not the binary of its bytes" do
+    test "a list attribute is an array of typed elements, not a string" do
       attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, %{l: [1, 2, 3]})]))
 
-      refute attrs["l"] == <<1, 2, 3>>
-      assert String.starts_with?(attrs["l"], "[")
-      assert attrs["l"] =~ "3"
+      assert attrs["l"] == {:array, [{:int, 1}, {:int, 2}, {:int, 3}]}
     end
 
     test "a binary attribute is unchanged" do
       attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, %{path: "/x"})]))
 
-      assert attrs["path"] == "/x"
+      assert attrs["path"] == {:string, "/x"}
+    end
+
+    test "each scalar takes the AnyValue member that carries its type" do
+      meta = %{i: 412, neg: -412, big: 1 <<< 70, ok: true, no: false, f: 1.5, a: :some_atom}
+
+      attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, meta)]))
+
+      assert attrs["i"] == {:int, 412}
+      assert attrs["neg"] == {:int, -412}
+      assert attrs["ok"] == {:bool, true}
+      assert attrs["no"] == {:bool, false}
+      assert attrs["f"] == {:double, 1.5}
+      assert attrs["a"] == {:string, "some_atom"}
+      # An integer with no int64 to be is its decimal rendering, not a varint
+      # no decoder can read.
+      assert attrs["big"] == {:string, Integer.to_string(1 <<< 70)}
+    end
+
+    test "a term OTLP has no shape for crosses as its inspection" do
+      meta = %{t: {:a, :b}, p: self(), s: %Signal{kind: :log, source: :s, name: :n}}
+
+      attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, meta)]))
+
+      for key <- ~w(t p s) do
+        assert {:string, rendered} = attrs[key]
+        assert String.valid?(rendered)
+      end
+
+      assert {:string, "{:a, :b}"} = attrs["t"]
+      assert {:string, "#PID" <> _} = attrs["p"]
+      assert {:string, "%Flezha.Observability.Signal{" <> _} = attrs["s"]
+    end
+
+    test "a nested map is built by the same rule as a top-level attribute" do
+      meta = %{m: %{{:tup, 1} => [true], a: 1, b: %{c: "x"}}}
+
+      attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, meta)]))
+
+      assert {:kvlist, m} = attrs["m"]
+      assert m["a"] == {:int, 1}
+      assert m["b"] == {:kvlist, %{"c" => {:string, "x"}}}
+      # A key is text in every format, at every depth.
+      assert m["{:tup, 1}"] == {:array, [{:bool, true}]}
     end
 
     test "all three encode sites coerce alike" do
@@ -100,9 +144,9 @@ defmodule Flezha.Observability.OtlpExportTest do
 
       assert metric == log
       assert log == span
-      assert String.starts_with?(log["m"], "%{")
-      assert String.starts_with?(log["t"], "{")
-      refute log["l"] == <<1, 2, 3>>
+      assert log["m"] == {:kvlist, %{"a" => {:int, 1}}}
+      assert log["t"] == {:string, "{:a, :b}"}
+      assert log["l"] == {:array, [{:int, 1}, {:int, 2}, {:int, 3}]}
     end
 
     test "a non-string attribute key is coerced the same way" do
@@ -121,14 +165,26 @@ defmodule Flezha.Observability.OtlpExportTest do
       # is NOT a UTF-8 assertion — a fixed64 timestamp makes every OTLP body
       # invalid UTF-8, clean or not — so what proves it is the attribute read
       # back out, plus the raw bytes being absent from the body entirely.
+      # `bytes_value` would carry them legally and is deliberately not used.
       raw = <<0xFF, 0x00, 0xFE>>
       body = OtlpCodec.encode_logs([attr_signal(:log, %{v: raw})])
 
       attrs = log_attributes(body)
 
-      assert attrs["v"] == inspect(raw)
-      assert String.valid?(attrs["v"])
+      assert attrs["v"] == {:string, inspect(raw)}
       assert :binary.match(IO.iodata_to_binary(body), raw) == :nomatch
+    end
+
+    test "a nil key names itself and a nil value carries no type" do
+      attrs =
+        log_attributes(OtlpCodec.encode_logs([attr_signal(:log, %{nil => 1, v: nil})]))
+
+      # A key with no name is not a key; a value with no type is exactly what
+      # the empty AnyValue is for, and it is distinguishable on the wire from
+      # a zero-length string_value.
+      assert attrs["nil"] == {:int, 1}
+      assert attrs["v"] == {:empty, nil}
+      refute attrs["v"] == {:string, ""}
     end
 
     test "the encoder represents any term it is handed" do
@@ -138,15 +194,12 @@ defmodule Flezha.Observability.OtlpExportTest do
         fun: &OtlpCodec.encode_logs/1,
         struct: %Signal{kind: :log, source: :s, name: :n},
         nested: %{a: [%{b: {1, 2}}]},
-        # `to_string(nil)` is "", which the `&1 != ""` assertion below catches:
-        # an attribute that names nothing is not an encodable attribute.
         nil_value: nil
       }
 
       attrs = log_attributes(OtlpCodec.encode_logs([attr_signal(:log, meta)]))
 
       assert map_size(attrs) == map_size(meta)
-      assert Enum.all?(Map.values(attrs), &(is_binary(&1) and &1 != ""))
     end
   end
 
@@ -244,13 +297,32 @@ defmodule Flezha.Observability.OtlpExportTest do
     Enum.reduce(path, IO.iodata_to_binary(body), fn field, msg -> hd(pb_get(msg, field)) end)
   end
 
-  defp pb_attributes(msg, field) do
-    Map.new(pb_get(msg, field), fn kv ->
-      [key] = pb_get(kv, 1)
-      [value] = kv |> pb_get(2) |> hd() |> pb_get(1)
-      {key, value}
-    end)
+  defp pb_attributes(msg, field), do: Map.new(pb_get(msg, field), &pb_kv/1)
+
+  # KeyValue { key = 1, value = 2 } -> {key, the AnyValue member it set}. The
+  # member is the assertion: reading field 1 alone cannot tell a typed value
+  # from a value that was stringified.
+  defp pb_kv(kv) do
+    [key] = pb_get(kv, 1)
+    {key, pb_any_value(hd(pb_get(kv, 2)))}
   end
+
+  # AnyValue { string=1, bool=2, int=3, double=4, array=5, kvlist=6, bytes=7 }
+  defp pb_any_value(<<>>), do: {:empty, nil}
+
+  defp pb_any_value(msg) do
+    case pb_fields(msg) do
+      [{1, v}] -> {:string, v}
+      [{2, v}] -> {:bool, v == 1}
+      [{3, v}] -> {:int, pb_signed64(v)}
+      [{4, <<v::little-float-64>>}] -> {:double, v}
+      [{5, v}] -> {:array, Enum.map(pb_get(v, 1), &pb_any_value/1)}
+      [{6, v}] -> {:kvlist, Map.new(pb_get(v, 1), &pb_kv/1)}
+    end
+  end
+
+  defp pb_signed64(v) when v >= 0x8000_0000_0000_0000, do: v - 0x1_0000_0000_0000_0000
+  defp pb_signed64(v), do: v
 
   defp pb_get(msg, field), do: for({^field, value} <- pb_fields(msg), do: value)
 

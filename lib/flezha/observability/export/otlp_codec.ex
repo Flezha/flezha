@@ -11,9 +11,10 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   Signal carries monotonic microseconds and this module converts.
 
   One invariant: encoding never raises on the shape of an attribute and
-  never puts bytes a protobuf `string` cannot carry on the wire. Every
-  term is representable through
-  `Flezha.Observability.Signal.metadata_text/1`.
+  never puts bytes a field cannot carry on the wire. An attribute key is
+  text and takes `Flezha.Observability.Signal.metadata_text/1`; a value
+  takes the typed rule, `Signal.metadata_json/1`, and `any_value/1` maps
+  its closed output domain onto `AnyValue`'s oneof.
   """
 
   import Bitwise
@@ -23,6 +24,9 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   @wire_varint 0
   @wire_64bit 1
   @wire_length_delim 2
+
+  @int64_min -0x8000_0000_0000_0000
+  @int64_max 0x7FFF_FFFF_FFFF_FFFF
 
   # ---------- Public API ----------
 
@@ -240,7 +244,7 @@ defmodule Flezha.Observability.Export.OtlpCodec do
       field(11, @wire_64bit, encode_fixed64(ts_ns)),
       field(2, @wire_varint, encode_varint(9)),
       field(3, @wire_length_delim, encode_string("INFO")),
-      field(5, @wire_length_delim, encode_message(any_value_string(body_str)))
+      field(5, @wire_length_delim, encode_message(any_value(body_str)))
     ] ++ attrs
   end
 
@@ -300,21 +304,59 @@ defmodule Flezha.Observability.Export.OtlpCodec do
 
   # ---------- Common helpers ----------
 
-  defp kv_attribute(key, value) do
-    # KeyValue { key = 1, value = 2 (AnyValue) }
-    # An OTLP attribute key and value both cross the wire as strings, and a
-    # signal's metadata holds arbitrary terms; `Signal.metadata_text/1` states
-    # the one rule that turns any of them into text.
+  # A signal's metadata holds arbitrary terms. A key is text in every format and
+  # takes the text rule; a value takes the typed rule, whose output domain is
+  # `binary | number | boolean | nil | list | map with binary keys`.
+  defp kv_attribute(key, value),
+    do: attribute(Signal.metadata_text(key), Signal.metadata_json(value))
+
+  # KeyValue { key = 1, value = 2 (AnyValue) }. A nested map's entries are built
+  # here too, so a `kvlist_value` cannot drift from a top-level attribute.
+  defp attribute(key, json_value) when is_binary(key) do
     [
-      field(1, @wire_length_delim, encode_string(Signal.metadata_text(key))),
-      field(2, @wire_length_delim, encode_message(any_value_string(Signal.metadata_text(value))))
+      field(1, @wire_length_delim, encode_string(key)),
+      field(2, @wire_length_delim, encode_message(any_value(json_value)))
     ]
   end
 
-  defp any_value_string(value) do
-    # AnyValue { string_value = 1 }
-    [field(1, @wire_length_delim, encode_string(value))]
+  # AnyValue { string_value = 1, bool_value = 2, int_value = 3, double_value = 4,
+  #            array_value = 5, kvlist_value = 6, bytes_value = 7 }
+  #
+  # `nil` sets no member: OTLP has no null literal, and an unset oneof is the
+  # protocol's own "no type", distinguishable on the wire from an empty string.
+  defp any_value(nil), do: []
+
+  defp any_value(value) when is_boolean(value),
+    do: [field(2, @wire_varint, encode_varint(if(value, do: 1, else: 0)))]
+
+  defp any_value(value) when is_integer(value) and value >= @int64_min and value <= @int64_max,
+    do: [field(3, @wire_varint, encode_varint_int64(value))]
+
+  defp any_value(value) when is_float(value),
+    do: [field(4, @wire_64bit, encode_double(value))]
+
+  defp any_value(value) when is_list(value) do
+    # ArrayValue { values = 1 }
+    elements = Enum.map(value, &field(1, @wire_length_delim, encode_message(any_value(&1))))
+    [field(5, @wire_length_delim, encode_message(elements))]
   end
+
+  defp any_value(%{} = value) when not is_struct(value) do
+    # KeyValueList { values = 1 }
+    entries =
+      Enum.map(value, fn {k, v} ->
+        field(1, @wire_length_delim, encode_message(attribute(k, v)))
+      end)
+
+    [field(6, @wire_length_delim, encode_message(entries))]
+  end
+
+  # A binary, an atom the typed rule already named, and — the reason this clause
+  # is total rather than a binary clause — an integer with no `int64` to be.
+  # `bytes_value` is not used: a binary that is not valid UTF-8 takes the text
+  # rule's inspection so the raw bytes reach the wire nowhere.
+  defp any_value(value),
+    do: [field(1, @wire_length_delim, encode_string(Signal.metadata_text(value)))]
 
   defp random_bytes(n), do: :crypto.strong_rand_bytes(n)
 
@@ -342,6 +384,11 @@ defmodule Flezha.Observability.Export.OtlpCodec do
   defp encode_string(value) when is_binary(value), do: value
 
   defp encode_bytes(value) when is_binary(value), do: value
+
+  defp encode_varint_int64(value) when value < 0,
+    do: encode_varint(value + 0x1_0000_0000_0000_0000)
+
+  defp encode_varint_int64(value), do: encode_varint(value)
 
   defp encode_varint(value) when value < 0x80, do: <<value>>
 

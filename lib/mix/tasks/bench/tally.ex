@@ -9,6 +9,7 @@ defmodule Mix.Tasks.Bench.Tally do
   """
 
   alias Flezha.State.Metrics
+  alias Mix.Tasks.Bench.Report
 
   @hist_step_ns 10_000
   @hist_buckets 6_000_000
@@ -115,7 +116,9 @@ defmodule Mix.Tasks.Bench.Tally do
       "p99.9 #{ms(pct[0.999])} / max #{ms(tally.max_ns)} ms (n=#{tally.received})"
   end
 
-  defp ms(ns), do: Float.round(ns / 1_000_000, 2)
+  # Two decimals: the histogram resolves to 0.01 ms and a percentile that reads
+  # `0.05` says something `0.1` does not.
+  defp ms(ns), do: Report.ms_from_ns(ns, 2)
 
   @doc "The namespace's state directory on disk: bytes, `.wal` and `.snap.*` counts."
   @spec state_dir_summary(String.t()) :: String.t()

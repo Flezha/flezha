@@ -183,8 +183,8 @@ defmodule Flezha.Service.Cli.Observe do
       source: signal.source,
       name: signal.name,
       ts: signal.ts,
-      measurements: stringify_keys(signal.measurements),
-      metadata: stringify_keys(signal.metadata)
+      measurements: Signal.metadata_json(signal.measurements),
+      metadata: Signal.metadata_json(signal.metadata)
     }
     |> Jason.encode!()
     |> IO.puts()
@@ -196,18 +196,6 @@ defmodule Flezha.Service.Cli.Observe do
         "measurements=#{inspect(signal.measurements)} metadata=#{inspect(signal.metadata)}"
     )
   end
-
-  defp stringify_keys(map) when is_map(map) do
-    Enum.into(map, %{}, fn {k, v} -> {Signal.metadata_text(k), inspect_or_pass(v)} end)
-  end
-
-  # `inspect_or_pass/1` is deliberately NOT `Signal.metadata_text/1`, for the
-  # same reason `AuditLog.Codec.stringify_value/1` is not: JSON carries typed
-  # values, and collapsing onto the text rule would render every number and
-  # boolean in `flz observe tail --json` as a string.
-  defp inspect_or_pass(v) when is_binary(v) or is_number(v) or is_boolean(v), do: v
-  defp inspect_or_pass(v) when is_atom(v), do: Atom.to_string(v)
-  defp inspect_or_pass(v), do: inspect(v)
 
   defp render_error(:pubsub_sink_disabled) do
     Context.cli_error!(

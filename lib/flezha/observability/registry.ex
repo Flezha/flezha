@@ -438,10 +438,19 @@ defmodule Flezha.Observability.Registry do
 
   defp validate_source(%{name: name, kinds: kinds, flavour: flavour})
        when is_atom(name) and is_list(kinds) and flavour in [:declarative, :process_backed] do
-    if Enum.all?(kinds, &(&1 in Signal.kinds())) do
-      :ok
-    else
-      {:error, {:invalid_kinds, kinds}}
+    cond do
+      not Enum.all?(kinds, &(&1 in Signal.kinds())) ->
+        {:error, {:invalid_kinds, kinds}}
+
+      # A source name is the head of every metric name it emits, and a metric
+      # name outside the exposition grammar fails the whole scrape. Refused
+      # here, where the developer wrote it, rather than rewritten at scrape
+      # time — a source name is chosen, not forwarded from a third party.
+      not Signal.legal_exposition_name?(Atom.to_string(name)) ->
+        {:error, {:invalid_source_name, name}}
+
+      true ->
+        :ok
     end
   end
 

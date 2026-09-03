@@ -31,6 +31,23 @@ defmodule Flezha.Observability.RegistryTest do
                })
     end
 
+    test "rejects a name outside the Prometheus exposition grammar" do
+      # A metric name is `<source>_<name>`, and a name outside
+      # `[a-zA-Z_][a-zA-Z0-9_]*` fails the WHOLE scrape rather than one series.
+      for bad <- [:"weird source.name", :"3leading_digit", :__reserved] do
+        assert {:error, {:invalid_source_name, ^bad}} =
+                 Registry.register_source(%{name: bad, kinds: [:metric], flavour: :declarative}),
+               "#{inspect(bad)} was accepted"
+
+        refute bad in Enum.map(Registry.list_sources(), & &1.name)
+      end
+    end
+
+    test "accepts a legal name unchanged", %{name: name} do
+      assert :ok =
+               Registry.register_source(%{name: name, kinds: [:metric], flavour: :declarative})
+    end
+
     test "lookup_source returns the entry", %{name: name} do
       :ok =
         Registry.register_source(%{

@@ -60,6 +60,7 @@ defmodule Flezha.Observability.Signal do
     validate_kind!(kind)
     validate_atom!(:source, source)
     validate_atom!(:name, name)
+    if kind == :metric, do: validate_metric_name!(name)
     validate_map!(:measurements, measurements)
     validate_map!(:metadata, metadata)
 
@@ -110,6 +111,78 @@ defmodule Flezha.Observability.Signal do
   def metadata_text(term), do: inspect_term(term)
 
   defp inspect_term(term), do: inspect(term, limit: :infinity, printable_limit: :infinity)
+
+  @doc """
+  Render one metadata value for a format that carries typed values — the audit
+  log's JSON lines and `flz observe tail --json`.
+
+  The companion to `metadata_text/1`, and the reason there are two: a wire that
+  can only hold text has to render `nil` as `"nil"` and a list by inspection,
+  while JSON has a null, an array and an object and loses nothing by keeping
+  them. A binary, a number and a boolean pass through; an atom takes its own
+  name; a list and a plain map recurse, a map's keys through `metadata_text/1`
+  because a key is text in either format. Everything else — a struct, a tuple,
+  a pid — is inspected, exactly as `metadata_text/1` inspects it.
+
+  One rule, so two renderers of one format cannot answer differently for the
+  same term.
+  """
+  @spec metadata_json(term()) :: term()
+  def metadata_json(term)
+      when is_binary(term) or is_number(term) or is_boolean(term) or is_nil(term),
+      do: term
+
+  def metadata_json(term) when is_atom(term), do: Atom.to_string(term)
+  def metadata_json(term) when is_list(term), do: Enum.map(term, &metadata_json/1)
+
+  def metadata_json(%{} = term) when not is_struct(term),
+    do: Map.new(term, fn {k, v} -> {metadata_text(k), metadata_json(v)} end)
+
+  def metadata_json(term), do: inspect_term(term)
+
+  @doc """
+  Is `name` legal in the Prometheus text exposition — `[a-zA-Z_][a-zA-Z0-9_]*`,
+  and outside the reserved `__` namespace?
+
+  One predicate answers for a metric name and for a label name. Prometheus lets
+  a metric name additionally carry `:`, which is reserved for recording rules
+  and which nothing here emits, so a name that passes this is legal in either
+  position.
+
+  A name that fails is a scrape-level failure, not a series-level one:
+  Prometheus rejects the whole exposition on a parse error. Which is why a
+  developer-chosen name is refused where it is declared and a metadata key,
+  which arrives at runtime from a third party, is sanitized instead.
+
+  The common case is a name that is already legal, so this is a scan that
+  allocates nothing and answers true.
+  """
+  @spec legal_exposition_name?(binary()) :: boolean()
+  def legal_exposition_name?("__" <> _), do: false
+
+  def legal_exposition_name?(<<c, rest::binary>>)
+      when c in ?a..?z or c in ?A..?Z or c == ?_,
+      do: legal_name_tail?(rest)
+
+  def legal_exposition_name?(_), do: false
+
+  defp legal_name_tail?(<<>>), do: true
+
+  defp legal_name_tail?(<<c, rest::binary>>)
+       when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c == ?_,
+       do: legal_name_tail?(rest)
+
+  defp legal_name_tail?(_), do: false
+
+  defp validate_metric_name!(name) do
+    if legal_exposition_name?(Atom.to_string(name)) do
+      :ok
+    else
+      raise ArgumentError,
+            "invalid metric name #{inspect(name)} — a metric name is rendered into the " <>
+              "exposition and must match [a-zA-Z_][a-zA-Z0-9_]* outside the reserved __ namespace"
+    end
+  end
 
   defp validate_kind!(kind) when kind in @kinds, do: :ok
 

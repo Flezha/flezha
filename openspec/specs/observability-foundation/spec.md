@@ -277,3 +277,55 @@ The producer-side emit function SHALL be allocation-light: it SHALL accept `meas
 - **WHEN** a producer emits with `measurements: %{count: 1}` and `metadata: %{operative: "r"}`
 - **THEN** the signal SHALL be delivered without the producer being required to convert the maps to lists or keyword lists
 
+### Requirement: A name that cannot be rendered in the exposition SHALL be refused where it is declared
+
+A source name and a `:metric` signal's name SHALL match `[a-zA-Z_][a-zA-Z0-9_]*`
+and SHALL NOT begin with two underscores, and a name that does not SHALL be
+refused at the point it is declared — never rewritten, and never discovered at
+scrape time.
+
+These two names are joined into the metric name an exporter renders, and a metric
+name outside that grammar fails the **whole** Prometheus scrape rather than one
+series: a single space, dot or leading digit hides every metric the controller
+exports. The grammar SHALL be stated in exactly one place and read by the
+registration path and by the exporter alike, so that what is refused and what is
+rendered cannot disagree.
+
+A source name SHALL be refused by `Registry.register_source/1`, answering an error
+that names the offending name, so a source with an unrenderable name never becomes
+registered. A `:metric` signal's name SHALL be refused by the signal constructor,
+raising before the signal reaches the bus, for the same reason an unknown `kind`
+does — both are developer-chosen atoms, wrong at the call site, and the call site
+is where the author can see it. A signal of any other kind SHALL be unaffected:
+only a `:metric` name is rendered as a metric name.
+
+This SHALL NOT extend to a signal's metadata keys. A metadata key is a runtime term
+forwarded verbatim from third-party telemetry, and an exporter SHALL keep
+sanitizing it rather than refusing it, because refusing there would drop a caller's
+dimension with nothing in the output to say so.
+
+#### Scenario: A source name outside the grammar is refused at registration
+
+- **WHEN** a source is registered under a name containing a space or a dot
+- **THEN** `register_source/1` SHALL answer an error naming that name, and the source SHALL NOT appear in `list_sources/0`
+
+#### Scenario: A metric name outside the grammar is refused at construction
+
+- **WHEN** a producer constructs a signal with `kind: :metric` and a name beginning with a digit
+- **THEN** the construction SHALL fail with an `ArgumentError` before the signal reaches the bus
+
+#### Scenario: The grammar binds metric names only
+
+- **WHEN** a producer constructs an `:event`, `:log` or `:trace_span` signal with a name outside the grammar
+- **THEN** the construction SHALL succeed, because that name is never rendered as a metric name
+
+#### Scenario: A legal name is untouched
+
+- **WHEN** a source `:flezha_state` is registered and a signal `kind: :metric, name: :wal_backpressure` is constructed
+- **THEN** both SHALL succeed, and the exposition SHALL render `flezha_state_wal_backpressure`
+
+#### Scenario: A metadata key is still sanitized rather than refused
+
+- **WHEN** a metric signal carries a metadata key outside the grammar, such as `"http.status_code"`
+- **THEN** the emit SHALL succeed and the exporter SHALL render a sanitized label name, exactly as before
+

@@ -45,7 +45,9 @@ The run SHALL proceed in every case. No condition SHALL abort a bench, because a
 
 Bench results SHALL be rendered as aligned plain-text tables by the shared module: a header row, a single horizontal rule, and space-aligned columns. Tables SHALL NOT use box-drawing borders or colour, because the documented comparison workflow pipes bench output through `tee` and `diff` and the output is read on terminals that are not reliably UTF-8.
 
-Durations SHALL be rendered in milliseconds to one decimal place and rates as integers. No raw float SHALL reach the output.
+Durations SHALL be rendered in milliseconds by the shared module's formatter and rates as integers. No float SHALL reach output text by interpolation: Elixir renders a float of magnitude 1000 or more that lands on a round value in scientific notation, so a window that measures a whole number of milliseconds prints `1.0e3` where a reader and a `diff` expect `1000.0`. One decimal place is the default and what every table uses; a row whose own resolution needs more SHALL ask the shared formatter for the decimals it needs, and SHALL NOT keep a rounding rule of its own.
+
+A value that a bench ships as a **number** SHALL stay a number. The JSON report's `metrics` block is read by summarisers that take medians and compute ratios over its fields, so a formatter returning a string is not the answer there. The shared formatter SHALL therefore be applied where text is rendered rather than where a value is measured, and a task that both prints a value and ships it SHALL render for the one and round for the other.
 
 #### Scenario: Two runs diff cleanly
 - **WHEN** two bench runs are captured with `tee` and compared with `diff`
@@ -54,6 +56,14 @@ Durations SHALL be rendered in milliseconds to one decimal place and rates as in
 #### Scenario: Durations are readable
 - **WHEN** a phase takes 12281.683999999998 ms of wall time
 - **THEN** the table renders `12281.7 ms`
+
+#### Scenario: A window that lands on a round millisecond
+- **WHEN** any bench task prints a duration of exactly 1000.0 ms
+- **THEN** the output reads `1000.0 ms`, and no bench task prints `1.0e3`
+
+#### Scenario: A printed value and a shipped value part company
+- **WHEN** a task prints a measured float and writes the same measurement into the JSON report
+- **THEN** the printed one is a fixed-decimal string and the reported one is a JSON number
 
 ### Requirement: The headline throughput names the window it measures
 
@@ -72,7 +82,6 @@ The metric `Average time per operative` SHALL be removed. It divides total elaps
 ### Requirement: Every bench run writes a structured report, and CI reads that report
 
 Every bench run SHALL write a JSON report through one shared writer, carrying the `run`, `system`, `artifacts` and `warnings` blocks of the header plus a `metrics` block holding every measured value, and SHALL print the report path. The destination path SHALL be supplied by the calling task.
-
 
 The report SHALL be the only machine-readable contract for a bench number. The `bench-regression` CI job SHALL read the recorded throughput from the report's named field rather than matching a line of printed prose, so that the printed rendering can change without breaking a merge-blocking gate.
 
@@ -114,4 +123,29 @@ Every bench task SHALL decide which `--runtime` values it accepts by reading the
 
 - **WHEN** a module under `lib/mix/tasks/bench` decides an accepted runtime set from a clause list or literal collection rather than from `Flezha.Service.PortPilot.runtimes/0` and the manifest's `deferred` key
 - **THEN** the conformance gate SHALL fail naming that task, the set it enumerates and the set the manifests advertise
+
+### Requirement: A series' settling SHALL be stated per instrument, and a floor SHALL NOT be computed from a series containing its own warm-up
+
+`docs/operations/benchmarking.md` SHALL state, for each bench instrument, whether that instrument's first run of a series is a result, and SHALL record the measurement that establishes it. A floor, a comparison or a regression verdict SHALL be computed from plateau samples only, and the number of plateau samples SHALL be reported beside the figure.
+
+The rule SHALL be stated per instrument rather than per machine, because it was measured to differ between instruments on one box: five consecutive runs of one identical arm of `mix bench.workflow --scenario chain` read a 303 % spread with run 1 at roughly four times the plateau, while the same five-run series on `mix bench.extension` put run 1 within 3.6 % of its plateau.
+
+Discarding a warm-up SHALL NOT be read as making a row comparable. A row whose measured noise floor exceeds the effect being claimed is a direction and SHALL NOT be run as a gate, and a document that states a settling protocol SHALL say so beside it.
+
+#### Scenario: A worker records a floor for an instrument
+
+- **WHEN** a floor is recorded for any bench instrument
+- **THEN** the series discards samples until the instrument's plateau, the arms are interleaved, and the recorded figure names how many plateau samples it came from
+
+#### Scenario: An instrument with no warm-up transient
+
+- **GIVEN** an instrument whose first run is measured to sit inside its plateau
+- **WHEN** its settling is stated
+- **THEN** the document says so for that instrument, and does not generalise either finding to the box
+
+#### Scenario: A settled row that still cannot gate
+
+- **GIVEN** a row whose measured noise floor exceeds the effect a change is claiming
+- **WHEN** its result is reported
+- **THEN** it is reported as a direction, and no merge or verdict rests on it
 

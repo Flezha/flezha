@@ -5,6 +5,12 @@
 # `--release` builds the veneer in release, which is what the bench profile
 # wants; the default is a debug veneer, which is what the e2e wants (it builds
 # in seconds and the runner is not what a conformance run measures).
+#
+# `--run <command>` runs that command behind the same two header guards instead
+# of building, so any cargo invocation that enables a `ruby` feature can reach
+# them:
+#
+#   scripts/build-ruby-sdk.sh --run cargo test -p flz_core_ffi --features ruby-embed
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,10 +18,23 @@ sdk="$root/sdk/ruby"
 
 profile=debug
 cargo_args=()
-if [[ "${1:-}" == "--release" ]]; then
-  profile=release
-  cargo_args+=(--release)
-fi
+run_cmd=()
+case "${1:-}" in
+  "") ;;
+  --release)
+    profile=release
+    cargo_args+=(--release)
+    ;;
+  --run)
+    shift
+    [[ $# -gt 0 ]] || { echo "--run takes the command to run" >&2; exit 2; }
+    run_cmd=("$@")
+    ;;
+  *)
+    echo "usage: build-ruby-sdk.sh [--release] | --run <command> [args...]" >&2
+    exit 2
+    ;;
+esac
 
 # The two ways this build dies are both "a header is missing", and they want
 # opposite remedies. First: a Ruby with no development headers, which rb-sys
@@ -36,8 +55,8 @@ fi
 # This guard cannot move into `flz_core_ffi/build.rs`: rb-sys is a dependency,
 # so its build script runs first and fails before ours exists. A bare
 # `cargo build/test -p flz_core_ffi --features ruby*` on a box with no clang
-# builtin headers is therefore unprotected — export the same variable, or
-# install libclang-dev, which is what CI does.
+# builtin headers is therefore unprotected: run it as `build-ruby-sdk.sh --run
+# cargo …` instead, or install libclang-dev, which is what CI does.
 if [[ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]] \
   && ! compgen -G "/usr/lib/llvm-*/lib/clang/*/include/stdarg.h" >/dev/null; then
   gcc_include="$(gcc -print-file-name=include 2>/dev/null || true)"
@@ -48,6 +67,10 @@ if [[ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]] \
     echo "no builtin stdarg.h for bindgen: install libclang-dev" >&2
     exit 1
   fi
+fi
+
+if (( ${#run_cmd[@]} )); then
+  exec "${run_cmd[@]}"
 fi
 
 echo "==> building flz_core_ffi ($profile) with the ruby feature"

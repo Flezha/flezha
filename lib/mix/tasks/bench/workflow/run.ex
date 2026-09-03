@@ -407,7 +407,7 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
     # ride every result — both read from in-VM state already computed, so no
     # sampler, no /proc, no observer effect.
     kv = kv ++ [peak_mb: mem_peak_mb(), fsync_p99_ms: Tally.fsync_p99_ms()]
-    fields = Enum.map_join(kv, " ", fn {k, v} -> "#{k}=#{fmt_field(v)}" end)
+    fields = Enum.map_join(kv, " ", fn {k, v} -> "#{k}=#{Report.decimal(v, 2)}" end)
     # `bench/acceptance/run.sh` parses this line; the JSON report below is the
     # newer contract, and both name the same numbers.
     IO.puts("BENCH_RESULT #{fields}")
@@ -421,6 +421,9 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
     )
   end
 
+  # The line above renders; this rounds. The report's `metrics` block is read by
+  # summarisers that take medians over its fields, so a value shipped as a
+  # number stays one.
   defp fmt_field(v) when is_float(v), do: Float.round(v, 2)
   defp fmt_field(v), do: v
 
@@ -508,7 +511,6 @@ defmodule Mix.Tasks.Bench.Workflow.Run do
 
   def now_ns, do: System.monotonic_time(:nanosecond)
   defp now_ms, do: System.monotonic_time(:millisecond)
-  def fmt_ms(ns), do: Float.round(ns / 1_000_000, 1)
   def mib(bytes), do: div(bytes, 1_048_576)
   def rate(count, window_ns), do: Float.round(count * 1.0e9 / max(window_ns, 1), 1)
 end

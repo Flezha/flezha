@@ -142,28 +142,38 @@ The system SHALL expose a runtime configuration map `:observability_export` with
 
 ### Requirement: Every attribute key and value SHALL be encodable on the OTLP wire
 
-The OTLP encoder SHALL represent any attribute key and any attribute value as a
-string, whatever the term's type. Encoding SHALL NOT raise, and SHALL NOT be
-able to take the export process down, because the terms it receives are ordinary
-telemetry: the Logger bridge attaches a map and a tuple to every log signal it
-forwards, and a signal's metadata is validated as a map without any constraint
-on its keys, so a key is as free in its shape as a value.
+The OTLP encoder SHALL represent any attribute key as a string and any attribute
+value as the `AnyValue` member that carries its type, whatever the term. Encoding
+SHALL NOT raise, and SHALL NOT be able to take the export process down, because
+the terms it receives are ordinary telemetry: the Logger bridge attaches a map
+and a tuple to every log signal it forwards, and a signal's metadata is validated
+as a map without any constraint on its keys, so a key is as free in its shape as
+a value.
 
-A term that is already a binary SHALL be used unchanged **where that binary is
-valid UTF-8**. A binary that is not SHALL be rendered by inspection: protobuf
-defines a `string` field as UTF-8, so passing arbitrary bytes through produces a
-message a strict collector rejects. Any term that is not a binary, atom, integer
-or float SHALL be rendered by inspection, **lists included** — a list SHALL NOT
-be converted with `to_string/1`, which returns the binary of its elements and
-silently changes what the attribute says.
+**A key takes the text rule.** A term that is already a binary SHALL be used
+unchanged **where that binary is valid UTF-8**. A binary that is not SHALL be
+rendered by inspection: protobuf defines a `string` field as UTF-8, so passing
+arbitrary bytes through produces a message a strict collector rejects. Any term
+that is not a binary, atom, integer or float SHALL be rendered by inspection,
+**lists included** — a list SHALL NOT be converted with `to_string/1`, which
+returns the binary of its elements and silently changes what the attribute says.
+A `nil` key SHALL render as `nil`: it is the one atom whose `String.Chars`
+rendering is not its own name but the empty string, which as a key names nothing
+at all and collides with a genuine empty key.
 
-`nil` SHALL render as `nil`. It is the one atom whose `String.Chars` rendering
-is not its own name but the empty string, which as a key names nothing at all
-and collides with a genuine empty key.
+**A value takes the typed rule**, and `AnyValue`'s oneof SHALL carry it: a
+boolean as `bool_value`, an integer as `int_value`, a float as `double_value`, a
+list as `array_value`, a map as `kvlist_value` whose entries are `KeyValue`
+messages built exactly as a top-level attribute is, and a binary or an atom as
+`string_value`. A `nil` value SHALL cross as an `AnyValue` with **no member of
+the oneof set** — the protocol's own representation of a value with no type —
+and SHALL NOT cross as the text `nil`, because a consumer cannot tell a real null
+from the word.
 
-The same rule SHALL apply to keys and to values. Two rules would be the same
-question answered twice, and the crash and the corruption both reach the encoder
-through either half.
+A term for which OTLP has no shape — a tuple, a pid, a reference, a function, a
+struct — SHALL cross as its inspection in `string_value`. An integer that does
+not fit `int_value`'s `int64` SHALL cross as its decimal rendering in
+`string_value` rather than as a varint no decoder can read.
 
 The rendering SHALL NOT elide. Where a limit applies it SHALL be stated
 explicitly, so a truncated attribute is never mistaken for a complete one.
@@ -171,21 +181,53 @@ explicitly, so a truncated attribute is never mistaken for a complete one.
 This rule SHALL be stated in exactly one place and reached by every renderer of
 a signal's metadata — the OTLP encoder, the Prometheus registry, the audit log
 and the `flz observe tail` renderer — so they cannot drift into different
-answers to one question. A renderer whose output format carries typed values
-MAY keep its own rule for *values*, but SHALL NOT keep its own rule for keys,
-which are text in every one of these formats.
+answers to one question. It is the rule for a wire that can carry only text, and
+it SHALL be the only such rule.
+
+A renderer whose output format carries typed values SHALL use one shared rule for
+*values* too, and SHALL NOT keep its own. There SHALL therefore be exactly two
+rules for a term the system did not choose the type of: the text one above, and a
+typed one for a format with a null, an array and an object. The typed rule SHALL
+pass a binary, a number and a boolean through unchanged, SHALL render an atom by
+its own name, SHALL carry `nil` as the format's null rather than as the text
+`nil`, and SHALL recurse into a list and into a map — whose keys take the text
+rule, because a key is text in every one of these formats. Any other term SHALL be
+rendered by inspection, exactly as the text rule renders it.
+
+Where a format has a type the typed rule's own output cannot express, the encoder
+SHALL choose the field that carries it and SHALL NOT re-decide what the term
+means. The one such term is a binary that is not valid UTF-8: it SHALL take the
+text rule's answer and cross inspected, so that the raw bytes appear nowhere in
+the encoded message.
+
+Two renderers of one format answering differently is the failure this states away:
+the audit log and `flz observe tail --json` are both JSON, an operator may read
+them side by side, and a list rendered as an array in one and as the string
+`"[1, 2, 3]"` in the other is one question answered twice.
 
 #### Scenario: A bridged log signal encodes
 
 - **GIVEN** a log signal carrying the metadata the Logger bridge attaches, including a map and an `{module, function, arity}` tuple
 - **WHEN** it is encoded for OTLP
-- **THEN** encoding SHALL succeed and the resulting attributes SHALL carry a readable rendering of both
+- **THEN** encoding SHALL succeed, the map SHALL be a `kvlist_value` and the tuple SHALL be a readable `string_value`
 
 #### Scenario: A list attribute is not re-encoded as its bytes
 
 - **GIVEN** an attribute whose value is the list `[1, 2, 3]`
 - **WHEN** it is encoded
-- **THEN** the attribute SHALL read as the list, and SHALL NOT be the three-byte binary of its elements
+- **THEN** the attribute SHALL be an `array_value` of three `int_value` elements, and SHALL NOT be the three-byte binary of its elements nor a string
+
+#### Scenario: A typed value crosses as its own `AnyValue` member
+
+- **GIVEN** attributes whose values are an integer, a negative integer, a boolean, a float and a map
+- **WHEN** they are encoded
+- **THEN** each SHALL set `int_value`, `int_value`, `bool_value`, `double_value` and `kvlist_value` respectively, and none SHALL set `string_value`
+
+#### Scenario: A term with no OTLP shape crosses as its inspection
+
+- **GIVEN** attributes whose values are a tuple, a pid and a struct
+- **WHEN** they are encoded
+- **THEN** each SHALL set `string_value`, and its content SHALL be the term's inspection
 
 #### Scenario: A non-string attribute key is coerced like a value
 
@@ -197,7 +239,7 @@ which are text in every one of these formats.
 
 - **GIVEN** an attribute whose value is already a binary and is valid UTF-8
 - **WHEN** it is encoded
-- **THEN** the attribute SHALL be that binary, unmodified
+- **THEN** the attribute SHALL be that binary, unmodified, in `string_value`
 
 #### Scenario: A non-UTF-8 binary attribute does not reach the wire raw
 
@@ -205,17 +247,30 @@ which are text in every one of these formats.
 - **WHEN** it is encoded
 - **THEN** the attribute's encoded `string` field SHALL be valid UTF-8, and the raw bytes SHALL NOT appear anywhere in the encoded message
 
-#### Scenario: A `nil` key or value renders as its name
+#### Scenario: A `nil` key names itself and a `nil` value carries no type
 
-- **GIVEN** an attribute whose key or value is `nil`
-- **WHEN** it is encoded
-- **THEN** it SHALL render `nil`, and SHALL NOT render as the empty string
+- **GIVEN** an attribute whose key is `nil` and an attribute whose value is `nil`
+- **WHEN** they are encoded
+- **THEN** the key SHALL render `nil` and SHALL NOT render as the empty string, and the value's `AnyValue` SHALL set no member of the oneof
 
 #### Scenario: The exporter survives what it cannot represent typefully
 
 - **GIVEN** a stream of signals carrying values of any term type
 - **WHEN** they are exported
 - **THEN** the export process SHALL remain alive, and no signal SHALL be dropped for the shape of its attribute values
+
+#### Scenario: A list, a map and a null reach a typed format as themselves
+
+- **GIVEN** a signal whose metadata carries a list, a map and a `nil` value
+- **WHEN** it is rendered into a format that carries typed values
+- **THEN** the list SHALL be an array, the map SHALL be an object whose keys took the
+  text rule, and the `nil` SHALL be the format's null — none of the three a string
+
+#### Scenario: Two renderers of one format answer identically
+
+- **GIVEN** one signal's metadata rendered by the audit log and by `flz observe tail --json`
+- **WHEN** both renderings are decoded
+- **THEN** the two metadata objects SHALL be equal
 
 ### Requirement: The Prometheus exposition SHALL be well-formed whatever a metric signal's metadata carries
 

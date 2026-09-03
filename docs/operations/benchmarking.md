@@ -288,12 +288,83 @@ is a trend signal, not a CI gate.
 | `rust-sdk-perf.yml`         | PRs and `main` pushes touching `sdk/rust/**`, `flz_transport/**`, `Cargo.toml`, `Cargo.lock`                                                                         | Runs the `correctness` bench (any invariant violation fails) and the `dispatch` bench with `--save-baseline`; on PRs compares against the cached `main` baseline and fails if any bench's estimated change exceeds 10%.                                                                      |
 | `rust-sdk-bench-cron.yml`   | Mondays 03:00 UTC, `workflow_dispatch`                                                                                                                              | Non-blocking drift detector: `mix bench -n 100 -m 10000` across rust/java × uds/quic, plus Criterion `dispatch` (`regression_` group only) and `dynamic_entity_steady_state`; posts a step summary.                                                                                           |
 
+## Settling a series
+
+**The first run of a series is not a result on every instrument — and which
+instruments it is not a result on was measured, not assumed.** A figure taken
+from a series that contains its own warm-up is not a floor. On
+`mix bench.workflow` the first run is roughly four times the plateau, so six
+consecutive runs of one identical arm spread 316 % while the four plateau
+samples spread 1.3 %.
+On `mix bench.extension`, on the same box in the same week, the first run sits
+inside the plateau. So this is a property of the driver, not of the machine, and
+it is stated per instrument.
+
+Every recorded number, on any instrument:
+
+1. **Discard until that instrument's plateau.** The table says how many runs.
+2. **Interleave the arms of a comparison** — one round of A, one of B, repeated —
+   never all of A and then all of B. A series whose arms are not interleaved can
+   read a warm-up as an effect.
+3. **Report how many plateau samples the figure came from.** A number with no
+   sample count cannot be told from a single run.
+4. **Say whether the row can gate at all.** Settling removes the warm-up; it does
+   not shrink the noise floor. A row whose floor exceeds the effect being claimed
+   is a *direction* and blocks nothing — the floors are below.
+
+| Instrument | First run | Discard | The measurement behind it |
+| --- | --- | --- | --- |
+| `mix bench.workflow --scenario chain --procs 4 -n 1000 -c 100` | ~4x the plateau, and run 2 is still ~1.4x | first **2** | Six runs of one identical arm on a quiet box: 94.5 / 31.8 / 23.0 / 22.9 / 23.0 / 22.7 workflows/s. **316 %** over the six; **1.3 %** over the four plateau samples. An earlier five-run series read 93.2 / 33.3 / 23.1 / 24.2 / 23.1 — the same shape. |
+| `mix bench.extension` | inside the plateau | **none** | Five runs: run 1 within **3.6 %** of the plateau on the four rows above 100 ns. The 60 ns row spreads 16.7 % and resolves nothing. |
+| `./scripts/bench.sh -n 100 -m 10000` (the `bench-regression` workload) | not separated from the noise | first **1**, per the floor-update protocol below | Five runs: receive window spread **12.1 %**, end-to-end **5.1 %**. |
+
+**Two runs, not one, is what the workflow measurement establishes.** Run 1 sits
+at 4.1x the plateau and run 2 at 1.4x, so a series that discards only its first
+sample still carries a 39 % warm-up into its floor. The four plateau samples
+above spread 1.3 %, taken with the 1-minute load average climbing 1.2 to 9.4
+across the series — the plateau is the *loaded* steady state, and it is what a
+comparison on this driver must be taken against, on both arms.
+
+**Two explanations for the workflow transient were refuted, which is what makes
+the number usable.** A cold run of the same arm after 4.5 minutes idle came back
+at 91.1 workflows/s with an identical state directory, so nothing accumulates on
+disk or in the namespace. `package_throttle_count` was flat before the cooldown,
+after the idle and after the cold run, so package thermal throttling is not it.
+What remains is the box's sustained-load clock behaviour under the `powersave`
+governor, which is not separated — and does not need to be, because the operating
+rule is the same either way.
+
+### What a row can resolve
+
+Measured on the reference box (i7-8650U, `powersave`, on mains). A row whose
+floor exceeds the effect being claimed is a direction, not a gate: do not run it
+as one, and do not report its single-run number as a verdict.
+
+| Row | Floor | Verdict |
+| --- | --- | --- |
+| Rust typed dispatch | 0.33 % | gate |
+| Rust entity stress | 0.95 % | gate |
+| `throughput_effectively_once_tiers`, tier off / on | 9.04 % / 6.01 % | direction only |
+| `host_loop` (erased) | 4.13 % | guard |
+| whole-system round trip | ~18 % | direction only |
+| veneer round trip (node) | 11.89 % | paired rounds only |
+| `bench-regression` receive window / end-to-end | 12.1 % / 5.1 % | see below |
+
+The last row is the one to read carefully: `bench.yml` sets
+`REGRESSION_TOLERANCE: "0.9"`, a 10 % band, on the **receive** window, which
+spreads 12.1 % run-to-run here. The gate passes with margin only because it
+compares against a floor of 480 000 while the slowest local run read 518 872 — a
+box nearer the floor would flip on scheduling alone. The end-to-end window is
+less than half as noisy on the same workload, which is the opposite of what the
+gate's choice of metric suggests.
+
 ## Floor-update protocol
 
 When a change intentionally moves the floor:
 
 1. Run `./scripts/bench.sh -n 100 -m 10000` three times after a warm cache
-   (discard the first) on the reference host class.
+   (discard the first, per *Settling a series* above) on the reference host
+   class.
 2. Take the median, round down to the nearest 5K msg/s.
 3. In the **same PR**, update both the `BENCH_FLOOR_MSG_PER_SEC` literal line
    in this doc and the `at least **N messages/second**` clause in the spec

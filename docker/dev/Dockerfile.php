@@ -30,6 +30,12 @@ RUN apt-get update \
 
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
+# The coverage driver. `phpunit/php-code-coverage` 10 dropped phpdbg, so a
+# coverage run needs Xdebug or PCOV; PCOV is the coverage-only one and costs a
+# fraction of Xdebug's runtime, which is all this image is asked for.
+RUN pecl install pcov \
+    && docker-php-ext-enable pcov
+
 WORKDIR /work
 
 # --- thread-safe plus Swoole: the threaded executor ------------------------
@@ -62,5 +68,11 @@ RUN apt-get update \
 RUN echo 'ffi.enable=1' > "$PHP_INI_DIR/conf.d/flezha-ffi.ini"
 
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+# The coverage driver. `phpunit/php-code-coverage` 10 dropped phpdbg, so a
+# coverage run needs Xdebug or PCOV; PCOV is the coverage-only one and costs a
+# fraction of Xdebug's runtime, which is all this image is asked for.
+RUN pecl install pcov \
+    && docker-php-ext-enable pcov
 
 WORKDIR /work

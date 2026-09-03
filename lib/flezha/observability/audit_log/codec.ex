@@ -37,8 +37,8 @@ defmodule Flezha.Observability.AuditLog.Codec do
       {"ts_iso", ts_iso},
       {"source", Atom.to_string(signal.source)},
       {"name", Atom.to_string(signal.name)},
-      {"measurements", stringify_map(signal.measurements)},
-      {"metadata", stringify_map(signal.metadata)},
+      {"measurements", Signal.metadata_json(signal.measurements)},
+      {"metadata", Signal.metadata_json(signal.metadata)},
       {"caller", caller},
       {"namespace", namespace}
     ]
@@ -120,22 +120,4 @@ defmodule Flezha.Observability.AuditLog.Codec do
   defp atom_or_string(nil), do: nil
   defp atom_or_string(a) when is_atom(a), do: Atom.to_string(a)
   defp atom_or_string(other), do: other
-
-  defp stringify_map(map) when is_map(map) do
-    Enum.into(map, %{}, fn {k, v} ->
-      {Signal.metadata_text(k), stringify_value(v)}
-    end)
-  end
-
-  # `stringify_value/1` is deliberately NOT `Signal.metadata_text/1`: JSON
-  # carries typed values, so recursing into a list or a map is right here and
-  # wrong on a wire that can only hold text.
-  defp stringify_value(v)
-       when is_binary(v) or is_number(v) or is_boolean(v) or is_nil(v),
-       do: v
-
-  defp stringify_value(v) when is_atom(v), do: Atom.to_string(v)
-  defp stringify_value(v) when is_list(v), do: Enum.map(v, &stringify_value/1)
-  defp stringify_value(%{} = v) when not is_struct(v), do: stringify_map(v)
-  defp stringify_value(v), do: inspect(v)
 end

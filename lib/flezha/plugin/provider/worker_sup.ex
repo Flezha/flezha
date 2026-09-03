@@ -53,7 +53,7 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
 
     case Registry.lookup(registry_name(family), key) do
       [{pid, _}] ->
-        if reusable?.(pid), do: {:ok, pid}, else: reap_and_start(family, pid, key, child)
+        if reusable?.(pid), do: {:ok, pid}, else: reap_and_start(family, pid, child)
 
       [] ->
         start_worker(family, child)
@@ -77,25 +77,13 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
     end
   end
 
-  defp reap_and_start(family, pid, key, child) do
+  # Terminate, then start: nothing is waited for in between. `terminate_child/2`
+  # monitors the child and returns only after its `:DOWN`, and `Registry`
+  # deletes an entry whose pid is dead when the fresh worker registers over it —
+  # so a stale entry can neither delay the start nor be handed back as
+  # `{:already_started, dead_pid}`.
+  defp reap_and_start(family, pid, child) do
     _ = DynamicSupervisor.terminate_child(dyn_sup_name(family), pid)
-    await_unregistered(family, key)
     start_worker(family, child)
-  end
-
-  # Bounded wait for the Registry to drop the reaped worker's entry so the
-  # fresh start is not handed back the dead pid via `{:already_started, _}`.
-  defp await_unregistered(family, key, attempts \\ 50) do
-    cond do
-      Registry.lookup(registry_name(family), key) == [] ->
-        :ok
-
-      attempts <= 0 ->
-        :ok
-
-      true ->
-        Process.sleep(2)
-        await_unregistered(family, key, attempts - 1)
-    end
   end
 end

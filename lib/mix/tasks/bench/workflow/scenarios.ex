@@ -86,12 +86,12 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       "chain summary: #{cfg.factory}, n=#{cfg.n}, #{m.mode}",
       Report.kv([
         {"spawned",
-         "#{st.spawned} ok, #{st.spawn_errors} errors, in #{Run.fmt_ms(m.spawn_window)} ms → #{Run.rate(cfg.n, m.spawn_window)} spawns/s"},
+         "#{st.spawned} ok, #{st.spawn_errors} errors, in #{Report.ms_from_ns(m.spawn_window)} ms → #{Run.rate(cfg.n, m.spawn_window)} spawns/s"},
         {"start_operative call", Tally.latency_line(st.spawn)},
         {"seed → sink output", Tally.latency_line(st.out)},
         {"seed → completed", Tally.latency_line(st.done)},
         {"completed",
-         "#{st.completed - cfg.warmup} in #{Run.fmt_ms(m.whole_window)} ms → #{Run.rate(cfg.n, m.whole_window)} workflows/s"},
+         "#{st.completed - cfg.warmup} in #{Report.ms_from_ns(m.whole_window)} ms → #{Run.rate(cfg.n, m.whole_window)} workflows/s"},
         {"sink outputs",
          "#{st.out.received} measured, #{st.out.duplicates} dup, #{m.missing} missing, #{st.out.foreign} foreign"},
         {"proc commits",
@@ -100,7 +100,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
          "#{Tally.state_dir_summary(Run.namespace())}; fsync p99 #{Tally.fsync_p99_ms()} ms"},
         {"beam", "#{Run.mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes"},
         {"convergence tick",
-         "#{Run.fmt_ms(tick_us * 1_000)} ms with #{st.completed} completed instances retained on disk"},
+         "#{Report.ms_from_ns(tick_us * 1_000)} ms with #{st.completed} completed instances retained on disk"},
         {"process kinds", Run.process_breakdown(Run.process_sample())},
         {"result", Run.verdict(st, m.missing)}
       ])
@@ -189,7 +189,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
         [
           {"turn → reply", Tally.latency_line(st.out)},
           {"throughput",
-           "#{st.out.received} replies in #{Run.fmt_ms(window)} ms → #{Run.rate(st.out.received, window)} turns/s"},
+           "#{st.out.received} replies in #{Report.ms_from_ns(window)} ms → #{Run.rate(st.out.received, window)} turns/s"},
           {"integrity",
            "#{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign"},
           {"parks / wakes",
@@ -289,7 +289,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
     connected_at = Run.now_ns()
 
     IO.puts(
-      "Booted over #{Run.namespace()}; runners connected #{Run.fmt_ms(connected_at - boot_t0)} ms after app start; waiting for #{n} sleepers to be restored as suspended..."
+      "Booted over #{Run.namespace()}; runners connected #{Report.ms_from_ns(connected_at - boot_t0)} ms after app start; waiting for #{n} sleepers to be restored as suspended..."
     )
 
     st = Run.collect(st, &(&1.suspended >= n), 300_000)
@@ -299,7 +299,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       IO.puts("  only #{st.suspended}/#{n} restored — see the boot gate / reconcile grace")
     else
       IO.puts(
-        "  #{n} restored #{Run.fmt_ms(restored_at - connected_at)} ms after the runners connected"
+        "  #{n} restored #{Report.ms_from_ns(restored_at - connected_at)} ms after the runners connected"
       )
     end
 
@@ -342,7 +342,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
         {"state dir",
          "#{div(bytes, 1024)} KiB (#{Float.round(bytes / n / 1024, 1)} KiB/sleeper), #{wals} wal, #{snaps} snap"},
         {"convergence tick",
-         "#{Enum.map_join(ticks, " / ", &"#{Run.fmt_ms(&1 * 1_000)} ms")} (3 samples)"},
+         "#{Enum.map_join(ticks, " / ", &"#{Report.ms_from_ns(&1 * 1_000)} ms")} (3 samples)"},
         {"commits so far", "#{c.proc} proc, #{c.iter} iter"}
       ])
     )
@@ -399,7 +399,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       Report.kv(
         [
           {"casts out",
-           "#{Run.fmt_ms(m.sent_dt)} ms; last reply #{Run.fmt_ms(window)} ms after the first cast → #{Run.rate(n, window)} wakes/s"},
+           "#{Report.ms_from_ns(m.sent_dt)} ms; last reply #{Report.ms_from_ns(window)} ms after the first cast → #{Run.rate(n, window)} wakes/s"},
           {"wake → reply", Tally.latency_line(st.out)},
           {"rehydrations",
            "#{st.rehydrating} (expect #{n}); replies #{st.out.received}, dup #{st.out.duplicates}, missing #{n - st.out.seen}"},
@@ -446,7 +446,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
       Report.kv(
         [
           {"timer wakes",
-           "#{length(st.timer_wakes)} of #{n} in #{Run.fmt_ms(t1 - t0)} ms; rehydrations #{st.rehydrating}"},
+           "#{length(st.timer_wakes)} of #{n} in #{Report.ms_from_ns(t1 - t0)} ms; rehydrations #{st.rehydrating}"},
           {"deadline → reply", Tally.latency_line(late)}
         ] ++ if(st.stalled, do: [{"result", "STALLED"}], else: [])
       )
@@ -570,7 +570,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
     if st.spawn_errors > 0, do: raise("#{st.spawn_errors} spawns failed")
 
     IO.puts(
-      "  spawned in #{Run.fmt_ms(Run.now_ns() - t0)} ms; start_operative #{Tally.latency_line(st.spawn)}"
+      "  spawned in #{Report.ms_from_ns(Run.now_ns() - t0)} ms; start_operative #{Tally.latency_line(st.spawn)}"
     )
 
     {st, List.to_tuple(for seq <- 0..(n - 1), do: "wf_#{seq}")}
@@ -617,7 +617,7 @@ defmodule Mix.Tasks.Bench.Workflow.Scenarios do
     recovered =
       case st.first_out_after_kill do
         nil -> "no reply after the kill"
-        at -> "first reply #{Run.fmt_ms(at - st.killed_at)} ms after the kill"
+        at -> "first reply #{Report.ms_from_ns(at - st.killed_at)} ms after the kill"
       end
 
     [
