@@ -44,21 +44,40 @@ defmodule Flezha.SDK.EntityTimersTest do
   test "a processing-time timer fires with no input: on_timer's change, its removal and its output leave in order, now equal to the scheduled time" do
     %{op: op, counters: counters} = start_operative(TimerOp)
     Inbox.input(op, "in", "0", %{})
-    [r0, r1, out] = frames(3)
-    assert {0, {:delta, 0}, _} = record(r0)
-    assert {1, [%{register: true, scheduled_at: at}], _} = timer_ops(r1)
-    assert {"op-1", "0", _} = out
-    assert_receive {:timers, %{count: 1}, %{event: :registered, procedure: "timer"}}, 1_000
 
-    [r2, r3, fired] = frames(3)
-    assert {2, {:fired, ^at}, _} = record(r2)
-    assert {3, [%{kind: :processing_time, register: false, scheduled_at: ^at}], _} = timer_ops(r3)
-    expected = "fired@#{at}@#{at}"
-    assert {"op-1", ^expected, _} = fired
+    # Two dispatches, six frames: the input's change, its arm and its output,
+    # then the firing's change, the fired timer's removal and its output. The
+    # Entity writes its own records and hands its outputs to the Operative, so
+    # the firing's records may overtake the input's output — asserted per
+    # dispatch below, never by position in the arrival.
+    arrival = Enum.map(frames(6), &kind/1)
+
+    assert [
+             {:change, 0, {:delta, 0}},
+             {:timer_ops, 1, [%{register: true, scheduled_at: at}]},
+             {:change, 2, {:fired, at}},
+             {:timer_ops, 3, [%{kind: :processing_time, register: false, scheduled_at: at}]}
+           ] = for({tag, _, _} = r <- arrival, tag in [:change, :timer_ops], do: r)
+
+    fired_out = "fired@#{at}@#{at}"
+
+    assert [{:output, "op-1", "0", _}, {:output, "op-1", ^fired_out, _}] =
+             for({:output, _, _, _} = o <- arrival, do: o)
+
+    # The guarantee: within a dispatch every record is on the wire before the
+    # output that dispatch produced.
+    assert record_at(arrival, 1) < output_at(arrival, "0"),
+           "the input's records must precede the input's output"
+
+    assert record_at(arrival, 3) < output_at(arrival, fired_out),
+           "the firing's records must precede the firing's output"
+
+    assert_receive {:timers, %{count: 1}, %{event: :registered, procedure: "timer"}}, 1_000
     assert {:ok, %{value: 0, fired: [^at]}, 4} = Entity.read(entity!(op, "timer"), 1_000)
     assert_receive {:timers, %{count: 1}, %{event: :fired, procedure: "timer"}}, 1_000
     assert Counters.timers_fired(counters) == 1
     assert Counters.timers_armed(counters) == 0
+    refute_receive {:flz_data, _, _, _, _}, 100
   end
 
   test "event-time timers fire ascending before the input that crossed the high-water; a quiet Entity fires nothing" do
@@ -194,4 +213,11 @@ defmodule Flezha.SDK.EntityTimersTest do
     assert Counters.timers_armed(counters) == 1
     assert Timers.size(:sys.get_state(entity!(op, "capped_timers")).timers.pending) == 1
   end
+
+  # Where a frame sits in the arrival, found by what it is rather than assumed.
+  defp record_at(arrival, seq),
+    do: Enum.find_index(arrival, &match?({tag, ^seq, _} when tag in [:change, :timer_ops], &1))
+
+  defp output_at(arrival, value),
+    do: Enum.find_index(arrival, &match?({:output, _, ^value, _}, &1))
 end

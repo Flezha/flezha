@@ -114,4 +114,41 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
     {:ok, ops} = Wire.decode_timer_ops(body)
     {seq, ops, decoded}
   end
+
+  @doc """
+  What a frame *is*, with no regard to where it sits: `{:change, seq, change}`,
+  `{:timer_ops, seq, ops}`, `{:effect, seq, body}` or `{:output, payload_id,
+  value, metadata}`. A change record and a timer-ops record share the
+  `entity_state_change` payload id and are told apart by the header's format
+  byte, so this is the only way to classify one frame on its own.
+
+  Order is then a question about positions in `frames/1`'s list and identity a
+  question about these terms — which is what a reader of this stream must ask
+  separately, because records and outputs are written by two processes.
+  """
+  def kind({"entity_state_change", frame, _meta} = f) do
+    # Byte 9 of the 16-byte record header is the format id, as
+    # `Wire.effect_record_header?/1` reads it.
+    {:ok, %{header: <<_::binary-size(9), format, _::binary>>}} = Wire.decode_frame(frame)
+
+    if format == Record.timer_ops_format_id() do
+      {seq, ops, _} = timer_ops(f)
+      {:timer_ops, seq, ops}
+    else
+      {seq, change, _} = record(f)
+      {:change, seq, change}
+    end
+  end
+
+  def kind({"entity_effect_record", _frame, _meta} = f) do
+    {seq, body} = effect(f)
+    {:effect, seq, body}
+  end
+
+  # Everything else on this stream is a plugin output, whose payload id is the
+  # operative's. The other record payload ids are named so one arriving where a
+  # test does not expect it raises here instead of passing as an output.
+  def kind({payload_id, value, meta})
+      when payload_id not in ~w(entity_state_snapshot delete_entity_state),
+      do: {:output, payload_id, value, meta}
 end

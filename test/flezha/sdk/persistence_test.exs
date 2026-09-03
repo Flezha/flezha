@@ -574,9 +574,50 @@ defmodule Flezha.SDK.PersistenceTest do
       assert [{"op-1", "3", %{"channel" => "c"}}, {"op-1", "7", _}] =
                for({"op-1", _, _} = o <- four, do: o)
 
-      first_record = Enum.find_index(ids, &(&1 == "entity_state_change"))
-      first_output = Enum.find_index(ids, &(&1 == "op-1"))
-      assert first_record < first_output, "a dispatch's record precedes its output"
+      # Per dispatch, both of them: the running sum names which dispatch an
+      # output came from, so each is compared with its own record rather than
+      # the two firsts with each other.
+      seen =
+        Enum.map(four, fn
+          {"entity_state_change", _, _} = f -> {:change, elem(record(f), 0)}
+          {"op-1", value, _} -> {:output, value}
+        end)
+
+      for {seq, value} <- [{0, "3"}, {1, "7"}] do
+        assert Enum.find_index(seen, &(&1 == {:change, seq})) <
+                 Enum.find_index(seen, &(&1 == {:output, value})),
+               "the record of change #{seq} must precede the output it produced"
+      end
+    end
+
+    test "no output leaves ahead of the change that produced it, in a burst and one dispatch at a time" do
+      %{op: op} = start_operative(KeyedOp)
+
+      # Even inputs all key to `k0`, so one Entity holds one seq line and a
+      # dispatch's handout seq — the `flz.seq` its keyed outputs carry — is the
+      # seq of the change record that same dispatch shipped. That stamp is the
+      # join: it says which change produced an output, rather than leaving the
+      # test to infer it from arrival order.
+      #
+      # A burst first: twelve inputs before a frame is read, so later records
+      # overtake earlier outputs and the frames of one dispatch are not
+      # adjacent. The per-dispatch order must hold through that.
+      burst = for n <- 1..12, do: n * 2
+      for n <- burst, do: Inbox.input(op, "in", Integer.to_string(n), %{})
+      assert_change_before_output(Enum.map(frames(3 * length(burst)), &kind/1), length(burst))
+
+      # Then one dispatch at a time, its frames read before the next input is
+      # sent. The Operative is idle when the emits reach it, so an output
+      # released ahead of its record reaches the stream first every time rather
+      # than only when the Entity loses a race — which is what makes this half
+      # able to fail.
+      settled =
+        Enum.flat_map(26..40//2, fn n ->
+          Inbox.input(op, "in", Integer.to_string(n), %{})
+          Enum.map(frames(3), &kind/1)
+        end)
+
+      assert_change_before_output(settled, 8)
     end
 
     test "a procedure without apply_change/2 ships nothing and holds no seq" do
@@ -703,5 +744,31 @@ defmodule Flezha.SDK.PersistenceTest do
       assert {:error, :entity_not_found} = Operative.lookup(single, "counter", "k")
       assert [{"counter", :single, [{nil, _}]}] = Operative.entities(single)
     end
+  end
+
+  # Every output is matched with the change record its `flz.seq` names, and the
+  # record must sit earlier in the arrival. `dispatches` is the vacuity guard:
+  # without it an arrival holding no record, or no output, would satisfy the
+  # comparison while proving nothing.
+  defp assert_change_before_output(arrival, dispatches) do
+    records = for {{:change, seq, _}, i} <- Enum.with_index(arrival), into: %{}, do: {seq, i}
+
+    outputs =
+      for {{:output, "op-1", value, %{"flz.seq" => stamp}}, i} <- Enum.with_index(arrival) do
+        {stamp |> String.split(".") |> hd() |> String.to_integer(), value, i}
+      end
+
+    assert map_size(records) == dispatches
+    assert length(outputs) == 2 * dispatches
+    assert Enum.all?(outputs, fn {seq, _, _} -> Map.has_key?(records, seq) end)
+
+    early =
+      for {seq, value, at} <- outputs,
+          Map.fetch!(records, seq) > at,
+          do: {value, seq, at, Map.fetch!(records, seq)}
+
+    assert early == [],
+           "an output left before the change record that produced it " <>
+             "(output, change seq, output position, record position): #{inspect(early)}"
   end
 end

@@ -833,6 +833,17 @@ per-record check to the owning session's append path.
 
 For a persistence-enabled operative, the SDK SHALL drain a just-applied state change to the durable WAL send path BEFORE writing the corresponding output frame, so durable state never lags emitted output by more than the in-flight network window. This is gated on `persistence_enabled` and `FLEZHA_FLUSH_BEFORE_EMIT` (default on); non-persistent operatives keep the zero-cost inline emit. Each change is moved out of the buffer exactly once and seq order is preserved via the shared `change_seq`.
 
+The guarantee is **per dispatch**, and it SHALL be stated that way wherever it is
+relied on. A dispatch's records and the outputs that dispatch produced have two
+different writers — the Entity ships its own records to the state stream and
+hands its outputs to the Operative, which ships them — so an output is one
+process-hop behind its record. Across dispatches the SDK SHALL NOT be taken to
+promise any interleaving of the two: a later dispatch's records MAY reach the
+stream ahead of an earlier dispatch's output, and this SHALL NOT be read as an
+output overtaking a record. A reader — a test, an operator, or a controller-side
+consumer — that asserts a fixed alternation of records and outputs across
+dispatches is asserting a coincidence of scheduling, not this requirement.
+
 #### Scenario: durable state does not trail emitted output
 - **GIVEN** a persistence-enabled operative applies a state change and then emits output for it
 - **WHEN** the dispatch runs with flush-before-emit enabled
@@ -843,6 +854,17 @@ For a persistence-enabled operative, the SDK SHALL drain a just-applied state ch
 - **GIVEN** an operative with persistence disabled
 - **WHEN** it emits output
 - **THEN** no flush-before-emit drain occurs and the emit path is unchanged.
+
+#### Scenario: An output never leaves ahead of the change that produced it
+- **GIVEN** a persistence-enabled operative whose Procedure applies a change and emits on every dispatch
+- **WHEN** many dispatches run, whether their inputs arrive in a burst or one at a time
+- **THEN** for every output, the change record of the dispatch that produced it SHALL already be on the state stream, so a crash in the gap can never leave an output in the world with no record of what produced it
+- **AND** the output SHALL carry the seq of that record, so which change produced it is readable rather than inferred from arrival order
+
+#### Scenario: A later dispatch's record may overtake an earlier dispatch's output
+- **GIVEN** an Entity that completes a second dispatch while the Operative is still writing the first dispatch's outputs
+- **WHEN** both dispatches' frames arrive on the state stream
+- **THEN** the second dispatch's records MAY precede the first dispatch's output, and this SHALL NOT be treated as a violation, a loss, or a reordering of any dispatch
 
 ### Requirement: Per-Entity state is deleted on dynamic-mode eviction
 
