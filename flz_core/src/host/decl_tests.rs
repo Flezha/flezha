@@ -24,7 +24,7 @@ mod entry_observation_decl_tests {
     fn a_host_declared_entry_channel_carries_the_observation_its_peers_read() {
         let id = factory("host_entry_observation");
         decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":false,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
                  "channels":[{{"name":"host_trades_in","kind":"entry","consumers":[0]}},
                              {{"name":"host_out","kind":"plugin","producer":0}}],
                  "procedures":[{{"name":"p0"}}]}}"#
@@ -70,7 +70,7 @@ mod checkpoint_interval_decl_tests {
 
     fn tier_class(id: &str, extra: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"effectively_once":true,{extra}
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,{extra}
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
                  "procedures":[{{"name":"p0"}}]}}"#
@@ -162,7 +162,7 @@ mod sync_durability_decl_tests {
     fn a_stream_class_declaring_sync_durability_is_refused_by_name() {
         let id = factory("sync_stream");
         let err = decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"sync_durability":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         ))
@@ -179,7 +179,7 @@ mod sync_durability_decl_tests {
     fn a_workflow_class_declaring_sync_durability_without_persistence_is_refused() {
         let id = factory("sync_wf_transient");
         let err = decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":false,"sync_durability":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,"sync_durability":true,
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         ))
         .expect_err("there is no barrier to ship for a class that journals nothing");
@@ -191,7 +191,7 @@ mod sync_durability_decl_tests {
     fn a_durable_workflow_class_may_declare_it() {
         let id = factory("sync_wf_ok");
         decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"sync_durability":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         ))
         .expect("a durable workflow class declares sync durability");
@@ -204,7 +204,7 @@ mod sync_durability_decl_tests {
     fn undeclared_is_the_default() {
         let id = factory("sync_wf_default");
         decl(&format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         ))
         .expect("a workflow class declaring nothing registers");
@@ -226,7 +226,7 @@ mod dropping_policy_decl_tests {
     /// durability contract `extra` adds.
     fn class(id: &str, overflow: &str, extra: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,{extra}
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,{extra}
                  "channels":[{{"name":"in","kind":"entry","consumers":[0],
                                "overflow":"{overflow}"}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
@@ -323,7 +323,7 @@ mod sdk_lang_declaration_tests {
 
     fn class(id: &str, lang: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}",{lang}"persistent":true,
+            r#"{{"factory_id":"{id}",{lang}"sdk_version":"0.1.0","persistent":true,
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
                              {{"name":"out","kind":"plugin","producer":0}}],
                  "procedures":[{{"name":"p0"}}]}}"#
@@ -462,6 +462,7 @@ mod declaration_key_tests {
             match (section, key) {
                 (_, "factory_id") | (_, "name") => r#""pinned_decl""#,
                 ("class", "sdk_lang") | ("class", "change_format_id") => "1",
+                ("class", "sdk_version") => r#""0.1.0""#,
                 ("procedure", "schema_version") | ("procedure", "min_readable_schema_version") => {
                     "1"
                 }
@@ -526,5 +527,64 @@ mod declaration_key_tests {
         assert_eq!(decl.channels.len(), 1);
         assert_eq!(decl.procedures.len(), 1);
         assert!(decl.workflow.is_some());
+    }
+}
+
+mod sdk_version_decl_tests {
+    //! The durable header's `sdk_version` is the *writing* SDK's version. A
+    //! hosted veneer is a different release train from the core it links
+    //! against, so the value crosses the ABI on the declaration rather than
+    //! being read from the core's own package metadata.
+
+    use super::{decl, factory};
+
+    #[test]
+    fn the_declared_version_reaches_the_record_header() {
+        let id = factory("host_sdk_version");
+        decl(&format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"1.2.3",
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                 "procedures":[{{"name":"p0"}}]}}"#
+        ))
+        .expect("the class registers");
+
+        let topology = crate::operative::registry::get_class(&id).expect("class registered");
+        let facts = topology
+            .procedure(0)
+            .and_then(|p| p.host_facts.clone())
+            .expect("a host procedure carries its declared facts");
+
+        assert_eq!(
+            facts.header().sdk_version,
+            0x01_02_03,
+            "the header carries the version the veneer declared, not the core's"
+        );
+    }
+
+    /// Omitting the key, sending an empty string, sending `0.0.0` and sending
+    /// something that is not a version are one defect — the class named no
+    /// usable version — so one clause refuses them with one message.
+    #[test]
+    fn a_class_declaring_no_usable_version_is_refused_naming_the_field() {
+        for (name, version) in [
+            ("host_version_absent", ""),
+            ("host_version_empty", r#""sdk_version":"","#),
+            ("host_version_zero", r#""sdk_version":"0.0.0","#),
+            ("host_version_unparseable", r#""sdk_version":"rolling","#),
+        ] {
+            let id = factory(name);
+            let err = decl(&format!(
+                r#"{{"factory_id":"{id}","sdk_lang":1,{version}
+                     "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                     "procedures":[{{"name":"p0"}}]}}"#
+            ))
+            .expect_err("a class that names no SDK version is refused");
+
+            assert!(err.contains("sdk_version"), "{err}");
+            assert!(
+                crate::operative::registry::get_class(&id).is_none(),
+                "a refused declaration registers nothing"
+            );
+        }
     }
 }

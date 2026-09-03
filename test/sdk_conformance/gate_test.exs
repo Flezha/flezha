@@ -73,6 +73,15 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
   defp fail(message), do: flunk(message <> "\n\nSee " <> @docs_section <> ".")
 
+  # The core refuses a declared version that packs to zero, so "names a real
+  # version" is the whole question here — the packing itself lives in
+  # `flz_core::header::pack_version` and is not restated.
+  defp names_a_real_version?(raw) do
+    raw
+    |> String.split(~r/[^0-9]+/, trim: true)
+    |> Enum.any?(&(String.to_integer(&1) > 0))
+  end
+
   defp moduledoc(module) do
     {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(module)
     doc
@@ -234,6 +243,83 @@ defmodule FlezhaTest.SdkConformance.GateTest do
               "#{PortPilot.sdk_lang(runtime)}, but #{path} stamps #{declared} — a " <>
               "manifest cannot drift from its SDK"
           )
+        end
+      end
+    end
+
+    test "each SDK's version constant agrees with its own package metadata" do
+      # The durable header names the SDK that wrote a record, so each SDK stamps
+      # its own released version rather than the core's. The shape is one literal
+      # in the language's package metadata, one reader, and this gate failing
+      # when the two disagree.
+      #
+      # Three rows have nothing to compare because the reader *is* the manifest:
+      # the Rust compiler expands `env!("CARGO_PKG_VERSION")` against Cargo.toml,
+      # Elixir reads `Application.spec(:flezha, :vsn)` from mix.exs, and Ruby's
+      # `graph.rb` packs the single `Flezha::VERSION` its gemspec also reads.
+      # PHP has nothing to compare *against*: `composer.json` declares no version
+      # by design, so its constant is the sole source of truth and is asserted
+      # only to parse non-zero.
+      reader_is_the_manifest = [:rust, :elixir, :ruby]
+
+      pinned = %{
+        java:
+          {{"sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
+            ~r/SDK_VERSION = "([0-9][^"]*)"/},
+           {"sdk/java/pom.xml", ~r|<version>([0-9][^<]*)</version>|}},
+        node:
+          {{"sdk/node/src/graph.ts", ~r/SDK_VERSION = '([0-9][^']*)'/},
+           {"sdk/node/package.json", ~r/"version":\s*"([0-9][^"]*)"/}},
+        python:
+          {{"sdk/python/src/flezha/version.py", ~r/__version__ = "([0-9][^"]*)"/},
+           {"sdk/python/pyproject.toml", ~r/^version = "([0-9][^"]*)"/m}}
+      }
+
+      php_constant = {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_VERSION = '([0-9][^']*)'/}
+
+      read = fn {path, pattern} ->
+        case Regex.run(pattern, File.read!(path)) do
+          [_, value] -> value
+          nil -> fail("#{path} no longer spells a version where this gate reads one")
+        end
+      end
+
+      for runtime <- runtimes(), runtime not in reader_is_the_manifest do
+        if runtime == :php do
+          version = read.(php_constant)
+          {path, _} = php_constant
+
+          unless names_a_real_version?(version) do
+            fail(
+              "#{path} stamps SDK_VERSION #{inspect(version)}, which packs to 0 — " <>
+                "0 means \"the writing SDK did not say\" and the core refuses it at " <>
+                "declaration time. PHP has no package metadata to compare against " <>
+                "(composer.json declares no version by design), so this constant is the " <>
+                "SDK's sole source of truth and the release checklist owes its bump"
+            )
+          end
+        else
+          {constant, metadata} =
+            Map.get(pinned, runtime) ||
+              fail(
+                "runtime #{runtime} has a manifest but no entry in this test's " <>
+                  "source-of-truth table; add where its SDK spells its version, or " <>
+                  "record it as one whose reader is the manifest itself"
+              )
+
+          stamped = read.(constant)
+          declared = read.(metadata)
+          {constant_path, _} = constant
+          {metadata_path, _} = metadata
+
+          unless stamped == declared do
+            fail(
+              "#{constant_path} stamps version #{inspect(stamped)}, but " <>
+                "#{metadata_path} declares #{inspect(declared)} — the durable header " <>
+                "names the SDK that wrote the record, so a package cannot ship a " <>
+                "version its records disagree with"
+            )
+          end
         end
       end
     end

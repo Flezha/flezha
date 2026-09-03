@@ -86,7 +86,7 @@ fn host_loop_bench(c: &mut Criterion) {
     // `drop_nothing` default the typed bench opts into explicitly.
     let decl = br#"{
         "factory_id": "host_loop_bench",
-        "sdk_lang": 1,
+        "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [{"name": "input", "kind": "entry", "consumers": [0]}],
         "procedures": [{"name": "host_pass"}]
     }"#;

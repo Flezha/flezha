@@ -118,7 +118,8 @@ entity mode (single/static with keys, dynamic with TTL and cap), clock
 kind, correction window and beyond-window policy, delivery tier
 (effectively-once, checkpoint ack-granularity), inter-procedure channels
 with edge ids and keying markers, per-channel retry and overflow
-policies, the record-header lang/format bytes, persistence, and workflow
+policies, the record-header lang/format bytes, the declaring SDK's own
+version, persistence, and workflow
 lifecycle facts (loop mode, rollback mode, retry, wake-after,
 compensable procs). Timer caps stay host-layer policy — in both SDKs the
 cap is enforced where the registration API lives, not in the core. A declaration
@@ -132,6 +133,19 @@ reaches placement untagged is a veneer whose state another language can be
 handed. The core SHALL expose the declared value so the runner's factory
 advertisement can carry it without the veneer restating it.
 
+The record-header **version** is mandatory on the same terms: a veneer SHALL
+declare `sdk_version` as the version string its own package metadata spells, and
+a declaration carrying no `sdk_version`, or one that packs to zero, SHALL be
+refused at declaration time naming the field and the offending value. The core
+SHALL NOT substitute its own package version, because the header records which
+SDK wrote a record and a value the kernel supplies answers a different question.
+The core — not the veneer — SHALL perform the packing, so that every SDK's header
+carries one packing rather than one per language. The core SHALL stamp the packed
+value into every durable header it writes for that class, and SHALL NOT publish it
+in the operative's declaration metadata: it describes the writing runtime, not the
+class, and a shared golden snapshot of that metadata could not hold a value that
+differs per SDK.
+
 #### Scenario: A full declaration round-trips into controller metadata
 - **WHEN** a shim declares a checkpoint-ack, correction-windowed, dynamic-mode class through the ABI and the controller sends `AddOperative`
 - **THEN** the `AddOperativeResponse` metadata SHALL carry the same declarations the typed Rust path would produce for an identical class
@@ -143,6 +157,15 @@ advertisement can carry it without the veneer restating it.
 #### Scenario: A class declaring no language is refused
 - **WHEN** a veneer declares a class with `sdk_lang` absent or zero
 - **THEN** `flz_core_declare_class` SHALL return an error naming `sdk_lang`, and the class SHALL NOT be registered
+
+#### Scenario: A class declaring no version is refused
+- **WHEN** a veneer declares a class whose `sdk_version` is absent, empty, all-zero or not a version
+- **THEN** `flz_core_declare_class` SHALL return one error naming `sdk_version` and the offending value, and the class SHALL NOT be registered
+
+#### Scenario: The declared version reaches the header and nothing else
+- **GIVEN** a veneer that declared its classes with a version different from the kernel's own package version
+- **WHEN** an Entity of that class writes a durable record and the controller reads the operative's declaration metadata
+- **THEN** bytes 1:5 of the record SHALL carry the declared version, and the declaration metadata SHALL NOT carry it
 
 #### Scenario: The advertisement reads the declared value from the core
 - **GIVEN** a veneer that declared its classes with `sdk_lang = 2`

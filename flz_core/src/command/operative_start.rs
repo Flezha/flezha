@@ -283,7 +283,7 @@ mod metadata_tests {
 
     fn register_workflow(id: &str, sync: bool) {
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"sync_durability":{sync},
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":{sync},
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
@@ -323,7 +323,7 @@ mod partition_tests {
 
     fn register(id: &str, entity_mode: &str, entity_keys: &str) {
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
                  "procedures":[{{"name":"p","entity_mode":"{entity_mode}",
                                  "entity_keys":[{entity_keys}]}}]}}"#

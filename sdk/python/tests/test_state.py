@@ -8,11 +8,10 @@ from dataclasses import dataclass, field
 import pytest
 
 import flezha
+from conftest import Bumped, Counter, count_up
 from flezha import entity_state as state_module
 from flezha.errors import FlezhaError
 from flezha.testing import ProcedureTestHarness
-
-from conftest import Bumped, Counter, count_up
 
 
 def test_direct_assignment_is_refused_naming_the_field_and_the_path() -> None:
@@ -74,15 +73,15 @@ def test_the_runtime_permission_is_thread_local() -> None:
     assert not state_module._mutation_permitted()
 
 
-def test_the_guard_delegates_to_the_class_it_wraps() -> None:
-    """A frozen dataclass keeps its own refusal rather than gaining ours."""
+def test_the_guard_refuses_before_the_class_it_wraps_can() -> None:
+    """A frozen dataclass gains our refusal; its own never runs while sealed."""
 
     @flezha.state
     @dataclass(frozen=True)
     class Frozen:
         value: int = 0
 
-    with pytest.raises(Exception):
+    with pytest.raises(FlezhaError):
         Frozen().value = 1  # type: ignore[misc]
 
 

@@ -19,12 +19,11 @@ from __future__ import annotations
 import inspect
 import re
 import types
+from collections.abc import Callable, Iterable
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
-    Iterable,
     Protocol,
     TypeVar,
     Union,
@@ -34,8 +33,8 @@ from typing import (
 )
 
 from . import codec as _codec
-from .errors import DeclarationError
 from .entity_state import runtime_mutation
+from .errors import DeclarationError
 
 if TYPE_CHECKING:
     from .ctx import Ctx
@@ -367,7 +366,11 @@ def _annotations(fn: Callable[..., Any] | None) -> dict[str, Any]:
         import typing
 
         return typing.get_type_hints(fn)
-    except Exception:
+    except Exception:  # noqa: BLE001
+        # The breadth is the point: an unresolvable forward reference raises
+        # NameError, TypeError, AttributeError or a recursion error depending on
+        # what was annotated, and a narrower tuple would silently drop this
+        # fallback to the raw annotations.
         return getattr(fn, "__annotations__", {}) or {}
 
 

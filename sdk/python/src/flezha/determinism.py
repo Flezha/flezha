@@ -24,7 +24,8 @@ import threading
 import time as _time
 import uuid as _uuid
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .errors import DeterminismWarning
 
@@ -118,7 +119,7 @@ class _WarningDatetime(_REAL_DATETIME, metaclass=_DatetimeMeta):
     @classmethod
     def utcnow(cls) -> Any:
         _warn("datetime.utcnow()", "ctx.now()")
-        return _REAL_DATETIME.now(_datetime.timezone.utc)
+        return _REAL_DATETIME.now(_datetime.UTC)
 
     @classmethod
     def today(cls) -> Any:

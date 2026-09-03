@@ -87,7 +87,7 @@ workflow inbox — is the same framed, CRC-protected, append-only log.
 
 header (16 bytes), entity WAL:
   [0]      sdk_lang        (Rust = 1, Java = 2)
-  [1..5]   sdk_version     u32 BE
+  [1..5]   sdk_version     u32 BE — the writing SDK's own released version
   [5..9]   schema_version  u32 BE
   [9]      format_id       1 = postcard state change · 2 = effect record
   [10..12] reserved

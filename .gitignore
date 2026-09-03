@@ -89,9 +89,6 @@ test/apps/java_runner/dist/
 # (`./scripts/bench.sh ... | tee bench-rust.txt`) — never committed.
 /bench-*.txt
 
-# Claude Code per-project scratch.
-/.claude/scheduled_tasks.lock
-
 # Compiled NIF artifacts: Rustler rebuilds them from the flz_nif crate on
 # `mix compile`, and the prod image cross-compiles its own per arch
 # (docker/prod/Dockerfile.controller). They are also arch-specific
@@ -105,11 +102,8 @@ test/apps/java_runner/dist/
 # Local dev
 .playwright-mcp
 stash/*
-# Local-only ops journal (per-incident prod freeze log)
-/incident_log.md
 # Local-only dev scratch: notes, brainstorms, ad-hoc files. Whole dir ignored.
 /local_dev/
 # Agent coding-fleet prototype: own git repo, extracted to flezha-agents when its shape settles.
 /examples/coding-fleet/
 
-/docs/dev_notes/

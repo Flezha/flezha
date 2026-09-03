@@ -20,9 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "sdk" / "python" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import flezha  # noqa: E402
-import fixtures  # noqa: E402
-import fixtures_workflow  # noqa: E402
+import fixtures
+import fixtures_workflow
+import flezha
 
 
 def main() -> None:

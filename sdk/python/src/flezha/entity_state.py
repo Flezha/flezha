@@ -15,8 +15,9 @@ duration of one call, on the calling thread only.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Iterator, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .errors import FlezhaError
 

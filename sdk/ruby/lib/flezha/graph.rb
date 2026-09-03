@@ -23,6 +23,12 @@ module Flezha
     # The Ruby SDK's byte in the core's `sdk_lang` allocation table.
     SDK_LANG_RUBY = 5
 
+    # This SDK's own released version, stamped into every durable record it
+    # writes; the core packs it. `Flezha::VERSION` is the single literal
+    # `lib/flezha/version.rb` holds and the gemspec already reads, so the gem
+    # cannot ship a version its records disagree with.
+    SDK_VERSION = Flezha::VERSION
+
     # MessagePack, shared with every SDK whose codec is MessagePack.
     FORMAT_ID_MSGPACK = 5
 
@@ -412,6 +418,7 @@ module Flezha
         "factory_id" => spec.factory_id,
         "persistent" => spec.persistent,
         "sdk_lang" => SDK_LANG_RUBY,
+        "sdk_version" => SDK_VERSION,
         "change_format_id" => FORMAT_ID_MSGPACK,
         **stream_tier_json(spec),
         "compact_after_bytes" => spec.compact_after_bytes,

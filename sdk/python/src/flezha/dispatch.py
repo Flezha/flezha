@@ -13,17 +13,18 @@ from __future__ import annotations
 import asyncio
 import inspect
 import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from . import codec as _codec
 from . import determinism
 from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
 from .ctx import Ctx
-from .logger import log
-from .errors import FlezhaError
-from .procedure import Procedure
 from .entity_state import fold_restore
+from .errors import FlezhaError
+from .logger import log
+from .procedure import Procedure
 
 __all__ = [
     "Registry",

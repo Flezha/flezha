@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import inspect
 import typing
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .builder import Channels, ClassSpec
 from .ctx import WorkflowCtx
@@ -136,7 +137,11 @@ class Operative:
 def _annotations(fn: Callable[..., Any]) -> dict[str, Any]:
     try:
         return typing.get_type_hints(fn)
-    except Exception:
+    except Exception:  # noqa: BLE001
+        # The breadth is the point: an unresolvable forward reference raises
+        # NameError, TypeError, AttributeError or a recursion error depending on
+        # what was annotated, and a narrower tuple would silently drop this
+        # fallback to the raw annotations.
         return getattr(fn, "__annotations__", {}) or {}
 
 

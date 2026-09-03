@@ -38,6 +38,16 @@ public final class HostClassDeclaration {
     /** Header lang byte for durable records (Rust = 1, Java = 2). */
     private static final int SDK_LANG_JAVA = 2;
 
+    /**
+     * This SDK's own released version, stamped into every durable record it
+     * writes. Pinned to {@code sdk/java/pom.xml} by
+     * {@code test/sdk_conformance/gate_test.exs}; a source constant rather than a
+     * filtered resource, because the shade plugin replaces the jar plugin's
+     * output in place, so a version written into the thin jar's manifest is not
+     * what the fat jar carries. The core packs it.
+     */
+    private static final String SDK_VERSION = "0.1.0";
+
     /** Header format byte for the host's plain change bodies (Kryo = 4). */
     private static final int FORMAT_ID_KRYO = 4;
 
@@ -139,6 +149,7 @@ public final class HostClassDeclaration {
         Map<String, Object> decl = new LinkedHashMap<>();
         decl.put("factory_id", factoryId);
         decl.put("sdk_lang", SDK_LANG_JAVA);
+        decl.put("sdk_version", SDK_VERSION);
         decl.put("change_format_id", FORMAT_ID_KRYO);
         return decl;
     }

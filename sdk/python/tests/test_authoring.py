@@ -14,10 +14,9 @@ from dataclasses import dataclass, field
 import pytest
 
 import flezha
+from conftest import Bumped, Counter, count_up, demo, echo
 from flezha import graph
 from flezha.errors import DeclarationError, UnrepresentableValueError
-
-from conftest import Bumped, Counter, count_up, demo, echo
 
 
 def declare(operative: flezha.Operative) -> None:
@@ -294,7 +293,8 @@ def test_a_branch_with_one_arm_is_refused() -> None:
         c.input("in").branch(lambda edge: edge.into(one).sink("out"))
 
     with pytest.raises(DeclarationError, match="at least two arms"):
-        thin_branch.spec
+        # Reading `.spec` is what builds the graph, so the access is the trigger.
+        _ = thin_branch.spec
 
 
 def test_an_event_time_clock_without_an_extractor_is_refused() -> None:

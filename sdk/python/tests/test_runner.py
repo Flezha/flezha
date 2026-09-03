@@ -15,11 +15,10 @@ from typing import Any
 import pytest
 
 import flezha
+from conftest import FakeCore, demo, work_activation
 from flezha import logger
 from flezha.errors import FlezhaError
 from flezha.runner import Runner
-
-from conftest import FakeCore, demo, work_activation
 
 
 @flezha.procedure
@@ -46,7 +45,10 @@ def runner() -> Any:
         try:
             r.stop()
             r.drain()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
+            # Teardown, after the assertions have run: a failure here must not
+            # mask the one the test already made, and nothing it could raise is
+            # actionable once the runner is on its way out.
             pass
 
 

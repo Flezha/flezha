@@ -903,7 +903,7 @@ right per-Entity WAL without a side table:
 | Offset | Field | Value |
 |--------|-------|-------|
 | 0 | `sdk_lang: u8` | `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python — the allocation table in `flz_core/src/header.rs` |
-| 1..5 | `sdk_version: u32 BE` | `(major << 16) \| (minor << 8) \| patch` |
+| 1..5 | `sdk_version: u32 BE` | `(major << 16) \| (minor << 8) \| patch` of the **writing SDK's** own released version, each component clamped at 255; `0` means the SDK did not say. Advisory: no reader decides how a body is read from it |
 | 5..9 | `schema_version: u32 BE` | the Procedure's declared schema version |
 | 9 | `format_id: u8` | `1` postcard change, `2` effect record, `3` timer-ops record, `4` Kryo change (Java), `5` MessagePack change (Node, Ruby, Python), `6` JSON change (PHP), `7` External Term Format change (Elixir) |
 | 10..12 | reserved | zero |

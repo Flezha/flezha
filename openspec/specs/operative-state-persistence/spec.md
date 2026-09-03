@@ -284,7 +284,7 @@ When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot
 Every WAL record and snapshot file SHALL carry a 16-byte header preceding the payload bytes:
 
 - bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python. Values `8–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
-- bytes 1:5 — `sdk_version: u32 BE` (semver-encoded)
+- bytes 1:5 — `sdk_version: u32 BE`, the **writing SDK's own** released version packed as `(major << 16) | (minor << 8) | patch` with each component clamped at 255. `0` means the writing SDK did not state one and SHALL NOT be read as version 0.0.0.
 - bytes 5:9 — `schema_version: u32 BE` (per-Procedure, user-controlled)
 - bytes 9:10 — `format_id: u8` (1 = postcard, 2 = effect record, 3 = timer ops, 4 = kryo-registered, 5 = msgpack, 6 = json, 7 = etf — Erlang External Term Format, the Elixir SDK's codec). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte; a new codec takes the next free value in the same table of record.
 - bytes 10:12 — reserved, MUST be zero
@@ -295,6 +295,10 @@ The agent SHALL stamp the header at write time using the SDK-supplied values (th
 The SDK SHALL verify the header at read time on **every** restore path — the typed path, the host path and an SDK that is its own core alike — before any body reaches a codec. A record whose `sdk_lang` is not the reading SDK's own value SHALL be refused with a language-mismatch error naming both values; the SDK SHALL NOT attempt to decode it, and SHALL NOT fall back to a partial or empty state. The agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
 
 **The language is resolved before the format.** A record from another SDK is neither a format question nor a schema one, so the language gate SHALL be applied first and its refusal SHALL name both languages. Reading the format byte first makes a record written by an SDK with a different codec report as a malformed header, naming neither.
+
+**`sdk_version` identifies the SDK that wrote the record, and it is advisory.** Each SDK SHALL stamp its own released version — the version its own package metadata declares, never the version of a component it links — and an SDK that is a host over the shared kernel SHALL carry that value across the declaration surface rather than let the kernel supply one of its own. The core SHALL refuse a class declaration that states no version, so a record written after this rule is in force SHALL NOT carry `0`.
+
+**No restore path SHALL gate on `sdk_version`.** The language byte decides which codec may read a body and the schema version decides which shape it has; those two carry every refusal. A migration MAY consult `sdk_version` to distinguish records that are identical in language and schema but were written by SDK builds known to differ, and SHALL NOT decide a body's shape from it alone. The packing is lossy — a pre-release or build suffix is dropped and a component above 255 clamps — so two distinct SDK builds MAY stamp the same value, and equality of this field SHALL NOT be read as identity of the writer.
 
 #### Scenario: Header stamped verbatim from SDK
 
@@ -360,6 +364,17 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 - **WHEN** an Elixir Entity writes a change record and later restores it, and separately is sent a record stamped with any other SDK's `sdk_lang`
 - **THEN** the written header SHALL carry `sdk_lang = 3` and `format_id = 7`, the Elixir restore SHALL decode it, and the foreign record SHALL be refused by the SDK's own fold with the language-mismatch wording naming both languages before its format byte is read
+
+#### Scenario: A record names the SDK that wrote it, not the kernel it linked
+
+- **GIVEN** a host-layer SDK at its own released version, running over a kernel built at a different version
+- **WHEN** that SDK writes a change record
+- **THEN** bytes 1:5 SHALL carry the SDK's own version, and SHALL NOT carry the kernel's
+
+#### Scenario: A declaration stating no version is refused before any record is written
+
+- **WHEN** a host class is declared with `sdk_version` absent or zero
+- **THEN** the declaration SHALL be refused naming the field, and no Entity of that class SHALL reach a state where it could stamp a header
 
 ### Requirement: Idempotent emits with stable dedup keys
 

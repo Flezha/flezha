@@ -8,8 +8,9 @@ import logging
 import threading
 from datetime import UTC, datetime, timedelta
 
-import flezha
 import pytest
+
+import flezha
 from conftest import FakeCore, demo
 from flezha.entry_idle import EntryIdleWatcher, IdleObserver, last_entry_delivery, tick_period_s
 from flezha.errors import FlezhaError

@@ -15,11 +15,10 @@ from typing import Any
 import pytest
 
 import flezha
+from conftest import FakeCore, compensating, demo, deps_for, solo_deps, work_activation
 from flezha import codec, native
 from flezha.dispatch import DispatchDeps, answer, dispatch_now, run_now
 from flezha.errors import NonRetryableError
-
-from conftest import FakeCore, compensating, demo, deps_for, solo_deps, work_activation
 
 
 def answered(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:

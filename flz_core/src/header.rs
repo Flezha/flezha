@@ -266,10 +266,10 @@ fn refuse_foreign_language(
     Ok(())
 }
 
-/// `CARGO_PKG_VERSION` as `(major << 16) | (minor << 8) | patch`, each
-/// clamped at 255.
-pub fn parse_pkg_version() -> u32 {
-    let raw = env!("CARGO_PKG_VERSION");
+/// A package version string as `(major << 16) | (minor << 8) | patch`, each
+/// clamped at 255. The caller supplies the string so `env!` expands in the
+/// crate whose version is wanted, never in this one.
+pub fn pack_version(raw: &str) -> u32 {
     let mut parts = raw
         .split(|c: char| !c.is_ascii_digit())
         .filter(|s| !s.is_empty());

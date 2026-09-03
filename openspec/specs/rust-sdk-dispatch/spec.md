@@ -270,7 +270,7 @@ The Rust SDK SHALL export `ProcedureTestHarness::<S: Procedure>` under `flezha_r
 The Rust SDK SHALL stamp a 16-byte header on every Change record emitted to the wire path, per the umbrella's spec:
 
 - bytes 0:1 — `sdk_lang: u8` SHALL equal `1` (Rust).
-- bytes 1:5 — `sdk_version: u32 BE` SHALL be parsed from `env!("CARGO_PKG_VERSION")` at SDK build time as `(major << 16) | (minor << 8) | patch`.
+- bytes 1:5 — `sdk_version: u32 BE` SHALL be the **Rust SDK crate's** own version, read from `env!("CARGO_PKG_VERSION")` expanded inside that crate, packed as `(major << 16) | (minor << 8) | patch`. It SHALL NOT be the version of any crate the SDK depends on: a macro that reads a package version expands where it is written, so the reading SHALL happen in the SDK crate and the packing SHALL take the string as an argument.
 - bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Procedure owning the Change.
 - bytes 9:10 — `format_id: u8` SHALL equal `1` (postcard) in v1.
 - bytes 10:12 — reserved, MUST be zero.
@@ -282,6 +282,12 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 - **WHEN** a Rust SDK at `version 0.5.3` and Procedure `SCHEMA_VERSION = 1` stamps a header for change_bytes `&[0x01, 0x02, 0x03]`
 - **THEN** the resulting 16-byte header SHALL equal `[0x01, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, <crc32 BE bytes of [0x01, 0x02, 0x03]>]`
+
+#### Scenario: The stamped version follows the SDK crate, not the kernel
+
+- **GIVEN** the SDK crate's manifest declaring a version the kernel crate's manifest does not
+- **WHEN** a Procedure stamps a header
+- **THEN** bytes 1:5 SHALL carry the SDK crate's version
 
 #### Scenario: Cross-language load fails loud
 

@@ -13,8 +13,9 @@ for what a type checker cannot see.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Iterable, TypeVar
+from typing import Any, Generic, TypeVar
 
 from .errors import DeclarationError
 from .procedure import Procedure
@@ -79,7 +80,7 @@ class ProcNode:
     index: int
     name: str
     proc: Procedure[Any, Any]
-    output: "ChannelSpec | None" = None
+    output: ChannelSpec | None = None
     """The one channel this node produces on, created on first wiring."""
 
 

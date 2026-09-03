@@ -8,9 +8,8 @@ from typing import Any
 import pytest
 
 import flezha
-from flezha.testing import ProcedureTestHarness, ReplayMismatch, replay_equals
-
 from conftest import Bumped, Counter, compensating, count_up, echo
+from flezha.testing import ProcedureTestHarness, ReplayMismatch, replay_equals
 
 
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:

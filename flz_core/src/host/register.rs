@@ -80,6 +80,15 @@ fn refuse_class_facts(decl: &HostClassDecl) -> Result<(), Error> {
             decl.sdk_lang
         )));
     }
+    if crate::header::pack_version(&decl.sdk_version) == 0 {
+        return Err(Error::Declaration(format!(
+            "sdk_version: class `{}` declares no usable SDK version ({:?}); every class \
+             declares the released version of the SDK that writes its records, because \
+             the durable header names the writer and a veneer releases apart from the \
+             core it links against",
+            decl.factory_id, decl.sdk_version
+        )));
+    }
     if decl.procedures.is_empty() && decl.workflow.is_none() {
         return Err(Error::Declaration(
             "a host class declares at least one procedure".to_string(),
@@ -344,6 +353,9 @@ fn refuse_procedure(
 /// they agree.
 struct ClassFacts {
     factory_id: &'static str,
+    /// The declared version packed as the durable header carries it, resolved
+    /// once so every procedure of the class stamps the same bytes.
+    sdk_version: u32,
     correction: Option<CorrectionPolicy>,
     ack_granularity: AckGranularity,
     compact_after_bytes: usize,
@@ -370,6 +382,7 @@ fn resolve_class_facts(decl: &HostClassDecl) -> ClassFacts {
     };
     ClassFacts {
         factory_id: Box::leak(decl.factory_id.clone().into_boxed_str()),
+        sdk_version: crate::header::pack_version(&decl.sdk_version),
         correction,
         ack_granularity,
         compact_after_bytes: decl
@@ -592,6 +605,7 @@ fn host_facts(
         checkpoint: class.ack_granularity.checkpoint(),
         clock: proc_decl.clock,
         sdk_lang: decl.sdk_lang,
+        sdk_version: class.sdk_version,
         change_format_id: decl.change_format_id,
         correction: if proc_decl.clock == HostClock::EventTime {
             class.correction

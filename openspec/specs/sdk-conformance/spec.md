@@ -405,3 +405,36 @@ A test under `test/system/` SHALL spawn every runner it drives through the harne
 - **WHEN** a `test/system/` module not tagged `interop: true` contains the literal `test/apps/rust_runner/`
 - **THEN** `mix test test/sdk_conformance/gate_test.exs` fails naming that file, in the same test that refuses a `runtime:` literal
 
+### Requirement: Every SDK's version constant agrees with its own package metadata
+
+Each SDK SHALL derive the version it stamps at bytes 1:5 of a durable record from its own package metadata, and a static gate SHALL assert that it does. The gate SHALL spawn no runner: it reads the SDK's source and the SDK's package file and compares them, in the manner the language-byte gate beside it already compares a conformance manifest against the constant its SDK compiles in.
+
+The gate SHALL, for each runtime the manifest set names:
+
+- resolve the version the SDK sends or stamps, from the file that SDK spells it in;
+- resolve the version that SDK's package metadata declares — the Cargo manifest, the Maven POM, `package.json`, the gemspec's source of `VERSION`, `pyproject.toml`, the Mix project;
+- fail naming both files and both values when they disagree.
+
+An SDK whose reader takes the version directly from its own build system — where a compiler or a runtime reads the package manifest and no second literal exists — SHALL be recorded as having nothing to compare, and the gate SHALL name that SDK and the reason rather than skip it silently. An SDK whose ecosystem publishes no version in its package file SHALL be recorded the same way, and the gate SHALL still assert that its constant exists, parses and is non-zero.
+
+`test/fixtures/host_class_decl_keys.txt` SHALL list the declaration key that carries the version, so an SDK whose builder cannot spell it is a red build for that SDK, and a key the core never learned is refused by the core's own unknown-field rule.
+
+#### Scenario: A constant left behind by a release bump is caught
+- **GIVEN** an SDK whose package metadata declares a version its source constant does not
+- **WHEN** the gate runs
+- **THEN** it SHALL fail naming both files and both values
+
+#### Scenario: An SDK with one source of truth is named, not skipped
+- **GIVEN** an SDK whose version reaches the header from its build system with no second literal
+- **WHEN** the gate runs
+- **THEN** it SHALL record that SDK as having nothing to compare, naming the mechanism, and SHALL NOT report it as checked
+
+#### Scenario: An SDK whose package file carries no version still declares one
+- **GIVEN** an SDK whose ecosystem resolves a published version from a tag rather than from a file in the package
+- **WHEN** the gate runs
+- **THEN** it SHALL assert that SDK's constant exists, parses and is non-zero, and SHALL name it as the one SDK whose constant nothing cross-checks
+
+#### Scenario: A builder that cannot spell the version key fails its own suite
+- **WHEN** the declaration key list gains the version key and one SDK's builder does not emit it
+- **THEN** that SDK's declaration-key test SHALL fail naming the key, and every other SDK's SHALL stay green
+

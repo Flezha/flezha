@@ -18,6 +18,16 @@ final class HostClassDecl
     public const SDK_LANG_PHP = 6;
 
     /**
+     * This SDK's own released version, stamped into every durable record it
+     * writes; the core packs it. Sole source of truth: `composer.json` declares
+     * no `version` key, because Composer resolves a published package's version
+     * from its VCS tag and a key in the file is how a stale one ships. So the
+     * release checklist bumps this constant, and no gate can compare it against
+     * package metadata that does not exist.
+     */
+    public const SDK_VERSION = '0.1.0';
+
+    /**
      * JSON. The byte names the encoding, not the SDK — the cross-language gate
      * is `sdk_lang`.
      */
@@ -36,6 +46,7 @@ final class HostClassDecl
             'factory_id' => $spec->factoryId,
             'persistent' => $spec->persistent,
             'sdk_lang' => self::SDK_LANG_PHP,
+            'sdk_version' => self::SDK_VERSION,
             'change_format_id' => self::FORMAT_ID_JSON,
             ...self::streamTier($spec),
             'compact_after_bytes' => $spec->compactAfterBytes,

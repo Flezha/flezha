@@ -73,7 +73,7 @@ pub(crate) mod host_class {
             .collect::<Vec<_>>()
             .join(",");
         let json = format!(
-            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"effectively_once":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
                              {{"name":"mid","kind":"inter_proc","producer":0,
                                "consumers":[{consumer_list}]}},

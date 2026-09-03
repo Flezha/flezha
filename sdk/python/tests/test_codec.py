@@ -20,6 +20,7 @@ from flezha.errors import UnrepresentableValueError
 # Every module of the package: the persistence and wire paths are all of it,
 # because there is no part of this SDK a durable body does not pass through.
 _PACKAGE = pathlib.Path(codec.__file__).parent
+_PICKLE_MODULES = ("pickle", "cPickle", "dill", "shelve")
 
 
 def test_pickle_is_absent_from_the_persistence_and_wire_paths() -> None:
@@ -37,11 +38,13 @@ def test_pickle_is_absent_from_the_persistence_and_wire_paths() -> None:
                 offenders += [
                     f"{path.name}:{node.lineno}"
                     for alias in node.names
-                    if alias.name.split(".")[0] in ("pickle", "cPickle", "dill", "shelve")
+                    if alias.name.split(".")[0] in _PICKLE_MODULES
                 ]
-            elif isinstance(node, ast.ImportFrom):
-                if (node.module or "").split(".")[0] in ("pickle", "cPickle", "dill", "shelve"):
-                    offenders.append(f"{path.name}:{node.lineno}")
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".")[0] in _PICKLE_MODULES
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == [], f"pickle reached the durable path at {offenders}"
 
 
@@ -65,12 +68,12 @@ def test_integers_round_trip_without_narrowing() -> None:
     """
     for value in (2**53 + 1, 2**63, 2**63 + 12345, 2**64 - 1):
         assert codec.decode(codec.encode(value)) == value
-    with pytest.raises(Exception):
+    with pytest.raises(OverflowError):
         codec.encode(2**64)
 
 
 def test_a_datetime_keeps_its_type() -> None:
-    when = datetime.datetime(2026, 8, 28, 12, 30, tzinfo=datetime.timezone.utc)
+    when = datetime.datetime(2026, 8, 28, 12, 30, tzinfo=datetime.UTC)
     assert codec.decode(codec.encode(when)) == when
 
 
@@ -190,7 +193,7 @@ def test_a_callable_field_is_refused() -> None:
 
 
 def test_the_json_form_marks_what_json_cannot_carry() -> None:
-    when = datetime.datetime(2026, 8, 28, tzinfo=datetime.timezone.utc)
+    when = datetime.datetime(2026, 8, 28, tzinfo=datetime.UTC)
     value = {"raw": b"\x00\xff", "at": when, "n": 1}
     assert codec.from_state_json(codec.to_state_json(value)) == value
 

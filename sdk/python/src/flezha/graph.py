@@ -18,6 +18,7 @@ from typing import Any
 
 from .builder import ChannelSpec, ClassSpec, ProcNode
 from .errors import DeclarationError
+from .version import __version__
 
 __all__ = ["validate", "to_host_class_decl", "SDK_LANG_PYTHON", "FORMAT_ID_MSGPACK"]
 
@@ -393,6 +394,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "factory_id": spec.factory_id,
             "persistent": spec.persistent,
             "sdk_lang": SDK_LANG_PYTHON,
+            "sdk_version": __version__,
             "change_format_id": FORMAT_ID_MSGPACK,
             **_stream_tier_json(spec),
             "compact_after_bytes": spec.compact_after_bytes,

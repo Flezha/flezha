@@ -22,17 +22,19 @@ import os
 import signal
 import sys
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from types import TracebackType
-from typing import Any, Callable
+from typing import Any, Self
 
 from . import determinism, graph
 from .ctx import WorkflowCtx
-from .logger import logger
 from .dispatch import DispatchDeps, Registry
 from .entry_idle import EntryIdleWatcher, IdleObserver, last_entry_delivery
 from .errors import FlezhaError
-from .executor import Executor, build as build_executor
+from .executor import Executor
+from .executor import build as build_executor
+from .logger import logger
 from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier, load_extension
 from .operative import Operative
 
@@ -181,7 +183,7 @@ class Runner:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def start(self, *, core: Core | None = None) -> Runner:
+    def start(self, *, core: Core | None = None) -> Self:
         """Declare, connect and start serving.
 
         Everything up to and including the first poll, and nothing that blocks.
@@ -287,7 +289,7 @@ class Runner:
         self._started = False
         self._release_slot()
 
-    def __enter__(self) -> Runner:
+    def __enter__(self) -> Self:
         """Start, unless the caller already did.
 
         A runner started explicitly — which is how a host injects a core, or

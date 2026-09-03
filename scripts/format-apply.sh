@@ -45,6 +45,10 @@ prettier_bin=sdk/node/node_modules/.bin/prettier
 phpcs_bin=sdk/php/vendor/bin/php-cs-fixer
 ruff_bin=sdk/python/.venv/bin/ruff
 [[ -x "$ruff_bin" ]] || ruff_bin=ruff
+# The formatter and the linter are the same binary over the same two trees, so
+# the trees and the install hint are named once and used by both calls.
+ruff_need="$ruff_bin":"install the dev group of sdk/python/pyproject.toml"
+ruff_paths=(sdk/python test/apps/python_runner)
 read -ra php <<< "${FLEZHA_PHP:-php}"
 
 # The nightly is pinned to the one .github/workflows/format.yml installs.
@@ -62,15 +66,15 @@ gate_run --finding "${drift[prettier]:-}" prettier \
   "$prettier_bin" "${prettier[@]}" \
   'sdk/node/{src,test,scripts,types-tests}/**/*.{ts,mts,cts,js,mjs,cjs}' \
   'test/apps/node_runner/*.mjs'
-# `ruff format` is gated; `ruff check`, the linter, deliberately is not. It
-# reports 77 errors on this tree (55 auto-fixable) and clearing them is a
-# Python SDK source change with judgement in it — the DTZ ambient-clock family
-# it flags is a rule the SDK guards on purpose, and RUF022/RUF023 reorder
-# `__all__` and `__slots__`. Adopting it is its own change, tracked as KI-6 in
-# docs/known_issues.md; it is not a line to uncomment here.
-gate_run --finding "${drift[ruff]:-}" "ruff format" \
-  "$ruff_bin":"install the dev group of sdk/python/pyproject.toml" -- \
-  "$ruff_bin" format "${ruff[@]}" sdk/python test/apps/python_runner
+gate_run --finding "${drift[ruff]:-}" "ruff format" "$ruff_need" -- \
+  "$ruff_bin" format "${ruff[@]}" "${ruff_paths[@]}"
+# The linter, in both modes and never with `--fix`: a format pass has to stay
+# reproducible by re-running the formatters, so this reports and rewrites
+# nothing. What it enforces is settled in ruff.toml — the rules refused there
+# carry their reason — and the enabled set is the pin's own default, so raising
+# ruff==… in sdk/python/pyproject.toml settles whatever the new version reports.
+gate_run --finding status:1 "ruff check" "$ruff_need" -- \
+  "$ruff_bin" check "${ruff_paths[@]}"
 gate_run --finding "${drift[rubocop]:-}" rubocop \
   rubocop:"install the development dependency in sdk/ruby/flezha.gemspec" -- \
   rubocop "${rubocop[@]}" sdk/ruby test/apps/ruby_runner

@@ -15,10 +15,12 @@ from typing import Any
 
 from flezha import graph
 
+# The runner app is not a package and is not installed, so it is importable
+# only after its directory is on the path — which is why the import below it.
 _APP = pathlib.Path(__file__).resolve().parents[3] / "test" / "apps" / "python_runner"
 sys.path.insert(0, str(_APP))
 
-import fixtures_state  # noqa: E402
+import fixtures_state
 
 
 def _procedure_names(decl: dict[str, Any]) -> list[str]:

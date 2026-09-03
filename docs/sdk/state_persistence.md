@@ -142,7 +142,7 @@ restore rejects any `sdk_lang` but its own before it reads the format byte:
 | Bytes | Field | Rust | Java | Elixir |
 |---|---|---|---|---|
 | 0 | `sdk_lang` | 1 | 2 | 3 |
-| 1..5 | `sdk_version` | `(major << 16) \| (minor << 8) \| patch` of the core crate version | same (stamped by the core) | the same packing of the `flezha` application version |
+| 1..5 | `sdk_version` | `(major << 16) \| (minor << 8) \| patch` of the writing SDK's own released version | the same packing of the writing SDK's own released version | the same packing of the writing SDK's own released version |
 | 5..9 | `schema_version` | the Procedure's `SCHEMA_VERSION` | the class-wide maximum of its Procedures' `schemaVersion()` | the Procedure's `schema_version/0` |
 | 9 | `format_id` | 1 postcard | 4 Kryo | 7 External Term Format |
 | 10..12 | reserved | 0 | 0 | 0 |

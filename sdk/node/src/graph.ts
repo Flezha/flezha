@@ -23,6 +23,16 @@ const MAX_MAILBOX_CAPACITY = 1_048_576;
 /** The Node SDK's byte in the core's `sdk_lang` allocation table. */
 export const SDK_LANG_NODE = 4;
 
+/**
+ * This SDK's own released version, stamped into every durable record it writes.
+ * Pinned to `sdk/node/package.json` by `test/sdk_conformance/gate_test.exs`; a
+ * source constant rather than a runtime read of the manifest, because the
+ * package ships `dist/cjs`, `dist/esm` and `dist/types` from one `src`, so the
+ * manifest sits at three different depths and any bundler that inlines the
+ * module loses it entirely. The core packs it.
+ */
+export const SDK_VERSION = '0.1.0';
+
 /** MessagePack, shared with every SDK whose codec is MessagePack. */
 export const FORMAT_ID_MSGPACK = 5;
 
@@ -514,6 +524,7 @@ export function toHostClassDecl(spec: ClassSpec): Record<string, unknown> {
     factory_id: spec.factoryId,
     persistent: spec.persistent,
     sdk_lang: SDK_LANG_NODE,
+    sdk_version: SDK_VERSION,
     change_format_id: FORMAT_ID_MSGPACK,
     ...streamTierJson(spec),
     compact_after_bytes: spec.compactAfterBytes,

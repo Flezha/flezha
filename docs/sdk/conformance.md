@@ -317,10 +317,14 @@ What the gate enforces, in the order it checks — a pull request adding
 6. Every carried capability's fixture ids equal the Rust reference's.
 7. The runtime is a `workflow_dispatch` option of `.github/workflows/nightly-e2e.yml`.
 8. The `docs` page exists and references the manifest by path.
-9. Where the SDK spells its language byte is added to the gate's one
-   source-of-truth table (`test/sdk_conformance/gate_test.exs`), so the manifest
-   can be checked against the constant rather than trusted. That row is data,
-   not a clause: nothing else about admitting a runtime touches the harness.
+9. Where the SDK spells its language byte, and where it spells its own released
+   version, are added to the gate's source-of-truth tables
+   (`test/sdk_conformance/gate_test.exs`), so the manifest can be checked against
+   the constant rather than trusted and the constant against the SDK's package
+   metadata. An SDK whose reader *is* its manifest — the Rust compiler, the
+   Elixir app spec, Ruby's single `VERSION` — is recorded as having nothing to
+   compare. Those rows are data, not clauses: nothing else about admitting a
+   runtime touches the harness.
 10. No bench task's help text enumerates the runtimes. `mix bench` and
     `mix bench.roundtrip` resolve `--runtime` against the manifests, so a new
     SDK joins them by existing; the gate fails a list that reappears in docs.
@@ -343,6 +347,30 @@ The gate fails on a missing value, a duplicate, or a manifest that has drifted
 from the constant its SDK compiles in. The `interop`-tagged scenario proves the
 other half — that the runner advertises the byte on connect and that placement
 never crosses languages.
+
+### `sdk_version`
+
+Bytes 1:5 of the same header name the *writing* SDK's own released version, not
+the kernel's: six SDKs release on their own cadences over a core that may not
+move, and "which SDK build wrote this record" is the question a migration asks.
+
+Declare it as the version string your package metadata already spells — the core
+packs it to `(major << 16) | (minor << 8) | patch`, each component clamped at
+255, so every SDK's header carries one packing rather than one per language. A
+value that packs to zero is refused at declaration time naming the field.
+
+The shape is one literal in the language's package metadata, one reader, and the
+gate failing when the two disagree. Where the reader *is* the manifest — the Rust
+compiler's `env!`, the Elixir app spec, Ruby's single `VERSION` — there is
+nothing to compare and the gate's table says so. The PHP SDK is the one with
+nothing to compare *against*: `composer.json` declares no `version` key by
+design, so its constant is that SDK's sole source of truth and the release
+checklist owes the bump.
+
+The field is advisory. `sdk_lang` decides which codec wrote a body and
+`schema_version` decides its shape; no reader decides how to read a record from
+`sdk_version`, and the packing is lossy — `0.2.0-rc1` and `0.2.0` are the same
+value — so nothing may be built on an equality it cannot hold.
 
 `:interop` is excluded from `mix test` **and** from `--include system`: it is
 the one scenario that places two runtimes in a single run, and the tiers are

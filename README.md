@@ -122,19 +122,28 @@ flags, the exit codes and the operator recipes for docker-compose, k8s and CI:
 
 ## Code style
 
-The repo enforces one formatter per language via the
+The repo enforces one formatter per language, plus the Python linter, via the
 [`format`](.github/workflows/format.yml) workflow on every PR — drift
 blocks merge. The workflow runs the same script you do, so the two cannot
 cover different languages:
 
 ```bash
 scripts/format-check.sh   # every formatter in check mode, plus the licensing checks
-scripts/format-apply.sh   # auto-fix everything the check reports
+scripts/format-apply.sh   # auto-fix the formatting the check reports
 ```
 
 Both report every language they can and name any formatter that is not
 installed, so a missing toolchain removes one language from the report and
 never the rest.
+
+`ruff check` is the one linter in that list, and it never rewrites source —
+not even in the apply pass, which has to stay reproducible by re-running the
+formatters alone. So the apply script can report a Python finding it will not
+fix for you; [`ruff.toml`](ruff.toml) is where each rule is settled, and the
+rules refused there carry the reason they were refused. Its enabled set is the
+default of the version pinned in
+[`sdk/python/pyproject.toml`](sdk/python/pyproject.toml), so raising that pin
+settles whatever the new version reports.
 
 Style sources of truth: [`rustfmt.toml`](rustfmt.toml) for Rust (nightly
 rustfmt — pinned date in `format.yml` and `scripts/format-apply.sh`),

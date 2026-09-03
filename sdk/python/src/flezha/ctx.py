@@ -8,7 +8,8 @@ value in a list until the completion carries it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, Iterable, Mapping, TypeVar
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from . import codec as _codec
 from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms

@@ -20,7 +20,8 @@ import asyncio
 import bisect
 import itertools
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import flezha
 from fixture_support import raw, text

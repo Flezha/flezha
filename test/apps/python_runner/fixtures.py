@@ -14,7 +14,7 @@ import struct
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import flezha
 from fixture_support import _as_int, _bytes_through, _env_int, passthrough, prefix, raw, text
@@ -248,7 +248,7 @@ class StressFanOut:
 
     #: The entities every input reaches. `stress_a` fans out to all of them and
     #: the rest funnel back to one, which is the topology the stress exercises.
-    targets = STRESS_KEYS
+    targets: ClassVar[list[str]] = STRESS_KEYS
 
     def process(self, value: str) -> str:
         return value
@@ -258,7 +258,7 @@ class StressFanOut:
 
 
 class StressToP0(StressFanOut):
-    targets = ["p0"]
+    targets: ClassVar[list[str]] = ["p0"]
 
 
 stress_a = flezha.procedure(StressFanOut, name="stress_a", entity_keys=STRESS_KEYS)

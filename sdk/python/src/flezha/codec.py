@@ -110,10 +110,13 @@ def _is_escape(cls: type) -> bool:
 def _hints(cls: type) -> dict[str, Any]:
     try:
         return typing.get_type_hints(cls)
-    except Exception:
-        # An unresolvable forward reference is not fatal: the field is then
-        # restored as whatever MessagePack produced, which is what an
-        # unannotated field gets anyway.
+    except Exception:  # noqa: BLE001
+        # The breadth is the point: an unresolvable forward reference raises
+        # NameError, TypeError, AttributeError or a recursion error depending on
+        # what was annotated, and a narrower tuple would silently drop this
+        # fallback. Nothing is lost by taking it — the field is restored as
+        # whatever MessagePack produced, which is what an unannotated field gets
+        # anyway.
         return {}
 
 
@@ -323,7 +326,7 @@ def _children(value: Any) -> list[tuple[Any, Any]] | None:
 
 
 def _unrepresentable_reason(value: Any) -> str | None:
-    if isinstance(value, _SCALARS) or isinstance(value, (dict, list, tuple)):
+    if isinstance(value, (*_SCALARS, dict, list, tuple)):
         if isinstance(value, dict):
             for key in value:
                 if not isinstance(key, (str, int)):
@@ -390,7 +393,7 @@ def _json_revive(value: Any) -> Any:
             if marker == _TIME_MARKER:
                 seconds, nanos = value[marker]
                 return _datetime.datetime.fromtimestamp(
-                    seconds + nanos / 1_000_000_000, tz=_datetime.timezone.utc
+                    seconds + nanos / 1_000_000_000, tz=_datetime.UTC
                 )
         return {k: _json_revive(v) for k, v in value.items()}
     if isinstance(value, list):

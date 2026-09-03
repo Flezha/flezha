@@ -42,6 +42,9 @@ def _check(path: pathlib.Path) -> list[dict[str, object]]:
         text=True,
         cwd=_HERE.parent,
         env={**_env(), "PYTHONPATH": str(_SRC)},
+        # pyright exits non-zero whenever it reports a diagnostic; the report
+        # below is what this reads, so a non-zero status is not a failure here.
+        check=False,
     )
     if not result.stdout:
         pytest.fail(f"pyright produced no report: {result.stderr}")

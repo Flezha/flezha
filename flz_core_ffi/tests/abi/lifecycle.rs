@@ -98,7 +98,7 @@ fn socket_dir() -> std::path::PathBuf {
 fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_probe",
-        "sdk_lang": 1,
+        "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [{"name": "in", "kind": "entry", "consumers": [0]}],
         "procedures": [{"name": "abi_pass"}]
     }"#;
@@ -371,7 +371,7 @@ fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Contro
         "factory_id": "abi_eff",
         "persistent": true,
         "effectively_once": true,
-        "sdk_lang": 2,
+        "sdk_lang": 2,"sdk_version":"0.1.0",
         "change_format_id": 4,
         "channels": [
             {"name": "ein", "kind": "entry", "consumers": [0]},
@@ -648,7 +648,7 @@ fn the_keyed_input_reaches_its_own_entity(ctx: *mut FlzContext) {
 fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_dyn",
-        "sdk_lang": 1,
+        "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [{"name": "din", "kind": "entry", "consumers": [0]}],
         "procedures": [{"name": "dyn_pass", "entity_mode": "dynamic"}]
     }"#;
@@ -709,7 +709,7 @@ fn a_workflow_body_runs_through_the_abi(ctx: *mut FlzContext, controller: &Contr
 fn declares_the_workflow_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_sugar",
-        "sdk_lang": 1,
+        "sdk_lang": 1,"sdk_version":"0.1.0",
         "channels": [],
         "procedures": [],
         "workflow": {}

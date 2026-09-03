@@ -11,15 +11,16 @@ agrees with it.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Generic, Iterable, TypeVar
+from typing import Any, Generic, TypeVar
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .dispatch import DispatchDeps, RegisteredClass, invoke, run_now
+from .entity_state import fold_restore
 from .errors import FlezhaError
 from .procedure import Procedure
-from .entity_state import fold_restore
 
 __all__ = ["ProcedureTestHarness", "ReplayMismatch", "Outcome", "replay_equals"]
 

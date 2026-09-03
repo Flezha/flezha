@@ -28,7 +28,6 @@ from .codec import TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
 from .entity_state import state
 from .entry_idle import IdleObserver
-from .logger import configure as configure_logging
 from .errors import (
     CoreError,
     DeclarationError,
@@ -40,6 +39,7 @@ from .errors import (
     SchemaMismatchError,
     UnrepresentableValueError,
 )
+from .logger import configure as configure_logging
 from .operative import Operative, stream_operative, workflow_operative
 from .procedure import Procedure, procedure
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner

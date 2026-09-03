@@ -14,13 +14,12 @@ from typing import Any
 import pytest
 
 import flezha
+from conftest import FakeCore, deps_for, solo_deps, work_activation
 from flezha import executor as executor_module
 from flezha import native
 from flezha.dispatch import DispatchDeps
 from flezha.errors import FlezhaError
 from flezha.executor import AsyncioExecutor, ThreadExecutor, build
-
-from conftest import FakeCore, deps_for, solo_deps, work_activation
 
 
 @flezha.procedure

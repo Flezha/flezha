@@ -46,6 +46,8 @@ pub struct HostProcedureFacts {
     pub checkpoint: Option<crate::operative::topology::CheckpointPolicy>,
     pub clock: HostClock,
     pub sdk_lang: u8,
+    /// The writing SDK's own version, as declared; never the core's.
+    pub sdk_version: u32,
     pub change_format_id: u8,
     pub correction: Option<CorrectionPolicy>,
 }
@@ -55,7 +57,7 @@ impl HostProcedureFacts {
     pub fn header(&self) -> HeaderTemplate {
         HeaderTemplate {
             sdk_lang: self.sdk_lang,
-            sdk_version: crate::header::parse_pkg_version(),
+            sdk_version: self.sdk_version,
             schema_version: self.schema_version,
             format_id: self.change_format_id,
         }

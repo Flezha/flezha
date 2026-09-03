@@ -979,3 +979,68 @@ A coverage diff is how this project decides whether a test may be deleted, so an
 - **WHEN** the non-thread-safe and thread-safe PHP targets are each inspected for loaded extensions
 - **THEN** both SHALL list the coverage driver
 
+### Requirement: A settled lint check SHALL be run by the gate CI actually invokes
+
+A lint check that has been settled SHALL be added to the script CI runs, and the change
+that adds it SHALL cite the workflow line that runs that script. A gate placed in a
+script no workflow invokes reports nothing while appearing to be armed, which is worse
+than an unsettled check because a reader stops looking.
+
+A lint check SHALL declare how its tool reports a finding as distinct from a failure to
+run, so that a linter that crashed is never reported as source that needs fixing.
+
+A gate that both formats and checks SHALL NOT apply lint fixes in its write mode, because
+a format pass must stay reproducible by re-running the formatters alone.
+
+#### Scenario: The gate is added where the workflow reads it
+
+- **WHEN** a settled lint check is armed
+- **THEN** it SHALL be invoked by the script the format workflow runs, and the change
+  SHALL name the workflow line that runs it
+
+#### Scenario: A crashed linter is not reported as unformatted source
+
+- **WHEN** the linter cannot run — its binary is absent, or it exits with its own error
+  status
+- **THEN** the gate SHALL report it under the tool-could-not-run heading and SHALL NOT
+  report the tree as having findings
+
+#### Scenario: The write mode does not rewrite source with lint fixes
+
+- **WHEN** the format script runs in its write mode
+- **THEN** the lint check SHALL report and SHALL NOT modify any file
+
+### Requirement: A gated linter's enabled rule set SHALL be fixed by its version pin
+
+A linter SHALL run at a version pinned in the repository, and where the enabled rule set
+comes from that version's own default rather than from repository configuration, the
+change that arms the gate SHALL record the size of that default and the fact that the pin
+is what fixes it.
+
+Raising the pin SHALL be treated as a rule-set change: every family the new version
+reports for the first time SHALL be settled — adopted, allowed at a site with a reason,
+or refused in configuration with a reason — in the change that raises the pin, never left
+to be discovered by an unrelated run.
+
+A refusal SHALL be argued from what the code means. A rule SHALL NOT be disabled because
+the number of sites it names is large.
+
+#### Scenario: The default rule set is recorded, not assumed
+
+- **WHEN** a linter is gated without explicit rule selection
+- **THEN** the change SHALL record the enabled rule count measured from the pinned
+  version, and SHALL name the pin that fixes it
+
+#### Scenario: A version bump settles what it newly reports
+
+- **WHEN** the pinned linter version is raised and the new version reports a family the
+  old one did not
+- **THEN** that family SHALL be settled in the same change, and the gate SHALL NOT be
+  left failing
+
+#### Scenario: A refusal names a meaning, not a count
+
+- **WHEN** a rule is disabled in the linter's configuration
+- **THEN** the recorded reason SHALL describe what the code means, and SHALL NOT be the
+  number of sites the rule reports
+

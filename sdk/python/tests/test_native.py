@@ -114,9 +114,8 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
     express it hands its author a class that cannot start.
     """
     import flezha
-    from flezha import graph
-
     from conftest import echo
+    from flezha import graph
 
     @flezha.stream_operative(factory_id)
     def operative(c: Any) -> None:
@@ -145,7 +144,7 @@ def test_a_freed_context_refuses_rather_than_dereferencing() -> None:
     core = native.Core.create()
     core.free()
     core.free()
-    with pytest.raises(Exception):
+    with pytest.raises(CoreError):
         core.declare_class(b"{}")
 
 
@@ -237,7 +236,7 @@ def test_the_payload_view_is_a_buffer_and_copies_only_on_request() -> None:
 def test_a_released_view_names_the_rule_rather_than_serving_stale_bytes() -> None:
     view = _view_of(b"\x01\x02")
     view.release()
-    with pytest.raises(Exception):
+    with pytest.raises(BufferError):
         memoryview(view)
     # The copy taken before the release is unaffected: it is the caller's.
     assert view.tobytes() == b"\x01\x02"
@@ -256,7 +255,7 @@ def test_the_dispatcher_releases_every_view_an_activation_carried() -> None:
         *[item["payload"] for item in activation["items"]],
         activation["changes"][0]["bytes"],
     ):
-        with pytest.raises(Exception):
+        with pytest.raises(BufferError):
             memoryview(value)
 
 

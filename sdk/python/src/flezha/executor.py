@@ -21,7 +21,8 @@ import asyncio
 import os
 import threading
 import time
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 from .dispatch import DispatchDeps, close_thread_loop, dispatch, dispatch_now
 from .errors import FlezhaError
@@ -124,7 +125,7 @@ def _positive_env(name: str) -> int:
         value = int(os.environ.get(name, "") or 0)
     except ValueError:
         return 0
-    return value if value > 0 else 0
+    return max(0, value)
 
 
 def _deadline() -> float:

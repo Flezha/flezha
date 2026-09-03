@@ -15,6 +15,7 @@
 class.factory_id
 class.persistent
 class.sdk_lang
+class.sdk_version
 class.change_format_id
 class.effectively_once
 class.ack_granularity

@@ -1,4 +1,42 @@
-# Ruff is the Python SDK's formatter (`ruff format`); the width matches
-# rustfmt.toml. Pinned in sdk/python/pyproject.toml's dev group.
+# Ruff is the Python SDK's formatter (`ruff format`) and its linter
+# (`ruff check`); both are gated by scripts/format-apply.sh. The width matches
+# rustfmt.toml. Pinned in sdk/python/pyproject.toml's dev group, and that pin is
+# what fixes the enabled rule set: no `select` is given here, so the set is the
+# pinned version's own default. Raising the pin settles whatever it newly
+# reports, in the change that raises it.
 line-length = 100
 target-version = "py311"
+# Where this repository's own Python lives. Without it ruff resolves nothing
+# outside the root, and isort sorts `flezha`, the tests' `conftest` and the
+# runner app's sibling modules as third parties — merging the package under
+# test into the same block as pytest.
+src = [".", "sdk/python/src", "sdk/python/tests", "test/apps/python_runner"]
+
+[lint]
+# Every rule below is refused because of what the code means. None is refused
+# for the number of sites it names.
+ignore = [
+  # `__all__` here is grouped under concept headings (`# authoring`, `# runner`,
+  # `# codec`, …) and elsewhere lists a base class before its subclasses. Sorting
+  # moves names across those headings and buries the base class mid-list.
+  "RUF022",
+  # `__slots__` here is ordered private fields first, then the public ones a
+  # handler may touch. Sorting interleaves the two halves.
+  "RUF023",
+]
+
+[lint.per-file-ignores]
+# Every naive clock call in this file is the ambient clock the SDK is meant to
+# observe: the procedures under test read `datetime.now()` so the determinism
+# warning can be seen firing, and one call sits inside a `catch_warnings` block
+# asserting that nothing warns outside an invocation. A `tz=` argument deletes
+# the test rather than fixing it.
+"sdk/python/tests/test_determinism.py" = ["DTZ001", "DTZ005"]
+
+# This shebang is decorative, as it is in the Ruby and Node test apps: all three
+# are mode 100644 and each is launched through its interpreter
+# (conformance.json's `command.test`). Making one of the three executable is the
+# inconsistency, and dropping all three shebangs is a cross-SDK change. Named
+# per file rather than repository-wide so a new script that *is* meant to be
+# executable still gets reported.
+"test/apps/python_runner/runner.py" = ["EXE001"]

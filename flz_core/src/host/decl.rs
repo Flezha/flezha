@@ -118,6 +118,11 @@ pub struct HostClassDecl {
     /// The language byte ([`crate::header`]); mandatory, since an untagged
     /// veneer's state could be handed to another language.
     pub sdk_lang: u8,
+    /// The writing SDK's own released version, as that SDK's package metadata
+    /// spells it (`"1.4.2"`). The core packs it, so every SDK's header carries
+    /// one packing; a value that packs to `0` is refused.
+    #[serde(default)]
+    pub sdk_version: String,
     /// The format byte of the host's change bodies.
     #[serde(default = "default_change_format")]
     pub change_format_id: u8,
