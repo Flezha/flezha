@@ -818,3 +818,55 @@ dependencies are resolved by the ecosystem's resolver and are out of scope.
 - **THEN** each SDK SHALL have an answer for all three clauses — what it declares, whether it is pinned, and what continuous integration installs
 - **AND** an SDK that fails any clause SHALL be recorded as failing, rather than reported as clean because its suite is green
 
+
+### Requirement: A document's citation of code SHALL be verified by a gate
+
+A citation a document makes SHALL resolve in the tree, and a gate SHALL check that it does. A citation is a pointer with a decidable answer — an Elixir module, an Elixir function, a repository path with an optional line, an environment variable, a telemetry event — and the gate SHALL fail a citation the tracked tree cannot answer. A prose claim about behaviour SHALL NOT be checked: a gate that reports a correct sentence gets turned off, and rewording correct prose to satisfy it is a defeat, not a fix.
+
+The gate SHALL judge only citations whose answer the tree carries. A pointer with no directory component, a path rooted where the repository tracks nothing, and a path the repository ignores by policy SHALL be left unjudged rather than reported, and each such exclusion SHALL be a rule about the shape of the citation rather than a list of the instances that trip it.
+
+A normative specification SHALL be out of the gate's scope, because a requirement states what SHALL hold and may name a helper or a variable the code still owes; reading a mandate as a citation of present fact would fail a correct, unimplemented requirement. A changelog SHALL be out of scope for the different reason that it is a dated record, whose removal entries name what no longer exists because that is what they record.
+
+A citation this repository makes on purpose to something it does not carry — a removal quoted as a record, a coordinate in another repository — SHALL be exempted by an explicit recorded-citation marker, and SHALL NOT be deleted or reworded to satisfy the gate.
+
+The gate SHALL report how much it read beside its verdict, so a green that means "the scope filter swallowed the tree" is distinguishable from a green that means the tree is clean. It SHALL be demonstrated to fail on a deliberately introduced dead citation of each kind it claims to check, and to pass once those are removed, before it is trusted.
+
+#### Scenario: A path that a refactor moved is caught
+
+- **GIVEN** a document citing a source file that a later split replaced with a directory
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero, naming the document, the line and the path
+
+#### Scenario: A module a rename retired is caught in prose
+
+- **GIVEN** a document naming an Elixir module no tracked source declares
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero naming that document and module, and SHALL NOT report a name that is a namespace above a module the source does declare
+
+#### Scenario: A name the source composes at runtime is not a dead citation
+
+- **GIVEN** a document naming a process registered as `:"#{__MODULE__}.Uds"` by the module that registers it
+- **WHEN** the gate runs
+- **THEN** that citation SHALL be treated as live
+
+#### Scenario: A deliberate citation to another repository is exempt
+
+- **GIVEN** a document naming files that belong to a sibling repository, wrapped in a recorded-citation marker pair
+- **WHEN** the gate runs
+- **THEN** those lines SHALL be exempt, and the prose SHALL be unchanged by the exemption
+
+#### Scenario: A normative requirement may name what the code still owes
+
+- **GIVEN** a specification requiring an environment variable or a helper file that does not exist yet
+- **WHEN** the gate runs
+- **THEN** it SHALL NOT report that requirement, because a mandate is not a citation of present fact
+
+#### Scenario: The gate says how much it read
+
+- **WHEN** the gate passes
+- **THEN** it SHALL print the number of citations judged and the number of documents read, so a fall in that count is visible without the gate failing
+
+#### Scenario: The gate is proved able to fail before it is trusted
+
+- **WHEN** the gate is added
+- **THEN** a dead citation of each kind it checks SHALL be introduced into more than one document, the gate SHALL be shown to exit non-zero naming every one, and it SHALL be shown to exit zero once the documents are restored

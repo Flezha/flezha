@@ -70,7 +70,7 @@ Resolving the established language SHALL NOT require reading state on each place
 
 Between a wrong establishment and its correction at the bind, the SDK-side language gate is the backstop: the bound runner refuses the other language's records, the restore fails, and the operative is left unbound rather than cold-started (see `operative-state-persistence`).
 
-The single placement filter (`Flezha.Runner.FleetManager.placeable_runners/3`, read by `runners_for_factory/3`, the convergence rebind, and the dead-runner reroute) SHALL return only runners whose advertised language for that factory equals the established language. Every placement path SHALL obtain candidates through that filter; no placement path SHALL construct a candidate set of its own.
+The single placement filter (`Flezha.Runner.FleetManager.Factories.placeable_runners/3`, read by `runners_for_factory/3`, the convergence rebind, and the dead-runner reroute) SHALL return only runners whose advertised language for that factory equals the established language. Every placement path SHALL obtain candidates through that filter; no placement path SHALL construct a candidate set of its own.
 
 The homogeneous unit is the factory id. A namespace SHALL be free to hold factories of different languages, and a runner of one language SHALL remain a valid candidate for every factory established in its own language.
 

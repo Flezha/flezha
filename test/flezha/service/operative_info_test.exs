@@ -1,10 +1,12 @@
 defmodule FlezhaTest.Service.OperativeInfoTest do
   @moduledoc """
-  §6.1: `flz operative info` surfaces the operative's `kind`, lifecycle `phase`
-  (`running` for a live operative in Phase 1), and `uptime_ms`, in both the text
-  and JSON renderings. The richer workflow phases (compensating / completing /
-  finished) + elapsed-vs-max-duration + per-procedure progress arrive with the
-  saga + retention + SDK-reporting work in later phases.
+  `flz operative info` surfaces the operative's `kind`, its lifecycle `phase`
+  (`running` / `suspended` / `parked`, and `finished` for a retained completion
+  record), the convergence loop's per-operative `health` verdict, and
+  `uptime_ms`, in both the text and JSON renderings. Phase and health are two
+  axes of one operative and must never contradict each other: the phase is read
+  from the operative's own state, the health from the map the loop publishes and
+  `flz operative list` reads.
   """
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
@@ -15,6 +17,9 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   import ExUnit.CaptureIO
 
+  alias Flezha.Convergence.Loop
+  alias Flezha.Convergence.Loop.Summary
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.{Completion, TestHelpers}
@@ -26,6 +31,10 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   setup do
     # Isolate the state root `operative_info` scans for finished-job records.
     TestHelpers.tmp_app_data_dir()
+
+    # The published health map is process-global; restore what was there.
+    published = Snapshot.current()
+    on_exit(fn -> Snapshot.publish(published) end)
     :ok
   end
 
@@ -74,6 +83,114 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
     %{"operatives" => [proc]} = Jason.decode!(out)
     assert proc["kind"] == "stream"
+  end
+
+  # `Lifecycle.park/2` stores the failure reason in `init_error` and leaves the
+  # Overwatch alive, so a parked operative is still listed and still readable.
+  defp parked_state(reason \\ {:no_runner, "exec1"}),
+    do: Map.put(workflow_state(0), :init_error, reason)
+
+  # The observation `Convergence.Probe` builds from an Overwatch state, so both
+  # operator surfaces are driven from one operative state rather than two
+  # fixtures that could drift apart.
+  defp observed(state) do
+    %{
+      bound_runner: state.runner_id,
+      parked?: Map.get(state, :init_error) != nil,
+      suspended?: Map.get(state, :suspended, false)
+    }
+  end
+
+  defp reality(state) do
+    %{
+      operatives: %{{@namespace, "op-1"} => observed(state)},
+      active_runners: %{@namespace => MapSet.new([state.runner_id])}
+    }
+  end
+
+  test "json output reports a parked operative as parked, not running" do
+    stub_one(parked_state())
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["phase"] == "parked"
+  end
+
+  test "text output reports a parked operative as parked, not running" do
+    stub_one(parked_state())
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "text") end)
+
+    assert out =~ "Phase: parked"
+    refute out =~ "Phase: running"
+  end
+
+  test "a suspended instance still reports suspended when it also carries a park reason" do
+    stub_one(Map.put(parked_state(), :suspended, true))
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["phase"] == "suspended"
+  end
+
+  test "info and the convergence health map agree about one parked operative" do
+    state = parked_state()
+    stub_one(state)
+
+    health =
+      Summary.operative_health_map(
+        [%{namespace: @namespace, operative_id: "op-1", factory_id: nil, plugins: []}],
+        reality(state),
+        %Loop.State{}
+      )
+
+    assert health == %{{@namespace, "op-1"} => :degraded}
+
+    Snapshot.publish(Map.put(Snapshot.current(), :operative_health, health))
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["health"] == "degraded"
+    assert proc["phase"] == "parked"
+
+    text = capture_io(fn -> CliManager.operative_info(@namespace, "text") end)
+    assert text =~ "Health: degraded"
+    assert text =~ "Phase: parked"
+  end
+
+  test "a healthy operative carries the loop's own verdict on both surfaces" do
+    state = workflow_state(0)
+    stub_one(state)
+
+    health =
+      Summary.operative_health_map(
+        [%{namespace: @namespace, operative_id: "op-1", factory_id: nil, plugins: []}],
+        reality(state),
+        %Loop.State{}
+      )
+
+    assert health == %{{@namespace, "op-1"} => :healthy}
+
+    Snapshot.publish(Map.put(Snapshot.current(), :operative_health, health))
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["health"] == "healthy"
+    assert proc["phase"] == "running"
+  end
+
+  test "health is unknown, never invented, before the loop has observed the operative" do
+    stub_one(parked_state())
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["health"] == "unknown"
+    assert proc["phase"] == "parked"
   end
 
   test "a finished workflow operative is surfaced from its completion record" do

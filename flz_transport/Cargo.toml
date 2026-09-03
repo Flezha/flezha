@@ -21,6 +21,9 @@ crossbeam = "0.8"
 mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
 quinn-proto = "0.11"
 bytes = "1"
+# Already in the graph via rustls; the direct dependency is one call, the
+# SHA-256 that bounds a data socket's runner-id field.
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
 tracing = "0.1"

@@ -536,10 +536,21 @@ const WorkflowProducer = defineProcedure({
   },
 });
 
+/** What a consumer of the `handoff` channel was handed, in delivery order. */
+const DELIVERED = [];
+
+const record = (name) =>
+  defineProcedure({
+    name,
+    handle: (input) => {
+      DELIVERED.push(input);
+    },
+  });
+
 const workflowGraph = (c) => {
   const edge = c.input('in').into(WorkflowProducer).named('handoff');
-  edge.map((value) => value + 1).into(defineProcedure({ name: 'wf_b', handle: (i) => i }));
-  edge.into(defineProcedure({ name: 'wf_c', handle: (i) => i }));
+  edge.map((value) => value + 1).into(record('wf_b'));
+  edge.into(record('wf_c'));
   edge.sink('wf_out');
 };
 
@@ -578,4 +589,43 @@ test('the same graph on a stream class releases one output per consumer', async 
       ['plugin', undefined, 10],
     ],
   );
+});
+
+// The other end of the same two arms: what the CONSUMER is handed. A stream
+// producer already applied the edge, so delivery applies nothing; a workflow
+// stage released the value raw, so delivery is the one application.
+
+/** Hand `payload` to `procedure` on the `handoff` channel and answer what it saw. */
+async function delivered(spec, procedure, payload) {
+  DELIVERED.length = 0;
+  const result = await answer(
+    activationFor(spec.factoryId)({
+      procedure,
+      items: [inputItem(0, { channel: 1, payload })],
+    }),
+    depsFor(spec),
+  );
+  assert.equal(result.effects[0].verdict, 'ok');
+  return [...DELIVERED];
+}
+
+test('a stream inter-proc edge applies its map exactly once', async () => {
+  const produced = await answer(
+    activationFor('wf_emit_stream')({ items: [inputItem(10)] }),
+    depsFor(StreamTwinSpec),
+  );
+  const mapped = produced.effects[0].outputs[0];
+  assert.deepEqual(await delivered(StreamTwinSpec, 1, mapped.payload), [11]);
+});
+
+test('a workflow consumer applies its own edge exactly once, at delivery', async () => {
+  const stage = await answer(
+    activationFor('wf_emit')({ items: [inputItem(10)] }),
+    depsFor(WorkflowSpec),
+  );
+  const released = stage.effects[0].outputs[0].payload;
+  // One released value reaches BOTH children — the driver's fan-out — and each
+  // evaluates its own edge here.
+  assert.deepEqual(await delivered(WorkflowSpec, 1, released), [11]);
+  assert.deepEqual(await delivered(WorkflowSpec, 2, released), [10]);
 });

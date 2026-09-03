@@ -44,4 +44,18 @@ final class ClassSpec
         public readonly array $chainIssues = [],
     ) {
     }
+
+    /**
+     * Whether this class's producers release their values untransformed.
+     *
+     * A structured workflow's stage releases ONE value per emit and the driver
+     * fans it out to every consumer itself, so each consumer edge — its
+     * transforms and its key — belongs to the consumer. The producer and the
+     * consumer read this one predicate, so they cannot disagree about which
+     * side applies the edge.
+     */
+    public function structuredWorkflow(): bool
+    {
+        return $this->kind === 'workflow' && $this->channels !== [];
+    }
 }

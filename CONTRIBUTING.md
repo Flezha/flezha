@@ -36,8 +36,7 @@ Two repo-wide rules that are easy to miss:
   one. Build the host triple once with `scripts/build-native.sh` and every Java
   test path works offline — see README "Building".
 
-Keep a change to one concern, and read the matching `docs/dev_notes/` entry
-before touching an area listed in `CLAUDE.md`.
+Keep a change to one concern.
 
 ## Security issues
 

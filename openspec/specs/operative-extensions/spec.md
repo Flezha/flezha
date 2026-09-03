@@ -204,7 +204,7 @@ A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` 
 #### Scenario: No raw transient errors surface to the chain
 - **GIVEN** the production-grade Kafka producer extension is loaded
 - **WHEN** any test or integration scenario induces a 60-second window of `:not_leader_for_partition` responses
-- **THEN** the chain caller (`Flezha.Plugin.Extension.Table.compile_chain/3`) SHALL never observe `{:error, :not_leader_for_partition}` for any message that ultimately succeeds
+- **THEN** the chain caller (`Flezha.Plugin.Extension.run/3`) SHALL never observe `{:error, :not_leader_for_partition}` for any message that ultimately succeeds
 - **AND** SHALL never observe `{:error, :no_broker}` either
 - **AND** for messages that genuinely fail, the chain SHALL receive `{:error, {:delivery_failed, _}}` only after the configured timeout
 

@@ -41,9 +41,9 @@ defmodule Flezha.Transport.Native do
 
   @doc """
   Self-reported driver liveness for a server. Returns a map
-  (`%{now_ms, loop_iterations, last_loop_ms, cmd_queue_depth, streams: [...]}`)
-  for UDS servers, or `:undefined` for QUIC. A frozen `loop_iterations` with a
-  stale `last_loop_ms` means the driver thread is wedged.
+  (`%{now_ms, loop_iterations, last_loop_ms, cmd_queue_depth, streams: [...]}`),
+  one shape for both the UDS and the QUIC driver. A frozen `loop_iterations`
+  with a stale `last_loop_ms` means the driver thread is wedged.
   """
   def driver_stats(_server_ref), do: :erlang.nif_error(:not_loaded)
 
@@ -143,6 +143,18 @@ defmodule Flezha.Transport.Native do
   """
   @spec socket_dir_live(String.t()) :: boolean()
   def socket_dir_live(_socket_dir), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  A runner's data-socket path in `socket_dir` — `flz_transport`'s own
+  composition, the one every other SDK reaches through `flz_core`, asked for
+  here rather than spelled so one runner cannot end up with two names. The
+  runner-id field is bounded, and a path a Unix domain socket address cannot
+  hold is refused by name and length.
+  """
+  @spec stream_socket_path(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def stream_socket_path(_socket_dir, _runner_id, _stream_type),
+    do: :erlang.nif_error(:not_loaded)
 
   @doc """
   Claim `state_root` for this controller with an exclusive advisory lock on a

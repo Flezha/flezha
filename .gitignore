@@ -112,12 +112,4 @@ stash/*
 # Agent coding-fleet prototype: own git repo, extracted to flezha-agents when its shape settles.
 /examples/coding-fleet/
 
-# Bench harness throwaway OUTPUT only: per-cell logs and Flink build/report
-# output. The harness itself — mix bench tasks, batch scripts, the flink
-# compose/job/scripts — stays trackable.
-/bench/workflow/reports/
-/bench/flink/reports/
-/bench/reports/
-/bench/flink/job/target/
-/bench/acceptance/results.*.tsv
-/bench/acceptance/summary.*.md
+/docs/dev_notes/

@@ -341,14 +341,25 @@ class DispatchTest < Minitest::Test
     def process(input, ctx) = ctx.emit(input)
   end
 
+  # What a consumer of the `handoff` channel was handed, in delivery order.
+  DELIVERED = []
+
   class WfB < Flezha::Procedure
     procedure_name "wf_b"
-    def process(input, _ctx) = input
+
+    def process(input, _ctx)
+      DELIVERED << input
+      nil
+    end
   end
 
   class WfC < Flezha::Procedure
     procedure_name "wf_c"
-    def process(input, _ctx) = input
+
+    def process(input, _ctx)
+      DELIVERED << input
+      nil
+    end
   end
 
   WORKFLOW_GRAPH = lambda do |c|
@@ -393,5 +404,36 @@ class DispatchTest < Minitest::Test
 
     assert_equal [["edge", 1, 11], ["edge", 2, 10], ["plugin", nil, 10]],
                  outputs.map { |o| [o[:target], o[:consumer], Flezha::Codec.decode(o[:payload])] }
+  end
+
+  # The other end of the same two arms: what the CONSUMER is handed. A stream
+  # producer already applied the edge, so delivery applies nothing; a workflow
+  # stage released the value raw, so delivery is the one application.
+
+  def delivered(operative, factory, procedure, payload)
+    DELIVERED.clear
+    deps = Flezha::TestSupport.deps(operative, @core)
+    activation = Flezha::TestSupport.activation(
+      factory: factory, kind: :work, procedure: procedure, entity_key: "ek",
+      items: [input_item(payload, channel: 1)]
+    )
+    result = Flezha::Dispatch.answer(activation, deps)
+    assert_equal "ok", result[:effects][0][:verdict]
+    DELIVERED.dup
+  end
+
+  def test_a_stream_inter_proc_edge_applies_its_map_exactly_once
+    mapped = emit_arm_outputs(WfEmitStreamOperative, "wf_emit_stream")[0][:payload]
+
+    assert_equal [11], delivered(WfEmitStreamOperative, "wf_emit_stream", 1, mapped)
+  end
+
+  def test_a_workflow_consumer_applies_its_own_edge_exactly_once_at_delivery
+    released = emit_arm_outputs(WfEmitOperative, "wf_emit")[0][:payload]
+
+    # One released value reaches BOTH children — the driver's fan-out — and
+    # each evaluates its own edge here.
+    assert_equal [11], delivered(WfEmitOperative, "wf_emit", 1, released)
+    assert_equal [10], delivered(WfEmitOperative, "wf_emit", 2, released)
   end
 end

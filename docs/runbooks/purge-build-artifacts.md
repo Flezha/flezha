@@ -99,9 +99,7 @@ is gone.
 `filter-repo` rewrites hashes in commit messages only. Tracked files that cite
 commits must be repointed from `filter-repo/commit-map`:
 
-    docs/refactor/STATE.md, docs/refactor/baseline.json, docs/refactor/charter.md,
-    docs/refactor/targets.md, CLAUDE.md, docs/known_issues.md, WORKFLOW-PERF.md,
-    docs/dev_notes/*.md, .git-blame-ignore-revs
+    .git-blame-ignore-revs
 
 `.git-blame-ignore-revs` and `baseline.json` are **not** markdown and are the two
 most often missed. Both are functional, not prose: git blame skips those revs,
@@ -124,9 +122,9 @@ Then re-clone locally and prove the result:
 
 Every existing clone is now invalid and must be re-cloned — no `git pull`
 recovers from a rewrite. Sibling projects that record a flezha commit for
-provenance need re-syncing: `flezha_market` holds `FLEZHA_SHA` in
-`kubernetes/lib/common.sh`, `docker/dev/sync-flezha-local.sh` and
-`docker/dev/run-quality.sh`. `.flezha-local` is an rsync copy rather than a
+provenance need re-syncing: `flezha_market` holds <!-- docs-citation-record:begin -->`FLEZHA_SHA`<!-- docs-citation-record:end --> in
+<!-- docs-citation-record:begin -->`kubernetes/lib/common.sh`, `docker/dev/sync-flezha-local.sh`<!-- docs-citation-record:end --> and
+<!-- docs-citation-record:begin -->`docker/dev/run-quality.sh`<!-- docs-citation-record:end -->. `.flezha-local` is an rsync copy rather than a
 clone, so nothing breaks functionally, but the recorded SHAs stop resolving.
 Pre-rewrite hashes quoted in that repo's archived proposals cannot be repointed
 and stay dangling.

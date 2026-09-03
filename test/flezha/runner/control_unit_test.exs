@@ -439,3 +439,57 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     IO.iodata_to_binary(iodata)
   end
 end
+
+defmodule FlezhaTest.Runner.ControlUnitPingTimeoutTest do
+  @moduledoc """
+  The overwatch ping timeout is one knob on two layers, and the published
+  contract names both: the `:overwatch_ping_timeout_ms` application key
+  `Flezha.Runner.ControlUnit` reads, and the `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`
+  variable `config/runtime.exs` resolves it from at boot. An operator who sets
+  the variable and gets the default back has been told a knob exists that does
+  nothing.
+  """
+  # async: false: the OS environment is process-global.
+  use ExUnit.Case, async: false
+
+  @var "FLEZHA_OVERWATCH_PING_TIMEOUT_MS"
+
+  setup do
+    previous = System.get_env(@var)
+
+    on_exit(fn ->
+      case previous do
+        nil -> System.delete_env(@var)
+        value -> System.put_env(@var, value)
+      end
+    end)
+
+    :ok
+  end
+
+  test "the variable the contract names reaches the application key" do
+    System.put_env(@var, "7777")
+
+    assert ping_timeout_from_runtime_config(:prod) == 7777
+  end
+
+  test "an unset variable leaves the 2 s default the ControlUnit reads" do
+    System.delete_env(@var)
+
+    assert ping_timeout_from_runtime_config(:prod) == 2_000
+  end
+
+  test "a value that is not an integer refuses at boot rather than degrading" do
+    System.put_env(@var, "soon")
+
+    assert_raise ArgumentError, fn -> ping_timeout_from_runtime_config(:prod) end
+  end
+
+  # Evaluates the real `config/runtime.exs`, which is where the two halves of
+  # the knob meet: the variable is resolved once at boot into the application
+  # key every reader takes.
+  defp ping_timeout_from_runtime_config(env) do
+    Config.Reader.read!("config/runtime.exs", env: env, target: :host)
+    |> get_in([:flezha, :overwatch_ping_timeout_ms])
+  end
+end

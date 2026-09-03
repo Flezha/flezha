@@ -12,13 +12,10 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | [`resilience/`](#resilience) | everyone | What survives what — the guarantee-level docs |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
 | [`runbooks/`](#runbooks) | operators, contributors | Step-by-step procedures for one-off operations |
-| [`dev_notes/`](#dev-notes) | contributors | Per-change gotchas, indexed in the repo `CLAUDE.md` |
 
 Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) and
 [`configuration.md`](configuration.md) (every knob, by layer).
 
-[`known_issues.md`](known_issues.md) is the open-defect register rather than a reference:
-defects found but not fixed where they were found, each carrying a command that
 reproduces it and the output that command gave.
 
 ## sdk
@@ -102,5 +99,4 @@ reproduces it and the output that command gave.
 
 ## dev notes
 
-`dev_notes/<change-id>.md` holds the gotchas of one landed change each; the repo `CLAUDE.md`
 indexes them. They are deliberately not repeated in the docs above.

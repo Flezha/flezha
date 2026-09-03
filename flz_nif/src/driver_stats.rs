@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+use flz_transport::transport::send_gate::SendGate;
+
 /// Per-stream liveness snapshot, rebuilt once per driver-loop iteration.
 /// `last_write_ms` / `last_read_ms` are driver-elapsed milliseconds at the
 /// last successful socket write / read (0 = never), comparable against
@@ -15,6 +17,32 @@ pub struct StreamSnapshot {
     pub frames_read: u64,
     pub last_write_ms: u64,
     pub last_read_ms: u64,
+}
+
+/// The counters one driver thread keeps for one stream. The driver loop is
+/// single-threaded, so these are plain integers; both server drivers embed
+/// this struct and take their snapshot through it.
+#[derive(Default)]
+pub struct StreamCounters {
+    pub frames_written: u64,
+    pub frames_read: u64,
+    pub last_write_ms: u64,
+    pub last_read_ms: u64,
+}
+
+impl StreamCounters {
+    /// This stream's line in the snapshot: the counters, plus the depth and
+    /// refusal count read straight off the buffer and the gate that carry them.
+    pub fn snapshot(&self, write_buffer: &[u8], gate: &SendGate) -> StreamSnapshot {
+        StreamSnapshot {
+            write_buffer_len: write_buffer.len() as u64,
+            write_buffer_dropped: gate.refused(),
+            frames_written: self.frames_written,
+            frames_read: self.frames_read,
+            last_write_ms: self.last_write_ms,
+            last_read_ms: self.last_read_ms,
+        }
+    }
 }
 
 /// Self-reported liveness of one driver thread. The loop counters are

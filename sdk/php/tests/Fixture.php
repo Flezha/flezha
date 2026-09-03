@@ -318,11 +318,20 @@ final class WfProducer extends Procedure
     }
 }
 
+/** What a consumer of the `handoff` channel was handed, in delivery order. */
+final class Delivered
+{
+    /** @var list<mixed> */
+    public static array $values = [];
+}
+
 #[Proc(name: 'wf_b')]
 final class WfB extends Procedure
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
+        Delivered::$values[] = $input;
+
         return null;
     }
 }
@@ -332,6 +341,8 @@ final class WfC extends Procedure
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
+        Delivered::$values[] = $input;
+
         return null;
     }
 }

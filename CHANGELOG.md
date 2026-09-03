@@ -181,7 +181,7 @@ proposal predicted the opposite; its figure was measured single-threaded and
 excluded what dominates here, that the re-arm is a scheduling round-trip where
 the park was a futex wake straight back into the emit. This is why the flag
 ships **off** and why flipping its default is gated on three things, all named
-in `docs/dev_notes/nonblocking-drop-nothing-backpressure.md`: a ≥ 2 h soak with
+recorded separately: a ≥ 2 h soak with
 it on against a workload that actually saturates a consumer, the Java
 round-trip bench run under both settings (**owed** — not run in this change, so
 the numbers above prove one runtime only), and that 30–36% cost either closed
@@ -602,7 +602,7 @@ as before.
 <!-- kind-naming-record:begin -->
 - **The two operative kinds are now `stream` and `workflow`**
   (`rename-operative-kinds-to-stream-and-workflow`). They were `unbounded` and
-  `bounded` — Flink's words for a property of the *data*, borrowed for what is
+  `bounded` — borrowed from stream-processing vocabulary for a property of the *data*, applied to what is
   actually an *execution model* distinction, and outright false for a durable
   `PerInput` operative, which consumes an unbounded input stream forever and
   bounds only its iteration. Nothing about execution, durability or the wire

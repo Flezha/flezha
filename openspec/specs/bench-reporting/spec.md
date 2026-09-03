@@ -71,17 +71,14 @@ The metric `Average time per operative` SHALL be removed. It divides total elaps
 
 ### Requirement: Every bench run writes a structured report, and CI reads that report
 
-Every bench run SHALL write a JSON report through one shared writer, carrying the `run`, `system`, `artifacts` and `warnings` blocks of the header plus a `metrics` block holding every measured value, and SHALL print the report path. The destination path SHALL be supplied by the calling task: `mix bench.roundtrip` SHALL keep writing `bench/flink/reports/`, which has live consumers, and the other bench tasks SHALL write `bench/reports/`.
+Every bench run SHALL write a JSON report through one shared writer, carrying the `run`, `system`, `artifacts` and `warnings` blocks of the header plus a `metrics` block holding every measured value, and SHALL print the report path. The destination path SHALL be supplied by the calling task.
+
 
 The report SHALL be the only machine-readable contract for a bench number. The `bench-regression` CI job SHALL read the recorded throughput from the report's named field rather than matching a line of printed prose, so that the printed rendering can change without breaking a merge-blocking gate.
 
 #### Scenario: CI reads a field, not a sentence
 - **WHEN** the `bench-regression` job runs the regression bench
 - **THEN** it reads the end-to-end throughput from the report's `metrics` block, and no step greps the printed output for a throughput value
-
-#### Scenario: The existing Flink comparison keeps working
-- **WHEN** `bench/flink/bench.sh` runs a sweep and `bench/flink/lib/summarize.py` folds the reports
-- **THEN** the reports are found at their existing path and every field the summarizer reads is present
 
 #### Scenario: A report is written even when the output is redirected
 - **WHEN** a bench is run with its stdout piped to a file

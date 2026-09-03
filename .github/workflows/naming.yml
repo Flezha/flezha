@@ -13,6 +13,15 @@ name: Naming
 # as code — and toolchain-free, so it costs nothing next to the Format gate.
 # Local equivalents: the `scripts/check-*.sh` invoked below.
 #
+# check-docs-citations is the documentation gate: it fails a PR whose docs point
+# at a module, function, file, `file:line`, environment variable or telemetry
+# event the tree no longer carries. It judges only what has a decidable answer,
+# and reports how many citations it read beside its verdict, because a green
+# that means "stopped reading" is indistinguishable from a clean tree. Its scope
+# is stated in the script: `openspec/specs/` is normative (a requirement may
+# name what the code still owes) and the changelogs are dated records of what
+# was removed, so both are out.
+#
 # check-mimic-global is the one path-scoped gate here: it reads `test/` only,
 # because the call it refuses has no place in `lib/` at all. Mimic's global
 # mode is process-group state, so a module that sets it without releasing it
@@ -20,7 +29,7 @@ name: Naming
 # `test/helpers/mimic_global.ex` defines the releasing wrapper and is the one
 # exemption, declared by path.
 #
-# The five gates share one walk (scripts/naming_gate.py), whose recorded-history
+# The six gates share one walk (scripts/naming_gate.py), whose recorded-history
 # escape hatch decides which lines each gate reads. Its self-test proves that
 # escape scopes to its own block: it runs the walk over a throwaway git tree
 # where a whole record on one line, a two-line block and a block left open each
@@ -62,6 +71,8 @@ jobs:
         run: scripts/check-sdk-boundary.sh
       - name: check-mimic-global
         run: scripts/check-mimic-global.sh
+      - name: check-docs-citations
+        run: scripts/check-docs-citations.sh
       - name: naming_gate self-test
         run: python3 scripts/naming_gate.py --self-test
 

@@ -11,8 +11,9 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   transport (at most two) and the BEAM aggregates carry no per-entity
   label, so nothing here grows with runner or operative churn.
 
-  The driver self-report is UDS-only; the metric list and what that
-  leaves uncovered on QUIC are in
+  Both server drivers produce the self-report, so the same metrics are
+  emitted whichever transport carries the traffic; the `:native` in-node
+  transport has no driver and emits none. The metric list is in
   `docs/operations/observability.md` → Shipped sources.
   """
 
@@ -57,9 +58,9 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     end
   end
 
-  # Driver self-report (UDS only; QUIC has no `:driver` key — see the moduledoc).
+  # Driver self-report; a transport with no driver has no `:driver` key.
   # `loop_age_ms` is the headline liveness signal — a value far above the poll
-  # interval means the flz-uds-driver thread is wedged.
+  # interval means the driver thread is wedged.
   #
   # `write_buffer_dropped` is not a metric to trend: the send gate holds a
   # sender rather than discarding its frame, so any non-zero value is a frame

@@ -129,7 +129,7 @@ When a channel does not call `.on_full(...)`, the runtime SHALL apply a default 
 
 An entry channel SHALL NOT discard a wire frame unless the Operative declared a dropping policy explicitly. Data loss on the ingress path SHALL be a stated intent, never a default: an Operative that wants shedding under saturation declares `.on_full(OverflowPolicy::DropNewest)` or `.on_full(OverflowPolicy::DropOldest)`.
 
-The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder.rs`), the policy assigned by `declareChannel` (`StreamOperativeTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Operative` and the serde `#[default]` on `HostOverflow` (`flz_core/src/host.rs`) SHALL all name `DropNothing`.
+The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder/state.rs`), the policy assigned by `declareChannel` (`StreamOperativeTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Operative` and the serde `#[default]` on `HostOverflow` (`flz_core/src/host/decl.rs`) SHALL all name `DropNothing`.
 
 These defaults SHALL be reflected in the `ChannelDescriptor.overflow_policy` field set by `build_topology` for every channel for which the user did not explicitly call `.on_full(...)`.
 
@@ -565,7 +565,7 @@ On a pure-`InterProcedure` channel with no plugin sink, `emit_with_meta` SHALL c
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
 ### Requirement: New BuildTopologyError variant — `DuplicatePluginSink`
-`BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_stream::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_stream::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
+`BuildTopologyError` (in `sdk/rust/src/channel/builder/issue.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_stream::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_stream::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
 
 #### Scenario: Second also_to_plugin_with call is rejected at registration
 - **WHEN** a Operative's `channels(c)` method calls `also_to_plugin_with("p1", f1)` followed by `also_to_plugin_with("p2", f2)` on the same channel
@@ -657,7 +657,7 @@ On a pure-`INTER_PROCEDURE` channel with no plugin sink, `emitWithMeta` SHALL co
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
 ### Requirement: New OperativeConfigurationException factory — `duplicatePluginSink` (Java SDK)
-`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/OperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerStream(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerStream(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
+`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerStream(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerStream(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
 
 #### Scenario: Second alsoToPluginWith call is rejected at registration (Java)
 - **WHEN** a Operative's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).alsoToPluginWith("p1", f1).alsoToPluginWith("p2", f2)`

@@ -218,9 +218,9 @@ defmodule Flezha.Transport.Server do
     {:reply, {:ok, stats}, state}
   end
 
-  # Merge the NIF driver self-report when available. UDS returns a map; QUIC
-  # returns `:undefined` (no per-stream stats yet). A NIF/decode failure must
-  # not break the stats call, so tolerate it.
+  # Merge the NIF driver self-report when available. Both server drivers return
+  # the same map; the `:native` transport has no driver and no server ref. A
+  # NIF/decode failure must not break the stats call, so tolerate it.
   defp put_driver_stats(stats, nil), do: stats
 
   defp put_driver_stats(stats, server_ref) do

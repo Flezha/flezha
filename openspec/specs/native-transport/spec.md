@@ -50,7 +50,7 @@ The `:native` `Transport.Server` instance SHALL accept connections via a local f
 - **THEN** exactly one implementation exists, `Flezha.Runner.StreamPool.bind_stream_to_first_nil/2`, and `Flezha.Runner.StreamSup` contains only supervision
 
 ### Requirement: Native transport integrates with stats and liveness without exemptions
-`Transport.Server.get_stats(:native)` SHALL return the standard stats map with the `:driver` key absent (the same shape QUIC produces — absent, not `:undefined`), and native streams SHALL participate in `LivenessCounters` and the secondary-channel heartbeat liveness check (`:io_liveness_check`, 30 s threshold) identically to other transports. The stall classifier SHALL require no native-specific branch: a native-only snapshot carries no driver stats and classifies exactly as a QUIC snapshot does.
+`Transport.Server.get_stats(:native)` SHALL return the standard stats map with the `:driver` key absent, because the native transport runs no driver thread — the key is absent, never `:undefined`. Native streams SHALL participate in `LivenessCounters` and the secondary-channel heartbeat liveness check (`:io_liveness_check`, 30 s threshold) identically to other transports. The stall classifier SHALL require no native-specific branch: a native-only snapshot carries no driver stats, so the driver clauses simply find nothing to judge, while a UDS or QUIC snapshot carries the one driver self-report shape both server drivers produce.
 
 #### Scenario: Stats shape
 - **WHEN** `Transport.Server.get_stats(:native)` is called on a running native transport

@@ -540,6 +540,7 @@ dependencies = [
  "libc",
  "mio",
  "quinn-proto",
+ "ring",
  "rustls",
  "rustls-pemfile",
  "tempfile",

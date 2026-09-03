@@ -11,17 +11,29 @@ use flz_transport::transport::send_gate::{GateChange, SendGate, Transition};
 use super::*;
 
 /// The driver's write path for one frame, exactly as `write_stream` runs it:
-/// offer at the ceiling, then flush what the peer will take. Returns the gate
-/// transition the driver would have reported to the stream's owner.
+/// offer at the ceiling, then flush what the peer will take, counting an
+/// accepted frame and stamping the clock the way the driver loop does.
+/// Returns the gate transition the driver would have reported to the owner.
 fn offer_and_flush(
     pair: &mut Pair,
     write_buffer: &mut Vec<u8>,
     stream_id: StreamId,
     gate: &SendGate,
+    counters: &mut StreamCounters,
+    now_ms: u64,
     frame: &[u8],
 ) -> Transition {
-    gate.offer(write_buffer, frame);
-    let (broken, change) = flush_quic_write(pair.server_conn(), stream_id, write_buffer, gate);
+    if gate.offer(write_buffer, frame) {
+        counters.frames_written += 1;
+    }
+    let (broken, change) = flush_quic_write(
+        pair.server_conn(),
+        stream_id,
+        write_buffer,
+        gate,
+        counters,
+        now_ms,
+    );
     assert!(!broken, "the stream must not break");
     pair.step();
     change
@@ -43,9 +55,18 @@ fn an_ungated_quic_send_buffer_grows_past_the_cap_when_the_peer_stops_reading() 
     let mut buffer = Vec::new();
 
     let frame = vec![b'x'; 64 * 1024];
+    let mut counters = StreamCounters::default();
     let mut offered = 0usize;
     for _ in 0..400 {
-        offer_and_flush(&mut pair, &mut buffer, stream_id, &gate, &frame);
+        offer_and_flush(
+            &mut pair,
+            &mut buffer,
+            stream_id,
+            &gate,
+            &mut counters,
+            1,
+            &frame,
+        );
         offered += frame.len();
     }
     let after_first_burst = buffer.len();
@@ -53,7 +74,15 @@ fn an_ungated_quic_send_buffer_grows_past_the_cap_when_the_peer_stops_reading() 
     // Offer as much again. A bounded buffer would hold at its bound; this one
     // takes every byte, which is what "no cap at all" means.
     for _ in 0..400 {
-        offer_and_flush(&mut pair, &mut buffer, stream_id, &gate, &frame);
+        offer_and_flush(
+            &mut pair,
+            &mut buffer,
+            stream_id,
+            &gate,
+            &mut counters,
+            1,
+            &frame,
+        );
         offered += frame.len();
     }
 
@@ -96,10 +125,18 @@ fn the_quic_send_buffer_holds_at_its_ceiling_and_raises_the_gate() {
     let mut buffer = Vec::new();
 
     let frame = vec![b'x'; 64 * 1024];
+    let mut counters = StreamCounters::default();
     let mut raises = 0;
     for _ in 0..800 {
-        if offer_and_flush(&mut pair, &mut buffer, stream_id, &gate, &frame)
-            == Some(GateChange::Raised)
+        if offer_and_flush(
+            &mut pair,
+            &mut buffer,
+            stream_id,
+            &gate,
+            &mut counters,
+            1,
+            &frame,
+        ) == Some(GateChange::Raised)
         {
             raises += 1;
         }
@@ -142,14 +179,30 @@ fn the_quic_send_buffer_drains_and_the_gate_lowers_when_the_peer_reads() {
     let mut buffer = Vec::new();
 
     let frame = vec![b'x'; 64 * 1024];
+    let mut counters = StreamCounters::default();
     let mut read_total = 0usize;
     for _ in 0..400 {
-        offer_and_flush(&mut pair, &mut buffer, stream_id, &gate, &frame);
+        offer_and_flush(
+            &mut pair,
+            &mut buffer,
+            stream_id,
+            &gate,
+            &mut counters,
+            1,
+            &frame,
+        );
         read_total += pair.client_reads(stream_id);
         pair.step();
     }
     for _ in 0..200 {
-        flush_quic_write(pair.server_conn(), stream_id, &mut buffer, &gate);
+        flush_quic_write(
+            pair.server_conn(),
+            stream_id,
+            &mut buffer,
+            &gate,
+            &mut counters,
+            1,
+        );
         pair.step();
         read_total += pair.client_reads(stream_id);
     }
@@ -164,4 +217,60 @@ fn the_quic_send_buffer_drains_and_the_gate_lowers_when_the_peer_reads() {
     assert_eq!(buffer.len(), 0, "a draining peer leaves nothing buffered");
     assert_eq!(gate.refused(), 0, "nothing was refused");
     assert!(!gate.is_raised(), "the gate is down for a healthy peer");
+}
+
+/// The liveness half of that same drive. A frame the ceiling turned away is
+/// not counted as written, the clock is stamped only by a write the peer took,
+/// and the snapshot the `driver_stats` NIF reads carries both alongside the
+/// buffer depth and the refusal count.
+#[test]
+fn the_quic_stream_snapshot_carries_what_the_driver_actually_did() {
+    let gate = SendGate::new();
+    let mut pair = Pair::new();
+    pair.connect();
+    let stream_id = pair.open_stream();
+    let mut buffer = Vec::new();
+    let mut counters = StreamCounters::default();
+
+    let idle = counters.snapshot(&buffer, &gate);
+    assert_eq!(idle.frames_written, 0);
+    assert_eq!(
+        idle.last_write_ms, 0,
+        "a stream that never wrote is unstamped"
+    );
+
+    let frame = vec![b'x'; 64 * 1024];
+    for i in 0..800u64 {
+        offer_and_flush(
+            &mut pair,
+            &mut buffer,
+            stream_id,
+            &gate,
+            &mut counters,
+            i + 1,
+            &frame,
+        );
+        pair.client_reads(stream_id);
+    }
+
+    let snap = counters.snapshot(&buffer, &gate);
+    println!(
+        "quic stream snapshot: frames_written={} last_write_ms={} write_buffer_len={} dropped={}",
+        snap.frames_written, snap.last_write_ms, snap.write_buffer_len, snap.write_buffer_dropped
+    );
+    assert_eq!(
+        snap.frames_written + snap.write_buffer_dropped,
+        800,
+        "every offered frame is either written or counted as refused"
+    );
+    assert!(snap.frames_written > 0, "the peer took frames");
+    assert!(
+        snap.last_write_ms > 0,
+        "a write the peer took stamps the clock"
+    );
+    assert_eq!(
+        snap.write_buffer_len,
+        buffer.len() as u64,
+        "the snapshot reports the live buffer depth"
+    );
 }

@@ -158,7 +158,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. `producing_operatives` MUST be derived from the producing-liveness classification (durable progress markers with the fed precondition) — an IDLE operative counts as producing, a STUCK operative does not. It returns `200 healthy`, `200 degraded` (bound ≠ producing, plugin-degraded, non-empty intent mismatch, or `sensor_stale`), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (`driver_loop_frozen` or `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
-The fabric arm of that guarantee is **transport-scoped, and the scope MUST be stated wherever the guarantee is**: the driver self-report the fabric verdicts are computed from exists for the UDS driver only. The QUIC server is started with no `DriverStats`, so `driver_stats/1` answers `:undefined`, no driver measurements are emitted, and `driver_loop_frozen` and `nif_queue_backing_up` can never be minted on a QUIC controller. A `200` from `/healthz` on a QUIC controller is therefore evidence about the convergence loop, the operative population and the plugin set, and is **not** evidence about the data plane. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so an operator does not read a green probe as a data-plane guarantee it cannot give.
+The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The `:native` in-node transport runs no driver thread and produces none, so on a native-only controller no driver measurement is emitted and `driver_loop_frozen` and `nif_queue_backing_up` cannot be minted; its `200` is evidence about the convergence loop, the operative population and the plugin set alone. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so an operator does not read a green probe as a data-plane guarantee it cannot give.
 
 #### Scenario: healthz reflects reality even when bound and producing diverge
 
@@ -205,12 +205,12 @@ The fabric arm of that guarantee is **transport-scoped, and the scope MUST be st
 - **WHEN** `/healthz` is queried
 - **THEN** the status is `200 degraded` (the convergence pipeline owns the remedy) and never `503`
 
-#### Scenario: the fabric arm is uninstrumented on QUIC and says so
+#### Scenario: the fabric arm covers a QUIC controller
 
-- **GIVEN** a controller whose transport is QUIC, so the driver produces no `DriverStats` and `driver_stats/1` answers `:undefined`
+- **GIVEN** a controller whose transport is QUIC, whose driver produces the self-report and whose loop heartbeat has stopped advancing past the freeze threshold
 - **WHEN** the data-plane classifier runs and `/healthz` is queried
-- **THEN** no driver measurement is emitted, no `driver_loop_frozen` or `nif_queue_backing_up` verdict is minted, and the endpoint answers `200` on the strength of the loop, operative and plugin evidence alone
-- **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state that limitation, so the `200` is not read as a data-plane guarantee
+- **THEN** driver measurements are emitted for it, `driver_loop_frozen` is minted naming the QUIC transport, and the endpoint moves toward the fabric `503` on the same sustained-poll rule a UDS controller follows
+- **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state which transports carry a driver, so the limit that remains — a native-only controller — is not left to inference
 
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 
@@ -599,3 +599,30 @@ into one it can no longer detect, because the plugin is now `:prepared` and
 - **WHEN** the Loop executes `start_plugin`
 - **THEN** the primitive SHALL report `:ok` and the plugin SHALL be `:running`
 
+### Requirement: Every NIF server driver SHALL produce the driver self-report
+
+Every transport server driver started through the NIF SHALL produce the driver self-report
+`driver_stats/1` returns, in one shape, so that no reader above the NIF carries a per-transport
+branch. The shape is `%{now_ms, loop_iterations, last_loop_ms, cmd_queue_depth, streams: [...]}`
+with each stream reporting `{stream_id, write_buffer_len, write_buffer_dropped, frames_written,
+frames_read, last_write_ms, last_read_ms}`.
+
+A field SHALL carry a measurement of the driver's own behaviour or SHALL be absent. A value that
+means "not measured" SHALL NOT be reported as zero, because the classifier reads zero as healthy
+and would then treat an uninstrumented driver as a working one.
+
+The observability source that emits these values and the stall classifier that judges them SHALL
+require no transport-specific branch: they read one map, and a transport that has no driver thread
+at all carries no `:driver` key rather than a differently-shaped one.
+
+#### Scenario: Both server drivers answer the same map
+- **WHEN** `driver_stats/1` is called on a running UDS server and on a running QUIC server
+- **THEN** both answer a map with the same keys, neither answers `:undefined`, and each loop heartbeat advances while its driver thread is alive
+
+#### Scenario: A driver's per-stream line reports what it actually did
+- **WHEN** a stream on either server driver is offered frames and its peer takes some of them
+- **THEN** every offered frame is counted either as written or as refused at the ceiling, a write the peer accepted stamps `last_write_ms`, and the reported `write_buffer_len` is the depth of that stream's own send buffer
+
+#### Scenario: A transport with no driver carries no driver key
+- **WHEN** stats are read for the `:native` in-node transport, which runs no driver thread
+- **THEN** the stats map carries no `:driver` key, no driver measurement is emitted for it, and the classifier's driver clauses do not fire on it

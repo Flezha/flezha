@@ -362,7 +362,6 @@ What the gate cannot check, and you still owe:
 
 - the SDK's own unit-test workflow;
 - [`naming_conventions.md`](naming_conventions.md) compliance;
-- a dev note under `docs/dev_notes/` and its `CLAUDE.md` index line.
 
 The loop: get `--include sdk_smoke` green with every optional capability
 deferred, then un-defer one capability at a time until `--include system` is

@@ -245,3 +245,27 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 - **WHEN** the id claim is refused but no live instance holds `demo`
 - **THEN** the command exits non-zero with the id-in-use error, unchanged from today
 
+
+### Requirement: `flz operative info` SHALL report the operative's phase and the loop's health verdict
+
+`flz operative info` SHALL report each live operative's lifecycle phase as one of `running`, `suspended` or `parked`, read from the operative's own state, and SHALL report `parked` — never `running` — for an operative the Controller has parked, whatever the park reason. It SHALL additionally report the per-operative health verdict published by the convergence loop, read through the same seam `flz operative list` and `flz cluster status` read, so no two operator surfaces describe one operative in contradictory words. `info` SHALL NOT derive a health verdict of its own. Both the text and the JSON rendering SHALL carry both fields. A finished workflow operative, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
+
+#### Scenario: A parked operative is not reported as running
+
+- **WHEN** the operator runs `flz operative info` for a namespace holding an operative the Controller has parked
+- **THEN** the text and the JSON rendering SHALL both report its phase as `parked`, and neither SHALL report `running`
+
+#### Scenario: A suspended instance is still suspended
+
+- **WHEN** a durable workflow instance evicted at a committed iteration boundary also carries a park reason
+- **THEN** its phase SHALL be reported `suspended`, the phase the convergence loop classifies it under
+
+#### Scenario: The health reported is the loop's own verdict
+
+- **WHEN** the convergence loop has classified an operative `degraded` and `flz operative list` shows that word
+- **THEN** `flz operative info` SHALL report `degraded` for the same operative
+
+#### Scenario: An unobserved operative reports unknown health, and a phase all the same
+
+- **WHEN** the convergence loop has not yet observed the operative
+- **THEN** its health SHALL be reported `unknown` rather than invented, and its phase SHALL still be reported from the operative's own state

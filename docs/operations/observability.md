@@ -41,9 +41,9 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
 - `:flezha_transport` (`[:metric]`, 1_000 ms, 40) — per active transport
   (`Flezha.Transport.Server.list_active_transports/0` + `get_stats/1`), metadata
   `%{transport: :uds | :quic}`: gauge `open_connections` (pending streams). With
-  `:data_plane_liveness` on (default): the UDS driver self-report (counter `driver_loop_iterations`;
-  gauges `driver_loop_age_ms`, `driver_cmd_queue_depth`, `driver_write_buffer_bytes`,
-  `driver_streams`; QUIC has none) and BEAM aggregates under `%{scope: :data_plane}` — counters
+  `:data_plane_liveness` on (default): the driver self-report, from the UDS and the QUIC driver
+  alike (counter `driver_loop_iterations`; gauges `driver_loop_age_ms`, `driver_cmd_queue_depth`,
+  `driver_write_buffer_bytes`, `driver_streams`) and BEAM aggregates under `%{scope: :data_plane}` — counters
   `channel_io_in_received`, `channel_send_frame_calls`, `channel_nil_drops`,
   `channel_flz_data_received`, `operative_io_in_received`, `operative_forwarded`,
   `operative_filtered_nil`, `credit_active_sessions`, `credit_overrun_total`, `credit_parked`,
@@ -53,11 +53,9 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   discarded — the only handle on that loss from outside the runner);
   gauge `credit_ledger_level`. No bytes in/out. Reading them:
   [../internals/transport_liveness.md](../internals/transport_liveness.md).
-  **The driver self-report is UDS-only, and that is an operator-visible hole.** The QUIC driver
-  produces no `DriverStats` at all, so on a QUIC controller every `driver_*` metric above is emitted
-  zero times — including `driver_write_buffer_dropped`, the send-buffer loss counter. A QUIC
-  deployment is therefore not covered by this source's data-plane half, and a green `/healthz` on
-  QUIC is not evidence about its transport. Tracked as KI-72.
+  **The self-report needs a NIF driver.** The `:native` in-node transport has none, so a
+  native-only controller emits no `driver_*` metric — including `driver_write_buffer_dropped`, the
+  send-buffer loss counter — and its data-plane evidence is the BEAM aggregates alone.
 - `:flezha_bounded_mailbox` (`[:metric, :event]`, 1_000 ms, 5_000) — registered so it shows in
   `flz observe sources`; emits one `:bounded_mailbox_unavailable` event (`metadata.reason:
   :nif_surface_pending`) on its first poll and nothing else — its poll body (`poll_mailboxes/0`)

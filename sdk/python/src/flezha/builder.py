@@ -157,6 +157,18 @@ class ClassSpec:
     workflow: dict[str, Any] | None = None
     run: Callable[..., Any] | None = None
 
+    @property
+    def structured_workflow(self) -> bool:
+        """Whether this class's producers release their values untransformed.
+
+        A structured workflow's stage releases ONE value per emit and the driver
+        fans it out to every consumer itself, so each consumer edge — its
+        transforms and its key — belongs to the consumer. The producer and the
+        consumer read this one predicate, so they cannot disagree about which
+        side applies the edge.
+        """
+        return self.kind == "workflow" and bool(self.channels)
+
 
 class Channels:
     """The fluent builder an operative's declaration function receives."""

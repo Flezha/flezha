@@ -45,17 +45,21 @@ no chain to break.
 
 Closures are evaluated at the **routing seam**, the one path both live
 delivery and the controller's re-forwarded replay slice travel: in-process
-`flz_core::routing::route_to_consumers` for Rust; host-side for a byte-level
-host such as Java (`ActivationDispatcher.collectEdgeOutputs` on the producer,
-`valuesForEntity` at delivery), because `(edge, key)` is all the core routes
-on. That is the **stream** seam. A **workflow stage** has a different one: the
-core does not route a stage's output on `(edge, key)` at all — it collects
-every output as one released value, and the driver hands that batch to each
-child itself. A workflow producer therefore releases the value **once, raw**,
-naming only the producing channel, and each consumer edge is evaluated at the
-consumer (`valuesForEntity`), which is also the seam a journal re-seed
+`flz_core::routing::route_to_consumers` for Rust; for a byte-level host, in
+the producing activation's emit context (Java's `EmitContext`), **once**, as
+that activation completes — the core then routes on `(edge, key)` and
+evaluates no host closure, and the consumer applies nothing. That is the
+**stream** seam. A **workflow stage** has a different one: the core does not
+route a stage's output on `(edge, key)` at all — it collects every output as
+one released value, and the driver hands that batch to each child itself. A
+workflow producer therefore releases the value **once, raw**, naming only the
+producing channel, and each consumer edge is evaluated at the consumer (Java's
+`EntityRouting.valuesForEntity`), which is also the seam a journal re-seed
 crosses. Evaluating producer-side there would multiply the released batch by
-the channel's consumer count. Two obligations follow:
+the channel's consumer count. A byte-level host's delivery seam therefore
+applies an edge only to a payload no producer transformed: an entry payload,
+whose producer is the wire, and a workflow stage's released value. Two
+obligations follow:
 
 - **Pure and total.** A closure re-runs on replay; one that reads the clock or
   a counter rebuilds a state the live run never had.
@@ -137,13 +141,14 @@ alone — an entry channel has no producer.
 | --- | --- | --- |
 | Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`), `TopologyIssue` | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java`, refusals in `flezha-sdk-api/.../operative/StreamOperativeConfigurationException.java` |
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operative/{ConsumerEdge,EdgeYield}.java` |
-| Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` |
+| Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,EntityRouting,EdgeTransforms}.java` |
 | Workflow containment (`extend_mapped`) and refusals | `flz_core/src/workflow/{driver,spec}.rs` | shared core |
 | Elixir SDK | `lib/flezha/sdk/{channels,topology}.ex` | — |
 
 Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/procedure_entity_key_removed.rs`, Java
-`StreamOperativeTopologyBuilderTest` / `ActivationDispatcherTest`, and
+`StreamOperativeTopologyBuilderTest` / `EntityRoutingTest` /
+`WorkflowDispatchTest`, and
 `test/system/dynamic_entity_e2e_test.exs` on both runtimes. Examples:
 `sdk/rust/examples/stream_transforms.rs`, Java `E10_StreamTransforms`.
 

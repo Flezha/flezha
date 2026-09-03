@@ -68,7 +68,16 @@
 # that enumeration is open-ended and chasing it is what kept this gate red.
 # A kind-sense use of this shape ("a bounded operative", "the bounded kind")
 # is caught by the gate's kind-sense patterns, which this cannot mask.
-*:(?<![A-Za-z0-9_])(?:[Uu]n)?[Bb]ounded[ -][A-Za-z0-9`"(]
+#
+# Three separators and three cases, because the shape is written in all of
+# them: a space in prose, a hyphen in a compound, an underscore in an
+# identifier (`bounded_id` — an id kept within a limit, the same attributive
+# sense `bounded_mailbox` carries). ALL CAPS is this repository's emphasis in
+# prose, so the shape appears as `BOUNDED per-turn state` too. The underscore
+# is safe for the same reason the whole rule is: the kind-sense patterns match
+# the word bound to `operative`/`kind`/`class`/`factory` through separators
+# that include `_`, so `bounded_operative` stays caught however this reads.
+*:(?<![A-Za-z0-9_])(?:[Uu]n|UN)?(?:[Bb]ounded|BOUNDED)[ \-_][A-Za-z0-9`"(]
 
 # The word MENTIONED as a token rather than used — quoted or in a code span,
 # as prose about the naming itself does. A kind atom (`:bounded`) keeps its

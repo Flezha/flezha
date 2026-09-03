@@ -270,8 +270,16 @@ final class Dispatcher
         // produces an effect, so its offset advances and nothing is retried.
         // A fanned one reaches the handler once per value.
         // This node's own edge off the channel: a transform chain declared
-        // before one `into` belongs to that consumer and to no other.
-        $edge = self::edgeInto($channel, $node->index);
+        // before one `into` belongs to that consumer and to no other. It is
+        // evaluated here only for a payload that reached us untransformed — an
+        // entry payload, whose producer is the wire, or a workflow stage's
+        // released value. A stream producer evaluated it as its activation
+        // completed, and evaluating it again would compose the chain with
+        // itself.
+        $untransformed = $channel === null
+            || $channel->kind === 'entry'
+            || $registered->spec->structuredWorkflow();
+        $edge = $untransformed ? self::edgeInto($channel, $node->index) : null;
         foreach (self::valuesOf($channel, $edge, (string) $item['payload']) as $input) {
             $ctx->emitReturned($definition->instance->run($input, $ctx));
         }

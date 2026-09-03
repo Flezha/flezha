@@ -491,6 +491,29 @@ abstract class DispatchTestBase {
         }
     }
 
+    /** A mapped inter-proc edge whose consumer narrows by its own `entitiesFor`. */
+    public static final class MappedStaticPipelineOperative extends Op {
+        public MappedStaticPipelineOperative() {
+            super("mapped_static_op", c -> c.input(String.class, "in")
+                    .into(MidProc.class)
+                    .named("mapped_static_mid")
+                    .map(String.class, s -> "a:" + s)
+                    .into(StaticProc.class));
+        }
+    }
+
+    /** A mapped inter-proc edge that keys the value it yields. */
+    public static final class MappedKeyedPipelineOperative extends Op {
+        public MappedKeyedPipelineOperative() {
+            super("mapped_keyed_op", c -> c.input(String.class, "in")
+                    .into(MidProc.class)
+                    .named("mapped_keyed_mid")
+                    .map(String.class, s -> "K:" + s)
+                    .keyBy(shaped -> shaped.split(":")[1])
+                    .into(KeyRecorder.class));
+        }
+    }
+
     public static final class PoisonOperative extends Op {
         public PoisonOperative() {
             super("poison_op", c -> c.input(String.class, "in").into(PoisonProc.class));

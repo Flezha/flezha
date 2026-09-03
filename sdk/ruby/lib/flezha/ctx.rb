@@ -147,17 +147,11 @@ module Flezha
 
     private
 
-    # A structured workflow releases ONE value per emit: the driver fans it out
-    # to every consumer itself, from the journaled handoff, so the host names
-    # the producing channel and its first consumer and applies neither the
-    # edge's transforms nor its key.
-    def structured_workflow? = @spec.kind == :workflow && !@spec.channels.empty?
-
     def release(channel, value, key, metadata)
       # A channel with no consumer releases nothing on the edge path: on a
       # workflow that is the plugin-bound terminal, and seeding the next stage
       # from it would hand the driver a terminal output.
-      if structured_workflow?
+      if @spec.structured_workflow?
         first = channel.consumers.first
         @outputs << workflow_output(channel, first, value) if first
       else

@@ -19,6 +19,7 @@ use rustler::LocalPid;
 use crate::driver_msg::{
     report_gate, send_closed_msg, send_connection_msg, send_refused_msg, send_stream_msg,
 };
+use crate::driver_stats::{DriverStats, StreamCounters, StreamSnapshot};
 use crate::frame_buffer::{FrameBuffer, Inbox};
 use crate::resources::StreamHandle;
 use crate::uds_driver::ServerCommand;
@@ -55,6 +56,9 @@ struct QuicStreamState {
     /// Shared with the `StreamHandle` Elixir holds, and carrying the ceiling.
     gate: Arc<SendGate>,
     type_byte_state: TypeByteState,
+    // Liveness counters (single-threaded driver, no contention). Copied into
+    // the DriverStats snapshot once per loop iteration.
+    counters: StreamCounters,
 }
 
 /// Per-QUIC-connection state.
@@ -81,6 +85,7 @@ pub fn run_quic_driver(
     cmd_rx: Receiver<ServerCommand>,
     cmd_tx: Sender<ServerCommand>,
     ready_tx: Sender<io::Result<QuicDriverReady>>,
+    stats: Arc<DriverStats>,
 ) {
     let outcome = bind_endpoint(bind_address, &ready_tx).and_then(|(poll, udp, waker)| {
         QuicDriver {
@@ -89,6 +94,8 @@ pub fn run_quic_driver(
             waker,
             poll,
             udp,
+            stats,
+            now_ms: 0,
             endpoint: quinn_proto::Endpoint::new(
                 Arc::new(EndpointConfig::default()),
                 Some(Arc::new(server_config)),
@@ -138,6 +145,10 @@ struct QuicDriver {
     waker: Arc<Waker>,
     poll: Poll,
     udp: UdpSocket,
+    stats: Arc<DriverStats>,
+    /// The driver-elapsed clock of the iteration in flight, refreshed once at
+    /// the top of the loop so every stamp taken during it agrees.
+    now_ms: u64,
     endpoint: quinn_proto::Endpoint,
     connections: HashMap<ConnectionHandle, ConnectionState>,
     /// Maps NIF stream_id → (ConnectionHandle, StreamId) for command dispatch.
@@ -156,6 +167,12 @@ impl QuicDriver {
         loop {
             let timeout = self.poll_timeout();
             let _ = self.poll.poll(&mut events, Some(timeout));
+
+            // Liveness heartbeat: bump once per iteration before any work, so a
+            // frozen counter (with a stale last_loop_ms) pinpoints a wedged thread.
+            self.now_ms = self.stats.now_ms();
+            self.stats.mark_loop(self.now_ms, cmd_rx.len() as u64);
+
             let now = Instant::now();
             for conn_state in self.connections.values_mut() {
                 expire_timer(&mut conn_state.connection, now);
@@ -189,6 +206,9 @@ impl QuicDriver {
                 self.flush_stream_writes(*ch);
             }
             self.flush_all(&conn_handles);
+
+            let streams = self.snapshot_streams();
+            self.stats.set_streams(streams);
         }
     }
 
@@ -329,6 +349,7 @@ impl QuicDriver {
     /// Flush one stream's buffered writes; a broken stream is closed and
     /// reported.
     fn flush_one(&mut self, ch: ConnectionHandle, qstream_id: StreamId) {
+        let now_ms = self.now_ms;
         let Some(conn_state) = self.connections.get_mut(&ch) else {
             return;
         };
@@ -339,6 +360,8 @@ impl QuicDriver {
                 qstream_id,
                 &mut stream_state.write_buffer,
                 &stream_state.gate,
+                &mut stream_state.counters,
+                now_ms,
             );
             report_gate(&stream_state.owner, stream_state.nif_stream_id, change);
             if is_broken {
@@ -415,6 +438,7 @@ impl QuicDriver {
     /// Flush every stream's buffered writes on one connection; a broken stream
     /// is closed and reported.
     fn flush_stream_writes(&mut self, ch: ConnectionHandle) {
+        let now_ms = self.now_ms;
         let Some(conn_state) = self.connections.get_mut(&ch) else {
             return;
         };
@@ -432,6 +456,8 @@ impl QuicDriver {
                     qstream_id,
                     &mut stream_state.write_buffer,
                     &stream_state.gate,
+                    &mut stream_state.counters,
+                    now_ms,
                 );
                 report_gate(&stream_state.owner, stream_state.nif_stream_id, change);
                 if broken {
@@ -527,6 +553,23 @@ impl QuicDriver {
         }
     }
 
+    /// The per-stream liveness snapshot, rebuilt once per iteration (off the
+    /// per-frame path) over every stream of every connection. A frozen loop
+    /// means this never refreshes — matching the stale last_loop_ms that flags
+    /// the wedge.
+    fn snapshot_streams(&self) -> HashMap<u64, StreamSnapshot> {
+        self.connections
+            .values()
+            .flat_map(|conn_state| conn_state.streams.values())
+            .map(|s| {
+                (
+                    s.nif_stream_id,
+                    s.counters.snapshot(&s.write_buffer, &s.gate),
+                )
+            })
+            .collect()
+    }
+
     /// The stream a NIF id addresses, if it is still open.
     fn stream_mut(&mut self, nif_id: u64) -> Option<&mut QuicStreamState> {
         let &(ch, qstream_id) = self.nif_stream_map.get(&nif_id)?;
@@ -543,9 +586,12 @@ impl QuicDriver {
             // The frame has arrived, so it stops being counted as queued and
             // starts being counted as buffered.
             stream_state.gate.release(reserved);
-            stream_state
+            if stream_state
                 .gate
-                .offer(&mut stream_state.write_buffer, &data);
+                .offer(&mut stream_state.write_buffer, &data)
+            {
+                stream_state.counters.frames_written += 1;
+            }
         }
         self.flush_one(ch, qstream_id);
     }
@@ -565,6 +611,7 @@ impl QuicDriver {
     /// switching to framed mode; a just-identified data stream is announced
     /// with the connection's routing key (the control stream's nif id).
     fn drain_readable(&mut self, ch: ConnectionHandle, id: StreamId) {
+        let now_ms = self.now_ms;
         let Some(conn_state) = self.connections.get_mut(&ch) else {
             return;
         };
@@ -602,7 +649,11 @@ impl QuicDriver {
             return;
         }
         match stream_state.frame_buffer.feed(data_for_framing) {
-            Ok(frames) => stream_state.inbox.deliver(owner, nif_id, frames),
+            Ok(frames) => {
+                stream_state.counters.last_read_ms = now_ms;
+                stream_state.counters.frames_read += frames.len() as u64;
+                stream_state.inbox.deliver(owner, nif_id, frames)
+            }
             Err(e) => {
                 eprintln!("[flz_nif] QUIC frame too large on nif_id={}: {}", nif_id, e);
                 send_closed_msg(owner, nif_id, "frame_too_large");
@@ -695,17 +746,21 @@ fn new_stream(
         write_buffer: Vec::new(),
         gate,
         type_byte_state,
+        counters: StreamCounters::default(),
     };
     (state, handle)
 }
 
-/// Flush what the peer will take of a stream's buffered bytes. Answers whether
-/// the stream broke, and whether that flush moved its send gate.
+/// Flush what the peer will take of a stream's buffered bytes, stamping
+/// `last_write_ms` on a write the peer accepted. Answers whether the stream
+/// broke, and whether that flush moved its send gate.
 fn flush_quic_write(
     connection: &mut quinn_proto::Connection,
     qstream_id: StreamId,
     write_buffer: &mut Vec<u8>,
     gate: &SendGate,
+    counters: &mut StreamCounters,
+    now_ms: u64,
 ) -> (bool, Transition) {
     if write_buffer.is_empty() {
         return (false, gate.observe(0));
@@ -714,6 +769,9 @@ fn flush_quic_write(
     match connection.send_stream(qstream_id).write(write_buffer) {
         Ok(written) => {
             write_buffer.drain(..written);
+            if written > 0 {
+                counters.last_write_ms = now_ms;
+            }
             (false, gate.observe(write_buffer.len()))
         }
         // The peer's flow-control window is full: the protocol has already

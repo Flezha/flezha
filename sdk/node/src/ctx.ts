@@ -8,7 +8,7 @@
  */
 
 import { encodeValue } from './codec.js';
-import { applyTransforms } from './authoring.js';
+import { applyTransforms, isStructuredWorkflow } from './authoring.js';
 import type { ChannelSpec, ClassSpec, ConsumerEdge, ProcNode } from './authoring.js';
 import type { NativeItemEffect, NativeMeta, NativeOutput, NativeTimerOp } from './native.js';
 import { entityIdentity, stableId } from './identity.js';
@@ -142,7 +142,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       // A channel with no consumer releases nothing on the edge path: on a
       // workflow that is the plugin-bound terminal, and seeding the next stage
       // from it would hand the driver a terminal output.
-      if (this.structuredWorkflow) {
+      if (isStructuredWorkflow(this.input.spec)) {
         const edge = channel.consumers[0];
         if (edge) this.outputs.push(this.workflowOutput(channel, edge, value));
       } else {
@@ -153,16 +153,6 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       }
       if (channel.sink !== undefined) this.outputs.push(this.pluginOutput(channel, value, options));
     }
-  }
-
-  /**
-   * A structured workflow releases ONE value per emit: the driver fans it out
-   * to every consumer itself, from the journaled handoff, so the host names
-   * the producing channel and its first consumer and applies neither the
-   * edge's transforms nor its key.
-   */
-  private get structuredWorkflow(): boolean {
-    return this.input.spec.kind === 'workflow' && this.input.spec.channels.length > 0;
   }
 
   private workflowOutput(channel: ChannelSpec, edge: ConsumerEdge, value: unknown): NativeOutput {

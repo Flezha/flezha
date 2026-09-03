@@ -10,7 +10,7 @@ When the Controller process restarts and a Runner's reconnect loop succeeds agai
 The mechanism has two halves:
 
 1. **Stream rebind.** `Flezha.Runner.StreamChannel` SHALL clear its `stream_ref` to `nil` synchronously inside its `handle_info({:flz_closed, _stream_ref, _reason}, state)` clause. A `StreamChannel` whose `stream_ref` is `nil` is "rebindable". `Flezha.Runner.StreamAcceptor` (UDS path) and `Flezha.Transport.Server` (QUIC path) SHALL, when accepting a new data stream for a `runner_id`, look up rebindable channels for that `runner_id` BEFORE spawning a fresh channel, and bind the new `stream_ref` via an atomic `GenServer.call(channel, {:bind, new_ref})` that returns `:ok` only if the channel was nil-ref at call time. On `:already_bound` the acceptor SHALL try the next candidate; if none, spawn fresh.
-2. **AddOperative reissue.** `Flezha.Runner.FleetManager.runner_connect/3` SHALL, AFTER the existing `try_migrate_runner` call, enumerate every Operative currently registered in ProcessHub for this `node()` + this namespace whose `assigned_runner` matches the connecting Runner's profile (declared factories overlap the Operative's `factory_id`) AND was NOT already handled by `try_migrate_runner`. For each match, FleetManager SHALL re-issue `AddOperative` to the new Runner via the existing `Overwatch.runner_migrate` → `start_operative_sdk` path, so the Runner rebuilds its local Operative registry and triggers fresh data-stream opens.
+2. **AddOperative reissue.** `Flezha.Runner.FleetManager.Session.runner_connect/3` SHALL, AFTER the existing `try_migrate_runner` call, enumerate every Operative currently registered in ProcessHub for this `node()` + this namespace whose `assigned_runner` matches the connecting Runner's profile (declared factories overlap the Operative's `factory_id`) AND was NOT already handled by `try_migrate_runner`. For each match, FleetManager SHALL re-issue `AddOperative` to the new Runner via the existing `Overwatch.runner_migrate` → `start_operative_sdk` path, so the Runner rebuilds its local Operative registry and triggers fresh data-stream opens.
 
 The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOperative` for a `operative_id` already in the local registry SHALL be a no-op (logged, not raised).
 
@@ -61,7 +61,7 @@ The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOpera
 
 ### Requirement: Rust SDK command decode SHALL treat a clean peer close as a transport event, not a panic
 
-The Rust SDK's command-frame decode path (today located at `sdk/rust/src/command/mod.rs:53-54`, currently `CommandRequest::decode(message.as_bytes()).expect("Failed to decode message")`) SHALL distinguish three transport outcomes when reading a frame from the controller's control socket:
+The Rust SDK's command-frame decode path (`flz_core/src/command/mod.rs`) SHALL distinguish three transport outcomes when reading a frame from the controller's control socket:
 
 1. **Clean peer close** — the read returns 0 bytes. The SDK SHALL classify this as a graceful disconnect, drive the existing reconnect loop, and SHALL NOT panic any runtime thread. The runner process SHALL remain alive across this event.
 2. **Malformed frame** — the read returns N bytes (N > 0) and `prost::Message::decode` returns `Err(prost::DecodeError)`. The SDK SHALL log a structured warning containing the decode error's `description` and `stack`, return a typed `Err(CommandDecodeError::Malformed { stack: String })` from `get_handler`, and drive the existing reconnect loop. The SDK SHALL NOT panic any runtime thread.
@@ -83,7 +83,7 @@ This requirement is a precondition for the existing "Runner → Controller data 
 Note: the `market-executor` container/PID-file name above is owned by the separate `flezha_market` repository and is unchanged by this proposal — see this change's design.md Open Questions.
 
 #### Scenario: Decoder receives 0-byte input on socket EOF and returns a clean signal
-- **GIVEN** a unit test in `sdk/rust/src/command/mod.rs`'s `#[cfg(test)] mod tests`
+- **GIVEN** a unit test in `flz_core/src/command/mod.rs`'s `#[cfg(test)] mod tests`
 - **WHEN** the test invokes the SDK's command-read entry point with an empty byte slice (`&[]`) simulating EOF
 - **THEN** the function SHALL return a value indicating "peer closed" (`Ok(FrameOutcome::PeerClosed)` or the equivalent typed variant chosen in the apply step)
 - **AND** the call SHALL NOT panic
@@ -110,7 +110,7 @@ The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateRe
 
 #### Scenario: `Command` oneof is None and SDK does not panic
 - **GIVEN** the SDK receives a well-formed `CommandRequest` whose `command` field is `None` (a future protocol contract violation or a defensive serialization bug)
-- **WHEN** the SDK enters `get_handler`'s `wrapper_command.command.unwrap()` site (today on `sdk/rust/src/command/mod.rs:58`)
+- **WHEN** the SDK enters `get_handler`'s command-classification step (`flz_core/src/command/mod.rs`)
 - **THEN** the SDK SHALL return a typed `Err(CommandDecodeError::EmptyCommand)` (or equivalent) instead of panicking on `.unwrap()`
 - **AND** the runtime thread SHALL remain alive
 - **AND** the SDK SHALL log a structured warning and continue processing subsequent frames
@@ -629,3 +629,42 @@ An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its ow
 - **WHEN** a live state read names an Entity inside an activation older than the bound
 - **THEN** the runner SHALL answer with an error naming the Entity as busy after the bound, and the control thread SHALL go on serving later commands
 
+
+### Requirement: A per-runner data socket name SHALL be bounded and composed by one implementation
+
+A per-runner data socket SHALL be named `<stream type>_stream_<id field>.sock` in the resolved
+socket directory, composed by one implementation that every SDK reaches, and the `<id field>`
+SHALL be at most 24 bytes.
+
+A runner id of 24 bytes or fewer SHALL be used as it stands. A longer one SHALL be replaced by
+its first 11 bytes, a `~`, and the first 12 lowercase hexadecimal characters of the SHA-256
+digest of the runner id's UTF-8 bytes.
+
+The shortening SHALL depend on the runner id alone and SHALL NOT depend on the socket
+directory. The controller and the runner compose this name independently, from directories they
+resolved separately, so a rule that consulted either side's directory could produce two names
+for one runner.
+
+Composing a socket path that would exceed the platform limit for a Unix domain socket path — 107
+bytes, `sun_path` less its NUL — SHALL be refused where the path is composed, naming the path and
+its byte length, rather than surfacing as a listener that failed to start.
+
+#### Scenario: A long runner id is shortened, deterministically
+- **WHEN** a runner id longer than 24 bytes is composed into a data socket name
+- **THEN** the id field is exactly 24 bytes, carries the id's first 11 bytes, a `~`, and 12 hexadecimal characters, and is byte-identical on every composition of the same id
+
+#### Scenario: A short runner id stays readable
+- **WHEN** a runner id of 24 bytes or fewer is composed into a data socket name
+- **THEN** the id field is that runner id unchanged
+
+#### Scenario: The controller and the runner compose one name
+- **WHEN** the controller binds a data socket for a runner id and that runner dials its data socket for the same id and stream type in the same directory
+- **THEN** both compose the same absolute path
+
+#### Scenario: A path that cannot fit is refused where it is built
+- **WHEN** a socket directory is long enough that the composed data socket path would exceed 107 bytes
+- **THEN** composition refuses, naming the path and its byte length, and no listener is started
+
+#### Scenario: A shortened name is still recognised as Flezha's own
+- **WHEN** a directory holds a data socket whose id field was shortened
+- **THEN** the predicate that decides which files in a socket directory belong to Flezha recognises it, and `flz reset --include-sockets` clears it

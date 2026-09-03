@@ -47,8 +47,8 @@ source plugin
   → StreamChannel.io_in/3                 [io_in_received, send_frame_calls, nil_drops, last_send_ms]
   → Transport.Stream.send_frame
   → [command channel]                     [cmd_queue_depth]
-  → flz-uds-driver loop (uds_driver.rs)   [loop_iterations, last_loop_ms]
-  → per-stream write buffer → UnixStream  [write_buffer_len, write_buffer_dropped, frames_written, last_write_ms]
+  → driver loop (uds/quic_driver.rs)      [loop_iterations, last_loop_ms]
+  → per-stream write buffer → socket      [write_buffer_len, write_buffer_dropped, frames_written, last_write_ms]
 Inbound mirror: driver read → StreamChannel({:flz_data}) [flz_data_received] + [frames_read, last_read_ms]
 ```
 
@@ -57,15 +57,17 @@ Inbound mirror: driver read → StreamChannel({:flz_data}) [flz_data_received] +
 The counters are passive and the classifier is pure — nothing here changes data-plane behaviour.
 
 **NIF driver self-report** (`Flezha.Transport.Native.driver_stats/1`,
-`flz_nif/src/driver_stats.rs`): per UDS server — `loop_iterations` (bumped once per loop
+`flz_nif/src/driver_stats.rs`): per server — `loop_iterations` (bumped once per loop
 iteration), `last_loop_ms` and `now_ms` (driver-elapsed ms), `cmd_queue_depth`, and per stream
 `{write_buffer_len, write_buffer_dropped, frames_written, frames_read, last_write_ms,
 last_read_ms}`. The loop counters are lock-free `AtomicU64`; the per-stream snapshot is rebuilt
 under a `Mutex` once per loop iteration, never per frame. A frozen `loop_iterations` with a stale
-`last_loop_ms` unambiguously means the thread is wedged. QUIC has no per-stream stats
-(`driver_stats/1` returns `:undefined`); the `native` in-node transport has no driver, so
-`Transport.Server.get_stats(:native)` carries no `:driver` key (the QUIC shape — no native-specific
-branch). `StreamAcceptor` registers each per-runner data-stream server
+`last_loop_ms` unambiguously means the thread is wedged. The UDS and the QUIC driver both produce
+this map, in one shape: each keeps its own per-stream write buffer and send gate before the bytes
+reach the socket, so every field has one answer on either transport, and the classifier needs no
+per-transport branch. The `native` in-node transport has no driver, so
+`Transport.Server.get_stats(:native)` carries no `:driver` key and its data-plane evidence is the
+BEAM counters alone. `StreamAcceptor` registers each per-runner data-stream server
 (`LivenessCounters.register_driver/3`) so the classifier polls the drivers carrying operative traffic.
 
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on `:atomics`-backed `:counters`, one
@@ -108,13 +110,24 @@ per-runner or per-stream labels — per-entity localisation is the classifier's 
 
 ## Send-buffer cap
 
-The per-stream send buffer is bounded so a slow or non-reading runner cannot grow controller memory
-without limit. When the buffer is non-empty and appending a frame would exceed `max_write_buffer_bytes`
-(`flz_transport/src/transport/config.rs`), `enqueue_write` drops the newest frame — a `DropNewest`
-policy mirroring the SDK bounded mailbox — and bumps the per-stream `write_buffer_dropped` counter. An
-empty buffer always accepts, so a single large frame on an idle stream is never dropped. The data
-stream is at-least-once with downstream dedup, so a dropped frame is recoverable; the driver never
-blocks its command loop on a slow peer. The QUIC driver mirrors the cap and counter on its write buffer.
+The per-stream send buffer is bounded by `max_write_buffer_bytes`
+(`flz_transport/src/transport/config.rs`) so a slow or non-reading runner cannot grow controller memory
+without limit, and the bound is reached through a **send gate** rather than by discarding
+(`flz_transport/src/transport/send_gate.rs`). A sender counts its own bytes into the gate as it queues
+them and raises the congestion signal itself once queued plus buffered crosses the high-water mark — the
+half it would otherwise be racing is the half it writes — and the driver lowers the signal and wakes the
+sender once the buffered bytes fall below the low-water mark. `Flezha.Runner.StreamChannel.Gate` holds
+a refused frame for `:send_gate_hold_ms` and offers it again on the drain; running that budget out
+answers `{:error, :send_buffer_full}` to the caller **with the frame still unsent**, so congestion is
+reported as the caller's decision and never as a silent loss. The driver never blocks its command loop
+on a slow peer, and both server drivers keep their own send buffer and their own gate.
+
+`would_overflow_write_buffer/3` is the last-resort ceiling underneath that gate, and a sender honouring
+the gate never reaches it. An empty buffer always accepts, so a single large frame on an idle stream is
+never dropped. When the ceiling does refuse, the refusal is answered to its caller rather than hidden
+under an `:ok`, and the per-stream `write_buffer_dropped` counter moves. That counter is an **invariant,
+not a metric**: nothing is discarded for congestion, so any increment is transport data loss and a
+defect to be surfaced — the stall classifier reads it as `:send_buffer_dropping`.
 
 ## The stall classifier
 
@@ -208,7 +221,7 @@ on); the `:flezha_transport` metric source only when `:observability, :otp_backe
 ## Zero-code operator fallback
 
 If the BEAM is up but unresponsive, sample the OS threads directly: `bin/flzvm pid` gives the BEAM
-pid; read `/proc/<pid>/task/*/comm` for threads named `flz-uds-driver` and check
+pid; read `/proc/<pid>/task/*/comm` for threads named `flz-uds-driver` or `flz-quic-driver` and check
 `/proc/<pid>/task/<tid>/stat` — a thread in `D` (uninterruptible sleep) or with a frozen `utime` is a
 wedged driver, matching a frozen `loop_iterations`. No controller code path is involved, so this works
 even if the NIF itself is what wedged.

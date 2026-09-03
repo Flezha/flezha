@@ -9,7 +9,7 @@
  * a rejected promise and an encoding failure all reach the same guard.
  */
 
-import { applyTransforms } from './authoring.js';
+import { applyTransforms, isStructuredWorkflow } from './authoring.js';
 import type { ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
 import { decodeValue, encodeValue, fromStateJson, toStateJson } from './codec.js';
 import { Invocation, type SpawnBridge } from './ctx.js';
@@ -281,8 +281,19 @@ async function runWork(
             ? channel.decode(item.payload ?? Buffer.alloc(0))
             : decodeValue(item.payload ?? Buffer.alloc(0));
           // This node's own edge off the channel: a transform chain declared
-          // before one `into` belongs to that consumer and to no other.
-          const edge = channel?.consumers.find((each) => each.procedure === node.index);
+          // before one `into` belongs to that consumer and to no other. It is
+          // evaluated here only for a payload that reached us untransformed —
+          // an entry payload, whose producer is the wire, or a workflow
+          // stage's released value. A stream producer evaluated it as its
+          // activation completed, and evaluating it again would compose the
+          // chain with itself.
+          const untransformed =
+            channel === undefined ||
+            channel.kind === 'entry' ||
+            isStructuredWorkflow(registered.spec);
+          const edge = untransformed
+            ? channel?.consumers.find((each) => each.procedure === node.index)
+            : undefined;
           const input = applyTransforms(edge?.transforms ?? [], decoded);
           // A filtered value is consumed and reaches no handler. It still
           // produces an effect, so its offset advances and nothing is retried.

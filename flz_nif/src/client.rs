@@ -12,6 +12,7 @@
 use std::io::{ErrorKind, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -110,6 +111,22 @@ fn resolve_connect<'a>(
     };
 
     Ok((atoms::ok(), resolved_dir, entries).encode(env))
+}
+
+/// A runner's data-socket path in `socket_dir` — `flz_transport`'s own
+/// composition, the one every other SDK reaches through `flz_core`. The
+/// controller and a runner ask for it here rather than spelling it, so one
+/// runner cannot end up with two names; the runner-id field is bounded there
+/// and a path a Unix domain socket address cannot hold is refused by name and
+/// length.
+#[rustler::nif]
+fn stream_socket_path(
+    socket_dir: String,
+    runner_id: String,
+    stream_type: String,
+) -> Result<String, String> {
+    socket_dir::stream_socket_path_in(Path::new(&socket_dir), &runner_id, &stream_type)
+        .map_err(|refusal| refusal.to_string())
 }
 
 /// Why this node cannot reach a controller over `transport`, in the words the

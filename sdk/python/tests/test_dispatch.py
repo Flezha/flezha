@@ -348,14 +348,18 @@ def _wf_producer(value: int, ctx: flezha.Ctx[None]) -> None:
     ctx.emit(value)
 
 
+_DELIVERED: list[Any] = []
+"""What a consumer of the ``handoff`` channel was handed, in delivery order."""
+
+
 @flezha.procedure(name="wf_b")
-def _wf_b(value: int) -> int:
-    return value
+def _wf_b(value: int) -> None:
+    _DELIVERED.append(value)
 
 
 @flezha.procedure(name="wf_c")
-def _wf_c(value: int) -> int:
-    return value
+def _wf_c(value: int) -> None:
+    _DELIVERED.append(value)
 
 
 def _workflow_graph(c: flezha.Channels) -> None:
@@ -365,14 +369,50 @@ def _workflow_graph(c: flezha.Channels) -> None:
     edge.sink("wf_out")
 
 
+@flezha.workflow_operative("wf_emit")
+def _wf_emit(c: flezha.Channels) -> None:
+    _workflow_graph(c)
+
+
+@flezha.stream_operative("wf_emit_stream")
+def _wf_emit_stream(c: flezha.Channels) -> None:
+    _workflow_graph(c)
+
+
+def _handoff(factory: str, procedure: int, payload: bytes) -> dict[str, Any]:
+    """One work activation handing `payload` to `procedure` on the handoff channel."""
+    return {
+        "token": 50,
+        "operative": "op",
+        "procedure": procedure,
+        "change_seq": 0,
+        "factory": factory,
+        "kind": "work",
+        "items": [
+            {
+                "kind": "input",
+                "channel": 1,
+                "payload": payload,
+                "metadata": [],
+                "consumed_offset": None,
+                "replay": False,
+                "now": 0,
+            }
+        ],
+    }
+
+
+def _delivered(factory: str, procedure: int, payload: bytes, deps: DispatchDeps) -> list[Any]:
+    _DELIVERED.clear()
+    (effect,) = answered(_handoff(factory, procedure, payload), deps)["effects"]
+    assert effect["verdict"] == "ok"
+    return list(_DELIVERED)
+
+
 def test_a_structured_workflow_releases_one_untransformed_edge_output(
     fake_core: FakeCore,
 ) -> None:
-    @flezha.workflow_operative("wf_emit")
-    def wf_emit(c: flezha.Channels) -> None:
-        _workflow_graph(c)
-
-    deps = deps_for(wf_emit, fake_core)
+    deps = deps_for(_wf_emit, fake_core)
     (effect,) = answered(work_activation(40, 10, factory="wf_emit"), deps)["effects"]
     assert [
         (o["target"], o["consumer"], o["plugin_channel"], codec.decode(o["payload"]))
@@ -385,12 +425,31 @@ def test_a_structured_workflow_releases_one_untransformed_edge_output(
 def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer(
     fake_core: FakeCore,
 ) -> None:
-    @flezha.stream_operative("wf_emit_stream")
-    def wf_emit_stream(c: flezha.Channels) -> None:
-        _workflow_graph(c)
-
-    deps = deps_for(wf_emit_stream, fake_core)
+    deps = deps_for(_wf_emit_stream, fake_core)
     (effect,) = answered(work_activation(41, 10, factory="wf_emit_stream"), deps)["effects"]
     assert [
         (o["target"], o["consumer"], codec.decode(o["payload"])) for o in effect["outputs"]
     ] == [("edge", 1, 11), ("edge", 2, 10), ("plugin", None, 10)]
+
+
+# The other end of the same two arms: what the CONSUMER is handed. A stream
+# producer already applied the edge, so delivery applies nothing; a workflow
+# stage released the value raw, so delivery is the one application.
+
+
+def test_a_stream_inter_proc_edge_applies_its_map_exactly_once(fake_core: FakeCore) -> None:
+    deps = deps_for(_wf_emit_stream, fake_core)
+    (effect,) = answered(work_activation(42, 10, factory="wf_emit_stream"), deps)["effects"]
+    assert _delivered("wf_emit_stream", 1, effect["outputs"][0]["payload"], deps) == [11]
+
+
+def test_a_workflow_consumer_applies_its_own_edge_exactly_once_at_delivery(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_wf_emit, fake_core)
+    (effect,) = answered(work_activation(43, 10, factory="wf_emit"), deps)["effects"]
+    released = effect["outputs"][0]["payload"]
+    # One released value reaches BOTH children — the driver's fan-out — and
+    # each evaluates its own edge here.
+    assert _delivered("wf_emit", 1, released, deps) == [11]
+    assert _delivered("wf_emit", 2, released, deps) == [10]

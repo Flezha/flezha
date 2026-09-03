@@ -211,16 +211,6 @@ class Ctx(Generic[S]):
 
     # -- internals -----------------------------------------------------------
 
-    @property
-    def _structured_workflow(self) -> bool:
-        """A structured workflow releases ONE value per emit.
-
-        The driver fans it out to every consumer itself, from the journaled
-        handoff, so the host names the producing channel and its first consumer
-        and applies neither the edge's transforms nor its key.
-        """
-        return self._spec.kind == "workflow" and bool(self._spec.channels)
-
     def _release(
         self,
         channel: ChannelSpec,
@@ -231,7 +221,7 @@ class Ctx(Generic[S]):
         # A channel with no consumer releases nothing on the edge path: on a
         # workflow that is the plugin-bound terminal, and seeding the next
         # stage from it would hand the driver a terminal output.
-        if self._structured_workflow:
+        if self._spec.structured_workflow:
             if channel.consumers:
                 self.outputs.append(self._workflow_output(channel, channel.consumers[0], value))
         else:

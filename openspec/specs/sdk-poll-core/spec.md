@@ -114,12 +114,18 @@ commands SHALL be handled entirely inside the core and SHALL NOT surface to the 
 ### Requirement: Edge transforms and keys evaluate producer-side
 
 For a **stream** activation, consumer-edge transform chains and `key_by` SHALL be
-applied by the host when completing the activation that produced the value;
-outputs SHALL carry `(consumer_edge_id, bytes, key?)` and the core SHALL route on
+applied by the host when completing the activation that produced the value, and
+SHALL NOT be applied again when the consuming host receives that value; outputs
+SHALL carry `(consumer_edge_id, bytes, key?)` and the core SHALL route on
 `(edge, key)` without evaluating host closures. Unkeyed entry inputs into a keyed
 edge SHALL take a batched `KeyRequest` activation before routing. A transform or
 key failure SHALL be reported in the completion and SHALL enter the existing
 retry→park ladder.
+
+A host receiving an input SHALL apply the consuming edge's transform chain only
+when the payload reached it untransformed — an **entry** payload, whose producer
+is the wire, or a **workflow stage's** released value. A `KeyRequest` carries
+entry payloads only, so the prepare crossing SHALL always apply the chain.
 
 For a **workflow stage** activation the shape is different, because the core does
 not route a workflow stage's output on `(edge, key)`: the driver holds the
@@ -144,6 +150,10 @@ an edge output's consumer field on this path.
 #### Scenario: A workflow stage emits once per released value
 - **WHEN** a host workflow procedure emits one value on a producing channel that declares two consumers
 - **THEN** the completion SHALL carry exactly one edge output for that value, and the stage's released batch SHALL hold one value — not one per consumer — so the journaled handoff, every downstream node's input batch and every downstream plugin output SHALL be identical to the single-consumer case
+
+#### Scenario: A stream inter-procedure transform applies exactly once
+- **WHEN** a `map` declared on an inter-procedure edge between two stream procedures carries a value from the producing activation to the consuming one
+- **THEN** the consuming procedure SHALL receive the value with the map applied exactly once, and no host SHALL compose the chain with itself at delivery
 
 ### Requirement: Host classes reach full capability
 
@@ -313,7 +323,7 @@ barrier. Its stack size SHALL be configurable
 
 A change that would make a workflow instance's concurrency bounded by work in
 flight rather than by instance count SHALL be justified against a measurement,
-not a prediction; `sdk/rust/tests/workflow_scaling.rs` is that measurement, and
+not a prediction; `sdk/rust/benches/workflow_scaling.rs` is that measurement, and
 `docs/resilience/workflow_operative.md` records the envelope it produced.
 
 #### Scenario: A blocked population's cost is its heap, not its threads

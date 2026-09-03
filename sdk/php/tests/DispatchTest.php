@@ -482,6 +482,38 @@ final class DispatchTest extends TestCase
         );
     }
 
+    // The other end of the same two arms: what the CONSUMER is handed. A stream
+    // producer already applied the edge, so delivery applies nothing; a
+    // workflow stage released the value raw, so delivery is the one
+    // application.
+
+    public function testAStreamInterProcEdgeAppliesItsMapExactlyOnce(): void
+    {
+        $produced = $this->work('wf_emit_stream', 0, [self::input('10')])['effects'][0]['outputs'];
+
+        self::assertSame([11], $this->delivered('wf_emit_stream', 1, $produced[0]['payload']));
+    }
+
+    public function testAWorkflowConsumerAppliesItsOwnEdgeExactlyOnceAtDelivery(): void
+    {
+        $released = $this->work('wf_emit', 0, [self::input('10')])['effects'][0]['outputs'][0]['payload'];
+
+        // One released value reaches BOTH children — the driver's fan-out —
+        // and each evaluates its own edge here.
+        self::assertSame([11], $this->delivered('wf_emit', 1, $released));
+        self::assertSame([10], $this->delivered('wf_emit', 2, $released));
+    }
+
+    /** What `procedure` was handed when `payload` arrived on the handoff channel. @return list<mixed> */
+    private function delivered(string $factory, int $procedure, string $payload): array
+    {
+        Delivered::$values = [];
+        $effect = $this->work($factory, $procedure, [self::input($payload, channel: 1)])['effects'][0];
+        self::assertSame('ok', $effect['verdict']);
+
+        return Delivered::$values;
+    }
+
     /** @return array<string, mixed> */
     private function mixed(string $payload, int $procedure = 0): array
     {
@@ -551,11 +583,11 @@ final class DispatchTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private static function input(string $payload, ?int $offset = null): array
+    private static function input(string $payload, ?int $offset = null, int $channel = 0): array
     {
         return [
             'kind' => 'input',
-            'channel' => 0,
+            'channel' => $channel,
             'payload' => $payload,
             'metadata' => [],
             'consumed_offset' => $offset,

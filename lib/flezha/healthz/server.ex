@@ -35,11 +35,12 @@ defmodule Flezha.Healthz.Server do
         `:convergence_fabric_503_polls` classifier polls). A verdict the
         convergence pipeline can heal stays `degraded`.
 
-        The fabric clause is **UDS-only**: the QUIC server is started with no
-        `DriverStats`, so no driver measurement exists and
-        `data_plane_fabric_wedged` can never be minted on a QUIC controller.
-        A `200` there is evidence about the loop, the operatives and the
-        plugins — not about the data plane (KI-72).
+        The fabric clause needs a NIF driver to judge. The UDS and the QUIC
+        server driver both produce the self-report, so a controller on either
+        transport is covered. The `:native` in-node transport runs no driver,
+        so `data_plane_fabric_wedged` cannot be minted on a native-only
+        controller and a `200` there is evidence about the loop, the
+        operatives and the plugins — not about the data plane.
 
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.

@@ -114,9 +114,8 @@ measured nothing.
 
 ### The structured report
 
-Every run writes `bench/reports/bench-<runtime>-<shape>-<run_id>.json`
-(`bench.roundtrip` keeps writing `bench/flink/reports/`, which
-`bench/flink/lib/summarize.py` reads). It carries the `run`, `system`,
+Every run writes `bench/reports/bench-<runtime>-<shape>-<run_id>.json`.
+It carries the `run`, `system`,
 `artifacts` and `warnings` blocks plus a `metrics` block with every measured
 value.
 
@@ -331,9 +330,7 @@ floor.
 ## Round-trip bench (`mix bench.roundtrip`)
 
 A full Kafka round trip — generator → `in` topic → engine → `out` topic →
-collector — with the engine as the only variable, so Flezha and Apache Flink are
-measured on one wire. `bench/flink/bench.sh` drives the whole grid; it needs the
-compose stack in `bench/flink/compose.yml`.
+collector, with the engine as the only variable so both are measured on one wire.
 
 `--runtime rust|java|elixir` picks the SDK serving the operatives, through the
 same manifest the e2e harness uses. **A number is a number for the runtime that

@@ -35,19 +35,28 @@ final class EntityRouting {
 
     private final KryoCodec edgeCodec;
 
+    /** Whether this class's producers release their values untransformed. */
+    private final boolean structuredWorkflow;
+
     @SuppressWarnings("rawtypes")
-    EntityRouting(StreamOperativeTopology topology, List<Procedure> routers, KryoCodec edgeCodec) {
+    EntityRouting(
+            StreamOperativeTopology topology,
+            List<Procedure> routers,
+            KryoCodec edgeCodec,
+            boolean structuredWorkflow) {
         this.topology = topology;
         this.routers = routers;
         this.edgeCodec = edgeCodec;
+        this.structuredWorkflow = structuredWorkflow;
     }
 
     /**
-     * Decode an input payload and apply the consumer edge's transform
-     * chain, keeping only the yielded values that route to this Entity —
-     * the producer-side evaluation the pre-core {@code routeToConsumers}
-     * did, re-run symmetrically at delivery because only bytes cross the
-     * core.
+     * Decode an input payload and keep only the values that route to this
+     * Entity, applying the consumer edge's transform chain when — and only
+     * when — the payload reached here untransformed: an entry payload, whose
+     * producer is the wire, or a workflow stage's released value. A stream
+     * producer evaluated the edge when its activation completed, so applying
+     * it again would compose the chain with itself.
      */
     @SuppressWarnings("unchecked")
     List<Object> valuesForEntity(EntityCell cell, int channelId, byte[] payload) {
@@ -60,7 +69,9 @@ final class EntityRouting {
         if (edge == null) {
             return List.of(base);
         }
-        List<Object> values = EdgeTransforms.valuesOf(edge, base);
+        List<Object> values = channel.kind() == ChannelKind.ENTRY || structuredWorkflow
+                ? EdgeTransforms.valuesOf(edge, base)
+                : List.of(base);
         if (values.isEmpty()) {
             return values;
         }

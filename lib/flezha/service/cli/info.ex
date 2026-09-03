@@ -4,6 +4,7 @@ defmodule Flezha.Service.Cli.Info do
   report `Cli.Listing` also prints.
   """
 
+  alias Flezha.Convergence.Snapshot
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
@@ -58,6 +59,7 @@ defmodule Flezha.Service.Cli.Info do
               namespace: state.namespace,
               kind: operative_kind(state),
               phase: operative_phase(state),
+              health: Snapshot.operative_health(namespace_display, operative_id),
               uptime_ms: operative_uptime_ms(state),
               default_input_type: state.default_input_type,
               plugins: format_plugins_json(state.extensions)
@@ -88,7 +90,7 @@ defmodule Flezha.Service.Cli.Info do
     Enum.each(live, fn operative_id ->
       case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
         {:ok, state} ->
-          display_operative_info(operative_id, state)
+          display_operative_info(operative_id, state, namespace_display)
 
         {:error, reason} ->
           IO.puts("Operative: #{operative_id}")
@@ -242,11 +244,15 @@ defmodule Flezha.Service.Cli.Info do
   defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
   defp operative_kind(_), do: "stream"
 
-  # A live operative is "running", unless its loop is parked at a committed
-  # iteration boundary — then it is "suspended": still registered, still
-  # addressable, holding zero runner resources until an input (or its wake
-  # deadline) rehydrates it (`workflow-durable-suspension`).
+  # The operative's own lifecycle state, in the order the convergence loop
+  # classifies it. "suspended": the loop is parked at a committed iteration
+  # boundary — still registered, still addressable, holding zero runner
+  # resources until an input (or its wake deadline) rehydrates it
+  # (`workflow-durable-suspension`). "parked": `Lifecycle.park/2` stored a
+  # failure reason and the Overwatch stayed alive, so it is registered and
+  # readable but processes nothing until the reconciler un-parks it.
   defp operative_phase(%{suspended: true}), do: "suspended"
+  defp operative_phase(%{init_error: reason}) when not is_nil(reason), do: "parked"
   defp operative_phase(_state), do: "running"
 
   defp operative_uptime_ms(%{started_at: started}) when is_integer(started),
@@ -306,10 +312,11 @@ defmodule Flezha.Service.Cli.Info do
   defp format_plugin_state_value(value) when is_binary(value), do: value
   defp format_plugin_state_value(value), do: inspect(value)
 
-  defp display_operative_info(operative_id, state) do
+  defp display_operative_info(operative_id, state, namespace) do
     IO.puts("Operative: #{operative_id}")
     IO.puts("  Kind: #{operative_kind(state)}")
     IO.puts("  Phase: #{operative_phase(state)}")
+    IO.puts("  Health: #{Snapshot.operative_health(namespace, operative_id)}")
     IO.puts("  Runner ID: #{state.runner_id}")
     IO.puts("  Group ID: #{state.namespace}")
     IO.puts("  Uptime (ms): #{operative_uptime_ms(state)}")

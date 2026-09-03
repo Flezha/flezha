@@ -126,6 +126,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 |---|---|---|
 | `FLEZHA_CONTROL_LIVENESS_WINDOW_MS` | `45000` | `:control_liveness_window_ms`; pair with the runner's `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` |
 | `FLEZHA_CONTROL_LIVENESS_INTERVAL_MS` | `15000` | `:control_liveness_interval_ms` |
+| `FLEZHA_OVERWATCH_PING_TIMEOUT_MS` | `2000` | `:overwatch_ping_timeout_ms`; bounds the pre-start `:ping_runner` round-trip, after which the Overwatch retries rather than cutting the channel |
 | `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` | `true` | `:graceful_shutdown_enabled`; when set, anything but `1`/`true`/`yes`/`on` is false |
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | `60000` | `:graceful_shutdown_timeout_ms`; the orchestrator grace period must be this + 15 s |
 | `FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS` | `10000` | `:output_watchdog_interval_ms` (not in test) |
@@ -333,7 +334,7 @@ of them is true today:
 3. the 30–36% saturation cost either closed or accepted in writing.
 
 The flag is deleted in the change that flips it, or the next one. Details and
-the deletion checklist: `docs/dev_notes/nonblocking-drop-nothing-backpressure.md`.
+the deletion checklist.
 
 ## Layer 2: application env keys
 

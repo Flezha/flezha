@@ -89,7 +89,9 @@ public final class OperativeInstance {
                 timerPolicies.add(TimerPolicy.of(instance.maxTimersPerEntity(), desc.name(), desc.clockType()));
             }
         }
-        this.routing = topology == null ? null : new EntityRouting(topology, routers, edgeCodec);
+        this.routing = topology == null
+                ? null
+                : new EntityRouting(topology, routers, edgeCodec, workflow.isStructuredWorkflow());
     }
 
     static OperativeInstance materialize(String operativeId, String factoryId) {

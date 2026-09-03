@@ -50,7 +50,7 @@ fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> Ni
         cmd_tx,
         waker: ready.waker,
         driver_handle: Mutex::new(Some(driver_handle)),
-        stats: Some(stats),
+        stats,
     });
 
     Ok((atoms::ok(), server).encode(env))
@@ -84,6 +84,8 @@ fn start_quic_server(
     let (ready_tx, ready_rx) = channel::bounded(1);
 
     let cmd_tx_clone = cmd_tx.clone();
+    let stats = Arc::new(DriverStats::new());
+    let stats_clone = Arc::clone(&stats);
 
     let driver_handle = thread::Builder::new()
         .name("flz-quic-driver".into())
@@ -95,6 +97,7 @@ fn start_quic_server(
                 cmd_rx,
                 cmd_tx_clone,
                 ready_tx,
+                stats_clone,
             );
         })
         .map_err(|e| rustler::Error::Term(Box::new(format!("spawn error: {}", e))))?;
@@ -108,7 +111,7 @@ fn start_quic_server(
         cmd_tx,
         waker: ready.waker,
         driver_handle: Mutex::new(Some(driver_handle)),
-        stats: None,
+        stats,
     });
 
     Ok((atoms::ok(), server).encode(env))
@@ -122,15 +125,12 @@ fn stop_server(env: Env, server: TransportServerArc) -> NifResult<Term> {
     Ok(atoms::ok().encode(env))
 }
 
-/// Self-reported driver liveness for this server. Returns a map for UDS
-/// servers, or `:undefined` for QUIC (no per-stream stats yet). Read by the
-/// `:flezha_transport` observability source ~1 Hz — never on a data path.
+/// Self-reported driver liveness for this server — the same map whichever
+/// server driver produced it. Read by the `:flezha_transport` observability
+/// source ~1 Hz — never on a data path.
 #[rustler::nif]
 fn driver_stats(env: Env, server: TransportServerArc) -> NifResult<Term> {
-    let stats = match &server.stats {
-        Some(s) => s,
-        None => return Ok(atoms::undefined().encode(env)),
-    };
+    let stats = &server.stats;
 
     let streams = match stats.streams.lock() {
         Ok(guard) => guard

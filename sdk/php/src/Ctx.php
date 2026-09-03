@@ -215,24 +215,13 @@ final class Ctx
         ];
     }
 
-    /**
-     * A structured workflow releases ONE value per emit: the driver fans it out
-     * to every consumer itself, from the journaled handoff, so the host names
-     * the producing channel and its first consumer and applies neither the
-     * edge's transforms nor its key.
-     */
-    private function structuredWorkflow(): bool
-    {
-        return $this->spec->kind === 'workflow' && $this->spec->channels !== [];
-    }
-
     /** @param array<string, string>|null $metadata */
     private function release(ChannelSpec $channel, mixed $value, ?string $key, ?array $metadata): void
     {
         // A channel with no consumer releases nothing on the edge path: on a
         // workflow that is the plugin-bound terminal, and seeding the next
         // stage from it would hand the driver a terminal output.
-        if ($this->structuredWorkflow()) {
+        if ($this->spec->structuredWorkflow()) {
             $first = $channel->consumers[0] ?? null;
             if ($first !== null) {
                 $this->outputs[] = [

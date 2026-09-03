@@ -134,8 +134,9 @@ Stream typing: the **first** bidi stream of a connection is the control channel 
 `[type, index]` preamble (type 1 primary, 2 secondary); once consumed the driver sends
 `{:flz_stream, handle, type, index, conn_id}` where `conn_id` is the control stream's id, and
 the rest of the bytes go to the frame buffer. Writes go through quinn's flow control: on
-`WriteError::Blocked` the data is buffered and retried on `Writable`; the QUIC write buffer has
-no byte cap of its own. `driver_stats/1` answers `:undefined` for QUIC.
+`WriteError::Blocked` the data is buffered and retried on `Writable`. The QUIC write buffer is
+bounded by the same send gate the UDS one is, and the driver keeps the same per-stream liveness
+counters, so `driver_stats/1` answers the one self-report map for either server.
 
 ## Client entry points (`client.rs`)
 
@@ -179,7 +180,7 @@ an opaque handle with its later events.
 | `start_uds_server` | `(socket_path, acceptor_pid) -> {:ok, server}` | spawns the UDS driver |
 | `start_quic_server` | `(bind_address, cert_path, key_path, client_ca_path, acceptor_pid) -> {:ok, server}` | `client_ca_path == ""` disables client auth |
 | `stop_server` | `(server) -> :ok` | `Shutdown` to the driver |
-| `driver_stats` | `(server) -> map \| :undefined` | UDS self-report; `:undefined` for QUIC |
+| `driver_stats` | `(server) -> map` | driver self-report, one shape for the UDS and the QUIC driver |
 | `send_frame` | `(handle, payload_id, message, metadata) -> `:ok` \| `{:error, :send_buffer_full \| :driver_gone}` | frame built in Rust by `payloader::build_from_binary`; refuses on a raised send gate, and answers rather than discarding when the driver thread is gone |
 | `set_active` / `set_passive` | `(handle) -> :ok` | deliver frames as messages / queue them |
 | `close` | `(handle) -> :ok` | |

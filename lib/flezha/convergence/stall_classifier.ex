@@ -56,12 +56,12 @@ defmodule Flezha.Convergence.StallClassifier do
   that must be *advancing* between ticks), so an idle operative never reads as a
   stall.
 
-  **The driver verdicts are UDS-only.** `:driver_loop_frozen`,
+  **The driver verdicts need a NIF driver.** `:driver_loop_frozen`,
   `:nif_queue_backing_up`, `:socket_write_blocked`, `:send_buffer_dropping` and
-  `:runner_not_consuming` all read the NIF driver self-report, and the QUIC
-  driver produces none — `drivers` is empty for a QUIC controller, so those
-  five clauses cannot fire on one at all. That is a gap in coverage, not a
-  clean bill of health (KI-72).
+  `:runner_not_consuming` all read the NIF driver self-report. Both the UDS and
+  the QUIC server driver produce it, in one shape; the `:native` in-node
+  transport has no driver at all, so on a native-only controller `drivers` is
+  empty and those five clauses do not fire.
   """
 
   @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}

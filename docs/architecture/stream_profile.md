@@ -386,7 +386,7 @@ flowchart TB
   identity contains the key and no runner, so no storage format changes — a crash mid-rescale
   re-derives the remaining moves from what is on disk.
 
-A hot *single* key is still bounded by one machine — inherent to per-key ordering (Flink is
+A hot *single* key is still bounded by one machine — inherent to per-key ordering (other engines are
 identical); the documented answer is two-stage aggregation. Partition spread across runners is
 statistical (HRW) for now. The full contract — preflight, id budget, quota, coverage
 validation, `flz state get <group>/...` resolution:

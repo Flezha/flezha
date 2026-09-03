@@ -245,6 +245,13 @@ config :flezha,
   control_liveness_interval_ms:
     System.get_env("FLEZHA_CONTROL_LIVENESS_INTERVAL_MS", "15000") |> String.to_integer(),
 
+  # How long an Overwatch waits for the end-to-end `:ping_runner` round-trip it
+  # takes before `:start_operative`. It bounds a proof, not a data path: a
+  # runner that has not answered within the window is retried under the
+  # bounded-retry governor rather than cut.
+  overwatch_ping_timeout_ms:
+    System.get_env("FLEZHA_OVERWATCH_PING_TIMEOUT_MS", "2000") |> String.to_integer(),
+
   # ------------------------------------------------------------------------------------------------
   # Graceful shutdown (controller-graceful-shutdown).
   #

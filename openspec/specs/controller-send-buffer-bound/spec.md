@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The controller-send-buffer-bound capability bounds every per-stream outbound send buffer in the tree — both server drivers and the QUIC client — so a slow or non-reading peer can neither grow memory without limit nor have its sender's frames quietly discarded. Each buffer is bounded by a configurable `max_write_buffer_bytes` and reaches it through one send gate: crossing a high-water mark raises a congestion signal the sender reads and holds on, and draining below a low-water mark lowers it and wakes the sender. Nothing is discarded for congestion, so `write_buffer_dropped` is an invariant rather than a metric — a non-zero value is a defect, emitted with the driver's statistics and named by a liveness verdict. **That reporting is UDS-only**: the QUIC driver produces no `DriverStats` at all, so a healthy `/healthz` on a QUIC controller is not evidence about its transport (tracked as KI-72).
+The controller-send-buffer-bound capability bounds every per-stream outbound send buffer in the tree — both server drivers and the QUIC client — so a slow or non-reading peer can neither grow memory without limit nor have its sender's frames quietly discarded. Each buffer is bounded by a configurable `max_write_buffer_bytes` and reaches it through one send gate: crossing a high-water mark raises a congestion signal the sender reads and holds on, and draining below a low-water mark lowers it and wakes the sender. Nothing is discarded for congestion, so `write_buffer_dropped` is an invariant rather than a metric — a non-zero value is a defect, emitted with the driver's statistics and named by a liveness verdict. Both server drivers produce that reporting, so a healthy `/healthz` is evidence about the transport on a UDS and on a QUIC controller alike.
 ## Requirements
 ### Requirement: Controller-to-runner transport send buffer is bounded
 
@@ -54,14 +54,14 @@ non-zero value is reported rather than merely recorded.
 Under the bound above no frame is discarded for congestion, so this counter is
 an invariant: any increment is a defect to be surfaced, not a routine metric.
 
-**This reporting is UDS-only, and the limit is part of the requirement.** The
-QUIC driver produces no `DriverStats` at all, so for a QUIC controller the
-counter is emitted zero times and the liveness verdict that names it cannot
-fire. A QUIC deployment is therefore not covered by this requirement's
-reporting half, and a healthy `/healthz` on QUIC is not evidence about its
-transport. Giving the QUIC driver a `DriverStats` is deferred and tracked
-(KI-72); until it lands, no reader may conclude that a QUIC controller is
-observed here.
+**Every server driver reports it, and the reporting is part of the
+requirement.** Both the UDS and the QUIC driver produce a `DriverStats`, so for
+a controller on either transport the counter is emitted with the rest of the
+driver's statistics and the liveness verdict that names it can fire. Each keeps
+its own per-stream send buffer and its own send gate, so the counter is a real
+per-stream refusal count on both rather than an aggregate. The `:native`
+in-node transport runs no driver and no send buffer of this kind, so it is the
+one transport outside this requirement's reporting half.
 
 #### Scenario: Congestion increments nothing
 
@@ -75,12 +75,13 @@ observed here.
 - **THEN** the value is emitted with the driver's statistics and a liveness
   verdict names it, rather than being visible only to a benchmark printout
 
-#### Scenario: A QUIC controller is uninstrumented, and says so
+#### Scenario: A QUIC controller is observed on the same counter
 
-- **WHEN** the controller's transport is QUIC
-- **THEN** no driver statistic is emitted and no driver liveness verdict can
-  fire, and the documentation of both states that limit rather than leaving a
-  reader to infer coverage
+- **WHEN** the controller's transport is QUIC and a stream's send buffer
+  refuses a frame at its ceiling
+- **THEN** the refusal is counted on that stream's own line of the driver's
+  statistics, emitted like any other, and named by the same liveness verdict a
+  UDS controller would raise
 
 ### Requirement: A transport write never reports bytes it did not accept
 

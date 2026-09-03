@@ -49,6 +49,17 @@ def load_allowlist(path):
     return rules
 
 
+def tracked_files(pathspec=()):
+    """Every path `git ls-files` reports, so a gate and its source index read
+    the same tree. Untracked and ignored files — build output, and the working
+    documents the repository deliberately keeps out — are absent by
+    construction rather than by exclusion."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", *pathspec], capture_output=True, check=True
+    ).stdout.decode()
+    return [rel for rel in listing.split("\0") if rel]
+
+
 def pattern_check(patterns, allowlist=()):
     """A `check` that flags any line still matching `patterns` once the
     allowlist rules in scope for the file have been erased from it. The
@@ -82,15 +93,11 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
     markers delimit and no others, both markers on one line exempt that line,
     and a block left open at end of file fails. Returns an exit code.
     """
-    listing = subprocess.run(
-        ["git", "ls-files", "-z", *pathspec], capture_output=True, check=True
-    ).stdout.decode()
-
     begin, end = (f"{record_tag}:begin", f"{record_tag}:end") if record_tag else (None, None)
     failures = []
     unclosed = []
-    for rel in listing.split("\0"):
-        if not rel or rel in self_files or "/dist/" in rel:
+    for rel in tracked_files(pathspec):
+        if rel in self_files or "/dist/" in rel:
             continue
         if path_filter and not path_filter(rel):
             continue

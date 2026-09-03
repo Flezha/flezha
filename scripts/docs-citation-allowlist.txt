@@ -1,0 +1,38 @@
+# Shapes scripts/check-docs-citations.sh must not read as citations.
+#
+# The gate asks one question of a document: does this pointer still resolve in
+# the tree? A few shapes look like a pointer and are not one, and this file
+# tells the gate how to recognise them.
+#
+# THREE mechanisms cover the exceptions. Reach for them in this order.
+#
+# 1. THE SCRIPT'S OWN RULES decide what can be judged at all — a citation with
+#    no directory component, a path rooted where the repository tracks nothing,
+#    a path the repository ignores by policy, `openspec/specs/` (normative, so a
+#    name there may be a mandate rather than a citation) and the changelogs
+#    (dated records of what was removed). Those are stated in the script,
+#    because they are the gate's shape rather than exceptions to it. Widening
+#    the script is how the gate gets stronger; adding entries here is how it
+#    gets quieter.
+#
+# 2. SHAPE RULES here, matching how a non-citation is WRITTEN rather than which
+#    document happens to contain one. A rule that pins a phrase goes stale the
+#    moment the sentence is reworded, and rewording correct prose to satisfy a
+#    regex is how a gate stops being read.
+#
+# 3. `docs-citation-record:begin` / `docs-citation-record:end` comments, for a
+#    block that names something this repository genuinely does not carry and
+#    names it on purpose: a removal quoted as a record, a coordinate that
+#    belongs to another repository. Greppable, scoped to the block, and it does
+#    not pin the prose's wording.
+#
+# Format: <path-prefix>:<regex>   (first colon separates; `*` matches any path)
+# The gate DELETES every match of <regex> from a line before it looks for
+# citations, so a rule that erases too much hides real rot on that line. Keep
+# each one anchored to the shape it describes.
+
+# --- a placeholder file name ---------------------------------------------
+# A one-character stem is an illustration, not a coordinate: `lib/x.ex` names
+# no file and is not meant to. No file in this repository has such a stem, so
+# erasing the shape cannot hide a live pointer.
+*:(?<![A-Za-z0-9_])[a-z]\.(?:ex|exs|rs|java|py|rb|php|js|ts|md|sh)(?![A-Za-z0-9_])

@@ -5,8 +5,11 @@
 //! invariant: an explicit `FLEZHA_SOCKET_FILES_PATH` wins outright, and a
 //! runner refuses to guess between two live directories.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::{env, fmt, fs};
+
+use ring::digest::{digest, SHA256};
 
 use crate::utility::last_good::LastGood;
 use crate::utility::socket_probe::{probe, Reach};
@@ -21,9 +24,24 @@ pub const RUN_CANDIDATE: &str = "/run/flezha";
 pub const REPOSITORY_CANDIDATE: &str = "app_data/sockets";
 
 pub(crate) const CONTROL_SOCKET_FILE: &str = "runner_control_channel.sock";
-/// A per-runner data socket is `<stream type>_stream_<runner id>.sock`.
+/// A per-runner data socket is `<stream type>_stream_<id field>.sock`.
 const STREAM_SOCKET_INFIX: &str = "_stream_";
 const SOCKET_SUFFIX: &str = ".sock";
+
+/// A Unix domain socket address holds `sun_path` less the NUL the kernel
+/// appends, and the kernel refuses anything longer before a socket exists.
+const SOCKET_PATH_MAX_BYTES: usize = 107;
+/// The id field's ceiling. The longest name around it is 22 bytes
+/// (`secondary_stream_` + `.sock`), so 24 here leaves 60 bytes for the socket
+/// directory — more than any candidate the ladder produces on a normal host,
+/// and more than the longest id `Identificator.unique_id/1` mints in the
+/// default namespace, which is 24 and is therefore never shortened.
+const STREAM_SOCKET_ID_MAX: usize = 24;
+/// How much of a shortened id is the id's own leading bytes; the rest is `~`
+/// and 12 hex characters of its digest, so a shortened field is exactly
+/// `STREAM_SOCKET_ID_MAX`.
+const STREAM_SOCKET_ID_PREFIX: usize = 11;
+const STREAM_SOCKET_ID_DIGEST_BYTES: usize = 6;
 
 /// The directory a control channel connected through: it settles an ambiguity
 /// a first connect would refuse, and it is where the data sockets are opened,
@@ -80,6 +98,9 @@ pub enum SocketDirError {
         walked: Vec<PathBuf>,
         reason: String,
     },
+    /// The composed path is longer than a Unix domain socket address, so
+    /// nothing can bind it and nothing can dial it.
+    PathTooLong { path: String, len: usize },
 }
 
 impl fmt::Display for SocketDirError {
@@ -99,6 +120,12 @@ impl fmt::Display for SocketDirError {
                 join_paths(walked),
                 reason,
                 SOCKET_DIR_VAR
+            ),
+            SocketDirError::PathTooLong { path, len } => write!(
+                f,
+                "the socket path {} is {} bytes; a Unix domain socket address \
+                 holds {}. Set {} to a shorter directory.",
+                path, len, SOCKET_PATH_MAX_BYTES, SOCKET_DIR_VAR
             ),
         }
     }
@@ -152,7 +179,7 @@ fn resolve_from(candidates: Vec<(Rung, PathBuf)>, role: Role) -> Result<SocketDi
 /// The absolute control-socket path a runner dials, resolved through the
 /// ladder.
 pub fn control_socket_path() -> Result<String, SocketDirError> {
-    Ok(path_in(
+    within_sun_path(path_in(
         &resolve_socket_dir(Role::Runner, None)?.path,
         CONTROL_SOCKET_FILE,
     ))
@@ -167,13 +194,67 @@ pub fn stream_socket_path(runner_id: &str, stream_type: String) -> Result<String
         None => resolve_socket_dir(Role::Runner, None)?.path,
     };
 
-    Ok(path_in(
-        &dir,
+    stream_socket_path_in(&dir, runner_id, &stream_type)
+}
+
+/// A per-runner data-socket path in `dir`. The controller and the runner reach
+/// this from directories they resolved separately, so it is the one place the
+/// name is composed and the one place the length is refused.
+pub fn stream_socket_path_in(
+    dir: &Path,
+    runner_id: &str,
+    stream_type: &str,
+) -> Result<String, SocketDirError> {
+    within_sun_path(path_in(
+        dir,
         &format!(
             "{}{}{}{}",
-            stream_type, STREAM_SOCKET_INFIX, runner_id, SOCKET_SUFFIX
+            stream_type,
+            STREAM_SOCKET_INFIX,
+            bounded_id(runner_id),
+            SOCKET_SUFFIX
         ),
     ))
+}
+
+/// The id field of a data socket name, at most `STREAM_SOCKET_ID_MAX` bytes.
+/// It reads the runner id and nothing else: the controller and the runner
+/// compose this name in different processes, and a rule that consulted either
+/// one's directory could give one runner two names.
+fn bounded_id(runner_id: &str) -> Cow<'_, str> {
+    if runner_id.len() <= STREAM_SOCKET_ID_MAX {
+        return Cow::Borrowed(runner_id);
+    }
+
+    let digest = digest(&SHA256, runner_id.as_bytes());
+    let hex: String = digest.as_ref()[..STREAM_SOCKET_ID_DIGEST_BYTES]
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+
+    Cow::Owned(format!(
+        "{}~{}",
+        char_prefix(runner_id, STREAM_SOCKET_ID_PREFIX),
+        hex
+    ))
+}
+
+fn char_prefix(value: &str, max_bytes: usize) -> &str {
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn within_sun_path(path: String) -> Result<String, SocketDirError> {
+    if path.len() > SOCKET_PATH_MAX_BYTES {
+        return Err(SocketDirError::PathTooLong {
+            len: path.len(),
+            path,
+        });
+    }
+    Ok(path)
 }
 
 /// Whether a file in a socket directory is one Flezha itself created — the
@@ -618,15 +699,112 @@ mod tests {
         LAST_GOOD_DIR.forget();
     }
 
+    // A peer node's socket directory, the longest `config/test.exs` mints, and a
+    // runner id at the width a late-scheduled test module draws.
+    const PEER_DIR: &str = "/tmp/flezha_sockets/native_reject_peer@127.0.0.1";
+    const LONG_ID: &str = "schema_evolution_e2e_419362_660179359383";
+
+    #[test]
+    fn a_long_runner_id_composes_a_data_socket_a_peer_directory_can_bind() {
+        let dir = PathBuf::from(PEER_DIR);
+        fs::create_dir_all(&dir).expect("the peer directory");
+
+        let path =
+            stream_socket_path_in(&dir, LONG_ID, "secondary").expect("the name fits the wall");
+
+        assert!(
+            path.len() <= 107,
+            "{} is {} bytes; sun_path holds 107 and a NUL",
+            path,
+            path.len()
+        );
+
+        let _ = fs::remove_file(&path);
+        std::os::unix::net::UnixListener::bind(&path)
+            .unwrap_or_else(|e| panic!("the controller binds {}: {}", path, e));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_id_field_is_shortened_by_the_id_alone_and_never_by_the_directory() {
+        let short = PathBuf::from("/run/flezha");
+        let long = PathBuf::from(PEER_DIR);
+
+        let in_short = stream_socket_path_in(&short, LONG_ID, "secondary").expect("fits");
+        let in_long = stream_socket_path_in(&long, LONG_ID, "secondary").expect("fits");
+
+        // The controller and the runner resolve their directories separately;
+        // two file names for one runner would never meet.
+        assert_eq!(
+            Path::new(&in_short).file_name(),
+            Path::new(&in_long).file_name()
+        );
+    }
+
+    #[test]
+    fn a_shortened_id_is_the_ids_own_prefix_and_its_digest() {
+        let field = bounded_id(LONG_ID);
+
+        assert_eq!(field.len(), STREAM_SOCKET_ID_MAX);
+        // The digest is SHA-256 over the runner id's bytes, so it is
+        // reproducible outside this repository: `printf %s <id> | sha256sum`.
+        assert_eq!(field, "schema_evol~d33017db4b61");
+        assert_eq!(
+            bounded_id(LONG_ID),
+            field,
+            "the same id gives the same field"
+        );
+
+        // The literal every other end of this name is pinned to;
+        // `Flezha.Socket.SupportTest` asserts the same string from the
+        // controller's side.
+        assert_eq!(
+            stream_socket_path_in(Path::new(PEER_DIR), LONG_ID, "secondary").expect("fits"),
+            format!(
+                "{}/secondary_stream_schema_evol~d33017db4b61.sock",
+                PEER_DIR
+            )
+        );
+    }
+
+    #[test]
+    fn an_id_within_the_ceiling_stays_readable() {
+        // The longest id `Identificator.unique_id/1` mints in the default
+        // namespace: four numbers of four digits each.
+        let id = "default_1000100010001000";
+        assert_eq!(id.len(), STREAM_SOCKET_ID_MAX);
+        assert_eq!(bounded_id(id), id);
+        assert_eq!(bounded_id("default_1_2_3_4"), "default_1_2_3_4");
+    }
+
+    #[test]
+    fn a_directory_that_cannot_hold_a_data_socket_is_refused_by_name_and_length() {
+        let dir = PathBuf::from(format!("/tmp/{}", "d".repeat(80)));
+
+        let refusal = stream_socket_path_in(&dir, "default_1_2_3_4", "secondary")
+            .expect_err("a directory this long leaves no room for a socket name");
+
+        let text = refusal.to_string();
+        assert!(
+            text.contains("secondary_stream_default_1_2_3_4.sock"),
+            "{}",
+            text
+        );
+        assert!(text.contains("123 bytes"), "{}", text);
+        assert!(text.contains("107"), "{}", text);
+    }
+
     #[test]
     fn the_socket_predicate_recognises_the_names_this_module_creates() {
         assert!(is_flezha_socket(CONTROL_SOCKET_FILE));
         for stream_type in ["primary", "secondary"] {
-            let name = format!(
-                "{}{}{}{}",
-                stream_type, STREAM_SOCKET_INFIX, "runner-1", SOCKET_SUFFIX
-            );
-            assert!(is_flezha_socket(&name), "{}", name);
+            for id in ["runner-1", &bounded_id(LONG_ID)] {
+                let name = format!(
+                    "{}{}{}{}",
+                    stream_type, STREAM_SOCKET_INFIX, id, SOCKET_SUFFIX
+                );
+                assert!(is_flezha_socket(&name), "{}", name);
+            }
         }
 
         // A directory an operator named through FLEZHA_SOCKET_FILES_PATH may

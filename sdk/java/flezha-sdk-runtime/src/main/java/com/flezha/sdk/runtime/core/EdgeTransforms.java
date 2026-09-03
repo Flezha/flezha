@@ -10,10 +10,11 @@ import java.util.List;
  *
  * <p>Three callers evaluate this rule — {@link EntityRouting#valuesForEntity}
  * at delivery, {@link EntityRouting#prepare} when the core asks a payload for
- * its keys or its event time, and {@link EmitContext} producer-side. KI-55 is
- * that the first and the last both run for one inter-procedure stream edge;
- * dropping a caller is that fix and is not made here. One implementation is
- * what makes the fix one edit rather than three.
+ * its keys or its event time, and {@link EmitContext} producer-side. The value
+ * a handler sees has crossed the chain exactly once: a stream producer
+ * evaluates the edge as its activation completes, and delivery evaluates it
+ * only for the payloads no producer transformed. The prepare crossing answers
+ * a question about a payload and hands no value on.
  */
 final class EdgeTransforms {
 

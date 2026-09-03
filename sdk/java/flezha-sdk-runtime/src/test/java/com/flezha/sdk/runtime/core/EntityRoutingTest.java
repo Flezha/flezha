@@ -138,8 +138,8 @@ class EntityRoutingTest extends DispatchTestBase {
     }
 
     @Test
-    @DisplayName("KI-55: a STREAM inter-proc edge map applies TWICE — pins the defect, not the contract")
-    void interProcEdgeMapAppliesTwice() {
+    @DisplayName("a STREAM inter-proc edge map applies exactly once, producer-side")
+    void interProcEdgeMapAppliesOnce() {
         StreamOperativeClassRegistry.registerClass(MappedPipelineOperative.class);
         ItemEffect produced = soleEffect(work("mapped_pipeline_op", 0, Optional.empty(), 0, input(0, "v", 1)));
         Output edge = produced.outputs().get(0);
@@ -150,15 +150,49 @@ class EntityRoutingTest extends DispatchTestBase {
                 0,
                 new WorkItem.Input(1, edge.payload(), List.of(), OptionalLong.empty(), false, 2)));
 
-        // collectEdgeOutputs applies the chain producer-side and valuesForEntity
-        // applies it again at delivery, so a map composes with itself. The
-        // contract (sdk-poll-core, "Edge transforms and keys evaluate
-        // producer-side") says `=M:mid:v`. This asserts what the code DOES so
-        // the suite is green and a fix cannot land silently: invert it to
-        // `=M:mid:v` when KI-55 is closed. Every transform elsewhere in the
-        // tree sits on an ENTRY channel, where there is no producer-side
-        // application, which is why nothing else sees this.
-        assertThat(RECORDED).containsExactly("=M:M:mid:v");
+        // collectEdgeOutputs applied the chain when the producing activation
+        // completed, so the payload crosses already mapped and delivery adds
+        // nothing. Every other transform in the tree sits on an ENTRY channel,
+        // where the producer is the wire and delivery IS the one application.
+        assertThat(RECORDED).containsExactly("=M:mid:v");
+    }
+
+    @Test
+    @DisplayName("an inter-proc consumer narrows on the once-transformed value, by key and by entitiesFor")
+    void interProcConsumersNarrowOnTheTransformedValue() {
+        StreamOperativeClassRegistry.registerClass(MappedStaticPipelineOperative.class);
+        StreamOperativeClassRegistry.registerClass(MappedKeyedPipelineOperative.class);
+
+        // entitiesFor: the core cannot narrow an unkeyed edge output to a
+        // static Entity, so it fans and delivery narrows. `a:mid:1` names
+        // Entity `a` and no other.
+        Output fanned = soleEffect(work("mapped_static_op", 0, Optional.empty(), 0, input(0, "1", 1)))
+                .outputs()
+                .get(0);
+        deliver("mapped_static_op", 1, "a", fanned);
+        deliver("mapped_static_op", 1, "b", fanned);
+        assertThat(RECORDED).containsExactly("a#1=a:mid:1");
+
+        RECORDED.clear();
+        // The edge key: the producer already computed it and the core routed
+        // on it, so re-reading it at delivery must agree.
+        Output keyed = soleEffect(work("mapped_keyed_op", 0, Optional.empty(), 0, input(0, "v", 1)))
+                .outputs()
+                .get(0);
+        assertThat(keyed.key()).hasValue("mid");
+        deliver("mapped_keyed_op", 1, "mid", keyed);
+        deliver("mapped_keyed_op", 1, "other", keyed);
+        assertThat(RECORDED).containsExactly("mid=K:mid:v");
+    }
+
+    /** Hand one produced Edge output to `entityKey`'s cell of its consumer. */
+    private void deliver(String factory, int procedure, String entityKey, Output produced) {
+        soleEffect(work(
+                factory,
+                procedure,
+                Optional.of(entityKey),
+                0,
+                new WorkItem.Input(1, produced.payload(), List.of(), OptionalLong.empty(), false, 2)));
     }
 
     @Test

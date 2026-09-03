@@ -10,7 +10,7 @@ use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::LocalPid;
 
 use crate::driver_msg::{report_gate, send_closed_msg, send_connection_msg};
-use crate::driver_stats::{DriverStats, StreamSnapshot};
+use crate::driver_stats::{DriverStats, StreamCounters, StreamSnapshot};
 use crate::frame_buffer::{FrameBuffer, Inbox};
 use crate::resources::StreamHandle;
 
@@ -53,10 +53,7 @@ struct StreamState {
     gate: Arc<SendGate>,
     // Liveness counters (single-threaded driver, no contention). Copied into
     // the DriverStats snapshot once per loop iteration.
-    frames_written: u64,
-    frames_read: u64,
-    last_write_ms: u64,
-    last_read_ms: u64,
+    counters: StreamCounters,
 }
 
 /// Start result passed back from driver thread to NIF via channel.
@@ -330,19 +327,7 @@ impl UdsDriver {
     fn snapshot_streams(&self) -> HashMap<u64, StreamSnapshot> {
         self.streams
             .iter()
-            .map(|(&id, s)| {
-                (
-                    id,
-                    StreamSnapshot {
-                        write_buffer_len: s.write_buffer.len() as u64,
-                        write_buffer_dropped: s.gate.refused(),
-                        frames_written: s.frames_written,
-                        frames_read: s.frames_read,
-                        last_write_ms: s.last_write_ms,
-                        last_read_ms: s.last_read_ms,
-                    },
-                )
-            })
+            .map(|(&id, s)| (id, s.counters.snapshot(&s.write_buffer, &s.gate)))
             .collect()
     }
 
@@ -397,10 +382,7 @@ impl UdsDriver {
                 inbox: Inbox::new(),
                 write_buffer: Vec::new(),
                 gate,
-                frames_written: 0,
-                frames_read: 0,
-                last_write_ms: 0,
-                last_read_ms: 0,
+                counters: StreamCounters::default(),
             },
         );
         self.token_to_stream.insert(token, stream_id);
@@ -446,8 +428,8 @@ impl UdsDriver {
                         }
                     };
                     let owner = *state.owner.lock().unwrap();
-                    state.last_read_ms = now_ms;
-                    state.frames_read += frames.len() as u64;
+                    state.counters.last_read_ms = now_ms;
+                    state.counters.frames_read += frames.len() as u64;
                     state.inbox.deliver(owner, stream_id, frames);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => return false,
@@ -481,7 +463,7 @@ fn enqueue_write(
             return false;
         }
 
-        state.frames_written += 1;
+        state.counters.frames_written += 1;
         return flush_pending(stream_id, state, poll, now_ms);
     }
     false
@@ -496,7 +478,7 @@ fn flush_pending(stream_id: u64, state: &mut StreamState, poll: &mut Poll, now_m
             Ok(0) => break,
             Ok(n) => {
                 state.write_buffer.drain(..n);
-                state.last_write_ms = now_ms;
+                state.counters.last_write_ms = now_ms;
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 let _ = poll.registry().reregister(
