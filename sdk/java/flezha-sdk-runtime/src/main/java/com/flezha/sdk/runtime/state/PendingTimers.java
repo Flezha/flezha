@@ -1,8 +1,6 @@
 package com.flezha.sdk.runtime.state;
 
 import com.flezha.sdk.state.TimerKind;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.NavigableSet;
 import java.util.TreeSet;
 import javax.annotation.Nonnull;
@@ -66,38 +64,5 @@ public final class PendingTimers {
 
     public boolean isEmpty() {
         return eventTime.isEmpty() && processingTime.isEmpty();
-    }
-
-    /**
-     * Scheduled timestamps at or below {@code upto}, ascending — what a
-     * high-water crossing (event time) or a wheel tick (processing time) must
-     * fire.
-     */
-    @Nonnull
-    public List<Long> due(@Nonnull TimerKind kind, long upto) {
-        return new ArrayList<>(setFor(kind).headSet(upto, true));
-    }
-
-    /** Every pending timer of one kind, ascending. */
-    @Nonnull
-    public List<Long> all(@Nonnull TimerKind kind) {
-        return new ArrayList<>(setFor(kind));
-    }
-
-    /**
-     * The full set expressed as registrations. A compaction re-states the
-     * pending timers this way at a seq ABOVE the snapshot's, so truncating the
-     * ops the snapshot covers cannot lose them.
-     */
-    @Nonnull
-    public List<TimerOp> asRegisterOps() {
-        List<TimerOp> ops = new ArrayList<>(size());
-        for (long at : eventTime) {
-            ops.add(TimerOp.register(TimerKind.EVENT_TIME, at));
-        }
-        for (long at : processingTime) {
-            ops.add(TimerOp.register(TimerKind.PROCESSING_TIME, at));
-        }
-        return ops;
     }
 }

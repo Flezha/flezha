@@ -14,6 +14,8 @@ defmodule Flezha.Observability.OtpBackendTest do
     TransportSource
   }
 
+  alias Flezha.Transport.LivenessCounters
+
   @moduletag :observability_otp_backend
 
   setup do
@@ -162,6 +164,32 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       poll(pid, 1)
       :ok = GenServer.stop(pid)
+    end
+
+    test "an operative's parked-drop count is summed into the data-plane aggregates" do
+      Application.put_env(
+        :flezha,
+        :observability,
+        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
+          poll_intervals: %{flezha_transport: 25}
+        )
+      )
+
+      operative = "obs_parked_#{System.unique_integer([:positive])}"
+      ref = LivenessCounters.register_operative(operative)
+      LivenessCounters.bump_operative(ref, :parked_drops)
+      LivenessCounters.bump_operative(ref, :parked_drops)
+
+      {:ok, pid} = TransportSource.start_link([])
+      poll(pid, 1)
+      :ok = GenServer.stop(pid)
+
+      signals = RingBufferSink.query(:flezha_transport, 0)
+      drops = Enum.find(signals, fn s -> s.name == :operative_parked_drops end)
+
+      assert drops, "the new slot never reached a signal"
+      assert drops.measurements[:count] >= 2
+      assert drops.metadata[:scope] == :data_plane
     end
   end
 

@@ -16,11 +16,13 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   """
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.Lifecycle
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: writes Application env; the live controller and its fleet; node-global tables.
@@ -316,6 +318,46 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert delta_mib < 50,
            "process memory delta exceeded 50 MiB: #{delta_mib} MiB " <>
              "(baseline=#{baseline}, final=#{final})"
+  end
+
+  describe "a park is reported, not only logged" do
+    test "a park caused by a plugin names the plugin that caused it" do
+      id = "park-plugin-#{System.unique_integer([:positive])}"
+      reason = {:plugin_prepare_failed, "orphan", {:module_not_loaded, MyOrg.Uninstalled}}
+
+      MessageTestHelper.forward_telemetry(
+        [:flezha, :operative, :parked],
+        :parked,
+        &(Map.get(&1, :operative_id) == id)
+      )
+
+      state = %Overwatch{id: id, namespace: @namespace}
+
+      assert %Overwatch{init_error: ^reason} = Lifecycle.park(state, reason)
+
+      assert_receive {:parked, %{count: 1}, meta}
+      assert meta.namespace == @namespace
+      assert meta.reason == reason
+      assert meta.plugin_id == "orphan"
+    end
+
+    test "a park with no plugin behind it is reported too, and claims no plugin id" do
+      id = "park-other-#{System.unique_integer([:positive])}"
+
+      MessageTestHelper.forward_telemetry(
+        [:flezha, :operative, :parked],
+        :parked,
+        &(Map.get(&1, :operative_id) == id)
+      )
+
+      state = %Overwatch{id: id, namespace: @namespace}
+
+      assert %Overwatch{} = Lifecycle.park(state, {:restore_refused, :sdk_refused})
+
+      assert_receive {:parked, %{count: 1}, meta}
+      assert meta.reason == {:restore_refused, :sdk_refused}
+      assert meta.plugin_id == nil
+    end
   end
 end
 

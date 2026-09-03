@@ -82,7 +82,8 @@ defmodule Flezha.Observability.TelemetryBridge do
       {:flezha_operative_forward, :saturated, :event},
     [:flezha, :plugin, :http_poll, :injected] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
-    [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event}
+    [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
+    [:flezha, :operative, :parked] => {:flezha_operative, :operative_parked_total, :metric}
   }
 
   # ---------- Public API ----------

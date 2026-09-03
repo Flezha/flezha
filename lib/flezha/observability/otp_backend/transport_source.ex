@@ -98,6 +98,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit_sum(:operative_io_in_received, operatives, :io_in_received)
     emit_sum(:operative_forwarded, operatives, :forwarded)
     emit_sum(:operative_filtered_nil, operatives, :filtered_nil)
+    emit_sum(:operative_parked_drops, operatives, :parked_drops)
 
     # Credit-grant flow control. Any non-zero overrun is an anomaly (a
     # credit-speaking sender violated its window), never expected load

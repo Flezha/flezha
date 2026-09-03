@@ -76,7 +76,10 @@ The verdicts SHALL be:
 - `{:error, :refused}` — the durable log refused the append
 
 The existing `{:io_in, _, _}` cast behaviour SHALL be unchanged, including its silent drop for
-an `init_error`-parked operative.
+an `init_error`-parked operative. The drop SHALL be silent to the sender and never unrecorded:
+each dropped cast SHALL increment a per-operative counter, summed into the data-plane aggregates
+the transport source publishes, so a cast-based source's loss is measurable from outside the
+controller for as long as the operative stays parked.
 
 Under the effectively-once tier the verdict SHALL be answered when the durable log answers the
 append — the operative's host does not wait for the log — in call order, so a caller parks
@@ -139,6 +142,12 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 - **WHEN** the many-input form is invoked for an operative id with no registered pid in the
   namespace
 - **THEN** it SHALL return `{:error, :not_found}` once per input and send nothing
+
+#### Scenario: The parked cast's drop is counted
+
+- **WHEN** `{:io_in, message, metadata}` is cast twice to an operative whose `init_error` is set
+- **THEN** the operative's parked-drop counter SHALL read `2`, its received-input counter SHALL
+  stay at `0`, and the aggregate the transport source publishes SHALL include those two drops
 
 ### Requirement: Retry until confirmed, with bounded queue and back-pressure
 

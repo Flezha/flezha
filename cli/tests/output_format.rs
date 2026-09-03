@@ -1,7 +1,9 @@
 //! One question, one answer: `--json` and `--output json` are two spellings of
 //! the same request, and every verb that renders must mean the same thing by
-//! both (KI-80). `flz plugin list` additionally has to stop letting the format
-//! flag choose *which* collection it lists (KI-148).
+//! both (KI-80). The same holds of an option's four forms — `--long=value`,
+//! `--long value`, `-s=value`, `-s value`. `flz plugin list` additionally has
+//! to stop letting the format flag choose *which* collection it lists
+//! (KI-148).
 //!
 //! The evidence is the RPC expression itself, so the fixture is a `flzvm` that
 //! echoes what it was handed instead of running it.
@@ -166,6 +168,22 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["plugin", "list", "--installed", "--output", "json"],
         Rpc("Flezha.Service.CliManager.list_installed_plugins(\"json\")"),
+    ),
+    // `flz plugin enable` passes its options on rather than rendering them,
+    // and reads them through the second scanner. An option's four spellings
+    // are one option there too: a short flag written with `=` is what the
+    // operator typed.
+    (
+        &["plugin", "enable", "p", "prov", "--output=json"],
+        Rpc(
+            r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{}", "{\"output\": \"json\", \"namespace\": \"default\"}")"#,
+        ),
+    ),
+    (
+        &["plugin", "enable", "p", "prov", "-o=json"],
+        Rpc(
+            r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{}", "{\"output\": \"json\", \"namespace\": \"default\"}")"#,
+        ),
     ),
     // The provider registry has no JSON rendering, so asking for one is
     // refused rather than answered with a different query.

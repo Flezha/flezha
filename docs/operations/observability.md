@@ -46,7 +46,9 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   `driver_write_buffer_bytes`, `driver_streams`) and BEAM aggregates under `%{scope: :data_plane}` — counters
   `channel_io_in_received`, `channel_send_frame_calls`, `channel_nil_drops`,
   `channel_flz_data_received`, `operative_io_in_received`, `operative_forwarded`,
-  `operative_filtered_nil`, `credit_active_sessions`, `credit_overrun_total`, `credit_parked`,
+  `operative_filtered_nil`, `operative_parked_drops` (ingress casts a parked operative dropped —
+  the confirming entry point refuses instead, so this counts only what a cast-based source lost),
+  `credit_active_sessions`, `credit_overrun_total`, `credit_parked`,
   `mailbox_blocked`, `mailbox_drops_newest`, `mailbox_drops_oldest`, `mailbox_pending_pushes`
   (the runner's overflow self-report: producers held on full entity mailboxes, Entities
   withheld work because a consumer will not take their output, and what a shedding operative
@@ -396,6 +398,7 @@ event segment unless shown as `→ name`.
 | `:flezha_dlq`               | metric: `[:dlq, :parked]` → `:dlq_parked_total`; `[:dlq, :retention_dropped]` → `:dlq_dropped_by_retention_total`; `[:dlq, :usage]` → `:dlq_usage`. event: `[:dlq, :operator_drop \| :operator_replay]`                                                   |
 | `:flezha_operative_forward` | metric: `[:plugin, :operative_forward, :delivered \| :retry \| :queue_depth]`. event: `[:plugin, :operative_forward, :saturated]`                                                                                                                         |
 | `:flezha_http_poll`         | metric: `[:plugin, :http_poll, :injected \| :unchanged]`. event: `[:plugin, :http_poll, :failed]`                                                                                                                                                         |
+| `:flezha_operative`         | metric: `[:operative, :parked]` → `:operative_parked_total`. Metadata `namespace`, `operative_id`, `reason`, and `plugin_id` — the plugin that caused the park, or `nil` when no plugin did.                                                               |
 
 ### Service API
 

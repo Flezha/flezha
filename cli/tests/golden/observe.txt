@@ -9,3 +9,4 @@ COMMANDS:
     tail       Stream live signals from a source via the PubSub sink
     enable     Enable a source (transitions its registry status to :active)
     disable    Disable a source (transitions to :disabled — Bus drops emits)
+    help       Show this help message

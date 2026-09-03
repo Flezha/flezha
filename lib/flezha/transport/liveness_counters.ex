@@ -72,7 +72,7 @@ defmodule Flezha.Transport.LivenessCounters do
     :stale_writer_refused,
     :send_gate_held
   ]
-  @operative_slots [:io_in_received, :forwarded, :filtered_nil]
+  @operative_slots [:io_in_received, :forwarded, :filtered_nil, :parked_drops]
   @channel_size length(@channel_slots)
   @operative_size length(@operative_slots)
 

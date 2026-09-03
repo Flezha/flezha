@@ -3,7 +3,6 @@ package com.flezha.sdk.runtime.operative;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,23 +82,9 @@ public final class StreamOperativeClassRegistry {
         return e == null ? null : e.topology();
     }
 
-    public static Class<? extends StreamOperative> getStreamOperativeClass(@Nonnull String factoryId) {
-        Entry e = ENTRIES.get(factoryId);
-        return e == null ? null : e.operativeClass();
-    }
-
     @Nonnull
     public static List<String> factoryIds() {
         return List.copyOf(ENTRIES.keySet());
-    }
-
-    @Nonnull
-    public static Map<String, StreamOperativeTopology> snapshot() {
-        Map<String, StreamOperativeTopology> out = new LinkedHashMap<>();
-        for (Map.Entry<String, Entry> e : ENTRIES.entrySet()) {
-            out.put(e.getKey(), e.getValue().topology());
-        }
-        return Map.copyOf(out);
     }
 
     public static boolean isEmpty() {

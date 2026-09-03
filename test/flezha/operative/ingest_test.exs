@@ -17,6 +17,7 @@ defmodule FlezhaTest.Operative.IngestTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
   alias Flezha.State.{InputLog, ProcInbox, Supervisor, TestHelpers}
+  alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -390,5 +391,26 @@ defmodule FlezhaTest.Operative.IngestTest do
 
     assert {:noreply, ^state} = Overwatch.handle_cast({:io_in, "hello", %{}}, state)
     refute_received {:channel_got, _, _}
+  end
+
+  test "the parked cast's drop is counted, so the loss shows in the liveness metrics" do
+    inst = instance_id()
+    ref = LivenessCounters.register_operative(inst)
+
+    state =
+      state(inst,
+        init_error: :sdk_start_failed,
+        channel: fake_channel(:ok),
+        liveness_ref: ref
+      )
+
+    assert {:noreply, ^state} = Overwatch.handle_cast({:io_in, "a", %{}}, state)
+    assert {:noreply, ^state} = Overwatch.handle_cast({:io_in, "b", %{}}, state)
+    refute_received {:channel_got, _, _}
+
+    row = Enum.find(LivenessCounters.snapshot_all().operatives, &(&1.operative_id == inst))
+
+    assert row[:parked_drops] == 2
+    assert row[:io_in_received] == 0, "a dropped cast was never received for processing"
   end
 end

@@ -5,6 +5,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
+  alias Flezha.Operative.{Lifecycle, Overwatch}
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -180,6 +181,41 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert mismatch
     assert mismatch.measurements[:count] == 2
     assert mismatch.metadata[:operatives] == ["btc_kraken", "eth_kraken"]
+  end
+
+  test "an operative park reaches the bus from the real lifecycle call site" do
+    park_sink = :"obs_tbridge_park_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: park_sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_operative]}
+      })
+
+    on_exit(fn -> Registry.unregister_sink(park_sink) end)
+    drain_mailbox()
+
+    reason = {:plugin_prepare_failed, "kraken_sink", {:module_not_loaded, MyOrg.Uninstalled}}
+
+    Lifecycle.park(
+      %Overwatch{id: "obs_park_operative", namespace: "default"},
+      reason
+    )
+
+    parked =
+      receive_until(
+        fn s -> s.source == :flezha_operative and s.name == :operative_parked_total end,
+        500
+      )
+
+    assert parked
+    assert parked.kind == :metric
+    assert parked.measurements[:count] == 1
+    assert parked.metadata[:operative_id] == "obs_park_operative"
+    assert parked.metadata[:plugin_id] == "kraken_sink"
+    assert parked.metadata[:reason] == reason
   end
 
   test "DLQ park / retention / usage counters reach the bus through the real store" do

@@ -268,13 +268,16 @@ pub(crate) fn extract_opts(args: &[String]) -> Vec<(String, String)> {
             if !arg.contains('=') && paired.is_some() {
                 i += 1;
             }
-        } else if let Some((key, value)) = arg.strip_prefix("--").and_then(|r| r.split_once('=')) {
-            flags.push((key.to_string(), strip_quotes(value)));
-        } else if !arg.contains('=') {
-            if let (Some(key), Some(value)) = (option_key(arg), paired) {
+        } else if let Some((flag, value)) = arg.split_once('=') {
+            // `--output=json` and `-o=json` are one option in two spellings, so
+            // both resolve their key through the same alias table as the
+            // space-separated forms below.
+            if let Some(key) = option_key(flag) {
                 flags.push((key, strip_quotes(value)));
-                i += 1;
             }
+        } else if let (Some(key), Some(value)) = (option_key(arg), paired) {
+            flags.push((key, strip_quotes(value)));
+            i += 1;
         }
 
         i += 1;
@@ -528,6 +531,30 @@ mod tests {
         assert!(opts.iter().any(|(k, v)| k == "namespace" && v == "prod"));
         assert!(!opts.iter().any(|(k, _)| k == "extension"));
         assert!(!opts.iter().any(|(k, _)| k.starts_with("on_input")));
+    }
+
+    /// The option scanner of a plugin enable reads the same four forms as
+    /// `extract_param`: a short flag written with `=` is the option the
+    /// operator typed, and a bare `key=value` word is a positional argument.
+    #[test]
+    fn extract_opts_reads_all_four_forms() {
+        for form in [
+            v(&["--output=json"]),
+            v(&["--output", "json"]),
+            v(&["-o=json"]),
+            v(&["-o", "json"]),
+        ] {
+            let opts = extract_opts(&form);
+            assert!(
+                opts.contains(&("output".to_string(), "json".to_string())),
+                "{:?} -> {:?}",
+                form,
+                opts
+            );
+        }
+
+        let positional = extract_opts(&v(&["topic=t"]));
+        assert!(!positional.iter().any(|(key, _)| key == "topic"));
     }
 
     #[test]

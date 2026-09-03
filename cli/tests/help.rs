@@ -1,10 +1,10 @@
 //! Every help screen `flz` prints, byte for byte.
 //!
-//! The text is hand-aligned and internally inconsistent — `flz help`'s `runner`
-//! row sits two columns left of its siblings, `flz audit help`'s `stats` row one
-//! — so it cannot be re-derived "correctly" without changing what an operator
-//! sees. The golden files are captured from the binary, not written by hand, and
-//! they are what proves a rendering change is deliberate.
+//! The text is hand-aligned and not uniform across screens — `flz schedule
+//! help` sets two description columns inside one block — so it cannot be
+//! re-derived "correctly" without changing what an operator sees. The golden
+//! files are captured from the binary, not written by hand, and they are what
+//! proves a rendering change is deliberate.
 
 use std::fs;
 use std::path::PathBuf;
@@ -109,6 +109,49 @@ fn the_golden_files_and_the_screens_are_the_same_set() {
     declared.sort();
 
     assert_eq!(declared, on_disk);
+}
+
+/// Every command table answers `help`, so every screen that lists its
+/// subcommands lists it among them. A screen whose list is of whole
+/// invocations rather than subcommands has no such block and is not asked.
+#[test]
+fn every_subcommand_list_offers_help() {
+    let missing: Vec<&str> = SCREENS
+        .iter()
+        .filter(|(name, _)| {
+            let text = fs::read_to_string(golden_dir().join(format!("{}.txt", name)))
+                .unwrap_or_else(|e| panic!("golden file for '{}': {}", name, e));
+            subcommand_rows(&text).is_some_and(|rows| !rows.contains(&"help"))
+        })
+        .map(|(name, _)| *name)
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "{} screen(s) list their subcommands without `help`, which they answer: {}",
+        missing.len(),
+        missing.join(", ")
+    );
+}
+
+/// The leading word of each row of a screen's `COMMANDS:` / `SUBCOMMANDS:`
+/// block. `None` when the screen has no such block. A row starts at column 5;
+/// a deeper indent is a continuation of the row above it.
+fn subcommand_rows(screen: &str) -> Option<Vec<&str>> {
+    let mut block = screen
+        .lines()
+        .skip_while(|l| !matches!(l.trim_end(), "COMMANDS:" | "SUBCOMMANDS:"))
+        .skip(1)
+        .peekable();
+    block.peek()?;
+
+    Some(
+        block
+            .take_while(|l| !l.trim().is_empty())
+            .filter(|l| l.starts_with("    ") && !l.starts_with("     "))
+            .filter_map(|l| l.split_whitespace().next())
+            .collect(),
+    )
 }
 
 /// The first differing line, with its neighbours — a whole-screen diff buries

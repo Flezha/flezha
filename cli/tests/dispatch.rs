@@ -69,19 +69,18 @@ const COMMANDS: &[(&str, &[&str], &str)] = &[
             "outbox",
             "journal",
             "inbox",
-            // No "help": `flz state help` works, but its screen is the one
-            // that does not list `help` among its subcommands.
+            "help",
         ],
         "Invalid argument",
     ),
     (
         "observe",
-        &["sources", "sinks", "tail", "enable", "disable"],
+        &["sources", "sinks", "tail", "enable", "disable", "help"],
         "Unknown observe subcommand",
     ),
     (
         "audit",
-        &["list", "read", "tail", "stats", "rotate"],
+        &["list", "read", "tail", "stats", "rotate", "help"],
         "Unknown audit subcommand",
     ),
     (

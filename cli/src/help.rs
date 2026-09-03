@@ -1,10 +1,10 @@
 //! Every help screen `flz` prints, as data rather than as 27 functions.
 //!
-//! The text is hand-aligned and internally inconsistent — two rows in this tree
-//! sit one and two columns off their siblings — so no renderer computes a
-//! column here: a screen is its own bytes, and the only mechanism is the table
-//! that names them. `cli/tests/golden/` holds the same 31 screens captured from
-//! the binary, which is what proves an edit here is deliberate.
+//! The text is hand-aligned and not uniform across screens — `flz schedule
+//! help` sets two description columns inside one block — so no renderer
+//! computes a column here: a screen is its own bytes, and the only mechanism
+//! is the table that names them. `cli/tests/golden/` holds the same 31 screens
+//! captured from the binary, which is what proves an edit here is deliberate.
 
 /// One help screen, without its trailing newline.
 pub(crate) type Help = &'static str;
@@ -40,8 +40,9 @@ COMMANDS:
     list      List the on-disk catalog of rotated files
     read      Read records from a specific file with optional filters
     tail      Stream live audit records until a duration elapses
-    stats    Show operational snapshot (file path, size, totals, drops)
+    stats     Show operational snapshot (file path, size, totals, drops)
     rotate    Force an immediate rotation of the active file
+    help      Show this help message
 
 OPTIONS:
     --json    Emit machine-readable output (NDJSON for tail/read).
@@ -196,7 +197,7 @@ COMMANDS:
     cluster        Controller cluster status (nodes, leader, operative health)
     operative      Operative management commands
     namespace      Namespace management commands
-    runner       Runner management commands
+    runner         Runner management commands
     plugin         Plugin management commands
     boot           Boot/recovery status, await, and legacy snapshot import
     state          Per-Entity state queries (time-travel, retention, list)
@@ -276,7 +277,8 @@ COMMANDS:
     sinks      List registered sinks and their overflow policy / watermark
     tail       Stream live signals from a source via the PubSub sink
     enable     Enable a source (transitions its registry status to :active)
-    disable    Disable a source (transitions to :disabled — Bus drops emits)"#;
+    disable    Disable a source (transitions to :disabled — Bus drops emits)
+    help       Show this help message"#;
 
 pub(crate) const OPERATIVE: Help = r#"flz operative - Operative management commands
 
@@ -446,6 +448,7 @@ SUBCOMMANDS:
     outbox <operative/procedure/key>         Effectively-once outbox status (lag, cursor, watermark)
     journal <operative/instance>             Workflow instance proc-journal (committed procs, iterations, park)
     inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)
+    help                                     Show this help message
 
 EXAMPLES:
     flz state get MarketOperative/OhlcProcedure/M1

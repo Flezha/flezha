@@ -450,12 +450,15 @@ defmodule Flezha.Operative.Overwatch do
   # handle_cast
   # ---------------------------------------------------------------
 
-  # Parked: silently drop ingress casts. A sender that needs the payload held
-  # rather than dropped uses the confirming entry point, which answers
-  # `{:error, :not_ready}` instead.
+  # Parked: drop ingress casts. A sender that needs the payload held rather than
+  # dropped uses the confirming entry point, which answers `{:error, :not_ready}`
+  # instead. The drop is silent to the sender by contract but never unrecorded:
+  # `parked_drops` is the only handle a cast-based source's loss has while the
+  # operative stays parked.
   @impl true
   def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
       when reason != nil do
+    LivenessCounters.bump_operative(state.liveness_ref, :parked_drops)
     {:noreply, state}
   end
 

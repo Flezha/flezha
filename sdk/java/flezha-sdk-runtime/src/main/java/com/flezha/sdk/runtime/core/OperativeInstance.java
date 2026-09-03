@@ -111,11 +111,6 @@ public final class OperativeInstance {
         return factoryId;
     }
 
-    @Nonnull
-    public String operativeId() {
-        return operativeId;
-    }
-
     private static Procedure<?, ?, ?, ?, ?, ?> instantiate(ProcedureDescriptor desc) {
         try {
             return desc.procedureClass().getDeclaredConstructor().newInstance();

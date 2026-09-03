@@ -7,8 +7,9 @@ COMMANDS:
     list      List the on-disk catalog of rotated files
     read      Read records from a specific file with optional filters
     tail      Stream live audit records until a duration elapses
-    stats    Show operational snapshot (file path, size, totals, drops)
+    stats     Show operational snapshot (file path, size, totals, drops)
     rotate    Force an immediate rotation of the active file
+    help      Show this help message
 
 OPTIONS:
     --json    Emit machine-readable output (NDJSON for tail/read).

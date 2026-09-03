@@ -8,7 +8,7 @@ COMMANDS:
     cluster        Controller cluster status (nodes, leader, operative health)
     operative      Operative management commands
     namespace      Namespace management commands
-    runner       Runner management commands
+    runner         Runner management commands
     plugin         Plugin management commands
     boot           Boot/recovery status, await, and legacy snapshot import
     state          Per-Entity state queries (time-travel, retention, list)

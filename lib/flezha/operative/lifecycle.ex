@@ -433,10 +433,30 @@ defmodule Flezha.Operative.Lifecycle do
   # Plugins remain in `:prepared` so no upstream I/O fires while parked. The
   # reconciler drives the event-driven un-park (`runner_migrate`) once a healthy
   # runner for the operative's factory is available.
+  #
+  # Every park funnels through here, so it is the one point that can report one.
+  # The reason rides the event whole: a plugin park's already names both the
+  # plugin and its provider module.
   @spec park(Overwatch.t(), term()) :: Overwatch.t()
   def park(%Overwatch{} = state, reason) do
+    :telemetry.execute(
+      [:flezha, :operative, :parked],
+      %{count: 1},
+      %{
+        namespace: state.namespace,
+        operative_id: state.id,
+        reason: reason,
+        plugin_id: parking_plugin(reason)
+      }
+    )
+
     Map.put(state, :init_error, reason)
   end
+
+  # A park a plugin caused names that plugin; every other reason carries `nil`
+  # rather than claim a plugin id it does not have.
+  defp parking_plugin({:plugin_prepare_failed, plugin_id, _reason}), do: plugin_id
+  defp parking_plugin(_reason), do: nil
 
   defp runner_wait_ms,
     do: Application.get_env(:flezha, :overwatch_runner_wait_ms, 30_000)

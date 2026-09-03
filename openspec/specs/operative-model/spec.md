@@ -269,3 +269,29 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 - **WHEN** the convergence loop has not yet observed the operative
 - **THEN** its health SHALL be reported `unknown` rather than invented, and its phase SHALL still be reported from the operative's own state
+
+### Requirement: A park is reported, not only logged
+
+The Controller SHALL emit `[:flezha, :operative, :parked]` with measurements `%{count: 1}` whenever an operative enters the parked state, from the single point every park funnels through, so a bind that could not complete, a restore the SDK refused and a migration that failed are each reported. The event's metadata SHALL carry the operative's `namespace` and `operative_id`, the whole park `reason` term, and `plugin_id` — the id of the plugin that caused the park, or `nil` when no plugin did, never a plugin id the reason does not name. A park caused by a plugin SHALL carry the failing plugin's provider module in its reason, so the event names both the row that refused and the module behind it. The event SHALL be lifted onto the observability bus as a `:metric` signal so a park reaches the configured exporters and not only a `:telemetry` handler.
+
+Reporting a park SHALL NOT change when one happens: an unloadable provider module still parks the operative, and the plugin fold still halts on it, leaving the rows after it unattempted.
+
+#### Scenario: A park caused by a plugin names the plugin
+
+- **WHEN** an operative parks because a plugin's provider module could not be loaded
+- **THEN** `[:flezha, :operative, :parked]` SHALL be emitted once, its metadata `plugin_id` SHALL be the failing plugin's id, and its `reason` SHALL name that plugin's provider module
+
+#### Scenario: A park with no plugin behind it is reported too
+
+- **WHEN** an operative parks for a reason no plugin caused — a restore the SDK refused, or a failed migration
+- **THEN** `[:flezha, :operative, :parked]` SHALL still be emitted once for it, carrying that reason, and its metadata `plugin_id` SHALL be `nil`
+
+#### Scenario: A park reaches the observability bus
+
+- **WHEN** an operative parks while the observability subsystem is running
+- **THEN** a `:metric` signal SHALL appear on the bus carrying the park's operative id, reason and plugin id
+
+#### Scenario: Reporting does not change the parking policy
+
+- **WHEN** one plugin in an operative's list has an unloadable provider and healthy plugins follow it
+- **THEN** the operative SHALL park exactly as before and the plugins after the failing one SHALL still never be attempted

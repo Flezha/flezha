@@ -13,6 +13,7 @@ SUBCOMMANDS:
     outbox <operative/procedure/key>         Effectively-once outbox status (lag, cursor, watermark)
     journal <operative/instance>             Workflow instance proc-journal (committed procs, iterations, park)
     inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)
+    help                                     Show this help message
 
 EXAMPLES:
     flz state get MarketOperative/OhlcProcedure/M1

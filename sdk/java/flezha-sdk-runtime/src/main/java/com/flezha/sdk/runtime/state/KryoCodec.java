@@ -7,7 +7,6 @@ import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import java.io.ByteArrayOutputStream;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -120,43 +119,9 @@ public final class KryoCodec {
         }
     }
 
-    /**
-     * Serialize {@code obj} preceded by the supplied 16-byte header. The
-     * header is written verbatim; the payload follows.
-     */
-    @Nonnull
-    public byte[] serializeWithHeader(@Nonnull Object obj, @Nonnull byte[] header) {
-        byte[] payload = serialize(obj);
-        byte[] full = new byte[header.length + payload.length];
-        System.arraycopy(header, 0, full, 0, header.length);
-        System.arraycopy(payload, 0, full, header.length, payload.length);
-        return full;
-    }
-
-    /**
-     * Decode a header-prefixed payload. Returns the 16-byte header slice and
-     * the decoded object, leaving header parsing to {@code HeaderTemplate}.
-     */
-    @Nonnull
-    public DecodedFrame deserializeWithHeader(@Nonnull byte[] bytes) {
-        if (bytes.length < 16) {
-            throw new IllegalArgumentException("frame is shorter than 16 bytes; cannot extract header");
-        }
-        byte[] header = Arrays.copyOfRange(bytes, 0, 16);
-        byte[] payload = Arrays.copyOfRange(bytes, 16, bytes.length);
-        Kryo kryo = kryoLocal.get();
-        try (Input input = new Input(payload)) {
-            Object obj = kryo.readClassAndObject(input);
-            return new DecodedFrame(header, obj);
-        }
-    }
-
     /** Aggregated registered user-type list (copy). */
     @Nonnull
     public List<Class<?>> registeredTypes() {
         return registeredTypes;
     }
-
-    /** Pair returned by {@link #deserializeWithHeader(byte[])}. */
-    public record DecodedFrame(byte[] header, Object value) {}
 }
