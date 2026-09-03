@@ -20,10 +20,13 @@ scripts/check-kind-naming.sh   # operative kinds are `stream` and `workflow`
 scripts/check-mimic-global.sh  # a test must release Mimic's global mode
 ```
 
-`format-check.sh` exits **1** when something is unformatted and **2** when a
-formatter is not installed on your box; the summary names which, and every
-other language is still reported either way. Exit 2 means CI has yet to say
-anything about that language — it is not a pass.
+`format-check.sh` reports every language it can and ends on one of three
+non-zero statuses: **1** when something is unformatted, **2** when a formatter
+is not installed on your box, and **3** when a formatter ran and did not finish
+— a missing runtime extension, an input it cannot parse, a toolchain it cannot
+reach. The summary names which checks landed where, and every other language is
+still reported whichever it is. Only **1** says anything about your source: on
+**2** and **3** that language has been checked by nothing, so neither is a pass.
 
 Two repo-wide rules that are easy to miss:
 

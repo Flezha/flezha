@@ -391,10 +391,24 @@ fn app_data_root_does_not_move_the_socket_directory() {
 #[test]
 fn a_resolution_refusal_keeps_the_socket_root_and_clears_the_rest() {
     let f = Fixture::populated();
-    // No directory can be created below a character device.
+    // Two rungs are serving and nothing says which is meant: the ladder
+    // refuses rather than choosing a controller for the operator, and the
+    // refusal names both. The repository rung is relative to the working
+    // directory, which is what makes the second one placeable.
+    let xdg = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let first = xdg.path().join("flezha");
+    let second = cwd.path().join("app_data/sockets");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    let _peers = [
+        UnixListener::bind(first.join(CONTROL_SOCKET)).expect("bind"),
+        UnixListener::bind(second.join(CONTROL_SOCKET)).expect("bind"),
+    ];
+
     let out = f
-        .cmd()
-        .env("FLEZHA_SOCKET_FILES_PATH", "/dev/null/nowhere")
+        .ladder_cmd(xdg.path())
+        .current_dir(cwd.path())
         .arg("--yes")
         .arg("--include-sockets")
         .output()
@@ -411,10 +425,40 @@ fn a_resolution_refusal_keeps_the_socket_root_and_clears_the_rest() {
     let text = stdout_of(&out);
     assert!(text.contains("kept"), "{}", text);
     assert!(
-        text.contains("no socket directory could be created"),
+        text.contains("more than one controller is listening"),
         "{}",
         text
     );
+    for named in [&first, &second] {
+        assert!(text.contains(&named.display().to_string()), "{}", text);
+    }
+    assert!(first.join(CONTROL_SOCKET).exists());
+    assert!(second.join(CONTROL_SOCKET).exists());
+}
+
+/// A socket root that resolves but cannot be read is the same outcome as one
+/// that cannot be resolved: reported, skipped, and the remaining roots still
+/// cleared. It is no longer a resolution refusal, because the run no longer
+/// tries to establish the directory in order to find that out.
+#[test]
+fn an_unreadable_socket_root_is_reported_and_the_rest_is_cleared() {
+    let f = Fixture::populated();
+    // Nothing is a directory below a character device.
+    let out = f
+        .cmd()
+        .env("FLEZHA_SOCKET_FILES_PATH", "/dev/null/nowhere")
+        .arg("--yes")
+        .arg("--include-sockets")
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(dir_is_empty(&f.root.join("state")));
+    assert!(dir_is_empty(&f.root.join("process_hub")));
+
+    let text = stdout_of(&out);
+    assert!(text.contains("kept"), "{}", text);
+    assert!(text.contains("/dev/null/nowhere"), "{}", text);
 }
 
 #[test]
@@ -505,6 +549,72 @@ fn the_socket_root_names_its_rung_in_the_dry_run_preview() {
     assert!(text.contains("$XDG_RUNTIME_DIR/flezha"), "{}", text);
     // Nothing was unlinked.
     assert!(live.join(CONTROL_SOCKET).exists());
+}
+
+/// The last rung of the ladder is `app_data/sockets` relative to the working
+/// directory, so a case about what the run creates has to own its cwd.
+#[test]
+fn no_socket_directory_is_established_by_a_run_that_clears_one() {
+    let f = Fixture::populated();
+    // A runtime directory with no `flezha/` in it: the rung exists, the
+    // directory the ladder would name under it does not.
+    let xdg = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+
+    let out = f
+        .ladder_cmd(xdg.path())
+        .current_dir(cwd.path())
+        .arg("--dry-run")
+        .arg("--include-sockets")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+
+    assert!(
+        !xdg.path().join("flezha").exists(),
+        "a preview established the per-user runtime rung: {}",
+        stdout_of(&out)
+    );
+    assert!(
+        !cwd.path().join("app_data").exists(),
+        "a preview established the repository rung: {}",
+        stdout_of(&out)
+    );
+}
+
+/// A peer is serving in the first rung the ladder offers. That rung is this
+/// fleet's socket directory, and stepping over it to a rung nothing has used
+/// answers about the wrong directory — after creating it.
+#[test]
+fn a_rung_a_peer_is_listening_in_is_what_the_run_names() {
+    let f = Fixture::populated();
+    let xdg = TempDir::new().unwrap();
+    let peer_dir = xdg.path().join("flezha");
+    fs::create_dir_all(&peer_dir).unwrap();
+    let _peer = UnixListener::bind(peer_dir.join(CONTROL_SOCKET)).expect("bind");
+    let cwd = TempDir::new().unwrap();
+
+    let out = f
+        .ladder_cmd(xdg.path())
+        .current_dir(cwd.path())
+        .arg("--dry-run")
+        .arg("--include-sockets")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+
+    let text = stdout_of(&out);
+    assert!(
+        text.contains(&peer_dir.display().to_string()),
+        "the rung the peer holds is not named: {}",
+        text
+    );
+    assert!(text.contains("controller reachable"), "{}", text);
+    assert!(
+        !cwd.path().join("app_data").exists(),
+        "the run stepped over the peer and established a rung of its own: {}",
+        text
+    );
 }
 
 #[test]

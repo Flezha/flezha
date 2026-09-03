@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::dispatch::{self, Command};
 use crate::{args, help, rpc};
 
@@ -16,14 +18,16 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
-fn extract_u64(args: &[String], name: &str) -> Option<u64> {
-    args::extract_param(args, &format!("--{}", name), &format!("--{}", name))
-        .and_then(|v| v.parse::<u64>().ok())
+fn read_named(args: &[String], name: &str) -> Option<String> {
+    let key = format!("--{}", name);
+    args::or_refuse(args::extract_param(args, &key, &key))
 }
 
-fn extract_i64(args: &[String], name: &str) -> Option<i64> {
-    args::extract_param(args, &format!("--{}", name), &format!("--{}", name))
-        .and_then(|v| v.parse::<i64>().ok())
+/// The audit options spell their long key from the option's name; the parse
+/// and its refusal are the shared reader's.
+fn read_number<T: FromStr>(args: &[String], name: &str) -> Option<T> {
+    let key = format!("--{}", name);
+    args::or_refuse(args::number(args, &key, &key))
 }
 
 fn handle_list(args: &[String]) {
@@ -51,19 +55,19 @@ fn handle_read(args: &[String]) {
     let rest = &given[1..];
     let mut opts = String::new();
 
-    if let Some(source) = args::extract_param(rest, "--source", "--source") {
+    if let Some(source) = read_named(rest, "source") {
         opts.push_str(&format!("source: \"{}\", ", source));
     }
-    if let Some(name) = args::extract_param(rest, "--name", "--name") {
+    if let Some(name) = read_named(rest, "name") {
         opts.push_str(&format!("name: \"{}\", ", name));
     }
-    if let Some(since) = extract_i64(rest, "since") {
+    if let Some(since) = read_number::<i64>(rest, "since") {
         opts.push_str(&format!("since_us: {}, ", since));
     }
-    if let Some(until) = extract_i64(rest, "until") {
+    if let Some(until) = read_number::<i64>(rest, "until") {
         opts.push_str(&format!("until_us: {}, ", until));
     }
-    if let Some(limit) = extract_u64(rest, "limit") {
+    if let Some(limit) = read_number::<u64>(rest, "limit") {
         opts.push_str(&format!("limit: {}, ", limit));
     }
 
@@ -90,7 +94,7 @@ fn handle_tail(args: &[String]) {
     }
 
     let rest = &args[1..];
-    let duration_ms = extract_u64(rest, "duration-ms").unwrap_or(30_000);
+    let duration_ms = read_number::<u64>(rest, "duration-ms").unwrap_or(30_000);
 
     rpc::run(
         format!(

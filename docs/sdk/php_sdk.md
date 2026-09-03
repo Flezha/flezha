@@ -17,10 +17,12 @@ defect of the ABI rather than of this package.
 
 ## Supported PHP versions
 
-`php >= 8.1` and `ext-ffi`, and nothing else. 8.1 is what the authoring surface
-needs — enums, `never`, readonly properties, first-class callable syntax — and
-`ext-ffi` itself is stable from 8.0. CI runs the package's suite on the
-declared floor and on the newest release.
+`php >= 8.4` and `ext-ffi`, and nothing else. 8.4 is the supported line, not
+the minimum the code could parse: the authoring surface itself needs only 8.1 —
+enums, `never`, readonly properties, first-class callable syntax — and `ext-ffi`
+is stable from 8.0, but 8.4 is what this repository builds, tests and benchmarks
+the SDK on. CI runs the package's suite on the declared floor, which is also the
+newest release; the matrix regains a second entry when a newer line ships.
 
 `SwooleExecutor` declares its own, higher requirements, checked when it is
 selected rather than at install: see [Choosing an executor](#choosing-an-executor).

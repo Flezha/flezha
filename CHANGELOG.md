@@ -86,7 +86,7 @@ native extension would be a PHP-version × thread-safety × platform matrix that
 grows with every release; `ext-ffi` needs one library per platform — the five
 that already ship for Java.
 
-`composer require flezha/sdk` pulls nothing: `php >= 8.1` and `ext-ffi`, and
+`composer require flezha/sdk` pulls nothing: `php >= 8.4` and `ext-ffi`, and
 that is the whole requirement. The authoring surface is a `#[Proc]` attribute
 for the scalar declarations and a fluent `channels()` builder for the graph,
 with the optional hooks read from the methods a procedure **overrides** so a

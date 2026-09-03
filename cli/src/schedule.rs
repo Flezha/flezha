@@ -41,8 +41,8 @@ fn handle_add(args: &[String]) {
     let cron = require_param(rest, "--cron", usage);
     let tz = require_param(rest, "--tz", usage);
     let factory = require_param(rest, "--factory", usage);
-    let kind =
-        args::extract_param(rest, "--kind", "--kind").unwrap_or_else(|| "workflow".to_string());
+    let kind = args::or_refuse(args::extract_param(rest, "--kind", "--kind"))
+        .unwrap_or_else(|| "workflow".to_string());
     let namespace = args::namespace(rest);
     let init_values = args::json(rest, "--init_values", "-iv");
     let escaped_init_values = escape_rpc_arg(&init_values);
@@ -80,7 +80,7 @@ fn handle_named(verb: &str, args: &[String]) {
 }
 
 fn require_param(args: &[String], key: &str, usage: &str) -> String {
-    match args::extract_param(args, key, key) {
+    match args::or_refuse(args::extract_param(args, key, key)) {
         Some(value) if !value.is_empty() => value,
         _ => {
             eprintln!("Error: {} is required.\n {}", key, usage);

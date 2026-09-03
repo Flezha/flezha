@@ -75,7 +75,7 @@ No two crates in the Cargo workspace SHALL produce the same shared-library outpu
 
 ### Requirement: Maven Java compile SHALL produce zero warnings from `flezha-sdk-*` modules
 
-`mvn -DskipTests compile` SHALL produce zero `[WARNING]` lines or `warning:` lines whose source path is under `sdk/java/flezha-sdk-*` modules. The `-Pstrict` Maven profile SHALL enforce this gate via `-Werror`. Warnings on protobuf-generated source under `target/generated-sources/` are suppressed at the source-set level and out of scope. Maven's `-Xlint:all` SHALL be enabled in the default compiler configuration so future warnings are visible without requiring an explicit flag.
+`mvn -DskipTests compile` SHALL produce zero `[WARNING]` lines or `warning:` lines whose source path is under `sdk/java/flezha-sdk-*` modules. The `-Pstrict` Maven profile SHALL enforce this gate via `-Werror`. Warnings on generated source under `target/generated-sources/` are suppressed at the source-set level and out of scope. Maven's `-Xlint:all` SHALL be enabled in the default compiler configuration so future warnings are visible without requiring an explicit flag.
 
 #### Scenario: Clean Maven build
 
@@ -91,7 +91,7 @@ No two crates in the Cargo workspace SHALL produce the same shared-library outpu
 
 ### Requirement: Source comments SHALL describe present-tense behavior
 
-Source comments in project files SHALL describe what the code does, why it is needed, or what invariant it preserves. Comments SHALL NOT reference change history (e.g. "previously", "used to", "no longer", "removed in"), in-flight OpenSpec change names, or PR numbers. Generated source files (`sdk/rust/src/generated/`, protobuf-output Java) are excluded; their content is owned by the generator.
+Source comments in project files SHALL describe what the code does, why it is needed, or what invariant it preserves. Comments SHALL NOT reference change history (e.g. "previously", "used to", "no longer", "removed in"), in-flight OpenSpec change names, or PR numbers. Generated source files (`sdk/rust/src/generated/`, Java under `target/generated-sources/`) are excluded; their content is owned by the generator.
 
 #### Scenario: Adding a comment that references history
 
@@ -818,7 +818,6 @@ dependencies are resolved by the ecosystem's resolver and are out of scope.
 - **THEN** each SDK SHALL have an answer for all three clauses — what it declares, whether it is pinned, and what continuous integration installs
 - **AND** an SDK that fails any clause SHALL be recorded as failing, rather than reported as clean because its suite is green
 
-
 ### Requirement: A document's citation of code SHALL be verified by a gate
 
 A citation a document makes SHALL resolve in the tree, and a gate SHALL check that it does. A citation is a pointer with a decidable answer — an Elixir module, an Elixir function, a repository path with an optional line, an environment variable, a telemetry event — and the gate SHALL fail a citation the tracked tree cannot answer. A prose claim about behaviour SHALL NOT be checked: a gate that reports a correct sentence gets turned off, and rewording correct prose to satisfy it is a defeat, not a fix.
@@ -870,3 +869,62 @@ The gate SHALL report how much it read beside its verdict, so a green that means
 
 - **WHEN** the gate is added
 - **THEN** a dead citation of each kind it checks SHALL be introduced into more than one document, the gate SHALL be shown to exit non-zero naming every one, and it SHALL be shown to exit zero once the documents are restored
+
+### Requirement: Tracked material SHALL identify this checkout by what it declares
+
+A tracked file SHALL NOT depend on an absolute path that only one machine resolves. This repository is a shipped artifact, so every tracked script, document and workflow SHALL work in any checkout by any contributor, and a file that names one developer's home directory works in exactly one of them.
+
+A script that must confirm it is operating on this project SHALL do so by reading what the checkout declares about itself — `mix.exs`'s `app:` atom — rather than by comparing its location to a fixed path. The two answer different questions: a location says where a tree sits, which a rename, a clone or a worktree changes, while the declaration says which project it is, which is what a guard against touching another project's data actually needs. Such a guard SHALL keep failing closed: a tree it cannot identify SHALL be refused, and the refusal SHALL name the resolved root and the declaration it did not find.
+
+A document that needs the reader to choose a directory SHALL state the constraints the choice must meet and use a named variable in its commands, rather than naming one instance of a valid choice. A script that needs a path outside the repository SHALL take it from an environment variable, SHALL default to a location derived from this checkout, and SHALL refuse with the resolved path named when nothing is there.
+
+An absolute path that an artefact this repository builds defines — a home directory a `Dockerfile` in this tree creates, and the mounts into it — is a fact about that artefact rather than an assumption about a machine, and SHALL NOT be read as a breach of this requirement. Neither SHALL an illustrative path in a scenario's GIVEN clause, which is a stand-in and not a coordinate.
+
+#### Scenario: A guard refuses a tree that does not declare this application
+
+- **GIVEN** a copy of a script whose guard protects this project's `app_data/`, placed in another project's checkout
+- **WHEN** it is run
+- **THEN** it SHALL exit non-zero without deleting anything, naming the root it resolved and that the tree's `mix.exs` does not declare this application
+
+#### Scenario: The same guard passes in any checkout of this repository
+
+- **GIVEN** a checkout of this repository at any path
+- **WHEN** the script is run
+- **THEN** it SHALL proceed, the guard having read the declaration rather than the location
+
+#### Scenario: A near-miss application name does not pass
+
+- **GIVEN** a sibling project whose `mix.exs` declares an application whose name begins with this one's
+- **WHEN** the guard runs there
+- **THEN** it SHALL refuse, the declaration being matched whole rather than as a prefix
+
+#### Scenario: The tracked tree names no developer's home
+
+- **WHEN** the tracked tree is searched for absolute paths under a user home directory
+- **THEN** every hit SHALL be a path defined by an image this repository builds, or an illustrative path inside a scenario, and no hit SHALL be a path only one contributor's machine resolves
+
+### Requirement: A CI job SHALL NOT report success when it could not run
+
+A continuous-integration step SHALL NOT be marked non-blocking in a way that turns a step which can never succeed into a permanent green. A job whose inputs a fresh checkout does not carry is not a lenient gate; it is a gate that has never run, and it is indistinguishable from a passing one.
+
+Every step in a workflow SHALL read only what the checkout carries — the tracked tree, or something the workflow itself creates. A step that reads a path outside `git ls-files` SHALL be removed from CI rather than tolerated, and the check it performed SHALL be recorded as a local instrument if that is what it is.
+
+Where a job is removed for this reason, the workflow SHALL record why in its own text, so that a reader who knows the check exists does not re-add it. `continue-on-error` SHALL remain available for a step that genuinely can both pass and fail and whose failure is not yet blocking; it SHALL NOT be used to hold a broken step in the pipeline.
+
+#### Scenario: A step reading an untracked baseline is removed
+
+- **GIVEN** a workflow step running a ratchet whose baseline file `git ls-files` does not print
+- **WHEN** the workflow is reviewed
+- **THEN** that step SHALL be removed rather than left under `continue-on-error`, and the workflow SHALL say why the check is not run there
+
+#### Scenario: Every surviving step is checked against a fresh checkout
+
+- **WHEN** a workflow is changed
+- **THEN** each remaining step SHALL be shown to read only tracked paths or paths the workflow creates, and the reason SHALL be stated per step rather than assumed for the file
+
+#### Scenario: A non-blocking step that can still fail is kept
+
+- **GIVEN** a step that passes on some trees and fails on others, whose failure is deliberately not blocking yet
+- **WHEN** the workflow is reviewed
+- **THEN** it SHALL be allowed to keep `continue-on-error`, because it reports a real verdict
+

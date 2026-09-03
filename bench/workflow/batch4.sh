@@ -6,7 +6,15 @@ set -u
 cd "$(dirname "$0")/../.."
 OUT=bench/workflow/reports
 FILTER='intent mismatch|Connection closed|SignalHandler|authz|Setting up|Started 2'
-export FLEZHA_PROCESS_HUB_PATH=/home/moon/Code/process-hub
+# The local process_hub checkout the two cells build against. Set
+# FLEZHA_PROCESS_HUB_PATH to point elsewhere; the default is a sibling of
+# this repository.
+: "${FLEZHA_PROCESS_HUB_PATH:=$(cd .. && pwd)/process-hub}"
+export FLEZHA_PROCESS_HUB_PATH
+[ -d "$FLEZHA_PROCESS_HUB_PATH" ] || {
+  echo "batch4: no process_hub checkout at ${FLEZHA_PROCESS_HUB_PATH}; set FLEZHA_PROCESS_HUB_PATH" >&2
+  exit 1
+}
 run() {
   local name="$1"; shift
   echo "=== $name: mix bench.workflow $* ($(date +%H:%M:%S))"

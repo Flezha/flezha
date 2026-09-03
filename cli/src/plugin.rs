@@ -113,11 +113,14 @@ fn is_installed_plugin(plugin_id: &str) -> bool {
     }
 }
 
-fn handle_enable(args: &[String]) {
-    let example_usage = "Usage: flz plugin enable <plugin_id> [<provider_id>] [Xkey=value] [--option value]\nExample: flz plugin enable operative_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
+/// What `flz plugin enable` prints on a bad invocation. A constant because it
+/// is one of the two texts that teach the bare `Xkey=value` spelling, and
+/// `args.rs` asserts the parser reads every setting it advertises.
+pub(crate) const ENABLE_USAGE: &str = "Usage: flz plugin enable <plugin_id> [<provider_id>] [Xkey=value] [--option value]\nExample: flz plugin enable operative_kafka_producer my_provider Xhosts=kafka:9092 Xtopic=my_topic --namespace mynamespace";
 
+fn handle_enable(args: &[String]) {
     if args.len() < 2 {
-        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
+        eprintln!("Error: Invalid number of arguments.\n {}", ENABLE_USAGE);
         exit(1);
     }
 
@@ -140,7 +143,7 @@ fn handle_enable(args: &[String]) {
     }
 
     if args.len() < 3 {
-        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
+        eprintln!("Error: Invalid number of arguments.\n {}", ENABLE_USAGE);
         exit(1);
     }
 

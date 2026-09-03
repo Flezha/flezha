@@ -18,6 +18,8 @@ defmodule Flezha.Service.HubManager.Rows do
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
 
+  require Logger
+
   def hub_alive?(namespace) do
     ProcessHub.is_alive?(Identificator.hub(namespace))
   end
@@ -25,14 +27,37 @@ defmodule Flezha.Service.HubManager.Rows do
   @doc """
   Run `fun` with `hub_id` when that hub is alive, else return `on_dead`.
 
-  The one guarded seam for reading ANY hub — the namespace hubs via
+  The one guarded seam for reaching ANY hub — the namespace hubs via
   `with_live_hub/3` below, the schedule hub via `Flezha.Schedule.Hub`. Every
-  hub reader goes through it so none can forget the liveness check: the class
-  of bug where `get_pid/2` alone omitted it and raised on a torn-down hub.
+  hub reader and every hub call goes through it so none can forget the
+  liveness check: the class of bug where `get_pid/2` alone omitted it and
+  raised on a torn-down hub.
+
+  The check alone is not the guarantee. `ProcessHub.is_alive?/1` is
+  `Process.whereis/1`, which answers `true` for a coordinator that is
+  terminating, and stops being true the instant it returns. So a hub that dies
+  DURING `fun` answers `on_dead` too — one namespace's teardown must never
+  reach a node-wide caller as an exit. Both kinds are caught because a dying
+  hub speaks both: its coordinator is a GenServer and exits, its registry is
+  ETS and raises. A containment is loud, never silent.
   """
   @spec with_live_hub_id(atom(), term(), (atom() -> term())) :: term()
   def with_live_hub_id(hub_id, on_dead, fun) when is_atom(hub_id) do
     if ProcessHub.is_alive?(hub_id), do: fun.(hub_id), else: on_dead
+  catch
+    kind, reason when kind in [:exit, :error] ->
+      :telemetry.execute(
+        [:flezha, :hub, :unavailable],
+        %{count: 1},
+        %{hub_id: hub_id, kind: kind, reason: reason}
+      )
+
+      Logger.warning(
+        "[hub_manager] hub #{inspect(hub_id)} went away mid-call " <>
+          "(#{kind} #{inspect(reason)}); answering #{inspect(on_dead)}"
+      )
+
+      on_dead
   end
 
   def with_live_hub(namespace, on_dead, fun) do
@@ -299,9 +324,7 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   def durable_operative_count(hub_id) do
-    map_size(live_registry_dump(hub_id))
-  catch
-    :exit, _ -> 0
+    with_live_hub_id(hub_id, 0, fn id -> map_size(live_registry_dump(id)) end)
   end
 
   @doc """
@@ -343,15 +366,9 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   def durable_operative_keys(hub_id) do
-    live_registry_dump(hub_id) |> Map.keys() |> Enum.filter(&is_binary/1)
-  catch
-    # A hub whose registry table is already gone holds no operatives — the
-    # table vanishing IS the hub being down. `:ets` RAISES for that rather than
-    # exiting, so the exit clause alone left `runner_cleanup/1` killing the
-    # FleetManager, and the control plane with it, on any namespace whose hub
-    # died before the tick reached it.
-    :exit, _ -> []
-    :error, _ -> []
+    with_live_hub_id(hub_id, [], fn id ->
+      live_registry_dump(id) |> Map.keys() |> Enum.filter(&is_binary/1)
+    end)
   end
 
   @doc """

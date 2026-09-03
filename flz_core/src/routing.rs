@@ -313,6 +313,8 @@ pub fn end_replay_slice(instance: &StreamInstance) {
     }
 }
 
+/// One plugin output onto the stream that carried its input. A write the
+/// stream refuses is held for the reconnect, never dropped.
 pub fn send_plugin_frame(
     stream: &Arc<FlezhaStream>,
     instance_id: &str,
@@ -321,12 +323,10 @@ pub fn send_plugin_frame(
 ) {
     let frame = payloader::build_from_binary(instance_id, bytes, metadata.clone());
     if let Err(e) = (&**stream).write_all(&frame) {
-        eprintln!(
-            "[flezha] plugin emit: failed to write {} bytes for {}: {}",
-            bytes.len(),
-            instance_id,
-            e
-        );
+        // The wire's other writer holds a frame it could not send and drives
+        // the reconnect that replays it; an output is not worth less than a
+        // record.
+        crate::state_sink::hold_failed_frame("plugin output", frame, &e);
     }
 }
 
@@ -556,5 +556,81 @@ fn wrap_entry(
             }
             None
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::flusher::SendFrameFn;
+    use crate::state_sink;
+
+    const OPERATIVE: &str = "op-plugin-emit";
+    const BODY: &[u8] = b"the operative's only output";
+
+    /// A stream whose peer is gone: the shape the controller leaves behind
+    /// when it closes the socket half of a rebound pair.
+    fn dead_stream() -> Arc<FlezhaStream> {
+        let (near, far) = UnixStream::pair().expect("a socket pair");
+        drop(far);
+        Arc::new(FlezhaStream::Unix(near))
+    }
+
+    fn sink_metadata() -> HashMap<String, String> {
+        HashMap::from([("channel".to_string(), "out".to_string())])
+    }
+
+    #[test]
+    fn a_plugin_frame_whose_write_fails_is_held_for_replay() {
+        let _guard = state_sink::SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state_sink::reset_for_test();
+
+        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &sink_metadata());
+
+        assert_eq!(
+            state_sink::ring_len_for_test(),
+            1,
+            "a plugin output whose write failed must be held, not dropped"
+        );
+        state_sink::reset_for_test();
+    }
+
+    #[test]
+    fn a_held_plugin_frame_reaches_the_stream_the_reconnect_wires() {
+        let _guard = state_sink::SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state_sink::reset_for_test();
+
+        let metadata = sink_metadata();
+        let expected = payloader::build_from_binary(OPERATIVE, BODY, metadata.clone());
+        send_plugin_frame(&dead_stream(), OPERATIVE, BODY, &metadata);
+
+        // The reconnect: a fresh secondary, then the sink install that replays
+        // the ring onto it.
+        let (near, mut far) = UnixStream::pair().expect("a socket pair");
+        far.set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("a read deadline, so a lost frame fails instead of hanging");
+        state_sink::set_secondary_stream(Some(Arc::new(FlezhaStream::Unix(near))));
+        let sink: SendFrameFn = Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(()));
+        state_sink::install_global_sink(sink);
+
+        let mut seen = vec![0u8; expected.len()];
+        far.read_exact(&mut seen)
+            .expect("the held frame must reach the fresh secondary");
+        assert_eq!(
+            seen, expected,
+            "the frame is replayed exactly as it was framed"
+        );
+        assert_eq!(state_sink::ring_len_for_test(), 0, "the ring is drained");
+
+        state_sink::set_secondary_stream(None);
+        state_sink::reset_for_test();
     }
 }

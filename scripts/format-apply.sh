@@ -21,14 +21,24 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source scripts/gate_lib.sh
 
+# What each formatter does when it finds drift, as opposed to failing for its
+# own reasons. prettier, ruff and rubocop document 1 for the first and 2 for the
+# second; php-cs-fixer's status is a bit field where exactly 8 is "needs fixing"
+# and every other bit set is an error. rustfmt, mix and mvn return 1 either way,
+# so the verdict each prints for drift, and for nothing else, decides. In write
+# mode a formatter has nothing to find: no rule is declared, and gate_run then
+# reads every non-zero status as the tool failing.
+declare -A drift=()
 if [[ "${1:-}" == "--check" ]]; then
   rust=(-- --check) elixir=(--check-formatted) java=(spotless:check)
   prettier=(--check) ruff=(--check) rubocop=() phpcs=(--dry-run)
-  verdict="UNFORMATTED — run scripts/format-apply.sh:"
+  drift=([rust]='says:Diff in '
+    [elixir]='says:format failed due to --check-formatted'
+    [java]='says:files had format violations'
+    [prettier]=status:1 [ruff]=status:1 [rubocop]=status:1 [phpcs]=status:8)
 else
   rust=() elixir=() java=(spotless:apply)
   prettier=(--write) ruff=() rubocop=(-a) phpcs=()
-  verdict="FAILED — the formatter itself errored:"
 fi
 
 prettier_bin=sdk/node/node_modules/.bin/prettier
@@ -41,13 +51,14 @@ read -ra php <<< "${FLEZHA_PHP:-php}"
 # rustfmt.toml's `imports_granularity`, `group_imports` and `ignore` are
 # nightly-only options, and two nightlies are two style opinions; bump this
 # with the workflow and rustfmt.toml together, as rust-toolchain.toml says.
-gate_run "cargo fmt" cargo:"install Rust via rustup" -- \
+gate_run --finding "${drift[rust]:-}" "cargo fmt" cargo:"install Rust via rustup" -- \
   cargo +nightly-2026-05-07 fmt --all "${rust[@]}"
-gate_run "mix format" mix:"install Elixir" -- \
+gate_run --finding "${drift[elixir]:-}" "mix format" mix:"install Elixir" -- \
   mix format "${elixir[@]}"
-gate_run "mvn spotless" mvn:"install Maven and a JDK" -- \
+gate_run --finding "${drift[java]:-}" "mvn spotless" mvn:"install Maven and a JDK" -- \
   mvn -q -f sdk/java/pom.xml -DskipTests "${java[@]}"
-gate_run prettier "$prettier_bin":"run npm ci in sdk/node" -- \
+gate_run --finding "${drift[prettier]:-}" prettier \
+  "$prettier_bin":"run npm ci in sdk/node" -- \
   "$prettier_bin" "${prettier[@]}" \
   'sdk/node/{src,test,scripts,types-tests}/**/*.{ts,mts,cts,js,mjs,cjs}' \
   'test/apps/node_runner/*.mjs'
@@ -57,12 +68,15 @@ gate_run prettier "$prettier_bin":"run npm ci in sdk/node" -- \
 # it flags is a rule the SDK guards on purpose, and RUF022/RUF023 reorder
 # `__all__` and `__slots__`. Adopting it is its own change, tracked as KI-6 in
 # docs/known_issues.md; it is not a line to uncomment here.
-gate_run "ruff format" "$ruff_bin":"install the dev group of sdk/python/pyproject.toml" -- \
+gate_run --finding "${drift[ruff]:-}" "ruff format" \
+  "$ruff_bin":"install the dev group of sdk/python/pyproject.toml" -- \
   "$ruff_bin" format "${ruff[@]}" sdk/python test/apps/python_runner
-gate_run rubocop rubocop:"install the development dependency in sdk/ruby/flezha.gemspec" -- \
+gate_run --finding "${drift[rubocop]:-}" rubocop \
+  rubocop:"install the development dependency in sdk/ruby/flezha.gemspec" -- \
   rubocop "${rubocop[@]}" sdk/ruby test/apps/ruby_runner
-gate_run php-cs-fixer "${php[0]}":"install PHP or set FLEZHA_PHP" \
+gate_run --finding "${drift[phpcs]:-}" php-cs-fixer \
+  "${php[0]}":"install PHP or set FLEZHA_PHP" \
   "$phpcs_bin":"run composer install in sdk/php" -- \
   "${php[@]}" "$phpcs_bin" fix "${phpcs[@]}" --config .php-cs-fixer.dist.php
 
-gate_report "$verdict"
+gate_report "UNFORMATTED — run scripts/format-apply.sh:"

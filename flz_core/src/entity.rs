@@ -112,6 +112,13 @@ pub fn drops_oldest_total() -> u64 {
     DROPS_OLDEST_TOTAL.load(Ordering::Relaxed)
 }
 
+/// One item a drop-oldest queue shed. The Entity mailboxes and the outbound
+/// reconnect ring share this counter, so the heartbeat's `drops_oldest` is
+/// every drop-oldest shed on the runner rather than one queue's.
+pub(crate) fn note_dropped_oldest() {
+    DROPS_OLDEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn restore_discarded_inputs() -> u64 {
     RESTORE_DISCARDED_INPUTS.load(Ordering::Relaxed)
 }
@@ -221,7 +228,7 @@ impl EntitySlot {
                 self.counters()
                     .drops_oldest_total
                     .fetch_add(1, Ordering::Relaxed);
-                DROPS_OLDEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+                note_dropped_oldest();
                 "drop_oldest"
             }
             // The policy that discards nothing sheds nothing.

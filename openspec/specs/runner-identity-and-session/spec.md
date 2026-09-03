@@ -100,3 +100,53 @@ Both the Rust and Java SDKs SHALL implement the stable-identity derivation, pers
 - **THEN** the controller SHALL apply the same binding-swap and takeover behaviour to both
 - **AND** the cross-language matrix SHALL pass for both transports
 
+### Requirement: A namespace hub's failure SHALL be refused to the connecting runner, never raised into a node-wide process
+
+A call into one namespace's hub SHALL NOT terminate a process that serves the whole node.
+`Flezha.Runner.FleetManager` and each `Flezha.Transport.Server` instance serve every
+namespace on the node, and a hub that is gone, terminating, or mid-restart belongs to one
+namespace only, so its failure SHALL reach them as a value and not as an exit.
+
+Hub liveness SHALL therefore be guarded at the call and not only before it. A check that a
+hub is alive is not a guarantee that it will still be alive when the call lands — a
+terminating coordinator is still a registered name — so the seam that runs a hub
+interaction SHALL answer its caller's dead-hub value both when the hub was already gone and
+when the hub goes away during the call, for a coordinator exit and for a registry read that
+raises alike.
+
+A refusal earned this way SHALL be loud and SHALL name the namespace: the connect fails
+with a structured error carrying the namespace, the transport counts it on
+`[:flezha, :transport, :connect_rejected]` and closes the stream, and the containment
+itself emits a signal carrying the hub and the reason. The runner SHALL be left able to
+reconnect on its existing backoff. A hub failure SHALL NOT be turned into a connect that
+succeeds without the runner's operative-insertion hook registered, because such a runner
+never has an operative pid seeded into its stream channels.
+
+This is a different rule from the node-wide quiesce refusal in
+`controller-graceful-shutdown`, and does not replace it: that one reads a node-wide flag
+before the connect begins, and is silent about a single namespace whose hub is being drained
+while the node stays up.
+
+#### Scenario: A connect landing on a terminating hub is refused, and the node keeps serving
+
+- **GIVEN** a namespace whose hub coordinator has a runner-connect call queued on it
+- **WHEN** that hub is torn down before the call is answered
+- **THEN** `Flezha.Runner.FleetManager` SHALL remain the same running process, the transport
+  server that dispatched the connect SHALL remain running, and the connect SHALL be answered
+  with an error naming the namespace
+
+#### Scenario: The refused runner is told, and reconnects
+
+- **WHEN** a runner connect is refused because its namespace's hub is unavailable
+- **THEN** the transport SHALL emit `[:flezha, :transport, :connect_rejected]` carrying the
+  refusal reason and close the runner's stream, and the runner SHALL treat the close as a
+  broken control channel and redial on its jittered backoff
+
+#### Scenario: A hub that vanishes mid-call answers the same as one already gone
+
+- **GIVEN** a caller reading or calling a hub through the guarded hub seam
+- **WHEN** the hub's coordinator exits, or its registry table is removed, while the call is
+  in flight
+- **THEN** the caller SHALL receive the same value it receives for a hub that was already
+  down, and the containment SHALL be reported rather than swallowed
+

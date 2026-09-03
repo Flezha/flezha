@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
@@ -26,19 +25,21 @@ pub(crate) const TABLE: Command = Command {
 };
 
 /// The JSON opts object `operative_start` takes: the flags that are neither
-/// the operative's identity nor its init values.
+/// the operative's identity nor its init values. Ordered, because the same
+/// invocation has to build the same request every run.
 fn start_opts(args: &[String]) -> String {
-    let mut opts: HashMap<String, String> = HashMap::new();
+    let mut opts: Vec<(String, String)> = Vec::new();
 
-    if let Some(spt) = args::extract_param(args, "--snapshot-interval", "-si") {
-        opts.insert("snapshot_interval".to_string(), spt);
+    for (long_key, short_key, name) in [
+        ("--snapshot-interval", "-si", "snapshot_interval"),
+        ("--partitions", "--partitions", "partitions"),
+    ] {
+        if let Some(count) = args::or_refuse(args::number::<u64>(args, long_key, short_key)) {
+            opts.push((name.to_string(), count.to_string()));
+        }
     }
 
-    if let Some(partitions) = args::extract_param(args, "--partitions", "--partitions") {
-        opts.insert("partitions".to_string(), partitions);
-    }
-
-    serde_json::to_string(&opts).unwrap()
+    args::serialize_flags(&opts)
 }
 
 fn handle_start(args: &[String]) {
@@ -66,7 +67,8 @@ fn handle_start(args: &[String]) {
         escape_rpc_arg(&args::json(rest, "--init_values", "-iv")),
         escape_rpc_arg(&start_opts(rest)),
         escape_rpc_arg(&plugins_json),
-        args::extract_param(rest, "--kind", "--kind").unwrap_or_else(|| "stream".to_string()),
+        args::or_refuse(args::extract_param(rest, "--kind", "--kind"))
+            .unwrap_or_else(|| "stream".to_string()),
     );
 
     println!("Starting operative...");
@@ -88,9 +90,9 @@ fn handle_scale(args: &[String]) {
     let group_id = &args[1];
     let partitions = &args[2];
 
-    let mut opts: HashMap<String, String> = HashMap::new();
-    if let Some(timeout) = args::extract_param(&args[3..], "--timeout", "-t") {
-        opts.insert("timeout_ms".to_string(), timeout);
+    let mut opts: Vec<(String, String)> = Vec::new();
+    if let Some(timeout_ms) = args::or_refuse(args::number::<u64>(&args[3..], "--timeout", "-t")) {
+        opts.push(("timeout_ms".to_string(), timeout_ms.to_string()));
     }
 
     let rpc_command = format!(
@@ -98,7 +100,7 @@ fn handle_scale(args: &[String]) {
         args::namespace(&args[3..]),
         group_id,
         partitions,
-        escape_rpc_arg(&serde_json::to_string(&opts).unwrap()),
+        escape_rpc_arg(&args::serialize_flags(&opts)),
     );
 
     println!("Scaling operative group {} to {}...", group_id, partitions);
@@ -198,7 +200,7 @@ fn handle_send(args: &[String]) {
 
     let rest = &args[2..];
 
-    let text = match args::extract_param(rest, "--text", "-t") {
+    let text = match args::or_refuse(args::extract_param(rest, "--text", "-t")) {
         Some(value) => value,
         None => {
             eprintln!("Error: --text <payload> is required.");
@@ -213,7 +215,9 @@ fn handle_send(args: &[String]) {
         args::namespace(rest),
         &args[1],
         escape_rpc_arg(&text),
-        escape_rpc_arg(&args::extract_param(rest, "--channel", "-c").unwrap_or_default()),
+        escape_rpc_arg(
+            &args::or_refuse(args::extract_param(rest, "--channel", "-c")).unwrap_or_default(),
+        ),
     );
 
     // operative_send halts non-zero on error verdicts (not_found / not_ready / refused).
@@ -236,14 +240,8 @@ fn handle_rewind(args: &[String]) {
         exit(1);
     }
 
-    let to_iter = match args::extract_param(&args[2..], "--to-iteration", "-i") {
-        Some(value) => match value.parse::<u32>() {
-            Ok(n) => n,
-            Err(_) => {
-                eprintln!("Error: --to-iteration must be a non-negative integer, got '{value}'");
-                exit(1);
-            }
-        },
+    let to_iter = match args::or_refuse(args::number::<u32>(&args[2..], "--to-iteration", "-i")) {
+        Some(iteration) => iteration,
         None => {
             eprintln!("Error: --to-iteration <N> is required.");
             exit(1);
@@ -278,7 +276,7 @@ fn handle_replay(args: &[String]) {
         exit(1);
     }
 
-    let from = match args::extract_param(&args[2..], "--from", "-f") {
+    let from = match args::or_refuse(args::extract_param(&args[2..], "--from", "-f")) {
         Some(value) => value,
         None => {
             eprintln!(

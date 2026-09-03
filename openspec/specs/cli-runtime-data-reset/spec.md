@@ -182,6 +182,10 @@ The codes SHALL be documented in `flz reset --help` output.
 
 The resolved directory is therefore frequently NOT under the `app_data/` root, and `--app-data-root` SHALL NOT move it: the two are resolved from different sources because the Controller resolves them from different sources.
 
+`flz reset` SHALL NOT create a directory while resolving one. It asks which directory holds this fleet's sockets; it does not establish one, and a run that has nothing to clear leaves the filesystem as it found it. This holds for every invocation, `--dry-run` included: a preview that writes to disk is not a preview.
+
+`flz reset` SHALL NOT resolve past a rung a Controller is listening in. The rung that answers is the one the command names and reports on; where more than one rung is live and nothing says which is meant, resolution SHALL refuse naming every live directory and the environment variable that settles it — the same refusal a runner is given, because it is the same question. Stepping over a serving Controller and answering with a rung nothing has ever used would report on a directory that is not this fleet's.
+
 When resolution refuses, `flz reset` SHALL report the socket root as kept with the refusal's reason and SHALL continue with the remaining roots. Not knowing which directory holds the sockets is not an I/O error on a path the command was asked to clear, and SHALL NOT change the exit code.
 
 #### Scenario: The per-user runtime directory is cleared, not `app_data/sockets/`
@@ -208,6 +212,19 @@ When resolution refuses, `flz reset` SHALL report the socket root as kept with t
 
 - **WHEN** the ladder cannot resolve a socket directory
 - **THEN** the socket root is reported as kept with the reason, `app_data/state/` and `app_data/process_hub/` are still cleared, and the exit code is unchanged
+
+#### Scenario: No directory is established by a run that clears one
+
+- **GIVEN** no rung of the ladder exists on this machine
+- **WHEN** the operator runs `flz reset --dry-run --include-sockets`
+- **THEN** no directory is created at any rung, the working directory holds no new `app_data/sockets/`, and the exit code is 0
+
+#### Scenario: A rung a peer is listening in is what the run names
+
+- **GIVEN** a peer Controller is serving in the first rung the ladder offers, and this Controller's node is down
+- **WHEN** the operator runs `flz reset --dry-run --include-sockets`
+- **THEN** the socket root reported is the rung the peer holds, named with its path
+- **AND** no later rung is created
 
 ### Requirement: `flz reset` never unlinks a live controller's socket
 

@@ -47,11 +47,17 @@ fn quotas_json_literal(args: &[String]) -> String {
     serde_json::Value::String(serialize_flags(&flags)).to_string()
 }
 
+/// The two usage lines that advertise a quota override. Constants because
+/// `args.rs` asserts the parser reads every setting the CLI prints.
+pub(crate) const CREATE_USAGE: &str =
+    "Usage: flz namespace create <name> [--X<quota>=<value> ...] [--token <admin-token>]";
+
+pub(crate) const SET_QUOTA_USAGE: &str =
+    "Usage: flz namespace set-quota <name> --X<quota>=<value> [...] [--token <admin-token>]";
+
 fn handle_create(args: &[String]) {
     if args.len() < 2 {
-        eprintln!(
-            "Usage: flz namespace create <name> [--X<quota>=<value> ...] [--token <admin-token>]"
-        );
+        eprintln!("{}", CREATE_USAGE);
         exit(1);
     }
 
@@ -84,9 +90,7 @@ fn handle_show(args: &[String]) {
 
 fn handle_set_quota(args: &[String]) {
     if args.len() < 2 {
-        eprintln!(
-            "Usage: flz namespace set-quota <name> --X<quota>=<value> [...] [--token <admin-token>]"
-        );
+        eprintln!("{}", SET_QUOTA_USAGE);
         exit(1);
     }
 

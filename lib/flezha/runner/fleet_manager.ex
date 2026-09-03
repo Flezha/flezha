@@ -178,10 +178,18 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  Re-issue `ConnectSocket` to `runner_id` so the SDK re-opens its data
-  sockets; the `StreamAcceptor` binds the fresh streams to the unbound
-  `StreamChannel`s (see `runner-controller-connection-healing`). Used by the
-  reconciler to heal a operative whose data stream dropped (`stream_ref: nil`).
+  Re-issue `ConnectSocket` to `runner_id` so the SDK re-opens its data sockets;
+  the `StreamAcceptor` binds each fresh stream to an unbound `StreamChannel`
+  and closes the rest (see `runner-controller-connection-healing`).
+
+  Nothing calls this. It is the only expression of a remedy the platform does
+  not otherwise have: no heal primitive rebinds a data stream, so a channel
+  that unbinds while its runner stays connected is never rebound.
+
+  Re-issuing is not a safe remedy as it stands. The SDK opens a whole pair set
+  and moves its output path onto it, while the acceptor binds only as many
+  streams as it has unbound channels — so the runner can be left emitting on
+  sockets the acceptor closed.
 
   Returns `:ok`, or `{:error, :no_control_unit}` when the runner's control
   unit is not registered.

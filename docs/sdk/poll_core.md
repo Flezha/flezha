@@ -42,7 +42,7 @@ the C ABI and where the code lives; the system-level picture is
 | `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
 | `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
 | `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `procedure/`, `channel/` (builder DSL), `operative/` (typed dispatcher, poll pool), `entity/`, `workflow/`, `runner/`, `testing/` (harness), `diag.rs`, `entry_idle.rs` |
-| `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-processor` (annotation processor), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-protobuf`, `flezha-sdk-testing` (`ProcedureTestHarness`), `flezha-sdk-examples`, `flezha-sdk` (fat-jar aggregator) |
+| `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-processor` (annotation processor), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`ProcedureTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
 ## The core decides, the SDK brings the threads
 
@@ -510,7 +510,7 @@ Two things differ from the Java binding, both following from the event loop:
 
 The PHP SDK is the first host to consume the C ABI **as a C ABI** — through
 `ext-ffi`, with no compiled veneer of its own. PHP has no stable ABI across
-minor versions, so a native extension would be a 8.1/8.2/8.3/8.4 × NTS/ZTS ×
+minor versions, so a native extension would be a per-minor × NTS/ZTS ×
 5-triple matrix that grows with every release; `ext-ffi` needs one library per
 platform, the five that already exist for Java.
 

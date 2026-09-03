@@ -3,20 +3,25 @@
 #
 # Deletes only the regenerable per-run state under this repo's app_data/
 # (WAL state, ProcessHub registry, sockets, persisted runner ids). It
-# never touches durable config (certs, auth) and refuses to run anywhere
-# but the repo root, so a stray invocation cannot delete outside the
-# project. Run it as its OWN command (not chained after cd/mix) so the
-# permission allowlist matches it cleanly.
+# never touches durable config (certs, auth) and refuses to run unless the
+# tree it resolved declares this application, so a copy of this script
+# dropped into another project cannot delete that project's state. Run it
+# as its OWN command (not chained after cd/mix) so the permission allowlist
+# matches it cleanly.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
-# Guard: only ever operate on this project's app_data.
-case "${repo_root}" in
-  /home/moon/Code/flezha) : ;;
-  *) echo "test_reset: refusing to run outside the flezha repo (${repo_root})" >&2; exit 1 ;;
-esac
+# Guard: only ever operate on this project's app_data. Identity, not location —
+# a path says where a tree sits, which a clone or a worktree changes; mix.exs
+# says which project it is. Anchored at both ends so `:flezha_market` cannot
+# pass, and the trailing comma is optional so reordering the keyword list does
+# not break the guard.
+if ! grep -Eq '^[[:space:]]*app:[[:space:]]*:flezha[[:space:]]*,?[[:space:]]*$' mix.exs 2>/dev/null; then
+  echo "test_reset: refusing to run in ${repo_root}: its mix.exs does not declare 'app: :flezha'" >&2
+  exit 1
+fi
 
 for sub in state process_hub sockets exec-id; do
   rm -rf "app_data/${sub:?}"/* 2>/dev/null || true

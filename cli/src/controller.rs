@@ -61,7 +61,8 @@ fn handle_start(args: &[String]) {
         return;
     }
 
-    let mode_arg = args::extract_param(&args[1..], "--mode", "-m").unwrap_or_default();
+    let mode_arg =
+        args::or_refuse(args::extract_param(&args[1..], "--mode", "-m")).unwrap_or_default();
 
     let command_mode = match mode_arg.as_str() {
         "attached" => "start",
@@ -92,9 +93,13 @@ fn handle_stop(args: &[String]) {
         return;
     }
 
+    // Built before the announcement: a refusal here means no shutdown starts,
+    // and a line saying one has is the wrong thing to print above it.
+    let opts_kw = stop_opts(&args[1..]);
+
     eprintln!("Stopping flezha controller...");
 
-    exit(match stop_outcome(&stop_opts(&args[1..])).as_deref() {
+    exit(match stop_outcome(&opts_kw).as_deref() {
         Some("clean") | Some("forced") => 0,
         Some("partial") => 1,
         Some("already_in_progress") => 2,
@@ -166,14 +171,10 @@ fn stop_outcome(opts_kw: &str) -> Option<String> {
 fn stop_opts(args: &[String]) -> String {
     let mut opts: Vec<String> = Vec::new();
 
-    if let Some(t) = args::extract_param(args, "--timeout-ms", "--timeout-ms") {
-        match t.parse::<u64>() {
-            Ok(n) => opts.push(format!("timeout_ms: {}", n)),
-            Err(_) => {
-                eprintln!("Error: --timeout-ms requires an integer (milliseconds)");
-                exit(1);
-            }
-        }
+    if let Some(timeout_ms) =
+        args::or_refuse(args::number::<u64>(args, "--timeout-ms", "--timeout-ms"))
+    {
+        opts.push(format!("timeout_ms: {}", timeout_ms));
     }
     if args.iter().any(|a| a == "--no-wait") {
         opts.push("no_wait: true".to_string());

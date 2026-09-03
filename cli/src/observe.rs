@@ -70,9 +70,8 @@ fn handle_tail(args: &[String]) {
 
     let source = &given[0];
     let rest = &given[1..];
-    let duration_ms = args::extract_param(rest, "--duration-ms", "--duration-ms")
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(30_000);
+    let duration_ms =
+        args::or_refuse(args::number(rest, "--duration-ms", "--duration-ms")).unwrap_or(30_000u64);
 
     rpc::run(
         format!(

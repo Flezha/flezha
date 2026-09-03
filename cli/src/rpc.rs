@@ -221,7 +221,7 @@ pub(crate) fn escape_rpc_arg(value: &str) -> String {
 /// environment variable. The CLI process resolves it (the controller's own
 /// env is NOT the caller's) and threads it into every gated verb's opts.
 pub(crate) fn auth_token(args: &[String]) -> Option<String> {
-    if let Some(t) = args::extract_param(args, "--token", "--token") {
+    if let Some(t) = args::or_refuse(args::extract_param(args, "--token", "--token")) {
         if !t.is_empty() {
             return Some(t);
         }

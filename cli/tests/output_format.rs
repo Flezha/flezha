@@ -3,7 +3,13 @@
 //! both (KI-80). The same holds of an option's four forms — `--long=value`,
 //! `--long value`, `-s=value`, `-s value`. `flz plugin list` additionally has
 //! to stop letting the format flag choose *which* collection it lists
-//! (KI-148).
+//! (KI-148), and a plugin setting has to mean the same thing written
+//! `Xkey=value` as written `--Xkey=value` (KI-167). An option written with no
+//! value at all is a fourth question of the same kind, and its answer is a
+//! refusal naming the flag rather than the default (KI-173). A value the
+//! reader cannot parse is the fifth, and takes the same answer (KI-176) — and
+//! the request an invocation builds may not depend on the process that built
+//! it (KI-177).
 //!
 //! The evidence is the RPC expression itself, so the fixture is a `flzvm` that
 //! echoes what it was handed instead of running it.
@@ -185,12 +191,79 @@ const CASES: &[(&[&str], Want)] = &[
             r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{}", "{\"output\": \"json\", \"namespace\": \"default\"}")"#,
         ),
     ),
+    // A plugin setting is one setting in both its spellings, and the bare one
+    // is what `flz help` and the enable usage line teach (KI-167).
+    (
+        &[
+            "plugin",
+            "enable",
+            "p",
+            "prov",
+            "Xhosts=kafka:9092",
+            "Xtopic=my_topic",
+        ],
+        Rpc(
+            r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{\"hosts\": \"kafka:9092\", \"topic\": \"my_topic\"}", "{\"namespace\": \"default\"}")"#,
+        ),
+    ),
+    (
+        &[
+            "plugin",
+            "enable",
+            "p",
+            "prov",
+            "--Xhosts=kafka:9092",
+            "--Xtopic=my_topic",
+        ],
+        Rpc(
+            r#"Flezha.Service.CliManager.enable_plugin("p", "prov", "{\"hosts\": \"kafka:9092\", \"topic\": \"my_topic\"}", "{\"namespace\": \"default\"}")"#,
+        ),
+    ),
     // The provider registry has no JSON rendering, so asking for one is
     // refused rather than answered with a different query.
     (&["plugin", "list", "--json"], Refused("--installed")),
     (
         &["plugin", "list", "--output", "json"],
         Refused("--installed"),
+    ),
+    // `flz boot await` takes one option, and it is one option in all four of
+    // its spellings (KI-169). The wait is 90 s so a reader that quietly fell
+    // back to the 60 s default fails the row instead of passing it by
+    // coincidence.
+    (
+        &["boot", "await"],
+        Rpc("Flezha.Service.CliManager.boot_await(60000)"),
+    ),
+    (
+        &["boot", "await", "--timeout", "90"],
+        Rpc("Flezha.Service.CliManager.boot_await(90000)"),
+    ),
+    (
+        &["boot", "await", "--timeout=90"],
+        Rpc("Flezha.Service.CliManager.boot_await(90000)"),
+    ),
+    (
+        &["boot", "await", "-t", "90"],
+        Rpc("Flezha.Service.CliManager.boot_await(90000)"),
+    ),
+    (
+        &["boot", "await", "-t=90"],
+        Rpc("Flezha.Service.CliManager.boot_await(90000)"),
+    ),
+    // Reading every spelling may not cost the refusals the same reader gives:
+    // a word it cannot act on, and a flag with no value, are still refused by
+    // name rather than answered with the default wait.
+    (
+        &["boot", "await", "--nope"],
+        Refused("unexpected argument '--nope'"),
+    ),
+    (
+        &["boot", "await", "--timeout"],
+        Refused("--timeout requires a value"),
+    ),
+    (
+        &["boot", "await", "--timeout", "abc"],
+        Refused("invalid --timeout value 'abc'"),
     ),
     // `flz reset` renders its own report, and reads the same two spellings.
     (
@@ -205,7 +278,205 @@ const CASES: &[(&[&str], Want)] = &[
         &["reset", "--dry-run", "--output", "yaml", NO_ROOT],
         Refused("unknown output format"),
     ),
+    // An option written with NO VALUE is a request the reader cannot answer,
+    // and answering it with the default is the silence KI-173 filed. Each
+    // trailing flag is paired with the invocation that omits it, so a reader
+    // that simply refused everything could not pass either row.
+    (
+        &["token", "issue", "p", "ns", "viewer"],
+        Rpc(
+            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", 86400, [])",
+        ),
+    ),
+    (
+        &["token", "issue", "p", "ns", "viewer", "--ttl", "60"],
+        Rpc(
+            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", 60, [])",
+        ),
+    ),
+    (
+        &["token", "issue", "p", "ns", "viewer", "--ttl"],
+        Refused("--ttl requires a value"),
+    ),
+    (
+        &["operative", "scale", "g", "2", "--timeout"],
+        Refused("--timeout requires a value"),
+    ),
+    // The identity readers: a default that is another namespace, or another
+    // caller, is worse than a default that is another number.
+    (
+        &["cluster", "status", "--namespace"],
+        Refused("--namespace requires a value"),
+    ),
+    (&["token", "list", "--token"], Refused("--token requires a value")),
+    (
+        &["operative", "start", "op", "fac", "--kind"],
+        Refused("--kind requires a value"),
+    ),
+    (
+        &["controller", "start", "--mode"],
+        Refused("--mode requires a value"),
+    ),
+    (
+        &["audit", "tail", "--duration-ms"],
+        Refused("--duration-ms requires a value"),
+    ),
+    // `flz reset` reads its root and its format through the same scanner, so
+    // its own walk no longer needs to say this twice.
+    (
+        &["reset", "--dry-run", "--app-data-root"],
+        Refused("--app-data-root requires a value"),
+    ),
+    // The switch spelling may not carry the reader past the refusal: `--json`
+    // answered the format before `--output` was ever read.
+    (
+        &["cluster", "status", "--json", "--output"],
+        Refused("--output requires a value"),
+    ),
+    // A value the operator wrote and left empty IS a value: it is not refused,
+    // and `json`'s own rule for an empty value still answers `{}`.
+    (
+        &["operative", "start", "op", "fac", "-iv", ""],
+        Rpc(
+            "Flezha.Service.CliManager.operative_start(\"\", \"op\", \"fac\", \"{}\", \"{}\", \"[]\", \"stream\")",
+        ),
+    ),
+    // A NUMBER the reader cannot parse is the same request as one nobody
+    // wrote, and `.parse().ok()` made them the same answer (KI-176). Each bad
+    // value is paired with the good value and the omitted form, so a reader
+    // that refused everything fails the triple instead of passing a third of
+    // it.
+    (
+        &["audit", "read", "f"],
+        Rpc("Flezha.Service.CliManager.audit_log_render_read(\"f\", \"text\", [])"),
+    ),
+    (
+        &["audit", "read", "f", "--limit", "5"],
+        Rpc("Flezha.Service.CliManager.audit_log_render_read(\"f\", \"text\", [limit: 5])"),
+    ),
+    (
+        &["audit", "read", "f", "--limit", "abc"],
+        Refused("invalid --limit value 'abc'"),
+    ),
+    (
+        &["audit", "read", "f", "--since", "10", "--until", "20"],
+        Rpc(
+            "Flezha.Service.CliManager.audit_log_render_read(\"f\", \"text\", [since_us: 10, until_us: 20])",
+        ),
+    ),
+    (
+        &["audit", "read", "f", "--since", "abc"],
+        Refused("invalid --since value 'abc'"),
+    ),
+    (
+        &["audit", "read", "f", "--until", "abc"],
+        Refused("invalid --until value 'abc'"),
+    ),
+    (
+        &["audit", "tail", "--duration-ms", "5000"],
+        Rpc("Flezha.Service.CliManager.audit_log_render_tail(\"text\", [duration_ms: 5000])"),
+    ),
+    (
+        &["audit", "tail", "--duration-ms", "abc"],
+        Refused("invalid --duration-ms value 'abc'"),
+    ),
+    (
+        &["observe", "tail", "beam_vm", "--duration-ms", "5000"],
+        Rpc(
+            "Flezha.Service.CliManager.observability_render_tail(\"beam_vm\", \"text\", [duration_ms: 5000])",
+        ),
+    ),
+    (
+        &["observe", "tail", "beam_vm", "--duration-ms", "abc"],
+        Refused("invalid --duration-ms value 'abc'"),
+    ),
+    // The two verbs that never parsed at all: they shipped the word the
+    // operator typed to the controller as a JSON string.
+    (
+        &[
+            "operative",
+            "start",
+            "op",
+            "fac",
+            "--snapshot-interval",
+            "5",
+            "--partitions",
+            "4",
+        ],
+        Rpc(
+            r#"Flezha.Service.CliManager.operative_start("", "op", "fac", "{}", "{\"snapshot_interval\": \"5\", \"partitions\": \"4\"}", "[]", "stream")"#,
+        ),
+    ),
+    (
+        &["operative", "start", "op", "fac", "--partitions", "abc"],
+        Refused("invalid --partitions value 'abc'"),
+    ),
+    (
+        &[
+            "operative",
+            "start",
+            "op",
+            "fac",
+            "--snapshot-interval",
+            "abc",
+        ],
+        Refused("invalid --snapshot-interval value 'abc'"),
+    ),
+    (
+        &["operative", "scale", "g", "2"],
+        Rpc("Flezha.Service.CliManager.operative_scale(\"\", \"g\", \"2\", \"{}\")"),
+    ),
+    (
+        &["operative", "scale", "g", "2", "--timeout", "5000"],
+        Rpc(
+            r#"Flezha.Service.CliManager.operative_scale("", "g", "2", "{\"timeout_ms\": \"5000\"}")"#,
+        ),
+    ),
+    (
+        &["operative", "scale", "g", "2", "--timeout", "abc"],
+        Refused("invalid --timeout value 'abc'"),
+    ),
+    // The five readers that already refused a bad number, each in its own
+    // words. They answer the shared sentence now, so the rule cannot depend on
+    // which verb was typed.
+    (
+        &["token", "issue", "p", "ns", "viewer", "--ttl", "abc"],
+        Refused("invalid --ttl value 'abc'"),
+    ),
+    // A range rule is the option's own, and only the parse is shared.
+    (
+        &["token", "issue", "p", "ns", "viewer", "--ttl", "0"],
+        Refused("--ttl requires a positive integer"),
+    ),
+    (
+        &["controller", "stop", "--timeout-ms", "abc"],
+        Refused("invalid --timeout-ms value 'abc'"),
+    ),
+    (
+        &["operative", "rewind", "op", "--to-iteration", "abc"],
+        Refused("invalid --to-iteration value 'abc'"),
+    ),
+    (
+        &["reset", "--dry-run", "--probe-timeout-ms", "abc", NO_ROOT],
+        Refused("invalid --probe-timeout-ms value 'abc'"),
+    ),
 ];
+
+/// One invocation, thirty-two runs: `operative start` built its options from a
+/// `HashMap`, and `RandomState` seeds itself per process, so the key order was
+/// a property of the run rather than of what the operator typed (KI-177). One
+/// flip is enough to fail this; on the defect it flipped within two runs.
+const REPEATED: &[&str] = &[
+    "operative",
+    "start",
+    "op",
+    "fac",
+    "--snapshot-interval",
+    "5",
+    "--partitions",
+    "4",
+];
+const REPEATS: usize = 32;
 
 /// The one `CliManager` call the run reached, as the shim echoed it.
 fn rpc_expression(stdout: &str) -> Option<&str> {
@@ -274,11 +545,41 @@ fn both_spellings_of_the_output_format_mean_the_same_thing() {
         }
     }
 
+    wrong.extend(the_same_invocation_answers_the_same_way_every_run(&cli));
+
     assert!(
         wrong.is_empty(),
         "{} of {} invocations answered the wrong thing:\n{}",
         wrong.len(),
-        CASES.len(),
+        CASES.len() + 1,
         wrong.join("\n")
     );
+}
+
+/// The same words must build the same request. A row asserting one exact
+/// expression would fail about half the time on the defect, and a coin flip
+/// proves nothing; repetition is what makes the answer decidable.
+fn the_same_invocation_answers_the_same_way_every_run(cli: &Shim) -> Vec<String> {
+    let expression = |out: Output| {
+        rpc_expression(&String::from_utf8_lossy(&out.stdout))
+            .unwrap_or("<no RPC>")
+            .to_string()
+    };
+
+    let first = expression(run(cli, REPEATED));
+
+    for run_number in 2..=REPEATS {
+        let again = expression(run(cli, REPEATED));
+        if again != first {
+            return vec![format!(
+                "flz {}\n     run 1   {}\n     run {}  {}",
+                REPEATED.join(" "),
+                first,
+                run_number,
+                again
+            )];
+        }
+    }
+
+    Vec::new()
 }

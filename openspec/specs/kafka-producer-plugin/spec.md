@@ -253,7 +253,8 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 
 #### Scenario: KafkaEx worker crashes mid-batch and queued records continue flowing
 - **GIVEN** a `ProducerWorker` is steadily delivering `btc_demo.ohlc.v1` records at 50 msg/sec and has 200 records in `state.queue`, 50 across the in-flight window, and 0 in `state.blocked`
-- **AND** the operator runs `docker compose -f /home/moon/Code/flezha_market/docker/dev/docker-compose.yml exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the operative's canonical identity
+- **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the operator's own checkout of the separate `flezha_market` repository, which owns that stack and which this repository does not carry
+- **AND** the operator runs `docker compose -f "$MARKET_COMPOSE" exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the operative's canonical identity
 - **WHEN** `WorkerRegistry` observes the worker's DOWN
 - **THEN** within 1 second the producer SHALL receive `{:kafka_worker_dead, registry_ref, _reason}`, acquire a new worker via `swap/2`, re-run `InitProducerId`, and resume sending
 - **AND** the topic end-offset of `btc_demo.ohlc.v1` (read via `docker compose ... exec kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic btc_demo.ohlc.v1`) SHALL advance by at least 200 records within the next 10 seconds

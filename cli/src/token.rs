@@ -26,16 +26,15 @@ fn handle_issue(args: &[String]) {
         exit(1);
     }
 
-    let ttl = match args::extract_param(&args[4..], "--ttl", "--ttl") {
-        Some(t) => match t.parse::<u64>() {
-            Ok(n) if n > 0 => n.to_string(),
-            _ => {
-                eprintln!("Error: --ttl requires a positive integer (seconds)");
-                exit(1);
-            }
-        },
+    let ttl = match args::or_refuse(args::number::<u64>(&args[4..], "--ttl", "--ttl")) {
+        // A range is this option's own rule; the parse is the shared reader's.
+        Some(0) => {
+            eprintln!("Error: --ttl requires a positive integer (seconds)");
+            exit(1);
+        }
+        Some(seconds) => seconds,
         // Default CLI-token TTL (config `:token_ttl_default_seconds`).
-        None => "86400".to_string(),
+        None => 86_400,
     };
 
     rpc::run(

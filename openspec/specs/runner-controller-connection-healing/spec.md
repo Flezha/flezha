@@ -39,7 +39,7 @@ The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOpera
 
 ### Requirement: An outbound input frame is sent by its caller from the channel's published binding
 
-`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel terminates. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every operative on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]` — so a stall on an unbound stream stays observable to the reconciler, whose probe rebinds it.
+`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel terminates. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every operative on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]`, so a stall on an unbound stream stays observable. An unbound channel SHALL be rebound by the acceptor when the SDK opens a fresh data stream for that runner, and by nothing else: no convergence heal primitive rebinds a data stream, so the sender's refusal is a report, not a request for a repair that is already under way.
 
 #### Scenario: A bound frame leaves from the caller
 - **GIVEN** a `StreamChannel` bound to `stream_ref_1`
@@ -73,8 +73,9 @@ This requirement is a precondition for the existing "Runner → Controller data 
 
 #### Scenario: Controller closes the control socket cleanly, SDK reconnects without panic
 - **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and Operatives steadily streaming
-- **AND** the operator captures the Runner's PID before the test: `RUNNER_PID=$(docker compose -f /home/moon/Code/flezha_market/docker/dev/docker-compose.yml exec -T market-executor cat /var/run/market-executor.pid)`
-- **WHEN** the operator runs `docker compose -f /home/moon/Code/flezha_market/docker/dev/docker-compose.yml restart flezha-controller`
+- **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the operator's own checkout of the separate `flezha_market` repository — the stack every `docker compose ...` in this scenario selects
+- **AND** the operator captures the Runner's PID before the test: `RUNNER_PID=$(docker compose -f "$MARKET_COMPOSE" exec -T market-executor cat /var/run/market-executor.pid)`
+- **WHEN** the operator runs `docker compose -f "$MARKET_COMPOSE" restart flezha-controller`
 - **AND** the new Controller process reaches ready
 - **THEN** the Rust Runner process SHALL still be alive (same PID — `docker compose ... exec -T market-executor cat /var/run/market-executor.pid` returns the same value as `RUNNER_PID`)
 - **AND** the Runner's stderr SHALL NOT contain `thread '<unnamed>' panicked` or `Failed to decode message: DecodeError`
@@ -629,7 +630,6 @@ An SDK that is its own core (the Elixir SDK) SHALL bound the same wait by its ow
 - **WHEN** a live state read names an Entity inside an activation older than the bound
 - **THEN** the runner SHALL answer with an error naming the Entity as busy after the bound, and the control thread SHALL go on serving later commands
 
-
 ### Requirement: A per-runner data socket name SHALL be bounded and composed by one implementation
 
 A per-runner data socket SHALL be named `<stream type>_stream_<id field>.sock` in the resolved
@@ -668,3 +668,4 @@ its byte length, rather than surfacing as a listener that failed to start.
 #### Scenario: A shortened name is still recognised as Flezha's own
 - **WHEN** a directory holds a data socket whose id field was shortened
 - **THEN** the predicate that decides which files in a socket directory belong to Flezha recognises it, and `flz reset --include-sockets` clears it
+

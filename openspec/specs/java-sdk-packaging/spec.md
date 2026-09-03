@@ -6,11 +6,11 @@ Defines how the Java SDK is structured, built, and distributed: Maven module lay
 ## Requirements
 ### Requirement: Maven Multi-Module Layout
 
-The Java SDK SHALL live under `sdk/java/` as a Maven multi-module project with the following modules: `flezha-sdk-api`, `flezha-sdk-protobuf`, `flezha-sdk-runtime`, `flezha-sdk-native`, `flezha-sdk` (aggregator / fat jar), and `flezha-sdk-integration-tests`. Each module's `pom.xml` MUST declare `java.version = 21` via Maven toolchains or the `maven-compiler-plugin` `<release>21</release>` setting.
+The Java SDK SHALL live under `sdk/java/` as a Maven multi-module project with the following modules: `flezha-sdk-api`, `flezha-sdk-processor`, `flezha-sdk-runtime`, `flezha-sdk-native`, `flezha-sdk-testing`, `flezha-sdk-examples`, and `flezha-sdk` (aggregator / fat jar). Each module's `pom.xml` MUST declare `java.version = 21` via Maven toolchains or the `maven-compiler-plugin` `<release>21</release>` setting.
 
 #### Scenario: Fresh checkout builds with a single Maven command
 - **WHEN** a developer runs `mvn -f sdk/java/pom.xml install` from a fresh checkout with Java 21 and a host-triple `flz_core_ffi` native build available
-- **THEN** all six modules SHALL compile and their unit tests SHALL pass
+- **THEN** all seven modules SHALL compile and their unit tests SHALL pass
 
 #### Scenario: Module targeting wrong Java version is rejected
 - **WHEN** any module's `pom.xml` is changed to target Java < 21

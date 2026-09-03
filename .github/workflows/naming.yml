@@ -44,11 +44,11 @@ name: Naming
 # blocking: the purge reclaimed 961 MB -> 15 MB, and the ceiling is what keeps
 # it there (docs/runbooks/purge-build-artifacts.md).
 #
-# refactor-metrics is the structure ratchet (docs/refactor/charter.md §11):
-# non-blocking until an area is listed under `blocking` in
-# docs/refactor/baseline.json, and it uploads the measured JSON either way.
-# It needs only jscpd from sdk/node; the Elixir cycle count and the lint counts
-# are skipped without their toolchains and compared only when both sides have them.
+# There is no structure ratchet here, deliberately. scripts/refactor_metrics.py
+# reads its baseline and targets from docs/refactor/, which is programme
+# material this repository does not track, so on a fresh checkout the check
+# exits 2 and can only ever be green by being ignored. It is a local instrument,
+# run on a box that holds the baseline, and it does not belong in CI.
 
 on:
   pull_request:
@@ -93,25 +93,3 @@ jobs:
           fetch-depth: 0
       - name: check-build-artifacts size
         run: scripts/check-build-artifacts.sh size
-
-  refactor-metrics:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install jscpd (pinned in sdk/node/package.json)
-        run: npm ci --prefix sdk/node --ignore-scripts
-      - name: refactor_metrics --check
-        run: python3 scripts/refactor_metrics.py --check
-      - name: Measure
-        if: always()
-        run: python3 scripts/refactor_metrics.py --json > refactor-metrics.json
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: refactor-metrics
-          path: refactor-metrics.json

@@ -8,9 +8,17 @@ Defines the testing strategy for the Java SDK: unit test coverage of the protoco
 
 The Java SDK SHALL include JUnit 5 unit tests that cover every component of the protocol and runtime layer: binary framing (frame build / parse, partial reads, incomplete headers, incomplete payloads, multiple frames per read, oversized payload ids, empty metadata), metadata serialization (round-trip, boundary lengths of 0 and 255, missing metadata, the reserved `channel` key), protobuf encode/decode for every `CommandRequest` oneof and `CommandResponse` shape, command dispatch for every command variant (success and error paths, including the `OperativeMessage` canonical-unsupported response), Operative registration (duplicate factoryId, missing factoryId lookup, before/after `newInstance` gating, wiring-mismatch rejection, entry-channel-type rejection, unwired-channel rejection, static-mode and dynamic-mode default-impl detection), Procedure dispatch (single-mode entity allocation, static-mode entity fan-out, sticky per-entity ordering, parallel entity execution, inter-procedure reference-equality, plugin-bound serialization + channel-name metadata attachment, `emitWithMeta` rejection on inter-procedure channels, reserved-key drop), operative-instance lifecycle (add via `AddOperative`, remove via `RemOperative`, state serialize via `EntityState`, migrate serialize via `MigrationSerialization`, migrate deserialize via `MigrationDeserialization`), and the reconnect state machine (intentional vs unexpected disconnect, backoff schedule).
 
+Line coverage of the `flezha-sdk-runtime` and `flezha-sdk-api` modules SHALL reach ≥ 85%. That number is produced by JaCoCo's `report` goal, which the `coverage` profile in `sdk/java/pom.xml` binds to the `verify` phase, so `mvn -f sdk/java/pom.xml -P coverage verify` is the command that measures it; `mvn ... test` runs the suite and writes no coverage report. No Maven goal enforces the floor — the profile binds no `check` execution — so it is met by writing tests, not by a failing build.
+
 #### Scenario: Running mvn test passes the unit suite
 - **WHEN** a developer runs `mvn -f sdk/java/pom.xml test`
-- **THEN** all unit tests SHALL pass and the JaCoCo line coverage report SHALL show ≥ 85% coverage for `flezha-sdk-runtime` and `flezha-sdk-api` modules
+- **THEN** all unit tests SHALL pass
+- **AND** no JaCoCo report SHALL be written, because the `report` goal is bound to `verify` inside the `coverage` profile and neither is reached
+
+#### Scenario: Coverage is read from the coverage profile's report
+- **WHEN** a developer runs `mvn -f sdk/java/pom.xml -P coverage verify`
+- **THEN** every module with sources SHALL write `target/site/jacoco/jacoco.csv`
+- **AND** the line coverage of `flezha-sdk-runtime` and `flezha-sdk-api` SHALL be readable from those files and compared against the 85% floor by whoever runs it
 
 #### Scenario: Each java-sdk requirement has at least one unit test
 - **WHEN** the unit test suite is enumerated
@@ -188,7 +196,7 @@ The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harn
 
 #### Scenario: Coverage report enumerates per-scenario harness tests
 
-- **WHEN** `mvn -f sdk/java test` runs and produces JaCoCo + JUnit reports
+- **WHEN** `mvn -f sdk/java test` runs and produces JUnit reports
 - **THEN** the JUnit report SHALL include test methods named after each scenario from the persistence requirements (e.g. `testDefaultChangeIsNoChange_skipsPersistence`, `testStateApplyRunsApplyChangeAndRecords`, `testCoalesceCollapsesSameKey`, ...) — at least one test method per scenario
 
 #### Scenario: Coverage gap fails CI pre-merge

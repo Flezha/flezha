@@ -3,13 +3,13 @@
 ## Purpose
 TBD - created by archiving change add-php-sdk. Update Purpose after archive.
 ## Requirements
-### Requirement: The SDK ships as one Composer package with a minimal floor
-The PHP SDK SHALL be distributed as a single Composer package named `flezha/sdk`, requiring `php >= 8.1` and `ext-ffi` and nothing else.
+### Requirement: The SDK ships as one Composer package with a declared PHP floor
+The PHP SDK SHALL be distributed as a single Composer package named `flezha/sdk`, requiring `php >= 8.4` and `ext-ffi` and nothing else.
 
-The 8.1 floor is what the authoring surface needs — enums and `never` — and nothing more; `ext-ffi` itself is stable from 8.0. `ext-swoole` SHALL be the only `suggest` entry, declared at the minimum version providing `Swoole\Thread`, and the threaded executor MAY declare a higher PHP floor than the package as a whole, checked when it is selected rather than at install.
+The 8.4 floor is the supported PHP line, not the lowest the code could parse: the authoring surface needs only 8.1 — enums and `never` — and `ext-ffi` itself is stable from 8.0, but 8.4 is the line this project builds, tests and benchmarks the SDK on. The floor SHALL be declared in `require` rather than pinned through `config.platform`, so the manifest states what is supported instead of freezing what resolves. `ext-swoole` SHALL be the only `suggest` entry, declared at the minimum version providing `Swoole\Thread`, and the threaded executor MAY declare a higher PHP floor than the package as a whole, checked when it is selected rather than at install.
 
 #### Scenario: A minimal install works
-- **WHEN** a project runs `composer require flezha/sdk` on PHP 8.1 with `ext-ffi` enabled
+- **WHEN** a project runs `composer require flezha/sdk` on PHP 8.4 with `ext-ffi` enabled
 - **THEN** installation SHALL pull no further packages, and a runner SHALL start
 
 #### Scenario: The threaded executor checks its own requirements
@@ -17,7 +17,7 @@ The 8.1 floor is what the authoring surface needs — enums and `never` — and 
 - **THEN** the SDK SHALL raise an error naming what is missing, and installation of the package itself SHALL never have been affected by it
 
 #### Scenario: An unsupported PHP version is refused at install
-- **WHEN** installation is attempted on PHP below 8.1
+- **WHEN** installation is attempted on PHP below 8.4
 - **THEN** Composer SHALL refuse it on the declared platform constraint
 
 ### Requirement: One runner per process; the SDK spawns none

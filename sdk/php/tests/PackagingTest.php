@@ -29,9 +29,9 @@ final class PackagingTest extends RepositoryTestCase
         self::assertSame(['php', 'ext-ffi'], array_keys($this->composer()['require']));
     }
 
-    public function testTheFloorIsWhatTheAuthoringSurfaceNeeds(): void
+    public function testTheDeclaredFloorIsTheSupportedPhpLine(): void
     {
-        self::assertSame('>=8.1', $this->composer()['require']['php']);
+        self::assertSame('>=8.4', $this->composer()['require']['php']);
     }
 
     public function testSwooleIsSuggestedAndNothingElseIs(): void

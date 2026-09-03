@@ -1,9 +1,12 @@
-//! The process-global send path for durable records: [`send`] resolves the
-//! live sink on every call, holds frames in a drop-oldest ring while
-//! no sink is installed or a write fails, and [`install_global_sink`] replays
-//! the ring through the new sink — so a record produced mid-reconnect is not
-//! lost. A sustained run of write failures is a dead data stream under a
-//! live control channel, and asks the coordinator for a full reconnect.
+//! The process-global send path for durable records, and the holding pen every
+//! writer on the outbound wire shares: [`send`] resolves the live sink on every
+//! call, a frame that cannot be written goes into a drop-oldest ring — through
+//! [`send`] for a record, through [`hold_failed_frame`] for a writer that
+//! framed its own payload — and [`install_global_sink`] replays the ring onto
+//! the stream a reconnect wires, so nothing produced mid-reconnect is lost. A
+//! sustained run of write failures is a dead data stream under a live control
+//! channel, and asks the coordinator for a full reconnect. An eviction is the
+//! one outcome that loses a frame, and it is counted as a drop-oldest shed.
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -55,11 +58,30 @@ const DEFAULT_RECONNECT_RETRY_MS: u64 = 30_000;
 
 const RECONNECT_REASON: &str = "broken_pipe_flood";
 
+/// A frame the wire could not take. A record is replayed through the sink
+/// that frames it; a framed payload already carries its own payload id and
+/// metadata, so it is replayed onto the live secondary exactly as it stands.
+enum Pending {
+    Record { payload_id: String, frame: Vec<u8> },
+    Framed(Vec<u8>),
+}
+
+impl Pending {
+    fn record(payload_id: &str, frame: Vec<u8>) -> Self {
+        Pending::Record {
+            payload_id: payload_id.to_string(),
+            frame,
+        }
+    }
+}
+
 struct SinkState {
     sink: Option<SendFrameFn>,
-    /// `(payload_id, frame)` held while no sink was installed or a write
-    /// failed; drop-oldest.
-    ring: VecDeque<(String, Vec<u8>)>,
+    /// Frames held while no sink was installed or a write failed; drop-oldest.
+    ring: VecDeque<Pending>,
+    /// Frames the ring dropped since the last install — a real loss, reported
+    /// when the stream comes back.
+    evicted_since_install: u64,
     broken_pipe_at: VecDeque<Instant>,
     /// When the last flood reconnect was requested; one per dead stream, but
     /// re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS` so an unanswered
@@ -72,16 +94,43 @@ impl SinkState {
         SinkState {
             sink: None,
             ring: VecDeque::new(),
+            evicted_since_install: 0,
             broken_pipe_at: VecDeque::new(),
             reconnect_requested_at: None,
         }
     }
 
-    fn push_ring(&mut self, payload_id: &str, frame: Vec<u8>) {
-        if self.ring.len() >= ring_capacity() {
-            self.ring.pop_front();
+    fn push_ring(&mut self, entry: Pending) {
+        if self.ring.len() >= ring_capacity() && self.ring.pop_front().is_some() {
+            // The ring holds the only copy: an eviction is a lost frame, and
+            // it is counted where every drop-oldest shed on this wire is.
+            crate::entity::note_dropped_oldest();
+            self.evicted_since_install += 1;
+            if self.evicted_since_install == 1 {
+                tracing::warn!(
+                    target: "flezha::transport",
+                    capacity = ring_capacity(),
+                    "reconnect ring full; dropping the oldest outbound frame"
+                );
+            }
         }
-        self.ring.push_back((payload_id.to_string(), frame));
+        self.ring.push_back(entry);
+    }
+
+    /// The posture every writer on this wire shares for a failed write: one
+    /// line to open the burst, the frame held, and the flood verdict back.
+    fn hold_failed(&mut self, kind: &str, entry: Pending, error: &dyn std::fmt::Display) -> bool {
+        if self.broken_pipe_at.is_empty() {
+            tracing::warn!(
+                target: "flezha::transport",
+                ring_len = self.ring.len() + 1,
+                "outbound {} write failed; buffering into reconnect ring: {}",
+                kind,
+                error
+            );
+        }
+        self.push_ring(entry);
+        self.note_broken_pipe(Instant::now())
     }
 
     /// Record a write failure; `true` when the caller should ask for a
@@ -180,24 +229,27 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
         match outcome {
             Some(Ok(())) => false,
             Some(Err(ref e)) => {
-                if st.broken_pipe_at.is_empty() {
-                    tracing::warn!(
-                        target: "flezha::transport",
-                        ring_len = st.ring.len() + 1,
-                        "outbound entity-state write failed; buffering into reconnect ring: {}",
-                        e
-                    );
-                }
-                st.push_ring(payload_id, frame);
-                st.note_broken_pipe(Instant::now())
+                st.hold_failed("entity-state", Pending::record(payload_id, frame), e)
             }
             None => {
                 // Reconnect window: hold the frame, but don't count it as a
                 // broken pipe — the stream is intentionally absent.
-                st.push_ring(payload_id, frame);
+                st.push_ring(Pending::record(payload_id, frame));
                 false
             }
         }
+    };
+    drive_reconnect_if(should_reconnect);
+}
+
+/// Hold a frame a writer framed itself and could not write — `kind` names that
+/// writer in the burst's first line. The same ring, the same flood ladder and
+/// the same reconnect request [`send`] uses: one wire, one policy for a failed
+/// write.
+pub fn hold_failed_frame(kind: &str, frame: Vec<u8>, error: &dyn std::fmt::Display) {
+    let should_reconnect = {
+        let mut st = STATE.lock().expect("state_sink lock poisoned");
+        st.hold_failed(kind, Pending::Framed(frame), error)
     };
     drive_reconnect_if(should_reconnect);
 }
@@ -235,19 +287,38 @@ pub fn install_global_sink(send_fn: SendFrameFn) {
     st.sink = Some(send_fn.clone());
     st.broken_pipe_at.clear();
     st.reconnect_requested_at = None;
+    if st.evicted_since_install > 0 {
+        tracing::warn!(
+            target: "flezha::transport",
+            dropped = st.evicted_since_install,
+            "reconnect ring overflowed while the stream was down; those frames are lost"
+        );
+        st.evicted_since_install = 0;
+    }
 
-    let pending: Vec<(String, Vec<u8>)> = st.ring.drain(..).collect();
+    let pending: Vec<Pending> = st.ring.drain(..).collect();
     let mut it = pending.into_iter();
-    for (pid, frame) in it.by_ref() {
-        if send_fn(&pid, &frame).is_err() {
+    for entry in it.by_ref() {
+        if !replay_held(&send_fn, &entry) {
             // The new stream is already failing — re-buffer this frame and
             // everything after it; a later install replays again.
-            st.push_ring(&pid, frame);
-            for (rest_pid, rest) in it.by_ref() {
-                st.push_ring(&rest_pid, rest);
+            st.push_ring(entry);
+            for rest in it.by_ref() {
+                st.push_ring(rest);
             }
             break;
         }
+    }
+}
+
+/// One held frame back onto the wire; `false` when the fresh stream refused
+/// it. A framed entry rides the live secondary, which an install wires before
+/// the sink — the only lock taken while `STATE` is held, and no path takes the
+/// two the other way round.
+fn replay_held(send_fn: &SendFrameFn, entry: &Pending) -> bool {
+    match entry {
+        Pending::Record { payload_id, frame } => send_fn(payload_id, frame).is_ok(),
+        Pending::Framed(frame) => send_oneshot(frame),
     }
 }
 
@@ -270,8 +341,16 @@ pub(crate) fn reset_for_test() {
     let mut st = STATE.lock().unwrap_or_else(|p| p.into_inner());
     st.sink = None;
     st.ring.clear();
+    st.evicted_since_install = 0;
     st.broken_pipe_at.clear();
     st.reconnect_requested_at = None;
+}
+
+/// How many frames the ring is holding.
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) fn ring_len_for_test() -> usize {
+    STATE.lock().unwrap_or_else(|p| p.into_inner()).ring.len()
 }
 
 /// Whether a reconnect is currently requested.
@@ -382,12 +461,44 @@ mod tests {
             .unwrap()
             .ring
             .iter()
-            .map(|(_pid, frame)| frame.clone())
+            .map(|entry| match entry {
+                Pending::Record { frame, .. } => frame.clone(),
+                Pending::Framed(frame) => frame.clone(),
+            })
             .collect();
         assert_eq!(
             ring,
             vec![vec![2u8], vec![3u8], vec![4u8]],
             "oldest dropped"
+        );
+
+        std::env::remove_var(ENV_RING_CAPACITY);
+        reset_state();
+    }
+
+    /// The ring holds the frame's last copy, so an eviction is a real loss —
+    /// and the heartbeat's `drops_oldest` is where this wire's shedding is
+    /// already reported.
+    #[test]
+    fn a_ring_eviction_counts_as_a_drop_oldest_shed() {
+        let _g = super::SINK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::env::set_var(ENV_RING_CAPACITY, "1");
+        reset_state();
+
+        let before = crate::entity::drops_oldest_total();
+        send(PID, b"first".to_vec());
+        send(PID, b"second".to_vec());
+
+        assert!(
+            crate::entity::drops_oldest_total() > before,
+            "an evicted frame must reach the counter the heartbeat reports"
+        );
+        assert_eq!(
+            STATE.lock().unwrap().evicted_since_install,
+            1,
+            "one eviction, reported once the stream comes back"
         );
 
         std::env::remove_var(ENV_RING_CAPACITY);

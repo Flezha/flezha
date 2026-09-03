@@ -37,10 +37,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The declared floor, and the newest release. `ext-ffi` is stable from
-        # 8.0 and the authoring surface needs 8.1, so the span is the support
-        # window rather than a compatibility hunt.
-        php: ["8.1", "8.4"]
+        # The declared floor, which is also the newest release: the support
+        # window is one line wide today. A second entry returns when a newer
+        # line ships and the floor stays where it is.
+        php: ["8.4"]
     steps:
       - uses: actions/checkout@v5
 

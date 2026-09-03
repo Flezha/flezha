@@ -145,6 +145,10 @@ fn verdict(
     0
 }
 
+/// The live-node probe's deadline. Named because the walk below has to know
+/// which word the reader above consumed.
+const PROBE_TIMEOUT_MS: &str = "--probe-timeout-ms";
+
 /// A boolean switch and the field it sets.
 type Switch = (&'static str, fn(&mut Flags));
 
@@ -172,7 +176,9 @@ fn parse_flags(args: &[String]) -> Result<Flags, (i32, String)> {
         // The output format is the CLI's one reader's answer here too, so
         // `--json` and `--output json` cannot mean different things.
         json: cli_args::parse_output_format(args).map_err(|refusal| (1, refusal))? == "json",
-        probe_timeout_ms: DEFAULT_PROBE_TIMEOUT_MS,
+        probe_timeout_ms: cli_args::number(args, PROBE_TIMEOUT_MS, PROBE_TIMEOUT_MS)
+            .map_err(|refusal| (1, refusal))?
+            .unwrap_or(DEFAULT_PROBE_TIMEOUT_MS),
         app_data_root: cli_args::app_data_root(args),
     };
 
@@ -182,24 +188,14 @@ fn parse_flags(args: &[String]) -> Result<Flags, (i32, String)> {
 
         if let Some((_, set)) = SWITCHES.iter().find(|(name, _)| *name == arg) {
             set(&mut flags);
-        } else if arg == "--probe-timeout-ms" {
-            let value = value_after(
-                args,
-                i,
-                "error: --probe-timeout-ms requires a value (milliseconds)",
-            )?;
-            flags.probe_timeout_ms = parse_timeout(value)?;
-            i += 1;
-        } else if let Some(value) = arg.strip_prefix("--probe-timeout-ms=") {
-            flags.probe_timeout_ms = parse_timeout(value)?;
-        } else if arg == "--app-data-root" {
-            // The value itself is read by `cli_args::app_data_root` above.
-            value_after(args, i, "error: --app-data-root requires a path")?;
-            i += 1;
-        } else if arg == "--output" || arg == "-o" {
-            // Likewise `cli_args::parse_output_format`: the walk only steps
-            // over the value it already read.
-            value_after(args, i, "error: --output requires a value (text or json)")?;
+        } else if arg == "--app-data-root"
+            || arg == "--output"
+            || arg == "-o"
+            || arg == PROBE_TIMEOUT_MS
+        {
+            // The readers in the `Flags` literal above answer these, and
+            // refuse a missing or unreadable value there. The walk only steps
+            // over the word they consumed.
             i += 1;
         } else if !read_above(arg) {
             return Err((1, format!("error: unknown argument '{}'", arg)));
@@ -225,22 +221,7 @@ fn read_above(arg: &str) -> bool {
         || arg.starts_with("--output=")
         || arg.starts_with("-o=")
         || arg.starts_with("--app-data-root=")
-}
-
-fn value_after<'a>(args: &'a [String], i: usize, refusal: &str) -> Result<&'a str, (i32, String)> {
-    match args.get(i + 1) {
-        Some(value) => Ok(value),
-        None => Err((1, refusal.to_string())),
-    }
-}
-
-fn parse_timeout(value: &str) -> Result<u64, (i32, String)> {
-    value.parse().map_err(|_| {
-        (
-            1,
-            format!("error: invalid --probe-timeout-ms value '{}'", value),
-        )
-    })
+        || arg.starts_with(&format!("{}=", PROBE_TIMEOUT_MS))
 }
 
 #[cfg(test)]

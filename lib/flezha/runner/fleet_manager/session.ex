@@ -148,10 +148,8 @@ defmodule Flezha.Runner.FleetManager.Session do
   # without waiting for a convergence tick. `do_evict_runner/2` then tears down
   # the old (now operative-less) session.
   def swap_bindings(namespace, old_session, new_session) do
-    if HubManager.hub_alive?(namespace) do
-      HubManager.runner_operatives(namespace, old_session)
-      |> Enum.each(&swap_one_binding(namespace, new_session, &1))
-    end
+    HubManager.runner_operatives(namespace, old_session)
+    |> Enum.each(&swap_one_binding(namespace, new_session, &1))
   end
 
   defp swap_one_binding(namespace, new_session, {operative_id, node_pids}) do
@@ -195,14 +193,13 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   defp detach_runner_operatives(namespace, runner_id) do
-    if HubManager.hub_alive?(namespace) do
-      HubManager.runner_operatives(namespace, runner_id)
-      |> Enum.each(fn {operative_id, _node_pids} ->
-        HubManager.hook_remove_pid(runner_id, %{child_id: operative_id})
-      end)
+    HubManager.runner_operatives(namespace, runner_id)
+    |> Enum.each(fn {operative_id, _node_pids} ->
+      HubManager.hook_remove_pid(runner_id, %{child_id: operative_id})
+    end)
 
-      HubManager.unregister_handler(namespace, runner_id)
-    end
+    _ = HubManager.unregister_handler(namespace, runner_id)
+    :ok
   end
 
   defp set_runner_counter({namespace, runners}) do
@@ -224,9 +221,7 @@ defmodule Flezha.Runner.FleetManager.Session do
       |> Factories.remove_ce_factories(namespace, runner_id)
       |> Factories.prune_empty_factories(namespace)
 
-    if HubManager.hub_alive?(namespace) do
-      HubManager.unregister_handler(namespace, runner_id)
-    end
+    _ = HubManager.unregister_handler(namespace, runner_id)
 
     runner_ids =
       state
@@ -301,18 +296,11 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   def runner_reroute(state, namespace, old_runner) do
     # Collected BEFORE the drop, while the tag query still names the dead
-    # runner's operatives. The hub (and its ETS table) can be down or
-    # mid-restart during churn — that must never abort the dead runner's
-    # removal from the active set below; the operatives heal on the next
-    # convergence tick instead.
-    operatives =
-      try do
-        HubManager.runner_operatives(namespace, old_runner)
-      rescue
-        _ -> []
-      catch
-        :exit, _ -> []
-      end
+    # runner's operatives. A hub that is down or mid-restart during churn
+    # answers `[]` through the guarded seam, so it can never abort the dead
+    # runner's removal from the active set below; the operatives heal on the
+    # next convergence tick instead.
+    operatives = HubManager.runner_operatives(namespace, old_runner)
 
     # Off-process: each rebind resolves placement back through this
     # FleetManager (`assign_runner/3`), which would deadlock inside this
@@ -380,7 +368,22 @@ defmodule Flezha.Runner.FleetManager.Session do
       HubManager.start_hub(namespace)
     end
 
-    HubManager.register_handler(namespace, runner_id)
+    # A hub that is gone, or terminating under a drain, cannot take this
+    # runner's operative-insertion hook. Refusing here is what keeps one
+    # namespace's teardown from travelling out of this call as an exit and
+    # killing the manager and the node's acceptor with it.
+    case HubManager.register_handler(namespace, runner_id) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "runner #{runner_id} on #{namespace} could not register its operative-insertion " <>
+            "hook (#{inspect(reason)}); refusing the connect"
+        )
+
+        throw({:runner_connect_failed, {:hub_unavailable, namespace}})
+    end
 
     Supervisor.start_child(FleetSupervisor, %{
       id: runner_id,

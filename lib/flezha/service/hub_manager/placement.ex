@@ -20,19 +20,29 @@ defmodule Flezha.Service.HubManager.Placement do
   # bound was sized for. Overrunning it is not fatal — see `unplaceable_runner/5`.
   @runner_assign_wait_ms 2_000
 
+  @doc """
+  Register `runner_id`'s operative-insertion hook on the namespace's hub.
+
+  Answers `{:error, :hub_unavailable}` when the hub is not there to take it —
+  the connect is refused on that, because a runner whose hook never registered
+  gets no operative pid seeded into its stream channels.
+  """
+  @spec register_handler(binary(), binary()) :: :ok | {:error, term()}
   def register_handler(namespace, runner_id) do
-    ProcessHub.register_hook_handlers(
-      Identificator.hub(namespace),
-      Hook.child_registered(),
-      [
-        %HookManager{
-          id: runner_id <> "_hub_pid_insertion",
-          m: Flezha.Service.HubManager,
-          f: :hook_insert_pid,
-          a: [runner_id, :_]
-        }
-      ]
-    )
+    Rows.with_live_hub(namespace, {:error, :hub_unavailable}, fn hub_id ->
+      ProcessHub.register_hook_handlers(
+        hub_id,
+        Hook.child_registered(),
+        [
+          %HookManager{
+            id: runner_id <> "_hub_pid_insertion",
+            m: Flezha.Service.HubManager,
+            f: :hook_insert_pid,
+            a: [runner_id, :_]
+          }
+        ]
+      )
+    end)
   end
 
   # Live stream-channel children (primary + secondary) for a runner; `[]`
@@ -44,18 +54,19 @@ defmodule Flezha.Service.HubManager.Placement do
     :exit, _ -> []
   end
 
+  @spec unregister_handler(binary(), binary()) :: :ok | {:error, term()}
   def unregister_handler(namespace, runner_id) do
-    ProcessHub.cancel_hook_handlers(
-      Identificator.hub(namespace),
-      Hook.child_registered(),
-      [runner_id <> "_hub_pid_insertion"]
-    )
+    Rows.with_live_hub(namespace, {:error, :hub_unavailable}, fn hub_id ->
+      ProcessHub.cancel_hook_handlers(
+        hub_id,
+        Hook.child_registered(),
+        [runner_id <> "_hub_pid_insertion"]
+      )
+    end)
   end
 
   def runner_operatives(namespace, runner_id) do
-    hub_id = Identificator.hub(namespace)
-
-    ProcessHub.tag_query(hub_id, runner_id)
+    Rows.with_live_hub(namespace, [], fn hub_id -> ProcessHub.tag_query(hub_id, runner_id) end)
   end
 
   @doc """

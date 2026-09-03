@@ -9,7 +9,13 @@
 
 One area table, one classifier per language: a line is blank, code, a plain
 comment or a doc comment; a file is production or test by its path, and a Rust
-file is test inside each `#[cfg(test)] mod … { }` block. Duplicates are jscpd's (`.jscpd.json`),
+file is test inside each `#[cfg(test)] mod … { }` block. The walk is the WORKING TREE —
+every file git tracks plus every file it neither tracks nor ignores — because a refactor
+adds files and a walk over the index alone can only leave source out, which can only make
+every count look better than the tree is; `repo.untracked_scanned` says how much of a run
+was not committed and `repo.unreadable` names a file that is THERE and could not be opened —
+counted nowhere, skipped by jscpd too, and told from a tracked file deleted from disk, which
+is correctly absent and is not reported. Duplicates are jscpd's (`.jscpd.json`),
 cycles `mix xref graph --format cycles`, lint counts credo and clippy under `--lint` (slow,
 opt-in). A ratcheted metric must never rise; timings tolerate 5 % and compare only on the
 recording box; an area under `blocking` in the baseline fails `--check`, the rest only report.
@@ -22,6 +28,12 @@ A recording MERGES: `--timing`/`--bench` add to what the baseline holds, so reco
 number never retires another and never re-stamps a measurement it did not take — retire a
 stale entry by deleting its key from the file. For the same reason `--write-baseline` demands
 `--lint`: recording the lint metrics as unmeasured would disarm those ratchets for good.
+A lint count comes only from a run that completed — cargo exiting non-zero leaves
+`clippy_warnings` unmeasured, never zero, because a workspace that does not build emits no
+warnings and would score perfectly.
+A narrative marker is history or an id a reader cannot resolve: this repository carries
+neither its archived proposals nor the refactor charter, so a task number or a bare `§N`
+counts, while a section cited beside a `docs/…` document or an RFC does not.
 """
 
 import argparse
@@ -87,14 +99,27 @@ def areas():
     table["lib/flezha"] = (["lib/flezha.ex", "lib/flezha/"], [f"lib/flezha/{s}/" for s in subtrees])
     for sub in subtrees:
         table[f"lib/flezha/{sub}"] = ([f"lib/flezha/{sub}/"], [])
+    # lib/mix owns the build and configuration surface: without these, credo
+    # reads six files that sit in no area and are therefore ratcheted by nothing.
+    table["lib/mix"] = (["lib/mix/", "config/", "mix.exs"], [])
     table["test"] = (["test/"], ["test/apps/"])
     table["test/apps"] = (["test/apps/"], [])
     return table
 
 
-def tracked_files():
-    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
-    return [p for p in out.stdout.decode().split("\0") if p]
+def working_tree_files(root=ROOT):
+    """The working tree as two lists: what git tracks, and what it neither tracks
+    nor ignores. `--exclude-standard` is load-bearing — `target/`, `_build/`,
+    `deps/`, `node_modules/` and `.venv/` live in this tree and would otherwise be
+    measured. The split is kept because a run that counted uncommitted files is a
+    fact about the tree, not about the commit it names."""
+
+    def ls(*flags):
+        cmd = ["git", "ls-files", "-z", *flags]
+        out = subprocess.run(cmd, cwd=root, capture_output=True, check=True)
+        return [p for p in out.stdout.decode().split("\0") if p]
+
+    return ls("--cached"), ls("--others", "--exclude-standard")
 
 
 def language(path):
@@ -354,9 +379,23 @@ def functions(lines, lang):
 NARRATIVE = re.compile(
     r"\b(used to|before this change|first draft|previously|originally|no longer|"
     r"the old (?:way|code|behaviou?r|design))\b|\b20\d\d-\d\d-\d\d\b|\btasks?\.md\b|"
-    r"\bopenspec/changes\b|\bD\d{1,2}\b|\bPR\s*#\d+|\bproposal\b",
+    r"\bopenspec/changes\b|\bD\d{1,2}\b|\bPR\s*#\d+|\bproposal\b|"
+    r"\btasks?\s+\d+(?:\.\d+)*\b",
     re.IGNORECASE,
 )
+SECTION = re.compile(r"§\s?\d")
+# The repository carries neither its archived proposals nor the refactor charter,
+# so `§7c.3` names something a reader cannot reach. A section beside the document
+# that defines it does reach, and counting that would ask for correct prose to be
+# reworded rather than for the reference to be removed.
+CITATION = re.compile(r"docs/\S*\.md\b|\bRFC\s*\d+", re.IGNORECASE)
+
+
+def narrates(line):
+    """Charter §5: history, or an id a future reader cannot resolve."""
+    return bool(NARRATIVE.search(line) or (SECTION.search(line) and not CITATION.search(line)))
+
+
 SLEEP = {
     "elixir": re.compile(r"\bProcess\.sleep\(|:timer\.sleep\("),
     "rust": re.compile(r"\bthread::sleep\(|\bsleep\(Duration"),
@@ -382,6 +421,20 @@ def read_lines(path):
     return lines[:-1] if lines and lines[-1] == "" else lines
 
 
+def unreadable(path):
+    """A source file that is in the tree and could not be read. A file git tracks
+    that has been DELETED from disk is correctly absent from a working-tree
+    measurement and is not this, so `os.path.exists` is the whole discriminator.
+    Kept out of `read_lines` because `box()` reads paths that may legitimately
+    be missing."""
+    return (
+        language(path) is not None
+        and not path.startswith(GENERATED)
+        and os.path.exists(os.path.join(ROOT, path))
+        and read_lines(path) is None
+    )
+
+
 def measure_file(path):
     """Everything one file contributes; None when the file is not source."""
     lang = language(path)
@@ -400,7 +453,7 @@ def measure_lines(path, lang, lines):
             counts["test_loc" if in_test[i] else "prod_loc"] += 1
         elif kind != "blank":
             counts[f"{kind}_lines"] += 1
-            counts["narrative_markers"] += bool(NARRATIVE.search(lines[i]))
+            counts["narrative_markers"] += narrates(lines[i])
         if in_test[i]:
             counts["sleeps"] += bool(SLEEP[lang].search(lines[i]))
             counts["refutes"] += bool(lang == "elixir" and REFUTE.search(lines[i]))
@@ -491,6 +544,11 @@ def clippy_warnings():
     # The feature `make stabilize-test-check` builds with; two sdk/rust test targets need it.
     cmd = "cargo clippy --workspace --all-targets --features flezha_runner/bench-internals".split()
     out = run(cmd + ["--message-format=json"])
+    # A workspace that does not compile emits errors and no warnings, so a count
+    # taken here would be zero — a perfect score on code nobody linted, and one
+    # `unmeasured` cannot see because an empty list is not None. Refuse instead.
+    if out.returncode != 0:
+        return None
     seen = set()
     for line in out.stdout.split("\n"):
         msg = json.loads(line) if line.startswith("{") else {}
@@ -557,11 +615,15 @@ def summarise(files, pairs, cycles, credo, clippy):
 def measure(area_filter=None, lint=False):
     """Every area's metrics plus the repo-wide facts they were derived from."""
     table = {k: v for k, v in areas().items() if not area_filter or k in area_filter}
-    per_file = {}
-    for path in tracked_files():
-        m = measure_file(path) if any(in_area(path, r, e) for r, e in table.values()) else None
+    tracked, untracked = working_tree_files()
+    per_file, blind = {}, []
+    for path in tracked + untracked:
+        scanned = any(in_area(path, r, e) for r, e in table.values())
+        m = measure_file(path) if scanned else None
         if m:
             per_file[path] = m
+        elif scanned and unreadable(path):
+            blind.append(path)
     pairs = jscpd_pairs([r for roots, _ in table.values() for r in roots])
     cycles = xref_cycles() if any(k.startswith(("lib/", "test")) for k in table) else None
     credo = credo_warnings() if lint else None
@@ -571,6 +633,8 @@ def measure(area_filter=None, lint=False):
         files = {p: m for p, m in per_file.items() if in_area(p, roots, excluded)}
         result[name] = summarise(files, pairs, cycles, credo, clippy)
     repo = {
+        "untracked_scanned": sum(p in per_file for p in untracked),
+        "unreadable": sorted(blind),
         "cycles": len(cycles) if cycles is not None else None,
         "cycle_sizes": sorted((len(c) for c in cycles), reverse=True)
         if cycles is not None
@@ -781,6 +845,12 @@ def self_test_classifiers():
     )
     assert NARRATIVE.search("// this used to be a list") and NARRATIVE.search("# see D3")
     assert NARRATIVE.search("// 2026-08-28 incident") and not NARRATIVE.search("// bounded at 3 ms")
+    assert narrates("# the swap on a dead worker (task 2.7)") and narrates("// tasks 3.1 - 3.5")
+    assert narrates("// crash-resume (§7c.3): the runner") and narrates("# charter §9 mandates one")
+    # A section beside the document that defines it is a citation, not a marker.
+    assert not narrates("//! See `docs/sdk/authoring_contract.md` §5.")
+    assert not narrates("# Client frames are always masked (RFC 6455 §5.3).")
+    assert not narrates("// tasks the poller with one sweep")
 
 
 def self_test_ratchet():
@@ -860,6 +930,52 @@ def self_test_cycle_depth():
     assert labelled == [["lib/a.ex", "lib/b.ex", "lib/x.ex"], ["lib/c.ex", "lib/z.ex"]], labelled
 
 
+def self_test_walk():
+    """The walk is the working tree, and an ignored path is in neither list."""
+    with tempfile.TemporaryDirectory() as tmp:
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=tmp, capture_output=True, check=True)
+
+        git("init", "-q")
+        # Local config outranks the box's global excludesFile, so the fixture's
+        # ignore rules are the only ones --exclude-standard can read.
+        git("config", "core.excludesFile", os.devnull)
+        os.mkdir(os.path.join(tmp, "generated"))
+        fixture = ((".gitignore", "generated/\n"), ("added.rs", ""), ("generated/g.rs", ""))
+        for name, body in fixture:
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        tracked, untracked = working_tree_files(tmp)
+        assert tracked == [], tracked
+        assert untracked == [".gitignore", "added.rs"], untracked
+
+
+def self_test_unreadable():
+    """A source file that is THERE and cannot be read is named; a tracked file
+    deleted from disk is correctly absent and is not."""
+    global ROOT
+    saved, src = ROOT, "flz_core/src"
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, src))
+        fixture = (("ok.rs", b"pub fn f() {}\n"), ("gone.rs", b""), ("bad.rs", b"\xff\xfe"))
+        for name, body in fixture:
+            with open(os.path.join(tmp, src, name), "wb") as fh:
+                fh.write(body)
+        os.remove(os.path.join(tmp, src, "gone.rs"))
+        ROOT = tmp
+        try:
+            assert read_lines(f"{src}/bad.rs") is None and read_lines(f"{src}/gone.rs") is None
+            assert unreadable(f"{src}/bad.rs"), "a file that is there and will not decode"
+            assert not unreadable(f"{src}/gone.rs"), "deleted from disk: correctly absent"
+            assert not unreadable(f"{src}/ok.rs") and not unreadable("README.md")
+            # A directory in a source file's place is the same state and must read alike.
+            os.mkdir(os.path.join(tmp, src, "dir.rs"))
+            assert unreadable(f"{src}/dir.rs")
+        finally:
+            ROOT = saved
+
+
 def self_test_baseline():
     measured = {"box": {"hostname": "here"}, "head": "new", "areas": {}}
     recorded = {
@@ -936,6 +1052,15 @@ def check(data, baseline, args):
         tag = "BLOCKING" if area in blocking else "measuring"
         where = f"  [{', '.join(culprits)}]" if culprits else ""
         print(f"{tag} {area} {metric}: {then} -> {now}{where}")
+    loose = data["repo"].get("untracked_scanned") or 0
+    if loose:
+        print(f"{loose} untracked file(s) counted: this is the working tree, not {data['head']}")
+    blind = data["repo"].get("unreadable") or []
+    if blind:
+        print(
+            f"{len(blind)} file(s) present and unreadable, counted nowhere and skipped by "
+            f"jscpd too — every metric below is short by them: {', '.join(blind)}"
+        )
     skipped = unmeasured(data, baseline)
     if skipped:
         named = ", ".join(f"{m} in {n} area(s)" for m, n in sorted(skipped.items()))
@@ -951,6 +1076,8 @@ def main(argv):
         self_test_classifiers()
         self_test_ratchet()
         self_test_cycle_depth()
+        self_test_walk()
+        self_test_unreadable()
         self_test_baseline()
         print("self-test OK")
         return 0

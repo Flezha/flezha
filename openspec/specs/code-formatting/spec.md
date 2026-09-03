@@ -79,11 +79,11 @@ The Maven parent at `sdk/java/pom.xml` SHALL configure `spotless-maven-plugin` w
 - **AND** the format CI workflow fails
 - **AND** merge is blocked until the contributor runs `mvn spotless:apply` and recommits
 
-#### Scenario: Generated protobuf Java is excluded
+#### Scenario: Generated Java is excluded
 
-- **WHEN** the Spotless plugin runs against the `flezha-sdk-protobuf` module
-- **THEN** files under `target/generated-sources/` are NOT inspected
-- **AND** the protobuf code-generation step continues to emit code in its own style without conflict
+- **WHEN** the Spotless plugin runs against a module whose build writes generated Java, such as a module consuming the `flezha-sdk-processor` annotation processor
+- **THEN** files under `target/generated-sources/` are NOT inspected, because the plugin's Java source set is `src/main/java` and `src/test/java` only
+- **AND** the code-generation step continues to emit code in its own style without conflict
 
 #### Scenario: Local `mvn verify` catches drift
 
@@ -95,14 +95,14 @@ The Maven parent at `sdk/java/pom.xml` SHALL configure `spotless-maven-plugin` w
 
 The repository SHALL ship two scripts at `scripts/format-check.sh` and `scripts/format-apply.sh`. Both SHALL attempt every check they cover and report the outcome of each; neither SHALL let one check's failure — or one tool's absence — prevent the checks behind it from running. The check script SHALL run every language's formatter in check mode and then the licensing checks; the apply script SHALL run every language's formatter in write mode to fix the whole tree in one command. Both SHALL be tracked under version control and documented in the top-level `README.md`.
 
-The scripts SHALL exit non-zero when anything is unformatted and non-zero when a tool they need is unavailable, using a different status for each, and the CI workflow SHALL invoke the same script rather than maintaining its own list of formatters.
+The scripts SHALL exit non-zero when anything is unformatted, non-zero when a tool they need is unavailable, and non-zero when a tool they ran did not complete, using a different status for each, and the CI workflow SHALL invoke the same script rather than maintaining its own list of formatters.
 
 #### Scenario: Developer runs format-check locally
 
 - **WHEN** a developer runs `scripts/format-check.sh` from the repo root
 - **THEN** the script runs every formatter it can, then the licensing checks
 - **AND** a failure in one of them does not prevent the rest from running
-- **AND** the summary names every check that failed and every tool that was missing
+- **AND** the summary names every check that failed, every tool that was missing, and every tool that did not complete
 - **AND** on full success the script exits 0
 
 #### Scenario: Developer fixes formatting in one shot
@@ -165,9 +165,19 @@ language from the report; it SHALL NOT prevent the remaining languages from
 being checked, and SHALL NOT leave the operator unable to tell which were
 examined.
 
-The output SHALL distinguish a tool that could not run from a tree that is not
-formatted. Both may fail the run, but a missing tool SHALL NOT suppress a
-dirty-tree finding for a different language.
+The output SHALL distinguish three outcomes, each under its own heading: a tool
+that could not run, a tree that is not formatted, and a tool that ran and did
+not complete. Any of them may fail the run, but no one of them SHALL suppress
+another for a different language, and a tool that failed for its own reasons
+SHALL NOT be reported as unformatted source. Naming the wrong cause sends the
+next reader to fix something that is already correct.
+
+How the gate tells a finding from a failure SHALL be declared per check rather
+than inferred from the exit status alone, because a formatter that finds drift
+and one that crashes may return the same status. The declaration SHALL be
+either the exit code the tool documents for a finding, or the verdict the tool
+prints when it has one. A check that declares neither has no finding state, and
+every non-zero status from it is a failure to complete.
 
 A language the gate claims to cover SHALL actually be attempted in continuous
 integration. Where a formatter cannot run there, the workflow SHALL say so
@@ -195,4 +205,24 @@ where the step would be, rather than presenting a gate that covers it.
 - **GIVEN** a machine missing one formatter
 - **WHEN** the gate runs against a tree every available formatter accepts
 - **THEN** it SHALL exit with a status distinct from the one it uses for an unformatted tree, so a caller can tell "not checked" from "not formatted" without parsing the output
+
+#### Scenario: A formatter that fails for its own reasons is not called unformatted
+
+- **GIVEN** a formatter that is installed but cannot complete — a missing runtime extension, an unparseable input, a toolchain it cannot reach
+- **WHEN** the gate runs
+- **THEN** it SHALL report that language under the heading for a tool that did not complete, and SHALL NOT list it as unformatted
+- **AND** it SHALL exit with a status distinct from both the unformatted status and the missing-tool status
+
+#### Scenario: A tool whose two outcomes share one exit status is told apart by its verdict
+
+- **GIVEN** a formatter that returns the same non-zero status for drift and for its own failure
+- **WHEN** the gate runs it
+- **THEN** the outcome SHALL be decided by the verdict sentence the tool prints for drift
+- **AND** output that carries no such verdict SHALL be reported as a failure to complete rather than as drift
+
+#### Scenario: A gate that wraps another gate carries the distinction up
+
+- **GIVEN** a gate whose check is itself a gate of the same kind
+- **WHEN** the inner gate reports that a tool did not complete
+- **THEN** the outer gate SHALL report the same outcome for that check, rather than flattening it into an unformatted finding or a missing tool
 

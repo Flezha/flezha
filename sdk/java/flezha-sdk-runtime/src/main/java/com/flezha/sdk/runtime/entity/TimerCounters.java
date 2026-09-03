@@ -6,15 +6,18 @@ import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.Nonnull;
 
 /**
- * Per-Procedure timer counters. Monotonic totals and a signed {@code pending}
- * gauge, read by observability at its leisure — the same posture as
- * the retired {@code EntityCounters}.
+ * Per-Procedure timer counters: monotonic totals and a signed {@code pending}
+ * gauge, read through {@link #of(String)} whenever a reader wants them.
  */
 public final class TimerCounters {
 
     private static final Map<String, TimerCounters> BY_PROCEDURE = new ConcurrentHashMap<>();
 
-    /** Timers that have fired across the JVM. */
+    /**
+     * Timers that have fired across the JVM. Nothing reads it: the
+     * {@code timers_fired} a runner heartbeat carries is the core's own
+     * process-wide counter, not this one.
+     */
     private static final AtomicLong FIRED_TOTAL = new AtomicLong();
 
     private final AtomicLong pending = new AtomicLong();

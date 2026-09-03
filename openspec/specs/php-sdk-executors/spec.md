@@ -120,7 +120,7 @@ The selection SHALL be an axis of the run, never a property of a file, so no tes
 - **THEN** no fixture, test name or manifest entry SHALL be specific to one executor
 
 ### Requirement: Swoole is optional and never named in shared code
-The SDK's Composer manifest SHALL require only `php >= 8.1` and `ext-ffi`, declaring `ext-swoole` under `suggest` with the minimum version that provides `Swoole\Thread`.
+The SDK's Composer manifest SHALL require only `php >= 8.4` and `ext-ffi`, declaring `ext-swoole` under `suggest` with the minimum version that provides `Swoole\Thread`.
 
 No Swoole type SHALL be named outside the threaded adapter's own files and its own tests — not in the `Executor` interface, not as a parameter or return type, and not in a `use` statement in shared code — so that PHP's per-class autoloading leaves the adapter entirely inert when it is not selected. The adapter is more than one file because a `Swoole\Thread` is constructed from a **script path**: its worker bootstrap is necessarily a script, not a class. The check SHALL read the parsed source rather than the raw text, so a comment explaining the seam is not an offence.
 

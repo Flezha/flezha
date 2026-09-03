@@ -146,19 +146,20 @@ fn out_of_scope(mode: ClearMode, flags: &Flags) -> Option<Action> {
     }
 }
 
-/// The socket directory the Controller this reset serves would use, and what
-/// probing it found.
+/// The socket directory this fleet's sockets are in, and what probing it
+/// found.
 ///
-/// `Role::Controller` because reset acts on that Controller's own runtime
-/// state: the ladder's controller walk steps past a directory a peer is
-/// listening in and answers with the next rung — this Controller's own — where
-/// the runner walk would have preferred the one that answers, which under
-/// colocation is the peer's.
+/// `Role::Runner` because that is the question: which directory holds them.
+/// The controller walk answers a different one — where could a controller
+/// establish a directory — and it answers it by **creating** the rung it
+/// settles on and by stepping past a rung a peer is listening in. Neither is
+/// this command's to do: it may not establish a directory it was not given,
+/// and the rung a controller answers in is the rung it must report on.
 fn plan_socket_root() -> Root {
     // Resolve and probe in one step, the way the runner's pre-retry diagnosis
-    // and `flz runner check` do — asked as the Controller, and never as two
-    // calls that could name two directories.
-    let Diagnosis { dir, reach } = match diagnose(Role::Controller, None) {
+    // and `flz runner check` do, and never as two calls that could name two
+    // directories.
+    let Diagnosis { dir, reach } = match diagnose(Role::Runner, None) {
         Ok(diagnosis) => diagnosis,
         // Not knowing which directory holds the sockets is not an I/O error on
         // a path this command was asked to clear: report it and let the

@@ -107,9 +107,10 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_registry`, shared I/O streams, and `runner_id` (no clear-and-reassign window where frames are dropped). In addition:
 
-1. **Live-sink resolution** — the per-Entity state send path (`EntityStateSink`) SHALL resolve the *live* secondary stream on every send rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Entities.
-2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), state-change frames SHALL be buffered in a bounded ring (drop-oldest on overflow) and replayed through the new sink on install, so changes produced mid-reconnect are not silently lost.
-3. **Broken-pipe flood → control reconnect** — sustained write failures (a flood within a short window) SHALL trigger a full control-channel reconnect via the coordinator rather than spinning on a dead stream.
+1. **Live-sink resolution** — the per-Entity state send path (`EntityStateSink`) SHALL resolve the *live* secondary stream on every call rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Entities.
+2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), **every frame the runner writes on the data plane** SHALL be buffered in one bounded ring (drop-oldest on overflow) and replayed when the fresh stream is wired, so nothing produced mid-reconnect is silently lost. This covers the durable records the flusher ships and the plugin outputs an operative emits: a plugin output arrives already framed with metadata that identifies its channel and its Entity, so it is replayed onto the live secondary as it stands rather than re-framed.
+3. **Broken-pipe flood → control reconnect** — sustained write failures (a flood within a short window) SHALL trigger a full control-channel reconnect via the coordinator rather than spinning on a dead stream, whichever writer saw them.
+4. **A shed frame is counted** — when the ring is full and drops its oldest entry, the runner SHALL count it on the process-wide drop-oldest counter its heartbeat already reports, and report the number lost when the stream recovers. A frame that is ultimately not delivered is never silent.
 
 #### Scenario: state changes produced during a reconnect are not lost
 - **GIVEN** the secondary stream drops and the SDK is reconnecting
@@ -120,6 +121,16 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 - **GIVEN** the state send path sees a flood of write failures within the detection window
 - **WHEN** the threshold is crossed
 - **THEN** the SDK requests a full control-channel reconnect from the coordinator instead of continuing to write to the dead stream.
+
+#### Scenario: a plugin output whose write fails is held and replayed
+- **GIVEN** an operative emits to a plugin sink on a stream the controller has closed
+- **WHEN** the write fails
+- **THEN** the frame is buffered in the same reconnect ring rather than discarded, the failure feeds the same flood ladder, and the next installed sink delivers the frame byte-for-byte on the live secondary.
+
+#### Scenario: an overflowing ring reports what it shed
+- **GIVEN** the reconnect ring is at its configured capacity while the stream is down
+- **WHEN** a further frame is held
+- **THEN** the oldest frame is dropped, the runner's `drops_oldest` heartbeat counter advances, and the recovery reports how many frames were lost before it.
 
 ### Requirement: Command Dispatch Behavior Preserved Byte-for-Byte for Surviving Commands
 

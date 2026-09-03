@@ -33,23 +33,26 @@ passes while the bytes stay.
 
 ## Before
 
+Pick a scratch directory for the mirror and the working copy. It has to be
+outside this checkout, and on a filesystem with room for twice the repository —
+`filter-repo` writes a rewritten copy before replacing the old. `/tmp` qualifies
+only where it is not a small tmpfs. `target/debug/incremental` is usually the
+largest reclaimable thing on the box if room has to be made, and is pure cache.
+
+    WORK="${TMPDIR:-/tmp}/flezha-purge-$(date +%F)"; mkdir -p "$WORK"
     scripts/check-build-artifacts.sh tracked     # must exit 0
     git push origin <branch>                     # land all work first
     git push origin backup/dev-pre-unbundle-<date> refs/tags/pre-unbundle-<date>
-    git clone --mirror . /home/moon/flezha-mirror-pre-unbundle-<date>.git
+    git clone --mirror . "$WORK/flezha-mirror-pre-unbundle.git"
 
 The mirror is the real insurance: it carries every ref and every object,
 including branches that exist nowhere else. Keep it until a fresh clone has
 built and tested green.
 
-Check disk: `filter-repo` writes a rewritten copy before replacing the old, so
-budget twice the repo size. `target/debug/incremental` is usually the largest
-reclaimable thing on the box and is pure cache.
-
 ## The rewrite — on a working copy, never on the live repo
 
-    git clone --mirror <mirror> /home/moon/flezha-purge-work.git
-    cd /home/moon/flezha-purge-work.git
+    git clone --mirror "$WORK/flezha-mirror-pre-unbundle.git" "$WORK/flezha-purge-work.git"
+    cd "$WORK/flezha-purge-work.git"
     git filter-repo --force --invert-paths \
       --path sdk/java/flezha-sdk-native/src/main/resources/native/ \
       --path sdk/java/flezha-sdk/dist/ \
@@ -129,8 +132,8 @@ clone, so nothing breaks functionally, but the recorded SHAs stop resolving.
 Pre-rewrite hashes quoted in that repo's archived proposals cannot be repointed
 and stay dangling.
 
-Make `repo-size` blocking in `.github/workflows/naming.yml` once the purge has
-landed — it is `continue-on-error: true` until then.
+`repo-size` in `.github/workflows/naming.yml` is blocking, and has been since
+this purge landed. It is the ceiling that keeps the reclaimed bytes reclaimed.
 
 ## Two traps the first real run found
 

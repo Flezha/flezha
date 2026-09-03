@@ -1,6 +1,6 @@
 # The PHP SDK's toolchain image, in two targets.
 #
-# The SDK requires only `php >= 8.1` and `ext-ffi`, so the default target is a
+# The SDK requires only `php >= 8.4` and `ext-ffi`, so the default target is a
 # stock non-thread-safe PHP with FFI turned on — which is what a distribution
 # ships and what `SyncExecutor` needs. The `zts` target adds the thread-safe
 # build and Swoole, which `SwooleExecutor` needs and which no distribution
