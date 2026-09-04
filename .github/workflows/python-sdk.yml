@@ -84,14 +84,16 @@ jobs:
         run: |
           pin() { grep -oP "\"$1==\\K[^\"]+" sdk/python/pyproject.toml; }
           sdk/python/.venv/bin/pip install --quiet \
-            "pytest==$(pin pytest)" "pyright==$(pin pyright)"
+            "pytest==$(pin pytest)" "pytest-cov==$(pin pytest-cov)" \
+            "pyright==$(pin pyright)"
 
       # The activation codec, the declaration refusals, the durable codec, the
       # GIL-release discipline, the pool's growth and retirement, and the
       # absence of pickle are behaviour here, not prose.
+      # Measured, not only run — `--cov` reports and arms no floor.
       - name: Unit tests
         working-directory: sdk/python
-        run: PYTHONPATH=src:tests PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest tests -q
+        run: PYTHONPATH=src:tests PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest tests -q --cov=flezha
 
       # The wheel tier is never ambiguous in a report, so it is never ambiguous
       # in CI either.

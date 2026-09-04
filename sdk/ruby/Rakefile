@@ -6,6 +6,10 @@ Rake::TestTask.new(:test) do |t|
   t.libs = %w[lib test]
   t.test_files = FileList["test/**/*_test.rb"]
   t.warning = true
+  # `COVERAGE=1 rake test` measures the one suite this task defines. SimpleCov
+  # has to be tracking before `flezha` is loaded, so it rides the interpreter's
+  # own -r rather than a require inside the suite.
+  t.ruby_opts << "-rsimplecov/autostart" if ENV["COVERAGE"]
 end
 
 desc "Build the native veneer and install it where the gem loads it from"

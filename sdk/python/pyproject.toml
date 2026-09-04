@@ -46,7 +46,15 @@ Documentation = "https://github.com/alfetahe/flezha/blob/main/docs/sdk/python_sd
 # 9 shipped, and every run since has been on it. `msgpack` deliberately keeps
 # the package's own range — it is a runtime dependency, and the suite has to
 # meet the resolution a consumer gets rather than one this file invented.
-dev = ["pytest==9.1.1", "pyright==1.1.411", "msgpack>=1.0", "ruff==0.16.5"]
+# `pytest-cov` is here because a coverage diff is what decides whether a test
+# may be deleted, so the suite has to be measurable and not only runnable.
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "pyright==1.1.411",
+    "msgpack>=1.0",
+    "ruff==0.16.5",
+]
 
 [tool.maturin]
 # The veneer is a feature of the shared ABI crate, never a crate of its own —

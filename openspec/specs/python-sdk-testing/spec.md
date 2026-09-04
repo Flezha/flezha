@@ -55,3 +55,19 @@ The round-trip benchmark SHALL accept the Python runtime as an arm, and the SDK 
 - **WHEN** a Python performance number is recorded
 - **THEN** it SHALL name the wheel tier and the executor, and SHALL NOT be reported as another runtime's number
 
+### Requirement: The Python SDK SHALL declare a pinned coverage plugin
+
+The Python SDK's `pyproject.toml` SHALL declare a coverage plugin for `pytest` in the same `dev` extra that pins the rest of the test toolchain, at an exact version, so `pytest` can report coverage from the declared dependencies alone.
+
+The extra currently pins `pytest`, `pyright`, `msgpack` and `ruff` and no coverage tool, so the SDK's suite runs and cannot be measured. Continuous integration SHALL install the plugin from that extra rather than naming a version of its own, on the same terms as every other entry.
+
+#### Scenario: Coverage runs from the declared extra
+
+- **WHEN** the `dev` extra is installed into a clean checkout and the Python SDK's suite is run in coverage mode
+- **THEN** a coverage report SHALL be produced without installing a tool the manifest does not name
+
+#### Scenario: The coverage plugin is pinned like its neighbours
+
+- **WHEN** the `dev` extra is read
+- **THEN** the coverage plugin SHALL name an exact version, not a lower bound
+

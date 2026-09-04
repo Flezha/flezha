@@ -1063,3 +1063,29 @@ improvement.
 - **THEN** the reporting SHALL still be in place, so the first file to cross it is
   seen rather than silently dropped
 
+### Requirement: An SDK SHALL be able to measure its own test coverage from its declared toolchain
+
+Every SDK whose test runner needs a library to report coverage SHALL declare and pin that library in its own dependency manifest, so a coverage report is producible from a clean checkout of that SDK with no tool the manifest does not name.
+
+A coverage diff is how this project decides whether a test may be deleted. An SDK that can run its suite but not measure it cannot take that decision, and the gap is invisible from the outside: the suite is green, the manifest reads complete, and nothing reports that the measurement is impossible until someone tries to take it.
+
+Where the runner reports coverage without a library — a built-in flag on the language's own test runner — the requirement is satisfied with no manifest entry, and the SDK SHALL record which flag that is so a reader does not read the absence as this defect. Where the driver is a native extension no dependency manifest can supply, it is the toolchain image's obligation and not the manifest's.
+
+Declaring the driver SHALL NOT be read as setting a coverage floor. A threshold is a separate decision, taken on measured evidence, and an SDK satisfies this requirement by being measurable.
+
+#### Scenario: A coverage report is producible from the manifest alone
+
+- **WHEN** an SDK's declared development dependencies are installed into a clean checkout and its suite is run in coverage mode
+- **THEN** a coverage report SHALL be produced, and the run SHALL NOT report that no coverage tool is available
+
+#### Scenario: A runner with built-in coverage declares nothing
+
+- **GIVEN** an SDK whose test runner reports coverage through a flag of its own
+- **WHEN** that SDK's manifest is read
+- **THEN** the absence of a coverage dependency SHALL be satisfied by the recorded flag, and SHALL NOT be a defect
+
+#### Scenario: The census names every SDK
+
+- **WHEN** the SDK manifests are audited for a coverage tool
+- **THEN** each SDK SHALL either declare one, name the built-in flag it uses, or name the image that carries its driver
+

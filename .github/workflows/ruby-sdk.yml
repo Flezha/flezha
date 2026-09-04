@@ -80,14 +80,16 @@ jobs:
           gem install --no-document async -v "$(pin async)"
           gem install --no-document rake -v "$(pin rake)"
           gem install --no-document minitest -v "$(pin minitest)"
+          gem install --no-document simplecov -v "$(pin simplecov)"
 
       # The concurrency requirements are behaviour here, not prose: pool growth
       # under blocked handlers, retirement afterwards, the GVL released around
       # a blocking core call, a refused post-fork call, and identical ordering
       # under both executors.
+      # Measured, not only run — `COVERAGE=1` reports and arms no floor.
       - name: Unit tests
         working-directory: sdk/ruby
-        run: rake test
+        run: COVERAGE=1 rake test
 
       - name: The gem builds
         working-directory: sdk/ruby

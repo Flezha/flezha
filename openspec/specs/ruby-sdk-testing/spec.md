@@ -51,3 +51,19 @@ The SDK SHALL have a CI workflow running the gem's unit tests on every supported
 - **WHEN** the gem's unit suite runs
 - **THEN** it SHALL include tests that observe pool growth under blocked handlers, retirement afterwards, a refused post-fork core call, and identical ordering under both executors
 
+### Requirement: The Ruby SDK SHALL declare a pinned coverage library
+
+The Ruby SDK's `flezha.gemspec` SHALL declare a coverage library as a development dependency at an exact version, alongside the `async`, `minitest`, `rake` and `rubocop` pins it already carries, so the gem's suite can report coverage from its own manifest.
+
+The suite SHALL load it through the `Rakefile`'s existing test task rather than through a second task added beside it, because a coverage run and a plain run SHALL exercise the same suite definition.
+
+#### Scenario: Coverage runs from the gemspec's development dependencies
+
+- **WHEN** the gem's development dependencies are installed into a clean checkout and the suite is run in coverage mode
+- **THEN** a coverage report SHALL be produced without installing a gem the gemspec does not name
+
+#### Scenario: One test task, not two
+
+- **WHEN** the `Rakefile` is read
+- **THEN** the coverage run SHALL use the existing test task's suite definition, and SHALL NOT duplicate it
+

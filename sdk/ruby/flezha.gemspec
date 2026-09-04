@@ -45,6 +45,9 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "minitest", "5.25.4"
   spec.add_development_dependency "rake", "13.2.1"
   spec.add_development_dependency "rubocop", "1.90.0"
+  # A coverage diff is what decides whether a test may be deleted, so the suite
+  # has to be measurable and not only runnable. `COVERAGE=1 rake test` loads it.
+  spec.add_development_dependency "simplecov", "1.1.1"
 
   spec.metadata = {
     "source_code_uri" => spec.homepage,

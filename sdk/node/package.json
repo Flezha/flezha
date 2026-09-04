@@ -39,6 +39,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:expected-failures": "node scripts/expected-failures.mjs",
     "test": "node --test test/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.mjs",
     "check": "npm run build && npm run typecheck && npm run typecheck:expected-failures && npm test"
   },
   "dependencies": {
