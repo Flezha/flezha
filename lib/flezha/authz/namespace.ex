@@ -15,6 +15,7 @@ defmodule Flezha.AuthZ.Namespace do
   """
 
   @system "_system"
+  @default "default"
 
   # Reserved prefix; new namespace names cannot start with an
   # underscore so we keep room for future system-owned namespaces.
@@ -42,6 +43,11 @@ defmodule Flezha.AuthZ.Namespace do
   @doc "The system namespace name (`_system`)."
   @spec system_name() :: name()
   def system_name, do: @system
+
+  @doc "The namespace an argument names: `default` when the argument was left empty."
+  @spec or_default(name()) :: name()
+  def or_default(""), do: @default
+  def or_default(name) when is_binary(name), do: name
 
   @doc "True when `name` is the system namespace."
   @spec system?(name()) :: boolean()

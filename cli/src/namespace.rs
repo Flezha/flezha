@@ -3,7 +3,7 @@ use std::process::exit;
 use crate::args::{self, extract_x_flags, serialize_flags};
 use crate::dispatch::{self, Command};
 use crate::help;
-use crate::rpc::{self, escape_rpc_arg, token_opts_fragment};
+use crate::rpc::{self, text};
 
 pub(crate) const TABLE: Command = Command {
     help: help::NAMESPACE,
@@ -31,10 +31,10 @@ fn handle_list(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.list_namespaces(\"{}\")",
-            output_format
-        ),
+        "list_namespaces",
+        &[text(output_format)],
+        &[],
+        args,
         rpc::REFUSED,
     );
 }
@@ -43,8 +43,7 @@ fn handle_list(args: &[String]) {
 // (e.g. `--Xmax_runners=4 --Xmax_state_bytes=1073741824`), serialized to the
 // same JSON object shape every other `--X` surface uses.
 fn quotas_json_literal(args: &[String]) -> String {
-    let flags = extract_x_flags(args);
-    serde_json::Value::String(serialize_flags(&flags)).to_string()
+    text(&serialize_flags(&extract_x_flags(args)))
 }
 
 /// The two usage lines that advertise a quota override. Constants because
@@ -62,12 +61,10 @@ fn handle_create(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.authz_render_namespace_create(\"{}\", {}, {})",
-            escape_rpc_arg(&args[1]),
-            quotas_json_literal(&args[2..]),
-            token_opts_fragment(&args[2..]),
-        ),
+        "authz_render_namespace_create",
+        &[text(&args[1]), quotas_json_literal(&args[2..])],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }
@@ -95,12 +92,10 @@ fn handle_set_quota(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.authz_render_namespace_set_quota(\"{}\", {}, {})",
-            escape_rpc_arg(&args[1]),
-            quotas_json_literal(&args[2..]),
-            token_opts_fragment(&args[2..]),
-        ),
+        "authz_render_namespace_set_quota",
+        &[text(&args[1]), quotas_json_literal(&args[2..])],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }

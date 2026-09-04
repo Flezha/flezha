@@ -5,6 +5,11 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   sides and fails only on an operator's machine. This test reads the names out
   of `cli/src` and hands them to `FlezhaTest.Helper.RpcSurface`, which is the
   one resolver both name-resolved consumers share.
+
+  A request is built by `rpc::run(name, positional, opts, args, failure)` or
+  `rpc::expression(name, positional, opts, args)`: the arity the controller must
+  export is the positional slice's length plus the options list every request
+  ends with.
   """
   use ExUnit.Case, async: true
 
@@ -15,23 +20,31 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   # parameter. Each one fixes the arity by construction; the second element is
   # the index of the name argument, the third a prefix the helper adds.
   @generic %{
-    "scoped_read" => {2, 1, ""},
+    "scoped_read" => {3, 1, ""},
     "one_arg_authz" => {2, 1, ""},
     "token_only" => {1, 1, ""},
-    "render" => {1, 2, ""},
-    "named_source" => {1, 2, ""},
+    "render" => {2, 2, ""},
+    "named_source" => {2, 2, ""},
     "handle_entity_verb" => {2, 2, ""},
     "handle_read" => {3, 3, ""},
     "named_verb" => {2, 0, "schedule_"}
   }
 
-  @rpc_call ~r/Flezha\.Service\.CliManager\.([a-z_0-9]+|\{\}|schedule_\{\})\(/
+  # `rpc::run` forwards its name to `rpc::expression`: the seam's own plumbing,
+  # not a call site.
+  @plumbing ["run"]
+
+  # `rpc::run(` anywhere, or a bare `run(` / `expression(` inside `rpc.rs`
+  # itself; `dispatch::run(` and a method call are neither.
+  @builder ~r/(?<!fn )(?<![\w.:])(?:rpc::)?(?:run|expression)\(/
 
   setup_all do
+    # A file's own unit tests build requests too; the wire contract is what
+    # ships, so the source is read up to its test module.
     files =
       "cli/src/**/*.rs"
       |> Path.wildcard()
-      |> Map.new(&{&1, File.read!(&1)})
+      |> Map.new(&{&1, &1 |> File.read!() |> String.split("\n#[cfg(test)]") |> hd()})
 
     assert map_size(files) > 0, "cli/src carries no Rust source; the gate would pass vacuously"
     %{files: files}
@@ -52,23 +65,27 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
     assert failures == [], Enum.map_join(failures, "\n", &RpcSurface.explain/1)
   end
 
-  test "no generic call site is missed: every CliManager.{} format is a known helper", ctx do
+  test "no generic call site is missed: every builder call without a literal name is a known helper",
+       ctx do
     for {path, source} <- ctx.files,
-        [offset] <- generic_offsets(source) do
+        {offset, args} <- builder_calls(source),
+        not literal?(hd(args)) do
       helper = enclosing_fn(source, offset)
 
-      assert Map.has_key?(@generic, helper),
+      assert Map.has_key?(@generic, helper) or helper in @plumbing,
              "#{path} builds a CliManager call inside #{helper}/?, which this test does not " <>
                "model; add it to @generic with the arity it fixes"
     end
   end
 
+  # Every `run("name", &[...], ...)` / `expression("name", &[...], ...)` with a
+  # literal name: the arity is the positional slice plus the options list.
   defp direct_calls(files) do
     for {path, source} <- files,
-        [{start, len}, {ns, nl}] <- Regex.scan(@rpc_call, source, return: :index),
-        name = binary_part(source, ns, nl),
-        not String.contains?(name, "{}"),
-        do: {name, arity_at(source, start + len - 1), "#{path}:#{line_of(source, start)}"}
+        {offset, [name_arg, slice | _]} <- builder_calls(source),
+        literal?(name_arg),
+        do:
+          {literal(name_arg), slice_length(path, slice) + 1, "#{path}:#{line_of(source, offset)}"}
   end
 
   defp generic_calls(files) do
@@ -78,10 +95,29 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
         do: {prefix <> lit, arity, "#{path}:#{line_of(source, offset)}"}
   end
 
-  defp generic_offsets(source) do
-    for [{start, len}, {ns, nl}] <- Regex.scan(@rpc_call, source, return: :index),
-        String.contains?(binary_part(source, ns, nl), "{}"),
-        do: [start + len]
+  # `{offset, [arg, ...]}` for every builder call in `source`.
+  defp builder_calls(source) do
+    for [{start, len}] <- Regex.scan(@builder, source, return: :index) do
+      {start, source |> balanced(start + len - 1) |> split_args() |> Enum.map(&String.trim/1)}
+    end
+  end
+
+  defp literal?(arg), do: Regex.match?(~r/^"[a-z_0-9?]+"$/, arg)
+  defp literal(arg), do: String.trim(arg, "\"")
+
+  # The positional slice is a `&[ ... ]` literal, so the arity is readable here;
+  # a slice built elsewhere would hide it, and is refused.
+  defp slice_length(path, slice) do
+    case Regex.run(~r/^&\[(.*)\]$/s, slice) do
+      [_, ""] ->
+        0
+
+      [_, inner] ->
+        inner |> split_args() |> Enum.count(&(String.trim(&1) != ""))
+
+      nil ->
+        flunk("#{path}: a builder's positional arguments are not a slice literal: #{slice}")
+    end
   end
 
   # The `fn <name>(` that most recently opened before `offset`.
@@ -106,11 +142,6 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
         do: {lit, start}
   end
 
-  # Arity of the call whose `(` is at `open`: top-level commas in the format string.
-  defp arity_at(source, open) do
-    source |> balanced(open) |> split_args() |> Enum.count(&(String.trim(&1) != ""))
-  end
-
   defp balanced(source, open) do
     size = byte_size(source)
 
@@ -118,9 +149,9 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
       <<c>> = binary_part(source, i, 1)
 
       cond do
-        c == ?( -> {:cont, {depth + 1, [c | acc]}}
+        c in [?(, ?[] -> {:cont, {depth + 1, [c | acc]}}
         c == ?) and depth == 0 -> {:halt, {depth, acc}}
-        c == ?) -> {:cont, {depth - 1, [c | acc]}}
+        c in [?), ?]] -> {:cont, {depth - 1, [c | acc]}}
         true -> {:cont, {depth, [c | acc]}}
       end
     end)

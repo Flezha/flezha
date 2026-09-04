@@ -2,33 +2,40 @@ defmodule Flezha.Service.Cli.Schedule do
   @moduledoc """
   `flz schedule add | list | remove | run` — scheduled operative spawns.
 
-  Rendering only for everything the policy names an action for.
-  `Flezha.Service.Schedule` owns the store, the hub and the authorization, so
-  the terminal and the console reach them through one gate instead of two.
+  Rendering only: the store and the hub are the effects the published
+  `Flezha.Service.Schedule` wraps, and the authorization is each verb's row.
   `run` fires an instance directly, hub-free, and is judged as
-  `operative.start` where the instance starts.
+  `operative.start` where the instance starts — the stored row's namespace.
   """
 
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Runner.FleetManager
   alias Flezha.Schedule.Cron
+  alias Flezha.Schedule.Hub
   alias Flezha.Schedule.Job
   alias Flezha.Schedule.Store
   alias Flezha.Service.Cli.Context
-  alias Flezha.Service.Schedule, as: ScheduleSvc
 
   # Error reasons truncate to the column; the full reason stays in
   # log/telemetry.
   @schedule_result_width 48
 
+  @doc "The stored schedule a `schedule run` fires, or the family's not-found."
+  def locate([name | _]) do
+    case Store.get(name) do
+      {:ok, entry} -> {:ok, %{namespace: entry.namespace, entry: entry}}
+      :error -> render_schedule_error({:not_found, name})
+    end
+  end
+
   @doc """
-  `opts` carries the flags: `cron`, `tz` and `factory`; `namespace`,
+  The call's options carry the flags: `cron`, `tz` and `factory`; `namespace`,
   `init_values`, `kind` and `plugins`, each defaulting as the help screen says
-  when absent; and `token`, the caller's credential.
+  when absent.
   """
-  def schedule_add(name, opts \\ []) do
-    ns = Context.normalize_namespace(Keyword.get(opts, :namespace, ""))
-    caller_context = Context.cli_context(opts)
+  def schedule_add(name, %{opts: opts}) do
+    ns = Namespace.or_default(Keyword.get(opts, :namespace, ""))
     cron_expr = Keyword.get(opts, :cron, "")
     timezone = Keyword.get(opts, :tz, "")
     factory_id = Keyword.get(opts, :factory, "")
@@ -38,64 +45,49 @@ defmodule Flezha.Service.Cli.Schedule do
          {:ok, init_map} <- schedule_decode_init(Keyword.get(opts, :init_values, "")),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
-           ScheduleSvc.add(
-             %{
-               name: name,
-               cron: cron_expr,
-               timezone: timezone,
-               factory_id: factory_id,
-               namespace: ns,
-               init_values: init_map,
-               plugins: plugins_json
-             },
-             caller_context
-           ) do
+           Store.add(%{
+             name: name,
+             cron: cron_expr,
+             timezone: timezone,
+             factory_id: factory_id,
+             namespace: ns,
+             init_values: init_map,
+             plugins: plugins_json
+           }) do
       schedule_warn_absent_factory(ns, factory_id)
-      _ = ScheduleSvc.assert_entry(entry, caller_context)
+      _ = Hub.assert(entry)
 
       IO.puts(
         "Schedule #{name} added (#{cron_expr} #{timezone}); next fire #{schedule_next_fire(entry)}"
       )
     else
-      {:error, reason} -> render_schedule_error(reason, "schedule.add")
+      {:error, reason} -> render_schedule_error(reason)
     end
   end
 
-  def schedule_list(opts \\ []) do
-    caller_context = Context.cli_context(opts)
-
-    case ScheduleSvc.list(caller_context) do
-      {:ok, []} -> IO.puts("no schedules")
-      {:ok, entries} -> render_schedule_listing(entries, caller_context)
-      {:error, reason} -> render_schedule_error(reason, "schedule.list")
+  def schedule_list(_call) do
+    case Store.list() do
+      [] -> IO.puts("no schedules")
+      entries -> render_schedule_listing(entries, Hub.statuses())
     end
   end
 
-  # The hub's view is a second read of `schedule.list` in the same scope, so a
-  # caller that got the rows gets the statuses too unless the posture changed
-  # between the two calls.
-  defp render_schedule_listing(entries, caller_context) do
-    case ScheduleSvc.statuses(caller_context) do
-      {:error, reason} ->
-        render_schedule_error(reason, "schedule.list")
+  defp render_schedule_listing(entries, statuses) do
+    IO.puts(
+      schedule_row([
+        "NAME",
+        "CRON",
+        "TZ",
+        "FACTORY",
+        "NAMESPACE",
+        "NODE",
+        "NEXT FIRE (UTC)",
+        "LAST FIRE (UTC)",
+        "LAST RESULT"
+      ])
+    )
 
-      {:ok, statuses} ->
-        IO.puts(
-          schedule_row([
-            "NAME",
-            "CRON",
-            "TZ",
-            "FACTORY",
-            "NAMESPACE",
-            "NODE",
-            "NEXT FIRE (UTC)",
-            "LAST FIRE (UTC)",
-            "LAST RESULT"
-          ])
-        )
-
-        Enum.each(entries, &IO.puts(schedule_row(schedule_cells(&1, statuses))))
-    end
+    Enum.each(entries, &IO.puts(schedule_row(schedule_cells(&1, statuses))))
   end
 
   defp schedule_cells(entry, statuses) do
@@ -128,60 +120,31 @@ defmodule Flezha.Service.Cli.Schedule do
 
   defp schedule_last_result(_), do: "-"
 
-  def schedule_remove(name, opts \\ []) do
-    caller_context = Context.cli_context(opts)
-
-    # Store first: retracting first would let the periodic re-assert sweep
-    # resurrect the job before the row is gone. The retraction is judged in the
-    # same scope by a role that holds both actions, so it cannot refuse where
-    # the removal passed.
-    case ScheduleSvc.remove(name, caller_context) do
+  # Store first: retracting first would let the periodic re-assert sweep
+  # resurrect the job before the row is gone.
+  def schedule_remove(name, _call) do
+    case Store.remove(name) do
       :ok ->
-        _ = ScheduleSvc.retract(name, caller_context)
+        _ = Hub.retract(name)
         IO.puts("Schedule #{name} removed")
 
       {:error, :not_found} ->
-        render_schedule_error({:not_found, name}, "schedule.remove")
+        render_schedule_error({:not_found, name})
 
       {:error, reason} ->
-        render_schedule_error(reason, "schedule.remove")
+        render_schedule_error(reason)
     end
   end
 
   # Deliberately hub-free: a manual fire works on any node whether or not the
-  # schedule hub is up. Firing starts an operative, so it is judged as
-  # `operative.start` where the instance will start — the stored row's
-  # namespace, which is why the row is read first.
-  def schedule_run(name, opts \\ []) do
-    case schedule_entry(name) do
-      {:ok, entry} ->
-        Context.with_cli_authorization(
-          opts,
-          :"operative.start",
-          entry.namespace,
-          %{schedule: name},
-          fn -> schedule_spawn_manual(entry) end
-        )
-
-      {:error, reason} ->
-        render_schedule_error(reason, "schedule.run")
-    end
-  end
-
-  defp schedule_spawn_manual(entry) do
+  # schedule hub is up.
+  def schedule_run(_name, %{row: %{entry: entry}}) do
     instance_id = "#{entry.name}@manual-#{System.system_time(:second)}"
 
     case Job.spawn_instance(entry, instance_id) do
       {:ok, %{operative_id: id}} -> IO.puts("Spawned #{id}")
       :duplicate -> IO.puts("instance already running; no-op")
-      {:error, reason} -> render_schedule_error(reason, "schedule.run")
-    end
-  end
-
-  defp schedule_entry(name) do
-    case Store.get(name) do
-      {:ok, entry} -> {:ok, entry}
-      :error -> {:error, {:not_found, name}}
+      {:error, reason} -> render_schedule_error(reason)
     end
   end
 
@@ -241,9 +204,7 @@ defmodule Flezha.Service.Cli.Schedule do
     |> Kernel.<>(last)
   end
 
-  defp render_schedule_error({:forbidden, reason}, action), do: Context.refuse!(action, reason)
-
-  defp render_schedule_error(reason, _action) do
+  defp render_schedule_error(reason) do
     Context.cli_error!("error: " <> schedule_error_message(reason), :stderr)
   end
 

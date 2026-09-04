@@ -121,3 +121,32 @@ than being discovered by a consumer at runtime.
 - **WHEN** a module that no manifest names is renamed
 - **THEN** the consumer gate SHALL report nothing
 
+### Requirement: A published function SHALL bind a declared verb
+
+Every published service function that takes a caller context SHALL bind one row of
+the operator-verb declaration and apply it through the one seam, so that the console
+and the terminal are judged by the same action, in the same scope, with the same audit.
+A published function SHALL NOT decide its own action, scope or audit inline, and a
+terminal verb body SHALL reach an effect the published function wraps rather than the
+published function itself, so that one request is judged once.
+
+#### Scenario: The console and the terminal read one declaration
+
+- **WHEN** the grant, scope rule or audit of a verb both surfaces carry is changed in
+  its row
+- **THEN** the next invocation from either surface SHALL reflect the change, with no
+  edit to either surface
+
+#### Scenario: A published function that bypasses the seam fails the suite
+
+- **WHEN** a public function on a published module reaches an effect without binding a
+  row
+- **THEN** the declaration test SHALL fail naming that function, before any consumer can
+  call it
+
+#### Scenario: A request is judged once
+
+- **WHEN** a terminal verb whose effect the published surface also carries is invoked
+  with a valid credential
+- **THEN** exactly one authorization decision and at most one audit record SHALL result
+

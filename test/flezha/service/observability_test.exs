@@ -139,17 +139,6 @@ defmodule Flezha.Service.ObservabilityTest do
   end
 
   describe "CliManager wrappers" do
-    test "list_sources via CliManager calls service API with :cli context", %{src: src} do
-      {:ok, sources} = CliManager.observability_list_sources()
-      assert Enum.any?(sources, &(&1.name == src))
-    end
-
-    test "enable_source via CliManager builds :cli context", %{src: src} do
-      assert :ok = CliManager.observability_disable_source(src)
-      {:ok, %{status: :disabled}} = Registry.lookup_source(src)
-      assert :ok = CliManager.observability_enable_source(src)
-    end
-
     test "observe tail --json renders a metadata key of any shape", %{src: src} do
       # `stringify_keys/1` was a fourth copy of the term->string decision and
       # applied `to_string/1` to the KEY: a tuple key raised

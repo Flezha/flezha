@@ -1,7 +1,7 @@
 defmodule Flezha.Service.Cli.Audit do
   @moduledoc """
   `flz audit` — the durable audit log's list, read, tail, stats and rotate
-  renderers.
+  renderers, over the effects `Flezha.Service.AuditLog` shares with the console.
   """
 
   alias Flezha.Observability.AuditLog.Writer
@@ -11,8 +11,8 @@ defmodule Flezha.Service.Cli.Audit do
   @doc """
   CLI entry: `flz audit list`. Renders the catalog as text or JSON.
   """
-  def audit_log_render_list(format) when format in ["text", "json"] do
-    case AuditSvc.list_files(Context.cli_context([])) do
+  def audit_log_render_list(format, _call) when format in ["text", "json"] do
+    case AuditSvc.catalog() do
       {:ok, entries} -> render_audit_list(entries, format)
       {:error, reason} -> render_audit_error(reason)
     end
@@ -22,7 +22,8 @@ defmodule Flezha.Service.Cli.Audit do
   CLI entry: `flz audit read <file> [filters]`. Streams matching records as
   one-record-per-line (text) or NDJSON.
   """
-  def audit_log_render_read(file, format, opts \\ []) when format in ["text", "json"] do
+  def audit_log_render_read(file, format, %{opts: opts, context: context})
+      when format in ["text", "json"] do
     params =
       %{file: file}
       |> Context.put_unless_nil(:source, Keyword.get(opts, :source))
@@ -31,7 +32,7 @@ defmodule Flezha.Service.Cli.Audit do
       |> Context.put_unless_nil(:until_us, Keyword.get(opts, :until_us))
       |> Context.put_unless_nil(:limit, Keyword.get(opts, :limit))
 
-    case AuditSvc.read(params, Context.cli_context(opts)) do
+    case AuditSvc.read_records(params, context) do
       {:ok, records} -> render_audit_records(records, format)
       {:error, reason} -> render_audit_error(reason)
     end
@@ -41,23 +42,20 @@ defmodule Flezha.Service.Cli.Audit do
   CLI entry: `flz audit tail`. Subscribes for live records and streams them
   to stdout until the duration elapses or the writer closes.
   """
-  def audit_log_render_tail(format, opts \\ []) when format in ["text", "json"] do
+  def audit_log_render_tail(format, %{opts: opts}) when format in ["text", "json"] do
     duration_ms = Keyword.get(opts, :duration_ms, 30_000)
 
-    case AuditSvc.tail(%{}, Context.cli_context(opts)) do
-      {:ok, ref} ->
-        audit_tail_loop(ref, format, duration_ms)
-
-      {:error, reason} ->
-        render_audit_error(reason)
+    case AuditSvc.subscribe_tail() do
+      {:ok, ref} -> audit_tail_loop(ref, format, duration_ms)
+      {:error, reason} -> render_audit_error(reason)
     end
   end
 
   @doc """
   CLI entry: `flz audit stats`. Prints the operational snapshot.
   """
-  def audit_log_render_stats(format) when format in ["text", "json"] do
-    case AuditSvc.stats(Context.cli_context([])) do
+  def audit_log_render_stats(format, _call) when format in ["text", "json"] do
+    case AuditSvc.stats_snapshot() do
       {:ok, snap} -> render_audit_stats(snap, format)
       {:error, reason} -> render_audit_error(reason)
     end
@@ -66,8 +64,8 @@ defmodule Flezha.Service.Cli.Audit do
   @doc """
   CLI entry: `flz audit rotate`. Forces an immediate rotation.
   """
-  def audit_log_render_rotate(format) when format in ["text", "json"] do
-    case AuditSvc.rotate(Context.cli_context([])) do
+  def audit_log_render_rotate(format, _call) when format in ["text", "json"] do
+    case AuditSvc.rotate_now() do
       {:ok, info} -> render_audit_rotate(info, format)
       {:error, reason} -> render_audit_error(reason)
     end
@@ -194,10 +192,6 @@ defmodule Flezha.Service.Cli.Audit do
 
   defp render_audit_error(:observability_disabled) do
     Context.cli_error!("error: observability is disabled", :stderr)
-  end
-
-  defp render_audit_error(:invalid_caller_context) do
-    Context.cli_error!("error: invalid caller context", :stderr)
   end
 
   defp render_audit_error(:file_not_found) do

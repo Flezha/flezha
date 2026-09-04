@@ -14,6 +14,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   """
   use ExUnit.Case, async: false
 
+  alias Flezha.AuthZ.{Verb, Verbs}
   alias Flezha.Service.Controller
   alias Flezha.Service.Dlq
   alias Flezha.Service.Fleet
@@ -161,34 +162,28 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       :ok
     end
 
-    test "is refused by every function that names an action" do
+    # Which functions must refuse is the declaration's answer, not this file's:
+    # every call shape above whose binding names a gated row.
+    test "is refused by every function that binds a gated row" do
       assert Flezha.AuthZ.enforcement_posture() == :enforced
-      context = %{source: :ui}
+      rows = Map.new(Verbs.all(), &{&1.verb, &1})
 
-      for {module, fun, args} <- [
-            {Operative, :list_namespaces, []},
-            {Operative, :start, ["default", %{}]},
-            {Operative, :stop, ["default", "rc"]},
-            {Namespace, :list, []},
-            {Namespace, :create, ["ns_surface", []]},
-            {Fleet, :runners, ["default"]},
-            {Controller, :shutdown_status, []},
-            {PluginManager, :list, []},
-            {Dlq, :list, [nil]},
-            {Dlq, :get, ["rc/proc/id"]},
-            {Dlq, :stats, []},
-            {Dlq, :drop, ["rc/proc/id"]},
-            {Schedule, :list, []},
-            {Schedule, :add, [%{name: "s"}]},
-            {Schedule, :remove, ["s"]},
-            {Schedule, :assert_entry, [%{name: "s"}]},
-            {Schedule, :retract, ["s"]},
-            {Workflow, :rescale, ["default", "group", 2, []]},
-            {Workflow, :rewind, ["default", "rc", 1]}
-          ] do
-        assert match?({:error, {:forbidden, _reason}}, apply(module, fun, args ++ [context])) or
-                 apply(module, fun, args ++ [context]) == {:error, :not_found},
-               "#{inspect(module)}.#{fun} served an unbound caller under enforcement"
+      gated =
+        for {module, functions} <- @published,
+            {fun, args} <- functions,
+            {^fun, arity, verb, _opts} <- Verb.bindings(module),
+            arity == length(args) + 1,
+            rows[verb].action not in [:public, :none],
+            do: {module, fun, args}
+
+      assert length(gated) > 40
+
+      for {module, fun, args} <- gated do
+        assert match?(
+                 {:error, {:forbidden, _reason}},
+                 apply(module, fun, args ++ [%{source: :ui}])
+               ),
+               "#{inspect(module)}.#{fun}/#{length(args) + 1} served an unbound caller under enforcement"
       end
     end
   end

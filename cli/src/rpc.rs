@@ -1,9 +1,12 @@
-//! The one place `flz` starts the sibling `flzvm`, and the one place a refused
-//! RPC becomes an exit code.
+//! The one place `flz` starts the sibling `flzvm`, the one place a request is
+//! built, and the one place a refused RPC becomes an exit code.
 //!
-//! Every verb is the same shape — build an Elixir expression, run
-//! `flzvm rpc <expr>`, exit non-zero if it did — so the shape lives here and
-//! each verb contributes only its expression and its failure policy.
+//! Every verb is the same shape — a `CliManager` wire name, its positional
+//! arguments, the options it carries, run as `flzvm rpc <expr>`, exit non-zero
+//! if it did — so the shape lives here and each verb contributes only its
+//! arguments and its failure policy. Every request ends with one options list,
+//! and the caller's token joins that list here and nowhere else: no verb can be
+//! gated on the controller and token-less on the wire.
 
 use std::process::{exit, Command, ExitStatus};
 use std::time::{Duration, Instant};
@@ -89,10 +92,40 @@ pub(crate) const UNKNOWN_STATUS: Failure =
 /// Exit 1 adding nothing to what the RPC printed.
 pub(crate) const QUIET: Failure = Failure::new(Exit::Fixed(1));
 
-/// Run one `CliManager` call on the controller. Returns only when the child
-/// succeeded, so the caller's next line is its success path.
-pub(crate) fn run(expr: String, failure: Failure) {
-    verdict(flzvm().arg("rpc").arg(expr).status(), failure);
+/// One option a request carries: its key and its value already rendered as an
+/// Elixir literal — `text` for a string, `to_string` for a number, `"true"`.
+pub(crate) type Opt<'a> = (&'a str, String);
+
+/// Run one `CliManager` call on the controller: `fun` with `positional` (each
+/// an Elixir literal) and `opts`, the caller's token appended from `args`.
+/// Returns only when the child succeeded, so the caller's next line is its
+/// success path.
+pub(crate) fn run(
+    fun: &str,
+    positional: &[String],
+    opts: &[Opt],
+    args: &[String],
+    failure: Failure,
+) {
+    verdict(
+        flzvm()
+            .arg("rpc")
+            .arg(expression(fun, positional, opts, args))
+            .status(),
+        failure,
+    );
+}
+
+/// The request `run` sends, for the two verbs that read the child's stdout.
+pub(crate) fn expression(
+    fun: &str,
+    positional: &[String],
+    opts: &[Opt],
+    args: &[String],
+) -> String {
+    let mut parts: Vec<String> = positional.to_vec();
+    parts.push(keyword_opts_fragment(opts, args));
+    format!("Flezha.Service.CliManager.{}({})", fun, parts.join(", "))
 }
 
 /// Apply a failure policy to a child that has already been waited on.
@@ -143,10 +176,10 @@ pub(crate) fn scoped_read(args: &[String], rpc_fun: &str, progress: Option<&str>
     }
 
     run(
-        format!(
-            "Flezha.Service.CliManager.{}(\"{}\", \"{}\")",
-            rpc_fun, namespace, output_format
-        ),
+        rpc_fun,
+        &[text(&namespace), text(output_format)],
+        &[],
+        args,
         REFUSED,
     );
 }
@@ -159,28 +192,13 @@ pub(crate) fn one_arg_authz(args: &[String], rpc_fun: &str, usage: &str) {
         exit(1);
     }
 
-    run(
-        format!(
-            "Flezha.Service.CliManager.{}(\"{}\", {})",
-            rpc_fun,
-            escape_rpc_arg(&args[1]),
-            token_opts_fragment(&args[2..]),
-        ),
-        PROPAGATE,
-    );
+    run(rpc_fun, &[text(&args[1])], &[], args, PROPAGATE);
 }
 
 /// The authz verbs that take nothing but the caller's token: the three list
 /// and identity reads.
 pub(crate) fn token_only(args: &[String], rpc_fun: &str) {
-    run(
-        format!(
-            "Flezha.Service.CliManager.{}({})",
-            rpc_fun,
-            token_opts_fragment(&args[1..]),
-        ),
-        PROPAGATE,
-    );
+    run(rpc_fun, &[], &[], args, PROPAGATE);
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its
@@ -210,17 +228,17 @@ fn exe_suffix() -> String {
     }
 }
 
-/// Escape a value for interpolation into the quoted Elixir string literals of
-/// an RPC expression. Every argument that can carry JSON or free text goes
-/// through this — one escaper, so no call site invents its own.
-pub(crate) fn escape_rpc_arg(value: &str) -> String {
-    value.replace('"', "\\\"")
+/// `value` as an Elixir string literal. A JSON string is one, and escapes a
+/// backslash as well as a quote — the one renderer for every argument that
+/// can carry JSON or free text, so no call site invents its own.
+pub(crate) fn text(value: &str) -> String {
+    serde_json::Value::String(value.to_string()).to_string()
 }
 
 /// The caller's identity token: `--token <t>` flag, else the FLEZHA_TOKEN
 /// environment variable. The CLI process resolves it (the controller's own
-/// env is NOT the caller's) and threads it into every gated verb's opts.
-pub(crate) fn auth_token(args: &[String]) -> Option<String> {
+/// env is NOT the caller's).
+fn auth_token(args: &[String]) -> Option<String> {
     if let Some(t) = args::or_refuse(args::extract_param(args, "--token", "--token")) {
         if !t.is_empty() {
             return Some(t);
@@ -230,38 +248,20 @@ pub(crate) fn auth_token(args: &[String]) -> Option<String> {
     env::var("FLEZHA_TOKEN").ok().filter(|v| !v.is_empty())
 }
 
-/// Elixir keyword-list fragment for a CliManager wrapper's `opts` parameter:
-/// `pairs` as `key: "value"` in the order given, then the caller's identity
-/// token when there is one — `[]` when it carries neither. Each value is
-/// written as a JSON string literal, which is also an Elixir string literal
-/// and escapes a backslash as well as a quote.
-pub(crate) fn keyword_opts_fragment(pairs: &[(&str, &str)], args: &[String]) -> String {
-    let entries: Vec<String> = pairs
+/// The options list every request ends with: `opts` in the order given, then
+/// the caller's identity token when there is one — `[]` when it carries
+/// neither.
+fn keyword_opts_fragment(opts: &[Opt], args: &[String]) -> String {
+    let mut entries: Vec<String> = opts
         .iter()
-        .copied()
-        .chain(auth_token(args).iter().map(|t| ("token", t.as_str())))
-        .map(|(key, value)| format!("{}: {}", key, serde_json::Value::String(value.to_string())))
+        .map(|(key, value)| format!("{}: {}", key, value))
         .collect();
 
-    format!("[{}]", entries.join(", "))
-}
-
-/// The fragment carrying the identity token alone: `[token: "…"]`, or `[]`
-/// when unauthenticated.
-pub(crate) fn token_opts_fragment(args: &[String]) -> String {
-    keyword_opts_fragment(&[], args)
-}
-
-/// JSON opts object (as an Elixir string literal) for wrappers taking an
-/// `opts_json` argument: `"{\"token\": \"…\"}"`, or `"{}"`.
-pub(crate) fn token_opts_json_literal(args: &[String]) -> String {
-    match auth_token(args) {
-        Some(t) => {
-            let json = serde_json::json!({ "token": t }).to_string();
-            serde_json::Value::String(json).to_string()
-        }
-        None => "\"{}\"".to_string(),
+    if let Some(token) = auth_token(args) {
+        entries.push(format!("token: {}", text(&token)));
     }
+
+    format!("[{}]", entries.join(", "))
 }
 
 pub(crate) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
@@ -269,10 +269,11 @@ pub(crate) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
 /// Whether a controller is serving on this node — `flz reset` and
 /// `flz auth rebootstrap` both refuse to run while one is.
 ///
-/// A successful `controller_status` RPC with non-empty stdout inside the
-/// timeout means up; every other outcome (no node, timeout, distribution
-/// failure) means not up, so the caller proceeds. `FLEZHA_RESET_PROBE_OVERRIDE`
-/// short-circuits it to `up` or `down` for both callers' tests.
+/// A successful `boot_status` RPC — a liveness read served to any caller —
+/// with non-empty stdout inside the timeout means up; every other outcome (no
+/// node, timeout, distribution failure) means not up, so the caller proceeds.
+/// `FLEZHA_RESET_PROBE_OVERRIDE` short-circuits it to `up` or `down` for both
+/// callers' tests.
 pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
     if let Ok(v) = env::var("FLEZHA_RESET_PROBE_OVERRIDE") {
         match v.as_str() {
@@ -284,7 +285,7 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let mut child = match flzvm()
         .arg("rpc")
-        .arg("Flezha.Service.CliManager.controller_status(\"text\")")
+        .arg(expression("boot_status", &[], &[], &[]))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -326,32 +327,33 @@ mod tests {
     use super::*;
     use crate::args::owned as v;
 
-    /// A token with a quote must not break out of the Elixir keyword literal.
+    /// A token with a quote must not break out of the Elixir keyword literal,
+    /// and a verb with nothing else still ends with the list.
     #[test]
-    fn token_opts_fragment_uses_the_flag_and_escapes() {
+    fn the_token_closes_the_options_list_and_is_escaped() {
         let args = v(&["--token", "abc\"def"]);
-        assert_eq!(token_opts_fragment(&args), "[token: \"abc\\\"def\"]");
-    }
-
-    /// Pairs keep the order they were given, a quote and a backslash inside a
-    /// value both stay inside it, and the token closes the list.
-    #[test]
-    fn keyword_opts_fragment_keeps_the_order_and_escapes_every_value() {
-        let pairs = [("cron", "0 8 * * *"), ("init_values", "{\"a\":\"x\\\"y\"}")];
         assert_eq!(
-            keyword_opts_fragment(&pairs, &v(&["--token", "t"])),
-            "[cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"]"
+            expression("x", &[], &[], &args),
+            "Flezha.Service.CliManager.x([token: \"abc\\\"def\"])"
+        );
+        assert_eq!(
+            expression("x", &[], &[], &[]),
+            "Flezha.Service.CliManager.x([])"
         );
     }
 
+    /// Options keep the order they were given, a quote and a backslash inside a
+    /// value both stay inside it, and the token closes the list.
     #[test]
-    fn token_opts_json_literal_is_a_decodable_elixir_string() {
-        let args = v(&["--token", "flzt_abc"]);
-        let literal = token_opts_json_literal(&args);
-        // The literal itself is a JSON string whose content is a JSON object.
-        let inner: String = serde_json::from_str(&literal).expect("outer string");
-        let parsed: serde_json::Value = serde_json::from_str(&inner).expect("inner object");
-        assert_eq!(parsed["token"], "flzt_abc");
+    fn options_keep_their_order_and_every_value_is_escaped() {
+        let opts = [
+            ("cron", text("0 8 * * *")),
+            ("init_values", text("{\"a\":\"x\\\"y\"}")),
+        ];
+        assert_eq!(
+            expression("schedule_add", &[text("d")], &opts, &v(&["--token", "t"])),
+            "Flezha.Service.CliManager.schedule_add(\"d\", [cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"])"
+        );
     }
 
     /// `flz reset help` quotes the default as a literal; nothing else can keep

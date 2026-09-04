@@ -1,6 +1,7 @@
+use crate::args;
 use crate::dispatch::{self, Command};
 use crate::help::{self, Help};
-use crate::{args, rpc};
+use crate::rpc::{self, text};
 
 pub(crate) const TABLE: Command = Command {
     help: help::OBSERVE,
@@ -33,11 +34,10 @@ fn render(args: &[String], screen: Help, rpc_fun: &str) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.{}(\"{}\")",
-            rpc_fun,
-            args::output_format(given)
-        ),
+        rpc_fun,
+        &[text(args::output_format(given))],
+        &[],
+        given,
         rpc::DIAGNOSED,
     );
 }
@@ -52,10 +52,7 @@ fn named_source(args: &[String], screen: Help, rpc_fun: &str) {
         return;
     }
 
-    rpc::run(
-        format!("Flezha.Service.CliManager.{}(\"{}\")", rpc_fun, &given[0]),
-        rpc::DIAGNOSED,
-    );
+    rpc::run(rpc_fun, &[text(&given[0])], &[], given, rpc::DIAGNOSED);
 }
 
 fn handle_tail(args: &[String]) {
@@ -74,12 +71,10 @@ fn handle_tail(args: &[String]) {
         args::or_refuse(args::number(rest, "--duration-ms", "--duration-ms")).unwrap_or(30_000u64);
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.observability_render_tail(\"{}\", \"{}\", [duration_ms: {}])",
-            source,
-            args::output_format(rest),
-            duration_ms
-        ),
+        "observability_render_tail",
+        &[text(source), text(args::output_format(rest))],
+        &[("duration_ms", duration_ms.to_string())],
+        rest,
         rpc::DIAGNOSED,
     );
 }

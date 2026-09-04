@@ -14,7 +14,7 @@ defmodule Flezha.Service.Cli.MemTop do
 
   `output_format` is `"text"` or `"json"`.
   """
-  def controller_mem_top(output_format \\ "text") do
+  def controller_mem_top(output_format, _call) do
     snapshot = build_mem_top_snapshot()
 
     case output_format do

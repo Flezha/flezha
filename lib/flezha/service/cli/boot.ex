@@ -11,7 +11,7 @@ defmodule Flezha.Service.Cli.Boot do
   `flz boot status` — per-namespace recovery state and persistent-registry
   row count. Returns immediately; for blocking semantics use `boot_await/1`.
   """
-  def boot_status() do
+  def boot_status(_call) do
     rows =
       HubManager.get_running_namespaces()
       |> Enum.map(fn namespace ->
@@ -56,7 +56,7 @@ defmodule Flezha.Service.Cli.Boot do
   `flz boot await --timeout SECS` — block until every namespace hub
   reports `:normal`, or the per-hub timeout elapses.
   """
-  def boot_await(timeout_ms \\ 60_000) when is_integer(timeout_ms) do
+  def boot_await(timeout_ms, _call) when is_integer(timeout_ms) do
     namespaces = HubManager.get_running_namespaces()
 
     failures =

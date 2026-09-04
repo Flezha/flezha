@@ -1,9 +1,10 @@
 defmodule Flezha.AuthZ.AuditEmissionTest do
   @moduledoc """
-  Verifies that the four mutating authn/authz procedures each emit
-  exactly one `:platform_authz` event on the observability bus,
-  carrying the documented `name:` atom and a `metadata.principal` /
-  related identity field.
+  Verifies that the three mutating authn/authz primitives each emit exactly
+  one `:platform_authz` event on the observability bus, carrying the
+  documented `name:` atom and a `metadata.principal` / related identity field,
+  and that a namespace create through the wire leaves exactly one record on
+  the verb's own source.
 
   The foundation `:ring_buffer` sink is already registered in the
   test config; the shared auth harness registers the `:platform_authz`
@@ -15,6 +16,7 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.AuthTestHelper
 
@@ -70,8 +72,8 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
     assert signal.metadata.principal == "alice"
   end
 
-  test "CliManager.namespace_create/3 emits exactly one :namespace_created event" do
-    # Enforced posture: the wrapper authorizes for real, so the caller needs a
+  test "a namespace create through the wire leaves exactly one :namespace_service record" do
+    # Enforced posture: the row authorizes for real, so the caller needs a
     # claimed auth state, a binding, and a verified token — a caller-supplied
     # principal would be ignored (§3.2).
     :ok = AuthState.set_enabled()
@@ -80,12 +82,20 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
 
     boundary = now_us()
 
-    {:ok, _entry} = CliManager.namespace_create("tenant-a", %{}, token: raw)
+    output =
+      ExUnit.CaptureIO.capture_io(fn ->
+        CliManager.authz_render_namespace_create("tenant-a", "{}", token: raw)
+      end)
 
-    [signal] = wait_for_events(:namespace_created, boundary, 1)
-    assert signal.source == @source
+    assert output =~ "namespace tenant-a created"
+    TestSinks.settle(RingBufferSink)
+
+    assert [signal] = RingBufferSink.query(:namespace_service, boundary)
+    assert signal.name == :namespace_create
+    assert signal.metadata.action == :"authz.namespace_create"
     assert signal.metadata.namespace == "tenant-a"
     assert signal.metadata.principal == "alice"
+    assert signal.metadata.outcome == :ok
   end
 
   # ----- helpers -----

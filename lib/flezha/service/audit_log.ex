@@ -1,16 +1,22 @@
 defmodule Flezha.Service.AuditLog do
   @moduledoc """
   Service-API surface for the durable audit log. Every public function takes a
-  `Flezha.Service.CallerContext` as its last argument.
+  `Flezha.Service.CallerContext` as its last argument and binds a row of
+  `Flezha.AuthZ.Verbs`; the rows audit every read on the `:audit_log` source
+  BEFORE doing the work, under the function's own name, so a read is itself
+  auditable.
 
   Disabled state has two answers: the master flag off
   (`:observability, :enabled: false`) gives `{:error, :observability_disabled}`,
   the subsystem flag off (`:audit_log, :enabled: false`) gives
   `{:error, :audit_log_disabled}`.
 
-  Every public function emits its audit-of-audit `:event` on the `:audit_log`
-  source BEFORE doing the work, so a read is itself auditable.
+  The effects — the catalog, a filtered read, the tail subscription, the stats
+  snapshot and a rotation — are public so `Flezha.Service.Cli.Audit` renders
+  the same answers under the same rows.
   """
+
+  use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ
   alias Flezha.Observability
@@ -18,20 +24,7 @@ defmodule Flezha.Service.AuditLog do
   alias Flezha.Observability.AuditLog.Rotation
   alias Flezha.Service.CallerContext
 
-  @audit_source :audit_log
-
   @type caller_context :: CallerContext.t()
-
-  # ---------- Public API ----------
-
-  @spec list_files(caller_context()) :: {:ok, [map()]} | {:error, term()}
-  def list_files(caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
-      emit_audit(:list_files, caller_context, %{})
-      {:ok, Writer.catalog()}
-    end
-  end
 
   @type read_params :: %{
           optional(:file) => String.t(),
@@ -42,15 +35,53 @@ defmodule Flezha.Service.AuditLog do
           optional(:limit) => pos_integer()
         }
 
-  @spec read(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
-  def read(%{} = params, caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
-      emit_audit(:read, caller_context, %{file: Map.get(params, :file)})
+  # ---------- Public API ----------
 
-      dir = audit_dir()
-      file = Map.get(params, :file) || "audit-current.jsonl"
-      path = Path.join(dir, file)
+  @spec list_files(caller_context()) :: {:ok, [map()]} | {:error, term()}
+  verb list_files(caller_context), verb: :audit_list do
+    catalog()
+  end
+
+  @spec read(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  verb read(params, caller_context) when is_map(params),
+    verb: :audit_read,
+    target: &read_target/1 do
+    read_records(params, caller_context)
+  end
+
+  @spec tail(map(), caller_context()) :: {:ok, reference()} | {:error, term()}
+  verb tail(params, caller_context), verb: :audit_tail do
+    subscribe_tail()
+  end
+
+  @spec unsubscribe(reference(), caller_context()) :: :ok | {:error, term()}
+  verb unsubscribe(ref, caller_context) when is_reference(ref), verb: :audit_unsubscribe do
+    with :ok <- check_enabled(), do: Writer.unsubscribe_tail(ref)
+  end
+
+  @spec stats(caller_context()) :: {:ok, map()} | {:error, term()}
+  verb stats(caller_context), verb: :audit_stats do
+    stats_snapshot()
+  end
+
+  @spec rotate(caller_context()) :: {:ok, map()} | {:error, term()}
+  verb rotate(caller_context), verb: :audit_rotate do
+    rotate_now()
+  end
+
+  # ---------- The effects the terminal shares ----------
+
+  @doc false
+  @spec catalog() :: {:ok, [map()]} | {:error, term()}
+  def catalog do
+    with :ok <- check_enabled(), do: {:ok, Writer.catalog()}
+  end
+
+  @doc false
+  @spec read_records(read_params(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  def read_records(params, caller_context) do
+    with :ok <- check_enabled() do
+      path = Path.join(audit_dir(), Map.get(params, :file) || "audit-current.jsonl")
 
       if File.exists?(path) do
         limit = Map.get(params, :limit, 1_000)
@@ -71,58 +102,37 @@ defmodule Flezha.Service.AuditLog do
     end
   end
 
-  @spec tail(map(), caller_context()) :: {:ok, reference()} | {:error, term()}
-  def tail(_params, caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
-      emit_audit(:tail, caller_context, %{})
-      Writer.subscribe_tail()
-    end
+  @doc false
+  @spec subscribe_tail() :: {:ok, reference()} | {:error, term()}
+  def subscribe_tail do
+    with :ok <- check_enabled(), do: Writer.subscribe_tail()
   end
 
-  @spec unsubscribe(reference(), caller_context()) :: :ok | {:error, term()}
-  def unsubscribe(ref, caller_context) when is_reference(ref) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.validate(caller_context),
-         :ok <- AuthZ.require_bound_principal(caller_context) do
-      Writer.unsubscribe_tail(ref)
-    end
-  end
-
-  @spec stats(caller_context()) :: {:ok, map()} | {:error, term()}
-  def stats(caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"audit.read") do
-      emit_audit(:stats, caller_context, %{})
-
+  @doc false
+  @spec stats_snapshot() :: {:ok, map()} | {:error, term()}
+  def stats_snapshot do
+    with :ok <- check_enabled() do
       snapshot = Writer.stats()
 
-      stats =
-        snapshot
-        |> Map.put(:total_bytes, snapshot.catalog_total_bytes + snapshot.current_file_bytes)
-        |> Map.put(:total_files, snapshot.catalog_count + 1)
-        |> Map.put(:record_count, snapshot.current_record_count)
-        |> Map.put(:drop_count, Sink.post_close_dropped())
-        |> Map.put(:oldest_ts_us, snapshot.oldest_ts_us)
-
-      {:ok, stats}
+      {:ok,
+       snapshot
+       |> Map.put(:total_bytes, snapshot.catalog_total_bytes + snapshot.current_file_bytes)
+       |> Map.put(:total_files, snapshot.catalog_count + 1)
+       |> Map.put(:record_count, snapshot.current_record_count)
+       |> Map.put(:drop_count, Sink.post_close_dropped())
+       |> Map.put(:oldest_ts_us, snapshot.oldest_ts_us)}
     end
   end
 
-  @spec rotate(caller_context()) :: {:ok, map()} | {:error, term()}
-  def rotate(caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"audit.rotate") do
-      emit_audit(:rotate, caller_context, %{})
-
-      case Rotation.rotate_now() do
-        {:ok, info} -> {:ok, info}
-        {:error, _} = err -> err
-      end
-    end
+  @doc false
+  @spec rotate_now() :: {:ok, map()} | {:error, term()}
+  def rotate_now do
+    with :ok <- check_enabled(), do: Rotation.rotate_now()
   end
 
-  # ---------- AuthZ helpers ----------
+  # ---------- Internal helpers ----------
+
+  defp read_target([params | _]), do: %{file: Map.get(params, :file)}
 
   # Filter JSONL records to the caller's namespace except for
   # `admin@_system` and internal callers. Records that pre-date the
@@ -151,8 +161,6 @@ defmodule Flezha.Service.AuditLog do
     end
   end
 
-  # ---------- Internal helpers ----------
-
   defp check_enabled() do
     cond do
       not Observability.enabled?() ->
@@ -164,17 +172,6 @@ defmodule Flezha.Service.AuditLog do
       true ->
         :ok
     end
-  end
-
-  # The principal rides the audit log's own signals and nothing else's, so it
-  # goes on the metadata here rather than into the shared emit.
-  defp emit_audit(action, caller_context, extra) do
-    CallerContext.emit(
-      @audit_source,
-      action,
-      caller_context,
-      CallerContext.put_unless_nil(extra, :principal, Map.get(caller_context, :principal))
-    )
   end
 
   defp audit_dir() do

@@ -4,6 +4,7 @@ defmodule Flezha.Service.Cli.Info do
   report `Cli.Listing` also prints.
   """
 
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Convergence.Snapshot
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
@@ -14,8 +15,8 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.State.PersistenceResolver
 
   @doc "Shows detailed information about operatives and their enabled plugins."
-  def operative_info(namespace, output_format \\ "text") do
-    namespace_display = Context.normalize_namespace(namespace)
+  def operative_info(namespace, output_format, _call) do
+    namespace_display = Namespace.or_default(namespace)
 
     live =
       case Flezha.list_operatives(namespace_display) do

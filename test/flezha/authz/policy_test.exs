@@ -11,7 +11,7 @@ defmodule Flezha.AuthZ.PolicyTest do
     end
 
     test "viewer cannot start operatives or mutate" do
-      for a <- [:"operative.start", :"plugin.install", :"reset.run", :"authz.token_issue"] do
+      for a <- [:"operative.start", :"plugin.install", :"state.retention", :"authz.token_issue"] do
         refute Policy.grants?(:viewer, a)
       end
     end
@@ -25,18 +25,18 @@ defmodule Flezha.AuthZ.PolicyTest do
       refute Policy.grants?(:operator, :"authz.token_issue")
     end
 
-    test "admin inherits operator plus auth-state mutation and reset" do
+    test "admin inherits operator plus auth-state mutation and the controller-wide settings" do
       assert Policy.grants?(:admin, :"operative.start")
       assert Policy.grants?(:admin, :"plugin.install")
       assert Policy.grants?(:admin, :"authz.token_issue")
       assert Policy.grants?(:admin, :"authz.namespace_create")
-      assert Policy.grants?(:admin, :"reset.run")
+      assert Policy.grants?(:admin, :"state.retention")
+      refute Policy.grants?(:operator, :"state.retention")
     end
 
-    test "runner only has data-plane verbs" do
-      for a <- [:"runner.connect", :"runner.checkpoint", :"runner.report"] do
-        assert Policy.grants?(:runner, a)
-      end
+    test "runner holds runner.connect and nothing else" do
+      assert Policy.grants?(:runner, :"runner.connect")
+      assert Enum.filter(Action.all(), &Policy.grants?(:runner, &1)) == [:"runner.connect"]
 
       for a <- [:"operative.start", :"operative.list", :"audit.read", :"observability.query"] do
         refute Policy.grants?(:runner, a)

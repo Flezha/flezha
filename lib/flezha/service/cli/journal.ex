@@ -5,16 +5,21 @@ defmodule Flezha.Service.Cli.Journal do
   """
 
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Service.OperativeManager
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
   alias Flezha.State.Wire
+
+  @doc "The row both reads are judged by: the instance's class namespace."
+  def instance_row([instance_id | _]),
+    do: {:ok, %{namespace: OperativeManager.namespace_of_class(instance_id)}}
 
   @doc """
   `flz state journal <operative/instance>` — render a workflow instance's
   proc-journal entries (`workflow-proc-journal`) in append order: seq, type,
   proc index, iteration, the entities that ran, and the handoff batch size.
   """
-  def state_journal(instance_id, output_format \\ "text", _opts \\ []) do
+  def state_journal(instance_id, output_format, _call) do
     {:ok, entries} = ProcJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
@@ -188,7 +193,7 @@ defmodule Flezha.Service.Cli.Journal do
   which are still undelivered (above the consumed offset the last committed
   iteration recorded).
   """
-  def state_inbox(instance_id, output_format \\ "text", _opts \\ []) do
+  def state_inbox(instance_id, output_format, _call) do
     entries = ProcInbox.read(instance_id)
     consumed = ProcJournal.consumed_offset(instance_id)
 

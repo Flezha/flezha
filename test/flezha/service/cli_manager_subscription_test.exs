@@ -19,7 +19,7 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.SpecDecoder
-  alias Flezha.Service.CliManager
+  alias Flezha.Service.Cli.Plugin, as: CliPlugin
 
   defmodule EveryKind do
     def on_operative_init(ctx, _opts), do: {:ok, ctx}
@@ -30,7 +30,7 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   end
 
   defp cli_subscriptions(extensions) do
-    CliManager.extract_subscriptions(%{"extensions" => extensions}, %{})
+    CliPlugin.extract_subscriptions(%{"extensions" => extensions}, %{})
   end
 
   defp extension(name, opts), do: %{"name" => name, "opts" => opts}
@@ -44,19 +44,19 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   end
 
   test "proactive and interval both map onto :on_interval" do
-    assert CliManager.trigger_to_subscription("proactive") == [
+    assert CliPlugin.trigger_to_subscription("proactive") == [
              {:on_interval, [interval_ms: 5_000]}
            ]
 
-    assert CliManager.trigger_to_subscription("interval") == [
+    assert CliPlugin.trigger_to_subscription("interval") == [
              {:on_interval, [interval_ms: 5_000]}
            ]
   end
 
   test "on_input / on_output map to their own extensions; unknown falls back to on_input" do
-    assert CliManager.trigger_to_subscription("on_input") == [{:on_input, []}]
-    assert CliManager.trigger_to_subscription("on_output") == [{:on_output, []}]
-    assert CliManager.trigger_to_subscription("bogus") == [{:on_input, []}]
+    assert CliPlugin.trigger_to_subscription("on_input") == [{:on_input, []}]
+    assert CliPlugin.trigger_to_subscription("on_output") == [{:on_output, []}]
+    assert CliPlugin.trigger_to_subscription("bogus") == [{:on_input, []}]
   end
 
   # Fails when: a subscription directive reaches `init_provider/1` as a plugin
@@ -64,7 +64,7 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   # `flz plugin enable` that names an extension or a trigger.
   test "subscription directives are stripped from the provider's options" do
     opts =
-      CliManager.provider_opts(%{
+      CliPlugin.provider_opts(%{
         "url" => "http://x",
         "trigger" => "on_input",
         "extensions" => [%{"name" => "on_terminate", "opts" => %{}}]

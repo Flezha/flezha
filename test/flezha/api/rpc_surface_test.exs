@@ -13,7 +13,7 @@ defmodule Flezha.Api.RpcSurfaceTest do
     test "resolves" do
       entries = [
         {Flezha.State.Paths, :operative_classes, 0, "control"},
-        {Flezha.Service.Cli.Listing, :cluster_status, 2, "control"}
+        {Flezha.Service.Cli.Listing, :cluster_status, 3, "control"}
       ]
 
       assert Enum.map(RpcSurface.resolve(entries), &elem(&1, 1)) == [:ok, :ok]

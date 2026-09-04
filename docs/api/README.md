@@ -16,22 +16,17 @@ enforcement posture *before* it holds a context, because their answers are what 
 context is built from; they cannot be authorized by the thing they bootstrap.
 Both are read-only. `consumers/published.txt` names them.
 
-## How much a function is governed
+## How a function is governed
 
-`Flezha.Service.CallerContext` carries three guards, and which one a published
-function uses is the plainest statement of how governed it is:
-
-| Guard | Checks | Used for |
-| --- | --- | --- |
-| `validated/2` | the context's shape, nothing more | a verb the policy names no action for |
-| `scoped_read/4` | an action, in a namespace the callee resolved | a read, unaudited, as the CLI's reads are |
-| `gated/6` | an action, then the effect, then an audit of what happened | a mutation |
-
-A verb under `validated/2` is as gated as the same verb is from the terminal, and
-no more — the DLQ reads, the schedule verbs, and partition rescale and rewind are
-there because `Flezha.AuthZ.Action` names no action for them. Gating them needs
-new actions and their role grants, which is a decision about who may read a
-parked payload rather than one a service module can take.
+Every published function binds one row of `Flezha.AuthZ.Verbs` — the same row
+the `flz` verb for that effect binds — and `Flezha.AuthZ.Verb.run/5` applies it
+in one order: identity, scope, policy, act, audit. The row names the action the
+policy judges, the rule that resolves its namespace, and the audit it leaves;
+`docs/operations/authn_authz.md` carries the whole table. A published function
+that took a caller context and bound no row would fail
+`test/flezha/authz/verbs_test.exs`, so there is no ungoverned function on this
+surface: a read the policy calls public (`kind_known?/2`, `parse_cron/2`, the
+partition arithmetic) binds a `:public` row and is served to any caller.
 
 The namespace a mutation is judged in is **resolved by the callee** from what is
 being acted on — a dead-letter entry's own namespace, a plugin's own namespace —

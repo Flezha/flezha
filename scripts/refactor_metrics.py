@@ -43,6 +43,7 @@ rather than written to the reader of the source.
 """
 
 import argparse
+import tomllib
 import json
 import os
 import re
@@ -56,6 +57,7 @@ from collections import defaultdict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = "docs/refactor/baseline.json"
 TARGETS = "docs/refactor/targets.md"
+SEAMS = "docs/refactor/seams.toml"
 JSCPD = "sdk/node/node_modules/.bin/jscpd"
 
 FILE_CEILING = 800
@@ -681,7 +683,105 @@ def measure(area_filter=None, lint=False):
         "credo_warnings": len(credo) if credo is not None else None,
         "clippy_warnings": len(clippy) if clippy is not None else None,
     }
-    return {"areas": result, "repo": repo, "scan": sorted(table)}
+    return {
+        "areas": result,
+        "repo": repo,
+        "scan": sorted(table),
+        "seams": measure_seams(tracked + untracked, seam_jobs()),
+    }
+
+
+# --- seams ---------------------------------------------------------------------
+
+
+def seam_jobs(path=None):
+    """The rows of the seam ledger: id, seam, the alternations of its shape, the
+    files allowed to match, the roots it is measured under."""
+    path = path or os.path.join(ROOT, SEAMS)
+    if not os.path.exists(path):
+        return []
+    with open(path, "rb") as fh:
+        ledger = tomllib.load(fh)
+    jobs = []
+    for job in ledger.get("job", []):
+        jobs.append(
+            {
+                "id": job["id"],
+                "seam": job["seam"],
+                "spellings": [re.compile(alt) for alt in split_alternations(job["shape"])],
+                "allow": set(job.get("allow", [])),
+                "roots": tuple(job.get("roots", [""])),
+            }
+        )
+    return jobs
+
+
+def split_alternations(shape):
+    """A shape's top-level `|` alternations; a `|` inside a group belongs to its
+    spelling, so one spelling can itself offer variants."""
+    parts, depth, current, escaped = [], 0, [], False
+    for ch in shape:
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "|" and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+    return [p for p in parts if p]
+
+
+def measure_seams(paths, jobs, root=ROOT):
+    """Per job: the sites its shape matches under its roots, how many distinct
+    spellings they use, and the bypasses — sites outside the allow-list."""
+    result = {}
+    for job in jobs:
+        sites, spellings, bypasses = 0, set(), []
+        for path in paths:
+            if not path.startswith(job["roots"]) or language(path) is None:
+                continue
+            for number, line in enumerate(read_lines(os.path.join(root, path)) or [], 1):
+                for index, spelling in enumerate(job["spellings"]):
+                    if spelling.search(line):
+                        sites += 1
+                        spellings.add(index)
+                        if path not in job["allow"]:
+                            bypasses.append(f"{path}:{number}")
+                        break
+        result[job["id"]] = {
+            "seam": job["seam"],
+            "sites": sites,
+            "spellings": len(spellings),
+            "bypasses": len(bypasses),
+            "bypass_list": bypasses,
+        }
+    return result
+
+
+def compare_seams(current, baseline):
+    """A job whose bypasses rose above the recorded baseline, as
+    (job, then, now, sites)."""
+    regressions = []
+    then_all = baseline.get("seams", {})
+    for job, now in (current.get("seams") or {}).items():
+        then = then_all.get(job)
+        if then is not None and now["bypasses"] > then["bypasses"]:
+            regressions.append((job, then["bypasses"], now["bypasses"], now["bypass_list"]))
+    return regressions
+
+
+def render_seams(seams):
+    return "\n".join(
+        f"seam {job}: sites {m['sites']}  spellings {m['spellings']}  bypasses {m['bypasses']}"
+        for job, m in seams.items()
+    )
 
 
 def box():
@@ -1059,6 +1159,31 @@ def self_test_jscpd_limit():
             ROOT = saved
 
 
+def self_test_seams():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "lib"))
+        os.makedirs(os.path.join(tmp, "seam"))
+        with open(os.path.join(tmp, "lib", "a.ex"), "w", encoding="utf-8") as fh:
+            fh.write("x = gate_a(1)\ny = gate_b(2)\nz = gate_a(3)\n")
+        with open(os.path.join(tmp, "seam", "s.ex"), "w", encoding="utf-8") as fh:
+            fh.write("gate_a(0)\n")
+        ledger = os.path.join(tmp, "seams.toml")
+        with open(ledger, "w", encoding="utf-8") as fh:
+            fh.write(
+                '[[job]]\nid = "j"\nseam = "S.run/1"\nshape = \'gate_a\\(|gate_(b|c)\\(\'\n'
+                'allow = ["seam/s.ex"]\n'
+            )
+        jobs = seam_jobs(ledger)
+        assert [len(j["spellings"]) for j in jobs] == [2], "a grouped `|` is one spelling"
+        got = measure_seams(["lib/a.ex", "seam/s.ex"], jobs, root=tmp)["j"]
+        assert (got["sites"], got["spellings"], got["bypasses"]) == (4, 2, 3), got
+        assert got["bypass_list"] == ["lib/a.ex:1", "lib/a.ex:2", "lib/a.ex:3"]
+        current = {"seams": {"j": got}}
+        assert compare_seams(current, {"seams": {"j": {"bypasses": 3}}}) == []
+        assert compare_seams(current, {"seams": {"j": {"bypasses": 0}}})[0][:3] == ("j", 0, 3)
+        assert compare_seams(current, {}) == [], "an unrecorded job is measured, not compared"
+
+
 def self_test_baseline():
     measured = {"box": {"hostname": "here"}, "head": "new", "areas": {}}
     recorded = {
@@ -1135,6 +1260,11 @@ def check(data, baseline, args):
         tag = "BLOCKING" if area in blocking else "measuring"
         where = f"  [{', '.join(culprits)}]" if culprits else ""
         print(f"{tag} {area} {metric}: {then} -> {now}{where}")
+    seam_regressions = compare_seams(data, baseline)
+    for job, then, now, sites in seam_regressions:
+        print(f"BLOCKING seam {job} bypasses: {then} -> {now}  [{', '.join(sites)}]")
+    if data.get("seams"):
+        print(render_seams(data["seams"]))
     loose = data["repo"].get("untracked_scanned") or 0
     if loose:
         print(f"{loose} untracked file(s) counted: this is the working tree, not {data['head']}")
@@ -1152,8 +1282,11 @@ def check(data, baseline, args):
     if skipped:
         named = ", ".join(f"{m} in {n} area(s)" for m, n in sorted(skipped.items()))
         print(f"not compared, unmeasured on this run: {named}")
-    code = exit_code(regressions, baseline)
-    print(f"{len(regressions)} regression(s) against {baseline.get('head')}; exit {code}")
+    code = exit_code(regressions, baseline) or (1 if seam_regressions else 0)
+    print(
+        f"{len(regressions) + len(seam_regressions)} regression(s) against "
+        f"{baseline.get('head')}; exit {code}"
+    )
     return code
 
 
@@ -1166,6 +1299,7 @@ def main(argv):
         self_test_walk()
         self_test_unreadable()
         self_test_jscpd_limit()
+        self_test_seams()
         self_test_baseline()
         print("self-test OK")
         return 0
@@ -1199,6 +1333,8 @@ def main(argv):
         print(json.dumps(data, indent=1, sort_keys=True))
     else:
         print(render_table(data))
+        if data.get("seams"):
+            print("\n" + render_seams(data["seams"]))
         print(f"\nrepo: {data['repo']}  head {data['head']}")
     return 0
 

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed — every operator verb is declared once, and one seam applies it (`declare-every-operator-verb`)
+
+Authorizing an operator verb used to be decided at every site, in six
+spellings, and thirty-two verbs never got a decision — five of them mutations,
+`flz operative start` among them. Every verb is now one row of a declaration
+table beside the policy (its action, where it is judged, how it is audited),
+and one function applies the row on the `flz` wire, the published service API
+and the runner session alike. A wire name without a row does not compile, a
+published function without one fails the suite, and an action no row names
+fails it too. Every `flz` request ends with one options list that carries the
+credential, so the thirteen verbs that could not receive a token now can, and
+`operative start` takes `--plugins` and `--kind` in that list. A verb scoped to
+a stored row refuses an unbound caller before reading it, so `schedule run` no
+longer says whether a name exists. Every declared audit source is durable by
+construction, and one record shape names the actor, the action and the
+outcome from either surface. Three actions were added (`operative.send`,
+`operative.replay`, `state.records`) and six dead ones deleted; the runner role
+holds `runner.connect` alone. Operators of the console: four controller-wide
+reads are now judged in the caller's own namespace, and the journal, inbox,
+completion and time-travel reads carry actions.
+
 ### Fixed — five development instruments that misreported or collided (`close-five-small-tooling-defects`)
 
 Five small defects in the tooling, each reproduced before it was touched. The

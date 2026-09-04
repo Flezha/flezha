@@ -1,22 +1,24 @@
 defmodule Flezha.Service.Observability do
   @moduledoc """
   Service-API surface for the observability foundation. Every public function
-  takes a `Flezha.Service.CallerContext` as its last argument.
+  takes a `Flezha.Service.CallerContext` as its last argument and binds a row
+  of `Flezha.AuthZ.Verbs`.
 
   With the master flag `:observability` → `enabled: false`, every public
   function returns `{:error, :observability_disabled}`.
 
-  `subscribe/2`, `enable_source/2` and `disable_source/2` emit an audit
-  `:event` on the bus carrying the function name, the caller's `source` and
-  its optional `request_id` — the seam the audit log consumes.
+  The subscriptions and the two mutations are audited on the
+  `:observability_service` source before the effect, under the function's
+  name — the seam the audit log consumes. The effects are public so
+  `Flezha.Service.Cli.Observe` renders the same answers under the same rows.
   """
+
+  use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ
   alias Flezha.Observability
   alias Flezha.Observability.{Registry, RingBufferSink}
   alias Flezha.Service.CallerContext
-
-  @audit_source :observability_service
 
   @type caller_context :: CallerContext.t()
 
@@ -29,12 +31,8 @@ defmodule Flezha.Service.Observability do
   # ---------- Subscriptions ----------
 
   @spec subscribe(atom(), caller_context()) :: :ok | {:error, term()}
-  def subscribe(source, caller_context) when is_atom(source) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.subscribe") do
-      emit_audit(:subscribe, caller_context, %{source: source})
-      Observability.subscribe(source)
-    end
+  verb subscribe(source, caller_context) when is_atom(source), verb: :observability_subscribe do
+    with :ok <- check_enabled(), do: Observability.subscribe(source)
   end
 
   @doc """
@@ -45,12 +43,9 @@ defmodule Flezha.Service.Observability do
   Authorized as `subscribe/2` is: the two are one capability.
   """
   @spec unsubscribe(atom(), caller_context()) :: :ok | {:error, term()}
-  def unsubscribe(source, caller_context) when is_atom(source) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.subscribe") do
-      emit_audit(:unsubscribe, caller_context, %{source: source})
-      Observability.unsubscribe(source)
-    end
+  verb unsubscribe(source, caller_context) when is_atom(source),
+    verb: :observability_unsubscribe do
+    with :ok <- check_enabled(), do: Observability.unsubscribe(source)
   end
 
   @doc """
@@ -64,34 +59,16 @@ defmodule Flezha.Service.Observability do
   not enabled (it cannot stream without the underlying broadcast).
   """
   @spec tail(atom(), caller_context()) :: :ok | {:error, term()}
-  def tail(source, caller_context) when is_atom(source) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.subscribe"),
-         :ok <- check_pubsub_sink() do
-      emit_audit(:tail, caller_context, %{source: source})
-      Observability.subscribe(source)
-    end
-  end
-
-  defp check_pubsub_sink() do
-    enabled? =
-      Application.get_env(:flezha, :observability, [])
-      |> Keyword.get(:pubsub_sink_enabled, true)
-
-    if enabled? do
-      :ok
-    else
-      {:error, :pubsub_sink_disabled}
-    end
+  verb tail(source, caller_context) when is_atom(source), verb: :observability_tail do
+    tail_source(source)
   end
 
   # ---------- Reads ----------
 
   @spec query(query_params(), caller_context()) ::
           {:ok, [Signal.t()]} | {:error, term()}
-  def query(%{} = params, caller_context) do
+  verb query(params, caller_context) when is_map(params), verb: :observability_query do
     with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.query"),
          {:ok, source} <- Map.fetch(params, :source) do
       from_ts = Map.get(params, :from_ts, 0)
       opts = if l = Map.get(params, :limit), do: [limit: l], else: []
@@ -105,45 +82,64 @@ defmodule Flezha.Service.Observability do
   end
 
   @spec list_sources(caller_context()) :: {:ok, [map()]} | {:error, term()}
-  def list_sources(caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.query") do
-      {:ok, Registry.list_sources()}
-    end
+  verb list_sources(caller_context), verb: :observability_sources do
+    sources()
   end
 
   @spec list_sinks(caller_context()) :: {:ok, [map()]} | {:error, term()}
-  def list_sinks(caller_context) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.query") do
-      {:ok, Registry.list_sinks()}
-    end
+  verb list_sinks(caller_context), verb: :observability_sinks do
+    sinks()
   end
 
   # ---------- Mutations ----------
 
   @spec enable_source(atom(), caller_context()) :: :ok | {:error, term()}
-  def enable_source(name, caller_context) when is_atom(name) do
-    with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.enable_source"),
-         :ok <- emit_audit(:enable_source, caller_context, %{source: name}) do
-      Registry.enable_source(name)
-    end
+  verb enable_source(name, caller_context) when is_atom(name), verb: :observability_enable do
+    enable(name)
   end
 
   @spec disable_source(atom(), caller_context()) :: :ok | {:error, term()}
-  def disable_source(name, caller_context) when is_atom(name) do
+  verb disable_source(name, caller_context) when is_atom(name), verb: :observability_disable do
+    disable(name)
+  end
+
+  # ---------- The effects the terminal shares ----------
+
+  @doc false
+  @spec sources() :: {:ok, [map()]} | {:error, term()}
+  def sources, do: with(:ok <- check_enabled(), do: {:ok, Registry.list_sources()})
+
+  @doc false
+  @spec sinks() :: {:ok, [map()]} | {:error, term()}
+  def sinks, do: with(:ok <- check_enabled(), do: {:ok, Registry.list_sinks()})
+
+  @doc false
+  @spec enable(atom()) :: :ok | {:error, term()}
+  def enable(name), do: with(:ok <- check_enabled(), do: Registry.enable_source(name))
+
+  @doc false
+  @spec disable(atom()) :: :ok | {:error, term()}
+  def disable(name), do: with(:ok <- check_enabled(), do: Registry.disable_source(name))
+
+  @doc false
+  @spec tail_source(atom()) :: :ok | {:error, term()}
+  def tail_source(source) do
     with :ok <- check_enabled(),
-         :ok <- CallerContext.authorize(caller_context, :"observability.disable_source"),
-         :ok <- emit_audit(:disable_source, caller_context, %{source: name}) do
-      Registry.disable_source(name)
+         :ok <- check_pubsub_sink() do
+      Observability.subscribe(source)
     end
   end
 
-  # Build a scope map for `Flezha.AuthZ.authorize/3`. The caller's
-  # bound namespace, when present, is used; otherwise we default to
-  # `_system` so internal callers and the disabled-auth path
-  # continue to work.
+  # ---------- Internal helpers ----------
+
+  defp check_pubsub_sink() do
+    enabled? =
+      Application.get_env(:flezha, :observability, [])
+      |> Keyword.get(:pubsub_sink_enabled, true)
+
+    if enabled?, do: :ok, else: {:error, :pubsub_sink_disabled}
+  end
+
   # Filter ring-buffer query results to signals visible to the
   # caller's namespace. `admin@_system` sees everything; every other
   # caller sees only their own namespace's signals (and signals
@@ -171,13 +167,7 @@ defmodule Flezha.Service.Observability do
     end
   end
 
-  # ---------- Internal helpers ----------
-
   defp check_enabled() do
     if Observability.enabled?(), do: :ok, else: {:error, :observability_disabled}
-  end
-
-  defp emit_audit(action, caller_context, extra) do
-    CallerContext.emit(@audit_source, action, caller_context, extra)
   end
 end

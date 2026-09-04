@@ -1,16 +1,12 @@
 defmodule Flezha.Service.Cli.Context do
   @moduledoc """
-  The caller context every `flz` verb builds, the authorization wrap around it,
-  and the refusal rendering the wrap produces. Every other `Cli.*` module calls
-  this one; it calls none of them.
+  The identity a `flz` verb's trailing options carry, and the rendering of a
+  refusal and an error on the stream the verb's family prints to. Every other
+  `Cli.*` module calls this one; it calls none of them. The authorization
+  itself is `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`.
   """
 
-  alias Flezha.AuthZ.Scope
   alias Flezha.AuthZ.TokenStore
-  alias Flezha.Observability.Bus
-  alias Flezha.Observability.Signal
-
-  @authz_source :platform_authz
 
   def format_reason(reason) when is_binary(reason), do: reason
   def format_reason(reason), do: inspect(reason)
@@ -45,21 +41,13 @@ defmodule Flezha.Service.Cli.Context do
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
 
-  # The credential as it reaches a verb whose only options argument is JSON —
-  # the installer verbs and `flz operative scale`. `flz` writes `{"token": …}`
-  # into that document; every other verb carries a keyword list instead.
-  def json_token_opts(opts_json) when is_binary(opts_json) do
-    case Jason.decode(opts_json) do
-      {:ok, %{"token" => token}} when is_binary(token) -> [token: token]
-      _ -> []
-    end
-  end
-
-  def json_token_opts(_), do: []
-
-  def normalize_namespace(""), do: "default"
-  def normalize_namespace(namespace), do: namespace
-
+  @doc """
+  The caller context a verb's trailing options describe. Identity comes ONLY
+  from a verified token (`flz --token` / `FLEZHA_TOKEN`, threaded through as
+  `opts[:token]`); a caller-supplied principal, namespace or role is never
+  trusted, so without a resolvable token the context stays unbound and a gated
+  verb refuses naming the credential.
+  """
   def cli_context(opts) do
     base = %{source: :cli}
 
@@ -69,10 +57,6 @@ defmodule Flezha.Service.Cli.Context do
         id when is_binary(id) -> Map.put(base, :request_id, id)
       end
 
-    # Identity comes ONLY from a verified token (`flz --token` /
-    # `FLEZHA_TOKEN`, threaded through as `opts[:token]`). A caller-supplied
-    # principal/namespace/role is never trusted — without a resolvable token
-    # the context stays unbound and gated verbs refuse naming the credential.
     case Keyword.get(opts, :token) do
       token when is_binary(token) and token != "" -> bind_token_identity(base, token)
       _ -> base
@@ -94,34 +78,6 @@ defmodule Flezha.Service.Cli.Context do
     # The token store is not running while auth is disabled; an unbound
     # context is the correct degraded shape either way.
     _, _ -> base
-  end
-
-  # The ONE authorize-or-halt seam for CLI verbs: authorize against the verb's
-  # RESOLVED target namespace, rendering a refusal as the CLI's non-zero exit.
-  # Returns the caller context so gated writers can audit the actor. The
-  # denial itself is audited by `AuthZ.authorize/3`.
-  def authorize_cli!(opts, action, namespace) do
-    ctx = cli_context(opts)
-
-    case Flezha.AuthZ.authorize(ctx, action, Scope.build(namespace)) do
-      :ok -> ctx
-      {:error, {:forbidden, reason}} -> refuse!(action, reason)
-    end
-  end
-
-  # Destructive-verb shape on top of `authorize_cli!/3`: run the body, then
-  # audit actor + target on success.
-  def with_cli_authorization(opts, action, namespace, audit_target, fun) do
-    ctx = authorize_cli!(opts, action, namespace)
-    result = fun.()
-
-    emit_cli_audit(
-      action,
-      Map.get(ctx, :principal),
-      Map.merge(audit_target, %{namespace: namespace})
-    )
-
-    result
   end
 
   @doc """
@@ -148,23 +104,6 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   def render_forbidden(reason), do: "refused: #{reason}"
-
-  def emit_cli_audit(name, principal, extra) do
-    metadata = Map.merge(extra, %{principal: principal})
-
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @authz_source,
-        name: name,
-        metadata: metadata
-      })
-    )
-
-    :ok
-  rescue
-    _ -> :ok
-  end
 
   # Fail the surrounding `flzvm rpc` evaluation: print the message, then exit
   # only this rpc process. Never System.halt here — every CliManager call runs

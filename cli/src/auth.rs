@@ -3,7 +3,7 @@ use std::io::Write;
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
+use crate::rpc::{self, controller_is_up, text, DEFAULT_PROBE_TIMEOUT_MS};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -28,10 +28,10 @@ fn handle_bootstrap(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.authz_render_bootstrap(\"{}\")",
-            rpc::escape_rpc_arg(&args[1])
-        ),
+        "authz_render_bootstrap",
+        &[text(&args[1])],
+        &[],
+        &args[2..],
         rpc::PROPAGATE,
     );
 }

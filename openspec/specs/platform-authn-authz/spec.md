@@ -58,7 +58,7 @@ The system SHALL expose exactly one authorization decision function `Flezha.Auth
 
 ### Requirement: Fixed role set
 
-The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `runner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus operative/plugin lifecycle, observability mutations, and audit rotation. `admin` SHALL grant operator plus namespace/role/quota mutation; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect`, `:runner.checkpoint`, `:runner.report` and SHALL NOT grant any operator action.
+The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `runner`. The role→action mapping SHALL be a compile-time map in `Flezha.AuthZ.Policy`. `viewer` SHALL grant read-only actions on the bound namespace. `operator` SHALL grant viewer plus operative/plugin lifecycle, observability mutations, audit rotation, and the reads of records in flight. `admin` SHALL grant operator plus namespace/role/quota mutation and the controller-wide settings; only `admin@_system` SHALL be allowed to invoke auth-state mutations on namespaces other than its own. `runner` SHALL grant only `:runner.connect` and SHALL NOT grant any operator action. The enumeration SHALL hold no action in reserve: an action no declared verb names is deleted, not kept.
 
 #### Scenario: Admin on team-orders cannot mutate team-payments
 - **WHEN** `admin@team-orders` invokes a service call whose `scope.namespace` is `team-payments` and whose action is `:authz.token_issue`
@@ -67,6 +67,10 @@ The system SHALL define exactly four roles: `viewer`, `operator`, `admin`, `runn
 #### Scenario: Runner role cannot read audit
 - **WHEN** an SDK Runner with role `runner` invokes any function in `Flezha.Service.AuditLog`
 - **THEN** the call SHALL return `{:error, {:forbidden, :role_insufficient}}`
+
+#### Scenario: The runner grant is one action
+- **WHEN** the runner role's grants are enumerated
+- **THEN** they SHALL contain `:runner.connect` and nothing else
 
 ### Requirement: Namespace catalog
 
@@ -328,23 +332,27 @@ provider pattern.
 ### Requirement: Every operator verb that reads business data or moves live work SHALL be an authorized action
 
 Such a verb SHALL name an action in the authorizable-action enumeration and SHALL
-authorize it before doing anything — a verb that reads parked business data, creates or
-destroys a schedule, starts an operative, or moves live work between runners. A verb
-whose action is absent from that enumeration is not merely ungated, it is unauthorizable
-— the policy point refuses only actions it knows — so the enumeration is the surface this
-requirement governs.
+authorize it before doing anything — a verb that reads parked business data or
+records in flight, reads an entity's state live or at a point in time, injects input
+into or replays inputs through an operative, enables a plugin on an operative, rewrites
+a controller-wide setting, creates or destroys a schedule, starts an operative, or
+moves live work between runners. A verb whose action is absent from that enumeration
+is not merely ungated, it is unauthorizable — the policy point refuses only actions it
+knows — so the enumeration is the surface this requirement governs.
 
 A CLI verb that this requirement gates SHALL accept the caller's credential, so that
 naming its action does not make it refuse every caller. A verb whose signature cannot
 carry a token is not gateable, and widening that signature is part of gating it.
 
 Each new action SHALL be granted to at least the roles that can invoke the verb today,
-unless narrowing it is the recorded intent of the change that adds it.
+unless narrowing it is the recorded intent of the change that adds it. A read of
+business data SHALL be granted no more widely than the mutation on the same data.
 
 A verb whose effect is one an existing action already names SHALL authorize that action
 rather than add a second name for the same right: firing a schedule by hand starts an
 operative, and is judged as `operative.start` in the namespace the schedule was added
-under.
+under; enabling a listener on an operative is `plugin.enable`; reading an entity's live
+state is `state.get`.
 
 #### Scenario: A parked payload is not readable by an unauthorized caller
 
@@ -377,4 +385,106 @@ under.
   authorization is enforced
 - **THEN** the verb SHALL be refused as `operative.start` in the schedule's namespace and
   no instance SHALL spawn
+
+#### Scenario: An operative is not started, fed, replayed or listened to by an unauthorized caller
+
+- **WHEN** a caller with no role binding issues `flz operative start`, `operative send`,
+  `operative replay` or `operative listen` while authorization is enforced
+- **THEN** each verb SHALL be refused as `operative.start`, `operative.send`,
+  `operative.replay` or `plugin.enable` respectively, and no operative SHALL start, no
+  input SHALL be delivered, no replay SHALL run and no plugin SHALL be enabled
+
+#### Scenario: A controller-wide setting is not rewritten by an unauthorized caller
+
+- **WHEN** a caller whose role is below `admin` issues `flz state retention` while
+  authorization is enforced
+- **THEN** the verb SHALL be refused as `state.retention` in `_system` and the setting
+  SHALL be unchanged
+
+#### Scenario: Records in flight are not read by an unauthorized caller
+
+- **WHEN** a caller with no role binding, or with the `viewer` role, issues `flz state
+  inbox`, `state journal` or `state outbox` while authorization is enforced
+- **THEN** the read SHALL be refused as `state.records` and no record bytes SHALL be
+  returned
+
+#### Scenario: Entity state is read by the role that reads persisted state
+
+- **WHEN** a `viewer` bound to the entity's namespace issues `flz entity state` or
+  `flz state at` while authorization is enforced
+- **THEN** the read SHALL be served as `state.get` and `state.at` respectively, and the
+  same read by a caller with no role binding SHALL be refused
+
+#### Scenario: A gated verb receives the token it was given
+
+- **WHEN** any gated verb is issued from `flz` with a valid token for a role that grants
+  its action
+- **THEN** the verb SHALL succeed; no gated verb SHALL answer that no identity was
+  supplied when one was
+
+### Requirement: Every operator verb SHALL be declared once, and one seam SHALL apply the declaration
+
+Every operator verb SHALL be one row of a declaration table in the policy directory,
+naming its action (an atom of the authorizable-action enumeration, or `:public` for a
+read the policy calls public, or `:none` for a function that is not a verb), the rule
+that resolves its scope (an argument, `_system`, the caller's own namespace, or a field
+of a stored row), and its audit (none, before the act, or after the act with its
+outcome, on a named source). A row SHALL name no module.
+
+One function SHALL apply a row for every surface — the `flz` wire, the published
+service API, the runner session — in one order: identity, scope, policy, act, audit.
+A surface SHALL bind its function to a row, and a function on a surface that binds no
+row SHALL NOT exist: a wire name with no row is a compile error, and a published
+function with no row fails the suite. Every action in the enumeration SHALL be named
+by at least one row, so an action can neither outlive its verbs nor be declared without
+one.
+
+A verb whose scope is a field of a stored row SHALL refuse a caller with no bound
+principal, and a caller whose role does not grant the action, before the row is read,
+so that the refusal says nothing about whether the name exists.
+
+#### Scenario: A wire name without a row does not compile
+
+- **WHEN** a delegate is added to `Flezha.Service.CliManager` beside the declared verbs
+  without a row for it
+- **THEN** compilation SHALL fail naming the wire name and the missing row
+
+#### Scenario: A published function without a row fails the suite
+
+- **WHEN** a public function is added to a published service module that reaches an
+  effect without applying a row
+- **THEN** the declaration test SHALL fail naming the module, function and arity
+
+#### Scenario: An action no row names fails the suite
+
+- **WHEN** an atom is added to the action enumeration and no row names it
+- **THEN** the declaration test SHALL fail naming the action
+
+#### Scenario: Every gated row refuses an unbound caller
+
+- **WHEN** authorization is enforced and every row whose action is not `:public` or
+  `:none` is invoked with a caller context carrying no principal
+- **THEN** every invocation SHALL be refused, no effect SHALL run, and each refusal SHALL
+  be audited as a denial once
+
+#### Scenario: A row-scoped verb refuses before it reads
+
+- **WHEN** authorization is enforced and a verb whose scope is a field of a stored row
+  is invoked by a caller with no bound principal, or by a principal whose role does not
+  grant the action, naming a row that does not exist
+- **THEN** the verb SHALL be refused with the refusal a bound caller would receive, and
+  the row store SHALL NOT be read
+
+#### Scenario: A public read is served without a credential
+
+- **WHEN** a verb declared `:public` is invoked with no token while authorization is
+  enforced
+- **THEN** it SHALL be served, and no denial SHALL be audited
+
+#### Scenario: The same verb is judged identically from every surface
+
+- **WHEN** a verb the terminal and the published surface both carry is invoked from
+  each with the same principal and the same target
+- **THEN** both SHALL reach the same verdict in the same scope, and an authorized act
+  SHALL be audited once with one record shape
 

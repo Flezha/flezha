@@ -3,6 +3,7 @@ defmodule Flezha.Service.Cli.Listing do
   `flz list namespaces | runners | operatives` and `flz cluster status`.
   """
 
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Controller
@@ -13,7 +14,7 @@ defmodule Flezha.Service.Cli.Listing do
   @health_order [:healthy, :degraded, :unbound, :failed]
 
   @doc "Lists all running namespaces."
-  def list_namespaces(output_format \\ "text") do
+  def list_namespaces(output_format, _call) do
     namespaces = Flezha.list_namespaces()
     handle_list_output(namespaces, "running namespaces", output_format)
   end
@@ -57,8 +58,8 @@ defmodule Flezha.Service.Cli.Listing do
   end
 
   @doc "Lists runners for a specific namespace."
-  def list_runners(namespace, output_format \\ "text") do
-    namespace_display = Context.normalize_namespace(namespace)
+  def list_runners(namespace, output_format, _call) do
+    namespace_display = Namespace.or_default(namespace)
 
     case Flezha.list_runners(namespace_display) do
       {:ok, runners} when is_list(runners) ->
@@ -73,12 +74,8 @@ defmodule Flezha.Service.Cli.Listing do
   operatives (whose only placement is a dead node) and is multi-node-safe — it no
   longer crashes on a operative registered across nodes.
   """
-  def list_operatives(namespace, output_format \\ "text", opts \\ []) do
-    namespace_display = Context.normalize_namespace(namespace)
-
-    # Listings are namespace-scoped: a principal bound to another namespace is
-    # refused here (namespace_mismatch), so no verb leaks another tenant's rows.
-    _ = Context.authorize_cli!(opts, :"operative.list", namespace_display)
+  def list_operatives(namespace, output_format, _call) do
+    namespace_display = Namespace.or_default(namespace)
 
     rows =
       namespace_display
@@ -187,13 +184,13 @@ defmodule Flezha.Service.Cli.Listing do
   `Leader` so a split view (one node sees operatives, its peer sees none) is
   visible at a glance.
   """
-  def cluster_status(namespace, output_format \\ "text") do
-    namespace_display = Context.normalize_namespace(namespace)
+  def cluster_status(namespace, output_format, _call) do
+    namespace_display = Namespace.or_default(namespace)
     nodes = HubManager.get_hub_nodes(namespace_display, true)
     rows = HubManager.operative_rows(namespace_display)
     counts = Enum.frequencies_by(rows, & &1.node)
     health = Enum.frequencies_by(rows, & &1.health)
-    recovery_per_node = recovery_per_node(namespace_display, nodes)
+    recovery_per_node = Controller.recovery_map(namespace_display, nodes)
 
     render_cluster_status(
       %{
@@ -207,16 +204,6 @@ defmodule Flezha.Service.Cli.Listing do
       },
       output_format
     )
-  end
-
-  # Through the published read, so a refusal is reported rather than rendered as
-  # a namespace with no recovery state — an empty column and an unanswerable one
-  # look identical to an operator.
-  defp recovery_per_node(namespace, nodes) do
-    case Controller.recovery_per_node(namespace, nodes, Context.cli_context([])) do
-      {:ok, per_node} -> per_node
-      {:error, reason} -> Context.cli_error!("error: #{inspect(reason)}", :stderr)
-    end
   end
 
   defp render_cluster_status(s, "json") do

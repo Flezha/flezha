@@ -4,6 +4,7 @@ defmodule Flezha.Service.Cli.Operative do
   `flz operative entity-state`.
   """
 
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Payloader
   alias Flezha.Plugin
@@ -14,22 +15,19 @@ defmodule Flezha.Service.Cli.Operative do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Workflow
 
-  @doc "Starts a operative."
-  def operative_start(
-        namespace,
-        operative_id,
-        factory_id,
-        init_values,
-        opts \\ [],
-        plugins_json \\ "[]",
-        kind \\ "stream"
-      ) do
+  @doc """
+  Starts an operative. The call's options carry `plugins` (a JSON array, `[]`
+  when absent) and `kind` (`stream` when absent).
+  """
+  def operative_start(namespace, operative_id, factory_id, init_values, opts_json, %{opts: opts}) do
     opts_kw =
-      Payloader.json_to_map(opts)
+      Payloader.json_to_map(opts_json)
       |> Context.atom_converter()
       |> Keyword.new()
 
     {partitions, opts_kw} = pop_partitions(opts_kw)
+    plugins_json = Keyword.get(opts, :plugins, "[]")
+    kind = Keyword.get(opts, :kind, "stream")
 
     if partitions >= 2 do
       start_partitioned(
@@ -43,7 +41,7 @@ defmodule Flezha.Service.Cli.Operative do
         plugins_json
       )
     else
-      case SpecDecoder.decode(plugins_json, Context.normalize_namespace(namespace), operative_id) do
+      case SpecDecoder.decode(plugins_json, Namespace.or_default(namespace), operative_id) do
         {:ok, []} ->
           start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind)
 
@@ -103,7 +101,7 @@ defmodule Flezha.Service.Cli.Operative do
     }
 
     case PartitionGroup.start(
-           Context.normalize_namespace(namespace),
+           Namespace.or_default(namespace),
            operative,
            partitions,
            plugins_json
@@ -148,7 +146,7 @@ defmodule Flezha.Service.Cli.Operative do
       opts: opts_kw
     }
 
-    case OperativeManager.start_operative(Context.normalize_namespace(namespace), operative) do
+    case OperativeManager.start_operative(Namespace.or_default(namespace), operative) do
       {:ok, _} ->
         IO.puts("Operative has been started")
 
@@ -178,25 +176,14 @@ defmodule Flezha.Service.Cli.Operative do
 
   defp parse_kind(kind), do: kind
 
-  ## Plugin-spec decoding lives in `Flezha.Plugin.SpecDecoder` — one decoder,
-  ## shared with the schedule firing path.
-
   @doc "Stops a operative (cooperatively for a workflow operative, hard otherwise)."
-  def operative_stop(namespace, operative_id, opts \\ []) do
-    namespace_display = Context.normalize_namespace(namespace)
+  def operative_stop(namespace, operative_id, _call) do
+    namespace_display = Namespace.or_default(namespace)
 
-    Context.with_cli_authorization(
-      opts,
-      :"operative.stop",
-      namespace_display,
-      %{operative_id: operative_id},
-      fn ->
-        case PartitionGroup.members(namespace_display, operative_id) do
-          [] -> stop_one(namespace_display, operative_id)
-          members -> stop_group(namespace_display, operative_id, members)
-        end
-      end
-    )
+    case PartitionGroup.members(namespace_display, operative_id) do
+      [] -> stop_one(namespace_display, operative_id)
+      members -> stop_group(namespace_display, operative_id, members)
+    end
   end
 
   defp stop_group(namespace, group_id, members) do
@@ -238,7 +225,7 @@ defmodule Flezha.Service.Cli.Operative do
   recomputed ranges. Refuses — changing nothing — when the quiesce cannot be
   reached or the new member set fails preflight.
   """
-  def operative_scale(namespace, group_id, target, opts_json \\ "{}") do
+  def operative_scale(namespace, group_id, target, opts_json, _call) do
     target =
       case Integer.parse(to_string(target)) do
         {n, ""} when n >= 1 ->
@@ -254,10 +241,7 @@ defmodule Flezha.Service.Cli.Operative do
         _ -> []
       end
 
-    namespace = Context.normalize_namespace(namespace)
-    caller_context = Context.cli_context(Context.json_token_opts(opts_json))
-
-    case Workflow.rescale(namespace, group_id, target, opts, caller_context) do
+    case PartitionGroup.rescale(Namespace.or_default(namespace), group_id, target, opts) do
       {:ok, result} ->
         Enum.each(result.warnings, &IO.puts("WARNING: #{&1}"))
 
@@ -268,9 +252,6 @@ defmodule Flezha.Service.Cli.Operative do
         )
 
         Enum.each(result.members, &IO.puts("  #{&1}"))
-
-      {:error, {:forbidden, reason}} ->
-        Context.refuse!("operative.scale", reason, :stdio)
 
       {:error, reason} ->
         Context.cli_error!("Error scaling operative: #{Context.format_reason(reason)}")
@@ -287,10 +268,10 @@ defmodule Flezha.Service.Cli.Operative do
   Refused, changing nothing, when the target has not committed or when an unwound
   procedure emitted plugin output it cannot compensate.
   """
-  def operative_rewind(namespace, operative_id, to_iter, opts \\ []) do
-    namespace = Context.normalize_namespace(namespace)
+  def operative_rewind(namespace, operative_id, to_iter, _call) do
+    namespace = Namespace.or_default(namespace)
 
-    case Workflow.rewind(namespace, operative_id, to_iter, Context.cli_context(opts)) do
+    case Workflow.rewind_instance(namespace, operative_id, to_iter) do
       {:error, :operative_not_running} ->
         Context.cli_error!("Error: operative '#{operative_id}' not found")
 
@@ -325,10 +306,6 @@ defmodule Flezha.Service.Cli.Operative do
     )
   end
 
-  defp print_rewind(_operative_id, _to_iter, {:error, {:forbidden, reason}}) do
-    Context.refuse!("operative.rewind", reason, :stdio)
-  end
-
   defp print_rewind(_operative_id, _to_iter, {:error, reason}) do
     Context.cli_error!("Error rewinding operative: #{inspect(reason)}")
   end
@@ -338,12 +315,12 @@ defmodule Flezha.Service.Cli.Operative do
   route), blocking for the confirming verdict so a parked or absent target is
   reported rather than silently dropped. `channel` is optional (`""` = none).
   """
-  def operative_send(namespace, operative_id, message, channel) do
+  def operative_send(namespace, operative_id, message, channel, _call) do
     metadata = if channel in [nil, ""], do: %{}, else: %{"channel" => channel}
 
     case OperativeManager.send_io_confirming(
            operative_id,
-           Context.normalize_namespace(namespace),
+           Namespace.or_default(namespace),
            message,
            metadata
          ) do
@@ -368,13 +345,10 @@ defmodule Flezha.Service.Cli.Operative do
   end
 
   @doc "Get operative state."
-  def entity_state(namespace, operative_id) do
-    namespace_display = Context.normalize_namespace(namespace)
+  def entity_state(namespace, operative_id, _call) do
+    namespace_display = Namespace.or_default(namespace)
 
-    case OperativeManager.get_entity_state(
-           Context.normalize_namespace(namespace),
-           operative_id
-         ) do
+    case OperativeManager.get_entity_state(namespace_display, operative_id) do
       {:ok, json_state} when is_binary(json_state) ->
         IO.puts("State for operative '#{operative_id}' in namespace '#{namespace_display}':")
         IO.puts(json_state)
@@ -404,8 +378,8 @@ defmodule Flezha.Service.Cli.Operative do
   end
 
   @doc "Listens to a operative IO."
-  def operative_listen(namespace, operative_id, io_type) do
-    namespace_display = Context.normalize_namespace(namespace)
+  def operative_listen(namespace, operative_id, io_type, _call) do
+    namespace_display = Namespace.or_default(namespace)
 
     extension =
       case io_type do

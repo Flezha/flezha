@@ -1,98 +1,185 @@
 defmodule Flezha.Service.CliManager do
   @moduledoc """
-  The RPC surface `flz` calls.
+  The RPC surface `flz` calls, as the wire binding of `Flezha.AuthZ.Verbs`.
 
   Every name here is built into an RPC expression string by `cli/src`, so the
   set of names, arities and defaults is a wire contract: `flz` resolves them
-  at runtime and the compiler cannot see the call. The bodies live in
-  `Flezha.Service.Cli.*`, one module per verb family.
+  at runtime and the compiler cannot see the call. Every verb ends with its
+  options list, which is where the caller's credential rides; the row it binds
+  says what it is authorized as, where, and how it is audited, and the body
+  lives in `Flezha.Service.Cli.*`, one module per verb family, taking the bound
+  call as its last argument. A name with no row does not compile, and a public
+  function that is not a `verb` line does not compile either.
   """
 
   alias Flezha.Service.Cli
 
-  defdelegate audit_log_render_list(arg1), to: Cli.Audit
-  defdelegate audit_log_render_read(arg1, arg2, arg3 \\ []), to: Cli.Audit
-  defdelegate audit_log_render_rotate(arg1), to: Cli.Audit
-  defdelegate audit_log_render_stats(arg1), to: Cli.Audit
-  defdelegate audit_log_render_tail(arg1, arg2 \\ []), to: Cli.Audit
-  defdelegate authz_render_bootstrap(arg1, arg2 \\ []), to: Cli.Authz
-  defdelegate authz_render_namespace_create(arg1, arg2, arg3 \\ []), to: Cli.Authz
-  defdelegate authz_render_namespace_delete(arg1, arg2 \\ []), to: Cli.Authz
-  defdelegate authz_render_namespace_set_quota(arg1, arg2, arg3 \\ []), to: Cli.Authz
-  defdelegate authz_render_namespace_show(arg1, arg2 \\ []), to: Cli.Authz
-  defdelegate authz_render_role_bind(arg1, arg2, arg3, arg4 \\ []), to: Cli.Authz
-  defdelegate authz_render_role_list(arg1 \\ []), to: Cli.Authz
-  defdelegate authz_render_role_unbind(arg1, arg2 \\ []), to: Cli.Authz
-  defdelegate authz_render_token_issue(arg1, arg2, arg3, arg4, arg5 \\ []), to: Cli.Authz
-  defdelegate authz_render_token_list(arg1 \\ []), to: Cli.Authz
-  defdelegate authz_render_token_revoke(arg1, arg2 \\ []), to: Cli.Authz
-  defdelegate authz_render_whoami(arg1 \\ []), to: Cli.Authz
-  defdelegate authz_whoami(arg1 \\ []), to: Cli.Authz
-  defdelegate boot_await(arg1 \\ 60_000), to: Cli.Boot
-  defdelegate boot_status(), to: Cli.Boot
-  defdelegate build_mem_top_snapshot(), to: Cli.MemTop
-  defdelegate cluster_status(arg1, arg2 \\ "text"), to: Cli.Listing
-  defdelegate controller_mem_top(arg1 \\ "text"), to: Cli.MemTop
-  defdelegate controller_status(arg1 \\ "text"), to: Cli.Controller
-  defdelegate controller_stop(arg1 \\ []), to: Cli.Controller
-  defdelegate controller_stop_progress_handler(arg1, arg2, arg3, arg4), to: Cli.Controller
-  defdelegate disable_plugin(arg1, arg2 \\ []), to: Cli.Plugin
-  defdelegate dlq_drop(arg1, arg2 \\ []), to: Cli.Dlq
-  defdelegate dlq_list(arg1 \\ "", arg2 \\ []), to: Cli.Dlq
-  defdelegate dlq_replay(arg1, arg2 \\ []), to: Cli.Dlq
-  defdelegate dlq_show(arg1, arg2 \\ []), to: Cli.Dlq
-  defdelegate enable_plugin(arg1, arg2, arg3, arg4), to: Cli.Plugin
-  defdelegate entity_state(arg1, arg2), to: Cli.Operative
-  defdelegate extract_subscriptions(arg1, arg2), to: Cli.Plugin
-  defdelegate group_partition_rows(arg1), to: Cli.Listing
-  defdelegate install_plugin(arg1, arg2), to: Cli.Plugin
-  defdelegate installed_plugin?(arg1), to: Cli.Plugin
-  defdelegate installed_plugin_info(arg1), to: Cli.Plugin
-  defdelegate installer_disable_plugin(arg1, arg2), to: Cli.Plugin
-  defdelegate installer_enable_plugin(arg1, arg2), to: Cli.Plugin
-  defdelegate list_installed_plugins(arg1 \\ "text"), to: Cli.Plugin
-  defdelegate list_namespaces(arg1 \\ "text"), to: Cli.Listing
-  defdelegate list_operatives(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.Listing
-  defdelegate list_plugins(), to: Cli.Plugin
-  defdelegate list_runners(arg1, arg2 \\ "text"), to: Cli.Listing
-  defdelegate local_recovery_snapshot(arg1), to: Flezha.Service.Controller
-  defdelegate namespace_create(arg1, arg2, arg3 \\ []), to: Cli.Authz
-  defdelegate observability_disable_source(arg1, arg2 \\ []), to: Cli.Observe
-  defdelegate observability_enable_source(arg1, arg2 \\ []), to: Cli.Observe
-  defdelegate observability_list_sources(arg1 \\ []), to: Cli.Observe
-  defdelegate observability_render_disable(arg1), to: Cli.Observe
-  defdelegate observability_render_enable(arg1), to: Cli.Observe
-  defdelegate observability_render_sinks(arg1), to: Cli.Observe
-  defdelegate observability_render_sources(arg1), to: Cli.Observe
-  defdelegate observability_render_tail(arg1, arg2, arg3 \\ []), to: Cli.Observe
-  defdelegate operative_info(arg1, arg2 \\ "text"), to: Cli.Info
-  defdelegate operative_listen(arg1, arg2, arg3), to: Cli.Operative
-  defdelegate operative_replay(arg1, arg2, arg3), to: Cli.State
-  defdelegate operative_rewind(arg1, arg2, arg3, arg4 \\ []), to: Cli.Operative
-  defdelegate operative_scale(arg1, arg2, arg3, arg4 \\ "{}"), to: Cli.Operative
-  defdelegate operative_send(arg1, arg2, arg3, arg4), to: Cli.Operative
+  use Flezha.AuthZ.Verb,
+    identity: &Cli.Context.cli_context/1,
+    refuse: &Cli.Context.refuse!/3,
+    sealed: true
 
-  defdelegate operative_start(arg1, arg2, arg3, arg4, arg5 \\ [], arg6 \\ "[]", arg7 \\ "stream"),
-    to: Cli.Operative
+  verb audit_log_render_list(format, opts \\ []), to: Cli.Audit, verb: :audit_list
+  verb audit_log_render_read(file, format, opts \\ []), to: Cli.Audit, verb: :audit_read
+  verb audit_log_render_rotate(format, opts \\ []), to: Cli.Audit, verb: :audit_rotate
+  verb audit_log_render_stats(format, opts \\ []), to: Cli.Audit, verb: :audit_stats
+  verb audit_log_render_tail(format, opts \\ []), to: Cli.Audit, verb: :audit_tail
+  verb authz_render_bootstrap(token, opts \\ []), to: Cli.Authz, verb: :authz_bootstrap
 
-  defdelegate operative_stop(arg1, arg2, arg3 \\ []), to: Cli.Operative
-  defdelegate plugin_help(arg1), to: Cli.Plugin
-  defdelegate provider_opts(arg1), to: Cli.Plugin
+  verb authz_render_namespace_create(name, quotas_json, opts \\ []),
+    to: Cli.Authz,
+    verb: :namespace_create
 
-  defdelegate schedule_add(arg1, arg2 \\ []), to: Cli.Schedule
-  defdelegate schedule_list(arg1 \\ []), to: Cli.Schedule
-  defdelegate schedule_remove(arg1, arg2 \\ []), to: Cli.Schedule
-  defdelegate schedule_run(arg1, arg2 \\ []), to: Cli.Schedule
-  defdelegate state_at(arg1, arg2, arg3 \\ "text"), to: Cli.State
-  defdelegate state_delete(arg1, arg2 \\ []), to: Cli.State
-  defdelegate state_get(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.State
-  defdelegate state_inbox(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.Journal
-  defdelegate state_journal(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.Journal
-  defdelegate state_list(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.State
-  defdelegate state_outbox(arg1, arg2 \\ []), to: Cli.State
-  defdelegate state_retention(arg1, arg2), to: Cli.State
-  defdelegate state_rotate(arg1, arg2 \\ []), to: Cli.State
-  defdelegate trigger_to_subscription(arg1), to: Cli.Plugin
-  defdelegate uninstall_plugin(arg1, arg2), to: Cli.Plugin
-  defdelegate upgrade_plugin(arg1, arg2, arg3), to: Cli.Plugin
+  verb authz_render_namespace_delete(name, opts \\ []), to: Cli.Authz, verb: :namespace_delete
+
+  verb authz_render_namespace_set_quota(name, quotas_json, opts \\ []),
+    to: Cli.Authz,
+    verb: :namespace_set_quota
+
+  verb authz_render_namespace_show(name, opts \\ []), to: Cli.Authz, verb: :namespace_show
+
+  verb authz_render_role_bind(principal, role, namespace, opts \\ []),
+    to: Cli.Authz,
+    verb: :role_bind
+
+  verb authz_render_role_list(opts \\ []), to: Cli.Authz, verb: :role_list
+
+  verb authz_render_role_unbind(principal, opts \\ []),
+    to: Cli.Authz,
+    verb: :role_unbind,
+    row: &Cli.Authz.binding_row/1
+
+  verb authz_render_token_issue(principal, namespace, role, ttl_seconds, opts \\ []),
+    to: Cli.Authz,
+    verb: :token_issue
+
+  verb authz_render_token_list(opts \\ []), to: Cli.Authz, verb: :token_list
+
+  verb authz_render_token_revoke(token_id, opts \\ []),
+    to: Cli.Authz,
+    verb: :token_revoke,
+    row: &Cli.Authz.token_row/1
+
+  verb authz_render_whoami(opts \\ []), to: Cli.Authz, verb: :authz_whoami
+  verb authz_whoami(opts \\ []), to: Cli.Authz
+  verb boot_await(timeout_ms \\ 60_000, opts \\ []), to: Cli.Boot
+  verb boot_status(opts \\ []), to: Cli.Boot
+  verb build_mem_top_snapshot(), to: Cli.MemTop
+  verb cluster_status(namespace, format \\ "text", opts \\ []), to: Cli.Listing
+  verb controller_mem_top(format \\ "text", opts \\ []), to: Cli.MemTop
+  verb controller_status(format \\ "text", opts \\ []), to: Cli.Controller
+  verb controller_stop(opts \\ []), to: Cli.Controller
+
+  verb disable_plugin(plugin_id, opts \\ []),
+    to: Cli.Plugin,
+    verb: :plugin_disable,
+    row: &Cli.Plugin.plugin_row/1
+
+  verb dlq_drop(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
+  verb dlq_list(operative_class \\ "", opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.class_row/1
+  verb dlq_replay(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
+  verb dlq_show(entry_ref, opts \\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
+
+  verb enable_plugin(plugin_id, provider_id, flags_json, opts_json, opts \\ []),
+    to: Cli.Plugin,
+    verb: :plugin_enable,
+    row: &Cli.Plugin.enable_row/1
+
+  verb entity_state(namespace, operative_id, opts \\ []), to: Cli.Operative, device: :stdio
+  verb group_partition_rows(rows), to: Cli.Listing
+  verb install_plugin(path, opts \\ []), to: Cli.Plugin
+  verb installed_plugin?(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
+  verb installed_plugin_info(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
+  verb installer_disable_plugin(plugin_id, opts \\ []), to: Cli.Plugin
+  verb installer_enable_plugin(plugin_id, opts \\ []), to: Cli.Plugin
+  verb list_installed_plugins(format \\ "text", opts \\ []), to: Cli.Plugin
+  verb list_namespaces(format \\ "text", opts \\ []), to: Cli.Listing
+  verb list_operatives(namespace, format \\ "text", opts \\ []), to: Cli.Listing
+  verb list_plugins(opts \\ []), to: Cli.Plugin, verb: :plugin_list
+  verb list_runners(namespace, format \\ "text", opts \\ []), to: Cli.Listing
+
+  verb observability_render_disable(source, opts \\ []),
+    to: Cli.Observe,
+    verb: :observability_disable
+
+  verb observability_render_enable(source, opts \\ []),
+    to: Cli.Observe,
+    verb: :observability_enable
+
+  verb observability_render_sinks(format, opts \\ []),
+    to: Cli.Observe,
+    verb: :observability_sinks
+
+  verb observability_render_sources(format, opts \\ []),
+    to: Cli.Observe,
+    verb: :observability_sources
+
+  verb observability_render_tail(source, format, opts \\ []),
+    to: Cli.Observe,
+    verb: :observability_tail
+
+  verb operative_info(namespace, format \\ "text", opts \\ []), to: Cli.Info
+
+  verb operative_listen(namespace, operative_id, io_type, opts \\ []),
+    to: Cli.Operative,
+    device: :stdio
+
+  verb operative_replay(namespace, path, from, opts \\ []),
+    to: Cli.State,
+    row: &Cli.State.replay_row/1
+
+  verb operative_rewind(namespace, operative_id, to_iter, opts \\ []),
+    to: Cli.Operative,
+    device: :stdio
+
+  verb operative_scale(namespace, group_id, target, opts_json \\ "{}", opts \\ []),
+    to: Cli.Operative,
+    device: :stdio
+
+  verb operative_send(namespace, operative_id, message, channel, opts \\ []),
+    to: Cli.Operative,
+    device: :stdio
+
+  verb operative_start(
+         namespace,
+         operative_id,
+         factory_id,
+         init_values,
+         opts_json \\ "{}",
+         opts \\ []
+       ),
+       to: Cli.Operative,
+       device: :stdio
+
+  verb operative_stop(namespace, operative_id, opts \\ []), to: Cli.Operative
+  verb plugin_help(provider_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
+  verb schedule_add(name, opts \\ []), to: Cli.Schedule
+  verb schedule_list(opts \\ []), to: Cli.Schedule
+  verb schedule_remove(name, opts \\ []), to: Cli.Schedule
+  verb schedule_run(name, opts \\ []), to: Cli.Schedule, row: &Cli.Schedule.locate/1
+
+  verb state_at(path, target, format \\ "text", opts \\ []),
+    to: Cli.State,
+    row: &Cli.State.at_row/1
+
+  verb state_delete(path, opts \\ []), to: Cli.State, row: &Cli.State.split_row/1
+  verb state_get(path, format \\ "text", opts \\ []), to: Cli.State, row: &Cli.State.live_row/1
+
+  verb state_inbox(instance_id, format \\ "text", opts \\ []),
+    to: Cli.Journal,
+    row: &Cli.Journal.instance_row/1
+
+  verb state_journal(instance_id, format \\ "text", opts \\ []),
+    to: Cli.Journal,
+    row: &Cli.Journal.instance_row/1
+
+  verb state_list(operative_class, format \\ "text", opts \\ []),
+    to: Cli.State,
+    row: &Cli.State.class_row/1
+
+  verb state_outbox(path, opts \\ []), to: Cli.State, row: &Cli.State.outbox_row/1
+  verb state_retention(operative_class, hours, opts \\ []), to: Cli.State
+  verb state_rotate(path, opts \\ []), to: Cli.State, row: &Cli.State.rotate_row/1
+  verb uninstall_plugin(plugin_id, opts \\ []), to: Cli.Plugin
+  verb upgrade_plugin(plugin_id, path, opts \\ []), to: Cli.Plugin
 end

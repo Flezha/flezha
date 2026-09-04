@@ -187,28 +187,120 @@ only `admin@_system` may target another namespace. A token carries its own role
 and namespace, so it keeps authorizing after its principal's binding is
 removed — revoke the token as well.
 
-### The verbs that read business data or move live work
+### The declaration: every verb, its action, its grant, where it is judged
 
-These are the grants an operator most often has to reason about, because the
-verb is not obviously a mutation or the namespace it is judged in is not the one
-on the command line.
+Every operator verb is one row of `Flezha.AuthZ.Verbs`, and one function —
+`Flezha.AuthZ.Verb.run/5` — applies the row on every surface: the `flz` wire,
+the published service API and the runner session. A row names the action the
+policy judges, the rule that resolves the namespace it is judged in, and the
+audit it leaves. The role column is the lowest role the action is granted to;
+`admin` inherits `operator`, which inherits `viewer`. `public` rows are served
+to any caller; `none` rows are wire names that are not verbs.
 
-| Verb | Action | Role | Judged in |
-| --- | --- | --- | --- |
-| `flz dlq list`, `flz dlq show` | `dlq.list`, `dlq.show` | operator | the named class's namespace; `_system` when no class is named |
-| `flz dlq replay`, `flz dlq drop` | `dlq.replay`, `dlq.drop` | operator | the entry's namespace |
-| `flz schedule list` | `schedule.list` | viewer | `_system` |
-| `flz schedule add`, `flz schedule remove` | `schedule.add` / `.remove` (and `.assert` / `.retract` for the hub half) | operator | `_system` |
-| `flz schedule run` | `operative.start` | operator | the schedule's own namespace |
-| `flz operative scale` | `operative.scale` | operator | the namespace given on the command line |
-| `flz operative rewind` | `operative.rewind` | operator | the namespace given on the command line |
+A row whose scope is a stored row's field (a DLQ entry's namespace, a
+schedule's, an Entity's class) reads that row only for a caller that is bound
+and whose role grants the action, so an unbound or under-privileged caller is
+told nothing about whether the name exists.
 
-Two of those choices are worth stating plainly.
+| Row | `flz` wire name(s) | Action | Role | Judged in | Audit |
+| --- | --- | --- | --- | --- | --- |
+| `boot_status` | `boot_status` | `public` | - | - | - |
+| `boot_await` | `boot_await` | `public` | - | - | - |
+| `kind_read` | published surface only | `public` | - | - | - |
+| `partition_report` | published surface only | `public` | - | - | - |
+| `cron_arithmetic` | published surface only | `public` | - | - | - |
+| `retention_default` | published surface only | `public` | - | - | - |
+| `authz_bootstrap` | `authz_render_bootstrap` | `none` | - | - | - |
+| `build_mem_top_snapshot` | `build_mem_top_snapshot` | `none` | - | - | - |
+| `group_partition_rows` | `group_partition_rows` | `none` | - | - | - |
+| `audit_list` | `audit_log_render_list` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
+| `audit_read` | `audit_log_render_read` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
+| `audit_tail` | `audit_log_render_tail` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
+| `audit_stats` | `audit_log_render_stats` | `audit.read` | viewer | the caller's own namespace | before on `audit_log` |
+| `audit_rotate` | `audit_log_render_rotate` | `audit.rotate` | operator | the caller's own namespace | before on `audit_log` |
+| `audit_unsubscribe` | published surface only | `audit.read` | viewer | the caller's own namespace | - |
+| `authz_whoami` | `authz_render_whoami`, `authz_whoami` | `authz.whoami` | viewer | the caller's own namespace | - |
+| `token_issue` | `authz_render_token_issue` | `authz.token_issue` | admin | argument 2 (the namespace named) | - |
+| `token_revoke` | `authz_render_token_revoke` | `authz.token_revoke` | admin | the stored row's `namespace` | - |
+| `token_list` | `authz_render_token_list` | `authz.token_list` | viewer | the caller's own namespace | - |
+| `role_bind` | `authz_render_role_bind` | `authz.role_bind` | admin | argument 3 (the namespace named) | after on `namespace_service` |
+| `role_unbind` | `authz_render_role_unbind` | `authz.role_unbind` | admin | the stored row's `namespace` | after on `namespace_service` |
+| `role_list` | `authz_render_role_list` | `authz.role_list` | viewer | the caller's own namespace | - |
+| `namespace_create` | `authz_render_namespace_create` | `authz.namespace_create` | admin | argument 1 (the namespace named) | after on `namespace_service` |
+| `namespace_delete` | `authz_render_namespace_delete` | `authz.namespace_delete` | admin | argument 1 (the namespace named) | after on `namespace_service` |
+| `namespace_set_quota` | `authz_render_namespace_set_quota` | `authz.namespace_set_quota` | admin | argument 1 (the namespace named) | after on `namespace_service` |
+| `namespace_show` | `authz_render_namespace_show` | `authz.namespace_show` | viewer | argument 1 (the namespace named) | - |
+| `namespace_list` | published surface only | `authz.namespace_list` | viewer | `_system` | - |
+| `namespace_roles` | published surface only | `authz.role_list` | viewer | argument 1 (the namespace named) | - |
+| `controller_status` | `controller_status` | `controller.status` | viewer | the caller's own namespace | - |
+| `controller_mem_top` | `controller_mem_top` | `controller.status` | viewer | the caller's own namespace | - |
+| `controller_hub_id` | published surface only | `controller.status` | viewer | argument 1 (the namespace named) | - |
+| `controller_recovery` | published surface only | `operative.list` | viewer | argument 1 (the namespace named) | - |
+| `controller_stop` | `controller_stop` | `controller.stop` | admin | `_system` | after on `controller_service` |
+| `cluster_status` | `cluster_status` | `operative.list` | viewer | argument 1 (the namespace named) | - |
+| `list_namespaces` | `list_namespaces` | `operative.list` | viewer | the caller's own namespace | - |
+| `list_operatives` | `list_operatives` | `operative.list` | viewer | argument 1 (the namespace named) | - |
+| `list_runners` | `list_runners` | `operative.list` | viewer | argument 1 (the namespace named) | - |
+| `operative_info` | `operative_info` | `operative.list` | viewer | argument 1 (the namespace named) | - |
+| `operative_classes` | published surface only | `operative.list` | viewer | the caller's own namespace | - |
+| `operative_start` | `operative_start` | `operative.start` | operator | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_stop` | `operative_stop` | `operative.stop` | operator | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_scale` | `operative_scale` | `operative.scale` | operator | argument 1 (the namespace named) | after on `workflow_service` |
+| `operative_rewind` | `operative_rewind` | `operative.rewind` | operator | argument 1 (the namespace named) | after on `workflow_service` |
+| `operative_send` | `operative_send` | `operative.send` | operator | argument 1 (the namespace named) | after on `operative_service` |
+| `operative_replay` | `operative_replay` | `operative.replay` | operator | the stored row's `namespace` | after on `operative_service` |
+| `operative_listen` | `operative_listen` | `plugin.enable` | operator | argument 1 (the namespace named) | after on `plugin_service` |
+| `entity_state` | `entity_state` | `state.get` | viewer | argument 1 (the namespace named) | - |
+| `schedule_run` | `schedule_run` | `operative.start` | operator | the stored row's `namespace` | after on `operative_service` |
+| `runner_connect` | published surface only | `runner.connect` | runner | argument 1 (the namespace named) | - |
+| `plugin_list` | `list_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
+| `list_installed_plugins` | `list_installed_plugins` | `plugin.list` | viewer | the caller's own namespace | - |
+| `plugin_info` | `installed_plugin?`, `installed_plugin_info`, `plugin_help` | `plugin.info` | viewer | the caller's own namespace | - |
+| `plugin_enable` | `enable_plugin` | `plugin.enable` | operator | the stored row's `namespace` | after on `plugin_service` |
+| `plugin_disable` | `disable_plugin` | `plugin.disable` | operator | the stored row's `namespace` | after on `plugin_service` |
+| `install_plugin` | `install_plugin` | `plugin.install` | admin | `_system` | after on `plugin_service` |
+| `upgrade_plugin` | `upgrade_plugin` | `plugin.upgrade` | admin | `_system` | after on `plugin_service` |
+| `uninstall_plugin` | `uninstall_plugin` | `plugin.uninstall` | admin | `_system` | after on `plugin_service` |
+| `installer_enable_plugin` | `installer_enable_plugin` | `plugin.enable` | operator | `_system` | after on `plugin_service` |
+| `installer_disable_plugin` | `installer_disable_plugin` | `plugin.disable` | operator | `_system` | after on `plugin_service` |
+| `observability_sources` | `observability_render_sources` | `observability.query` | viewer | the caller's own namespace | - |
+| `observability_sinks` | `observability_render_sinks` | `observability.query` | viewer | the caller's own namespace | - |
+| `observability_query` | published surface only | `observability.query` | viewer | the caller's own namespace | - |
+| `observability_subscribe` | published surface only | `observability.subscribe` | viewer | the caller's own namespace | before on `observability_service` |
+| `observability_unsubscribe` | published surface only | `observability.subscribe` | viewer | the caller's own namespace | before on `observability_service` |
+| `observability_tail` | `observability_render_tail` | `observability.subscribe` | viewer | the caller's own namespace | before on `observability_service` |
+| `observability_enable` | `observability_render_enable` | `observability.enable_source` | operator | the caller's own namespace | before on `observability_service` |
+| `observability_disable` | `observability_render_disable` | `observability.disable_source` | operator | the caller's own namespace | before on `observability_service` |
+| `dlq_list` | `dlq_list` | `dlq.list` | operator | the stored row's `namespace` | - |
+| `dlq_stats` | published surface only | `dlq.list` | operator | `_system` | - |
+| `dlq_show` | `dlq_show` | `dlq.show` | operator | the stored row's `namespace` | - |
+| `dlq_drop` | `dlq_drop` | `dlq.drop` | operator | the stored row's `namespace` | after on `dlq_service` |
+| `dlq_replay` | `dlq_replay` | `dlq.replay` | operator | the stored row's `namespace` | after on `dlq_service` |
+| `schedule_list` | `schedule_list` | `schedule.list` | viewer | `_system` | - |
+| `schedule_add` | `schedule_add` | `schedule.add` | operator | `_system` | after on `schedule_service` |
+| `schedule_remove` | `schedule_remove` | `schedule.remove` | operator | `_system` | after on `schedule_service` |
+| `schedule_assert` | published surface only | `schedule.assert` | operator | `_system` | after on `schedule_service` |
+| `schedule_retract` | published surface only | `schedule.retract` | operator | `_system` | after on `schedule_service` |
+| `state_get` | `state_get` | `state.get` | viewer | the stored row's `namespace` | - |
+| `state_list` | `state_list` | `state.list` | viewer | the stored row's `namespace` | - |
+| `state_at` | `state_at` | `state.at` | viewer | the stored row's `namespace` | - |
+| `state_rotate` | `state_rotate` | `state.rotate` | operator | the stored row's `namespace` | after on `state_service` |
+| `state_delete` | `state_delete` | `state.delete` | admin | the stored row's `namespace` | after on `state_service` |
+| `state_retention` | `state_retention` | `state.retention` | admin | `_system` | after on `state_service` |
+| `state_outbox` | `state_outbox` | `state.records` | operator | the stored row's `namespace` | - |
+| `state_inbox` | `state_inbox` | `state.records` | operator | the stored row's `namespace` | - |
+| `state_journal` | `state_journal` | `state.records` | operator | the stored row's `namespace` | - |
+| `state_metrics` | published surface only | `state.list` | viewer | `_system` | - |
+
+Four of those choices are worth stating plainly.
 
 **A parked payload is business data.** `dlq list` and `dlq show` are the
 operator's, not the viewer's, because a DLQ entry holds the record that failed —
 verbatim, with its entity key and its error. Reading one is at least as
-privileged as the drop that destroys it, and no viewer workflow needs it.
+privileged as the drop that destroys it, and no viewer workflow needs it. The
+same rule places `state inbox`, `state journal` and `state outbox`, which read
+records in flight, under `state.records` beside `operative.rewind` and
+`operative.replay`.
 
 **Schedule management is a `_system` privilege.** The schedule store is one
 durable table for the whole controller and the hub is a cluster-wide singleton;
@@ -217,10 +309,6 @@ the registry. So a credential for `flz schedule add | list | remove` is one
 bound to `_system` (`flz token issue ci _system operator`), or `admin@_system`.
 A namespace-bound operator cannot manage schedules.
 
-Both are reversible in `Flezha.AuthZ.Policy`: move an action between
-`@viewer_actions`, `@operator_extra` and `@admin_extra` and the grant moves with
-it.
-
 **`flz schedule run` is judged where the instance starts.** Firing a schedule by
 hand starts an operative, so it authorizes `operative.start` in the schedule's
 own namespace rather than in `_system`. An `operator@_system` token — the
@@ -228,17 +316,30 @@ credential above for managing schedules — can add, list and remove a schedule
 but cannot run one; a token bound to the schedule's namespace with
 `operative.start` (an `operator` or `admin` there), or `admin@_system`, can.
 
+**`flz auth whoami` is a gated read.** It answers the identity a token
+resolves to, so while authorization is enforced an invocation with no token is
+refused naming the credential rather than printing an unbound identity.
+
+Every grant is reversible in `Flezha.AuthZ.Policy`: move an action between
+`@viewer_actions`, `@operator_extra` and `@admin_extra` and the grant moves
+with it, on every surface at once.
+
 ## Audit-log integration
 
-`:platform_authz` is in the audit log's default allow-list, so with
-`:audit_log, :enabled: true` every event below lands as one JSONL record whose
-`caller.principal` is the verified principal: `:authorization_denied`,
-`:token_issued`, `:token_revoked`, `:namespace_created`, `:namespace_deleted`,
-`:namespace_quota_updated`, `:role_bound`, `:role_unbound`,
-`:bootstrap_completed`, `:rebootstrap_recovery`. Record shape, rotation and the
-`flz audit` verbs are in [audit_log.md](audit_log.md). The `flz audit` verbs do
-not pass `--token`; while the posture is enforced they refuse with
-`principal_not_bound`, so read the JSONL files directly.
+Two kinds of record reach the audit log. The auth stores' own events land on
+`:platform_authz` with the verified principal in `caller.principal`:
+`:authorization_denied`, `:token_issued`, `:token_revoked`,
+`:bootstrap_completed`, `:rebootstrap_recovery`. An operator verb's act lands on
+the source its row declares — `namespace_service` for namespace and role
+mutations, `dlq_service`, `schedule_service`, `operative_service`,
+`plugin_service`, `state_service`, `controller_service`, `workflow_service`,
+`observability_service` and `audit_log` — in one record shape: the record's
+`name` is the verb, `metadata.action` the action it was judged as,
+`metadata.outcome` (`ok` or `error`) for a mutation, `namespace` where it was
+judged, and `caller` who asked and from which surface. Every declared source is
+in the audit log's default allow-list by construction. Record shape, rotation
+and the `flz audit` verbs are in [audit_log.md](audit_log.md); the `flz audit`
+verbs carry `--token` like every other verb.
 
 ## Runtime knobs
 

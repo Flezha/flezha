@@ -4,7 +4,7 @@ defmodule Flezha.AuthZ.Policy do
 
   Roles inherit upward: `admin` ⊇ `operator` ⊇ `viewer`. The
   `runner` role is intentionally outside this hierarchy and grants
-  only the three data-plane verbs.
+  only `runner.connect`.
 
   Cross-namespace auth-state mutations are additionally gated in
   `Flezha.AuthZ.authorize/3` by requiring the bound namespace to be
@@ -27,8 +27,6 @@ defmodule Flezha.AuthZ.Policy do
     :"authz.namespace_show",
     :"authz.role_list",
     :"controller.status",
-    :"boot.status",
-    :"boot.await",
     :"state.get",
     :"state.list",
     :"state.at",
@@ -36,13 +34,16 @@ defmodule Flezha.AuthZ.Policy do
   ]
 
   # Operator adds operative/plugin lifecycle, audit rotation, observability
-  # mutate, schedule management, and the dead-letter queue whole. The DLQ reads
-  # sit with `dlq.drop` rather than with the viewer reads because a parked
-  # payload is the failed record itself: whoever may read one may already
-  # destroy it, and no viewer workflow needs it.
+  # mutate, schedule management, the dead-letter queue whole and the records in
+  # flight. The DLQ reads and `state.records` sit here rather than with the
+  # viewer reads because a parked payload or a journaled input is the business
+  # record itself: whoever may read one may already replay or destroy it, and
+  # no viewer workflow needs it.
   @operator_extra [
     :"operative.start",
     :"operative.stop",
+    :"operative.send",
+    :"operative.replay",
     :"plugin.enable",
     :"plugin.disable",
     :"audit.rotate",
@@ -55,23 +56,22 @@ defmodule Flezha.AuthZ.Policy do
     :"dlq.show",
     :"dlq.replay",
     :"dlq.drop",
+    :"state.records",
     :"schedule.add",
     :"schedule.remove",
     :"schedule.assert",
     :"schedule.retract"
   ]
 
-  # Admin adds everything that touches auth state, plus reset / shutdown
-  # and irreversible state destruction.
+  # Admin adds everything that touches auth state, plus shutdown, the
+  # controller-wide settings and irreversible state destruction.
   @admin_extra [
     :"plugin.install",
     :"plugin.uninstall",
     :"plugin.upgrade",
-    :"reset.run",
     :"controller.stop",
     :"state.retention",
     :"state.delete",
-    :"authz.bootstrap",
     :"authz.token_issue",
     :"authz.token_revoke",
     :"authz.namespace_create",
@@ -81,11 +81,7 @@ defmodule Flezha.AuthZ.Policy do
     :"authz.role_unbind"
   ]
 
-  @runner_actions [
-    :"runner.connect",
-    :"runner.checkpoint",
-    :"runner.report"
-  ]
+  @runner_actions [:"runner.connect"]
 
   @viewer MapSet.new(@viewer_actions)
   @operator MapSet.union(@viewer, MapSet.new(@operator_extra))

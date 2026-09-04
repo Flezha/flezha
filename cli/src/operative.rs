@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::rpc::{self, escape_rpc_arg};
+use crate::rpc::{self, text, Opt};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -42,6 +42,9 @@ fn start_opts(args: &[String]) -> String {
     args::serialize_flags(&opts)
 }
 
+/// `--plugins` and `--kind` ride the options list, and only when written: an
+/// absent flag is absent from the request and the controller applies its
+/// default.
 fn handle_start(args: &[String]) {
     let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <stream|workflow>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>] [--partitions <N>]";
 
@@ -51,23 +54,31 @@ fn handle_start(args: &[String]) {
     }
 
     let rest = &args[3..];
-    let plugins_json = plugins_json_or_refuse(&args::json(rest, "--plugins", "--plugins"));
+    let flag = |long, short| args::or_refuse(args::extract_param(rest, long, short));
+    let mut opts: Vec<Opt> = Vec::new();
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        args::namespace(rest),
-        &args[1],
-        &args[2],
-        escape_rpc_arg(&args::json(rest, "--init_values", "-iv")),
-        escape_rpc_arg(&start_opts(rest)),
-        escape_rpc_arg(&plugins_json),
-        args::or_refuse(args::extract_param(rest, "--kind", "--kind"))
-            .unwrap_or_else(|| "stream".to_string()),
-    );
+    if let Some(plugins) = flag("--plugins", "--plugins") {
+        opts.push(("plugins", text(&plugins_json_or_refuse(&plugins))));
+    }
+    if let Some(kind) = flag("--kind", "--kind") {
+        opts.push(("kind", text(&kind)));
+    }
 
     println!("Starting operative...");
 
-    rpc::run(rpc_command, rpc::REFUSED);
+    rpc::run(
+        "operative_start",
+        &[
+            text(&args::namespace(rest)),
+            text(&args[1]),
+            text(&args[2]),
+            text(&args::json(rest, "--init_values", "-iv")),
+            text(&start_opts(rest)),
+        ],
+        &opts,
+        rest,
+        rpc::REFUSED,
+    );
 }
 
 /// `flz operative scale <group> <partitions>` — rescale a partition group.
@@ -88,23 +99,21 @@ fn handle_scale(args: &[String]) {
     if let Some(timeout_ms) = args::or_refuse(args::number::<u64>(&args[3..], "--timeout", "-t")) {
         opts.push(("timeout_ms".to_string(), timeout_ms.to_string()));
     }
-    // `operative_scale` has one options argument and it is JSON, so the
-    // credential rides in it rather than in a keyword list of its own.
-    if let Some(token) = rpc::auth_token(&args[3..]) {
-        opts.push(("token".to_string(), token));
-    }
-
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_scale(\"{}\", \"{}\", \"{}\", \"{}\")",
-        args::namespace(&args[3..]),
-        group_id,
-        partitions,
-        escape_rpc_arg(&args::serialize_flags(&opts)),
-    );
 
     println!("Scaling operative group {} to {}...", group_id, partitions);
 
-    rpc::run(rpc_command, rpc::REFUSED);
+    rpc::run(
+        "operative_scale",
+        &[
+            text(&args::namespace(&args[3..])),
+            text(group_id),
+            text(&partitions.to_string()),
+            text(&args::serialize_flags(&opts)),
+        ],
+        &[],
+        &args[3..],
+        rpc::REFUSED,
+    );
 }
 
 /// Validate the `--plugins` JSON blob at the CLI layer so parse errors are
@@ -175,18 +184,14 @@ fn handle_stop(args: &[String]) {
         exit(1);
     }
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_stop(\"{}\", \"{}\", {})",
-        args::namespace(&args[2..]),
-        &args[1],
-        rpc::token_opts_fragment(&args[2..]),
-    );
-
     println!("Stopping operative...");
 
     // operative_stop halts non-zero on error verdicts (not_found / refused).
     rpc::run(
-        rpc_command,
+        "operative_stop",
+        &[text(&args::namespace(&args[2..])), text(&args[1])],
+        &[],
+        &args[2..],
         rpc::UNKNOWN_STATUS.diagnosing("Failed to stop operative"),
     );
 
@@ -208,7 +213,7 @@ fn handle_send(args: &[String]) {
 
     let rest = &args[2..];
 
-    let text = match args::or_refuse(args::extract_param(rest, "--text", "-t")) {
+    let payload = match args::or_refuse(args::extract_param(rest, "--text", "-t")) {
         Some(value) => value,
         None => {
             eprintln!("Error: --text <payload> is required.");
@@ -216,21 +221,19 @@ fn handle_send(args: &[String]) {
         }
     };
 
-    // Escape embedded quotes so the payload/channel survive being wrapped in
-    // quotes inside the Elixir RPC expression (same as handle_start).
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_send(\"{}\", \"{}\", \"{}\", \"{}\")",
-        args::namespace(rest),
-        &args[1],
-        escape_rpc_arg(&text),
-        escape_rpc_arg(
-            &args::or_refuse(args::extract_param(rest, "--channel", "-c")).unwrap_or_default(),
-        ),
-    );
+    let channel = args::or_refuse(args::extract_param(rest, "--channel", "-c")).unwrap_or_default();
 
     // operative_send halts non-zero on error verdicts (not_found / not_ready / refused).
     rpc::run(
-        rpc_command,
+        "operative_send",
+        &[
+            text(&args::namespace(rest)),
+            text(&args[1]),
+            text(&payload),
+            text(&channel),
+        ],
+        &[],
+        rest,
         rpc::QUIET.diagnosing("Failed to send input to operative"),
     );
 }
@@ -258,13 +261,14 @@ fn handle_rewind(args: &[String]) {
 
     // operative_rewind halts non-zero on error verdicts (not_found / refused).
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.operative_rewind(\"{}\", \"{}\", {}, {})",
-            args::namespace(&args[2..]),
-            &args[1],
-            to_iter,
-            rpc::token_opts_fragment(&args[2..]),
-        ),
+        "operative_rewind",
+        &[
+            text(&args::namespace(&args[2..])),
+            text(&args[1]),
+            to_iter.to_string(),
+        ],
+        &[],
+        &args[2..],
         rpc::UNKNOWN_STATUS.diagnosing("Failed to rewind operative"),
     );
 }
@@ -298,12 +302,14 @@ fn handle_replay(args: &[String]) {
 
     // operative_replay halts non-zero on error verdicts (not_found / refused).
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.operative_replay(\"{}\", \"{}\", \"{}\")",
-            args::namespace(&args[2..]),
-            &args[1],
-            from,
-        ),
+        "operative_replay",
+        &[
+            text(&args::namespace(&args[2..])),
+            text(&args[1]),
+            text(&from),
+        ],
+        &[],
+        &args[2..],
         rpc::UNKNOWN_STATUS.diagnosing("Failed to replay entity"),
     );
 }
@@ -316,11 +322,10 @@ fn handle_state(args: &[String]) {
 
     // entity_state halts non-zero on error verdicts (not_found / refused).
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.entity_state(\"{}\", \"{}\")",
-            args::namespace(&args[2..]),
-            &args[1],
-        ),
+        "entity_state",
+        &[text(&args::namespace(&args[2..])), text(&args[1])],
+        &[],
+        &args[2..],
         rpc::UNKNOWN_STATUS.diagnosing("Failed to get operative state"),
     );
 }
@@ -352,20 +357,23 @@ fn handle_io_listen(args: &[String]) {
         exit(1);
     }
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_listen(\"{}\", \"{}\", \"{}\")",
-        args::namespace(&args[3..]),
-        operative_id,
-        io_type
-    );
-
     println!(
         "Starting IO listener for operative '{}' ({} mode)...",
         operative_id, io_type
     );
     println!("Press Ctrl+C to stop listening");
 
-    rpc::run(rpc_command, rpc::REFUSED);
+    rpc::run(
+        "operative_listen",
+        &[
+            text(&args::namespace(&args[3..])),
+            text(operative_id),
+            text(io_type),
+        ],
+        &[],
+        &args[3..],
+        rpc::REFUSED,
+    );
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::rpc::{self, escape_rpc_arg, token_opts_fragment};
+use crate::rpc::{self, text};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -38,14 +38,15 @@ fn handle_issue(args: &[String]) {
     };
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.authz_render_token_issue(\"{}\", \"{}\", \"{}\", {}, {})",
-            escape_rpc_arg(&args[1]),
-            escape_rpc_arg(&args[2]),
-            escape_rpc_arg(&args[3]),
-            ttl,
-            token_opts_fragment(&args[4..]),
-        ),
+        "authz_render_token_issue",
+        &[
+            text(&args[1]),
+            text(&args[2]),
+            text(&args[3]),
+            ttl.to_string(),
+        ],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }

@@ -22,7 +22,7 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 ### Requirement: Configurable subscription allow-list
 
-The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL include at minimum `{:observability_service, :any}`, `{:flezha_shutdown, :any}`, `{:flezha_plugin_installer, :any}`, AND `{:platform_authz, :any}`. Operators SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
+The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL be derived, not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_installer, :any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the operator-verb declaration table names — at minimum `:observability_service` and `:audit_log` — so that a verb declared with an audit reaches the durable log by construction and no verb's audit can be volatile. Operators SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
 
 #### Scenario: Default allow-list captures observability-service audit events
 - **WHEN** the audit subsystem is enabled and a caller invokes `Flezha.Service.Observability.disable_source/2`
@@ -43,6 +43,14 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 #### Scenario: Operator-extended allow-list is honoured
 - **WHEN** the application boots with `:audit_log, :extra_subscriptions: [{:my_source, :critical}]` and a signal `(source: :my_source, name: :critical)` is emitted
 - **THEN** a record for that signal SHALL appear in `audit-current.jsonl`
+
+#### Scenario: A declared audit source is durable by construction
+- **WHEN** an operator verb declared with an audit on a source — a `schedule add` on `:schedule_service`, a `dlq drop` on `:dlq_service` — succeeds with the audit subsystem enabled and no `:extra_subscriptions` configured
+- **THEN** within one second exactly one record for it SHALL appear in `audit-current.jsonl`, carrying `metadata.action`, `metadata.outcome`, the verified `caller.principal` and the resolved `namespace`
+
+#### Scenario: One record shape for an operator's act
+- **WHEN** the same verb is audited after an invocation from the terminal and after one from the published service API
+- **THEN** both records SHALL carry the same `source`, `name` and metadata keys, differing only in `caller.source` and the actor
 
 ### Requirement: JSON Lines record format with stable field order
 

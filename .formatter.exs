@@ -5,6 +5,7 @@
 # gitignored prototype with its own repo — `examples/**` would turn this check
 # red on a file CI cannot see.
 [
+  locals_without_parens: [verb: 2, verb: 3],
   inputs: [
     "{mix,.formatter,.credo}.exs",
     "{config,lib,test}/**/*.{ex,exs}",

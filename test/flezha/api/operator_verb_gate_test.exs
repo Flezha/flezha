@@ -8,10 +8,11 @@ defmodule Flezha.Api.OperatorVerbGateTest do
   caller's context. Four families were in that position: the dead-letter reads,
   the schedule verbs, and the two that move live work.
 
-  Each family is asked twice: once by a caller with no identity at all, which
-  must be refused under enforcement, and once by the role that is granted the
-  new action, which must still get through. The second half is what keeps
-  naming an action from quietly taking a verb away from the callers it had.
+  The refusal of a caller with no identity is every row's, asserted once for
+  the whole declaration in `Flezha.AuthZ.VerbsTest`. What stays here is the
+  half that keeps naming an action from quietly taking a verb away from the
+  callers it had: the role the action is granted to still gets through, and
+  the entry read hands no payload bytes to a caller it refuses.
   """
   use ExUnit.Case, async: false
 
@@ -60,56 +61,11 @@ defmodule Flezha.Api.OperatorVerbGateTest do
 
   defp refused?(result), do: match?({:error, {:forbidden, _reason}}, result)
 
-  # Every row is reported, not just the first: the point of the table is which
-  # verbs answer an unbound caller, and stopping at one hides the rest.
-  defp assert_all_refused(module, calls) do
-    served =
-      for {fun, args} <- calls,
-          result = apply(module, fun, args ++ [@unbound]),
-          not refused?(result),
-          do: "#{inspect(module)}.#{fun}/#{length(args) + 1} answered #{inspect(result)}"
-
-    assert served == [],
-           "#{length(served)} verb(s) served a caller with no identity:\n" <>
-             Enum.join(served, "\n")
-  end
-
   describe "a caller with no identity, under enforcement" do
-    test "is refused by every dead-letter read", ctx do
-      assert Flezha.AuthZ.enforcement_posture() == :enforced
-
-      assert_all_refused(Dlq, [
-        {:list, [nil]},
-        {:list, [@class]},
-        {:get, [ctx.entry_ref]},
-        {:stats, []},
-        {:procedures, [nil]}
-      ])
-    end
-
     test "is handed no payload bytes by the entry read", ctx do
+      assert Flezha.AuthZ.enforcement_posture() == :enforced
       assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @operator)
       refute inspect(Dlq.get(ctx.entry_ref, @unbound)) =~ @payload
-    end
-
-    test "is refused by every schedule verb", ctx do
-      assert_all_refused(Schedule, [
-        {:list, []},
-        {:statuses, []},
-        {:add, [ScheduleTestHelper.entry_fields(%{name: "no-job"})]},
-        {:remove, ["gate-job"]},
-        {:assert_entry, [ctx.schedule]},
-        {:retract, ["gate-job"]}
-      ])
-
-      assert ScheduleStore.get("no-job") == :error
-    end
-
-    test "is refused by the two verbs that move live work" do
-      assert_all_refused(Workflow, [
-        {:rescale, ["default", "gate-group", 2, []]},
-        {:rewind, ["default", @class, 1]}
-      ])
     end
   end
 

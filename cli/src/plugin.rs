@@ -6,7 +6,7 @@ use crate::args::{
 };
 use crate::dispatch::Command;
 use crate::help;
-use crate::rpc::{self, token_opts_fragment, token_opts_json_literal};
+use crate::rpc::{self, text};
 
 pub(crate) const TABLE: Command = Command {
     help: help::PLUGIN,
@@ -36,11 +36,10 @@ fn handle_install(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.install_plugin(\"{}\", {})",
-            rpc::escape_rpc_arg(&args[1]),
-            token_opts_json_literal(&args[2..])
-        ),
+        "install_plugin",
+        &[text(&args[1])],
+        &[],
+        &args[2..],
         rpc::REFUSED,
     );
 }
@@ -52,11 +51,10 @@ fn handle_upgrade(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.upgrade_plugin(\"{}\", \"{}\", \"{{}}\")",
-            &args[1],
-            rpc::escape_rpc_arg(&args[2])
-        ),
+        "upgrade_plugin",
+        &[text(&args[1]), text(&args[2])],
+        &[],
+        &args[3..],
         rpc::REFUSED,
     );
 }
@@ -68,11 +66,10 @@ fn handle_uninstall(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.uninstall_plugin(\"{}\", {})",
-            &args[1],
-            token_opts_json_literal(&args[2..])
-        ),
+        "uninstall_plugin",
+        &[text(&args[1])],
+        &[],
+        &args[2..],
         rpc::REFUSED,
     );
 }
@@ -84,22 +81,23 @@ fn handle_info(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.installed_plugin_info(\"{}\")",
-            &args[1]
-        ),
+        "installed_plugin_info",
+        &[text(&args[1])],
+        &[],
+        &args[2..],
         rpc::REFUSED,
     );
 }
 
 // Check whether an id is tracked by the installer. Returns true/false based
-// on the stdout output of the RPC call.
-fn is_installed_plugin(plugin_id: &str) -> bool {
+// on the stdout output of the RPC call; the probe carries the caller's token
+// like every other request, because the read is a gated one.
+fn is_installed_plugin(plugin_id: &str, args: &[String]) -> bool {
     let output = rpc::flzvm()
         .arg("rpc")
         .arg(format!(
-            "Flezha.Service.CliManager.installed_plugin?(\"{}\") |> IO.puts()",
-            plugin_id
+            "{} |> IO.puts()",
+            rpc::expression("installed_plugin?", &[text(plugin_id)], &[], args)
         ))
         .output()
         .ok();
@@ -127,15 +125,14 @@ fn handle_enable(args: &[String]) {
     let plugin_id = &args[1];
 
     // Dispatch installed plugins through the Installer service.
-    if is_installed_plugin(plugin_id) {
+    if is_installed_plugin(plugin_id, &args[2..]) {
         println!("Enabling installed plugin {}...", plugin_id);
 
         rpc::run(
-            format!(
-                "Flezha.Service.CliManager.installer_enable_plugin(\"{}\", {})",
-                plugin_id,
-                token_opts_json_literal(&args[2..])
-            ),
+            "installer_enable_plugin",
+            &[text(plugin_id)],
+            &[],
+            &args[2..],
             rpc::REFUSED,
         );
 
@@ -147,17 +144,20 @@ fn handle_enable(args: &[String]) {
         exit(1);
     }
 
-    let rpc_command = format!(
-        "Flezha.Service.CliManager.enable_plugin(\"{}\", \"{}\", {}, {})",
-        plugin_id,
-        &args[2],
-        serde_json::to_string(&plugin_flags_json(&args[3..])).unwrap(),
-        serde_json::to_string(&opts_json(&args[3..])).unwrap()
-    );
-
     println!("Enabling plugin...");
 
-    rpc::run(rpc_command, rpc::REFUSED);
+    rpc::run(
+        "enable_plugin",
+        &[
+            text(plugin_id),
+            text(&args[2]),
+            text(&plugin_flags_json(&args[3..])),
+            text(&opts_json(&args[3..])),
+        ],
+        &[],
+        &args[3..],
+        rpc::REFUSED,
+    );
 }
 
 /// The plugin's own settings: the `--X` flags, with any declared
@@ -174,9 +174,15 @@ fn plugin_flags_json(args: &[String]) -> String {
 }
 
 /// The plain CLI options. The extension entries are removed first, so the
-/// option parser does not read them as options of their own.
+/// option parser does not read them as options of their own, and the
+/// credential rides the request's options list rather than this document.
 fn opts_json(args: &[String]) -> String {
-    serialize_flags(&extract_opts(&filter_out_extension_entries(args)))
+    let opts: Vec<(String, String)> = extract_opts(&filter_out_extension_entries(args))
+        .into_iter()
+        .filter(|(key, _)| key != "token")
+        .collect();
+
+    serialize_flags(&opts)
 }
 
 fn handle_disable(args: &[String]) {
@@ -191,23 +197,27 @@ fn handle_disable(args: &[String]) {
 
     // Dispatch installed plugins through the Installer service; legacy
     // plugins keep their existing code path.
-    let rpc_command = if is_installed_plugin(plugin_id) {
-        format!(
-            "Flezha.Service.CliManager.installer_disable_plugin(\"{}\", {})",
-            plugin_id,
-            token_opts_json_literal(&args[2..])
-        )
-    } else {
-        format!(
-            "Flezha.Service.CliManager.disable_plugin(\"{}\", {})",
-            plugin_id,
-            token_opts_fragment(&args[2..])
-        )
-    };
+    let installed = is_installed_plugin(plugin_id, &args[2..]);
 
     println!("Disabling plugin...");
 
-    rpc::run(rpc_command, rpc::REFUSED);
+    if installed {
+        rpc::run(
+            "installer_disable_plugin",
+            &[text(plugin_id)],
+            &[],
+            &args[2..],
+            rpc::REFUSED,
+        );
+    } else {
+        rpc::run(
+            "disable_plugin",
+            &[text(plugin_id)],
+            &[],
+            &args[2..],
+            rpc::REFUSED,
+        );
+    }
 }
 
 fn handle_help(args: &[String]) {
@@ -221,7 +231,10 @@ fn handle_help(args: &[String]) {
     println!("Getting help for plugin '{}'...", provider_id);
 
     rpc::run(
-        format!("Flezha.Service.CliManager.plugin_help(\"{}\")", provider_id),
+        "plugin_help",
+        &[text(provider_id)],
+        &[],
+        &args[2..],
         rpc::REFUSED,
     );
 }
@@ -239,16 +252,17 @@ fn handle_list(args: &[String]) {
         exit(1);
     }
 
-    let call = if installed {
-        format!(
-            "Flezha.Service.CliManager.list_installed_plugins(\"{}\")",
-            format
-        )
+    if installed {
+        rpc::run(
+            "list_installed_plugins",
+            &[text(format)],
+            &[],
+            args,
+            rpc::REFUSED,
+        );
     } else {
-        "Flezha.Service.CliManager.list_plugins()".to_string()
-    };
-
-    rpc::run(call, rpc::REFUSED);
+        rpc::run("list_plugins", &[], &[], args, rpc::REFUSED);
+    }
 }
 
 // Serialize a `"extensions": [{"name": "...", "opts": {...}}, ...]` list into

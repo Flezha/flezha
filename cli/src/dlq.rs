@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::rpc::{self, token_opts_fragment};
+use crate::rpc::{self, text};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -20,13 +20,11 @@ pub(crate) const TABLE: Command = Command {
 
 fn handle_list(args: &[String]) {
     let operative_class = args::positional(args, 1).map(String::as_str).unwrap_or("");
-
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.dlq_list(\"{}\", {})",
-            operative_class,
-            token_opts_fragment(args)
-        ),
+        "dlq_list",
+        &[text(operative_class)],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }
@@ -43,36 +41,15 @@ fn entry_ref_arg(args: &[String], usage: &str) -> String {
 
 fn handle_show(args: &[String]) {
     let entry_ref = entry_ref_arg(args, "flz dlq show <operative/procedure/entry-id>");
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.dlq_show(\"{}\", {})",
-            entry_ref,
-            token_opts_fragment(args)
-        ),
-        rpc::PROPAGATE,
-    );
+    rpc::run("dlq_show", &[text(&entry_ref)], &[], args, rpc::PROPAGATE);
 }
 
 fn handle_replay(args: &[String]) {
     let entry_ref = entry_ref_arg(args, "flz dlq replay <operative/procedure/entry-id>");
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.dlq_replay(\"{}\", {})",
-            entry_ref,
-            token_opts_fragment(args)
-        ),
-        rpc::PROPAGATE,
-    );
+    rpc::run("dlq_replay", &[text(&entry_ref)], &[], args, rpc::PROPAGATE);
 }
 
 fn handle_drop(args: &[String]) {
     let entry_ref = entry_ref_arg(args, "flz dlq drop <operative/procedure/entry-id>");
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.dlq_drop(\"{}\", {})",
-            entry_ref,
-            token_opts_fragment(args)
-        ),
-        rpc::PROPAGATE,
-    );
+    rpc::run("dlq_drop", &[text(&entry_ref)], &[], args, rpc::PROPAGATE);
 }

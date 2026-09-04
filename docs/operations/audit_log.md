@@ -10,17 +10,27 @@ the host's disk-space behaviour): `:audit_log, :enabled: true` or `FLEZHA_AUDIT_
 
 The sink subscribes to the bus with overflow policy `:block`, so an audit emit
 is never silently dropped; the `(source, name | :any)` filter is applied inside
-the sink. Compiled-in defaults:
+the sink. The default allow-list is derived, not written by hand: the three
+system pairs plus `{source, :any}` for every audit source a row of
+`Flezha.AuthZ.Verbs` declares, so a verb declared with an audit reaches the
+durable log by construction.
 
 ```elixir
 [
-  {:observability_service, :any},    # service-API audit events
   {:flezha_shutdown, :any},          # graceful-shutdown phases
   {:flezha_plugin_installer, :any},  # plugin install / load activity
+  {:platform_authz, :any},           # the auth stores' own events and every denial
+  # and every source the operator-verb declaration names, today:
   {:audit_log, :any},                # audit-of-audit: reads, rotations, sweeps
-  {:platform_authz, :any},           # auth mutations and authorization denials
-  {:flezha_dlq, :operator_drop},     # flz dlq drop
-  {:flezha_dlq, :operator_replay}    # flz dlq replay
+  {:controller_service, :any},
+  {:dlq_service, :any},
+  {:namespace_service, :any},
+  {:observability_service, :any},
+  {:operative_service, :any},
+  {:plugin_service, :any},
+  {:schedule_service, :any},
+  {:state_service, :any},
+  {:workflow_service, :any}
 ]
 ```
 
@@ -68,6 +78,23 @@ and `metadata.request_id`, so `jq 'select(.caller.source == "cli")'` needs no
 knowledge of the metadata convention. `caller.principal` is the verified
 principal while authorization is enabled (`null` when the signal carried none)
 and the caller source (`"cli"`, `"internal"`, ...) while it is disabled.
+
+An operator verb's act has one shape whichever surface invoked it. `name` is
+the verb (`drop`, `add`, `enable_source`), `metadata.action` the action it was
+judged as (`dlq.drop`), `metadata.outcome` is `ok` or `error` for a mutation
+audited after its effect, `namespace` is where it was judged, and the rest of
+`metadata` names the target (`entry`, `schedule`, `operative`, `plugin_id`,
+`entity`, …). A terminal invocation and a console invocation of the same verb
+differ only in `caller.source` and the actor:
+
+```json
+{"ts_us": -576460712, "ts_iso": "2026-09-04T21:03:11.208Z",
+ "source": "dlq_service", "name": "drop", "measurements": {"count": 1},
+ "metadata": {"action": "dlq.drop", "outcome": "ok", "entry": "orders/ingest/7f2a",
+              "principal": "alice", "caller_source": "cli"},
+ "caller": {"source": "cli", "principal": "alice", "request_id": null},
+ "namespace": "team-orders"}
+```
 `namespace` is `"_system"` when the signal has none; the reader treats an absent
 field the same way. `ts_us` is the bus's monotonic timestamp, `ts_iso` its
 wall-clock translation; the `--since`/`--until` filters take `ts_us`.

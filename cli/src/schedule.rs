@@ -2,7 +2,7 @@ use std::process::exit;
 
 use crate::dispatch::{self, Command};
 use crate::operative::plugins_json_or_refuse;
-use crate::rpc::{self, keyword_opts_fragment, token_opts_fragment};
+use crate::rpc::{self, text, Opt};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -20,16 +20,10 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_list(args: &[String]) {
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.schedule_list({})",
-            token_opts_fragment(args)
-        ),
-        rpc::PROPAGATE,
-    );
+    rpc::run("schedule_list", &[], &[], args, rpc::PROPAGATE);
 }
 
-/// The flags travel as one keyword list: the three required ones first, then
+/// The flags travel as the options list: the three required ones first, then
 /// each optional one the operator wrote, so an absent flag is absent from the
 /// request and the controller applies its own default. `--plugins` is carried
 /// as the text it was written as, whatever it parses as: the controller's
@@ -60,21 +54,18 @@ fn handle_add(args: &[String]) {
         ),
     ];
 
-    let mut opts: Vec<(&str, &str)> = vec![("cron", &cron), ("tz", &tz), ("factory", &factory)];
+    let mut opts: Vec<Opt> = vec![
+        ("cron", text(&cron)),
+        ("tz", text(&tz)),
+        ("factory", text(&factory)),
+    ];
     for (key, value) in &optional {
         if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
-            opts.push((*key, value));
+            opts.push((*key, text(value)));
         }
     }
 
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.schedule_add(\"{}\", {})",
-            name,
-            keyword_opts_fragment(&opts, rest),
-        ),
-        rpc::PROPAGATE,
-    );
+    rpc::run("schedule_add", &[text(&name)], &opts, rest, rpc::PROPAGATE);
 }
 
 fn handle_remove(args: &[String]) {
@@ -88,12 +79,10 @@ fn handle_run(args: &[String]) {
 /// `remove` and `run` take the schedule's name and the caller's token.
 fn named_verb(verb: &str, args: &[String]) {
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.schedule_{}(\"{}\", {})",
-            verb,
-            schedule_name(verb, args),
-            token_opts_fragment(args)
-        ),
+        &format!("schedule_{}", verb),
+        &[text(&schedule_name(verb, args))],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }

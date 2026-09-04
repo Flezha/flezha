@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
 use crate::dispatch::{self, Command};
-use crate::{args, help, rpc};
+use crate::rpc::{self, text, Opt};
+use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
     help: help::AUDIT,
@@ -36,10 +37,10 @@ fn handle_list(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.audit_log_render_list(\"{}\")",
-            args::output_format(&args[1..])
-        ),
+        "audit_log_render_list",
+        &[text(args::output_format(&args[1..]))],
+        &[],
+        args,
         rpc::DIAGNOSED,
     );
 }
@@ -53,37 +54,29 @@ fn handle_read(args: &[String]) {
 
     let file = &given[0];
     let rest = &given[1..];
-    let mut opts = String::new();
+    let mut opts: Vec<Opt> = Vec::new();
 
     if let Some(source) = read_named(rest, "source") {
-        opts.push_str(&format!("source: \"{}\", ", source));
+        opts.push(("source", text(&source)));
     }
     if let Some(name) = read_named(rest, "name") {
-        opts.push_str(&format!("name: \"{}\", ", name));
+        opts.push(("name", text(&name)));
     }
     if let Some(since) = read_number::<i64>(rest, "since") {
-        opts.push_str(&format!("since_us: {}, ", since));
+        opts.push(("since_us", since.to_string()));
     }
     if let Some(until) = read_number::<i64>(rest, "until") {
-        opts.push_str(&format!("until_us: {}, ", until));
+        opts.push(("until_us", until.to_string()));
     }
     if let Some(limit) = read_number::<u64>(rest, "limit") {
-        opts.push_str(&format!("limit: {}, ", limit));
+        opts.push(("limit", limit.to_string()));
     }
 
-    let opts_kw = if opts.is_empty() {
-        "[]".to_string()
-    } else {
-        format!("[{}]", opts.trim_end_matches(", "))
-    };
-
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.audit_log_render_read(\"{}\", \"{}\", {})",
-            file,
-            args::output_format(rest),
-            opts_kw
-        ),
+        "audit_log_render_read",
+        &[text(file), text(args::output_format(rest))],
+        &opts,
+        rest,
         rpc::DIAGNOSED,
     );
 }
@@ -97,11 +90,10 @@ fn handle_tail(args: &[String]) {
     let duration_ms = read_number::<u64>(rest, "duration-ms").unwrap_or(30_000);
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.audit_log_render_tail(\"{}\", [duration_ms: {}])",
-            args::output_format(rest),
-            duration_ms
-        ),
+        "audit_log_render_tail",
+        &[text(args::output_format(rest))],
+        &[("duration_ms", duration_ms.to_string())],
+        rest,
         rpc::DIAGNOSED,
     );
 }
@@ -112,10 +104,10 @@ fn handle_stats(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.audit_log_render_stats(\"{}\")",
-            args::output_format(&args[1..])
-        ),
+        "audit_log_render_stats",
+        &[text(args::output_format(&args[1..]))],
+        &[],
+        args,
         rpc::DIAGNOSED,
     );
 }
@@ -126,10 +118,10 @@ fn handle_rotate(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.audit_log_render_rotate(\"{}\")",
-            args::output_format(&args[1..])
-        ),
+        "audit_log_render_rotate",
+        &[text(args::output_format(&args[1..]))],
+        &[],
+        args,
         rpc::DIAGNOSED,
     );
 }

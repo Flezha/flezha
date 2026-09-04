@@ -1,0 +1,301 @@
+defmodule Flezha.AuthZ.VerbsWalkTest do
+  @moduledoc """
+  The mechanism driven through the real wire entry points, under `:enforced`.
+
+  Every gated wire verb is invoked the way `flz` invokes it — through
+  `Flezha.Service.CliManager` with the credential in the trailing options —
+  three ways: with no token, with a token bound to another namespace, and with
+  a token holding the declared action in the declared scope. The first two arms
+  walk the whole table; the third drives one verb per audit shape and reads the
+  record back from the durable log, not the ring buffer. The row set is read
+  from the declaration, so a new verb is covered with no edit here.
+  """
+  # async: false: the auth stores, the schedule store and the audit sink are
+  # singletons; Mimic stubs.
+  use ExUnit.Case, async: false
+  use Mimic
+
+  import ExUnit.CaptureIO
+
+  alias Flezha.AuthZ.{TokenStore, Verb, Verbs}
+  alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Observability.AuditLog.{Retention, Rotation, Sink, Writer}
+  alias Flezha.Observability.TestSinks
+  alias Flezha.Schedule.Store, as: ScheduleStore
+  alias Flezha.Service.CliManager
+  alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.{AuthTestHelper, DlqFixtures, ScheduleTestHelper}
+
+  @elsewhere "walk-elsewhere"
+
+  setup do
+    AuthTestHelper.setup_auth_stores(prefix: "flz_verbs_walk", enabled: true, claim: true)
+    ScheduleTestHelper.isolated_store_setup()
+    ScheduleTestHelper.schedule_hub_setup()
+    DlqFixtures.isolated_dir()
+    audit_dir = start_audit_log()
+
+    prev_retention = Application.get_env(:flezha, :time_travel_retention_hours, %{})
+
+    _ =
+      Flezha.Observability.Registry.register_source(%{
+        name: :walk_source,
+        kinds: [:event],
+        flavour: :declarative,
+        cardinality_budget: 10
+      })
+
+    on_exit(fn ->
+      Application.put_env(:flezha, :time_travel_retention_hours, prev_retention)
+      Flezha.Observability.Registry.unregister_source(:walk_source)
+    end)
+
+    assert Flezha.AuthZ.enforcement_posture() == :enforced
+
+    {:ok, admin_sys, _} = TokenStore.issue("walk-admin", "_system", :admin, 3_600)
+    {:ok, viewer_sys, _} = TokenStore.issue("walk-viewer", "_system", :viewer, 3_600)
+    {:ok, op_sys, _} = TokenStore.issue("walk-op-sys", "_system", :operator, 3_600)
+    {:ok, op_default, _} = TokenStore.issue("walk-op", "default", :operator, 3_600)
+    {:ok, stranger, _} = TokenStore.issue("walk-stranger", @elsewhere, :admin, 3_600)
+
+    %{
+      audit_dir: audit_dir,
+      admin_sys: admin_sys,
+      viewer_sys: viewer_sys,
+      op_sys: op_sys,
+      op_default: op_default,
+      stranger: stranger
+    }
+  end
+
+  test "every gated wire verb refuses a caller with no token, on its declared device" do
+    for {name, args, row, device} <- gated_wire_verbs() do
+      {out, err} = refusal(fn -> apply(CliManager, name, args ++ [[]]) end)
+      refused = "#{row.action}: refused: no verifiable identity"
+      printed = if device == :stdio, do: out, else: err
+      silent = if device == :stdio, do: err, else: out
+
+      assert printed =~ refused, "#{name} did not refuse on #{device}: #{inspect({out, err})}"
+      refute silent =~ "refused", "#{name} printed its refusal on both streams"
+    end
+  end
+
+  test "every namespace-scoped wire verb refuses a token bound elsewhere", ctx do
+    for {name, args, row, _device} <- gated_wire_verbs(),
+        row.scope == :system or match?({:argument, _}, row.scope) do
+      {out, err} = refusal(fn -> apply(CliManager, name, args ++ [[token: ctx.stranger]]) end)
+
+      assert out <> err =~
+               ~r/#{row.action}: refused: (namespace_mismatch|cross_namespace_admin_denied)/,
+             "#{name}: #{inspect({out, err})}"
+    end
+  end
+
+  test "a public verb is served with no token" do
+    assert capture_io(fn -> CliManager.boot_status([]) end) =~ "recovery_state"
+    assert capture_io(fn -> CliManager.boot_await(10, []) end) =~ "boot await"
+  end
+
+  test "an authorized act leaves exactly one durable record with the row's declared source",
+       ctx do
+    add =
+      capture_io(fn ->
+        CliManager.schedule_add("walk-sched",
+          cron: "0 8 * * *",
+          tz: "Etc/UTC",
+          factory: "f",
+          token: ctx.admin_sys
+        )
+      end)
+
+    assert add =~ "Schedule walk-sched added"
+
+    {:ok, ref} = DlqStore.append(parked("WalkDlqClass"))
+
+    assert capture_io(fn -> CliManager.dlq_drop(ref, token: ctx.admin_sys) end) =~
+             "dropped #{ref}"
+
+    assert capture_io(fn ->
+             CliManager.state_retention("WalkClass", "2", token: ctx.admin_sys)
+           end) =~
+             "retention[WalkClass] = 2 hours"
+
+    assert capture_io(fn -> CliManager.audit_log_render_stats("text", token: ctx.viewer_sys) end) =~
+             "record_count"
+
+    assert capture_io(fn ->
+             CliManager.observability_render_enable("walk_source", token: ctx.op_default)
+           end) =~
+             "source walk_source enabled"
+
+    # An authorized act that fails is still an act: the record carries the outcome.
+    {_out, _err} =
+      refusal(fn -> CliManager.operative_stop("default", "walk-nope", token: ctx.op_default) end)
+
+    settle()
+
+    assert [record] = records(ctx.audit_dir, "schedule_service", "add")
+    assert record["metadata"]["action"] == "schedule.add"
+    assert record["metadata"]["schedule"] == "walk-sched"
+    assert record["metadata"]["outcome"] == "ok"
+    assert record["caller"]["principal"] == "walk-admin"
+    assert record["caller"]["source"] == "cli"
+    assert record["namespace"] == "_system"
+
+    assert [drop] = records(ctx.audit_dir, "dlq_service", "drop")
+    assert drop["metadata"]["entry"] == ref
+    assert drop["metadata"]["outcome"] == "ok"
+
+    assert [retention] = records(ctx.audit_dir, "state_service", "retention")
+
+    assert retention["metadata"] |> Map.take(["operative_class", "hours"]) == %{
+             "operative_class" => "WalkClass",
+             "hours" => "2"
+           }
+
+    assert [stats] = records(ctx.audit_dir, "audit_log", "stats")
+    assert stats["caller"]["principal"] == "walk-viewer"
+
+    assert [enable] = records(ctx.audit_dir, "observability_service", "enable_source")
+    assert enable["metadata"]["source"] == "walk_source"
+    assert enable["namespace"] == "default"
+
+    assert [stop] = records(ctx.audit_dir, "operative_service", "stop")
+    assert stop["metadata"]["outcome"] == "error"
+    assert stop["metadata"]["operative"] == "walk-nope"
+  end
+
+  test "a row-scoped verb refuses before it reads, and a bound operator sees the row's verdict",
+       ctx do
+    {:ok, ref} = DlqStore.append(parked("WalkRowClass"))
+
+    for token_opts <- [[], [token: ctx.viewer_sys]] do
+      {_out, err} = refusal(fn -> CliManager.dlq_drop("nope/proc/1", token_opts) end)
+      assert err =~ "dlq.drop: refused"
+      refute err =~ "not found", "the row was read before the refusal: #{err}"
+    end
+
+    # A bound admin elsewhere passes the role check, reads the row, and is
+    # refused in the row's namespace.
+    {_out, err} = refusal(fn -> CliManager.dlq_drop(ref, token: ctx.stranger) end)
+    assert err =~ "dlq.drop: refused: namespace_mismatch"
+    assert {:ok, _entry, _payload} = DlqStore.get(ref)
+
+    # Firing a schedule is judged where the instance starts, not in `_system`.
+    {:ok, _} = ScheduleStore.add(ScheduleTestHelper.entry_fields(%{name: "walk-run"}))
+    test = self()
+
+    stub(OperativeManager, :start_workflow, fn "default", id, _factory, _init, _opts ->
+      send(test, {:spawned, id})
+      {:ok, %{operative_id: id}}
+    end)
+
+    {_out, err} = refusal(fn -> CliManager.schedule_run("walk-run", token: ctx.op_sys) end)
+    assert err =~ "operative.start: refused: namespace_mismatch"
+    refute_received {:spawned, _}
+
+    assert capture_io(fn -> CliManager.schedule_run("walk-run", token: ctx.op_default) end) =~
+             "Spawned walk-run@manual-"
+
+    assert_received {:spawned, "walk-run@manual-" <> _}
+  end
+
+  test "whoami is a gated read: refused unbound, answered for a bound viewer", ctx do
+    {_out, err} = refusal(fn -> CliManager.authz_render_whoami([]) end)
+    assert err =~ "authz.whoami: refused"
+
+    assert capture_io(fn -> CliManager.authz_render_whoami(token: ctx.viewer_sys) end) =~
+             "principal: walk-viewer"
+  end
+
+  # ---------- helpers ----------
+
+  # Every wire name bound to a gated row, once at its widest arity, with one
+  # binary per positional argument: the refusal comes before any body reads
+  # them, and a namespace-shaped argument is what a scope rule needs.
+  defp gated_wire_verbs do
+    rows = Map.new(Verbs.all(), &{&1.verb, &1})
+
+    Verb.bindings(CliManager)
+    |> Enum.group_by(&elem(&1, 0))
+    |> Enum.map(fn {_name, bindings} -> Enum.max_by(bindings, &elem(&1, 1)) end)
+    |> Enum.reject(fn {_name, _arity, verb, _opts} -> rows[verb].action in [:public, :none] end)
+    |> Enum.map(fn {name, arity, verb, opts} ->
+      {name, List.duplicate("x", arity - 1), rows[verb], Keyword.get(opts, :device, :stderr)}
+    end)
+    |> Enum.sort()
+  end
+
+  # Both streams of a verb that refuses, the exit swallowed.
+  defp refusal(fun) do
+    {{:cli_error, out}, err} =
+      with_io(:stderr, fn ->
+        with_io(fn -> catch_exit(fun.()) end)
+      end)
+
+    {out, err}
+  end
+
+  defp parked(operative_class) do
+    %{
+      operative_class: operative_class,
+      procedure_id: "proc",
+      entity_key: "k",
+      channel: "input",
+      origin_offset: nil,
+      error: "boom",
+      attempts: 1,
+      payload: "bytes"
+    }
+  end
+
+  defp start_audit_log do
+    dir =
+      Path.join(System.tmp_dir!(), "flz_verbs_walk_audit_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(dir)
+    prev = Application.get_env(:flezha, :audit_log, [])
+    Application.put_env(:flezha, :audit_log, Keyword.merge(prev, enabled: true, dir: dir))
+
+    _ =
+      Flezha.Observability.Registry.register_source(%{
+        name: :audit_log,
+        kinds: [:event],
+        flavour: :declarative,
+        cardinality_budget: 200
+      })
+
+    {:ok, sup} =
+      Supervisor.start_link([Writer, Rotation, Retention, Sink], strategy: :one_for_one)
+
+    Process.unlink(sup)
+
+    on_exit(fn ->
+      try do
+        Supervisor.stop(sup, :normal, 2_000)
+      catch
+        :exit, _ -> :ok
+      end
+
+      _ = Flezha.Observability.Registry.unregister_sink(:audit_log)
+      Application.put_env(:flezha, :audit_log, prev)
+      File.rm_rf!(dir)
+    end)
+
+    dir
+  end
+
+  defp settle do
+    TestSinks.settle(Sink)
+    Process.sleep(50)
+  end
+
+  defp records(dir, source, name) do
+    dir
+    |> Path.join("audit-current.jsonl")
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.map(&Jason.decode!/1)
+    |> Enum.filter(&(&1["source"] == source and &1["name"] == name))
+  end
+end

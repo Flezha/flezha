@@ -2,7 +2,7 @@ use std::process::exit;
 
 use crate::dispatch::{self, Command};
 use crate::help;
-use crate::rpc::{self, escape_rpc_arg, token_opts_fragment};
+use crate::rpc::{self, text};
 
 pub(crate) const TABLE: Command = Command {
     help: help::ROLE,
@@ -27,13 +27,10 @@ fn handle_bind(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.authz_render_role_bind(\"{}\", \"{}\", \"{}\", {})",
-            escape_rpc_arg(&args[1]),
-            escape_rpc_arg(&args[2]),
-            escape_rpc_arg(&args[3]),
-            token_opts_fragment(&args[4..]),
-        ),
+        "authz_render_role_bind",
+        &[text(&args[1]), text(&args[2]), text(&args[3])],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }

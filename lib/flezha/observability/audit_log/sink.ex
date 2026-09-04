@@ -12,7 +12,8 @@ defmodule Flezha.Observability.AuditLog.Sink do
   makes `:block` back-pressure end to end. Once the Writer is closed,
   signals are discarded against a `:post_close_dropped` counter.
 
-  The default allow-list and `:extra_subscriptions`:
+  The default allow-list is the system pairs plus every source
+  `Flezha.AuthZ.Verbs` declares; `:extra_subscriptions` extends it:
   `docs/operations/audit_log.md`.
   """
 
@@ -20,6 +21,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
 
   @behaviour Flezha.Observability.Sink
 
+  alias Flezha.AuthZ.Verbs
   alias Flezha.Observability.AuditLog.{Codec, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
 
@@ -27,20 +29,16 @@ defmodule Flezha.Observability.AuditLog.Sink do
   @default_high_watermark 10_000
   @default_block_timeout_ms 30_000
 
-  @default_allow_list [
-    {:observability_service, :any},
+  # The system pairs. Every source an operator verb's row declares joins them
+  # at boot, so a declared audit is durable by construction.
+  @system_allow_list [
     {:flezha_shutdown, :any},
     {:flezha_plugin_installer, :any},
-    {:audit_log, :any},
     # Auth-state mutations and authorization denials emit on
     # `:platform_authz`; the audit log subscribes by default so every
-    # token issue/revoke, role bind/unbind, namespace create/delete,
-    # bootstrap completion, and forbidden decision is durably recorded.
-    {:platform_authz, :any},
-    # Operator-driven DLQ mutations (`flz dlq replay | drop`) discard or
-    # re-drive parked data; both are durably recorded.
-    {:flezha_dlq, :operator_drop},
-    {:flezha_dlq, :operator_replay}
+    # token issue/revoke, bootstrap completion, and forbidden decision is
+    # durably recorded.
+    {:platform_authz, :any}
   ]
 
   # ---------- Sink behaviour ----------
@@ -148,7 +146,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
       |> Keyword.get(:extra_subscriptions, [])
       |> Enum.filter(&valid_entry?/1)
 
-    @default_allow_list ++ extra
+    @system_allow_list ++ Enum.map(Verbs.audit_sources(), &{&1, :any}) ++ extra
   end
 
   defp valid_entry?({source, name}) when is_atom(source) and (is_atom(name) or name == :any),

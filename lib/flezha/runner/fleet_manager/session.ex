@@ -13,7 +13,7 @@ defmodule Flezha.Runner.FleetManager.Session do
 
   alias Flezha.AuthZ.QuotaCounters
   alias Flezha.AuthZ.Quotas
-  alias Flezha.AuthZ.Scope
+  alias Flezha.AuthZ.Verb
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Orchestrator
   alias Flezha.Convergence.Heal
@@ -51,15 +51,12 @@ defmodule Flezha.Runner.FleetManager.Session do
   def admit_runner(namespace, transport) do
     runner_ctx = runner_caller_context(namespace)
 
-    with :ok <-
-           Flezha.AuthZ.authorize(
-             runner_ctx,
-             :"runner.connect",
-             Scope.build(namespace)
-           ),
-         :ok <- Quotas.check_allocation(namespace, :max_runners) do
-      :ok
-    else
+    case Verb.run(:runner_connect, runner_ctx, [namespace], fn _call ->
+           Quotas.check_allocation(namespace, :max_runners)
+         end) do
+      :ok ->
+        :ok
+
       {:error, {:quota_exceeded, _kind, %{current: current, limit: limit}} = reason} ->
         Logger.warning(
           "[FleetManager] runner connect refused for namespace=#{namespace}: " <>

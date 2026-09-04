@@ -2,9 +2,12 @@ defmodule Flezha.Service.Cli.State do
   @moduledoc """
   `flz state get | list | at | rotate | delete | outbox | retention` and
   `flz operative replay` — the Entity-scoped state reads and writes.
+
+  Every verb here is judged in the namespace that holds the Entity: the row a
+  path or a class resolves to, read only for a bound caller whose role grants
+  the action, so an unbound caller learns nothing about what exists on disk.
   """
 
-  alias Flezha.AuthZ.Scope
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Operative.Replay
@@ -22,6 +25,75 @@ defmodule Flezha.Service.Cli.State do
   alias Flezha.State.TimeTravel
   alias Flezha.State.WalWriter
 
+  # ---------- The rows ----------
+
+  @doc "The row a `state list` is judged by: the class's namespace."
+  def class_row([operative_class | _]),
+    do: {:ok, %{namespace: OperativeManager.namespace_of_class(operative_class)}}
+
+  @doc """
+  The row a `state at | rotate | outbox` is judged by: an Entity with persisted
+  state, in its class's namespace. Each verb keeps its own prefix on the
+  not-found it prints.
+  """
+  def at_row(args), do: entity_row(args, "state at")
+  def rotate_row(args), do: entity_row(args, "state rotate")
+  def outbox_row(args), do: entity_row(args, "state outbox")
+
+  defp entity_row([path_string | _], verb) do
+    case parse_state_path(path_string) do
+      {:ok, {operative_class, _, _} = entity_id} ->
+        {:ok,
+         %{namespace: OperativeManager.namespace_of_class(operative_class), entity_id: entity_id}}
+
+      {:error, reason} ->
+        Context.cli_error!("#{verb}: #{reason}", :stderr)
+    end
+  end
+
+  @doc """
+  The row a `state delete` is judged by: the path split, with no on-disk check,
+  so deleting an Entity that left nothing behind still succeeds.
+  """
+  def split_row([path_string | _]) do
+    case String.split(path_string, "/", parts: 3) do
+      [rc, sh, pk] ->
+        {:ok, %{namespace: OperativeManager.namespace_of_class(rc), entity_id: {rc, sh, pk}}}
+
+      _ ->
+        Context.cli_error!(
+          "state delete: expected <operative>/<procedure>/<entity_key>; got #{path_string}",
+          :stderr
+        )
+    end
+  end
+
+  @doc "The row a `state get` is judged by: the live Operative's namespace and the members that hold the key."
+  def live_row([path_string | _]) do
+    with {:ok, {operative_id, procedure, entity_key}} <- parse_live_path(path_string),
+         {:ok, namespace, targets} <- resolve_state_targets(operative_id, entity_key) do
+      {:ok,
+       %{namespace: namespace, targets: targets, procedure: procedure, entity_key: entity_key}}
+    else
+      {:error, reason} ->
+        Context.cli_error!("state get: #{render_state_get_error(reason)}", :stderr)
+    end
+  end
+
+  @doc "The row an `operative replay` is judged by: the Entity's class namespace."
+  def replay_row([_namespace, path_string | _]) do
+    case parse_state_path(path_string) do
+      {:ok, {operative_class, _, _} = entity_id} ->
+        {:ok,
+         %{namespace: OperativeManager.namespace_of_class(operative_class), entity_id: entity_id}}
+
+      {:error, reason} ->
+        Context.cli_error!("replay: #{inspect(reason)}", :stderr)
+    end
+  end
+
+  # ---------- The verbs ----------
+
   @doc """
   `flz state get <operative/procedure[/entity_key]>` — the CURRENT in-memory
   state of one live Entity (or of one Procedure's Entities), as JSON, with the
@@ -33,17 +105,10 @@ defmodule Flezha.Service.Cli.State do
   naming why — never served from the durable store, which is what
   `flz state at` is for.
   """
-  def state_get(path_string, output_format \\ "text", opts \\ []) do
-    with {:ok, {operative_id, procedure, entity_key}} <- parse_live_path(path_string),
-         {:ok, namespace, targets} <- resolve_state_targets(operative_id, entity_key),
-         :ok <-
-           Flezha.AuthZ.authorize(
-             Context.cli_context(opts),
-             :"state.get",
-             Scope.build(namespace)
-           ),
-         {:ok, json, change_seq} <-
-           read_entity_state(namespace, targets, procedure, entity_key),
+  def state_get(path_string, output_format, %{row: row}) do
+    %{namespace: namespace, targets: targets, procedure: procedure, entity_key: entity_key} = row
+
+    with {:ok, json, change_seq} <- read_entity_state(namespace, targets, procedure, entity_key),
          :ok <- within_read_ceiling(json) do
       print_state_get(path_string, json, change_seq, output_format)
     else
@@ -52,8 +117,8 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  # The read authorizes and resolves against the namespace that actually holds
-  # the Operative rather than assuming `default`.
+  # The read resolves against the namespace that actually holds the Operative
+  # rather than assuming `default`.
   #
   # A partition group id names no operative — it names N — so a keyed read
   # resolves the one member owning the key's group, and a procedure-level read
@@ -200,25 +265,13 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  defp render_state_get_error({:forbidden, reason}), do: Context.render_forbidden(reason)
   defp render_state_get_error(reason), do: inspect(reason)
 
   @doc """
   `flz state list <operative_class>` — print one row per Entity under
   `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
-  def state_list(operative_class, output_format \\ "text", opts \\ []) do
-    _ =
-      Context.authorize_cli!(
-        opts,
-        :"state.list",
-        OperativeManager.namespace_of_class(operative_class)
-      )
-
-    do_state_list(operative_class, output_format)
-  end
-
-  defp do_state_list(operative_class, output_format) do
+  def state_list(operative_class, output_format, _call) do
     rows =
       for {{rc, sh, pk} = pid, counters} <- Metrics.snapshot_all(),
           rc == operative_class do
@@ -268,24 +321,18 @@ defmodule Flezha.Service.Cli.State do
   procedure, entity_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
-  def state_at(path_string, target_string, output_format \\ "text") do
-    case parse_state_path(path_string) do
-      {:ok, entity_id} ->
-        target = parse_state_target(target_string)
+  def state_at(_path_string, target_string, output_format, %{row: %{entity_id: entity_id}}) do
+    target = parse_state_target(target_string)
 
-        case TimeTravel.query(entity_id, target) do
-          {:ok, result} ->
-            print_state_at(entity_id, target, result, output_format)
+    case TimeTravel.query(entity_id, target) do
+      {:ok, result} ->
+        print_state_at(entity_id, target, result, output_format)
 
-          {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
-            Context.cli_error!(
-              "state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})",
-              :stderr
-            )
-        end
-
-      {:error, reason} ->
-        Context.cli_error!("state at: #{reason}", :stderr)
+      {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
+        Context.cli_error!(
+          "state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})",
+          :stderr
+        )
     end
   end
 
@@ -312,41 +359,17 @@ defmodule Flezha.Service.Cli.State do
   `flz state rotate <operative/procedure/entity>` — force a compaction by
   dispatching a `CompactEntity` to the SDK.
   """
-  def state_rotate(path_string, opts \\ []) do
-    case parse_state_path(path_string) do
-      {:ok, {rc, sh, pk}} ->
-        Context.with_cli_authorization(
-          opts,
-          :"state.rotate",
-          OperativeManager.namespace_of_class(rc),
-          %{entity: path_string},
-          fn ->
-            case lookup_runner_for_entity(rc, sh, pk) do
-              {:ok, runner_id} ->
-                case Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
-                  {:ok, _ref} ->
-                    IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
-
-                  {:error, reason} ->
-                    Context.cli_error!("state rotate: #{inspect(reason)}", :stderr)
-                end
-
-              {:error, reason} ->
-                Context.cli_error!("state rotate: #{reason}", :stderr)
-            end
-          end
-        )
+  def state_rotate(_path_string, %{row: %{entity_id: {rc, sh, pk}}}) do
+    case Recovery.resolve_runner({rc, sh, pk}) do
+      {:ok, runner_id} ->
+        case Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
+          {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+          {:error, reason} -> Context.cli_error!("state rotate: #{inspect(reason)}", :stderr)
+        end
 
       {:error, reason} ->
         Context.cli_error!("state rotate: #{reason}", :stderr)
     end
-  end
-
-  # The namespace a state verb is authorized against: the registry's answer
-  # for a live Operative, else the on-disk claim (`Flezha.State.Paths`),
-  # so a stopped Operative's durable state is still owned by its namespace.
-  defp lookup_runner_for_entity(rc, sh, pk) do
-    Recovery.resolve_runner({rc, sh, pk})
   end
 
   @doc """
@@ -356,26 +379,9 @@ defmodule Flezha.Service.Cli.State do
   operator-driven, confirmation-returning counterpart to the SDK reaper's
   fire-and-forget `delete_entity_state` send (Decision 8).
   """
-  def state_delete(path_string, opts \\ []) do
-    case String.split(path_string, "/", parts: 3) do
-      [rc, sh, pk] ->
-        Context.with_cli_authorization(
-          opts,
-          :"state.delete",
-          OperativeManager.namespace_of_class(rc),
-          %{entity: path_string},
-          fn ->
-            {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})
-            IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
-          end
-        )
-
-      _ ->
-        Context.cli_error!(
-          "state delete: expected <operative>/<procedure>/<entity_key>; got #{path_string}",
-          :stderr
-        )
-    end
+  def state_delete(_path_string, %{row: %{entity_id: {rc, sh, pk}}}) do
+    {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})
+    IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
   end
 
   @doc """
@@ -383,37 +389,31 @@ defmodule Flezha.Service.Cli.State do
   status for one Entity: durable seq, flush cursor, epoch, undispatched
   lag, and the operative's input-log min-watermark.
   """
-  def state_outbox(path_string, _opts \\ []) do
-    case parse_state_path(path_string) do
-      {:ok, {rc, sh, pk} = entity_id} ->
-        status =
-          case Flezha.State.WriterRegistry.lookup(entity_id) do
-            {:ok, pid} ->
-              WalWriter.outbox_status(pid)
+  def state_outbox(_path_string, %{row: %{entity_id: {rc, sh, pk} = entity_id}}) do
+    status =
+      case Flezha.State.WriterRegistry.lookup(entity_id) do
+        {:ok, pid} ->
+          WalWriter.outbox_status(pid)
 
-            :error ->
-              dedup = Outbox.read(entity_id)
+        :error ->
+          dedup = Outbox.read(entity_id)
 
-              %{
-                last_persisted_seq: dedup.last_persisted_seq,
-                outbox_flushed_seq: dedup.outbox_flushed_seq,
-                epoch: dedup.epoch,
-                pending: nil
-              }
-          end
+          %{
+            last_persisted_seq: dedup.last_persisted_seq,
+            outbox_flushed_seq: dedup.outbox_flushed_seq,
+            epoch: dedup.epoch,
+            pending: nil
+          }
+      end
 
-        watermark = InputLog.watermark(rc)
+    watermark = InputLog.watermark(rc)
 
-        IO.puts("entity            #{rc}/#{sh}/#{pk}")
-        IO.puts("last_persisted_seq #{status.last_persisted_seq}")
-        IO.puts("outbox_flushed_seq #{status.outbox_flushed_seq}")
-        IO.puts("epoch              #{status.epoch}")
-        IO.puts("outbox_lag         #{status.pending || "unknown (writer not running)"}")
-        IO.puts("input_watermark    #{watermark || "none"}")
-
-      {:error, reason} ->
-        Context.cli_error!("state outbox: #{reason}", :stderr)
-    end
+    IO.puts("entity            #{rc}/#{sh}/#{pk}")
+    IO.puts("last_persisted_seq #{status.last_persisted_seq}")
+    IO.puts("outbox_flushed_seq #{status.outbox_flushed_seq}")
+    IO.puts("epoch              #{status.epoch}")
+    IO.puts("outbox_lag         #{status.pending || "unknown (writer not running)"}")
+    IO.puts("input_watermark    #{watermark || "none"}")
   end
 
   @doc """
@@ -426,9 +426,10 @@ defmodule Flezha.Service.Cli.State do
   the stale rows by natural key, which is what makes "deploy a fix, heal the
   recent past" a single verb rather than a migration.
   """
-  def operative_replay(namespace, path_string, from_string) do
-    with {:ok, {operative_class, _, _} = entity_id} <- parse_state_path(path_string),
-         {:ok, overwatch} <- resolve_replay_overwatch(namespace, operative_class),
+  def operative_replay(_namespace, path_string, from_string, %{row: %{entity_id: entity_id}}) do
+    {operative_class, _, _} = entity_id
+
+    with {:ok, overwatch} <- resolve_replay_overwatch(operative_class),
          {:ok, target_seq} <- resolve_replay_seq(entity_id, from_string) do
       Replay.replay_from(overwatch, entity_id, target_seq)
 
@@ -449,9 +450,7 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  defp resolve_replay_overwatch(namespace, operative_class) do
-    _ = Context.normalize_namespace(namespace)
-
+  defp resolve_replay_overwatch(operative_class) do
     case ClassRegistry.overwatch_pid(operative_class) do
       {:ok, pid} -> {:ok, pid}
       :error -> {:error, {:not_running, operative_class}}
@@ -472,7 +471,7 @@ defmodule Flezha.Service.Cli.State do
   for `<operative_class>`. Persisted across the next Application boot only
   if the runner separately writes it to runtime.exs.
   """
-  def state_retention(operative_class, hours_string) do
+  def state_retention(operative_class, hours_string, _call) do
     case Integer.parse(hours_string) do
       {hours, ""} when hours >= 0 ->
         current = Application.get_env(:flezha, :time_travel_retention_hours, %{})

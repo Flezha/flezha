@@ -32,7 +32,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     fpz = Plugins.build_fixture!(tmp, "cli_one_#{unique}", "1.0.0", [mod])
 
     # Install.
-    install_output = capture_io(fn -> CliManager.install_plugin(fpz, "{}") end)
+    install_output = capture_io(fn -> CliManager.install_plugin(fpz) end)
     assert install_output =~ "Installed plugin cli_one_#{unique}"
     assert install_output =~ "status: disabled"
 
@@ -65,14 +65,14 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     mod = "CliIntegration.Lifecycle#{unique}"
     fpz = Plugins.build_fixture!(tmp, "cli_life_#{unique}", "1.0.0", [mod])
 
-    capture_io(fn -> CliManager.install_plugin(fpz, "{}") end)
+    capture_io(fn -> CliManager.install_plugin(fpz) end)
 
     # Enable — this will call PluginManager.enable_plugin which expects a
     # real operative. Without one, the enable will fail. Verify the error
     # is surfaced to stdout rather than crashing.
     enable_output =
       capture_io(fn ->
-        catch_exit(CliManager.installer_enable_plugin("cli_life_#{unique}", "{}"))
+        catch_exit(CliManager.installer_enable_plugin("cli_life_#{unique}"))
       end)
 
     # Either succeeds (if the PluginManager path is tolerant) or reports a
@@ -83,7 +83,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     # Disable is idempotent on a not-enabled plugin, so it should always
     # produce the success line.
     disable_output =
-      capture_io(fn -> CliManager.installer_disable_plugin("cli_life_#{unique}", "{}") end)
+      capture_io(fn -> CliManager.installer_disable_plugin("cli_life_#{unique}") end)
 
     assert disable_output =~ "disabled successfully"
   end
@@ -93,11 +93,11 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     mod = "CliIntegration.Uninstall#{unique}"
     fpz = Plugins.build_fixture!(tmp, "cli_un_#{unique}", "1.0.0", [mod])
 
-    capture_io(fn -> CliManager.install_plugin(fpz, "{}") end)
+    capture_io(fn -> CliManager.install_plugin(fpz) end)
     assert CliManager.installed_plugin?("cli_un_#{unique}") == true
 
     uninstall_output =
-      capture_io(fn -> CliManager.uninstall_plugin("cli_un_#{unique}", "{}") end)
+      capture_io(fn -> CliManager.uninstall_plugin("cli_un_#{unique}") end)
 
     assert uninstall_output =~ "Uninstalled plugin cli_un_#{unique}"
     assert CliManager.installed_plugin?("cli_un_#{unique}") == false
@@ -111,10 +111,10 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     fpz_v1 = Plugins.build_fixture!(tmp, "cli_up_#{unique}", "1.0.0", [mod_a])
     fpz_v2 = Plugins.build_fixture!(tmp, "cli_up_#{unique}", "1.1.0", [mod_b])
 
-    capture_io(fn -> CliManager.install_plugin(fpz_v1, "{}") end)
+    capture_io(fn -> CliManager.install_plugin(fpz_v1) end)
 
     upgrade_output =
-      capture_io(fn -> CliManager.upgrade_plugin("cli_up_#{unique}", fpz_v2, "{}") end)
+      capture_io(fn -> CliManager.upgrade_plugin("cli_up_#{unique}", fpz_v2) end)
 
     assert upgrade_output =~ "Upgraded plugin cli_up_#{unique} to 1.1.0"
 
@@ -131,11 +131,11 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     mod = "CliIntegration.Refuse#{unique}"
     fpz = Plugins.build_fixture!(tmp, "cli_refuse_#{unique}", "1.0.0", [mod])
 
-    capture_io(fn -> CliManager.install_plugin(fpz, "{}") end)
+    capture_io(fn -> CliManager.install_plugin(fpz) end)
     :ok = Store.update_status("cli_refuse_#{unique}", :enabled)
 
     output =
-      capture_io(fn -> catch_exit(CliManager.uninstall_plugin("cli_refuse_#{unique}", "{}")) end)
+      capture_io(fn -> catch_exit(CliManager.uninstall_plugin("cli_refuse_#{unique}")) end)
 
     assert output =~ "Error uninstalling plugin"
     assert output =~ "plugin_enabled"
@@ -145,7 +145,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     bad = Path.join(tmp, "bad.fpz")
     File.write!(bad, "not a tarball")
 
-    output = capture_io(fn -> catch_exit(CliManager.install_plugin(bad, "{}")) end)
+    output = capture_io(fn -> catch_exit(CliManager.install_plugin(bad)) end)
     assert output =~ "Error installing plugin"
   end
 end

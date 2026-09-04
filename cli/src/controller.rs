@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{exit, Stdio};
 
 use crate::dispatch::{self, Command};
-use crate::rpc::{self, Exit, Failure};
+use crate::rpc::{self, text, Exit, Failure, Opt};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -28,10 +28,10 @@ fn handle_mem_top(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.controller_mem_top(\"{}\")",
-            args::output_format(args)
-        ),
+        "controller_mem_top",
+        &[text(args::output_format(args))],
+        &[],
+        args,
         rpc::UNREACHABLE,
     );
 }
@@ -42,10 +42,10 @@ fn handle_status(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.controller_status(\"{}\")",
-            args::output_format(args)
-        ),
+        "controller_status",
+        &[text(args::output_format(args))],
+        &[],
+        args,
         rpc::UNREACHABLE,
     );
 }
@@ -95,11 +95,11 @@ fn handle_stop(args: &[String]) {
 
     // Built before the announcement: a refusal here means no shutdown starts,
     // and a line saying one has is the wrong thing to print above it.
-    let opts_kw = stop_opts(&args[1..]);
+    let expression = rpc::expression("controller_stop", &[], &stop_opts(&args[1..]), &args[1..]);
 
     eprintln!("Stopping flezha controller...");
 
-    exit(match stop_outcome(&opts_kw).as_deref() {
+    exit(match stop_outcome(&expression).as_deref() {
         Some("clean") | Some("forced") => 0,
         Some("partial") => 1,
         Some("already_in_progress") => 2,
@@ -118,13 +118,10 @@ fn handle_stop(args: &[String]) {
 /// Drive the shutdown and answer its result marker. Exits 3 rather than
 /// returning when the controller could not be reached at all: there is no
 /// outcome to report then, only an unreachable socket.
-fn stop_outcome(opts_kw: &str) -> Option<String> {
+fn stop_outcome(expression: &str) -> Option<String> {
     let mut child = match rpc::flzvm()
         .arg("rpc")
-        .arg(format!(
-            "Flezha.Service.CliManager.controller_stop({})",
-            opts_kw
-        ))
+        .arg(expression)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -166,31 +163,24 @@ fn stop_outcome(opts_kw: &str) -> Option<String> {
     outcome
 }
 
-/// The shutdown's keyword list. The identity token rides it like any other
-/// gated verb's, spelled out here because this one carries three more.
-fn stop_opts(args: &[String]) -> String {
-    let mut opts: Vec<String> = Vec::new();
+/// The three options a shutdown carries; the credential joins them where
+/// every request's does.
+fn stop_opts(args: &[String]) -> Vec<Opt<'static>> {
+    let mut opts: Vec<Opt> = Vec::new();
 
     if let Some(timeout_ms) =
         args::or_refuse(args::number::<u64>(args, "--timeout-ms", "--timeout-ms"))
     {
-        opts.push(format!("timeout_ms: {}", timeout_ms));
+        opts.push(("timeout_ms", timeout_ms.to_string()));
     }
     if args.iter().any(|a| a == "--no-wait") {
-        opts.push("no_wait: true".to_string());
+        opts.push(("no_wait", "true".to_string()));
     }
     if args.iter().any(|a| a == "--force") {
-        opts.push("force: true".to_string());
-    }
-    if let Some(token) = rpc::auth_token(args) {
-        opts.push(format!("token: \"{}\"", rpc::escape_rpc_arg(&token)));
+        opts.push(("force", "true".to_string()));
     }
 
-    if opts.is_empty() {
-        "[]".to_string()
-    } else {
-        format!("[{}]", opts.join(", "))
-    }
+    opts
 }
 
 /// Stream the child's stdout through, holding back the one line that carries

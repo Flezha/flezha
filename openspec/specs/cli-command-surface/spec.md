@@ -274,3 +274,32 @@ whether the operator wrote the value as an option or as a positional.
 - **THEN** the verb SHALL refuse rather than refuse the option and forward the
   positional
 
+### Requirement: Every verb SHALL carry its options and the caller's credential as one trailing list
+
+Every request `flz` builds SHALL end with one options keyword list, whatever else the
+verb carries, and the caller's credential SHALL ride that list and nothing else. A verb
+whose optional flags were spelled as positional arguments with defaults SHALL carry
+them in that list instead, so that the credential is always the last slot and a new
+optional flag has somewhere to go. A verb whose only free argument is a JSON document
+SHALL keep the document and gain the list beside it. The operator-facing flags do not
+change; what changes is the request the CLI builds.
+
+#### Scenario: A verb with no options still ends with the list
+
+- **WHEN** `flz boot status` or `flz plugin list` is run
+- **THEN** the request SHALL end with an options list, empty when no token or request
+  id is given, and the controller SHALL apply the defaults it applies today
+
+#### Scenario: `operative start` carries its trailing flags in the list
+
+- **WHEN** `flz operative start <op> <factory> --plugins '[…]' --kind workflow` is run
+- **THEN** the request SHALL carry `plugins` and `kind` in the options list, as text
+  where the controller reads text, and SHALL carry no positional placeholder for an
+  absent flag
+
+#### Scenario: One rule, one test
+
+- **WHEN** the CLI's request-shape test runs over every verb the wire contract exports
+- **THEN** it SHALL assert the trailing list for every verb from one table, so that a
+  verb added without the list fails the test rather than the operator
+

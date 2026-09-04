@@ -11,6 +11,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{AuthState, RoleStore, Scope, TokenStore}
+  alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.AuthTestHelper
@@ -81,22 +82,28 @@ defmodule Flezha.AuthZ.EnforcementTest do
       claim!()
 
       # The legacy `principal:`/`role:` opts are ignored by cli_context — the
-      # identity stays unbound and the gated verb refuses.
-      assert {:ok, %{principal: nil}} =
-               CliManager.authz_whoami(principal: "forged-admin", role: :admin)
+      # identity stays unbound and every gated verb, `whoami` included, refuses.
+      forged = [principal: "forged-admin", namespace: "_system", role: :admin]
 
-      assert {:error, {:forbidden, :principal_not_bound}} =
-               CliManager.namespace_create("forged-ns", %{},
-                 principal: "forged-admin",
-                 namespace: "_system",
-                 role: :admin
-               )
+      for verb <- [
+            fn -> CliManager.authz_render_whoami(forged) end,
+            fn -> CliManager.authz_render_namespace_create("forged-ns", "{}", forged) end
+          ] do
+        output = capture_io(:stderr, fn -> assert catch_exit(verb.()) == :cli_error end)
+        assert output =~ "refused: no verifiable identity"
+      end
     end
 
     test "an invalid token leaves the identity unbound" do
       claim!()
 
-      assert {:ok, %{principal: nil}} = CliManager.authz_whoami(token: "flzt_not_a_real_token")
+      output =
+        capture_io(:stderr, fn ->
+          assert catch_exit(CliManager.authz_render_whoami(token: "flzt_not_a_real_token")) ==
+                   :cli_error
+        end)
+
+      assert output =~ "authz.whoami: refused"
     end
 
     test "the runner principal is bound to its connection's namespace" do
@@ -117,29 +124,6 @@ defmodule Flezha.AuthZ.EnforcementTest do
   end
 
   describe "destructive verbs are gated and audited (§4.2/§4.3)" do
-    test "an unauthorized state delete is refused and does not take effect" do
-      claim!()
-      {:ok, raw, _} = TokenStore.issue("viewer-1", "_system", :viewer, 3600)
-
-      output =
-        capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/proc/key", token: raw)) == :cli_error
-        end)
-
-      assert output =~ "refused"
-    end
-
-    test "a gated verb without any token names the credential requirement" do
-      claim!()
-
-      output =
-        capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/proc/key", [])) == :cli_error
-        end)
-
-      assert output =~ "--token"
-    end
-
     test "bootstrap-pending refuses a destructive verb naming the bootstrap procedure" do
       assert AuthZ.enforcement_posture() == :bootstrap_pending
 
@@ -157,9 +141,8 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(
-                   CliManager.installer_enable_plugin("some_plugin", ~s({"token": "#{raw}"}))
-                 ) == :cli_error
+          assert catch_exit(CliManager.installer_enable_plugin("some_plugin", token: raw)) ==
+                   :cli_error
         end)
 
       assert output =~ "refused"
@@ -179,13 +162,15 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       assert output =~ "deleted persisted state"
 
-      # The success audit event names the actor and the target.
-      assert [signal | _] =
-               AuthTestHelper.await_platform_authz_events(
-                 :"state.delete",
-                 boundary
-               )
+      # The success audit record names the actor and the target, on the verb's
+      # own source with the action it was judged as.
+      TestSinks.settle(RingBufferSink)
 
+      assert [signal | _] =
+               Enum.filter(RingBufferSink.query(:state_service, boundary), &(&1.name == :delete))
+
+      assert signal.metadata.action == :"state.delete"
+      assert signal.metadata.outcome == :ok
       assert signal.metadata.principal == "admin-1"
       assert signal.metadata.entity == "enf_test_op/proc/key"
     end

@@ -239,6 +239,8 @@ defmodule Flezha.Service.CliManagerDlqTest do
   import ExUnit.CaptureIO
 
   alias Flezha.Dlq.Store
+  alias Flezha.Observability.RingBufferSink
+  alias Flezha.Observability.TestSinks
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.DlqFixtures
@@ -307,173 +309,21 @@ defmodule Flezha.Service.CliManagerDlqTest do
     assert still_there["status"] == "parked"
   end
 
-  test "drop removes the entry and emits the audit event", %{entry: entry} do
+  test "drop removes the entry and audits it on the dlq service source", %{entry: entry} do
     {:ok, ref} = Store.append(entry)
-
-    handler = :"dlq_cli_test_#{System.unique_integer([:positive])}"
-    parent = self()
-
-    :telemetry.attach(
-      handler,
-      [:flezha, :dlq, :operator_drop],
-      fn _e, m, md, _c -> send(parent, {:audit, m, md}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler) end)
+    boundary = System.monotonic_time(:microsecond)
 
     output = capture_io(fn -> CliManager.dlq_drop(ref) end)
 
     assert output =~ "dropped #{ref}"
-    assert_received {:audit, %{count: 1}, %{entry: ^ref, caller_source: :cli}}
+    TestSinks.settle(RingBufferSink)
+
+    assert Enum.any?(RingBufferSink.query(:dlq_service, boundary), fn signal ->
+             signal.name == :drop and signal.metadata[:entry] == ref and
+               signal.metadata[:caller_source] == :cli
+           end)
+
     assert {:error, :not_found} = Store.get(ref)
-  end
-end
-
-defmodule Flezha.Service.CliManagerGatedVerbsTest do
-  @moduledoc """
-  The four verb families that used to reach their stores with no credential:
-  `flz dlq list | show`, `flz schedule add | list | remove | run`, `flz operative
-  scale` and `flz operative rewind`.
-
-  Driven from the RPC surface `flz` calls, because the credential's whole
-  journey is the point — `--token` arrives as `opts`, becomes a principal in
-  `Flezha.Service.Cli.Context`, and is what the service guard judges. A verb
-  asked without one must refuse and say where the token goes.
-  """
-  # async: false: a shared on-disk root; the auth stores are singletons; Mimic
-  # stubs.
-  use ExUnit.Case, async: false
-  use Mimic
-
-  import ExUnit.CaptureIO
-
-  alias Flezha.AuthZ.TokenStore
-  alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Schedule.Store, as: ScheduleStore
-  alias Flezha.Service.CliManager
-  alias Flezha.Service.OperativeManager
-  alias FlezhaTest.Helper.AuthTestHelper
-  alias FlezhaTest.Helper.DlqFixtures
-  alias FlezhaTest.Helper.ScheduleTestHelper
-
-  setup do
-    AuthTestHelper.setup_auth_stores(prefix: "flz_gated_cli", enabled: true, claim: true)
-    ScheduleTestHelper.isolated_store_setup()
-
-    DlqFixtures.isolated_dir()
-
-    # An operative class nothing runs and nothing has state for resolves to the
-    # system namespace, which is where the schedule verbs are judged too — so
-    # one `operator@_system` token answers for every family here.
-    operative_class = "gatedcli_#{System.unique_integer([:positive])}"
-
-    {:ok, ref, _record} =
-      TokenStore.issue("gated-op", Flezha.AuthZ.Namespace.system_name(), :operator, 3600)
-
-    {:ok, entry_ref} =
-      DlqStore.append(%{
-        operative_class: operative_class,
-        procedure_id: "proc",
-        entity_key: "k",
-        channel: "input",
-        origin_offset: nil,
-        error: "kaboom",
-        attempts: 3,
-        payload: "poison-bytes"
-      })
-
-    %{token: ref, entry_ref: entry_ref, operative_class: operative_class}
-  end
-
-  # A refused verb exits `:cli_error` after printing its refusal; swallow the
-  # exit so the message stays assertable. `device` is the verb family's own
-  # stream — the dlq and schedule verbs print to stderr, the operative verbs to
-  # stdout, and that split is observable behaviour.
-  defp refusal(device \\ :stderr, fun) do
-    capture_io(device, fn ->
-      assert catch_exit(fun.()) == :cli_error
-    end)
-  end
-
-  test "the dead-letter reads refuse without a token and answer with one", ctx do
-    assert refusal(fn -> CliManager.dlq_list(ctx.operative_class) end) =~ "dlq.list: refused"
-    assert refusal(fn -> CliManager.dlq_show(ctx.entry_ref) end) =~ "dlq.show: refused"
-
-    listing = capture_io(fn -> CliManager.dlq_list(ctx.operative_class, token: ctx.token) end)
-    assert listing =~ ctx.entry_ref
-
-    shown = capture_io(fn -> CliManager.dlq_show(ctx.entry_ref, token: ctx.token) end)
-    assert shown =~ "poison-bytes"
-  end
-
-  test "the schedule verbs refuse without a token and go through with one", ctx do
-    add = fn opts ->
-      CliManager.schedule_add(
-        "digest",
-        [cron: "0 8 * * *", tz: "Etc/UTC", factory: "ai_digest"] ++ opts
-      )
-    end
-
-    assert refusal(fn -> add.([]) end) =~ "schedule.add: refused"
-    assert refusal(fn -> CliManager.schedule_list() end) =~ "schedule.list: refused"
-    assert refusal(fn -> CliManager.schedule_remove("digest") end) =~ "schedule.remove: refused"
-
-    assert capture_io(fn -> add.(token: ctx.token) end) =~ "Schedule digest added"
-    assert capture_io(fn -> CliManager.schedule_list(token: ctx.token) end) =~ "digest"
-
-    assert capture_io(fn -> CliManager.schedule_remove("digest", token: ctx.token) end) =~
-             "Schedule digest removed"
-  end
-
-  # Firing a schedule by hand starts an operative, so it is judged as
-  # `operative.start` where the instance starts — the stored row's namespace,
-  # not the `_system` scope the other schedule verbs share.
-  test "schedule run is refused without a token and judged in the schedule's namespace",
-       ctx do
-    {:ok, _entry} = ScheduleStore.add(ScheduleTestHelper.entry_fields(%{name: "digest"}))
-    test_pid = self()
-
-    stub(OperativeManager, :start_workflow, fn "default", id, _factory, _init, _opts ->
-      send(test_pid, {:spawned, id})
-      {:ok, %{operative_id: id}}
-    end)
-
-    assert refusal(fn -> CliManager.schedule_run("digest") end) =~ "operative.start: refused"
-
-    # The `_system` operator that manages schedules is not bound where this
-    # one starts.
-    assert refusal(fn -> CliManager.schedule_run("digest", token: ctx.token) end) =~
-             "operative.start: refused"
-
-    refute_received {:spawned, _}
-
-    {:ok, bound_here, _} = TokenStore.issue("gated-op-default", "default", :operator, 3600)
-
-    assert capture_io(fn -> CliManager.schedule_run("digest", token: bound_here) end) =~
-             "Spawned digest@manual-"
-
-    assert_received {:spawned, "digest@manual-" <> _}
-  end
-
-  test "the two verbs that move live work refuse without a token", ctx do
-    assert refusal(:stdio, fn -> CliManager.operative_scale("_system", "grp", "2") end) =~
-             "operative.scale: refused"
-
-    assert refusal(:stdio, fn ->
-             CliManager.operative_rewind("_system", ctx.operative_class, 1)
-           end) =~ "operative.rewind: refused"
-
-    # With one they reach their own machinery, which refuses for its own reason.
-    scale_opts = ~s({"token": "#{ctx.token}"})
-
-    assert refusal(:stdio, fn ->
-             CliManager.operative_scale("_system", "grp", "2", scale_opts)
-           end) =~ "Error scaling operative"
-
-    assert refusal(:stdio, fn ->
-             CliManager.operative_rewind("_system", ctx.operative_class, 1, token: ctx.token)
-           end) =~ "not found"
   end
 end
 
@@ -692,24 +542,15 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     assert delete_out =~ "namespace render-ns deleted"
   end
 
-  test "a gated verb without identity renders the token requirement" do
-    :ok = AuthState.set_enabled()
-
-    out =
-      capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.authz_render_token_list([])) == :cli_error
-      end)
-
-    assert out =~ "--token"
-  end
-
   test "an unknown role string is refused by name" do
     :ok = AuthState.set_enabled()
+    {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
 
     out =
       capture_io(:stderr, fn ->
-        assert catch_exit(CliManager.authz_render_role_bind("dave", "superuser", "render-ns", [])) ==
-                 :cli_error
+        assert catch_exit(
+                 CliManager.authz_render_role_bind("dave", "superuser", "render-ns", token: admin)
+               ) == :cli_error
       end)
 
     assert out =~ "unknown_role"

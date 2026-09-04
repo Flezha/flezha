@@ -13,11 +13,8 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
-fn handle_status(_args: &[String]) {
-    rpc::run(
-        "Flezha.Service.CliManager.boot_status()".to_string(),
-        rpc::PROPAGATE,
-    );
+fn handle_status(args: &[String]) {
+    rpc::run("boot_status", &[], &[], args, rpc::PROPAGATE);
 }
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
@@ -29,7 +26,10 @@ fn handle_await(args: &[String]) {
     });
 
     rpc::run(
-        format!("Flezha.Service.CliManager.boot_await({})", timeout_ms),
+        "boot_await",
+        &[timeout_ms.to_string()],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }
@@ -37,13 +37,19 @@ fn handle_await(args: &[String]) {
 /// The wait in milliseconds, from the operator's seconds. `extract_param` reads
 /// the value in every spelling and refuses a flag written with none; the walk is
 /// what refuses a word this verb cannot act on at all, because answering that
-/// with the default wait is a silence, not a wait.
+/// with the default wait is a silence, not a wait. The credential is the one
+/// other word every verb accepts.
 fn read_timeout_ms(args: &[String]) -> Result<u64, String> {
     let (long, short) = ("--timeout", "-t");
 
     let mut i = 0;
     while i < args.len() {
-        match args::resolve_spelling(&args[i], long, short) {
+        let spelling = match args::resolve_spelling(&args[i], long, short) {
+            Spelling::Other => args::resolve_spelling(&args[i], "--token", "--token"),
+            known => known,
+        };
+
+        match spelling {
             Spelling::Attached(_) => {}
             Spelling::Separated => i += 1,
             Spelling::Other => return Err(format!("Error: unexpected argument '{}'", args[i])),

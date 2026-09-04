@@ -5,7 +5,7 @@ defmodule Flezha.Service.Schedule do
   show an operator when a schedule fires next.
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
-  argument and answers data.
+  argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
 
   Schedule management is a `_system` privilege. The store is one durable table
   for the whole controller and the hub is a cluster-wide singleton: a listing
@@ -20,86 +20,66 @@ defmodule Flezha.Service.Schedule do
   itself, published so it does not have to.
   """
 
+  use Flezha.AuthZ.Verb
+
   alias Flezha.Schedule.Cron
   alias Flezha.Schedule.Hub
   alias Flezha.Schedule.Store
   alias Flezha.Service.CallerContext
 
-  @audit_source :schedule_service
-
   @type caller_context :: CallerContext.t()
 
   @doc "Every stored schedule, by name."
   @spec list(caller_context()) :: {:ok, [map()]} | {:error, term()}
-  def list(caller_context) do
-    schedule_read(caller_context, fn -> {:ok, Store.list()} end)
+  verb list(caller_context), verb: :schedule_list do
+    {:ok, Store.list()}
   end
 
   @doc "Store a schedule from `fields`."
   @spec add(map(), caller_context()) :: term() | {:error, term()}
-  def add(fields, caller_context) when is_map(fields) do
-    gated(caller_context, :"schedule.add", fields[:name], fn -> Store.add(fields) end)
+  verb add(fields, caller_context), verb: :schedule_add, target: &schedule_target/1 do
+    Store.add(fields)
   end
 
   @doc "Forget the schedule `name`."
   @spec remove(String.t(), caller_context()) :: term() | {:error, term()}
-  def remove(name, caller_context) when is_binary(name) do
-    gated(caller_context, :"schedule.remove", name, fn -> Store.remove(name) end)
+  verb remove(name, caller_context), verb: :schedule_remove do
+    Store.remove(name)
   end
 
   @doc "What the hub currently holds for each schedule."
   @spec statuses(caller_context()) :: {:ok, term()} | {:error, term()}
-  def statuses(caller_context) do
-    schedule_read(caller_context, fn -> {:ok, Hub.statuses()} end)
+  verb statuses(caller_context), verb: :schedule_list do
+    {:ok, Hub.statuses()}
   end
 
   @doc "Assert `entry` on the hub, so it starts firing."
   @spec assert_entry(term(), caller_context()) :: term() | {:error, term()}
-  def assert_entry(entry, caller_context) do
-    gated(caller_context, :"schedule.assert", schedule_name(entry), fn -> Hub.assert(entry) end)
+  verb assert_entry(entry, caller_context), verb: :schedule_assert, target: &schedule_target/1 do
+    Hub.assert(entry)
   end
 
   @doc "Retract the schedule `name` from the hub, so it stops firing."
   @spec retract(String.t(), caller_context()) :: term() | {:error, term()}
-  def retract(name, caller_context) when is_binary(name) do
-    gated(caller_context, :"schedule.retract", name, fn -> Hub.retract(name) end)
+  verb retract(name, caller_context), verb: :schedule_retract do
+    Hub.retract(name)
   end
 
   @doc "Parse a cron expression, or say why it cannot be parsed."
   @spec parse_cron(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
-  def parse_cron(expression, caller_context) when is_binary(expression) do
-    CallerContext.validated(caller_context, fn -> Cron.parse(expression) end)
+  verb parse_cron(expression, caller_context), verb: :cron_arithmetic do
+    Cron.parse(expression)
   end
 
   @doc "The next UTC instant a parsed cron fires after `after_utc`, in `tz`."
   @spec next_fire(term(), String.t(), DateTime.t(), caller_context()) ::
           {:ok, term()} | {:error, term()}
-  def next_fire(cron, tz, %DateTime{} = after_utc, caller_context) do
-    CallerContext.validated(caller_context, fn -> Cron.next_fire(cron, tz, after_utc) end)
+  verb next_fire(cron, tz, after_utc, caller_context), verb: :cron_arithmetic do
+    Cron.next_fire(cron, tz, after_utc)
   end
 
-  defp schedule_read(caller_context, fun) do
-    CallerContext.scoped_read(
-      caller_context,
-      :"schedule.list",
-      CallerContext.system_scope(),
-      fun
-    )
-  end
-
-  defp gated(caller_context, action, name, fun) do
-    CallerContext.gated(
-      caller_context,
-      action,
-      CallerContext.system_scope(),
-      @audit_source,
-      %{schedule: name},
-      fun
-    )
-  end
-
-  # `assert_entry/2` takes a term, so the audit reads the name only when there
-  # is one to read.
-  defp schedule_name(%{name: name}), do: name
-  defp schedule_name(_entry), do: nil
+  # `add/2` and `assert_entry/2` take a map or a term, so the audit reads the
+  # name only when there is one to read.
+  defp schedule_target([%{name: name} | _]), do: %{schedule: name}
+  defp schedule_target(_args), do: %{}
 end

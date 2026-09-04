@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::rpc::{self, token_opts_fragment};
+use crate::rpc::{self, text};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -44,12 +44,14 @@ fn handle_at(args: &[String]) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.state_at(\"{}\", \"{}\", \"{}\")",
-            &args[1],
-            &args[2],
-            args::output_format(&args[3..]),
-        ),
+        "state_at",
+        &[
+            text(&args[1]),
+            text(&args[2]),
+            text(args::output_format(&args[3..])),
+        ],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }
@@ -63,33 +65,24 @@ fn handle_retention(args: &[String]) {
     let hours = args::or_refuse(args::read_number::<u64>("<hours>", &args[2]));
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.state_retention(\"{}\", \"{}\")",
-            &args[1], hours,
-        ),
+        "state_retention",
+        &[text(&args[1]), text(&hours.to_string())],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }
 
 /// The Entity-scoped write verbs — `rotate`, `delete`, `outbox` — take one
 /// Entity path and no output format; they differ only in the CliManager
-/// function they call. The identity token (`--token` / FLEZHA_TOKEN) rides
-/// the trailing opts.
+/// function they call.
 fn handle_entity_verb(args: &[String], verb: &str, rpc_fun: &str) {
     if args.len() < 2 {
         eprintln!("Usage: flz state {verb} <operative/procedure/entity_key> [--token <token>]");
         exit(1);
     }
 
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.{}(\"{}\", {})",
-            rpc_fun,
-            &args[1],
-            token_opts_fragment(&args[2..]),
-        ),
-        rpc::PROPAGATE,
-    );
+    rpc::run(rpc_fun, &[text(&args[1])], &[], args, rpc::PROPAGATE);
 }
 
 /// The read verbs — `list`, `journal`, `inbox` — take one scope argument plus an
@@ -102,13 +95,10 @@ fn handle_read(args: &[String], verb: &str, scope: &str, rpc_fun: &str) {
     }
 
     rpc::run(
-        format!(
-            "Flezha.Service.CliManager.{}(\"{}\", \"{}\", {})",
-            rpc_fun,
-            &args[1],
-            args::output_format(&args[2..]),
-            token_opts_fragment(&args[2..]),
-        ),
+        rpc_fun,
+        &[text(&args[1]), text(args::output_format(&args[2..]))],
+        &[],
+        args,
         rpc::PROPAGATE,
     );
 }

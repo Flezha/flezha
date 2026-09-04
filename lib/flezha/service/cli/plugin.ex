@@ -16,47 +16,56 @@ defmodule Flezha.Service.Cli.Plugin do
   # provider with a strict allow-list refuses every key it does not own.
   @subscription_keys ["extensions", "trigger"]
 
-  @doc "Enables plugin."
-  def enable_plugin(plugin_id, provider_id, plugin_flags_json, opts_json) do
+  @doc """
+  The row a `plugin enable` is judged by: the namespace in the operator's
+  options, with the decoded provider, flags and options the body needs.
+  """
+  def enable_row([_plugin_id, provider_id, plugin_flags_json, opts_json | _]) do
     with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
          {:ok, plugin_flags} <- Jason.decode(plugin_flags_json),
          {:ok, opts} <- Jason.decode(opts_json) do
-      subscriptions = extract_subscriptions(plugin_flags, opts)
-      namespace = Map.get(opts, "namespace", "default")
-      operative_id = Map.get(plugin_flags, "operative_id") || Map.get(opts, "operative_id")
-
-      Context.with_cli_authorization(
-        Context.json_token_opts(opts_json),
-        :"plugin.enable",
-        namespace,
-        %{plugin_id: plugin_id, provider: provider_id},
-        fn ->
-          plugin = %Plugin{
-            id: plugin_id,
-            provider: provider_mod,
-            namespace: namespace,
-            operative_id: operative_id,
-            opts: provider_opts(plugin_flags),
-            subscriptions: subscriptions
-          }
-
-          case PluginManager.enable_plugin(plugin_id, plugin) do
-            {:ok, :already_enabled} ->
-              IO.puts(
-                "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
-                  "untouched (options were not compared)."
-              )
-
-            {:ok, _msg} ->
-              IO.puts("Plugin #{plugin_id} enabled successfully.")
-
-            {:error, reason} ->
-              Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
-          end
-        end
-      )
+      {:ok,
+       %{
+         namespace: Map.get(opts, "namespace", "default"),
+         provider_mod: provider_mod,
+         plugin_flags: plugin_flags,
+         opts: opts
+       }}
     else
       {:error, reason} -> Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
+    end
+  end
+
+  @doc "The row a `plugin disable` is judged by: the namespace the plugin is enabled in."
+  def plugin_row([plugin_id | _]),
+    do: {:ok, %{namespace: PluginManager.target_namespace(plugin_id)}}
+
+  @doc "Enables plugin."
+  def enable_plugin(plugin_id, _provider_id, _plugin_flags_json, _opts_json, %{row: row}) do
+    %{namespace: namespace, provider_mod: provider_mod, plugin_flags: plugin_flags, opts: opts} =
+      row
+
+    plugin = %Plugin{
+      id: plugin_id,
+      provider: provider_mod,
+      namespace: namespace,
+      operative_id: Map.get(plugin_flags, "operative_id") || Map.get(opts, "operative_id"),
+      opts: provider_opts(plugin_flags),
+      subscriptions: extract_subscriptions(plugin_flags, opts)
+    }
+
+    case PluginManager.enable_plugin(plugin_id, plugin) do
+      {:ok, :already_enabled} ->
+        IO.puts(
+          "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
+            "untouched (options were not compared)."
+        )
+
+      {:ok, _msg} ->
+        IO.puts("Plugin #{plugin_id} enabled successfully.")
+
+      {:error, reason} ->
+        Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -119,115 +128,62 @@ defmodule Flezha.Service.Cli.Plugin do
   Disables a plugin — or, when the id was fanned out over a partition group,
   every `#pK` instance of it.
   """
-  def disable_plugin(plugin_id, opts \\ []) do
-    Context.with_cli_authorization(
-      opts,
-      :"plugin.disable",
-      PluginManager.target_namespace(plugin_id),
-      %{plugin_id: plugin_id},
-      fn ->
-        case PluginManager.disable_plugin_group(plugin_id) do
-          {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
-          {:error, reason} -> Context.cli_error!("Error disabling plugin: #{inspect(reason)}.")
-        end
-      end
-    )
+  def disable_plugin(plugin_id, _call) do
+    case PluginManager.disable_plugin_group(plugin_id) do
+      {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
+      {:error, reason} -> Context.cli_error!("Error disabling plugin: #{inspect(reason)}.")
+    end
   end
 
-  # A running plugin's namespace comes from its own registration; an unknown
-  # id authorizes against `_system` (and then fails on its own terms).
   @doc "Install a plugin from a `.fpz` archive."
-  def install_plugin(path, opts_json) do
-    Context.with_cli_authorization(
-      Context.json_token_opts(opts_json),
-      :"plugin.install",
-      "_system",
-      %{path: path},
-      fn ->
-        case Installer.install(path) do
-          {:ok, installed} ->
-            IO.puts(
-              "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
-            )
+  def install_plugin(path, _call) do
+    case Installer.install(path) do
+      {:ok, installed} ->
+        IO.puts(
+          "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
+        )
 
-          {:error, reason} ->
-            Context.cli_error!("Error installing plugin: #{inspect(reason)}.")
-        end
-      end
-    )
+      {:error, reason} ->
+        Context.cli_error!("Error installing plugin: #{inspect(reason)}.")
+    end
   end
 
   @doc "Upgrade an installed plugin to a new version in `path`."
-  def upgrade_plugin(plugin_id, path, opts_json) do
-    Context.with_cli_authorization(
-      Context.json_token_opts(opts_json),
-      :"plugin.upgrade",
-      "_system",
-      %{plugin_id: plugin_id},
-      fn ->
-        case Installer.upgrade(plugin_id, path) do
-          {:ok, installed} ->
-            IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
-
-          {:error, reason} ->
-            Context.cli_error!("Error upgrading plugin: #{inspect(reason)}.")
-        end
-      end
-    )
+  def upgrade_plugin(plugin_id, path, _call) do
+    case Installer.upgrade(plugin_id, path) do
+      {:ok, installed} -> IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
+      {:error, reason} -> Context.cli_error!("Error upgrading plugin: #{inspect(reason)}.")
+    end
   end
 
   @doc "Uninstall an installed plugin by id."
-  def uninstall_plugin(plugin_id, opts_json) do
-    Context.with_cli_authorization(
-      Context.json_token_opts(opts_json),
-      :"plugin.uninstall",
-      "_system",
-      %{plugin_id: plugin_id},
-      fn ->
-        case Installer.uninstall(plugin_id) do
-          :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
-          {:error, reason} -> Context.cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
-        end
-      end
-    )
+  def uninstall_plugin(plugin_id, _call) do
+    case Installer.uninstall(plugin_id) do
+      :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
+      {:error, reason} -> Context.cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
+    end
   end
 
   @doc "Enable an installed plugin (routes through the Installer)."
-  def installer_enable_plugin(plugin_id, opts_json) do
-    Context.with_cli_authorization(
-      Context.json_token_opts(opts_json),
-      :"plugin.enable",
-      "_system",
-      %{plugin_id: plugin_id},
-      fn ->
-        case Installer.enable(plugin_id) do
-          :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-          {:error, reason} -> Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
-        end
-      end
-    )
+  def installer_enable_plugin(plugin_id, _call) do
+    case Installer.enable(plugin_id) do
+      :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
+      {:error, reason} -> Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
+    end
   end
 
   @doc "Disable an installed plugin (routes through the Installer)."
-  def installer_disable_plugin(plugin_id, opts_json) do
-    Context.with_cli_authorization(
-      Context.json_token_opts(opts_json),
-      :"plugin.disable",
-      "_system",
-      %{plugin_id: plugin_id},
-      fn ->
-        case Installer.disable(plugin_id) do
-          :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
-          {:error, reason} -> Context.cli_error!("Error disabling plugin: #{inspect(reason)}.")
-        end
-      end
-    )
+  def installer_disable_plugin(plugin_id, _call) do
+    case Installer.disable(plugin_id) do
+      :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
+      {:error, reason} -> Context.cli_error!("Error disabling plugin: #{inspect(reason)}.")
+    end
   end
 
   @doc """
   List every installed plugin. `format` is `"text" | "json"`.
   """
-  def list_installed_plugins(format \\ "text") do
+  def list_installed_plugins(format, _call) do
     plugins = Installer.list()
 
     case format do
@@ -251,7 +207,7 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   @doc "Return detailed information about an installed plugin."
-  def installed_plugin_info(plugin_id) do
+  def installed_plugin_info(plugin_id, _call) do
     case Installer.info(plugin_id) do
       {:ok, p} ->
         IO.puts("#{p.id}@#{p.version}")
@@ -274,7 +230,7 @@ defmodule Flezha.Service.Cli.Plugin do
   Returns `true` when `plugin_id` is tracked by `Flezha.Plugin.Installer`,
   so the CLI's `enable`/`disable` commands know which code path to use.
   """
-  def installed_plugin?(plugin_id) do
+  def installed_plugin?(plugin_id, _call) do
     case Installer.info(plugin_id) do
       {:ok, _} -> true
       _ -> false
@@ -302,7 +258,7 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   @doc "Show help for a specific plugin provider."
-  def plugin_help(provider_id) do
+  def plugin_help(provider_id, _call) do
     case get_plugin_provider_mod(provider_id) do
       {:ok, provider_mod} ->
         try do
@@ -346,7 +302,7 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   @doc "List all available plugin providers."
-  def list_plugins() do
+  def list_plugins(_call) do
     enabled_plugins = Config.get_enabled_plugins()
 
     IO.puts("Available Plugin Providers:")

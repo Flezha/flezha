@@ -4,7 +4,6 @@ defmodule Flezha.Service.Cli.Controller do
   handler, and the controller status block.
   """
 
-  alias Flezha.Service.Cli.Context
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
 
@@ -15,21 +14,13 @@ defmodule Flezha.Service.Cli.Controller do
 
       flz-controller-stop-result: clean | partial | forced | already_in_progress
 
-  Options (keys may be atoms or binaries):
+  The call's options (keys may be atoms or binaries):
     * `:timeout_ms` — overrides the configured timeout
     * `:no_wait` — fire-and-forget; print marker `clean` and return immediately
     * `:force` — skip quiesce + drain, finalise only
   """
-  def controller_stop(opts \\ []) do
-    opts_map = normalize_controller_stop_opts(opts)
-
-    Context.with_cli_authorization(
-      [token: Map.get(opts_map, :token)],
-      :"controller.stop",
-      "_system",
-      %{},
-      fn -> do_controller_stop(opts_map) end
-    )
+  def controller_stop(%{opts: opts}) do
+    do_controller_stop(normalize_controller_stop_opts(opts))
   end
 
   defp do_controller_stop(opts_map) do
@@ -161,13 +152,6 @@ defmodule Flezha.Service.Cli.Controller do
     end)
   end
 
-  defp normalize_controller_stop_opts(opts) when is_map(opts) do
-    Enum.into(opts, %{}, fn
-      {k, v} when is_atom(k) -> {k, v}
-      {k, v} when is_binary(k) -> {String.to_atom(k), v}
-    end)
-  end
-
   defp maybe_put(list, _k, nil), do: list
   defp maybe_put(list, _k, false), do: list
   defp maybe_put(list, k, v), do: Keyword.put(list, k, v)
@@ -176,7 +160,7 @@ defmodule Flezha.Service.Cli.Controller do
   `flz controller status` RPC. Prints a human-readable status block
   including graceful-shutdown state and configuration knobs.
   """
-  def controller_status(output_format \\ "text") do
+  def controller_status(output_format, _call) do
     status = Map.merge(safe_shutdown_status(), durability_status())
 
     case output_format do

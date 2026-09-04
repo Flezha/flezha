@@ -20,7 +20,9 @@ defmodule Flezha.Service.PluginManager do
   """
 
   use GenServer
+  use Flezha.AuthZ.Verb
 
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.PartitionGroup
@@ -463,18 +465,14 @@ defmodule Flezha.Service.PluginManager do
 
   # ---------- Published surface ----------
   #
-  # The context-taking half a consumer is allowed to call. Each function
-  # authorizes the action `flz plugin` uses for the same verb, in the plugin's
-  # own namespace, and answers data. Everything above stays internal.
-
-  @audit_source :plugin_service
+  # The context-taking half a consumer is allowed to call. Each function binds
+  # the row `flz plugin` binds for the same verb, judged in the plugin's own
+  # namespace, and answers data. Everything above stays internal.
 
   @doc "Every enabled plugin, by id."
   @spec list(CallerContext.t()) :: {:ok, map()} | {:error, term()}
-  def list(caller_context) do
-    CallerContext.scoped_read(caller_context, :"plugin.list", CallerContext.system_scope(), fn ->
-      {:ok, get_plugins()}
-    end)
+  verb list(caller_context), verb: :plugin_list do
+    {:ok, get_plugins()}
   end
 
   @doc """
@@ -486,17 +484,10 @@ defmodule Flezha.Service.PluginManager do
   authorized in, defaulting to `"default"` as the CLI's does.
   """
   @spec enable(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
-  def enable(plugin_id, fields, caller_context) when is_binary(plugin_id) and is_list(fields) do
-    namespace = Keyword.get(fields, :namespace, "default")
-
-    CallerContext.gated(
-      caller_context,
-      :"plugin.enable",
-      namespace,
-      @audit_source,
-      %{plugin_id: plugin_id},
-      fn -> enable_plugin(plugin_id, Plugin.new(fields)) end
-    )
+  verb enable(plugin_id, fields, caller_context) when is_binary(plugin_id) and is_list(fields),
+    verb: :plugin_enable,
+    row: &fields_row/1 do
+    enable_plugin(plugin_id, Plugin.new(fields))
   end
 
   @doc """
@@ -504,15 +495,10 @@ defmodule Flezha.Service.PluginManager do
   every `#pK` instance of it.
   """
   @spec disable(String.t(), CallerContext.t()) :: term() | {:error, term()}
-  def disable(plugin_id, caller_context) when is_binary(plugin_id) do
-    CallerContext.gated(
-      caller_context,
-      :"plugin.disable",
-      target_namespace(plugin_id),
-      @audit_source,
-      %{plugin_id: plugin_id},
-      fn -> disable_plugin_group(plugin_id) end
-    )
+  verb disable(plugin_id, caller_context) when is_binary(plugin_id),
+    verb: :plugin_disable,
+    row: &plugin_row/1 do
+    disable_plugin_group(plugin_id)
   end
 
   @doc """
@@ -525,7 +511,12 @@ defmodule Flezha.Service.PluginManager do
   def target_namespace(plugin_id) when is_binary(plugin_id) do
     case Map.get(get_plugins(), plugin_id) do
       {namespace, _operative_id} when is_binary(namespace) -> namespace
-      _other -> CallerContext.system_scope()
+      _other -> Namespace.system_name()
     end
   end
+
+  defp fields_row([_plugin_id, fields]),
+    do: {:ok, %{namespace: Keyword.get(fields, :namespace, "default")}}
+
+  defp plugin_row([plugin_id]), do: {:ok, %{namespace: target_namespace(plugin_id)}}
 end

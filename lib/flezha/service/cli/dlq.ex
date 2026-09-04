@@ -2,36 +2,42 @@ defmodule Flezha.Service.Cli.Dlq do
   @moduledoc """
   `flz dlq` — list, show, replay and drop for parked records.
 
-  Rendering only. `Flezha.Service.Dlq` owns the reads, the authorization, the
-  audit and the re-drive, so the terminal and the console reach the store
-  through one gate instead of two.
+  Rendering only: the store call and the re-drive are `Flezha.Service.Dlq`'s,
+  and the authorization and audit are the verb's row, so the terminal and the
+  console reach the store through one gate.
   """
 
+  alias Flezha.Dlq.Store
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Dlq, as: DlqSvc
+
+  @doc "The row a `dlq list` is judged by: the named class's namespace, `_system` for none."
+  def class_row([operative_class | _]), do: DlqSvc.class_row(class_filter(operative_class))
+
+  @doc "The entry a `dlq show | replay | drop` names, or the family's not-found."
+  def locate([entry_ref | _]) do
+    case DlqSvc.entry_row(entry_ref) do
+      {:ok, _row} = located -> located
+      {:error, reason} -> render_dlq_error(reason)
+    end
+  end
 
   @doc """
   `flz dlq list [operative]` — parked entries, nearest-to-expiry (oldest)
   first.
   """
-  def dlq_list(operative_class \\ "", opts \\ []) do
-    filter = if operative_class == "", do: nil, else: operative_class
-
-    case DlqSvc.list(filter, Context.cli_context(opts)) do
-      {:ok, []} -> IO.puts("dead-letter queue is empty")
-      {:ok, entries} -> render_listing(entries)
-      {:error, reason} -> render_dlq_error(reason, "dlq.list")
+  def dlq_list(operative_class, _call) do
+    case Store.list(class_filter(operative_class)) do
+      [] -> IO.puts("dead-letter queue is empty")
+      entries -> render_listing(entries)
     end
   end
 
   @doc """
   `flz dlq show <operative/procedure/id>` — entry metadata + payload preview.
   """
-  def dlq_show(entry_ref, opts \\ []) do
-    case DlqSvc.get(entry_ref, Context.cli_context(opts)) do
-      {:ok, entry, payload} -> render_entry(entry, payload)
-      {:error, reason} -> render_dlq_error(reason, "dlq.show")
-    end
+  def dlq_show(_entry_ref, %{row: %{entry: entry, payload: payload}}) do
+    render_entry(entry, payload)
   end
 
   @doc """
@@ -40,8 +46,8 @@ defmodule Flezha.Service.Cli.Dlq do
   removes the entry; a failing one re-parks it with `generation`
   incremented.
   """
-  def dlq_replay(entry_ref, opts \\ []) do
-    case DlqSvc.replay(entry_ref, Context.cli_context(opts)) do
+  def dlq_replay(entry_ref, %{row: %{entry: entry, payload: payload}}) do
+    case DlqSvc.redrive(entry_ref, entry, payload) do
       {:ok, :removed} ->
         IO.puts("replay succeeded; #{entry_ref} removed")
 
@@ -49,7 +55,7 @@ defmodule Flezha.Service.Cli.Dlq do
         IO.puts("replay failed; #{entry_ref} re-parked with generation #{generation}")
 
       {:error, reason} ->
-        render_dlq_error(reason, "dlq.replay")
+        render_dlq_error(reason)
     end
   end
 
@@ -57,12 +63,13 @@ defmodule Flezha.Service.Cli.Dlq do
   `flz dlq drop <operative/procedure/id>` — discard a parked entry and its
   payload. Audited: the drop is deliberate data loss.
   """
-  def dlq_drop(entry_ref, opts \\ []) do
-    case DlqSvc.drop(entry_ref, Context.cli_context(opts)) do
-      :ok -> IO.puts("dropped #{entry_ref}")
-      {:error, reason} -> render_dlq_error(reason, "dlq.drop")
-    end
+  def dlq_drop(entry_ref, _call) do
+    :ok = Store.drop(entry_ref)
+    IO.puts("dropped #{entry_ref}")
   end
+
+  defp class_filter(""), do: nil
+  defp class_filter(operative_class), do: operative_class
 
   defp render_listing(entries) do
     IO.puts(
@@ -113,31 +120,29 @@ defmodule Flezha.Service.Cli.Dlq do
     IO.puts("payload            #{rendered}")
   end
 
-  defp render_dlq_error({:forbidden, reason}, action), do: Context.refuse!(action, reason)
-
-  defp render_dlq_error(:not_found, _action) do
+  defp render_dlq_error(:not_found) do
     Context.cli_error!("error: DLQ entry not found", :stderr)
   end
 
-  defp render_dlq_error(:bad_entry_ref, _action) do
+  defp render_dlq_error(:bad_entry_ref) do
     Context.cli_error!("error: expected <operative>/<procedure>/<entry-id>", :stderr)
   end
 
-  defp render_dlq_error(:payload_not_replayable, _action) do
+  defp render_dlq_error(:payload_not_replayable) do
     Context.cli_error!(
       "error: entry carries no payload bytes (inter-procedure input); inspect or drop it",
       :stderr
     )
   end
 
-  defp render_dlq_error(:operative_not_running, _action) do
+  defp render_dlq_error(:operative_not_running) do
     Context.cli_error!(
       "error: the entry's operative is not running; start it before replaying",
       :stderr
     )
   end
 
-  defp render_dlq_error(reason, _action) do
+  defp render_dlq_error(reason) do
     Context.cli_error!("error: #{inspect(reason)}", :stderr)
   end
 end

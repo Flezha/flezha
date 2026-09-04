@@ -1,36 +1,25 @@
 defmodule Flezha.Service.Cli.Observe do
   @moduledoc """
-  `flz observe` — sources, sinks, enable, disable and tail.
+  `flz observe` — sources, sinks, enable, disable and tail, over the effects
+  `Flezha.Service.Observability` shares with the console.
   """
 
   alias Flezha.Observability.Signal
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Observability, as: ObsSvc
 
-  def observability_list_sources(opts \\ []) do
-    ObsSvc.list_sources(Context.cli_context(opts))
-  end
-
-  def observability_enable_source(source, opts \\ []) when is_atom(source) do
-    ObsSvc.enable_source(source, Context.cli_context(opts))
-  end
-
-  def observability_disable_source(source, opts \\ []) when is_atom(source) do
-    ObsSvc.disable_source(source, Context.cli_context(opts))
-  end
-
   @doc """
   CLI entry point for `flz observe sources`. Renders text or JSON.
   """
-  def observability_render_sources(format) when format in ["text", "json"] do
-    case ObsSvc.list_sources(Context.cli_context([])) do
+  def observability_render_sources(format, _call) when format in ["text", "json"] do
+    case ObsSvc.sources() do
       {:ok, sources} -> render_sources_output(sources, format)
       {:error, reason} -> render_error(reason)
     end
   end
 
-  def observability_render_sinks(format) when format in ["text", "json"] do
-    case ObsSvc.list_sinks(Context.cli_context([])) do
+  def observability_render_sinks(format, _call) when format in ["text", "json"] do
+    case ObsSvc.sinks() do
       {:ok, sinks} -> render_sinks_output(sinks, format)
       {:error, reason} -> render_error(reason)
     end
@@ -41,23 +30,21 @@ defmodule Flezha.Service.Cli.Observe do
   streams signals as NDJSON (one signal per line) until the calling
   RPC connection closes.
   """
-  def observability_render_tail(source_str, format, opts \\ []) when format in ["text", "json"] do
+  def observability_render_tail(source_str, format, %{opts: opts})
+      when format in ["text", "json"] do
     source = String.to_atom(source_str)
     duration_ms = Keyword.get(opts, :duration_ms, 30_000)
 
-    case ObsSvc.tail(source, Context.cli_context(opts)) do
-      :ok ->
-        tail_loop(source, format, duration_ms)
-
-      {:error, reason} ->
-        render_error(reason)
+    case ObsSvc.tail_source(source) do
+      :ok -> tail_loop(source, format, duration_ms)
+      {:error, reason} -> render_error(reason)
     end
   end
 
-  def observability_render_enable(source_str) do
+  def observability_render_enable(source_str, _call) do
     source = String.to_atom(source_str)
 
-    case ObsSvc.enable_source(source, Context.cli_context([])) do
+    case ObsSvc.enable(source) do
       :ok ->
         IO.puts("source #{source} enabled")
         :ok
@@ -67,10 +54,10 @@ defmodule Flezha.Service.Cli.Observe do
     end
   end
 
-  def observability_render_disable(source_str) do
+  def observability_render_disable(source_str, _call) do
     source = String.to_atom(source_str)
 
-    case ObsSvc.disable_source(source, Context.cli_context([])) do
+    case ObsSvc.disable(source) do
       :ok ->
         IO.puts("source #{source} disabled")
         :ok

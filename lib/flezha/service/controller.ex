@@ -5,9 +5,10 @@ defmodule Flezha.Service.Controller do
   recovery state, and the event subscription a consumer needs to follow it.
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
-  argument and answers data. `local_recovery_snapshot/1` is the exception and is
-  not on the published surface: it is the remote half of `recovery_per_node/3`'s
-  fan-out, which every peer calls by name.
+  argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
+  `local_recovery_snapshot/1` is the exception and is not on the published
+  surface: it is the remote half of `recovery_per_node/3`'s fan-out, which every
+  peer calls by name; `recovery_map/2` is the effect the terminal shares.
 
   The controller's event subscription is deliberately NOT here.
   `Flezha.Service.EventManager.add_handler/1` is `pg:join(scope, event, self())`
@@ -19,6 +20,8 @@ defmodule Flezha.Service.Controller do
   needs controller events still ships code to the controller and compiles it
   there.
   """
+
+  use Flezha.AuthZ.Verb
 
   alias Flezha.Identificator
   alias Flezha.Service.CallerContext
@@ -33,18 +36,14 @@ defmodule Flezha.Service.Controller do
 
   @doc "The hub id for `namespace`, as this controller composes it."
   @spec hub_id(String.t(), caller_context()) :: {:ok, atom()} | {:error, term()}
-  def hub_id(namespace, caller_context) when is_binary(namespace) do
-    CallerContext.scoped_read(caller_context, :"controller.status", namespace, fn ->
-      {:ok, Identificator.hub(namespace)}
-    end)
+  verb hub_id(namespace, caller_context) when is_binary(namespace), verb: :controller_hub_id do
+    {:ok, Identificator.hub(namespace)}
   end
 
   @doc "One hub's recovery state, by hub id."
   @spec recovery_state(atom(), caller_context()) :: {:ok, atom()} | {:error, term()}
-  def recovery_state(hub_id, caller_context) when is_atom(hub_id) do
-    status_read(caller_context, fn ->
-      HubManager.recovery_state(hub_id)
-    end)
+  verb recovery_state(hub_id, caller_context) when is_atom(hub_id), verb: :controller_status do
+    HubManager.recovery_state(hub_id)
   end
 
   @doc """
@@ -56,59 +55,46 @@ defmodule Flezha.Service.Controller do
   """
   @spec recovery_per_node(String.t(), [node()], caller_context()) ::
           {:ok, map()} | {:error, term()}
-  def recovery_per_node(namespace, nodes, caller_context)
-      when is_binary(namespace) and is_list(nodes) do
-    CallerContext.scoped_read(caller_context, :"operative.list", namespace, fn ->
-      {:ok, recovery_map(namespace, nodes)}
-    end)
+  verb recovery_per_node(namespace, nodes, caller_context)
+       when is_binary(namespace) and is_list(nodes),
+       verb: :controller_recovery do
+    {:ok, recovery_map(namespace, nodes)}
   end
 
   @doc "Where the graceful shutdown sequence has reached."
   @spec shutdown_status(caller_context()) :: {:ok, term()} | {:error, term()}
-  def shutdown_status(caller_context) do
-    status_read(caller_context, fn ->
-      {:ok, Coordinator.status()}
-    end)
+  verb shutdown_status(caller_context), verb: :controller_status do
+    {:ok, Coordinator.status()}
   end
 
   @doc "The durability backend this controller is configured for."
   @spec durability_backend(caller_context()) :: {:ok, term()} | {:error, term()}
-  def durability_backend(caller_context) do
-    status_read(caller_context, fn ->
-      {:ok, DurabilityTier.configured_backend()}
-    end)
+  verb durability_backend(caller_context), verb: :controller_status do
+    {:ok, DurabilityTier.configured_backend()}
   end
 
   @doc "Whether durable state is shipped to a remote tier or stays local."
   @spec durability_posture(caller_context()) :: {:ok, term()} | {:error, term()}
-  def durability_posture(caller_context) do
-    status_read(caller_context, fn ->
-      {:ok, DurabilityTier.posture()}
-    end)
+  verb durability_posture(caller_context), verb: :controller_status do
+    {:ok, DurabilityTier.posture()}
   end
 
   @doc "The durability breaches recorded since the controller started."
   @spec durability_breaches(caller_context()) :: {:ok, term()} | {:error, term()}
-  def durability_breaches(caller_context) do
-    status_read(caller_context, fn ->
-      {:ok, DurabilityTier.breaches()}
-    end)
+  verb durability_breaches(caller_context), verb: :controller_status do
+    {:ok, DurabilityTier.breaches()}
   end
 
   @doc "The durability shipper's own status."
   @spec durability_status(caller_context()) :: {:ok, term()} | {:error, term()}
-  def durability_status(caller_context) do
-    status_read(caller_context, fn ->
-      {:ok, DurabilityTier.status()}
-    end)
+  verb durability_status(caller_context), verb: :controller_status do
+    {:ok, DurabilityTier.status()}
   end
 
   @doc "Every data-plane liveness counter this node holds."
   @spec liveness_counters(caller_context()) :: {:ok, term()} | {:error, term()}
-  def liveness_counters(caller_context) do
-    status_read(caller_context, fn ->
-      {:ok, LivenessCounters.snapshot_all()}
-    end)
+  verb liveness_counters(caller_context), verb: :controller_status do
+    {:ok, LivenessCounters.snapshot_all()}
   end
 
   @doc false
@@ -122,18 +108,9 @@ defmodule Flezha.Service.Controller do
     end
   end
 
-  # Every controller-wide read is the same question — may this caller see the
-  # controller's own state — so it is asked in one place.
-  defp status_read(caller_context, fun) do
-    CallerContext.scoped_read(
-      caller_context,
-      :"controller.status",
-      CallerContext.system_scope(),
-      fun
-    )
-  end
-
-  defp recovery_map(namespace, nodes) do
+  @doc false
+  @spec recovery_map(String.t(), [node()]) :: map()
+  def recovery_map(namespace, nodes) do
     hub_id = Identificator.hub(namespace)
     Map.new(nodes, &{&1, node_recovery(&1, hub_id)})
   end

@@ -5,7 +5,9 @@ defmodule Flezha.Service.Fleet do
   its hub, and what is installed.
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
-  argument and answers data.
+  argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data. A fleet read
+  is an operative-topology read — the row `flz runner list` binds — scoped to
+  the namespace asked about rather than to one the caller declares.
 
   The two runner reads are named so they cannot be confused, because the console
   takes both today and the answers differ: `runners/2` is **cluster-wide** — it
@@ -13,6 +15,8 @@ defmodule Flezha.Service.Fleet do
   — while `runners_on_this_node/2` is **node-local**. Two screens took the
   node-local answer while believing it was the fleet's.
   """
+
+  use Flezha.AuthZ.Verb
 
   alias Flezha.Cluster.Directory
   alias Flezha.Plugin.Installer
@@ -23,10 +27,8 @@ defmodule Flezha.Service.Fleet do
 
   @doc "Every runner serving `namespace`, anywhere in the cluster."
   @spec runners(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
-  def runners(namespace, caller_context) do
-    fleet_read(caller_context, namespace, fn ->
-      {:ok, FleetManager.global_runners(namespace)}
-    end)
+  verb runners(namespace, caller_context), verb: :list_runners do
+    {:ok, FleetManager.global_runners(namespace)}
   end
 
   @doc """
@@ -36,56 +38,38 @@ defmodule Flezha.Service.Fleet do
   have" wants `runners/2`.
   """
   @spec runners_on_this_node(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
-  def runners_on_this_node(namespace, caller_context) do
-    fleet_read(caller_context, namespace, fn ->
-      {:ok, FleetManager.active_runners(namespace)}
-    end)
+  verb runners_on_this_node(namespace, caller_context), verb: :list_runners do
+    {:ok, FleetManager.active_runners(namespace)}
   end
 
   @doc "The runners of one factory in `namespace`."
   @spec runners_for_factory(String.t(), String.t(), caller_context()) ::
           {:ok, [term()]} | {:error, term()}
-  def runners_for_factory(namespace, factory_id, caller_context) do
-    fleet_read(caller_context, namespace, fn ->
-      {:ok, FleetManager.runners_for_factory(namespace, factory_id)}
-    end)
+  verb runners_for_factory(namespace, factory_id, caller_context), verb: :list_runners do
+    {:ok, FleetManager.runners_for_factory(namespace, factory_id)}
   end
 
   @doc "The factories declared in `namespace`."
   @spec factories(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
-  def factories(namespace, caller_context) do
-    fleet_read(caller_context, namespace, fn ->
-      {:ok, FleetManager.list_factories(namespace)}
-    end)
+  verb factories(namespace, caller_context), verb: :list_runners do
+    {:ok, FleetManager.list_factories(namespace)}
   end
 
   @doc "The caller context a runner in `namespace` connects with."
   @spec runner_caller_context(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
-  def runner_caller_context(namespace, caller_context) do
-    fleet_read(caller_context, namespace, fn ->
-      FleetManager.runner_caller_context(namespace)
-    end)
+  verb runner_caller_context(namespace, caller_context), verb: :list_runners do
+    FleetManager.runner_caller_context(namespace)
   end
 
   @doc "The nodes holding a hub for `namespace`."
   @spec hub_nodes(String.t(), caller_context()) :: {:ok, [node()]} | {:error, term()}
-  def hub_nodes(namespace, caller_context) do
-    fleet_read(caller_context, namespace, fn ->
-      {:ok, Directory.hub_nodes(namespace)}
-    end)
+  verb hub_nodes(namespace, caller_context), verb: :list_runners do
+    {:ok, Directory.hub_nodes(namespace)}
   end
 
   @doc "Every plugin package installed on this controller."
   @spec installed_plugins(caller_context()) :: {:ok, [term()]} | {:error, term()}
-  def installed_plugins(caller_context) do
-    CallerContext.scoped_read(caller_context, :"plugin.list", CallerContext.system_scope(), fn ->
-      {:ok, Installer.list()}
-    end)
-  end
-
-  # A fleet read is an operative-topology read, scoped to the namespace asked
-  # about rather than to one the caller declares.
-  defp fleet_read(caller_context, namespace, fun) do
-    CallerContext.scoped_read(caller_context, :"operative.list", namespace, fun)
+  verb installed_plugins(caller_context), verb: :list_installed_plugins do
+    {:ok, Installer.list()}
   end
 end

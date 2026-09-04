@@ -2,8 +2,9 @@ defmodule Flezha.AuthZ.Action do
   @moduledoc """
   Compile-time enumeration of every authorizable action atom.
 
-  Add an entry here AND a role-grant in `Flezha.AuthZ.Policy` before
-  calling `Flezha.AuthZ.authorize/3` with a new action.
+  An action exists only because a row of `Flezha.AuthZ.Verbs` names it: add
+  the entry here, a role grant in `Flezha.AuthZ.Policy` and the row together,
+  and the declaration test refuses an action no row names.
   """
 
   @actions [
@@ -13,6 +14,8 @@ defmodule Flezha.AuthZ.Action do
     :"operative.list",
     :"operative.scale",
     :"operative.rewind",
+    :"operative.send",
+    :"operative.replay",
     # Plugin lifecycle and read.
     :"plugin.install",
     :"plugin.enable",
@@ -29,10 +32,8 @@ defmodule Flezha.AuthZ.Action do
     :"observability.subscribe",
     :"observability.enable_source",
     :"observability.disable_source",
-    # Operational reset.
-    :"reset.run",
-    # Auth-state mutations.
-    :"authz.bootstrap",
+    # Auth-state mutations. The bootstrap claim is not here: the one-time
+    # token IS its credential, so nothing can authorize it.
     :"authz.token_issue",
     :"authz.token_revoke",
     :"authz.token_list",
@@ -45,21 +46,19 @@ defmodule Flezha.AuthZ.Action do
     :"authz.role_bind",
     :"authz.role_unbind",
     :"authz.role_list",
-    # Data-plane verbs granted only to the runner role.
+    # The one data-plane verb the runner role holds.
     :"runner.connect",
-    :"runner.checkpoint",
-    :"runner.report",
-    # Controller / boot / state surface.
+    # Controller / state surface.
     :"controller.status",
     :"controller.stop",
-    :"boot.status",
-    :"boot.await",
     :"state.get",
     :"state.list",
     :"state.at",
     :"state.rotate",
     :"state.retention",
     :"state.delete",
+    # Records in flight: an instance's inbox, journal and outbox.
+    :"state.records",
     # Dead-letter-queue operator verbs. The reads are named separately from the
     # mutations because `dlq.show` is the one that answers payload bytes.
     :"dlq.list",
