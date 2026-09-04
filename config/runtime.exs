@@ -43,6 +43,14 @@ testnet_ws_port =
   System.get_env("FLEZHA_TESTNET_WS_PORT") ||
     if run_token, do: "#{run_port.(10_000)}", else: "4500"
 
+# The release names its node `FLEZHA_NODE_NAME@FLEZHA_NODE_HOST` (`rel/env.sh.eex`)
+# and the test harness starts distribution under the same two keys. One VM per
+# host holds a name, and a second suite that asks for it gets no distribution
+# at all, so every peer-using test fails with a message that never names this.
+node_base_name =
+  System.get_env("FLEZHA_NODE_NAME") ||
+    if run_token, do: "flezha_test_#{run_token}", else: "flezha"
+
 # `Paths.state_root/0` prefers this key over `FLEZHA_STATE_DIR`, so the variable
 # is read here rather than shadowed by the derived default. `run_token` is
 # published so the socket directory (`config/test.exs`) derives from the same
@@ -113,7 +121,7 @@ config :flezha,
     System.get_env("FLEZHA_CLUSTER_FORMATION_TIMEOUT_MS", "15000") |> String.to_integer(),
 
   # The node base name that is to generate the full name including the host address.
-  node_base_name: System.get_env("FLEZHA_NODE_NAME", "flezha"),
+  node_base_name: node_base_name,
 
   # The node host name. For Kubernetes, it is the Pod IP.
   node_host_name: System.get_env("FLEZHA_NODE_HOST", "127.0.0.1"),

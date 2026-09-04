@@ -128,11 +128,9 @@ config :flezha,
       end
     end,
     fn ->
-      # Check if local node is running.
       if !Node.alive?() do
-        # Start the local node
         {_, 0} = System.cmd("epmd", ["-daemon"])
-        Node.start(:"test_agent_node1@127.0.0.1", :longnames)
+        Node.start(FlezhaTest.Helper.NodeTestHelper.node_name(), :longnames)
       end
     end,
     fn ->
@@ -144,7 +142,7 @@ config :flezha,
       # a deep checkout plus a long stream-socket name does not. The run token
       # is the same one the state root and the data-plane port derive from
       # (`config/runtime.exs`), so two suites on one checkout cannot meet here
-      # either — `node()` alone is `nonode@nohost` for both of them.
+      # even when `FLEZHA_NODE_NAME` pins the same name for both.
       Application.put_env(
         :flezha,
         :socket_files_path,

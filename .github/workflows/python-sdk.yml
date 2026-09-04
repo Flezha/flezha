@@ -75,14 +75,11 @@ jobs:
         run: scripts/build-python-sdk.sh
 
       - name: Install the test dependencies
-        # The versions the dev group of sdk/python/pyproject.toml names, the way
-        # format.yml already installs ruff out of that same file. Matching on
-        # `==` is what keeps the pin load-bearing: a range in the group leaves
-        # the substitution empty and fails this step, instead of quietly
-        # resolving whatever is newest — which is how every run so far has been
-        # on pytest 9 against a group that says 8.
+        # The versions the dev group of sdk/python/pyproject.toml names, read by
+        # the one manifest reader, which refuses a range: a relaxed pin fails
+        # this step instead of quietly resolving whatever is newest.
         run: |
-          pin() { grep -oP "\"$1==\\K[^\"]+" sdk/python/pyproject.toml; }
+          pin() { scripts/manifest_pin.sh sdk/python/pyproject.toml "$1"; }
           sdk/python/.venv/bin/pip install --quiet \
             "pytest==$(pin pytest)" "pytest-cov==$(pin pytest-cov)" \
             "pyright==$(pin pyright)"
@@ -137,8 +134,8 @@ jobs:
         # checker that resolves to whatever shipped this week turns a green
         # gate red on a tree nobody touched.
         run: |
-          pin() { grep -oP "\"$1==\\K[^\"]+" sdk/python/pyproject.toml; }
-          sdk/python/.venv/bin/pip install --quiet "pyright==$(pin pyright)"
+          sdk/python/.venv/bin/pip install --quiet \
+            "pyright==$(scripts/manifest_pin.sh sdk/python/pyproject.toml pyright)"
 
       - name: Type-check the public surface
         working-directory: sdk/python

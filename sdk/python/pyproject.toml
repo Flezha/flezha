@@ -70,7 +70,6 @@ include = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = ["error::flezha.DeterminismWarning"]
 
 [tool.pyright]
 include = ["src", "tests"]

@@ -211,3 +211,16 @@ Where a caller needs a different degraded value, that SHALL be a parameter of th
 - **WHEN** the broad-exception check is run over the Python SDK
 - **THEN** the fallback SHALL account for one finding and one suppression, not three
 
+### Requirement: The state guard SHALL delegate to the class it wraps inside the runtime window
+
+Inside `runtime_mutation()` the guard on a declared state class SHALL hand
+assignment to the wrapped class's own `__setattr__`, so a class that refuses
+assignment on its own terms — a frozen dataclass — keeps that refusal rather than
+gaining a permission the runtime never meant to grant. The delegation SHALL be
+covered by a test that fails when it is removed.
+
+#### Scenario: A frozen state class refuses inside the runtime window
+
+- **WHEN** a frozen dataclass declared with `@flezha.state` is assigned to inside `runtime_mutation()`
+- **THEN** the dataclass's own `FrozenInstanceError` SHALL be raised, not `FlezhaError` and not silence
+

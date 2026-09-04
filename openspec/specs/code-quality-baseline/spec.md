@@ -1073,6 +1073,8 @@ Where the runner reports coverage without a library — a built-in flag on the l
 
 Declaring the driver SHALL NOT be read as setting a coverage floor. A threshold is a separate decision, taken on measured evidence, and an SDK satisfies this requirement by being measurable.
 
+The report SHALL be a figure for the package's own sources. A file the suite writes outside the package — a temporary fixture module — SHALL NOT enter the table, because a total over a set that changes between runs is not a measurement anyone can quote.
+
 #### Scenario: A coverage report is producible from the manifest alone
 
 - **WHEN** an SDK's declared development dependencies are installed into a clean checkout and its suite is run in coverage mode
@@ -1088,4 +1090,27 @@ Declaring the driver SHALL NOT be read as setting a coverage floor. A threshold 
 
 - **WHEN** the SDK manifests are audited for a coverage tool
 - **THEN** each SDK SHALL either declare one, name the built-in flag it uses, or name the image that carries its driver
+
+#### Scenario: The table lists only the package
+
+- **WHEN** an SDK's suite writes temporary modules outside the package and is run in coverage mode
+- **THEN** the report SHALL list the package's own files only, and its total SHALL be over those files
+
+### Requirement: A manifest pin SHALL be read by one reader
+
+Every place continuous integration derives a version from an SDK manifest SHALL
+call one shared reader rather than spell its own extraction, so that the anchored
+exact-pin pattern the toolchain requirement demands exists once and a pin cannot
+resolve to two versions in two jobs. The reader SHALL refuse a pin that is not an
+exact version.
+
+#### Scenario: Two jobs read the same pin
+
+- **WHEN** two workflow jobs derive the version of one tool from one manifest
+- **THEN** both SHALL obtain the same string, through the same reader
+
+#### Scenario: A relaxed pin is refused
+
+- **WHEN** a manifest entry the reader is asked for is a range rather than an exact version
+- **THEN** the reader SHALL exit non-zero and the install step SHALL fail
 

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed — five development instruments that misreported or collided (`close-five-small-tooling-defects`)
+
+Five small defects in the tooling, each reproduced before it was touched. The
+Python coverage report had been measuring almost nothing of the package: the
+`filterwarnings` entry in `pyproject.toml` imported `flezha` before coverage
+started tracing, and moving the filter into `tests/conftest.py` takes the
+package total from 61 % to 93 % — the filing had counted two modules, the
+measurement says the whole package. Node's coverage table lists only `dist/`
+now instead of the fixtures the suite writes under `/tmp`. One reader,
+`scripts/manifest_pin.sh`, replaces the five inline patterns CI used to pull a
+pinned version out of a manifest, and refuses a range. The test node is named
+the way the release names its node — `FLEZHA_NODE_NAME@FLEZHA_NODE_HOST` —
+with a base derived per run, so two suites on one box are both distributed.
+The Python state guard's delegation inside the runtime window has a test.
+
 ### Fixed — `flz schedule run` is an authorized operative start, and the schedule flags travel as one options document (`gate-schedule-run-and-fold-its-flags`)
 
 `flz schedule run <name>` fired an instance with no authorization under any

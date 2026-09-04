@@ -272,6 +272,16 @@ def solo_deps(proc: flezha.Procedure[Any, Any], core: FakeCore, factory: str = "
     return deps_for(operative, core)
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Fail any test that trips a determinism warning.
+
+    Declared here and not in ``pyproject.toml``: pytest resolves an ini-time
+    category by importing its package, which happens before coverage starts
+    tracing and leaves every module executed at import unmeasured.
+    """
+    config.addinivalue_line("filterwarnings", "error::flezha.DeterminismWarning")
+
+
 @pytest.fixture
 def fake_core() -> FakeCore:
     return FakeCore()

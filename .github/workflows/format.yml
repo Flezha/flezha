@@ -112,13 +112,13 @@ jobs:
 
       - name: Install ruff (sdk/python)
         continue-on-error: true
-        run: pip install "ruff==$(grep -oP 'ruff==\K[0-9.]+' sdk/python/pyproject.toml)"
+        run: pip install "ruff==$(scripts/manifest_pin.sh sdk/python/pyproject.toml ruff)"
 
       - name: Install rubocop (sdk/ruby)
         continue-on-error: true
         run: |
           gem install --no-document rubocop \
-            -v "$(grep -oP '"rubocop", "\K[^"]+' sdk/ruby/flezha.gemspec)"
+            -v "$(scripts/manifest_pin.sh sdk/ruby/flezha.gemspec rubocop)"
 
       - name: Install php-cs-fixer (sdk/php)
         continue-on-error: true

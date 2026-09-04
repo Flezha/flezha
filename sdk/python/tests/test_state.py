@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field
 
 import pytest
 
@@ -73,16 +73,25 @@ def test_the_runtime_permission_is_thread_local() -> None:
     assert not state_module._mutation_permitted()
 
 
+@flezha.state
+@dataclass(frozen=True)
+class Frozen:
+    """A class that refuses assignment on its own terms."""
+
+    value: int = 0
+
+
 def test_the_guard_refuses_before_the_class_it_wraps_can() -> None:
     """A frozen dataclass gains our refusal; its own never runs while sealed."""
-
-    @flezha.state
-    @dataclass(frozen=True)
-    class Frozen:
-        value: int = 0
-
     with pytest.raises(FlezhaError):
         Frozen().value = 1  # type: ignore[misc]
+
+
+def test_the_guard_delegates_to_the_class_it_wraps_inside_the_runtime_window() -> None:
+    """Inside the runtime window the class's own refusal is what answers."""
+    frozen = Frozen()
+    with state_module.runtime_mutation(), pytest.raises(FrozenInstanceError):
+        frozen.value = 1  # type: ignore[misc]
 
 
 def test_decorating_twice_is_idempotent() -> None:

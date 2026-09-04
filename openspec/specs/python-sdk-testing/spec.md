@@ -61,6 +61,8 @@ The Python SDK's `pyproject.toml` SHALL declare a coverage plugin for `pytest` i
 
 The extra currently pins `pytest`, `pyright`, `msgpack` and `ruff` and no coverage tool, so the SDK's suite runs and cannot be measured. Continuous integration SHALL install the plugin from that extra rather than naming a version of its own, on the same terms as every other entry.
 
+The report SHALL measure the package's import-time modules. A test configuration that imports the package before coverage begins tracing — a warning filter resolved at ini time, an early plugin — leaves the modules executed at import wholly unmeasured and prints a warning that reads like a broken tool; the filter SHALL be applied where tracing has already started.
+
 #### Scenario: Coverage runs from the declared extra
 
 - **WHEN** the `dev` extra is installed into a clean checkout and the Python SDK's suite is run in coverage mode
@@ -70,4 +72,9 @@ The extra currently pins `pytest`, `pyright`, `msgpack` and `ruff` and no covera
 
 - **WHEN** the `dev` extra is read
 - **THEN** the coverage plugin SHALL name an exact version, not a lower bound
+
+#### Scenario: The package's own import is measured
+
+- **WHEN** the suite is run in coverage mode
+- **THEN** `flezha/__init__.py` SHALL report the lines the import executed as covered, and the run SHALL NOT warn that the package was imported before it was measured
 

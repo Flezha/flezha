@@ -54,19 +54,20 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_CONTROLLER_ENABLED` | `true` | `:controller_enabled`; `false`/`0`/`no`/`off` boots a runner-only node with no controller tree |
 
 > **Two suites on one checkout.** In `:test` the state root, the UDS socket
-> directory, the QUIC listen port and the testnet daemon's WS port all derive
-> from the OS process running the suite, so a second session isolates itself by
-> existing. Setting `FLEZHA_STATE_DIR`, `FLEZHA_QUIC_LISTEN_ADDRESS` or
-> `FLEZHA_TESTNET_WS_PORT` still wins, which is how a scenario that needs a
-> known address asks for one.
+> directory, the QUIC listen port, the testnet daemon's WS port and the
+> distribution node name all derive from the OS process running the suite, so a
+> second session isolates itself by existing. Setting `FLEZHA_STATE_DIR`,
+> `FLEZHA_QUIC_LISTEN_ADDRESS`, `FLEZHA_TESTNET_WS_PORT` or `FLEZHA_NODE_NAME`
+> still wins, which is how a scenario that needs a known address or name asks
+> for one.
 
 ### Cluster and nodes
 
 | Variable | Default | Sets / notes |
 |---|---|---|
 | `FLEZHA_CLUSTER_DISCOVERY` | `manual_discovery` | `:cluster_discovery`; also `k8s_pod_discovery` |
-| `FLEZHA_NODE_NAME` | `flezha` | `:node_base_name`; `rel/env.sh.eex` builds `RELEASE_NODE=<name>@<host>` from it |
-| `FLEZHA_NODE_HOST` | `127.0.0.1` | the host half of `RELEASE_NODE` (`rel/env.sh.eex`); also sets `:node_host_name`, which nothing reads |
+| `FLEZHA_NODE_NAME` | `flezha` (`:test` derives a base per run) | `:node_base_name`; `rel/env.sh.eex` builds `RELEASE_NODE=<name>@<host>` from it, and the test harness starts distribution under the same `<name>@<host>` |
+| `FLEZHA_NODE_HOST` | `127.0.0.1` | the host half of `RELEASE_NODE` (`rel/env.sh.eex`); also sets `:node_host_name`, the host half the test harness names its node with |
 | `RELEASE_COOKIE` | unset | read by `rel/env.sh.eex`: set → `RELEASE_DISTRIBUTION=name`; unset → `none` (no clustering, `flz` verbs fail) |
 | `FLEZHA_DIST_TLS_OPTFILE` | unset | read by `rel/env.sh.eex`: path of an `inet_tls_dist` option file, adds `-proto_dist inet_tls -ssl_dist_optfile` |
 | `FLEZHA_INITIAL_NODES` | `""` | `:initial_nodes`, comma list of node names |
@@ -204,6 +205,7 @@ present; otherwise the `config/config.exs` defaults stand.
 | `RUSTLER_SKIP_COMPILATION` | Rustler, via `mix compile` | `true` makes the build pick up a pre-built `priv/native/flz_nif.so` instead of invoking cargo (prod image Stage 2) |
 | `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; it bounds the wait for the controller's control socket. See [`operations/deployment.md`](operations/deployment.md) |
 | `FLEZHA_TESTNET_WS_PORT` | `config/runtime.exs` and `docker/prod/controller-entrypoint.sh` | the port the WS testnet daemon binds. `:test` derives it from the run (`4500` outside `:test`); the entrypoint starts the daemon only when it is set explicitly |
+| `FLEZHA_NODE_NAME` | `config/runtime.exs` and `rel/env.sh.eex` | the base of the node name `<name>@<host>`. `:test` derives it from the run (`flezha_test_<pid>`; `flezha` outside `:test`) and starts distribution under it; the release script builds `RELEASE_NODE` from it |
 
 ### Runner-process environment (SDK side)
 

@@ -95,6 +95,8 @@ The controller's state root, socket directory and QUIC listen address already de
 
 A daemon whose port is a constant makes a second concurrent run bind-fail. Where the failing tests are excluded by default the failure is not red — it is a stack trace in the output of every concurrent run, and a run that wants those tests cannot have them at all.
 
+A distribution node name is the same kind of resource: one VM on a host holds it, and a second run that asks for it gets no distribution at all, so every test that needs a peer fails with a message that never names the cause. The name SHALL derive from the run, and the harness and every helper that repeats it SHALL read one source.
+
 #### Scenario: Two suites run at once without a port collision
 
 - **WHEN** two suites run on one checkout at the same time, each with its own isolation environment
@@ -109,4 +111,9 @@ A daemon whose port is a constant makes a second concurrent run bind-fail. Where
 
 - **WHEN** a test module connects to the test daemon
 - **THEN** it SHALL take the port from the same source the harness spawned it with, and SHALL NOT hardcode the literal
+
+#### Scenario: Two suites run at once and both are distributed
+
+- **WHEN** two suites run on one host at the same time
+- **THEN** each SHALL start distribution under its own node name, and neither run's output SHALL carry a `:nodistribution` report
 

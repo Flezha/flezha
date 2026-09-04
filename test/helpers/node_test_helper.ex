@@ -13,8 +13,15 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Service.PortPilot
   alias Flezha.Socket.Support
 
+  @doc """
+  The name this run's node is distributed under: `<base>@<host>` from the two
+  keys the release names its node with (`rel/env.sh.eex`), the base derived
+  per run in `:test` (`config/runtime.exs`).
+  """
   def node_name() do
-    :"test_agent_node1@127.0.0.1"
+    base = Application.fetch_env!(:flezha, :node_base_name)
+    host = Application.fetch_env!(:flezha, :node_host_name)
+    :"#{base}@#{host}"
   end
 
   # A peer's `Application.start/2` blocks in `validate_boot_ready/0`, which
