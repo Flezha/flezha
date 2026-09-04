@@ -87,3 +87,26 @@ tier's page, so an operator reaching the question from either direction meets it
 - **WHEN** the remote durability tier's page is read
 - **THEN** it states that adding controllers does not substitute for the tier
 
+### Requirement: Every contested resource a test run holds SHALL derive from the run
+
+A resource that only one process on a machine can hold SHALL be selected from the run's own environment rather than written as a constant in the harness, so that two suites can execute on one checkout at the same time.
+
+The controller's state root, socket directory and QUIC listen address already derive this way. A network port a test daemon binds is the same kind of resource and SHALL be selected the same way: a helper that spawns such a daemon SHALL pass the selected value into the daemon's environment, and every test module that dials the daemon SHALL read the same value rather than repeat the literal.
+
+A daemon whose port is a constant makes a second concurrent run bind-fail. Where the failing tests are excluded by default the failure is not red — it is a stack trace in the output of every concurrent run, and a run that wants those tests cannot have them at all.
+
+#### Scenario: Two suites run at once without a port collision
+
+- **WHEN** two suites run on one checkout at the same time, each with its own isolation environment
+- **THEN** neither test daemon SHALL fail to bind, and neither run's output SHALL carry an address-in-use trace
+
+#### Scenario: The daemon receives the port the run selected
+
+- **WHEN** the harness spawns the test daemon
+- **THEN** the selected port SHALL reach the daemon's environment, and SHALL NOT be left to the daemon's own default
+
+#### Scenario: A dialling test reads the selected port
+
+- **WHEN** a test module connects to the test daemon
+- **THEN** it SHALL take the port from the same source the harness spawned it with, and SHALL NOT hardcode the literal
+

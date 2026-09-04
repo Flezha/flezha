@@ -36,7 +36,10 @@ A lint count comes only from a run that completed — cargo exiting non-zero lea
 warnings and would score perfectly.
 A narrative marker is history or an id a reader cannot resolve: this repository carries
 neither its archived proposals nor the refactor charter, so a task number or a bare `§N`
-counts, while a section cited beside a `docs/…` document or an RFC does not.
+counts, while a section cited beside a `docs/…` document or an RFC does not. A phrase that
+is also ordinary English counts only in its narrating sense — `used to be` does, `used to
+verify` does not — and nothing inside a quoted message counts, because that text is emitted
+rather than written to the reader of the source.
 """
 
 import argparse
@@ -379,8 +382,16 @@ def functions(lines, lang):
     return found
 
 
+# `used to` is also ordinary English for *employed to*, and the two senses share
+# one shape: `used to be` and `used to verify` are both `used to` plus a bare
+# infinitive. Nothing else on the line separates them, so the narrating sense is
+# named by the words that only it takes — `be`, `do`, `have`, and the elliptical
+# clause end of "exactly as the Entity used to." A plain verb after it is the
+# ordinary sense and is not counted: this is a blocking ratchet in every area, so
+# a false positive is correct prose someone must reword to get a build green.
 NARRATIVE = re.compile(
-    r"\b(used to|before this change|first draft|previously|originally|no longer|"
+    r"\bused to(?=\s+(?:be|do|have)\b|\s*[.,;:)])|"
+    r"\b(before this change|first draft|previously|originally|no longer|"
     r"the old (?:way|code|behaviou?r|design))\b|\b20\d\d-\d\d-\d\d\b|\btasks?\.md\b|"
     r"\bopenspec/changes\b|\bD\d{1,2}\b|\bPR\s*#\d+|\bproposal\b|"
     r"\btasks?\s+\d+(?:\.\d+)*\b",
@@ -392,11 +403,18 @@ SECTION = re.compile(r"§\s?\d")
 # that defines it does reach, and counting that would ask for correct prose to be
 # reworded rather than for the reference to be removed.
 CITATION = re.compile(r"docs/\S*\.md\b|\bRFC\s*\d+", re.IGNORECASE)
+# A quoted span is text the program emits, not the prose around it. An operator
+# told an option is `no longer honoured` is being told what the code does now,
+# and a date or an id inside a message is data — neither narrates anything to a
+# reader of the source. An apostrophe never opens one, so `this member's` cannot
+# swallow the rest of a line.
+MESSAGE = re.compile(r"\"[^\"]*\"|(?<!\w)'[^']*'")
 
 
 def narrates(line):
     """Charter §5: history, or an id a future reader cannot resolve."""
-    return bool(NARRATIVE.search(line) or (SECTION.search(line) and not CITATION.search(line)))
+    prose = MESSAGE.sub("", line)
+    return bool(NARRATIVE.search(prose) or (SECTION.search(prose) and not CITATION.search(prose)))
 
 
 SLEEP = {
@@ -880,6 +898,14 @@ def self_test_classifiers():
     assert not narrates("//! See `docs/sdk/authoring_contract.md` §5.")
     assert not narrates("# Client frames are always masked (RFC 6455 §5.3).")
     assert not narrates("// tasks the poller with one sweep")
+    # Each narrating sense of the two phrases that are also ordinary English.
+    assert narrates("// the count used to do the rounding") and narrates("// it used to have one")
+    assert narrates("// the reason is the one it used to, and the retry is new")
+    assert narrates("# rebinding is no longer the case for a parked entry")
+    # And each ordinary sense of the same two.
+    assert not narrates("#   PEM-encoded strings) used to verify `signature.sig` over")
+    assert not narrates("# This option can be used to prevent the runner from being removed")
+    assert not narrates('// refused with "FLEZHA_QUIC_ADDRESS is no longer honoured"')
 
 
 def self_test_ratchet():

@@ -5,6 +5,7 @@ defmodule FlezhaTest do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
+  alias Flezha.Testnet
   alias FlezhaTest.Fixtures.OperativeFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OperativeTestHelper
@@ -18,20 +19,17 @@ defmodule FlezhaTest do
   @default_namespace "default"
   @temp_namespace "test_temp_namespace"
   @node_name NodeTestHelper.node_name()
-  @testnet_ws_uri "ws://localhost:4500"
 
   @test_store_input_factory "store_input"
   @test_operative_factory "do_nothing"
   @test_compare_filter_factory "compare_filter"
 
   # WS-dependent tests below connect to a Node.js testnet daemon at
-  # `@testnet_ws_uri` (the bundle lives at `test/apps/testnet/dist/index.js`,
-  # built by `mix test.setup`; the daemon is started by
-  # `npm --prefix test/apps/testnet start`). The daemon is not always
-  # running, so these tests are tagged `:testnet` and excluded from the
-  # default `mix test` run via `test/test_helper.exs`. Run them with:
+  # `Testnet.ws_uri/0`. The harness starts it (`Flezha.Testnet`, on the port the
+  # run derives) but the bundle it runs is built by `mix test.setup`, so these
+  # tests are tagged `:testnet` and excluded from the default `mix test` run via
+  # `test/test_helper.exs`. Run them with:
   #     mix test.setup
-  #     npm --prefix test/apps/testnet start &
   #     mix test --include testnet
 
   setup_all do
@@ -133,19 +131,11 @@ defmodule FlezhaTest do
         operative_id: operative_id,
         provider: Flezha.Plugin.Provider.Websocket,
         opts: %{
-          uri: @testnet_ws_uri,
+          uri: Testnet.ws_uri(),
           post_connect: %{
             payload: %{
               "type" => "text",
-              "message" => ~s(
-                {
-                  "event_type": "subscribe",
-                  "event_data": {
-                    "default_message": "hello world",
-                    "interval": 1000
-                  }
-                }
-              )
+              "message" => Testnet.subscribe_message("hello world", 1000)
             }
           }
         },
@@ -209,19 +199,11 @@ defmodule FlezhaTest do
       operative_id: operative_id,
       provider: Flezha.Plugin.Provider.Websocket,
       opts: %{
-        uri: @testnet_ws_uri,
+        uri: Testnet.ws_uri(),
         post_connect: %{
           "payload" => %{
             "type" => "text",
-            "message" => ~s(
-              {
-                "event_type": "subscribe",
-                "event_data": {
-                  "default_message": "hello world",
-                  "interval": 1000
-                }
-              }
-          )
+            "message" => Testnet.subscribe_message("hello world", 1000)
           }
         }
       },

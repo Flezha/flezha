@@ -54,10 +54,11 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_CONTROLLER_ENABLED` | `true` | `:controller_enabled`; `false`/`0`/`no`/`off` boots a runner-only node with no controller tree |
 
 > **Two suites on one checkout.** In `:test` the state root, the UDS socket
-> directory and the QUIC listen port all derive from the OS process running the
-> suite, so a second session isolates itself by existing. Setting
-> `FLEZHA_STATE_DIR` or `FLEZHA_QUIC_LISTEN_ADDRESS` still wins, which is how a
-> scenario that needs a known address asks for one.
+> directory, the QUIC listen port and the testnet daemon's WS port all derive
+> from the OS process running the suite, so a second session isolates itself by
+> existing. Setting `FLEZHA_STATE_DIR`, `FLEZHA_QUIC_LISTEN_ADDRESS` or
+> `FLEZHA_TESTNET_WS_PORT` still wins, which is how a scenario that needs a
+> known address asks for one.
 
 ### Cluster and nodes
 
@@ -201,7 +202,8 @@ present; otherwise the `config/config.exs` defaults stand.
 |---|---|---|
 | `FLEZHA_PROCESS_HUB_PATH` | `mix.exs` | build a release against a local `process_hub` checkout instead of the published hex release |
 | `RUSTLER_SKIP_COMPILATION` | Rustler, via `mix compile` | `true` makes the build pick up a pre-built `priv/native/flz_nif.so` instead of invoking cargo (prod image Stage 2) |
-| `FLEZHA_RESTORE_WAIT_TIMEOUT_S`, `FLEZHA_TESTNET_WS_PORT` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; `FLEZHA_RESTORE_WAIT_TIMEOUT_S` bounds the wait for the controller's control socket. See [`operations/deployment.md`](operations/deployment.md) |
+| `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; it bounds the wait for the controller's control socket. See [`operations/deployment.md`](operations/deployment.md) |
+| `FLEZHA_TESTNET_WS_PORT` | `config/runtime.exs` and `docker/prod/controller-entrypoint.sh` | the port the WS testnet daemon binds. `:test` derives it from the run (`4500` outside `:test`); the entrypoint starts the daemon only when it is set explicitly |
 
 ### Runner-process environment (SDK side)
 

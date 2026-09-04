@@ -72,7 +72,7 @@ def positional_parameters(fn: Callable[..., Any], *, skip_self: bool = True) -> 
 
     Every declaration this SDK reads is read from a signature — how many
     positional parameters a handler takes, which one carries the input, which
-    one carries the context — so the walk lives here and the four readers ask
+    one carries the context — so the walk lives here and its readers ask
     it rather than each spelling `POSITIONAL_OR_KEYWORD` again.
     """
     return [
@@ -359,21 +359,6 @@ def _hooks_of(instance: Any) -> Callable[[str], Any]:
     return hook
 
 
-def _annotations(fn: Callable[..., Any] | None) -> dict[str, Any]:
-    if fn is None:
-        return {}
-    try:
-        import typing
-
-        return typing.get_type_hints(fn)
-    except Exception:  # noqa: BLE001
-        # The breadth is the point: an unresolvable forward reference raises
-        # NameError, TypeError, AttributeError or a recursion error depending on
-        # what was annotated, and a narrower tuple would silently drop this
-        # fallback to the raw annotations.
-        return getattr(fn, "__annotations__", {}) or {}
-
-
 def _declared_type(annotation: Any) -> type | None:
     """The class an annotation names, or ``None`` for "undeclared".
 
@@ -390,7 +375,9 @@ def _declared_type(annotation: Any) -> type | None:
 
 
 def _returned_type(fn: Callable[..., Any] | None) -> type | None:
-    return _declared_type(_annotations(fn).get("return"))
+    if fn is None:
+        return None
+    return _declared_type(_codec.type_hints(fn).get("return"))
 
 
 def _parameter_annotation(fn: Callable[..., Any] | None, index: int) -> Any:
@@ -399,7 +386,7 @@ def _parameter_annotation(fn: Callable[..., Any] | None, index: int) -> Any:
     names = positional_parameters(fn)
     if index >= len(names):
         return None
-    return _annotations(fn).get(names[index])
+    return _codec.type_hints(fn).get(names[index])
 
 
 def _parameter_type(fn: Callable[..., Any] | None, index: int) -> type | None:
@@ -408,12 +395,12 @@ def _parameter_type(fn: Callable[..., Any] | None, index: int) -> type | None:
 
 def input_type(proc: Procedure[Any, Any]) -> Any:
     """The type the handler accepts, as its annotation names it."""
-    return _annotations(proc.handler).get(_first_parameter(proc.handler))
+    return _codec.type_hints(proc.handler).get(_first_parameter(proc.handler))
 
 
 def output_type(proc: Procedure[Any, Any]) -> Any:
     """The type the handler returns, as its annotation names it."""
-    return _annotations(proc.handler).get("return")
+    return _codec.type_hints(proc.handler).get("return")
 
 
 def _first_parameter(fn: Callable[..., Any]) -> str:
@@ -459,7 +446,7 @@ def _refuse_unannotated(proc: Procedure[Any, Any]) -> None:
             proc.name,
             "takes no input parameter; a procedure is what runs against an input",
         )
-    if name not in _annotations(proc.handler):
+    if name not in _codec.type_hints(proc.handler):
         raise DeclarationError(
             "<procedure>",
             proc.name,

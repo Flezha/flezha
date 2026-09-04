@@ -188,3 +188,26 @@ A runner stopped by a signal, by end of file on standard input, or by the contro
 - **WHEN** the other end of standard input closes
 - **THEN** the watcher SHALL observe end of file, the runner SHALL drain, and the process SHALL exit with status 0
 
+### Requirement: The Python SDK SHALL resolve type hints through one fallback
+
+Resolving a callable's or a class's type hints, with a fallback for annotations that cannot be resolved, SHALL be written once in the Python SDK and called from every site that needs it.
+
+The fallback is a judgement call — which exceptions an unresolvable forward reference may raise, and what an unresolvable annotation degrades to — and writing it at three sites means the judgement is taken three times and must be revised three times. It is also what makes a linter report one decision as three findings, each needing its own suppression.
+
+Where a caller needs a different degraded value, that SHALL be a parameter of the shared helper rather than a reason to copy it.
+
+#### Scenario: One definition, called from every site
+
+- **WHEN** the Python SDK's modules that resolve type hints are read
+- **THEN** exactly one definition of the resolution-and-fallback SHALL exist, and the others SHALL call it
+
+#### Scenario: The differing fallback value is a parameter
+
+- **WHEN** a caller needs an unresolvable annotation to degrade to something other than the raw annotations
+- **THEN** it SHALL pass that value to the shared helper, and SHALL NOT define its own copy
+
+#### Scenario: The suppression is written once
+
+- **WHEN** the broad-exception check is run over the Python SDK
+- **THEN** the fallback SHALL account for one finding and one suppression, not three
+

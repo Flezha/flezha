@@ -45,6 +45,7 @@ __all__ = [
     "encode",
     "decode",
     "codec_for",
+    "type_hints",
     "assert_representable",
     "to_state_json",
     "from_state_json",
@@ -107,17 +108,25 @@ def _is_escape(cls: type) -> bool:
     return hasattr(cls, "to_dict") and hasattr(cls, "from_dict")
 
 
-def _hints(cls: type) -> dict[str, Any]:
+def type_hints(target: Any, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A class's or callable's resolved type hints, degrading instead of raising.
+
+    ``fallback`` is what an annotation nothing can resolve degrades to. The
+    default is the raw annotations, whose string form still names the type an
+    author wrote; the codec passes ``{}`` because a field it cannot type is
+    restored as whatever MessagePack produced, which is what an unannotated
+    field gets anyway.
+    """
     try:
-        return typing.get_type_hints(cls)
+        return typing.get_type_hints(target)
     except Exception:  # noqa: BLE001
         # The breadth is the point: an unresolvable forward reference raises
         # NameError, TypeError, AttributeError or a recursion error depending on
-        # what was annotated, and a narrower tuple would silently drop this
-        # fallback. Nothing is lost by taking it — the field is restored as
-        # whatever MessagePack produced, which is what an unannotated field gets
-        # anyway.
-        return {}
+        # what was annotated, and a narrower tuple would silently drop the
+        # fallback.
+        if fallback is not None:
+            return fallback
+        return getattr(target, "__annotations__", {}) or {}
 
 
 def _field_names(cls: type) -> list[str]:
@@ -206,7 +215,7 @@ def _build(cls: type, body: dict[str, Any]) -> Any:
     before a field was added takes that field's default and one written before
     a field was removed does not fail on the leftover key.
     """
-    hints = _hints(cls)
+    hints = type_hints(cls, {})
     kwargs = {
         name: _from_plain(hints.get(name), body[name]) for name in _field_names(cls) if name in body
     }

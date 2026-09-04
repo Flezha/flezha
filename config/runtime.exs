@@ -25,15 +25,23 @@ external_processes =
 # known address says so.
 run_token = if config_env() == :test, do: System.pid()
 
-# 20000-29999 is clear of the ports the fixtures use and below the ephemeral
-# range Linux allocates from, so nothing else on the box competes for it. Two
-# pids exactly 10 000 apart still collide, and that run fails loudly on
-# EADDRINUSE exactly as it does today.
+# One slice of a thousand-wide band per contested port, so the next one is a
+# base and a line. Both bands are clear of the ports the fixtures use and below
+# the ephemeral range Linux allocates from, so nothing else on the box competes
+# for them. Two pids exactly 10 000 apart still collide, and that run fails
+# loudly on EADDRINUSE exactly as it does today.
+run_port = fn base -> base + rem(String.to_integer(run_token), 10_000) end
+
 quic_listen_address =
   System.get_env("FLEZHA_QUIC_LISTEN_ADDRESS") ||
-    if run_token,
-      do: "0.0.0.0:#{20_000 + rem(String.to_integer(run_token), 10_000)}",
-      else: "0.0.0.0:4433"
+    if run_token, do: "0.0.0.0:#{run_port.(20_000)}", else: "0.0.0.0:4433"
+
+# The WS testnet daemon (`test/apps/testnet`, started in `:dev` and `:test`) binds
+# one port too, and a second suite that cannot start it gets a Node stack trace
+# in its output and no daemon.
+testnet_ws_port =
+  System.get_env("FLEZHA_TESTNET_WS_PORT") ||
+    if run_token, do: "#{run_port.(10_000)}", else: "4500"
 
 # `Paths.state_root/0` prefers this key over `FLEZHA_STATE_DIR`, so the variable
 # is read here rather than shadowed by the derived default. `run_token` is
@@ -193,6 +201,11 @@ config :flezha,
          |> String.split(",", trim: true)
          |> Enum.map(transport_atom!)
      end),
+
+  # The port `Flezha.Testnet` starts the WS testnet daemon on, and the one the
+  # scenarios that dial it read back. Both sides take it from here so neither
+  # can hold a literal the other does not.
+  testnet_ws_port: String.to_integer(testnet_ws_port),
 
   # QUIC transport settings.
   quic_listen_address: quic_listen_address,

@@ -4,9 +4,10 @@
 # smoke tier alone. What that runtime carries comes from its manifest
 # (`test/apps/<runtime>_runner/conformance.json`) — see
 # `docs/sdk/conformance.md`.
-# `:testnet` is excluded because the WS testnet daemon must be running on
-# port 4500 — run `npm --prefix test/apps/testnet start` first, then
-# `mix test --include testnet`.
+# `:testnet` is excluded because the WS testnet daemon serves a bundle that
+# `mix test.setup` builds. The run starts the daemon itself, on a port it
+# derives (`Flezha.Testnet.ws_port/0`), so two suites on one checkout do not
+# contend for it — `mix test.setup`, then `mix test --include testnet`.
 # `:memory_drift` is the long-running load harness in
 # `test/load/memory_drift_test.exs`; it also requires
 # `MIX_RUN_MEMORY_DRIFT=1`.

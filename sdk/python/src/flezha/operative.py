@@ -20,14 +20,14 @@ annotated as neither is refused naming both shapes.
 
 from __future__ import annotations
 
-import inspect
-import typing
 from collections.abc import Callable
 from typing import Any
 
+from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .ctx import WorkflowCtx
 from .errors import DeclarationError
+from .procedure import positional_parameters
 
 __all__ = ["Operative", "stream_operative", "workflow_operative"]
 
@@ -134,43 +134,24 @@ class Operative:
         )
 
 
-def _annotations(fn: Callable[..., Any]) -> dict[str, Any]:
-    try:
-        return typing.get_type_hints(fn)
-    except Exception:  # noqa: BLE001
-        # The breadth is the point: an unresolvable forward reference raises
-        # NameError, TypeError, AttributeError or a recursion error depending on
-        # what was annotated, and a narrower tuple would silently drop this
-        # fallback to the raw annotations.
-        return getattr(fn, "__annotations__", {}) or {}
-
-
 def _is_run_body(fn: Callable[..., Any]) -> bool:
     """Whether a workflow declaration is a run-sugar body rather than a graph.
 
     Read from the last parameter's annotation: a run body takes ``(args, ctx)``
     with the context annotated :class:`WorkflowCtx`.
     """
-    parameters = [
-        p
-        for p in inspect.signature(fn).parameters.values()
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-    ]
-    if not parameters:
+    names = positional_parameters(fn, skip_self=False)
+    if not names:
         return False
-    annotation = _annotations(fn).get(parameters[-1].name)
+    annotation = _codec.type_hints(fn).get(names[-1])
     return isinstance(annotation, type) and issubclass(annotation, WorkflowCtx)
 
 
 def _declares_channels(fn: Callable[..., Any]) -> bool:
-    parameters = [
-        p
-        for p in inspect.signature(fn).parameters.values()
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-    ]
-    if len(parameters) != 1:
+    names = positional_parameters(fn, skip_self=False)
+    if len(names) != 1:
         return False
-    annotation = _annotations(fn).get(parameters[0].name)
+    annotation = _codec.type_hints(fn).get(names[0])
     return annotation is None or (isinstance(annotation, type) and issubclass(annotation, Channels))
 
 

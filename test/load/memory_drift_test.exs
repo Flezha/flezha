@@ -66,16 +66,15 @@ defmodule Flezha.Load.MemoryDriftTest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Testnet
   alias FlezhaTest.Helper.NodeTestHelper
 
   @artifact_dir Path.expand("artifacts", __DIR__)
 
-  # The Flezha.Testnet child (test config has testnet_enabled: true)
-  # spawns `npm start --prefix test/apps/testnet`, which listens on
-  # ws://localhost:4500. The harness waits for it to be reachable
-  # before starting the load operative.
-  @testnet_ws_uri "ws://localhost:4500"
-  @testnet_port 4500
+  # The Flezha.Testnet child (test config has testnet_enabled: true) spawns
+  # `npm start --prefix test/apps/testnet` on the port the run derives, and
+  # `Testnet.ws_port/0` is where both sides read it. The harness waits for the
+  # daemon to be reachable before starting the load operative.
   @testnet_wait_timeout_ms 30_000
 
   @namespace "default"
@@ -157,7 +156,7 @@ defmodule Flezha.Load.MemoryDriftTest do
     reachable? =
       NodeTestHelper.wait_until(
         fn ->
-          case :gen_tcp.connect(~c"localhost", @testnet_port, [:binary, active: false], 500) do
+          case :gen_tcp.connect(~c"localhost", Testnet.ws_port(), [:binary, active: false], 500) do
             {:ok, sock} -> :gen_tcp.close(sock) == :ok
             {:error, _reason} -> false
           end
@@ -168,7 +167,7 @@ defmodule Flezha.Load.MemoryDriftTest do
 
     unless reachable? do
       flunk(
-        "Testnet WS source #{@testnet_ws_uri} not reachable within " <>
+        "Testnet WS source #{Testnet.ws_uri()} not reachable within " <>
           "#{@testnet_wait_timeout_ms} ms. Verify `testnet_enabled: true` " <>
           "in config/test.exs and that the bundle at " <>
           "test/apps/testnet/dist/index.js exists (run `mix test.setup` " <>
@@ -288,16 +287,10 @@ defmodule Flezha.Load.MemoryDriftTest do
   end
 
   defp ws_endpoint(_) do
-    payload = synthetic_payload()
-    interval = int_env("MEMORY_DRIFT_WS_INTERVAL_MS", 3)
-
     msg =
-      Jason.encode!(%{
-        event_type: "subscribe",
-        event_data: %{default_message: payload, interval: interval}
-      })
+      Testnet.subscribe_message(synthetic_payload(), int_env("MEMORY_DRIFT_WS_INTERVAL_MS", 3))
 
-    {@testnet_ws_uri, msg}
+    {Testnet.ws_uri(), msg}
   end
 
   defp stop_load_operative do
