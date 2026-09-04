@@ -507,16 +507,16 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool 
 }
 
 /// The heartbeat's self-report; its keys are a cross-SDK contract, and the
-/// controller mirrors all but three of them.
+/// controller holds a liveness slot for every one of them.
 fn heartbeat_metadata() -> HashMap<String, String> {
     let core = crate::poll_core::global();
     // The runner's whole self-report, as one table. The heartbeat thread
     // outlives a wedged dispatch pool, so these counters are what tell "alive
     // but frozen" from "healthy". The key set is a cross-SDK contract, not a
     // convenience: every SDK sends these names. The controller
-    // (`Flezha.Runner.StreamChannel`) holds a liveness slot for nine of them;
-    // `restore_discarded_inputs`, `timers_armed` and `timers_fired` arrive and
-    // are dropped, so a key added here stays invisible until it gains a slot.
+    // (`Flezha.Runner.StreamChannel`) mirrors each into an `hb_<key>` liveness
+    // slot, so a key added here stays invisible until it gains one — which the
+    // cross-SDK gate refuses.
     [
         // Dispatch progress: frozen with the runner alive is a wedged pool.
         ("dispatches", crate::entity::dispatches_completed()),
@@ -611,8 +611,39 @@ fn handle_reconnect(
 mod heartbeat_tests {
     use super::*;
 
-    /// The heartbeat's keys are a cross-SDK contract; `stream_channel.ex`
-    /// mirrors nine of them, and a rename silently blinds the controller.
+    /// The whole key set, pinned. The controller's gate refuses a key it
+    /// holds no slot for, which catches an addition; nothing there catches a
+    /// removal — the mirror simply stops being fed — so the set is written
+    /// out here, in the crate that builds it.
+    #[test]
+    fn the_heartbeat_builds_exactly_the_contracted_keys() {
+        let mut keys: Vec<String> = super::heartbeat_metadata().into_keys().collect();
+        keys.sort();
+
+        let mut expected = vec![
+            "blocked_parks",
+            "credit_parked",
+            "dispatches",
+            "drops_newest",
+            "drops_oldest",
+            "inflight",
+            "inflight_oldest_ms",
+            "pending_push_oldest_ms",
+            "pending_pushes",
+            "restore_discarded_inputs",
+            "timers_armed",
+            "timers_fired",
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(
+            keys, expected,
+            "the heartbeat's key set is a cross-SDK contract"
+        );
+    }
+
+    /// A rename silently blinds the controller, and a counter that reports a
+    /// stale value blinds it just as thoroughly.
     #[test]
     fn the_heartbeat_carries_every_overflow_counter() {
         let before = super::heartbeat_metadata();

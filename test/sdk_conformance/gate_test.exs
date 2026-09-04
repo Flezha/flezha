@@ -10,6 +10,12 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   still accounted for. Both failure directions ride the same rules: an SDK that
   neither carries a capability nor defers it by name, and a capability, fixture
   or runtime added to one SDK and not the others.
+
+  It also holds the cross-SDK contracts that are static: the connect
+  environment every SDK's discovery path reads, the heartbeat key set the
+  controller must mirror, and the diagnostics every runner application this
+  repository ships must install. Each is a fact two languages hold separately
+  and nothing else compares.
   """
 
   use ExUnit.Case, async: true
@@ -53,6 +59,10 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # The one file allowed to name a retired variable is the one that refuses it.
   @retired_refusal_site "flz_transport/src/transport/config.rs"
 
+  # The heartbeat's self-report is built here for every SDK but Elixir's, whose
+  # core inherits nothing from the kernel and builds its own.
+  @heartbeat_site "flz_core/src/coordinator.rs"
+
   # A manifest must declare all of these.
   @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports dispatch toolchain deferred fixtures docs)
 
@@ -93,11 +103,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
   describe "manifests" do
     test "every SDK test app carries one" do
-      apps =
-        Path.wildcard(Path.join(@apps_root, "*_runner"))
-        |> Enum.filter(&File.dir?/1)
-
-      missing = Enum.reject(apps, &File.exists?(Path.join(&1, "conformance.json")))
+      missing = Enum.reject(runner_app_dirs(), &File.exists?(Path.join(&1, "conformance.json")))
 
       if missing != [] do
         fail("these SDK test app directories have no conformance.json: #{inspect(missing)}")
@@ -631,6 +637,74 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         fail("#{runtime} reads the retired #{name} in #{file}; set FLEZHA_QUIC_ADDRESSES instead")
       end
     end
+  end
+
+  describe "data heartbeat" do
+    test "the controller mirrors every key the shared core's heartbeat builds" do
+      core = core_heartbeat_keys()
+
+      refute Enum.empty?(core),
+             "no keys were read out of #{@heartbeat_site}: heartbeat_metadata was restructured " <>
+               "and this gate no longer measures anything"
+
+      mirrored = MapSet.new(Flezha.Runner.StreamChannel.heartbeat_keys())
+      unmirrored = MapSet.difference(MapSet.new(core), mirrored)
+
+      if MapSet.size(unmirrored) > 0 do
+        fail(
+          "#{@heartbeat_site} builds #{Enum.join(Enum.sort(unmirrored), ", ")}, which the " <>
+            "controller holds no liveness slot for: the runner pays for them on the wire and " <>
+            "they reach no operator surface"
+        )
+      end
+    end
+  end
+
+  describe "runner diagnostics" do
+    test "every runner app built on the Rust SDK installs the default subscriber" do
+      for {app, main} <- rust_sdk_runner_apps(),
+          not (File.read!(main) =~ "init_default_tracing()") do
+        fail(
+          "#{app} links flezha_runner and never calls " <>
+            "flezha_runner::diag::init_default_tracing(): every `tracing` event the SDK and " <>
+            "the shared kernel emit is written to a subscriber that does not exist, so the " <>
+            "reconnect, flood-ladder and mailbox-stall diagnostics are unobservable in the " <>
+            "drills that exist to test recovery"
+        )
+      end
+    end
+  end
+
+  # Runner applications this repository ships that link the Rust SDK, as
+  # `{app, main.rs}`. The SDK installs no subscriber of its own — that is its
+  # rule — so the application is the caller that rule assumes.
+  defp rust_sdk_runner_apps do
+    for app <- runner_app_dirs(),
+        manifest = Path.join(app, "Cargo.toml"),
+        File.exists?(manifest),
+        File.read!(manifest) =~ ~r/^\s*flezha_runner\s*=/m,
+        main = Path.join(app, "src/main.rs"),
+        File.exists?(main),
+        do: {app, main}
+  end
+
+  # Every SDK test app directory this repository ships.
+  defp runner_app_dirs do
+    Path.join(@apps_root, "*_runner") |> Path.wildcard() |> Enum.filter(&File.dir?/1)
+  end
+
+  # The keys `flz_core`'s `heartbeat_metadata` builds — the wire contract five
+  # runtimes share (Rust and Java through the kernel, every FFI veneer through
+  # it too). Read from the source because the set lives in another language;
+  # the Elixir SDK builds its own and is measured by its own suite.
+  defp core_heartbeat_keys do
+    body =
+      case Regex.run(~r/fn heartbeat_metadata\(\).*?\n\}\n/s, File.read!(@heartbeat_site)) do
+        [body] -> body
+        nil -> ""
+      end
+
+    for [_, key] <- Regex.scan(~r/\(\s*"([a-z_]+)",/, body), uniq: true, do: key
   end
 
   # The fixture, parsed once per test: whitespace-separated rows, `#` comments.

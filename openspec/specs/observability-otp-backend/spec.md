@@ -54,7 +54,24 @@ The system SHALL provide a built-in process-backed source named `:processhub` th
 
 ### Requirement: Built-in transport source
 
-The system SHALL provide a built-in process-backed source named `:flezha_transport` that polls each configured transport (`:uds`, `:quic`) and emits `:metric` signals for per-transport open connection count, lifetime bytes in, and lifetime bytes out. The source SHALL produce one signal per active transport per poll.
+The system SHALL provide a built-in process-backed source named
+`:flezha_transport` that polls each configured transport (`:uds`, `:quic`) and
+emits `:metric` signals for per-transport open connection count, lifetime bytes
+in, and lifetime bytes out. The source SHALL produce one signal per active
+transport per poll.
+
+Every counter a runner's data heartbeat carries SHALL be mirrored into a
+liveness slot, and every mirrored slot SHALL reach an operator surface — this
+source's metrics, or the convergence stall classifier's per-runner verdicts.
+A counter the runner pays for on the wire and the controller discards is
+invisible to every operator surface, and no reader can tell a key that is
+absent from one whose value is genuinely zero. The heartbeat's key set is a
+cross-SDK contract, so a key added to it SHALL be given a slot and a surface in
+the same change that adds it.
+
+A liveness slot does not surface by itself: this source emits one hard-coded
+metric per name and nothing iterates the slot layout, so a slot with no line of
+its own is readable only by a caller of `snapshot_all/0`.
 
 #### Scenario: Per-transport open-connection count
 - **WHEN** a UDS transport has `4` open runner connections
@@ -63,6 +80,22 @@ The system SHALL provide a built-in process-backed source named `:flezha_transpo
 #### Scenario: Transport-absent case
 - **WHEN** a transport is not enabled in `:flezha, :transports` config
 - **THEN** the source SHALL NOT emit signals for that transport and SHALL NOT raise
+
+#### Scenario: A rebind's discarded inputs reach an operator surface
+- **WHEN** a runner's heartbeat carries `restore_discarded_inputs` after a rebind threw inputs away
+- **THEN** the count SHALL be readable on a controller surface rather than dropped at the channel
+
+#### Scenario: Armed timers that stop firing are visible
+- **WHEN** a runner's heartbeats carry a climbing `timers_armed` and a frozen `timers_fired`
+- **THEN** both counters SHALL be emitted by this source, so wedged promotion is distinguishable from an idle Operative
+
+#### Scenario: Every heartbeat key has a slot
+- **WHEN** the controller's mirrored key set is compared with the key set the shared core's heartbeat builds
+- **THEN** the two SHALL name the same keys
+
+#### Scenario: A slot with no metric line reaches no exporter
+- **WHEN** a heartbeat counter is given a liveness slot and this source is left unchanged
+- **THEN** the counter SHALL reach no signal, no sink and no exporter
 
 ### Requirement: Built-in bounded-mailbox source
 

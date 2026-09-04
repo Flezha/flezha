@@ -8,6 +8,24 @@
 //! Schema negotiation happens at context creation: a shim built against a
 //! different `SCHEMA_VERSION` is refused with an error naming both versions,
 //! before any controller connection is attempted.
+//!
+//! # Diagnostics: this crate installs no tracing subscriber
+//!
+//! Deliberate, and the reason is the shape of a veneer host. This crate is
+//! loaded into a Node, Python, Ruby or PHP process the application owns; a
+//! subscriber claims a process-global slot at load time, writes to that
+//! process's stderr and cannot be handed back. Two veneers in one process, or
+//! a veneer beside another Rust extension, would then contend for the same
+//! slot. So the kernel's `tracing` events are dropped in a veneer host unless
+//! the host installs a subscriber itself, and `RUST_LOG` alone changes
+//! nothing there.
+//!
+//! The Rust SDK's `flezha_runner::diag::init_default_tracing` is the opt-in a
+//! standalone application calls; this crate does not depend on the SDK, so a
+//! veneer cannot reach it. Giving the veneers an opt-in of their own means a
+//! new exported entry point and a call in each of the four hosts — a
+//! cross-SDK change, owed by every veneer at once, not a side effect of this
+//! one.
 
 mod error;
 #[cfg(feature = "jni")]

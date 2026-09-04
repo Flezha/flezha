@@ -32,13 +32,7 @@ defmodule Flezha.Observability.OtpBackendTest do
 
   describe "BeamVmSource" do
     test "registers and emits memory + run-queue + scheduler signals" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{beam_vm: 25}
-        )
-      )
+      arm(:beam_vm)
 
       {:ok, pid} = BeamVmSource.start_link([])
 
@@ -97,13 +91,7 @@ defmodule Flezha.Observability.OtpBackendTest do
 
   describe "HostSource" do
     test "registers and either emits rss + cpu signals on Linux or transitions to :degraded" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{host: 25}
-        )
-      )
+      arm(:host)
 
       {:ok, pid} = HostSource.start_link([])
 
@@ -129,13 +117,7 @@ defmodule Flezha.Observability.OtpBackendTest do
 
   describe "ProcessHubSource" do
     test "registers and no-ops cleanly when no namespaces are up" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{processhub: 25}
-        )
-      )
+      arm(:processhub)
 
       {:ok, pid} = ProcessHubSource.start_link([])
 
@@ -149,13 +131,7 @@ defmodule Flezha.Observability.OtpBackendTest do
 
   describe "TransportSource" do
     test "registers and polls without crashing when no transports are active" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{flezha_transport: 25}
-        )
-      )
+      arm(:flezha_transport)
 
       {:ok, pid} = TransportSource.start_link([])
 
@@ -167,13 +143,7 @@ defmodule Flezha.Observability.OtpBackendTest do
     end
 
     test "an operative's parked-drop count is summed into the data-plane aggregates" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{flezha_transport: 25}
-        )
-      )
+      arm(:flezha_transport)
 
       operative = "obs_parked_#{System.unique_integer([:positive])}"
       ref = LivenessCounters.register_operative(operative)
@@ -191,17 +161,43 @@ defmodule Flezha.Observability.OtpBackendTest do
       assert drops.measurements[:count] >= 2
       assert drops.metadata[:scope] == :data_plane
     end
+
+    # A liveness slot does not surface by itself: `poll_beam_counters/0` calls
+    # `emit_sum/3` once per hard-coded metric and nothing iterates the layout,
+    # so a heartbeat counter with no line there is readable only by a caller of
+    # `snapshot_all/0` and reaches no signal, no sink and no exporter.
+    test "the heartbeat's rebind-discard and timer counters reach the data-plane aggregates" do
+      arm(:flezha_transport)
+
+      runner = "obs_hb_#{System.unique_integer([:positive])}"
+      ref = LivenessCounters.register_channel(runner, :secondary_1)
+
+      for {slot, value} <- [
+            hb_restore_discarded_inputs: 7,
+            hb_timers_armed: 3,
+            hb_timers_fired: 11
+          ] do
+        LivenessCounters.set_channel(ref, slot, value)
+      end
+
+      {:ok, pid} = TransportSource.start_link([])
+      poll(pid, 1)
+      :ok = GenServer.stop(pid)
+
+      signals = RingBufferSink.query(:flezha_transport, 0)
+
+      for {name, value} <- [restore_discarded_inputs: 7, timers_armed: 3, timers_fired: 11] do
+        signal = Enum.find(signals, fn s -> s.name == name end)
+        assert signal, "#{name} never reached a signal"
+        assert signal.measurements[:count] >= value
+        assert signal.metadata[:scope] == :data_plane
+      end
+    end
   end
 
   describe "BoundedMailboxSource" do
     test "registers and emits a one-shot degraded event on first poll" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{flezha_bounded_mailbox: 25}
-        )
-      )
+      arm(:flezha_bounded_mailbox)
 
       {:ok, pid} = BoundedMailboxSource.start_link([])
 
@@ -291,13 +287,7 @@ defmodule Flezha.Observability.OtpBackendTest do
 
   describe "Bus integration" do
     test "an emit from a built-in source flows through the ring buffer" do
-      Application.put_env(
-        :flezha,
-        :observability,
-        Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
-          poll_intervals: %{beam_vm: 25}
-        )
-      )
+      arm(:beam_vm)
 
       {:ok, pid} = BeamVmSource.start_link([])
       poll(pid, 1)
@@ -309,6 +299,18 @@ defmodule Flezha.Observability.OtpBackendTest do
       _ = Bus
       :ok = GenServer.stop(pid)
     end
+  end
+
+  # Shrink one source's poll interval so `poll/2` drives it now instead of
+  # waiting out its default second.
+  defp arm(source) do
+    Application.put_env(
+      :flezha,
+      :observability,
+      Keyword.put(Application.get_env(:flezha, :observability, []), :otp_backend,
+        poll_intervals: %{source => 25}
+      )
+    )
   end
 
   # Drive `n` polls of a source now rather than waiting out its interval, then

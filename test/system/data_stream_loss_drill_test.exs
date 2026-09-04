@@ -136,7 +136,13 @@ defmodule FlezhaTest.System.DataStreamLossDrillTest do
 
     log("phase 1: the control channel answered a ping — the runner is alive")
 
-    _ = drain_port(port, [])
+    # The runner's own account of the loss, read before phase 2 clears the
+    # buffer for its own window: the reader dies at the loss, so its diagnostic
+    # is never in what the self-heal window sees.
+    log(
+      "phase 1: runner said = " <>
+        inspect(drain_port(port, []), printable_limit: 4_000)
+    )
 
     # --- Phase 2: does anything bring it back? -----------------------------
     healed_by_itself? = produces?(operative_id, namespace, "after", 90_000)

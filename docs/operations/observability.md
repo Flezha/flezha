@@ -52,7 +52,11 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   `mailbox_blocked`, `mailbox_drops_newest`, `mailbox_drops_oldest`, `mailbox_pending_pushes`
   (the runner's overflow self-report: producers held on full entity mailboxes, Entities
   withheld work because a consumer will not take their output, and what a shedding operative
-  discarded — the only handle on that loss from outside the runner);
+  discarded — the only handle on that loss from outside the runner),
+  `restore_discarded_inputs` (inputs a rebind threw away, correct only where the controller
+  re-forwards from a durable log, so a climbing value sizes that loss), `timers_armed` and
+  `timers_fired` (the wake list's occupancy and its firings: armed climbing while fired stays
+  flat is promotion wedged rather than an idle Operative);
   gauge `credit_ledger_level`. No bytes in/out. Reading them:
   [../internals/transport_liveness.md](../internals/transport_liveness.md).
   **The self-report needs a NIF driver.** The `:native` in-node transport has none, so a

@@ -73,15 +73,17 @@ BEAM counters alone. `StreamAcceptor` registers each per-runner data-stream serv
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on `:atomics`-backed `:counters`, one
 array per channel (`{runner_id, name}`) and per operative, registered in a public ETS table and pruned
 of dead owners on `snapshot_all/0`. Channel slots: `io_in_received`, `send_frame_calls`, `nil_drops`,
-`flz_data_received`, `last_send_ms`, `hb_count`, `hb_dispatches`, `hb_credit_parked`, `hb_blocked_parks`,
-`hb_drops_newest`, `hb_drops_oldest`, `hb_pending_pushes`, `hb_pending_push_oldest_ms`, `credit_active`,
-`credit_ledger_level`, `credit_overrun_total`, `stale_writer_refused`. Operative slots: `io_in_received`,
-`forwarded`, `filtered_nil`.
+`flz_data_received`, `last_send_ms`, `hb_count`, `hb_dispatches`, `hb_credit_parked`, `hb_inflight`,
+`hb_inflight_oldest_ms`, `hb_blocked_parks`, `hb_drops_newest`, `hb_drops_oldest`, `hb_pending_pushes`,
+`hb_pending_push_oldest_ms`, `hb_restore_discarded_inputs`, `hb_timers_armed`, `hb_timers_fired`,
+`credit_active`, `credit_ledger_level`, `credit_overrun_total`, `stale_writer_refused`,
+`send_gate_held`. Operative slots: `io_in_received`, `forwarded`, `filtered_nil`, `parked_drops`.
 
 **Runner dispatch self-report** (all three SDKs): every `data_heartbeat` frame on a secondary stream
 carries `dispatches` (process-global payloads dispatched through the poll engine), `blocked_parks`,
-`drops_newest`, `drops_oldest`, `pending_pushes`, `pending_push_oldest_ms` and, from `flz_core`,
-`credit_parked`. The heartbeat thread
+`drops_newest`, `drops_oldest`, `inflight`, `inflight_oldest_ms`, `pending_pushes`,
+`pending_push_oldest_ms`, `credit_parked`, `timers_armed`, `timers_fired` and, from `flz_core`,
+`restore_discarded_inputs`. The heartbeat thread
 outlives a wedged dispatch pool, so without the counter a runner can look alive while processing
 nothing. The secondary `StreamChannel` mirrors each into its `hb_*` slot and bumps `hb_count`; the
 per-stream `output_stall` heartbeat check runs only on secondary channels — primary streams are

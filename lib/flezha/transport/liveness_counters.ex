@@ -45,6 +45,12 @@ defmodule Flezha.Transport.LivenessCounters do
   # is being withheld work because a consumer is full. A gated producer holds
   # no handout, so `hb_inflight` is blind to it and backpressure that
   # withholds work would otherwise read as a runner doing nothing.
+  # `hb_restore_discarded_inputs` mirrors what a rebind threw away — a discard
+  # is correct only where the controller re-forwards from a durable log, so a
+  # climbing value is the operator's one handle on the size of that loss — and
+  # `hb_timers_armed`/`hb_timers_fired` the wake list's occupancy and its
+  # firings: armed climbing while fired stays flat is promotion wedged rather
+  # than an idle Operative.
   # `stale_writer_refused` counts durable-write forwards refused on a fenced
   # (takeover-superseded) channel.
   # `send_gate_held` counts senders held on this stream's send-buffer gate —
@@ -66,6 +72,9 @@ defmodule Flezha.Transport.LivenessCounters do
     :hb_drops_oldest,
     :hb_pending_pushes,
     :hb_pending_push_oldest_ms,
+    :hb_restore_discarded_inputs,
+    :hb_timers_armed,
+    :hb_timers_fired,
     :credit_active,
     :credit_ledger_level,
     :credit_overrun_total,
@@ -75,6 +84,15 @@ defmodule Flezha.Transport.LivenessCounters do
   @operative_slots [:io_in_received, :forwarded, :filtered_nil, :parked_drops]
   @channel_size length(@channel_slots)
   @operative_size length(@operative_slots)
+
+  @doc """
+  The channel slot layout, in index order. Read by `Flezha.Runner.StreamChannel`
+  at compile time: a heartbeat key whose `hb_<key>` slot is missing here would
+  raise from `channel_index/1` on the first heartbeat and take the channel down
+  with it, so the pairing is a compile error rather than a runtime one.
+  """
+  @spec channel_slots() :: [atom()]
+  def channel_slots(), do: @channel_slots
 
   @doc """
   Whether the ~1 Hz driver poll + stall classifier should run. The counters

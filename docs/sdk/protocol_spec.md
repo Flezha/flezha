@@ -238,10 +238,12 @@ reads), `blocked_parks`, `drops_newest`, `drops_oldest`, `inflight`,
 withheld work because a consumer will not take their output, and the age of the
 oldest such push — a gated producer holds no handout, so `inflight` cannot see
 it), `credit_parked`, `restore_discarded_inputs`, `timers_armed`,
-`timers_fired`. The controller reads `dispatches` and
-`credit_parked`, bumps `hb_count`, and treats any inbound frame as liveness; a
+`timers_fired`. The controller mirrors every one of them into an `hb_<key>`
+liveness slot, bumps `hb_count`, and treats any inbound frame as liveness; a
 bound channel silent past `:io_stream_liveness_threshold_ms` (default 30 s) is
-flagged as a stall.
+flagged as a stall. A key added here owes a slot and a metric in the same
+change, or the runner pays for it on the wire and no operator surface reads
+it.
 
 ### Per-Entity mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 

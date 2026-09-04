@@ -117,6 +117,17 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit_sum(:mailbox_drops_oldest, channels, :hb_drops_oldest)
     emit_sum(:mailbox_pending_pushes, channels, :hb_pending_pushes)
 
+    # What a rebind threw away, and the wake list. A discard is correct only
+    # where the controller re-forwards from a durable log, so `restore_discarded`
+    # climbing is the operator's one handle on the size of that loss; and
+    # `timers_fired` frozen while `timers_armed` climbs is promotion wedged
+    # rather than an idle Operative. Each line is the honest cost of a liveness
+    # slot: nothing here iterates the slot layout, so a slot with no line is
+    # readable only by a caller of `snapshot_all/0` and reaches no exporter.
+    emit_sum(:restore_discarded_inputs, channels, :hb_restore_discarded_inputs)
+    emit_sum(:timers_armed, channels, :hb_timers_armed)
+    emit_sum(:timers_fired, channels, :hb_timers_fired)
+
     # Send-side backpressure, the mirror of `credit_parked`: senders held on a
     # stream's send-buffer gate. Climbing while `channel_nil_drops` stays flat
     # is congestion being absorbed rather than data being lost.

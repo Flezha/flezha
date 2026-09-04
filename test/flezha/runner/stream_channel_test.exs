@@ -259,11 +259,10 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert row.hb_inflight_oldest_ms == 0
     end
 
-    # The comment above `@heartbeat_keys` says nine of the runner's twelve keys
-    # mirror. This is what makes that number checkable: the other three reach
-    # the controller and land nowhere, which is a gap with an owner, not a
-    # spelling mistake.
-    test "twelve reported keys mirror into nine slots, and three have none", %{
+    # Every key the runner's heartbeat carries lands in a slot. The cross-SDK
+    # gate proves the two key sets name the same things; this proves the value
+    # actually arrives in the slot the mirror derives.
+    test "every reported key mirrors into its own slot", %{
       pid: pid,
       name: name
     } do
@@ -298,13 +297,12 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
             hb_drops_newest: 6,
             hb_drops_oldest: 7,
             hb_pending_pushes: 8,
-            hb_pending_push_oldest_ms: 9
+            hb_pending_push_oldest_ms: 9,
+            hb_restore_discarded_inputs: 10,
+            hb_timers_armed: 11,
+            hb_timers_fired: 12
           ] do
         assert Map.fetch(row, slot) == {:ok, value}, "#{slot} did not mirror"
-      end
-
-      for slot <- [:hb_restore_discarded_inputs, :hb_timers_armed, :hb_timers_fired] do
-        refute Map.has_key?(row, slot), "#{slot} has a slot now — the comment says it has none"
       end
     end
 
