@@ -303,4 +303,23 @@ mod tests {
         assert_eq!(summary.terminal_seq, 0);
         assert_eq!(sink.changes, vec![b"postcard-bytes".to_vec()]);
     }
+
+    /// The crc that is checked is the frame's trailing one, over header and
+    /// body together, and it is checked before the header is decoded — so a
+    /// corrupted body is refused even though its header parses.
+    #[test]
+    fn a_corrupted_body_is_refused_before_the_header_is_decoded() {
+        let mut log = record(7, &template(SDK_LANG_RUST), b"postcard-bytes");
+        let last_body_byte = log.len() - 5; // the trailing crc is the last four
+        log[last_body_byte] ^= 0xFF;
+        let mut sink = RecordingSink::default();
+
+        let err = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap_err();
+
+        match err {
+            RestoreError::CrcMismatch { entity, seq } => assert_eq!((entity, seq), (0, 7)),
+            other => panic!("expected a crc mismatch, got {other:?}"),
+        }
+        assert!(sink.changes.is_empty());
+    }
 }

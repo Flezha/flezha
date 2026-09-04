@@ -274,9 +274,9 @@ The Rust SDK SHALL stamp a 16-byte header on every Change record emitted to the 
 - bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Procedure owning the Change.
 - bytes 9:10 — `format_id: u8` SHALL equal `1` (postcard) in v1.
 - bytes 10:12 — reserved, MUST be zero.
-- bytes 12:16 — `crc32: u32 BE` SHALL be `crc32fast::hash(&change_bytes)`.
+- bytes 12:16 — `crc32: u32 BE` SHALL be `crc32fast::hash(&change_bytes)`. This field is stamped and carried; it is NOT the value the restore path compares. The WAL frame carries its own trailing crc32 over the header and the body together, and that is the one a fold checks.
 
-The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u8; 16]` and verified in `decode_header` on the restoration path.
+The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u8; 16]`. Decoding it SHALL be split across the functions that own each refusal, and this requirement SHALL name the function that raises each one rather than attributing them all to the parser: `decode_header` parses the sixteen bytes and refuses only a header it cannot parse; the language byte is refused by `refuse_foreign_language`; the schema decision is taken by `decide_schema` against a readable floor, reached through `resolve_record` and `resolve_state`; and the crc a fold refuses on is the WAL frame's trailing one, read before the header is decoded. A scenario that names a refusal no function raises, or a variant the crate does not declare, is unfalsifiable and SHALL NOT stand as a requirement.
 
 #### Scenario: Header bytes match the umbrella spec
 
@@ -289,20 +289,35 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 - **WHEN** a Procedure stamps a header
 - **THEN** bytes 1:5 SHALL carry the SDK crate's version
 
+#### Scenario: An unparseable header is refused by the parser
+
+- **WHEN** `decode_header` is given fewer than sixteen bytes
+- **THEN** it SHALL return `Err(RestoreError::HeaderInvalid)`, which is the only refusal that function raises
+
 #### Scenario: Cross-language load fails loud
 
-- **WHEN** the Rust SDK attempts to decode a header whose `sdk_lang` byte is `2` (Java)
-- **THEN** `decode_header` SHALL return `Err(RestoreError::LangMismatch { expected: 1, found: 2 })` and SHALL NOT proceed to deserialization
+- **WHEN** the Rust SDK attempts to restore a record whose `sdk_lang` byte is `2` (Java)
+- **THEN** the language check SHALL return `Err(RestoreError::LangMismatch { expected: 1, found: 2 })` and SHALL NOT proceed to deserialization
 
-#### Scenario: schema_version mismatch fails loud
+#### Scenario: A schema older than the readable floor fails loud
 
-- **WHEN** the Rust SDK at Procedure `SCHEMA_VERSION = 2` attempts to decode a record whose header carries `schema_version = 1`
-- **THEN** `decode_header` SHALL return `Err(RestoreError::SchemaMismatch { expected: 2, found: 1 })` and SHALL NOT proceed to deserialization (registered migrators are reserved by the umbrella but not implemented in this change)
+- **WHEN** the Rust SDK restores a record whose header carries a `schema_version` below the Procedure's readable floor
+- **THEN** the schema decision SHALL return `Err(RestoreError::SchemaTooOld { .. })` and SHALL NOT proceed to deserialization
+
+#### Scenario: A schema newer than this build fails loud
+
+- **WHEN** the Rust SDK at Procedure `SCHEMA_VERSION = 1` restores a record whose header carries `schema_version = 2`
+- **THEN** the schema decision SHALL return `Err(RestoreError::SchemaFromTheFuture { .. })` and SHALL NOT proceed to deserialization
 
 #### Scenario: crc32 mismatch fails loud
 
-- **WHEN** the Rust SDK decodes a record whose header crc32 does not match a recomputed crc32 over the change_bytes
-- **THEN** `decode_header` SHALL return `Err(RestoreError::CrcMismatch { entity, seq })` and SHALL NOT proceed to deserialization
+- **WHEN** the Rust SDK folds a change-log record whose trailing crc32 does not match a crc32 recomputed over that record's header and change bytes
+- **THEN** the fold SHALL return `Err(RestoreError::CrcMismatch { entity, seq })` before the header is decoded, and SHALL NOT proceed to deserialization
+
+#### Scenario: Every error variant a scenario names is declared by the crate
+
+- **WHEN** the `RestoreError` variants this requirement names are looked up in `flz_core`
+- **THEN** each SHALL exist, so no scenario here can be satisfied by no code at all
 
 ### Requirement: Public Rust SDK API uses canonical Operative/Runner vocabulary
 

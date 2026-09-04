@@ -12,7 +12,7 @@
 # gets turned off, and the repository has already paid for one that went red on
 # correct prose.
 #
-# Six citation kinds, each judged against the tracked tree:
+# Seven citation kinds, each judged against the tracked tree:
 #
 #   module     `Flezha.A.B` — live when the tracked Elixir source names it, or
 #              names something below it. `#{__MODULE__}` is resolved first, so a
@@ -31,6 +31,13 @@
 #   telemetry  `[:flezha, …]` — live when the source carries the literal, or
 #              carries the prefix and the final atom, which is how an event
 #              assembled from a variable is written.
+#   rust enum  `RestoreError::CrcMismatch`, `RestoreError::{A, B}` — live when
+#              the one tracked Rust file declaring `enum RestoreError` declares
+#              that variant. Only a name exactly one file declares as an enum is
+#              judged, so a module path (`flz_core::routing`) and an ambiguous
+#              type name are out of scope by construction. A document naming a
+#              variant the crate does not have mandates a refusal no code can
+#              raise, which is the shape this gate exists to catch.
 #
 # WHAT IS NOT JUDGED, and why each is a shape rather than a list of instances:
 #
@@ -130,6 +137,18 @@ EVENT = re.compile(r"\[\s*:flezha(?:\s*,\s*:?[A-Za-z0-9_]+)*\s*\]")
 # that is the only family with a registry — `flezha-certs`, `flezha-reaper` and
 # ten more are Kubernetes resources, volumes and thread names.
 MAVEN = re.compile(r"`(flezha-sdk(?:-[a-z0-9]+)*)`")
+# `enum Name {` on one line; a declaration whose brace opens on the next line is
+# not this repository's style and reads as undeclared rather than as empty.
+RUST_ENUM = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+(\w+)")
+# A variant opens its line — rustfmt writes one per line, and the format gate
+# keeps it that way — and a struct-variant's fields are lower-case, so nothing
+# below the variant can be read as one.
+RUST_VARIANT = re.compile(r"\s*(?:#\[[^\]]*\]\s*)?([A-Z]\w*)\s*(?:\{|\(|,|=|$)")
+# `Type::{A, B}` is unambiguous Rust wherever it is written, and the list often
+# wraps mid-span; `Type::Variant` alone is only read inside a code span.
+RUST_GROUPED = re.compile(r"\b([A-Z]\w*)::\{([^}`\n]*)")
+RUST_SINGLE = re.compile(r"\b([A-Z]\w*)::([A-Z]\w*)")
+RUST_SPAN = re.compile(r"`([^`\n]+)`")
 
 elixir_names = set()      # every `Flezha.…` the source names
 module_file = {}          # module -> the file whose `defmodule` opens it
@@ -137,6 +156,8 @@ module_defs = {}          # module -> the names that file defines
 source_atoms = set()      # every `:atom` the non-document source writes
 source_envs = set()       # every `FLEZHA_*` the non-document source writes
 source_events = set()     # every `[:flezha, …]` literal, whitespace removed
+rust_enum_files = {}      # enum name -> the tracked files declaring it
+rust_variants = {}        # enum name -> the variants those files declare
 
 
 def squash(text):
@@ -154,6 +175,26 @@ for rel in TRACKED:
     source_atoms.update(ATOM.findall(text))
     source_envs.update(ENV.findall(text))
     source_events.update(squash(m) for m in EVENT.findall(text))
+    if rel.endswith(".rs"):
+        # The enum whose body the walk is inside, and how deep, so a
+        # struct-variant's own braces do not close it.
+        open_enum, depth = None, 0
+        for line in text.split("\n"):
+            if open_enum is None:
+                declared = RUST_ENUM.match(line)
+                if declared and "{" in line:
+                    open_enum = declared.group(1)
+                    depth = line.count("{") - line.count("}")
+                    rust_enum_files.setdefault(open_enum, set()).add(rel)
+                    rust_variants.setdefault(open_enum, set())
+                continue
+            depth += line.count("{") - line.count("}")
+            if depth <= 0:
+                open_enum = None
+                continue
+            variant = RUST_VARIANT.match(line)
+            if variant:
+                rust_variants[open_enum].add(variant.group(1))
     if not rel.endswith((".ex", ".exs")):
         continue
     # A stack of (indentation, module), because a nested `defmodule Child` owns
@@ -296,6 +337,24 @@ def check_maven_modules(line):
             for name in named if name not in MAVEN_MODULES]
 
 
+def check_rust_variants(line):
+    named = []
+    for match in RUST_GROUPED.finditer(line):
+        named += [(match.group(1), v) for v in re.findall(r"[A-Z]\w*", match.group(2))]
+    for span in RUST_SPAN.findall(RUST_GROUPED.sub("", line)):
+        named += [(m.group(1), m.group(2)) for m in RUST_SINGLE.finditer(span)]
+    out = []
+    for name, variant in named:
+        # One declaring file, or the citation has no single answer to check.
+        if len(rust_enum_files.get(name, ())) != 1:
+            continue
+        tally["citations"] += 1
+        if variant not in rust_variants[name]:
+            declared = next(iter(rust_enum_files[name]))
+            out.append(f"names `{name}::{variant}`, which `{declared}` does not declare")
+    return out
+
+
 def check_telemetry(line):
     out = []
     for cited in EVENT.findall(line):
@@ -324,7 +383,8 @@ def check(rel, line):
     for rule in scoped[rel]:
         line = rule.sub("", line)
     return (check_paths(rel, line) + check_elixir(line) + check_env(line)
-            + check_maven_modules(line) + check_telemetry(line))
+            + check_maven_modules(line) + check_telemetry(line)
+            + check_rust_variants(line))
 
 
 def in_scope(rel):

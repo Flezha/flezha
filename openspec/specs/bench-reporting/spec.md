@@ -212,3 +212,19 @@ other's durable state.
 - **WHEN** two sessions start a suite that binds the data-plane port
 - **THEN** neither SHALL fail to bind, and neither SHALL read state the other wrote
 
+### Requirement: Published operator documentation SHALL NOT drive material the repository excludes
+
+A tracked operator document SHALL NOT instruct a reader to run a task, script or stack whose source this repository deliberately keeps out of version control, without saying so at the point of instruction. A fresh clone does not have that material, so the instruction fails with an unknown task and the reader cannot tell a missing dependency from a documentation error.
+
+Where such a harness is described because its results are quoted elsewhere, the document SHALL mark the section as describing development material the repository does not carry, and SHALL state any published fact it depends on rather than sending the reader to the excluded file for it.
+
+#### Scenario: A documented bench task is not in a fresh clone
+
+- **WHEN** a tracked operations document names a Mix task whose source is excluded from version control
+- **THEN** the document SHALL say the repository does not carry that task, at the section that names it
+
+#### Scenario: A published number does not depend on excluded material
+
+- **WHEN** a published document quotes a figure produced by an excluded harness
+- **THEN** the figure SHALL be stated in the published document rather than cited from the excluded file
+

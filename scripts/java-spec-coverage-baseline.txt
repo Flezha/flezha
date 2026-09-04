@@ -1,0 +1,144 @@
+# Scenarios in openspec/specs/java-sdk/spec.md that no Java test named when
+# scripts/check-java-spec-coverage.sh landed. This is recorded debt, not an
+# exemption: the gate fails on any scenario outside this list, and on any entry
+# here that has since been covered or that the spec no longer carries.
+#
+# The list may only shrink. Close an entry by naming the scenario in a test's
+# @DisplayName, method name or class name, then delete the line.
+#
+# One `Requirement :: Scenario` per line, sorted.
+Auto-Reconnect on Unexpected Disconnect :: Controller restart is invisible to Java pollers
+Command Dispatch :: AddOperative spawns a Java-hosted operative instance
+Command Dispatch :: Ping never reaches Java
+Command Dispatch :: Restore is a fold handed to Java
+Each Entity SHALL run on its own Procedure instance :: Concurrent Entities do not race on one instance
+Each Entity SHALL run on its own Procedure instance :: Dynamic Entities each receive an instance
+Each Entity SHALL run on its own Procedure instance :: Instance state does not leak between Entity keys
+Each Entity SHALL run on its own Procedure instance :: The dispatcher's documentation matches its behaviour
+Factory visibility SHALL match its documentation :: Declared visibility matches documented visibility
+Flezha static accessor for the active runner :: currentRunner() reflects the singleton's lifecycle
+Hot-path cost is bounded :: No JNI calls on state.apply
+Hot-path cost is bounded :: No serialization on state.apply
+JNI Bridge to flz_core_ffi :: Native buffer freed after copy into Java byte[]
+JNI Bridge to flz_core_ffi :: Shutdown wakes blocked Java pollers
+JNI Bridge to flz_core_ffi :: Version mismatch refuses at context creation
+Java SDK Entry Point :: Controller unavailable triggers exponential backoff retries
+Java SDK Entry Point :: RunnerBuilder is not importable
+Java SDK Entry Point :: Successful connection on a created runner
+Java SDK Entry Point :: start() with zero defined operative types is legal
+Java SDK data heartbeat reports dispatch progress :: A wedged Java runner is distinguishable from an idle one
+Java SDK data heartbeat reports dispatch progress :: The heartbeat carries dispatch progress
+Java SDK implements checkpoint ack granularity :: A park closes the open interval
+Java SDK implements checkpoint ack granularity :: A restore discards the open interval
+Java SDK implements checkpoint ack granularity :: An open interval holds the consumed offset
+Java SDK implements checkpoint ack granularity :: checkpoint() closes the interval and acknowledges the offset
+Java SDK implements checkpoint ack granularity :: checkpointAck without the tier is refused
+Java SDK implements stream late-input correction :: A closed slice flushes before a live input behind it
+Java SDK implements stream late-input correction :: A correction window without the tier is refused
+Java SDK implements stream late-input correction :: A replay does not lower the event-time high-water
+Java SDK implements stream late-input correction :: A replayed slice dispatches in event-time order
+Java SDK implements stream late-input correction :: Beyond-window default is process-as-arrival
+Java SDK implements the effectively-once output tier :: A poisoned tier invocation parks inside the effect record
+Java SDK implements the effectively-once output tier :: A tier class with a non-keyed plugin channel fails registration
+Java SDK implements the effectively-once output tier :: A tier invocation ships one effect record, not separate frames
+Java SDK implements the effectively-once output tier :: Effect-record bytes are byte-identical to the Rust encoder
+Java SDK implements the workflow durable loop and suspension :: A durable chained loop whose terminal proc has no codec is refused
+Java SDK implements the workflow durable loop and suspension :: A loop on run-sugar is refused
+Java SDK implements the workflow durable loop and suspension :: A resumed loop restarts at the journaled iteration
+Java SDK implements the workflow durable loop and suspension :: An idle loop parks instead of completing
+Java SDK implements the workflow durable loop and suspension :: Each loop iteration commits at its boundary
+Java SDK implements the workflow entity retry ladder :: A non-retryable error skips the ladder
+Java SDK implements the workflow entity retry ladder :: A transient entity failure recovers on retry
+Java SDK implements the workflow entity retry ladder :: An exhausted ladder compensates
+Java SDK implements the workflow entity retry ladder :: attempts > 1 with a zero backoff is refused
+Java SDK implements the workflow proc-journal and ProcCommit handshake :: A commit timeout triggers compensation
+Java SDK implements the workflow proc-journal and ProcCommit handshake :: A committed proc is skipped on resume, not re-run
+Java SDK implements the workflow proc-journal and ProcCommit handshake :: A missing inter-proc codec fails registration
+Java SDK implements the workflow proc-journal and ProcCommit handshake :: An opted-out class re-runs from the top
+Java SDK implements workflow branching :: A branching chain runs its branches and joins
+Java SDK implements workflow branching :: Compensation runs in reverse-topological order
+Java SDK implements workflow branching :: Fan-in does not overwrite an edge
+Java SDK implements workflow loop rewind :: A hookless proc still drains the rewind undo
+Java SDK implements workflow loop rewind :: A rewind does not re-deliver consumed inputs
+Java SDK implements workflow loop rewind :: A rewind undoes committed iterations in reverse order
+Java SDK implements workflow staged commit and the transactional outbox :: A failing stage leaks no staged output
+Java SDK implements workflow staged commit and the transactional outbox :: A proc's emits are staged, not shipped, until the barrier
+Java SDK implements workflow staged commit and the transactional outbox :: run-sugar keeps the direct path
+Kryo serialization with stable registered type IDs :: Built-in types registered with stable IDs
+Kryo serialization with stable registered type IDs :: Unregistered class fails loud
+Kryo serialization with stable registered type IDs :: User types registered after built-ins
+Operative Type Declaration :: Declaring a stream operative class before start() succeeds
+Operative Type Declaration :: Declaring an operative type after start() is accepted
+Operative Type Declaration :: Declaring or removing a type on a closed runner is refused
+Operative Type Declaration :: Duplicate factoryId across two stream operative classes is rejected
+Operative Type Declaration :: Dynamic-mode procedure declares and creates entities lazily
+Operative Type Declaration :: Removing a type that is not defined is rejected
+Operative Type Declaration :: Removing a type with live instances is refused and keeps it defined
+Operative Type Declaration :: Typed entry channel deserializes at the edge
+Operative Type Declaration :: Unreachable node fails declaration
+Operative Type Declaration :: Wiring mismatch fails declaration with a diagnosable error
+Operative declares persistenceEnabled default-method, frozen at instance start :: Code-declared opt-out is honored
+Operative declares persistenceEnabled default-method, frozen at instance start :: Default-on with no override
+Operative declares persistenceEnabled default-method, frozen at instance start :: Resolved value frozen at instance start
+Operative declares persistenceEnabled default-method, frozen at instance start :: Runner override takes precedence
+Per-Entity flusher with toggle-aware drain :: Changes returned in a completion reach the WAL
+Per-Entity flusher with toggle-aware drain :: Persistence disabled drains and discards
+Procedure Interface and Per-Entity Dispatch :: A key-less emit in a keyed Entity carries that Entity's key
+Procedure Interface and Per-Entity Dispatch :: Inter-procedure zero-copy preserves value identity
+Procedure Interface and Per-Entity Dispatch :: Keyed emit stamps flz.key on the wire
+Procedure Interface and Per-Entity Dispatch :: Plugin-bound emit attaches the channel name as metadata on the wire
+Procedure Interface and Per-Entity Dispatch :: Plugin-bound emitWithMeta appends user metadata after the channel key
+Procedure Interface and Per-Entity Dispatch :: Reserved flz. metadata key in user map is rejected
+Procedure Interface and Per-Entity Dispatch :: Run throwing ProcedureException logs and continues
+Procedure Interface and Per-Entity Dispatch :: Run throwing arbitrary RuntimeException logs and continues
+Procedure Interface and Per-Entity Dispatch :: Single-mode Procedure runs on a single entity
+Procedure Interface and Per-Entity Dispatch :: Static-mode Procedure creates one entity per entityKey
+Procedure Interface and Per-Entity Dispatch :: Static-mode entitiesFor fan-out enqueues input on each named entity
+Procedure Interface and Per-Entity Dispatch :: emitKeyed on a non-keyed channel is rejected
+Procedure Interface and Per-Entity Dispatch :: emitWithMeta on an inter-procedure channel returns error
+Procedure Interface and Per-Entity Dispatch :: now() is constant within one invocation
+Procedure Interface and Per-Entity Dispatch :: stableId() is byte-identical to the Rust SDK
+Procedure Interface and Per-Entity Dispatch :: stableId() is replay-stable and ordinal-distinct
+Procedure declares Clock generic parameter with default WallClock :: Default Clock is WallClock
+Procedure declares Clock generic parameter with default WallClock :: EventTimeFrom serves the extracted input time
+Procedure declares Clock generic parameter with default WallClock :: EventTimeFrom without an eventTime override fails registration
+Procedure declares Clock generic parameter with default WallClock :: LogicalClock serves the durable change seq and re-arms on restore
+Procedure declares Clock generic parameter with default WallClock :: LogicalClock with NoChange fails registration
+Procedure interface declares Change, Clock, Config generic parameters :: Default Change is NoChange skips persistence machinery
+Procedure interface declares Change, Clock, Config generic parameters :: Default applyChange throws on non-NoChange Change without override
+Procedure interface declares Change, Clock, Config generic parameters :: Default fromConfig invokes no-arg constructor for Void Config
+Procedure interface declares Change, Clock, Config generic parameters :: User-defined Change opts the Procedure into persistence
+Procedure interface declares Change, Clock, Config generic parameters :: User-defined Config ships through Jackson deserialization
+Procedure.run receives StateHandle, not direct State reference :: Direct field mutation requires apply
+Procedure.run receives StateHandle, not direct State reference :: Mutation via apply runs applyChange and records
+Procedure.run receives StateHandle, not direct State reference :: Read access via get() is allocation-free
+Public Java SDK handler classes use canonical Operative vocabulary :: New handlers wire into dispatch
+Public Java SDK handler classes use canonical Operative vocabulary :: Old handler classes do not exist
+Public Operative / Procedure / Entity user-facing API names :: User extends StreamOperative
+Runner lifecycle — start, run, awaitTermination, close :: close() wakes a thread blocked in awaitTermination()
+Runner lifecycle — start, run, awaitTermination, close :: run() blocks until shutdown
+Runner lifecycle — start, run, awaitTermination, close :: start() returns immediately after the handshake, before shutdown
+Runner lifecycle — start, run, awaitTermination, close :: try-with-resources still works for short-lived usage
+Sticky Per-Entity Ordering Under ThreadPool Dispatch :: Different entities of same procedure may run concurrently
+Sticky Per-Entity Ordering Under ThreadPool Dispatch :: Per-entity inputs delivered in arrival order
+Sticky Per-Entity Ordering Under ThreadPool Dispatch :: Same entity never runs concurrently under load
+The Java Procedure surface declares migrations :: a Java Procedure restores state written at an older version
+The Java SDK SHALL document its actual state-mutation enforcement level :: A bypassed mutation's actual fate is described
+The Java SDK SHALL document its actual state-mutation enforcement level :: Documentation does not claim enforcement that does not exist
+The Java SDK SHALL document its actual state-mutation enforcement level :: The asymmetry with Rust is stated
+The Java SDK SHALL emit an entity_state_snapshot on CompactEntity :: A live Entity produces a snapshot at its current seq
+The Java SDK SHALL emit an entity_state_snapshot on CompactEntity :: The response is never a zero-length body
+The Java SDK SHALL emit an entity_state_snapshot on CompactEntity :: The snapshot body round-trips through the restore path
+The Java SDK SHALL ship its declared compact_after_bytes to the Controller :: A declared override reaches the Controller
+The Java class declaration carries per-Procedure schema versions :: two Procedures with different versions declare both
+The Java runtime is a poll host over the shared core :: Blocking user code does not consume a fetcher
+The Java runtime is a poll host over the shared core :: Java reproduces the schema fixtures byte-identically
+The Java runtime is a poll host over the shared core :: Kernel classes are gone
+The Java runtime is a poll host over the shared core :: Per-entity state is host-held without host locking
+The snapshot frame SHALL be stamped with its payload-id :: No transport helper claims stamping it does not perform
+The snapshot frame SHALL be stamped with its payload-id :: The frame is routable by the Controller
+Worker Pool and Dispatch Throughput Floor :: A throwing dispatch abandons instead of dropping the activation
+Worker Pool and Dispatch Throughput Floor :: Default fetcher count is small and fixed
+Worker Pool and Dispatch Throughput Floor :: Reference bench meets the Java throughput floor
+initState accepts optional restoration payload :: Cold start passes Optional.empty()
+initState accepts optional restoration payload :: Restart passes Optional.of(payload)

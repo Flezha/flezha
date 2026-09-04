@@ -279,6 +279,30 @@
                     </execution>
                 </executions>
             </plugin>
+            <!--
+                java-sdk-testing requires a scenario/test sync check that
+                `mvn -f sdk/java verify` runs. Bound here, on the aggregator
+                only: the check reads the whole spec and the whole test tree
+                once, so running it per module would repeat one answer seven
+                times.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <inherited>false</inherited>
+                <executions>
+                    <execution>
+                        <id>java-spec-coverage</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${project.basedir}/../../scripts/check-java-spec-coverage.sh</executable>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>

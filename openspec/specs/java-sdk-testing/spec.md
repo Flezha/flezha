@@ -192,17 +192,34 @@ The harness SHALL provide a `TestProcedureCtx` implementation of `ProcedureCtx` 
 
 ### Requirement: At least one harness test per java-sdk requirement scenario
 
-The Java SDK test suite (`mvn -f sdk/java test`) SHALL include at least one harness-based test per scenario in the `java-sdk` capability's persistence-related requirements added by `operative-state-persistence-java`. Scenarios SHALL be enumerated from the spec's `#### Scenario:` blocks and verified at the test level.
+The Java SDK test suite SHALL include at least one test that names each scenario in the `java-sdk` capability. The in-scope set SHALL be computable from the live spec tree — every `#### Scenario:` under every `### Requirement:` in `openspec/specs/java-sdk/spec.md` — and SHALL NOT be scoped through an archived change's requirement titles, which stop resolving the moment a requirement is renamed.
 
-#### Scenario: Coverage report enumerates per-scenario harness tests
+A test names a scenario when the scenario's title appears in the test's `@DisplayName`, its method name or its class name, compared on letters and digits alone so that case, punctuation and word breaks do not decide it. That is the spelling the suite already carries; no second annotation SHALL be introduced for the check.
 
-- **WHEN** `mvn -f sdk/java test` runs and produces JUnit reports
-- **THEN** the JUnit report SHALL include test methods named after each scenario from the persistence requirements (e.g. `testDefaultChangeIsNoChange_skipsPersistence`, `testStateApplyRunsApplyChangeAndRecords`, `testCoalesceCollapsesSameKey`, ...) — at least one test method per scenario
+The rule SHALL be enforced by a gate bound to a plugin execution that `mvn -f sdk/java verify` reaches, and the gate SHALL be run by the workflow CI invokes. A requirement that mandates a check no build invokes is unfalsifiable: it can never be the reason a test exists, and a reader looking for the check finds nothing and cannot tell whether it was removed or never written.
 
-#### Scenario: Coverage gap fails CI pre-merge
+The gate SHALL carry a committed baseline of the scenarios no test named when it landed, so it lands green over the debt it inherits rather than red. The baseline is data, not an exemption: the gate SHALL fail on a scenario outside it, on an entry that a test has since covered, and on an entry the spec no longer carries. The list may only shrink.
 
-- **WHEN** a new persistence-related scenario is added to a `java-sdk` requirement and no corresponding harness test exists
-- **THEN** the spec/test sync check (run as part of `mvn -f sdk/java verify`) SHALL fail and block merge with a message naming the missing scenario; this matches the existing pattern from `java-sdk-testing` "Each java-sdk requirement has at least one unit test"
+#### Scenario: Coverage gap fails the build
+
+- **WHEN** a scenario is added to a `java-sdk` requirement and no test names it
+- **THEN** `mvn -f sdk/java verify` SHALL fail with a message naming that requirement and that scenario
+
+#### Scenario: The named gate is one the build runs
+
+- **WHEN** the enforcement this requirement names is looked for in the Java build
+- **THEN** it SHALL be bound to a plugin execution `mvn -f sdk/java verify` reaches, and SHALL NOT be named here while no execution runs it
+
+#### Scenario: The in-scope set is computed, never listed
+
+- **WHEN** a `java-sdk` requirement is renamed or a scenario is added to one
+- **THEN** the gate SHALL read the new title from `openspec/specs/java-sdk/spec.md` on its next run, with no list to update for it to keep judging the right set
+
+#### Scenario: Recorded debt may only shrink
+
+- **WHEN** a test is written that names a scenario the baseline records as uncovered
+- **THEN** the gate SHALL fail until that entry is removed from the baseline
+- **AND** an entry naming a scenario the spec no longer carries SHALL fail the same way
 
 ### Requirement: Java test app directory uses canonical Runner naming
 

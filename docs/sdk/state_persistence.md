@@ -93,13 +93,14 @@ snapshot header carrying that format is malformed. A refused fold leaves the Ent
 was and the controller parks the operative.
 Rust folds in-process with postcard and verifies each record's header (`sdk_lang`,
 `schema_version`, `format_id`) and trailing CRC32, failing loud with
-`RestoreError::{LangMismatch, SchemaMismatch, HeaderInvalid, CrcMismatch, SnapshotDecode,
-ChangeDecode}`. Java folds through a `RestoreFold` activation: the core splits the log on
-`format_id`, folds timer ops and cursors itself and hands the host only the snapshot and
-change bodies to Kryo-decode and `applyChange`; the host fold performs no header or CRC
-check. A restore naming an Entity with no live slot validates the log and acks the terminal
-seq; a dynamic Entity the controller has state for is materialised so it survives a rebind;
-an evicted Entity is never restored — eviction deletes its files.
+`RestoreError::{LangMismatch, SchemaTooOld, SchemaFromTheFuture, HeaderInvalid,
+CrcMismatch, SnapshotDecode, ChangeDecode}`. Java folds through a `RestoreFold`
+activation: the core splits the log on `format_id`, folds timer ops and cursors itself and
+hands the host only the snapshot and change bodies to Kryo-decode and `applyChange`; the
+host fold performs no header or CRC check. A restore naming an Entity with no live slot
+validates the log and acks the terminal seq; a dynamic Entity the controller has state for
+is materialised so it survives a rebind; an evicted Entity is never restored — eviction
+deletes its files.
 
 ### Compaction (`CompactEntity`)
 
