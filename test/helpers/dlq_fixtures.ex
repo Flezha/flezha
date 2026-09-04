@@ -3,7 +3,32 @@ defmodule FlezhaTest.Helper.DlqFixtures do
   Fixtures for driving the dead-letter queue's operator verbs.
   """
 
+  import ExUnit.Callbacks, only: [on_exit: 1]
+
   alias Flezha.Dlq.Store
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  @doc """
+  Point `:dlq` at a per-test tmp directory and register its cleanup. `opts` are
+  merged into the `:dlq` config (`replay_grace_ms: 400`, `retention_seconds: 0`
+  and the like); the directory is returned for a test that asserts on disk.
+
+  `Flezha.Dlq.Store` reads its root per call, so this repoints the store the
+  application tree already runs as well as any the test starts itself.
+  """
+  @spec isolated_dir(keyword()) :: String.t()
+  def isolated_dir(opts \\ []) do
+    dir = NodeTestHelper.claim_tmp_dir("flz_dlq")
+    previous = Application.get_env(:flezha, :dlq, [])
+    Application.put_env(:flezha, :dlq, Keyword.merge(previous, [dir: dir] ++ opts))
+
+    on_exit(fn ->
+      Application.put_env(:flezha, :dlq, previous)
+      File.rm_rf!(dir)
+    end)
+
+    dir
+  end
 
   @doc """
   An overwatch stand-in that re-parks whatever input it is handed, then tells

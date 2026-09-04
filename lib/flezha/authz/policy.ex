@@ -11,7 +11,9 @@ defmodule Flezha.AuthZ.Policy do
   `_system`; the role table alone does not express that constraint.
   """
 
-  # Read-only actions usable by viewers on the bound namespace.
+  # Read-only actions usable by viewers on the bound namespace. `schedule.list`
+  # is here because the schedule registry names no business data — a viewer sees
+  # what fires and when, not what any of it produced.
   @viewer_actions [
     :"operative.list",
     :"plugin.list",
@@ -29,10 +31,15 @@ defmodule Flezha.AuthZ.Policy do
     :"boot.await",
     :"state.get",
     :"state.list",
-    :"state.at"
+    :"state.at",
+    :"schedule.list"
   ]
 
-  # Operator adds operative/plugin lifecycle, audit rotation, observability mutate.
+  # Operator adds operative/plugin lifecycle, audit rotation, observability
+  # mutate, schedule management, and the dead-letter queue whole. The DLQ reads
+  # sit with `dlq.drop` rather than with the viewer reads because a parked
+  # payload is the failed record itself: whoever may read one may already
+  # destroy it, and no viewer workflow needs it.
   @operator_extra [
     :"operative.start",
     :"operative.stop",
@@ -42,8 +49,16 @@ defmodule Flezha.AuthZ.Policy do
     :"observability.enable_source",
     :"observability.disable_source",
     :"state.rotate",
+    :"operative.scale",
+    :"operative.rewind",
+    :"dlq.list",
+    :"dlq.show",
     :"dlq.replay",
-    :"dlq.drop"
+    :"dlq.drop",
+    :"schedule.add",
+    :"schedule.remove",
+    :"schedule.assert",
+    :"schedule.retract"
   ]
 
   # Admin adds everything that touches auth state, plus reset / shutdown

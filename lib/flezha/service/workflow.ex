@@ -7,12 +7,11 @@ defmodule Flezha.Service.Workflow do
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument and answers data.
 
-  `rescale/5` and `rewind/4` carry no action of their own, because
-  `Flezha.AuthZ.Action` names none and `flz operative scale` and `flz operative
-  rewind` authorize nothing either. They are as gated here as they are from the
-  terminal, and no more: naming them, granting them and threading a token
-  through those two CLI verbs is a policy decision recorded for the repository
-  owner rather than taken here.
+  `rescale/5` and `rewind/4` move live work, so each carries an action of its
+  own — `operative.scale` and `operative.rewind`, both the operator's, both
+  judged in the namespace the caller names rather than one the context carries.
+  They sit beside `operative.stop` in the grant table because they are the same
+  kind of intervention on a running operative.
 
   `rewind/4` takes an operative rather than a pid. The console resolves a pid
   and then rewinds it, which puts a process identifier on the wire and makes the
@@ -30,6 +29,8 @@ defmodule Flezha.Service.Workflow do
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
   alias Flezha.State.TimeTravel
+
+  @audit_source :workflow_service
 
   @type caller_context :: CallerContext.t()
 
@@ -113,9 +114,14 @@ defmodule Flezha.Service.Workflow do
   @spec rescale(String.t(), String.t(), pos_integer(), keyword(), caller_context()) ::
           term() | {:error, term()}
   def rescale(namespace, group_id, target, opts, caller_context) do
-    CallerContext.validated(caller_context, fn ->
-      PartitionGroup.rescale(namespace, group_id, target, opts)
-    end)
+    CallerContext.gated(
+      caller_context,
+      :"operative.scale",
+      namespace,
+      @audit_source,
+      %{group: group_id, partitions: target},
+      fn -> PartitionGroup.rescale(namespace, group_id, target, opts) end
+    )
   end
 
   @doc """
@@ -128,11 +134,18 @@ defmodule Flezha.Service.Workflow do
   @spec rewind(String.t(), String.t(), non_neg_integer(), caller_context()) ::
           :ok | {:error, term()}
   def rewind(namespace, operative_class, to_iter, caller_context) do
-    CallerContext.validated(caller_context, fn ->
-      case OperativeManager.get_operative_pid(namespace, operative_class) do
-        {:ok, pid} -> Migration.rewind(pid, to_iter)
-        _other -> {:error, :operative_not_running}
+    CallerContext.gated(
+      caller_context,
+      :"operative.rewind",
+      namespace,
+      @audit_source,
+      %{operative: operative_class, to_iteration: to_iter},
+      fn ->
+        case OperativeManager.get_operative_pid(namespace, operative_class) do
+          {:ok, pid} -> Migration.rewind(pid, to_iter)
+          _other -> {:error, :operative_not_running}
+        end
       end
-    end)
+    )
   end
 end

@@ -5,17 +5,16 @@ defmodule Flezha.Service.Dlq do
   before any effect, and answers data.
 
   `Flezha.Dlq.Store` is a store: it deletes what it is told to delete and asks
-  nothing about who asked. `platform-authn-authz` names `dlq.drop` and
-  `dlq.replay` as authorized verbs, so those two are gated here — in the entry's
-  own namespace rather than one the caller declares, which is what stops a
-  consumer widening its reach by asking in a namespace it prefers.
+  nothing about who asked. Every verb here is authorized in the entry's own
+  namespace rather than one the caller declares, which is what stops a consumer
+  widening its reach by asking in a namespace it prefers. A verb that names no
+  class reads across every namespace, so it is judged in `_system`.
 
-  The reads validate the context and nothing more, because the policy names no
-  DLQ read action to authorize against. Gating them would need three new
-  entries in `Flezha.AuthZ.Action`, their role grants, and a `--token` threaded
-  into `flz dlq list` and `flz dlq show`, which today take no options at all —
-  who may read a parked payload is a decision for the repository owner, and it
-  is recorded rather than guessed here.
+  The reads carry actions of their own: `dlq.list` for the three listings and
+  `dlq.show` for the one that answers payload bytes. Both are granted to the
+  operator, alongside the drop that destroys the same record — a parked payload
+  is the failed business record held verbatim, so reading one is at least as
+  privileged as discarding it.
 
   The entry is read before the action is authorized, because the scope is the
   entry's namespace and the entry is where it comes from; the context's *shape*
@@ -48,7 +47,7 @@ defmodule Flezha.Service.Dlq do
   @doc "Parked entries, nearest-to-expiry first; `nil` for every class."
   @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
   def list(operative_class, caller_context) do
-    CallerContext.validated(caller_context, fn ->
+    class_read(caller_context, :"dlq.list", operative_class, fn ->
       {:ok, Store.list(operative_class)}
     end)
   end
@@ -57,15 +56,17 @@ defmodule Flezha.Service.Dlq do
   @spec get(String.t(), caller_context()) ::
           {:ok, entry(), binary() | nil} | {:error, term()}
   def get(entry_ref, caller_context) do
-    CallerContext.validated(caller_context, fn ->
-      Store.get(entry_ref)
-    end)
+    with {:ok, entry, payload} <- entry_for(entry_ref, caller_context) do
+      class_read(caller_context, :"dlq.show", entry["operative_class"], fn ->
+        {:ok, entry, payload}
+      end)
+    end
   end
 
   @doc "Entry and byte counts per parked procedure."
   @spec stats(caller_context()) :: {:ok, [map()]} | {:error, term()}
   def stats(caller_context) do
-    CallerContext.validated(caller_context, fn ->
+    class_read(caller_context, :"dlq.list", nil, fn ->
       {:ok, Store.stats()}
     end)
   end
@@ -74,7 +75,7 @@ defmodule Flezha.Service.Dlq do
   @spec procedures(String.t() | nil, caller_context()) ::
           {:ok, [{String.t(), String.t()}]} | {:error, term()}
   def procedures(operative_class, caller_context) do
-    CallerContext.validated(caller_context, fn ->
+    class_read(caller_context, :"dlq.list", operative_class, fn ->
       {:ok, Store.procedures(operative_class)}
     end)
   end
@@ -157,12 +158,21 @@ defmodule Flezha.Service.Dlq do
     CallerContext.gated(
       caller_context,
       action,
-      OperativeManager.namespace_of_class(entry["operative_class"]),
+      class_scope(entry["operative_class"]),
       @audit_source,
       %{entry: entry_ref},
       fun
     )
   end
+
+  defp class_read(caller_context, action, operative_class, fun) do
+    CallerContext.scoped_read(caller_context, action, class_scope(operative_class), fun)
+  end
+
+  # A verb that names a class is judged in that class's namespace; one that
+  # names none reads across every namespace, which is a `_system` read.
+  defp class_scope(nil), do: CallerContext.system_scope()
+  defp class_scope(operative_class), do: OperativeManager.namespace_of_class(operative_class)
 
   defp replayable(nil), do: {:error, :payload_not_replayable}
   defp replayable(_payload), do: :ok

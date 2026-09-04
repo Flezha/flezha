@@ -174,7 +174,17 @@ defmodule Flezha.Api.ServiceSurfaceTest do
             {Fleet, :runners, ["default"]},
             {Controller, :shutdown_status, []},
             {PluginManager, :list, []},
-            {Dlq, :drop, ["rc/proc/id"]}
+            {Dlq, :list, [nil]},
+            {Dlq, :get, ["rc/proc/id"]},
+            {Dlq, :stats, []},
+            {Dlq, :drop, ["rc/proc/id"]},
+            {Schedule, :list, []},
+            {Schedule, :add, [%{name: "s"}]},
+            {Schedule, :remove, ["s"]},
+            {Schedule, :assert_entry, [%{name: "s"}]},
+            {Schedule, :retract, ["s"]},
+            {Workflow, :rescale, ["default", "group", 2, []]},
+            {Workflow, :rewind, ["default", "rc", 1]}
           ] do
         assert match?({:error, {:forbidden, _reason}}, apply(module, fun, args ++ [context])) or
                  apply(module, fun, args ++ [context]) == {:error, :not_found},

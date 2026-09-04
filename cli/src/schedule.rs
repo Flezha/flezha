@@ -2,7 +2,7 @@ use std::process::exit;
 
 use crate::dispatch::{self, Command};
 use crate::operative::parse_plugins_json;
-use crate::rpc::{self, escape_rpc_arg};
+use crate::rpc::{self, escape_rpc_arg, token_opts_fragment};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -10,8 +10,8 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         ("add", handle_add),
         ("list", handle_list),
-        ("remove", |args| handle_named("remove", args)),
-        ("run", |args| handle_named("run", args)),
+        ("remove", handle_remove),
+        ("run", handle_run),
     ],
     help_verbs: dispatch::HELP_VERBS,
     missing: None,
@@ -19,9 +19,12 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
-fn handle_list(_args: &[String]) {
+fn handle_list(args: &[String]) {
     rpc::run(
-        "Flezha.Service.CliManager.schedule_list()".to_string(),
+        format!(
+            "Flezha.Service.CliManager.schedule_list({})",
+            token_opts_fragment(args)
+        ),
         rpc::PROPAGATE,
     );
 }
@@ -30,9 +33,9 @@ fn handle_add(args: &[String]) {
     let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind workflow]";
     let rest = &args[1..];
 
-    let name = match rest.first() {
-        Some(name) if !name.starts_with('-') => name.clone(),
-        _ => {
+    let name = match args::positional(rest, 0) {
+        Some(name) => name.clone(),
+        None => {
             eprintln!("Error: missing schedule name.\n {}", usage);
             exit(1);
         }
@@ -57,26 +60,50 @@ fn handle_add(args: &[String]) {
 
     rpc::run(
         format!(
-            "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-            name, cron, tz, factory, namespace, escaped_init_values, kind, escaped_plugins,
+            "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", {})",
+            name,
+            cron,
+            tz,
+            factory,
+            namespace,
+            escaped_init_values,
+            kind,
+            escaped_plugins,
+            token_opts_fragment(rest),
         ),
         rpc::PROPAGATE,
     );
 }
 
-fn handle_named(verb: &str, args: &[String]) {
-    let name = match args.get(1) {
+fn handle_remove(args: &[String]) {
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.schedule_remove(\"{}\", {})",
+            schedule_name("remove", args),
+            token_opts_fragment(args)
+        ),
+        rpc::PROPAGATE,
+    );
+}
+
+fn handle_run(args: &[String]) {
+    rpc::run(
+        format!(
+            "Flezha.Service.CliManager.schedule_run(\"{}\")",
+            schedule_name("run", args)
+        ),
+        rpc::PROPAGATE,
+    );
+}
+
+fn schedule_name(verb: &str, args: &[String]) -> String {
+    match args::positional(args, 1) {
         Some(name) => name.clone(),
         None => {
             eprintln!("Usage: flz schedule {} <name>", verb);
             exit(1);
         }
-    };
-
-    rpc::run(
-        format!("Flezha.Service.CliManager.schedule_{}(\"{}\")", verb, name),
-        rpc::PROPAGATE,
-    );
+    }
 }
 
 fn require_param(args: &[String], key: &str, usage: &str) -> String {

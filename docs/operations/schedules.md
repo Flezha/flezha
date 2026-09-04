@@ -29,6 +29,16 @@ flz schedule run <name>
 Names match `[A-Za-z0-9][A-Za-z0-9_-]*` and are at most 11 bytes, so the
 composed instance id `<name>@<slot-iso>` fits the 32-byte operative id limit.
 
+**Authorization.** `add`, `list` and `remove` take `--token` (or `FLEZHA_TOKEN`)
+and are judged in the **system namespace**, not in the schedule's own: the store
+is one table for the whole controller and the hub is a cluster-wide singleton,
+so a listing crosses every namespace and `--namespace` says only where a firing
+lands. Listing is a `viewer` action (`schedule.list`); adding and removing are
+`operator` actions (`schedule.add`, `schedule.remove`, plus `schedule.assert`
+and `schedule.retract` for the hub half). So the credential is one bound to
+`_system` — `flz token issue ci _system operator` — or an `admin@_system` token.
+`run` carries no action of its own.
+
 ```bash
 flz schedule add digest --cron "0 8,20 * * *" --tz Europe/Tallinn --factory ai_digest
 ```

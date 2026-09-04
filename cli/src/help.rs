@@ -185,7 +185,9 @@ Usage:
   flz dlq list [operative]                       Parked entries, nearest-to-expiry first
   flz dlq show <operative/procedure/entry-id>    Entry metadata + payload preview
   flz dlq replay <operative/procedure/entry-id>  Re-dispatch through the normal input path
-  flz dlq drop <operative/procedure/entry-id>    Discard the entry (audited)"#;
+  flz dlq drop <operative/procedure/entry-id>    Discard the entry (audited)
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
 pub(crate) const FLZ: Help = r#"flz - Flezha CLI
 
@@ -305,7 +307,9 @@ EXAMPLES:
     flz operative rewind chat-1 --to-iteration 3
     flz operative replay candles/aggregate/BTC --from 1720000000000
 
-Use 'flz operative <COMMAND> --help' for more information on a specific command."#;
+Use 'flz operative <COMMAND> --help' for more information on a specific command.
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
 pub(crate) const PLUGIN: Help = r#"flz plugin - Plugin management commands
 
@@ -431,7 +435,9 @@ SUBCOMMANDS:
 EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest
     flz schedule list
-    flz schedule run digest"#;
+    flz schedule run digest
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var."#;
 
 pub(crate) const STATE: Help = r#"flz state - Per-Entity state inspection and time-travel queries
 

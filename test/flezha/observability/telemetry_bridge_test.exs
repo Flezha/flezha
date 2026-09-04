@@ -6,6 +6,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
   alias Flezha.Operative.{Lifecycle, Overwatch}
+  alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -229,15 +230,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
         config: %{counter_ref: ref, parent: self(), sources: [:flezha_dlq]}
       })
 
-    dir = Path.join(System.tmp_dir!(), "flezha_dlq_obs_#{System.unique_integer([:positive])}")
-    original = Application.get_env(:flezha, :dlq, [])
-    Application.put_env(:flezha, :dlq, Keyword.merge(original, dir: dir, retention_seconds: 0))
-
-    on_exit(fn ->
-      Registry.unregister_sink(dlq_sink)
-      Application.put_env(:flezha, :dlq, original)
-      File.rm_rf!(dir)
-    end)
+    DlqFixtures.isolated_dir(retention_seconds: 0)
+    on_exit(fn -> Registry.unregister_sink(dlq_sink) end)
 
     drain_mailbox()
 

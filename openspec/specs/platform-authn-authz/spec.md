@@ -3,9 +3,7 @@
 ## Purpose
 
 The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `runner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
-
 ## Requirements
-
 ### Requirement: Verified-principal model
 
 The system SHALL define a Principal as a verified identity. For mTLS-authenticated callers the Principal SHALL be derived from the X.509 client cert via `Flezha.AuthN.Cert.principal_from_peer/1`: if the cert carries a SPIFFE URI SAN of the form `spiffe://<trust-domain>/...` the SAN SHALL be the Principal; otherwise the cert subject DN normalised to RFC 4514 form SHALL be the Principal. For callers presenting a scoped token, the Principal SHALL be the `principal` field stored in the token registry entry. No code path SHALL invent a Principal from any other source (request body, header, environment variable, peer-credential UID). Wiring this extraction into the live transport handshake is out of scope for this change; the extraction primitives are provided.
@@ -326,3 +324,45 @@ provider pattern.
   are read back
 - **THEN** the stored and returned opts carry a redacted placeholder, not the
   secret, while the live client authenticates successfully
+
+### Requirement: Every operator verb that reads business data or moves live work SHALL be an authorized action
+
+Such a verb SHALL name an action in the authorizable-action enumeration and SHALL
+authorize it before doing anything — a verb that reads parked business data, creates or
+destroys a schedule, or moves live work between runners. A verb whose action is absent
+from that enumeration is not merely ungated, it is unauthorizable — the policy point
+refuses only actions it knows — so the enumeration is the surface this requirement
+governs.
+
+A CLI verb that this requirement gates SHALL accept the caller's credential, so that
+naming its action does not make it refuse every caller. A verb whose signature cannot
+carry a token is not gateable, and widening that signature is part of gating it.
+
+Each new action SHALL be granted to at least the roles that can invoke the verb today,
+unless narrowing it is the recorded intent of the change that adds it.
+
+#### Scenario: A parked payload is not readable by an unauthorized caller
+
+- **WHEN** a caller with no role binding lists or shows a dead-letter entry while
+  authorization is enforced
+- **THEN** the read SHALL be refused, and no payload bytes SHALL be returned
+
+#### Scenario: A schedule is not created by an unauthorized caller
+
+- **WHEN** a caller with no role binding adds, removes, asserts or retracts a schedule
+  while authorization is enforced
+- **THEN** the verb SHALL be refused and no schedule SHALL change
+
+#### Scenario: Live partitions are not moved by an unauthorized caller
+
+- **WHEN** a caller with no role binding rescales a partition group or rewinds an
+  operative while authorization is enforced
+- **THEN** the verb SHALL be refused and no work SHALL move
+
+#### Scenario: A gated verb still reaches the callers it had
+
+- **WHEN** a role that could invoke one of these verbs before its action existed invokes
+  it after
+- **THEN** the verb SHALL succeed, unless the change that named the action recorded a
+  narrower grant as its intent
+

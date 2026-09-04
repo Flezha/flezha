@@ -24,3 +24,5 @@ EXAMPLES:
     flz operative replay candles/aggregate/BTC --from 1720000000000
 
 Use 'flz operative <COMMAND> --help' for more information on a specific command.
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

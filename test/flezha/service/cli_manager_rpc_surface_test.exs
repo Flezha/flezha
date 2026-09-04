@@ -21,8 +21,7 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
     "render" => {1, 2, ""},
     "named_source" => {1, 2, ""},
     "handle_entity_verb" => {2, 2, ""},
-    "handle_read" => {3, 3, ""},
-    "handle_named" => {1, 0, "schedule_"}
+    "handle_read" => {3, 3, ""}
   }
 
   @rpc_call ~r/Flezha\.Service\.CliManager\.([a-z_0-9]+|\{\}|schedule_\{\})\(/

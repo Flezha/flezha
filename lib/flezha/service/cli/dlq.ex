@@ -14,10 +14,10 @@ defmodule Flezha.Service.Cli.Dlq do
   `flz dlq list [operative]` — parked entries, nearest-to-expiry (oldest)
   first.
   """
-  def dlq_list(operative_class \\ "") do
+  def dlq_list(operative_class \\ "", opts \\ []) do
     filter = if operative_class == "", do: nil, else: operative_class
 
-    case DlqSvc.list(filter, Context.cli_context([])) do
+    case DlqSvc.list(filter, Context.cli_context(opts)) do
       {:ok, []} -> IO.puts("dead-letter queue is empty")
       {:ok, entries} -> render_listing(entries)
       {:error, reason} -> render_dlq_error(reason, "dlq.list")
@@ -27,8 +27,8 @@ defmodule Flezha.Service.Cli.Dlq do
   @doc """
   `flz dlq show <operative/procedure/id>` — entry metadata + payload preview.
   """
-  def dlq_show(entry_ref) do
-    case DlqSvc.get(entry_ref, Context.cli_context([])) do
+  def dlq_show(entry_ref, opts \\ []) do
+    case DlqSvc.get(entry_ref, Context.cli_context(opts)) do
       {:ok, entry, payload} -> render_entry(entry, payload)
       {:error, reason} -> render_dlq_error(reason, "dlq.show")
     end
@@ -113,9 +113,7 @@ defmodule Flezha.Service.Cli.Dlq do
     IO.puts("payload            #{rendered}")
   end
 
-  defp render_dlq_error({:forbidden, reason}, action) do
-    Context.cli_error!("#{action}: #{Context.render_forbidden(reason)}", :stderr)
-  end
+  defp render_dlq_error({:forbidden, reason}, action), do: Context.refuse!(action, reason)
 
   defp render_dlq_error(:not_found, _action) do
     Context.cli_error!("error: DLQ entry not found", :stderr)

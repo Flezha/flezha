@@ -94,6 +94,11 @@ fn handle_scale(args: &[String]) {
     if let Some(timeout_ms) = args::or_refuse(args::number::<u64>(&args[3..], "--timeout", "-t")) {
         opts.push(("timeout_ms".to_string(), timeout_ms.to_string()));
     }
+    // `operative_scale` has one options argument and it is JSON, so the
+    // credential rides in it rather than in a keyword list of its own.
+    if let Some(token) = rpc::auth_token(&args[3..]) {
+        opts.push(("token".to_string(), token));
+    }
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_scale(\"{}\", \"{}\", \"{}\", \"{}\")",
@@ -251,10 +256,11 @@ fn handle_rewind(args: &[String]) {
     // operative_rewind halts non-zero on error verdicts (not_found / refused).
     rpc::run(
         format!(
-            "Flezha.Service.CliManager.operative_rewind(\"{}\", \"{}\", {})",
+            "Flezha.Service.CliManager.operative_rewind(\"{}\", \"{}\", {}, {})",
             args::namespace(&args[2..]),
             &args[1],
             to_iter,
+            rpc::token_opts_fragment(&args[2..]),
         ),
         rpc::UNKNOWN_STATUS.diagnosing("Failed to rewind operative"),
     );

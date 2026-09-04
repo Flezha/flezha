@@ -255,8 +255,9 @@ defmodule Flezha.Service.Cli.Operative do
       end
 
     namespace = Context.normalize_namespace(namespace)
+    caller_context = Context.cli_context(Context.json_token_opts(opts_json))
 
-    case Workflow.rescale(namespace, group_id, target, opts, Context.cli_context([])) do
+    case Workflow.rescale(namespace, group_id, target, opts, caller_context) do
       {:ok, result} ->
         Enum.each(result.warnings, &IO.puts("WARNING: #{&1}"))
 
@@ -267,6 +268,9 @@ defmodule Flezha.Service.Cli.Operative do
         )
 
         Enum.each(result.members, &IO.puts("  #{&1}"))
+
+      {:error, {:forbidden, reason}} ->
+        Context.refuse!("operative.scale", reason, :stdio)
 
       {:error, reason} ->
         Context.cli_error!("Error scaling operative: #{Context.format_reason(reason)}")
@@ -283,10 +287,10 @@ defmodule Flezha.Service.Cli.Operative do
   Refused, changing nothing, when the target has not committed or when an unwound
   procedure emitted plugin output it cannot compensate.
   """
-  def operative_rewind(namespace, operative_id, to_iter) do
+  def operative_rewind(namespace, operative_id, to_iter, opts \\ []) do
     namespace = Context.normalize_namespace(namespace)
 
-    case Workflow.rewind(namespace, operative_id, to_iter, Context.cli_context([])) do
+    case Workflow.rewind(namespace, operative_id, to_iter, Context.cli_context(opts)) do
       {:error, :operative_not_running} ->
         Context.cli_error!("Error: operative '#{operative_id}' not found")
 
@@ -319,6 +323,10 @@ defmodule Flezha.Service.Cli.Operative do
         "procedure that declares no `compensate` hook, so the output cannot be " <>
         "undone: #{Enum.join(channels, ", ")}"
     )
+  end
+
+  defp print_rewind(_operative_id, _to_iter, {:error, {:forbidden, reason}}) do
+    Context.refuse!("operative.rewind", reason, :stdio)
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, reason}) do

@@ -187,6 +187,40 @@ only `admin@_system` may target another namespace. A token carries its own role
 and namespace, so it keeps authorizing after its principal's binding is
 removed — revoke the token as well.
 
+### The verbs that read business data or move live work
+
+These are the grants an operator most often has to reason about, because the
+verb is not obviously a mutation or the namespace it is judged in is not the one
+on the command line.
+
+| Verb | Action | Role | Judged in |
+| --- | --- | --- | --- |
+| `flz dlq list`, `flz dlq show` | `dlq.list`, `dlq.show` | operator | the named class's namespace; `_system` when no class is named |
+| `flz dlq replay`, `flz dlq drop` | `dlq.replay`, `dlq.drop` | operator | the entry's namespace |
+| `flz schedule list` | `schedule.list` | viewer | `_system` |
+| `flz schedule add`, `flz schedule remove` | `schedule.add` / `.remove` (and `.assert` / `.retract` for the hub half) | operator | `_system` |
+| `flz operative scale` | `operative.scale` | operator | the namespace given on the command line |
+| `flz operative rewind` | `operative.rewind` | operator | the namespace given on the command line |
+
+Two of those choices are worth stating plainly.
+
+**A parked payload is business data.** `dlq list` and `dlq show` are the
+operator's, not the viewer's, because a DLQ entry holds the record that failed —
+verbatim, with its entity key and its error. Reading one is at least as
+privileged as the drop that destroys it, and no viewer workflow needs it.
+
+**Schedule management is a `_system` privilege.** The schedule store is one
+durable table for the whole controller and the hub is a cluster-wide singleton;
+a schedule's `--namespace` says where its firings land, it does not partition
+the registry. So a credential for `flz schedule add | list | remove` is one
+bound to `_system` (`flz token issue ci _system operator`), or `admin@_system`.
+A namespace-bound operator cannot manage schedules.
+
+Both are reversible in `Flezha.AuthZ.Policy`: move an action between
+`@viewer_actions`, `@operator_extra` and `@admin_extra` and the grant moves with
+it. `flz schedule run` carries no action at all — it fires an existing schedule
+rather than changing one.
+
 ## Audit-log integration
 
 `:platform_authz` is in the audit log's default allow-list, so with

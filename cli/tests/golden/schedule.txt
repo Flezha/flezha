@@ -18,3 +18,5 @@ EXAMPLES:
     flz schedule add digest --cron "0 8 * * *" --tz Europe/Tallinn --factory ai_digest
     flz schedule list
     flz schedule run digest
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

@@ -45,8 +45,9 @@ defmodule Flezha.Service.Cli.Context do
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
 
-  # The installer surface is node-level (a `.fpz` lands on the controller's
-  # disk for every namespace), so every installer verb authorizes on `_system`.
+  # The credential as it reaches a verb whose only options argument is JSON —
+  # the installer verbs and `flz operative scale`. `flz` writes `{"token": …}`
+  # into that document; every other verb carries a keyword list instead.
   def json_token_opts(opts_json) when is_binary(opts_json) do
     case Jason.decode(opts_json) do
       {:ok, %{"token" => token}} when is_binary(token) -> [token: token]
@@ -103,11 +104,8 @@ defmodule Flezha.Service.Cli.Context do
     ctx = cli_context(opts)
 
     case Flezha.AuthZ.authorize(ctx, action, Scope.build(namespace)) do
-      :ok ->
-        ctx
-
-      {:error, {:forbidden, reason}} ->
-        cli_error!("#{action}: #{render_forbidden(reason)}", :stderr)
+      :ok -> ctx
+      {:error, {:forbidden, reason}} -> refuse!(action, reason)
     end
   end
 
@@ -124,6 +122,16 @@ defmodule Flezha.Service.Cli.Context do
     )
 
     result
+  end
+
+  @doc """
+  Halt the verb `action` with the refusal `reason`, on the stream its verb
+  family prints errors to. The one spelling of an authorization refusal, so a
+  gated verb never invents its own wording.
+  """
+  @spec refuse!(atom() | String.t(), term(), :stdio | :stderr) :: no_return()
+  def refuse!(action, reason, device \\ :stderr) do
+    cli_error!("#{action}: #{render_forbidden(reason)}", device)
   end
 
   def render_forbidden(:bootstrap_pending) do

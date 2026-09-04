@@ -98,6 +98,13 @@ pub(crate) fn or_refuse<T>(read: Result<T, String>) -> T {
     }
 }
 
+/// The positional argument at `index`, or `None` when it is absent or is a
+/// flag. A flag is never a positional: `flz dlq list --token X` names no
+/// operative class, and `flz schedule remove --token X` names no schedule.
+pub(crate) fn positional(args: &[String], index: usize) -> Option<&String> {
+    args.get(index).filter(|arg| !arg.starts_with('-'))
+}
+
 pub(crate) fn namespace(args: &[String]) -> String {
     or_refuse(extract_param(args, "--namespace", "-n")).unwrap_or_default()
 }

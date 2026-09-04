@@ -244,21 +244,8 @@ defmodule Flezha.Service.CliManagerDlqTest do
   alias FlezhaTest.Helper.DlqFixtures
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "flezha_dlq_cli_#{System.unique_integer([:positive])}")
-    original = Application.get_env(:flezha, :dlq, [])
-
-    Application.put_env(
-      :flezha,
-      :dlq,
-      Keyword.merge(original, dir: dir, replay_grace_ms: 400)
-    )
-
+    DlqFixtures.isolated_dir(replay_grace_ms: 400)
     ClassRegistry.ensure_table()
-
-    on_exit(fn ->
-      Application.put_env(:flezha, :dlq, original)
-      File.rm_rf!(dir)
-    end)
 
     rc = "dlqcli_" <> Integer.to_string(System.unique_integer([:positive]))
 
@@ -340,6 +327,126 @@ defmodule Flezha.Service.CliManagerDlqTest do
     assert output =~ "dropped #{ref}"
     assert_received {:audit, %{count: 1}, %{entry: ^ref, caller_source: :cli}}
     assert {:error, :not_found} = Store.get(ref)
+  end
+end
+
+defmodule Flezha.Service.CliManagerGatedVerbsTest do
+  @moduledoc """
+  The four verb families that used to reach their stores with no credential:
+  `flz dlq list | show`, `flz schedule add | list | remove`, `flz operative
+  scale` and `flz operative rewind`.
+
+  Driven from the RPC surface `flz` calls, because the credential's whole
+  journey is the point — `--token` arrives as `opts`, becomes a principal in
+  `Flezha.Service.Cli.Context`, and is what the service guard judges. A verb
+  asked without one must refuse and say where the token goes.
+  """
+  # async: false: a shared on-disk root; the auth stores are singletons.
+  use ExUnit.Case, async: false
+
+  import ExUnit.CaptureIO
+
+  alias Flezha.AuthZ.TokenStore
+  alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.AuthTestHelper
+  alias FlezhaTest.Helper.DlqFixtures
+  alias FlezhaTest.Helper.ScheduleTestHelper
+
+  setup do
+    AuthTestHelper.setup_auth_stores(prefix: "flz_gated_cli", enabled: true, claim: true)
+    ScheduleTestHelper.isolated_store_setup()
+
+    DlqFixtures.isolated_dir()
+
+    # An operative class nothing runs and nothing has state for resolves to the
+    # system namespace, which is where the schedule verbs are judged too — so
+    # one `operator@_system` token answers for every family here.
+    operative_class = "gatedcli_#{System.unique_integer([:positive])}"
+
+    {:ok, ref, _record} =
+      TokenStore.issue("gated-op", Flezha.AuthZ.Namespace.system_name(), :operator, 3600)
+
+    {:ok, entry_ref} =
+      DlqStore.append(%{
+        operative_class: operative_class,
+        procedure_id: "proc",
+        entity_key: "k",
+        channel: "input",
+        origin_offset: nil,
+        error: "kaboom",
+        attempts: 3,
+        payload: "poison-bytes"
+      })
+
+    %{token: ref, entry_ref: entry_ref, operative_class: operative_class}
+  end
+
+  # A refused verb exits `:cli_error` after printing its refusal; swallow the
+  # exit so the message stays assertable. `device` is the verb family's own
+  # stream — the dlq and schedule verbs print to stderr, the operative verbs to
+  # stdout, and that split is observable behaviour.
+  defp refusal(device \\ :stderr, fun) do
+    capture_io(device, fn ->
+      assert catch_exit(fun.()) == :cli_error
+    end)
+  end
+
+  test "the dead-letter reads refuse without a token and answer with one", ctx do
+    assert refusal(fn -> CliManager.dlq_list(ctx.operative_class) end) =~ "dlq.list: refused"
+    assert refusal(fn -> CliManager.dlq_show(ctx.entry_ref) end) =~ "dlq.show: refused"
+
+    listing = capture_io(fn -> CliManager.dlq_list(ctx.operative_class, token: ctx.token) end)
+    assert listing =~ ctx.entry_ref
+
+    shown = capture_io(fn -> CliManager.dlq_show(ctx.entry_ref, token: ctx.token) end)
+    assert shown =~ "poison-bytes"
+  end
+
+  test "the schedule verbs refuse without a token and go through with one", ctx do
+    add = fn opts ->
+      CliManager.schedule_add(
+        "digest",
+        "0 8 * * *",
+        "Etc/UTC",
+        "ai_digest",
+        "",
+        "",
+        "workflow",
+        "",
+        opts
+      )
+    end
+
+    assert refusal(fn -> add.([]) end) =~ "schedule.add: refused"
+    assert refusal(fn -> CliManager.schedule_list() end) =~ "schedule.list: refused"
+    assert refusal(fn -> CliManager.schedule_remove("digest") end) =~ "schedule.remove: refused"
+
+    assert capture_io(fn -> add.(token: ctx.token) end) =~ "Schedule digest added"
+    assert capture_io(fn -> CliManager.schedule_list(token: ctx.token) end) =~ "digest"
+
+    assert capture_io(fn -> CliManager.schedule_remove("digest", token: ctx.token) end) =~
+             "Schedule digest removed"
+  end
+
+  test "the two verbs that move live work refuse without a token", ctx do
+    assert refusal(:stdio, fn -> CliManager.operative_scale("_system", "grp", "2") end) =~
+             "operative.scale: refused"
+
+    assert refusal(:stdio, fn ->
+             CliManager.operative_rewind("_system", ctx.operative_class, 1)
+           end) =~ "operative.rewind: refused"
+
+    # With one they reach their own machinery, which refuses for its own reason.
+    scale_opts = ~s({"token": "#{ctx.token}"})
+
+    assert refusal(:stdio, fn ->
+             CliManager.operative_scale("_system", "grp", "2", scale_opts)
+           end) =~ "Error scaling operative"
+
+    assert refusal(:stdio, fn ->
+             CliManager.operative_rewind("_system", ctx.operative_class, 1, token: ctx.token)
+           end) =~ "not found"
   end
 end
 

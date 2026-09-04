@@ -1,8 +1,8 @@
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::help;
 use crate::rpc::{self, token_opts_fragment};
+use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
     help: help::DLQ,
@@ -19,18 +19,20 @@ pub(crate) const TABLE: Command = Command {
 };
 
 fn handle_list(args: &[String]) {
-    let operative_class = args.get(1).map(String::as_str).unwrap_or("");
+    let operative_class = args::positional(args, 1).map(String::as_str).unwrap_or("");
+
     rpc::run(
         format!(
-            "Flezha.Service.CliManager.dlq_list(\"{}\")",
-            operative_class
+            "Flezha.Service.CliManager.dlq_list(\"{}\", {})",
+            operative_class,
+            token_opts_fragment(args)
         ),
         rpc::PROPAGATE,
     );
 }
 
 fn entry_ref_arg(args: &[String], usage: &str) -> String {
-    match args.get(1) {
+    match args::positional(args, 1) {
         Some(entry_ref) => entry_ref.clone(),
         None => {
             eprintln!("Usage: {}", usage);
@@ -42,7 +44,11 @@ fn entry_ref_arg(args: &[String], usage: &str) -> String {
 fn handle_show(args: &[String]) {
     let entry_ref = entry_ref_arg(args, "flz dlq show <operative/procedure/entry-id>");
     rpc::run(
-        format!("Flezha.Service.CliManager.dlq_show(\"{}\")", entry_ref),
+        format!(
+            "Flezha.Service.CliManager.dlq_show(\"{}\", {})",
+            entry_ref,
+            token_opts_fragment(args)
+        ),
         rpc::PROPAGATE,
     );
 }

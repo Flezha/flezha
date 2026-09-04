@@ -38,9 +38,9 @@ defmodule Flezha.Service.CliManager do
   defdelegate controller_stop_progress_handler(arg1, arg2, arg3, arg4), to: Cli.Controller
   defdelegate disable_plugin(arg1, arg2 \\ []), to: Cli.Plugin
   defdelegate dlq_drop(arg1, arg2 \\ []), to: Cli.Dlq
-  defdelegate dlq_list(arg1 \\ ""), to: Cli.Dlq
+  defdelegate dlq_list(arg1 \\ "", arg2 \\ []), to: Cli.Dlq
   defdelegate dlq_replay(arg1, arg2 \\ []), to: Cli.Dlq
-  defdelegate dlq_show(arg1), to: Cli.Dlq
+  defdelegate dlq_show(arg1, arg2 \\ []), to: Cli.Dlq
   defdelegate enable_plugin(arg1, arg2, arg3, arg4), to: Cli.Plugin
   defdelegate entity_state(arg1, arg2), to: Cli.Operative
   defdelegate extract_subscriptions(arg1, arg2), to: Cli.Plugin
@@ -68,7 +68,7 @@ defmodule Flezha.Service.CliManager do
   defdelegate operative_info(arg1, arg2 \\ "text"), to: Cli.Info
   defdelegate operative_listen(arg1, arg2, arg3), to: Cli.Operative
   defdelegate operative_replay(arg1, arg2, arg3), to: Cli.State
-  defdelegate operative_rewind(arg1, arg2, arg3), to: Cli.Operative
+  defdelegate operative_rewind(arg1, arg2, arg3, arg4 \\ []), to: Cli.Operative
   defdelegate operative_scale(arg1, arg2, arg3, arg4 \\ "{}"), to: Cli.Operative
   defdelegate operative_send(arg1, arg2, arg3, arg4), to: Cli.Operative
 
@@ -87,12 +87,13 @@ defmodule Flezha.Service.CliManager do
                 arg5 \\ "",
                 arg6 \\ "",
                 arg7 \\ "workflow",
-                arg8 \\ ""
+                arg8 \\ "",
+                arg9 \\ []
               ),
               to: Cli.Schedule
 
-  defdelegate schedule_list(), to: Cli.Schedule
-  defdelegate schedule_remove(arg1), to: Cli.Schedule
+  defdelegate schedule_list(arg1 \\ []), to: Cli.Schedule
+  defdelegate schedule_remove(arg1, arg2 \\ []), to: Cli.Schedule
   defdelegate schedule_run(arg1), to: Cli.Schedule
   defdelegate state_at(arg1, arg2, arg3 \\ "text"), to: Cli.State
   defdelegate state_delete(arg1, arg2 \\ []), to: Cli.State

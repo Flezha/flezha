@@ -5,3 +5,5 @@ Usage:
   flz dlq show <operative/procedure/entry-id>    Entry metadata + payload preview
   flz dlq replay <operative/procedure/entry-id>  Re-dispatch through the normal input path
   flz dlq drop <operative/procedure/entry-id>    Discard the entry (audited)
+
+Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.

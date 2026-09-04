@@ -6,19 +6,10 @@ defmodule Flezha.Dlq.StoreTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   alias Flezha.Dlq.Store
+  alias FlezhaTest.Helper.DlqFixtures
 
   setup do
-    dir =
-      Path.join(System.tmp_dir!(), "flezha_dlq_test_#{System.unique_integer([:positive])}")
-
-    original = Application.get_env(:flezha, :dlq, [])
-    Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, dir))
-
-    on_exit(fn ->
-      Application.put_env(:flezha, :dlq, original)
-      File.rm_rf!(dir)
-    end)
-
+    dir = DlqFixtures.isolated_dir()
     name = :"dlq_store_#{System.unique_integer([:positive])}"
     pid = start_supervised!(Supervisor.child_spec({Store, name: name}, id: name))
     %{store: pid, dir: dir, name: name}

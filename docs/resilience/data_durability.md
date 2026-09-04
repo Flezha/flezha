@@ -353,7 +353,11 @@ does the Entity advance:
   Parking advances the consumed offset past the poison, so the min-watermark resumes and a
   credit-parked source resumes granting.
 
-Operator surface: `flz dlq list | show | replay | drop`. Replay is explicit-only and re-enters the
+Operator surface: `flz dlq list | show | replay | drop`. All four are `operator` verbs and take
+`--token` (or `FLEZHA_TOKEN`) — a parked payload is the failed business record held verbatim, so
+reading one is as privileged as discarding it. A verb naming an operative class is authorized in
+that class's namespace; one that names none reads across every namespace and is authorized in
+`_system`. Replay is explicit-only and re-enters the
 ordinary input path (fresh output identity — it journals as a new input); a failing replay
 re-parks with `generation` incremented; `drop` is audited. Retention bounds the store by age
 AND size (30 d / 4 GiB, more restrictive wins); a retention deletion is genuine loss and is
