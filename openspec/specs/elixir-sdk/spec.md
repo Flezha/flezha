@@ -706,3 +706,28 @@ and therefore refuses per channel alone.
   with different encoders
 - **THEN** registration succeeds and each channel's frames carry its own encoder's bytes
 
+### Requirement: The Elixir SDK SHALL hold a failed change record rather than losing it
+
+A change record whose write to the secondary stream fails SHALL be held and
+replayed on the next bound stream, on the same terms the SDK holds a failed
+plugin-bound output. Losing it SHALL NOT be the whole handling, because an output
+the SDK does replay can otherwise reach the controller with no record of the
+change that produced it.
+
+#### Scenario: A record's write fails while the data stream is down
+
+- **WHEN** an Entity's `entity_state_change` frame cannot be written
+- **THEN** the record SHALL be held for replay and SHALL NOT be discarded
+
+#### Scenario: A replay keeps records ahead of the outputs of the same dispatch
+
+- **WHEN** held records and held outputs of one dispatch are replayed after a rebind
+- **THEN** the dispatch's records SHALL reach the stream before its output frame,
+  as they do on a live stream
+
+#### Scenario: The hold is bounded and counts what it sheds
+
+- **WHEN** more records are held than the bound allows
+- **THEN** the SDK SHALL count what it sheds where every drop-oldest on this wire
+  is counted
+

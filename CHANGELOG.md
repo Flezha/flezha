@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Fixed — an Elixir Entity holds a change record the wire refused (`hold-a-failed-record-in-the-elixir-sdk`)
+
+The Elixir SDK already held a plugin-bound output no stream would take and
+replayed it on the next bound one. The Entity's change records were still lost
+outright, on both arms — the write refused, and no stream bound at all — so
+after a reconnect the controller could receive an output with no record of the
+change that produced it, and nothing counted the loss.
+
+- **A refused record is held and replayed** on the stream the rebind wires, in
+  the order the records were written, so a `change_seq` is never inverted.
+- **The hold reads `FLEZHA_RECONNECT_RING_CAPACITY`** (default 1024), drops the
+  oldest past it, and counts the shed as `drops_oldest` — the same terms and the
+  same knob the output hold uses. That counter now moves for records too.
+- **A dispatch's records still reach the wire before its output frame**, on a
+  replay as on a live stream: the Operative rebinds every Entity and waits before
+  replaying its own outputs.
+- **The credit window is unchanged**: a frame is debited when it is written, not
+  when it is held, so a held record does not consume the window and a replay
+  debits the session the reconnect armed rather than the one that failed.
+
 ### Changed — the Kafka producer's queue-overflow option joins the policy vocabulary (`rename-kafka-queue-overflow`)
 
 **BREAKING for a producer plugin that configured `:queue_overflow` explicitly.**

@@ -287,6 +287,15 @@ its records are on the wire, so an Entity killed untrappably comes back on the s
 rather than at seq 0, where the controller's writer would drop every later record as a
 duplicate.
 
+A record no stream will take — the write refused, or no stream bound at all — is held in the
+Entity and replayed onto the stream the next rebind wires, in the order the records were
+written, so a `change_seq` is never inverted. The hold is bounded by
+`FLEZHA_RECONNECT_RING_CAPACITY` (default 1024), drops the oldest past that and counts the
+shed as `drops_oldest`, the same terms the Operative holds a refused plugin-bound output on.
+The two holds are ordered against each other: the Operative rebinds every Entity and waits
+before replaying its own outputs, so a dispatch's records reach the wire ahead of its output
+frame on a replay exactly as they do live.
+
 The controller's commands are answered by `Flezha.SDK.Commands`, off the runner's loop:
 `RestoreInitState` folds the snapshot then the change log in the controller's on-disk framing
 (`Flezha.SDK.Record.fold/6` — CRC over header and body, language before format before schema,

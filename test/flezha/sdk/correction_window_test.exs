@@ -57,7 +57,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       s
       | timers: %{s.timers | high_water: high_water},
         tier: %{s.tier | correction: policy},
-        secondary: secondary
+        stream: %{s.stream | handle: secondary}
     }
   end
 
