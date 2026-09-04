@@ -3,11 +3,13 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   `flz` builds `Flezha.Service.CliManager.<fun>(...)` as a *string* and sends it
   to `flzvm rpc`, so a missing or renamed delegation compiles clean on both
   sides and fails only on an operator's machine. This test reads the names out
-  of `cli/src` and resolves each against the module's real export list.
+  of `cli/src` and hands them to `FlezhaTest.Helper.RpcSurface`, which is the
+  one resolver both name-resolved consumers share.
   """
   use ExUnit.Case, async: true
 
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.RpcSurface
 
   # `cli/src` also calls through helpers that take the function name as a
   # parameter. Each one fixes the arity by construction; the second element is
@@ -32,7 +34,7 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
       |> Map.new(&{&1, File.read!(&1)})
 
     assert map_size(files) > 0, "cli/src carries no Rust source; the gate would pass vacuously"
-    %{files: files, exports: MapSet.new(CliManager.__info__(:functions))}
+    %{files: files}
   end
 
   test "every RPC name cli/src spells resolves to an exported CliManager function", ctx do
@@ -42,10 +44,12 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
     assert length(calls) >= 60,
            "only #{length(calls)} RPC call sites found in cli/src; the extraction is broken"
 
-    for {name, arity, where} <- calls do
-      assert MapSet.member?(ctx.exports, {String.to_atom(name), arity}),
-             "#{where} calls Flezha.Service.CliManager.#{name}/#{arity}, which is not exported"
-    end
+    failures =
+      calls
+      |> Enum.map(&{CliManager, String.to_atom(elem(&1, 0)), elem(&1, 1), elem(&1, 2)})
+      |> RpcSurface.unresolved()
+
+    assert failures == [], Enum.map_join(failures, "\n", &RpcSurface.explain/1)
   end
 
   test "no generic call site is missed: every CliManager.{} format is a known helper", ctx do

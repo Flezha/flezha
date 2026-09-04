@@ -3,9 +3,9 @@ defmodule Flezha.Service.Cli.Listing do
   `flz list namespaces | runners | operatives` and `flz cluster status`.
   """
 
-  alias Flezha.Identificator
+  alias Flezha.Partition
   alias Flezha.Service.Cli.Context
-  alias Flezha.Service.Cli.Info
+  alias Flezha.Service.Controller
   alias Flezha.Service.HubManager
 
   # A group is exactly as healthy as its sickest member: an aggregate that
@@ -100,7 +100,7 @@ defmodule Flezha.Service.Cli.Listing do
   @spec group_partition_rows([map()]) :: [map()]
   def group_partition_rows(rows) do
     plain = Enum.reject(rows, &(&1[:partition] != nil))
-    Enum.sort_by(plain ++ Enum.map(Info.partition_groups(rows), &group_row/1), &inspect(&1.id))
+    Enum.sort_by(plain ++ Enum.map(Partition.groups(rows), &group_row/1), &inspect(&1.id))
   end
 
   defp group_row(report) do
@@ -193,7 +193,7 @@ defmodule Flezha.Service.Cli.Listing do
     rows = HubManager.operative_rows(namespace_display)
     counts = Enum.frequencies_by(rows, & &1.node)
     health = Enum.frequencies_by(rows, & &1.health)
-    recovery_per_node = cluster_status_recovery(namespace_display, nodes)
+    recovery_per_node = recovery_per_node(namespace_display, nodes)
 
     render_cluster_status(
       %{
@@ -209,38 +209,13 @@ defmodule Flezha.Service.Cli.Listing do
     )
   end
 
-  # RPC fan-out: asks every node in the cluster (including the local one) for
-  # its `HubManager.recovery_state/1`, keyed by node(). Populates the
-  # `recovery_state` column on `flz cluster status`.
-  @spec cluster_status_recovery(binary(), [node()]) :: map()
-  defp cluster_status_recovery(namespace, nodes) do
-    hub_id = Identificator.hub(namespace)
-
-    Map.new(nodes, fn n ->
-      state =
-        if n == node() do
-          local_recovery_snapshot(hub_id)
-        else
-          try do
-            case :rpc.call(n, __MODULE__, :local_recovery_snapshot, [hub_id], 5_000) do
-              {:badrpc, _} -> :unreachable
-              s when is_atom(s) -> s
-            end
-          catch
-            _, _ -> :unreachable
-          end
-        end
-
-      {n, state}
-    end)
-  end
-
-  @doc false
-  @spec local_recovery_snapshot(atom()) :: atom()
-  def local_recovery_snapshot(hub_id) when is_atom(hub_id) do
-    case HubManager.recovery_state(hub_id) do
-      {:ok, s} -> s
-      {:error, :unknown_hub} -> :unknown
+  # Through the published read, so a refusal is reported rather than rendered as
+  # a namespace with no recovery state — an empty column and an unanswerable one
+  # look identical to an operator.
+  defp recovery_per_node(namespace, nodes) do
+    case Controller.recovery_per_node(namespace, nodes, Context.cli_context([])) do
+      {:ok, per_node} -> per_node
+      {:error, reason} -> Context.cli_error!("error: #{inspect(reason)}", :stderr)
     end
   end
 

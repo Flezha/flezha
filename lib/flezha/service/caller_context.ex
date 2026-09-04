@@ -7,9 +7,22 @@ defmodule Flezha.Service.CallerContext do
   validated the same way by every service module. What a module puts on the
   signal beyond `:request_id` is its own: the audit log carries the principal,
   observability does not.
+
+  Three guards say how much a published function checks, weakest first:
+  `validated/2` (the shape only, for a verb the policy names no action for),
+  `scoped_read/4` (an action, in a namespace the caller resolved, unaudited, as
+  the CLI's reads are) and `gated/6` (an action, then the effect, then an audit
+  of what happened). Which one a function uses is the plainest statement of how
+  governed it is.
+
+  `Flezha.Service.AuditLog` and `Flezha.Service.Observability` predate the three
+  and still inline their own: both authorize in the namespace the *caller*
+  declares, and observability audits before its effect rather than after.
+  Converting them would change both of those, so they keep their shape.
   """
 
   alias Flezha.AuthZ
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Observability.{Bus, Signal}
 
   @valid_sources [:cli, :ui, :sdk, :internal]
@@ -38,8 +51,78 @@ defmodule Flezha.Service.CallerContext do
     end
   end
 
+  @doc """
+  The namespace a cluster-wide verb is judged in.
+
+  One spelling, over `Flezha.AuthZ.Namespace`'s own name for it, so a published
+  module does not carry a copy of the string.
+  """
+  @spec system_scope() :: String.t()
+  def system_scope, do: Namespace.system_name()
+
   defp scope_for(caller_context) do
-    %{namespace: Map.get(caller_context, :namespace) || "_system"}
+    %{namespace: Map.get(caller_context, :namespace) || system_scope()}
+  end
+
+  @doc """
+  A published function whose verb `Flezha.AuthZ.Action` names no action for: the
+  context's shape is checked, and nothing else.
+
+  The weakest of the three guards, named for what it checks rather than for a
+  read, because some of what it guards mutates — a schedule, a partition group,
+  a rewound loop. Those verbs are as gated here as they are from the terminal,
+  which authorizes none of them either. Naming their actions needs role grants,
+  which is a decision for the repository owner and not one a service module can
+  take.
+  """
+  @spec validated(t(), (-> result)) :: result | {:error, :invalid_caller_context}
+        when result: var
+  def validated(caller_context, fun) do
+    with :ok <- validate(caller_context), do: fun.()
+  end
+
+  @doc """
+  A published read that is authorized and not audited, as the CLI's own reads
+  are: `action` is checked in `namespace`, then `fun` runs.
+  """
+  @spec scoped_read(t(), atom(), String.t(), (-> result)) :: result | {:error, term()}
+        when result: var
+  def scoped_read(caller_context, action, namespace, fun) do
+    with :ok <- authorize(scoped(caller_context, namespace), action), do: fun.()
+  end
+
+  @doc """
+  A published mutation: `action` is authorized in `namespace`, `fun` runs, and
+  its success is audited as `audit_source` under the verb `action` names.
+
+  `namespace` is resolved by the caller from what it is acting on, never taken
+  from the context, so a consumer cannot choose the scope its own request is
+  judged in. A refusal runs nothing and audits nothing, and a `fun` that
+  answers `{:error, _}` is not audited either — the audit says what happened,
+  which is what the CLI's `with_cli_authorization/5` has always meant by it.
+  """
+  @spec gated(t(), atom(), String.t(), atom(), map(), (-> result)) :: result | {:error, term()}
+        when result: var
+  def gated(caller_context, action, namespace, audit_source, target, fun) do
+    with :ok <- authorize(scoped(caller_context, namespace), action) do
+      audited(fun.(), audit_source, verb(action), caller_context, target, namespace)
+    end
+  end
+
+  defp audited({:error, _reason} = error, _source, _verb, _caller_context, _target, _namespace),
+    do: error
+
+  defp audited(result, source, verb, caller_context, target, namespace) do
+    emit(source, verb, caller_context, Map.put(target, :namespace, namespace))
+    result
+  end
+
+  defp scoped(caller_context, namespace), do: Map.put(caller_context, :namespace, namespace)
+
+  # `:"dlq.drop"` audits as `:drop`: the signal's source already names the
+  # domain, so repeating it in the name would read `dlq_service dlq.drop`.
+  defp verb(action) do
+    action |> Atom.to_string() |> String.split(".") |> List.last() |> String.to_atom()
   end
 
   @spec put_unless_nil(map(), atom(), term()) :: map()

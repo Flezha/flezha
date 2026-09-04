@@ -38,6 +38,22 @@ defmodule Flezha.Service.Observability do
   end
 
   @doc """
+  Undo a `subscribe/2` or `tail/2`.
+
+  A subscription established on this surface is undone on it, so a consumer
+  never has to reach past the service API to release what it took through it.
+  Authorized as `subscribe/2` is: the two are one capability.
+  """
+  @spec unsubscribe(atom(), caller_context()) :: :ok | {:error, term()}
+  def unsubscribe(source, caller_context) when is_atom(source) do
+    with :ok <- check_enabled(),
+         :ok <- CallerContext.authorize(caller_context, :"observability.subscribe") do
+      emit_audit(:unsubscribe, caller_context, %{source: source})
+      Observability.unsubscribe(source)
+    end
+  end
+
+  @doc """
   Stream live signals for a single source to the caller process.
 
   Subscribes to the foundation's `PubSubSink` topic for `source` and

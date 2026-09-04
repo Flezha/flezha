@@ -208,7 +208,13 @@ defmodule Flezha.Service.Cli.State do
   `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
   def state_list(operative_class, output_format \\ "text", opts \\ []) do
-    _ = Context.authorize_cli!(opts, :"state.list", state_target_namespace(operative_class))
+    _ =
+      Context.authorize_cli!(
+        opts,
+        :"state.list",
+        OperativeManager.namespace_of_class(operative_class)
+      )
+
     do_state_list(operative_class, output_format)
   end
 
@@ -312,7 +318,7 @@ defmodule Flezha.Service.Cli.State do
         Context.with_cli_authorization(
           opts,
           :"state.rotate",
-          state_target_namespace(rc),
+          OperativeManager.namespace_of_class(rc),
           %{entity: path_string},
           fn ->
             case lookup_runner_for_entity(rc, sh, pk) do
@@ -339,13 +345,6 @@ defmodule Flezha.Service.Cli.State do
   # The namespace a state verb is authorized against: the registry's answer
   # for a live Operative, else the on-disk claim (`Flezha.State.Paths`),
   # so a stopped Operative's durable state is still owned by its namespace.
-  def state_target_namespace(operative_class) do
-    case OperativeManager.namespace_of(operative_class) do
-      {:ok, namespace} -> namespace
-      :error -> Paths.namespace_of_class(operative_class)
-    end
-  end
-
   defp lookup_runner_for_entity(rc, sh, pk) do
     Recovery.resolve_runner({rc, sh, pk})
   end
@@ -363,7 +362,7 @@ defmodule Flezha.Service.Cli.State do
         Context.with_cli_authorization(
           opts,
           :"state.delete",
-          state_target_namespace(rc),
+          OperativeManager.namespace_of_class(rc),
           %{entity: path_string},
           fn ->
             {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})

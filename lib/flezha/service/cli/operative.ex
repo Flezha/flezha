@@ -4,7 +4,6 @@ defmodule Flezha.Service.Cli.Operative do
   `flz operative entity-state`.
   """
 
-  alias Flezha.Operative.Migration
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Payloader
   alias Flezha.Plugin
@@ -13,6 +12,7 @@ defmodule Flezha.Service.Cli.Operative do
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.Workflow
 
   @doc "Starts a operative."
   def operative_start(
@@ -254,7 +254,9 @@ defmodule Flezha.Service.Cli.Operative do
         _ -> []
       end
 
-    case PartitionGroup.rescale(Context.normalize_namespace(namespace), group_id, target, opts) do
+    namespace = Context.normalize_namespace(namespace)
+
+    case Workflow.rescale(namespace, group_id, target, opts, Context.cli_context([])) do
       {:ok, result} ->
         Enum.each(result.warnings, &IO.puts("WARNING: #{&1}"))
 
@@ -282,12 +284,14 @@ defmodule Flezha.Service.Cli.Operative do
   procedure emitted plugin output it cannot compensate.
   """
   def operative_rewind(namespace, operative_id, to_iter) do
-    case OperativeManager.get_operative_pid(Context.normalize_namespace(namespace), operative_id) do
-      {:ok, pid} ->
-        print_rewind(operative_id, to_iter, Migration.rewind(pid, to_iter))
+    namespace = Context.normalize_namespace(namespace)
 
-      _ ->
+    case Workflow.rewind(namespace, operative_id, to_iter, Context.cli_context([])) do
+      {:error, :operative_not_running} ->
         Context.cli_error!("Error: operative '#{operative_id}' not found")
+
+      outcome ->
+        print_rewind(operative_id, to_iter, outcome)
     end
   end
 

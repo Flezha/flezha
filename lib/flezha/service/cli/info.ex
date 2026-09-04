@@ -134,25 +134,8 @@ defmodule Flezha.Service.Cli.Info do
   # the read-time coverage check. There is no stored group record, so the check
   # is what turns a missing member into a visible fault rather than a quietly
   # short list. The one grouping both group views read.
-  def partition_groups(rows) when is_list(rows) do
-    rows
-    |> Enum.filter(&(&1[:partition] != nil))
-    |> Enum.group_by(& &1.partition.group)
-    |> Enum.map(fn {group, group_rows} ->
-      members = Enum.sort_by(group_rows, & &1.partition.index)
-
-      %{
-        group: group,
-        declared: members |> Enum.map(& &1.partition.count) |> Enum.max(),
-        members: members,
-        coverage: Partition.coverage(Enum.map(members, &{&1.id, &1.partition.range}))
-      }
-    end)
-    |> Enum.sort_by(& &1.group)
-  end
-
   def partition_groups(namespace) when is_binary(namespace),
-    do: namespace |> HubManager.operative_rows() |> partition_groups()
+    do: namespace |> HubManager.operative_rows() |> Partition.groups()
 
   defp display_group_report(report) do
     IO.puts("Partition group: #{report.group} (#{length(report.members)}/#{report.declared})")

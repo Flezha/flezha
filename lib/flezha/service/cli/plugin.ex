@@ -123,7 +123,7 @@ defmodule Flezha.Service.Cli.Plugin do
     Context.with_cli_authorization(
       opts,
       :"plugin.disable",
-      plugin_target_namespace(plugin_id),
+      PluginManager.target_namespace(plugin_id),
       %{plugin_id: plugin_id},
       fn ->
         case PluginManager.disable_plugin_group(plugin_id) do
@@ -136,13 +136,6 @@ defmodule Flezha.Service.Cli.Plugin do
 
   # A running plugin's namespace comes from its own registration; an unknown
   # id authorizes against `_system` (and then fails on its own terms).
-  defp plugin_target_namespace(plugin_id) do
-    case Map.get(PluginManager.get_plugins(), plugin_id) do
-      {namespace, _operative_id} when is_binary(namespace) -> namespace
-      _ -> "_system"
-    end
-  end
-
   @doc "Install a plugin from a `.fpz` archive."
   def install_plugin(path, opts_json) do
     Context.with_cli_authorization(

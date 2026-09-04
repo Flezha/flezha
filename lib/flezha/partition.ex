@@ -192,6 +192,32 @@ defmodule Flezha.Partition do
   end
 
   @doc """
+  The partition groups `rows` describe, one report per group.
+
+  A report carries the group, how many members it declares, its members ordered
+  by index, and its key-group `coverage/1`. Rows with no partition are not part
+  of any group and are left out. Recomputed from the rows on every call — there
+  is no stored group record that could disagree with them.
+  """
+  @spec groups([map()]) :: [map()]
+  def groups(rows) when is_list(rows) do
+    rows
+    |> Enum.filter(&(&1[:partition] != nil))
+    |> Enum.group_by(& &1.partition.group)
+    |> Enum.map(fn {group, group_rows} ->
+      members = Enum.sort_by(group_rows, & &1.partition.index)
+
+      %{
+        group: group,
+        declared: members |> Enum.map(& &1.partition.count) |> Enum.max(),
+        members: members,
+        coverage: coverage(Enum.map(members, &{&1.id, &1.partition.range}))
+      }
+    end)
+    |> Enum.sort_by(& &1.group)
+  end
+
+  @doc """
   Check that `ranges` (a `{label, {from, to}}` list) covers every key group
   exactly once.
 

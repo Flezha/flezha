@@ -241,6 +241,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   alias Flezha.Dlq.Store
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Service.CliManager
+  alias FlezhaTest.Helper.DlqFixtures
 
   setup do
     dir = Path.join(System.tmp_dir!(), "flezha_dlq_cli_#{System.unique_integer([:positive])}")
@@ -306,18 +307,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   test "failing replay re-parks with generation 2", %{rc: rc, entry: entry} do
     {:ok, ref} = Store.append(entry)
 
-    # Stand-in for the runner's retry-then-park cycle: on receiving the
-    # replayed input, park the same payload again (same content identity).
-    parent = self()
-
-    overwatch =
-      spawn_link(fn ->
-        receive do
-          {:"$gen_cast", {:io_in, payload, _metadata}} ->
-            {:ok, _} = Store.append(%{entry | payload: payload, attempts: 3})
-            send(parent, :re_parked)
-        end
-      end)
+    overwatch = DlqFixtures.spawn_reparking_overwatch(entry, self())
 
     ClassRegistry.put_overwatch(rc, overwatch)
 

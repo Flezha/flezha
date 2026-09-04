@@ -55,7 +55,7 @@ defmodule Flezha.Service.CliManager do
   defdelegate list_operatives(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.Listing
   defdelegate list_plugins(), to: Cli.Plugin
   defdelegate list_runners(arg1, arg2 \\ "text"), to: Cli.Listing
-  defdelegate local_recovery_snapshot(arg1), to: Cli.Listing
+  defdelegate local_recovery_snapshot(arg1), to: Flezha.Service.Controller
   defdelegate namespace_create(arg1, arg2, arg3 \\ []), to: Cli.Authz
   defdelegate observability_disable_source(arg1, arg2 \\ []), to: Cli.Observe
   defdelegate observability_enable_source(arg1, arg2 \\ []), to: Cli.Observe

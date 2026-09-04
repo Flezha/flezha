@@ -6,6 +6,7 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | Directory | For | What is in it |
 | --- | --- | --- |
 | [`architecture/`](architecture/README.md) | everyone | The conceptual model: kernel, stream profile, workflow profile, runner |
+| [`api/`](api/README.md) | authors of a program that drives the controller | The published consumer surface, its three guards, and the manifest that keeps a consumer's calls resolving |
 | [`sdk/`](#sdk) | operative authors, SDK implementers | Authoring contract, per-SDK surfaces, wire protocol, the shared poll core |
 | [`plugins/`](#plugins) | plugin authors and users | The plugin system and every first-party plugin |
 | [`operations/`](#operations) | operators | Deploying, configuring, securing, observing and recovering a controller |

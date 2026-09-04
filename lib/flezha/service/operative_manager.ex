@@ -606,6 +606,22 @@ defmodule Flezha.Service.OperativeManager do
   defp normalize_namespace(namespace), do: to_string(namespace)
 
   @doc """
+  The namespace an operative class belongs to, for a caller that must scope an
+  authorization decision to it.
+
+  The running registries answer first; a class that is not running is resolved
+  from its state root, so a verb against a stopped operative still authorizes
+  in the right namespace rather than in `_system`.
+  """
+  @spec namespace_of_class(String.t()) :: String.t()
+  def namespace_of_class(operative_class) when is_binary(operative_class) do
+    case namespace_of(operative_class) do
+      {:ok, namespace} -> namespace
+      :error -> Paths.namespace_of_class(operative_class)
+    end
+  end
+
+  @doc """
   The namespace whose registry holds members of the partition group
   `group_id`, or `:error`.
 

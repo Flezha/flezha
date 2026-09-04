@@ -27,6 +27,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.SafeCall
+  alias Flezha.Service.CallerContext
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate
   alias ProcessHub.Service.ProcessRegistry
@@ -457,6 +458,74 @@ defmodule Flezha.Service.PluginManager do
           {:error, reason} ->
             {:error, reason}
         end
+    end
+  end
+
+  # ---------- Published surface ----------
+  #
+  # The context-taking half a consumer is allowed to call. Each function
+  # authorizes the action `flz plugin` uses for the same verb, in the plugin's
+  # own namespace, and answers data. Everything above stays internal.
+
+  @audit_source :plugin_service
+
+  @doc "Every enabled plugin, by id."
+  @spec list(CallerContext.t()) :: {:ok, map()} | {:error, term()}
+  def list(caller_context) do
+    CallerContext.scoped_read(caller_context, :"plugin.list", CallerContext.system_scope(), fn ->
+      {:ok, get_plugins()}
+    end)
+  end
+
+  @doc """
+  Enable a plugin built from `fields`.
+
+  The plugin is constructed here rather than by the caller, so a consumer never
+  has to name `Flezha.Plugin` or put a struct on the wire. `fields` needs at
+  least `:id` and `:provider`; its `:namespace` is the scope the enable is
+  authorized in, defaulting to `"default"` as the CLI's does.
+  """
+  @spec enable(String.t(), keyword(), CallerContext.t()) :: term() | {:error, term()}
+  def enable(plugin_id, fields, caller_context) when is_binary(plugin_id) and is_list(fields) do
+    namespace = Keyword.get(fields, :namespace, "default")
+
+    CallerContext.gated(
+      caller_context,
+      :"plugin.enable",
+      namespace,
+      @audit_source,
+      %{plugin_id: plugin_id},
+      fn -> enable_plugin(plugin_id, Plugin.new(fields)) end
+    )
+  end
+
+  @doc """
+  Disable a plugin — or, when the id was fanned out over a partition group,
+  every `#pK` instance of it.
+  """
+  @spec disable(String.t(), CallerContext.t()) :: term() | {:error, term()}
+  def disable(plugin_id, caller_context) when is_binary(plugin_id) do
+    CallerContext.gated(
+      caller_context,
+      :"plugin.disable",
+      target_namespace(plugin_id),
+      @audit_source,
+      %{plugin_id: plugin_id},
+      fn -> disable_plugin_group(plugin_id) end
+    )
+  end
+
+  @doc """
+  The namespace a plugin is enabled in, or `"_system"` when it is not enabled.
+
+  The scope a plugin verb is judged in; shared with `Flezha.Service.Cli.Plugin`
+  so the two callers cannot disagree about it.
+  """
+  @spec target_namespace(String.t()) :: String.t()
+  def target_namespace(plugin_id) when is_binary(plugin_id) do
+    case Map.get(get_plugins(), plugin_id) do
+      {namespace, _operative_id} when is_binary(namespace) -> namespace
+      _other -> CallerContext.system_scope()
     end
   end
 end

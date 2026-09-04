@@ -111,6 +111,9 @@ defmodule Flezha.Service.ObservabilityTest do
                  Observability.subscribe(:s, %{source: :cli})
 
         assert {:error, :observability_disabled} =
+                 Observability.unsubscribe(:s, %{source: :cli})
+
+        assert {:error, :observability_disabled} =
                  Observability.enable_source(:s, %{source: :cli})
 
         assert {:error, :observability_disabled} =
@@ -118,6 +121,20 @@ defmodule Flezha.Service.ObservabilityTest do
       after
         Application.put_env(:flezha, :observability, prev)
       end
+    end
+  end
+
+  describe "unsubscribe/2" do
+    test "undoes a subscription taken on the same surface", %{src: src} do
+      claim_pubsub_sink()
+
+      assert :ok = Observability.subscribe(src, %{source: :cli})
+      assert :ok = Observability.unsubscribe(src, %{source: :cli})
+    end
+
+    test "refuses a caller with no context, as subscribe/2 does", %{src: src} do
+      assert {:error, :invalid_caller_context} = Observability.unsubscribe(src, %{})
+      assert {:error, :invalid_caller_context} = Observability.subscribe(src, %{})
     end
   end
 
@@ -200,18 +217,7 @@ defmodule Flezha.Service.ObservabilityTest do
   # owns that flag for its own duration rather than inheriting whatever the
   # previous test left.
   defp capture_tail_json(src, signal) do
-    prev = Application.get_env(:flezha, :observability, [])
-    Application.put_env(:flezha, :observability, Keyword.put(prev, :pubsub_sink_enabled, true))
-    on_exit(fn -> Application.put_env(:flezha, :observability, prev) end)
-
-    # The gate also needs the sink process itself; `config/test.exs` leaves it
-    # off, so start one unless another module already has.
-    if Process.whereis(PubSubSink) == nil do
-      sink = :"obs_tail_pubsub_#{:erlang.unique_integer([:positive])}"
-      {:ok, _pid} = Registry.register_sink(%{name: sink, module: PubSubSink, config: %{}})
-      on_exit(fn -> Registry.unregister_sink(sink) end)
-    end
-
+    claim_pubsub_sink()
     send(self(), {:flezha_signal, signal})
 
     out =
@@ -220,5 +226,20 @@ defmodule Flezha.Service.ObservabilityTest do
       end)
 
     out |> String.split("\n", trim: true) |> List.first() |> Jason.decode!()
+  end
+
+  # `config/test.exs` sets `:pubsub_sink_enabled` false and starts no sink, and
+  # every subscription gate reads both. The test owns the flag for its own
+  # duration rather than inheriting whatever the previous one left.
+  defp claim_pubsub_sink do
+    prev = Application.get_env(:flezha, :observability, [])
+    Application.put_env(:flezha, :observability, Keyword.put(prev, :pubsub_sink_enabled, true))
+    on_exit(fn -> Application.put_env(:flezha, :observability, prev) end)
+
+    if Process.whereis(PubSubSink) == nil do
+      sink = :"obs_tail_pubsub_#{:erlang.unique_integer([:positive])}"
+      {:ok, _pid} = Registry.register_sink(%{name: sink, module: PubSubSink, config: %{}})
+      on_exit(fn -> Registry.unregister_sink(sink) end)
+    end
   end
 end

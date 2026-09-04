@@ -1,0 +1,221 @@
+defmodule Flezha.Api.ServiceSurfaceTest do
+  @moduledoc """
+  Every function on the published consumer surface, called once with a context
+  that is not one.
+
+  The requirement is that every published function except the two identity reads
+  takes a `Flezha.Service.CallerContext` as its last argument and authorizes
+  through it. A structural check cannot show that — a function can take the
+  argument and ignore it — so each is called here with `%{}` and must refuse. A
+  function that answered data instead would prove it never looked.
+
+  The table is also the surface's call shapes written down: what each published
+  function wants, in order, before the context.
+  """
+  use ExUnit.Case, async: false
+
+  alias Flezha.Service.Controller
+  alias Flezha.Service.Dlq
+  alias Flezha.Service.Fleet
+  alias Flezha.Service.Namespace
+  alias Flezha.Service.Operative
+  alias Flezha.Service.PluginManager
+  alias Flezha.Service.Schedule
+  alias Flezha.Service.Workflow
+  alias FlezhaTest.Helper.AuthTestHelper
+  alias FlezhaTest.Helper.RpcSurface
+
+  @published %{
+    Controller => [
+      {:hub_id, ["default"]},
+      {:recovery_state, [:flezha_hub_default]},
+      {:recovery_per_node, ["default", []]},
+      {:shutdown_status, []},
+      {:durability_backend, []},
+      {:durability_posture, []},
+      {:durability_breaches, []},
+      {:durability_status, []},
+      {:liveness_counters, []}
+    ],
+    Dlq => [
+      {:list, [nil]},
+      {:get, ["rc/proc/id"]},
+      {:stats, []},
+      {:procedures, [nil]},
+      {:drop, ["rc/proc/id"]},
+      {:replay, ["rc/proc/id"]}
+    ],
+    Fleet => [
+      {:runners, ["default"]},
+      {:runners_on_this_node, ["default"]},
+      {:runners_for_factory, ["default", "factory"]},
+      {:factories, ["default"]},
+      {:runner_caller_context, ["default"]},
+      {:hub_nodes, ["default"]},
+      {:installed_plugins, []}
+    ],
+    Namespace => [
+      {:list, []},
+      {:get, ["default"]},
+      {:quota_kinds, []},
+      {:quota, ["default", :operatives]},
+      {:roles, ["default"]},
+      {:create, ["ns_surface", []]},
+      {:delete, ["ns_surface"]},
+      {:set_quotas, ["default", %{}]}
+    ],
+    Operative => [
+      {:list_namespaces, []},
+      {:list_operatives, ["default"]},
+      {:operative_rows, ["default"]},
+      {:operative_plugins, ["default"]},
+      {:registry, ["default"]},
+      {:partition_coverage, [[]]},
+      {:partition_groups, [[]]},
+      {:kind_known?, [:stream]},
+      {:kind_capabilities, [:stream]},
+      {:entity_state, ["default", "rc", "key"]},
+      {:overwatch_state, ["default", "rc"]},
+      {:start, ["default", %{}]},
+      {:stop, ["default", "rc"]}
+    ],
+    PluginManager => [
+      {:list, []},
+      {:enable, ["plug_1", [id: "plug_1", provider: Flezha.Plugin]]},
+      {:disable, ["plug_1"]}
+    ],
+    Schedule => [
+      {:list, []},
+      {:add, [%{name: "s"}]},
+      {:remove, ["s"]},
+      {:statuses, []},
+      {:assert_entry, [%{name: "s"}]},
+      {:retract, ["s"]},
+      {:parse_cron, ["* * * * *"]},
+      {:next_fire, [%{}, "Etc/UTC", ~U[2026-01-01 00:00:00Z]]}
+    ],
+    Workflow => [
+      {:operative_classes, []},
+      {:completion, ["instance"]},
+      {:completed_retention_hours, ["rc", %{}]},
+      {:journal, ["instance"]},
+      {:committed_iterations, ["instance"]},
+      {:consumed_offset, ["instance"]},
+      {:undelivered, ["instance"]},
+      {:last_offset, ["instance"]},
+      {:state_metrics, []},
+      {:rescale, ["default", "group", 2, []]},
+      {:rewind, ["default", "rc", 1]},
+      {:time_travel, ["entity", :latest]}
+    ]
+  }
+
+  describe "every published function" do
+    test "refuses a caller whose context is not one" do
+      for {module, functions} <- @published, {fun, args} <- functions do
+        assert apply(module, fun, args ++ [%{}]) == {:error, :invalid_caller_context},
+               "#{inspect(module)}.#{fun}/#{length(args) + 1} did not refuse an invalid context"
+      end
+    end
+
+    test "refuses an invalid context on the identity-adjacent shapes too" do
+      for {module, functions} <- @published, {fun, args} <- functions do
+        assert apply(module, fun, args ++ [%{source: :not_a_source}]) ==
+                 {:error, :invalid_caller_context},
+               "#{inspect(module)}.#{fun}/#{length(args) + 1} accepted an unknown :source"
+      end
+    end
+
+    test "the table covers the whole published surface", %{} do
+      recorded =
+        for {module, functions} <- @published,
+            {fun, args} <- functions,
+            into: MapSet.new(),
+            do: {module, fun, length(args) + 1}
+
+      surface =
+        "docs/api/consumers/published.txt"
+        |> RpcSurface.manifest()
+        |> Enum.map(fn {module, fun, arity, _where} -> {module, fun, arity} end)
+        |> Enum.reject(fn {module, _fun, _arity} ->
+          # The two domains that had a service API before this surface existed
+          # keep their own suites, which drive them against live sinks.
+          module in [Flezha.Service.AuditLog, Flezha.Service.Observability]
+        end)
+        |> MapSet.new()
+
+      missing = MapSet.difference(surface, recorded)
+      extra = MapSet.difference(recorded, surface)
+
+      assert MapSet.to_list(missing) == [],
+             "published but not exercised here: #{inspect(MapSet.to_list(missing))}"
+
+      assert MapSet.to_list(extra) == [],
+             "exercised here but not published: #{inspect(MapSet.to_list(extra))}"
+    end
+  end
+
+  describe "an unbound caller under enforcement" do
+    setup do
+      AuthTestHelper.setup_auth_stores(enabled: true, claim: true)
+      :ok
+    end
+
+    test "is refused by every function that names an action" do
+      assert Flezha.AuthZ.enforcement_posture() == :enforced
+      context = %{source: :ui}
+
+      for {module, fun, args} <- [
+            {Operative, :list_namespaces, []},
+            {Operative, :start, ["default", %{}]},
+            {Operative, :stop, ["default", "rc"]},
+            {Namespace, :list, []},
+            {Namespace, :create, ["ns_surface", []]},
+            {Fleet, :runners, ["default"]},
+            {Controller, :shutdown_status, []},
+            {PluginManager, :list, []},
+            {Dlq, :drop, ["rc/proc/id"]}
+          ] do
+        assert match?({:error, {:forbidden, _reason}}, apply(module, fun, args ++ [context])) or
+                 apply(module, fun, args ++ [context]) == {:error, :not_found},
+               "#{inspect(module)}.#{fun} served an unbound caller under enforcement"
+      end
+    end
+  end
+
+  describe "the reads answer data for a valid caller" do
+    test "the ones that need no fleet, hub or store running" do
+      context = %{source: :ui, principal: "console@_system"}
+
+      assert {:ok, kinds} = Namespace.quota_kinds(context)
+      assert is_list(kinds) and kinds != []
+
+      assert {:ok, true} = Operative.kind_known?(:stream, context)
+      assert {:ok, capabilities} = Operative.kind_capabilities(:stream, context)
+      assert is_map(capabilities)
+
+      assert {:ok, []} = Operative.partition_groups([], context)
+      assert {:ok, _coverage} = Operative.partition_coverage([], context)
+
+      assert {:ok, hub} = Controller.hub_id("default", context)
+      assert is_atom(hub)
+
+      assert {:ok, posture} = Controller.durability_posture(context)
+      assert posture in [:remote_tier, :local_only]
+
+      assert {:ok, counters} = Controller.liveness_counters(context)
+      assert is_map(counters) or is_list(counters)
+
+      assert {:ok, classes} = Workflow.operative_classes(context)
+      assert is_list(classes)
+
+      assert {:ok, hours} = Workflow.completed_retention_hours("rc", %{}, context)
+      assert is_integer(hours) and hours > 0
+
+      assert {:ok, cron} = Schedule.parse_cron("* * * * *", context)
+      assert {:ok, _next} = Schedule.next_fire(cron, "Etc/UTC", DateTime.utc_now(), context)
+
+      assert {:error, _reason} = Schedule.parse_cron("not a cron", context)
+    end
+  end
+end
