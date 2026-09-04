@@ -480,6 +480,44 @@ const CASES: &[(&[&str], Want)] = &[
         &["reset", "--dry-run", "--probe-timeout-ms", "abc", NO_ROOT],
         Refused("invalid --probe-timeout-ms value 'abc'"),
     ),
+    // `flz schedule` — `add`'s flags travel as one keyword list in which an
+    // absent flag is absent, `--plugins` stays the text the operator wrote
+    // whatever it parses as, and `run` carries the token like its siblings.
+    (
+        &["schedule", "run", "digest"],
+        Rpc("Flezha.Service.CliManager.schedule_run(\"digest\", [])"),
+    ),
+    (
+        &["schedule", "run", "digest", "--token", "t"],
+        Rpc("Flezha.Service.CliManager.schedule_run(\"digest\", [token: \"t\"])"),
+    ),
+    // A quote escaped inside the JSON stays escaped inside the Elixir literal.
+    (
+        &[
+            "schedule",
+            "add",
+            "digest",
+            "--cron",
+            "0 8 * * *",
+            "--tz",
+            "Etc/UTC",
+            "--factory",
+            "f",
+            "-iv",
+            r#"{"a":"x\"y"}"#,
+        ],
+        Rpc(
+            r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", init_values: "{\"a\":\"x\\\"y\"}"])"#,
+        ),
+    ),
+    (
+        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f"],
+        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f"])"#),
+    ),
+    (
+        &["schedule", "add", "digest", "--cron", "0 8 * * *", "--tz", "Etc/UTC", "--factory", "f", "-n", "prod", "-iv", r#"{"a":1}"#, "--kind", "workflow", "-p", r#"[{"id":"p","provider":"x","subscriptions":["on_output"]}]"#, "--token", "t"],
+        Rpc(r#"Flezha.Service.CliManager.schedule_add("digest", [cron: "0 8 * * *", tz: "Etc/UTC", factory: "f", namespace: "prod", init_values: "{\"a\":1}", kind: "workflow", plugins: "[{\"id\":\"p\",\"provider\":\"x\",\"subscriptions\":[\"on_output\"]}]", token: "t"])"#),
+    ),
 ];
 
 /// One invocation, thirty-two runs: `operative start` built its options from a

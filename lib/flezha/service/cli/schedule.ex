@@ -5,7 +5,8 @@ defmodule Flezha.Service.Cli.Schedule do
   Rendering only for everything the policy names an action for.
   `Flezha.Service.Schedule` owns the store, the hub and the authorization, so
   the terminal and the console reach them through one gate instead of two.
-  `run` is the exception: it fires an instance directly and carries no action.
+  `run` fires an instance directly, hub-free, and is judged as
+  `operative.start` where the instance starts.
   """
 
   alias Flezha.Plugin.SpecDecoder
@@ -20,22 +21,21 @@ defmodule Flezha.Service.Cli.Schedule do
   # log/telemetry.
   @schedule_result_width 48
 
-  def schedule_add(
-        name,
-        cron_expr,
-        timezone,
-        factory_id,
-        namespace \\ "",
-        init_values \\ "",
-        kind \\ "workflow",
-        plugins_json \\ "",
-        opts \\ []
-      ) do
-    ns = Context.normalize_namespace(namespace)
+  @doc """
+  `opts` carries the flags: `cron`, `tz` and `factory`; `namespace`,
+  `init_values`, `kind` and `plugins`, each defaulting as the help screen says
+  when absent; and `token`, the caller's credential.
+  """
+  def schedule_add(name, opts \\ []) do
+    ns = Context.normalize_namespace(Keyword.get(opts, :namespace, ""))
     caller_context = Context.cli_context(opts)
+    cron_expr = Keyword.get(opts, :cron, "")
+    timezone = Keyword.get(opts, :tz, "")
+    factory_id = Keyword.get(opts, :factory, "")
+    plugins_json = Keyword.get(opts, :plugins, "")
 
-    with :ok <- schedule_workflow_only(kind),
-         {:ok, init_map} <- schedule_decode_init(init_values),
+    with :ok <- schedule_workflow_only(Keyword.get(opts, :kind, "workflow")),
+         {:ok, init_map} <- schedule_decode_init(Keyword.get(opts, :init_values, "")),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
            ScheduleSvc.add(
@@ -149,14 +149,30 @@ defmodule Flezha.Service.Cli.Schedule do
   end
 
   # Deliberately hub-free: a manual fire works on any node whether or not the
-  # schedule hub is up.
-  def schedule_run(name) do
-    with {:ok, entry} <- schedule_entry(name),
-         instance_id = "#{name}@manual-#{System.system_time(:second)}",
-         {:ok, %{operative_id: id}} <-
-           Job.spawn_instance(entry, instance_id) do
-      IO.puts("Spawned #{id}")
-    else
+  # schedule hub is up. Firing starts an operative, so it is judged as
+  # `operative.start` where the instance will start — the stored row's
+  # namespace, which is why the row is read first.
+  def schedule_run(name, opts \\ []) do
+    case schedule_entry(name) do
+      {:ok, entry} ->
+        Context.with_cli_authorization(
+          opts,
+          :"operative.start",
+          entry.namespace,
+          %{schedule: name},
+          fn -> schedule_spawn_manual(entry) end
+        )
+
+      {:error, reason} ->
+        render_schedule_error(reason, "schedule.run")
+    end
+  end
+
+  defp schedule_spawn_manual(entry) do
+    instance_id = "#{entry.name}@manual-#{System.system_time(:second)}"
+
+    case Job.spawn_instance(entry, instance_id) do
+      {:ok, %{operative_id: id}} -> IO.puts("Spawned #{id}")
       :duplicate -> IO.puts("instance already running; no-op")
       {:error, reason} -> render_schedule_error(reason, "schedule.run")
     end

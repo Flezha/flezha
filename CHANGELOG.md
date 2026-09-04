@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed — `flz schedule run` is an authorized operative start, and the schedule flags travel as one options document (`gate-schedule-run-and-fold-its-flags`)
+
+`flz schedule run <name>` fired an instance with no authorization under any
+posture, and its request had nowhere to carry a token. It now takes `--token`
+(or `FLEZHA_TOKEN`) and is judged as `operative.start` in the schedule's own
+namespace before anything spawns. That makes it the one schedule verb not
+judged in `_system`: an `operator@_system` token can add, list and remove a
+schedule but cannot run one; a token bound to the schedule's namespace with
+`operative.start`, or `admin@_system`, can.
+
+- **One options document.** `flz schedule add`'s optional flags — `--namespace`,
+  `--init_values`, `--kind`, `--plugins` — and the credential reach the
+  controller as one keyword list instead of positional arguments with defaults,
+  and an absent flag is absent from the request. The operator-facing flags do
+  not change; `--plugins` arrives as the text the operator wrote and is stored
+  verbatim.
+
 ### Fixed — a runner's self-report is counted once per runner (`count-a-runner-self-report-once`)
 
 **The value of eight `:flezha_transport` metrics changes on any runner with more

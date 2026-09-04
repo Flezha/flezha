@@ -24,20 +24,27 @@ flz schedule run <name>
 | `add`    | Validates name, cron, time zone, `--init_values` (a JSON object) and `--plugins` (against the enabled providers) before storing anything. Namespace defaults to `default`. Any `--kind` other than `workflow` is refused. A factory with no live runner is accepted with a warning. |
 | `list`   | Columns `NAME CRON TZ FACTORY NAMESPACE NODE NEXT FIRE (UTC) LAST FIRE (UTC) LAST RESULT`. `NODE` is `-` when the hub has no owner for the entry (not asserted yet, or the hub is down on this node). `NEXT FIRE` is `never` for a cron with no future slot. `LAST RESULT` is `ok`, `duplicate`, `retrying: <reason>` (cut at 48 chars) or `-` before the first fire; a job that does not answer within 1 s still lists with its node. |
 | `remove` | Deletes the row, then stops the job cluster-wide and waits for it (up to 5 s) so no further slot fires after the row is gone.                                                                                                                                  |
-| `run`    | Fires one instance now with the stored configuration under the id `<name>@manual-<unix-ts>`. Works on any node whether or not the schedule hub is up.                                                                                                          |
+| `run`    | Fires one instance now with the stored configuration under the id `<name>@manual-<unix-ts>`, judged as `operative.start` in the schedule's own namespace. Works on any node whether or not the schedule hub is up.                                                |
 
 Names match `[A-Za-z0-9][A-Za-z0-9_-]*` and are at most 11 bytes, so the
 composed instance id `<name>@<slot-iso>` fits the 32-byte operative id limit.
 
-**Authorization.** `add`, `list` and `remove` take `--token` (or `FLEZHA_TOKEN`)
-and are judged in the **system namespace**, not in the schedule's own: the store
-is one table for the whole controller and the hub is a cluster-wide singleton,
-so a listing crosses every namespace and `--namespace` says only where a firing
-lands. Listing is a `viewer` action (`schedule.list`); adding and removing are
-`operator` actions (`schedule.add`, `schedule.remove`, plus `schedule.assert`
-and `schedule.retract` for the hub half). So the credential is one bound to
-`_system` — `flz token issue ci _system operator` — or an `admin@_system` token.
-`run` carries no action of its own.
+**Authorization.** Every verb takes `--token` (or `FLEZHA_TOKEN`). `add`, `list`
+and `remove` are judged in the **system namespace**, not in the schedule's own:
+the store is one table for the whole controller and the hub is a cluster-wide
+singleton, so a listing crosses every namespace and `--namespace` says only
+where a firing lands. Listing is a `viewer` action (`schedule.list`); adding and
+removing are `operator` actions (`schedule.add`, `schedule.remove`, plus
+`schedule.assert` and `schedule.retract` for the hub half). So the credential
+for those three is one bound to `_system` — `flz token issue ci _system
+operator` — or an `admin@_system` token.
+
+`run` is the exception. Firing a schedule by hand starts an operative, so it is
+judged as `operative.start` in the schedule's **own** namespace — the one named
+by `--namespace` at `add` — before anything spawns. An `operator@_system` token
+can therefore add, list and remove a schedule but cannot run one; a token bound
+to the schedule's namespace with `operative.start` (an `operator` or `admin`
+there), or `admin@_system`, can.
 
 ```bash
 flz schedule add digest --cron "0 8,20 * * *" --tz Europe/Tallinn --factory ai_digest

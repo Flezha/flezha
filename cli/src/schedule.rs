@@ -1,8 +1,8 @@
 use std::process::exit;
 
 use crate::dispatch::{self, Command};
-use crate::operative::parse_plugins_json;
-use crate::rpc::{self, escape_rpc_arg, token_opts_fragment};
+use crate::operative::plugins_json_or_refuse;
+use crate::rpc::{self, keyword_opts_fragment, token_opts_fragment};
 use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
@@ -29,6 +29,11 @@ fn handle_list(args: &[String]) {
     );
 }
 
+/// The flags travel as one keyword list: the three required ones first, then
+/// each optional one the operator wrote, so an absent flag is absent from the
+/// request and the controller applies its own default. `--plugins` is carried
+/// as the text it was written as, whatever it parses as: the controller's
+/// decoder reads the JSON itself, at every firing.
 fn handle_add(args: &[String]) {
     let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind workflow]";
     let rest = &args[1..];
@@ -44,53 +49,50 @@ fn handle_add(args: &[String]) {
     let cron = require_param(rest, "--cron", usage);
     let tz = require_param(rest, "--tz", usage);
     let factory = require_param(rest, "--factory", usage);
-    let kind = args::or_refuse(args::extract_param(rest, "--kind", "--kind"))
-        .unwrap_or_else(|| "workflow".to_string());
-    let namespace = args::namespace(rest);
-    let init_values = args::json(rest, "--init_values", "-iv");
-    let escaped_init_values = escape_rpc_arg(&init_values);
-    let plugins = match parse_plugins_json(&args::json(rest, "--plugins", "-p")) {
-        Ok(canonical) => canonical,
-        Err(reason) => {
-            eprintln!("Error: invalid --plugins JSON: {}", reason);
-            exit(1);
+    let flag = |long, short| args::or_refuse(args::extract_param(rest, long, short));
+    let optional = [
+        ("namespace", Some(args::namespace(rest))),
+        ("init_values", flag("--init_values", "-iv")),
+        ("kind", flag("--kind", "--kind")),
+        (
+            "plugins",
+            flag("--plugins", "-p").map(|p| plugins_json_or_refuse(&p)),
+        ),
+    ];
+
+    let mut opts: Vec<(&str, &str)> = vec![("cron", &cron), ("tz", &tz), ("factory", &factory)];
+    for (key, value) in &optional {
+        if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
+            opts.push((*key, value));
         }
-    };
-    let escaped_plugins = escape_rpc_arg(&plugins);
+    }
 
     rpc::run(
         format!(
-            "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", {})",
+            "Flezha.Service.CliManager.schedule_add(\"{}\", {})",
             name,
-            cron,
-            tz,
-            factory,
-            namespace,
-            escaped_init_values,
-            kind,
-            escaped_plugins,
-            token_opts_fragment(rest),
+            keyword_opts_fragment(&opts, rest),
         ),
         rpc::PROPAGATE,
     );
 }
 
 fn handle_remove(args: &[String]) {
-    rpc::run(
-        format!(
-            "Flezha.Service.CliManager.schedule_remove(\"{}\", {})",
-            schedule_name("remove", args),
-            token_opts_fragment(args)
-        ),
-        rpc::PROPAGATE,
-    );
+    named_verb("remove", args);
 }
 
 fn handle_run(args: &[String]) {
+    named_verb("run", args);
+}
+
+/// `remove` and `run` take the schedule's name and the caller's token.
+fn named_verb(verb: &str, args: &[String]) {
     rpc::run(
         format!(
-            "Flezha.Service.CliManager.schedule_run(\"{}\")",
-            schedule_name("run", args)
+            "Flezha.Service.CliManager.schedule_{}(\"{}\", {})",
+            verb,
+            schedule_name(verb, args),
+            token_opts_fragment(args)
         ),
         rpc::PROPAGATE,
     );

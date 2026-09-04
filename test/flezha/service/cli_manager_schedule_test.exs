@@ -18,13 +18,17 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     ScheduleTestHelper.isolated_store_setup()
   end
 
+  # `flz schedule add digest …` with `extra` overriding the defaults; answers
+  # what the verb printed.
+  defp add_digest(extra \\ []) do
+    flags = Keyword.merge([cron: "0 8 * * *", tz: "Etc/UTC", factory: "ai_digest"], extra)
+    capture_io(fn -> CliManager.schedule_add("digest", flags) end)
+  end
+
   test "schedule_add stores the entry and previews the next fire" do
     stub(FleetManager, :runners_for_factory, fn "default", "ai_digest" -> ["runner-1"] end)
 
-    output =
-      capture_io(fn ->
-        CliManager.schedule_add("digest", "0 8 * * *", "Europe/Tallinn", "ai_digest")
-      end)
+    output = add_digest(tz: "Europe/Tallinn")
 
     assert output =~ "Schedule digest added"
     assert output =~ "next fire 20"
@@ -39,17 +43,12 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     stub(FleetManager, :runners_for_factory, fn _, _ -> [] end)
 
     output =
-      capture_io(fn ->
-        CliManager.schedule_add(
-          "digest",
-          "0 8 * * *",
-          "Europe/Tallinn",
-          "ai_digest",
-          "prod",
-          ~s({"mode": "daily"}),
-          "workflow"
-        )
-      end)
+      add_digest(
+        tz: "Europe/Tallinn",
+        namespace: "prod",
+        init_values: ~s({"mode": "daily"}),
+        kind: "workflow"
+      )
 
     assert output =~ "warning: factory ai_digest has no live runner in namespace prod"
     assert {:ok, %{init_values: %{"mode" => "daily"}}} = ScheduleStore.get("digest")
@@ -57,7 +56,8 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
   test "schedule_list renders entries with the next fire time" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+
+    add_digest()
 
     output = capture_io(fn -> CliManager.schedule_list() end)
 
@@ -75,7 +75,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
       %{"digest" => %{node: :flz@testhost, last_fire: nil}}
     end)
 
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+    add_digest()
 
     output = capture_io(fn -> CliManager.schedule_list() end)
 
@@ -86,7 +86,8 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   test "schedule_list renders a dash when the schedule is unplaced" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
     stub(Flezha.Schedule.Hub, :statuses, fn -> %{} end)
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+
+    add_digest()
 
     output = capture_io(fn -> CliManager.schedule_list() end)
 
@@ -111,7 +112,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
       }
     end)
 
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+    add_digest()
 
     output = capture_io(fn -> CliManager.schedule_list() end)
 
@@ -139,7 +140,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
       }
     end)
 
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+    add_digest()
 
     output = capture_io(fn -> CliManager.schedule_list() end)
 
@@ -152,9 +153,24 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     assert capture_io(fn -> CliManager.schedule_list() end) =~ "no schedules"
   end
 
+  # `--plugins` reaches the controller as the text the operator wrote, and the
+  # stored row holds it verbatim: providers are resolved again at every firing.
+  test "schedule_add stores the plugin spec as the text it was given" do
+    stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
+
+    spec =
+      ~s([{"id":"out","provider":"operative_stdout","opts":{},"subscriptions":["on_output"]}])
+
+    output = add_digest(plugins: spec)
+
+    assert output =~ "Schedule digest added"
+    assert {:ok, %{plugins: ^spec}} = ScheduleStore.get("digest")
+  end
+
   test "schedule_run spawns immediately with a manual id" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+
+    add_digest()
 
     expect(OperativeManager, :start_workflow, fn "default", id, factory_id, _init, _opts ->
       assert id =~ ~r/^digest@manual-\d+$/
@@ -170,7 +186,8 @@ defmodule Flezha.Service.CliManagerScheduleTest do
   # the CLI stays usable when the hub is down.
   test "schedule_remove deletes the entry" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
-    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+
+    add_digest()
 
     assert capture_io(fn -> CliManager.schedule_remove("digest") end) =~
              "Schedule digest removed"

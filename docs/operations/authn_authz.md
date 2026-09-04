@@ -199,6 +199,7 @@ on the command line.
 | `flz dlq replay`, `flz dlq drop` | `dlq.replay`, `dlq.drop` | operator | the entry's namespace |
 | `flz schedule list` | `schedule.list` | viewer | `_system` |
 | `flz schedule add`, `flz schedule remove` | `schedule.add` / `.remove` (and `.assert` / `.retract` for the hub half) | operator | `_system` |
+| `flz schedule run` | `operative.start` | operator | the schedule's own namespace |
 | `flz operative scale` | `operative.scale` | operator | the namespace given on the command line |
 | `flz operative rewind` | `operative.rewind` | operator | the namespace given on the command line |
 
@@ -218,8 +219,14 @@ A namespace-bound operator cannot manage schedules.
 
 Both are reversible in `Flezha.AuthZ.Policy`: move an action between
 `@viewer_actions`, `@operator_extra` and `@admin_extra` and the grant moves with
-it. `flz schedule run` carries no action at all — it fires an existing schedule
-rather than changing one.
+it.
+
+**`flz schedule run` is judged where the instance starts.** Firing a schedule by
+hand starts an operative, so it authorizes `operative.start` in the schedule's
+own namespace rather than in `_system`. An `operator@_system` token — the
+credential above for managing schedules — can add, list and remove a schedule
+but cannot run one; a token bound to the schedule's namespace with
+`operative.start` (an `operator` or `admin` there), or `admin@_system`, can.
 
 ## Audit-log integration
 

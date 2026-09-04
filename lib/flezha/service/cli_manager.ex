@@ -79,22 +79,10 @@ defmodule Flezha.Service.CliManager do
   defdelegate plugin_help(arg1), to: Cli.Plugin
   defdelegate provider_opts(arg1), to: Cli.Plugin
 
-  defdelegate schedule_add(
-                arg1,
-                arg2,
-                arg3,
-                arg4,
-                arg5 \\ "",
-                arg6 \\ "",
-                arg7 \\ "workflow",
-                arg8 \\ "",
-                arg9 \\ []
-              ),
-              to: Cli.Schedule
-
+  defdelegate schedule_add(arg1, arg2 \\ []), to: Cli.Schedule
   defdelegate schedule_list(arg1 \\ []), to: Cli.Schedule
   defdelegate schedule_remove(arg1, arg2 \\ []), to: Cli.Schedule
-  defdelegate schedule_run(arg1), to: Cli.Schedule
+  defdelegate schedule_run(arg1, arg2 \\ []), to: Cli.Schedule
   defdelegate state_at(arg1, arg2, arg3 \\ "text"), to: Cli.State
   defdelegate state_delete(arg1, arg2 \\ []), to: Cli.State
   defdelegate state_get(arg1, arg2 \\ "text", arg3 \\ []), to: Cli.State

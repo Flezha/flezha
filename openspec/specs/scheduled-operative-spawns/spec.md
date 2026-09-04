@@ -118,3 +118,51 @@ A slot whose spawn fails SHALL be retried by the schedule process with exponenti
 
 - **WHEN** every slot of a schedule fails for days because its factory's runner is never deployed
 - **THEN** the schedule SHALL remain registered and probing on backoff, `flz schedule list` SHALL show the failing last result, and no operator action SHALL be needed for it to fire once the runner appears
+
+### Requirement: A manual fire SHALL be an authorized operative start
+
+`flz schedule run <name>` SHALL authorize `operative.start` in the namespace the
+schedule was added under before it spawns an instance, and SHALL accept the
+caller's credential the way every other gated schedule verb does. It SHALL stay
+hub-free: the authorization is judged from the stored row, so a manual fire still
+works on a node whose schedule hub is down.
+
+#### Scenario: A manual fire carries a credential
+
+- **WHEN** `flz schedule run <name> --token <t>` is issued
+- **THEN** the token SHALL reach the controller with the request, and the spawn SHALL
+  be judged as `operative.start` for that token in the schedule's namespace
+
+#### Scenario: A manual fire with no credential is refused under enforcement
+
+- **WHEN** authorization is enforced and `schedule run` is issued with no credential
+- **THEN** no instance SHALL spawn and the refusal SHALL name the action
+
+### Requirement: The schedule verbs SHALL carry their optional flags as one options document
+
+A schedule verb's optional flags SHALL travel to the controller as one options
+document — the namespace, the initial values, the kind, the plugin spec and the
+caller's credential — the keyword list every other gated schedule verb already
+carries its credential in, rather than as positional arguments with defaults.
+The operator-facing flags do not change; what changes is the request the CLI
+builds. A value that must reach the controller as text, such as the plugin spec
+the decoder reads verbatim, SHALL be carried as text whatever it parses as.
+
+#### Scenario: An optional flag is absent
+
+- **WHEN** `flz schedule add` is issued without `--namespace`, `--init_values`,
+  `--plugins` or `--kind`
+- **THEN** the controller SHALL apply the same defaults it applies today, and the
+  request SHALL carry no positional placeholder for the absent flag
+
+#### Scenario: The plugin spec arrives as the text the operator wrote
+
+- **WHEN** `flz schedule add --plugins '[{"provider": …}]'` is issued
+- **THEN** the controller SHALL receive the JSON text, and the stored entry SHALL
+  hold it verbatim as the registry requirement demands
+
+#### Scenario: No schedule verb exceeds the arity ceiling
+
+- **WHEN** the lint gate reads `lib/flezha/service/cli/schedule.ex`
+- **THEN** no function SHALL take more parameters than the ceiling the gate enforces
+

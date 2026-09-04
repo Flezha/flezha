@@ -51,13 +51,7 @@ fn handle_start(args: &[String]) {
     }
 
     let rest = &args[3..];
-    let plugins_json = match parse_plugins_json(&args::json(rest, "--plugins", "--plugins")) {
-        Ok(canonical) => canonical,
-        Err(reason) => {
-            eprintln!("Error: invalid --plugins JSON: {}", reason);
-            exit(1);
-        }
-    };
+    let plugins_json = plugins_json_or_refuse(&args::json(rest, "--plugins", "--plugins"));
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
@@ -164,6 +158,15 @@ pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
     }
 
     Ok(serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string()))
+}
+
+/// `parse_plugins_json` for a handler that answers `()`: the canonical text,
+/// or the one refusal every verb that takes `--plugins` prints.
+pub(crate) fn plugins_json_or_refuse(raw: &str) -> String {
+    args::or_refuse(
+        parse_plugins_json(raw)
+            .map_err(|reason| format!("Error: invalid --plugins JSON: {}", reason)),
+    )
 }
 
 fn handle_stop(args: &[String]) {

@@ -333,7 +333,7 @@ end
 defmodule Flezha.Service.CliManagerGatedVerbsTest do
   @moduledoc """
   The four verb families that used to reach their stores with no credential:
-  `flz dlq list | show`, `flz schedule add | list | remove`, `flz operative
+  `flz dlq list | show`, `flz schedule add | list | remove | run`, `flz operative
   scale` and `flz operative rewind`.
 
   Driven from the RPC surface `flz` calls, because the credential's whole
@@ -341,14 +341,18 @@ defmodule Flezha.Service.CliManagerGatedVerbsTest do
   `Flezha.Service.Cli.Context`, and is what the service guard judges. A verb
   asked without one must refuse and say where the token goes.
   """
-  # async: false: a shared on-disk root; the auth stores are singletons.
+  # async: false: a shared on-disk root; the auth stores are singletons; Mimic
+  # stubs.
   use ExUnit.Case, async: false
+  use Mimic
 
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Dlq.Store, as: DlqStore
+  alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.CliManager
+  alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.ScheduleTestHelper
@@ -407,14 +411,7 @@ defmodule Flezha.Service.CliManagerGatedVerbsTest do
     add = fn opts ->
       CliManager.schedule_add(
         "digest",
-        "0 8 * * *",
-        "Etc/UTC",
-        "ai_digest",
-        "",
-        "",
-        "workflow",
-        "",
-        opts
+        [cron: "0 8 * * *", tz: "Etc/UTC", factory: "ai_digest"] ++ opts
       )
     end
 
@@ -427,6 +424,36 @@ defmodule Flezha.Service.CliManagerGatedVerbsTest do
 
     assert capture_io(fn -> CliManager.schedule_remove("digest", token: ctx.token) end) =~
              "Schedule digest removed"
+  end
+
+  # Firing a schedule by hand starts an operative, so it is judged as
+  # `operative.start` where the instance starts — the stored row's namespace,
+  # not the `_system` scope the other schedule verbs share.
+  test "schedule run is refused without a token and judged in the schedule's namespace",
+       ctx do
+    {:ok, _entry} = ScheduleStore.add(ScheduleTestHelper.entry_fields(%{name: "digest"}))
+    test_pid = self()
+
+    stub(OperativeManager, :start_workflow, fn "default", id, _factory, _init, _opts ->
+      send(test_pid, {:spawned, id})
+      {:ok, %{operative_id: id}}
+    end)
+
+    assert refusal(fn -> CliManager.schedule_run("digest") end) =~ "operative.start: refused"
+
+    # The `_system` operator that manages schedules is not bound where this
+    # one starts.
+    assert refusal(fn -> CliManager.schedule_run("digest", token: ctx.token) end) =~
+             "operative.start: refused"
+
+    refute_received {:spawned, _}
+
+    {:ok, bound_here, _} = TokenStore.issue("gated-op-default", "default", :operator, 3600)
+
+    assert capture_io(fn -> CliManager.schedule_run("digest", token: bound_here) end) =~
+             "Spawned digest@manual-"
+
+    assert_received {:spawned, "digest@manual-" <> _}
   end
 
   test "the two verbs that move live work refuse without a token", ctx do

@@ -174,7 +174,7 @@ defmodule Flezha.Schedule.Store do
 
   # Structural only: provider ids are resolved at every firing against the
   # controller that is actually running, so a decoded plugin must never be
-  # frozen into a DETS row. `CliManager.schedule_add/9` does the full
+  # frozen into a DETS row. `CliManager.schedule_add/2` does the full
   # provider-resolving check before calling `add/1`.
   defp validate_plugins(json) when json in [nil, ""], do: {:ok, "[]"}
 

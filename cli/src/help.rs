@@ -429,7 +429,8 @@ SUBCOMMANDS:
                  each firing prefixes the plugin ids with its instance id.
     list         List schedules with their next fire time
     remove <name>  Remove a schedule
-    run <name>     Fire one instance immediately with the stored config
+    run <name>     Fire one instance immediately with the stored config;
+                   judged as operative.start in the schedule's namespace
     help         Show this help message
 
 EXAMPLES:

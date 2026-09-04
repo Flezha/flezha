@@ -230,13 +230,26 @@ pub(crate) fn auth_token(args: &[String]) -> Option<String> {
     env::var("FLEZHA_TOKEN").ok().filter(|v| !v.is_empty())
 }
 
-/// Elixir keyword-list fragment carrying the identity token for a CliManager
-/// wrapper's `opts` parameter: `[token: "…"]`, or `[]` when unauthenticated.
+/// Elixir keyword-list fragment for a CliManager wrapper's `opts` parameter:
+/// `pairs` as `key: "value"` in the order given, then the caller's identity
+/// token when there is one — `[]` when it carries neither. Each value is
+/// written as a JSON string literal, which is also an Elixir string literal
+/// and escapes a backslash as well as a quote.
+pub(crate) fn keyword_opts_fragment(pairs: &[(&str, &str)], args: &[String]) -> String {
+    let entries: Vec<String> = pairs
+        .iter()
+        .copied()
+        .chain(auth_token(args).iter().map(|t| ("token", t.as_str())))
+        .map(|(key, value)| format!("{}: {}", key, serde_json::Value::String(value.to_string())))
+        .collect();
+
+    format!("[{}]", entries.join(", "))
+}
+
+/// The fragment carrying the identity token alone: `[token: "…"]`, or `[]`
+/// when unauthenticated.
 pub(crate) fn token_opts_fragment(args: &[String]) -> String {
-    match auth_token(args) {
-        Some(t) => format!("[token: \"{}\"]", escape_rpc_arg(&t)),
-        None => "[]".to_string(),
-    }
+    keyword_opts_fragment(&[], args)
 }
 
 /// JSON opts object (as an Elixir string literal) for wrappers taking an
@@ -318,6 +331,17 @@ mod tests {
     fn token_opts_fragment_uses_the_flag_and_escapes() {
         let args = v(&["--token", "abc\"def"]);
         assert_eq!(token_opts_fragment(&args), "[token: \"abc\\\"def\"]");
+    }
+
+    /// Pairs keep the order they were given, a quote and a backslash inside a
+    /// value both stay inside it, and the token closes the list.
+    #[test]
+    fn keyword_opts_fragment_keeps_the_order_and_escapes_every_value() {
+        let pairs = [("cron", "0 8 * * *"), ("init_values", "{\"a\":\"x\\\"y\"}")];
+        assert_eq!(
+            keyword_opts_fragment(&pairs, &v(&["--token", "t"])),
+            "[cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"]"
+        );
     }
 
     #[test]

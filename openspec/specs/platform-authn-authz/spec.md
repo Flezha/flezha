@@ -329,10 +329,10 @@ provider pattern.
 
 Such a verb SHALL name an action in the authorizable-action enumeration and SHALL
 authorize it before doing anything — a verb that reads parked business data, creates or
-destroys a schedule, or moves live work between runners. A verb whose action is absent
-from that enumeration is not merely ungated, it is unauthorizable — the policy point
-refuses only actions it knows — so the enumeration is the surface this requirement
-governs.
+destroys a schedule, starts an operative, or moves live work between runners. A verb
+whose action is absent from that enumeration is not merely ungated, it is unauthorizable
+— the policy point refuses only actions it knows — so the enumeration is the surface this
+requirement governs.
 
 A CLI verb that this requirement gates SHALL accept the caller's credential, so that
 naming its action does not make it refuse every caller. A verb whose signature cannot
@@ -340,6 +340,11 @@ carry a token is not gateable, and widening that signature is part of gating it.
 
 Each new action SHALL be granted to at least the roles that can invoke the verb today,
 unless narrowing it is the recorded intent of the change that adds it.
+
+A verb whose effect is one an existing action already names SHALL authorize that action
+rather than add a second name for the same right: firing a schedule by hand starts an
+operative, and is judged as `operative.start` in the namespace the schedule was added
+under.
 
 #### Scenario: A parked payload is not readable by an unauthorized caller
 
@@ -365,4 +370,11 @@ unless narrowing it is the recorded intent of the change that adds it.
   it after
 - **THEN** the verb SHALL succeed, unless the change that named the action recorded a
   narrower grant as its intent
+
+#### Scenario: A schedule is not fired by hand by an unauthorized caller
+
+- **WHEN** a caller with no role binding issues `flz schedule run <name>` while
+  authorization is enforced
+- **THEN** the verb SHALL be refused as `operative.start` in the schedule's namespace and
+  no instance SHALL spawn
 
