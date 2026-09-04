@@ -73,6 +73,15 @@ A liveness slot does not surface by itself: this source emits one hard-coded
 metric per name and nothing iterates the slot layout, so a slot with no line of
 its own is readable only by a caller of `snapshot_all/0`.
 
+A heartbeat counter is global to the runner that sends it, and the runner sends
+the same heartbeat on every secondary stream it holds, so the controller mirrors
+one value into every channel row of that runner. A surface SHALL count such a
+slot once per runner, never once per channel: the collapse SHALL live with the
+slot layout and every reader SHALL use it, so that a metric's value does not
+change with the size of a runner's stream pool. A slot that is genuinely per
+channel — a frame count, a credit session, a send-gate hold — is summed across
+channels as before.
+
 #### Scenario: Per-transport open-connection count
 - **WHEN** a UDS transport has `4` open runner connections
 - **THEN** a `:metric` signal on source `:flezha_transport` with `name: :open_connections`, `measurements: %{value: 4}`, and `metadata: %{transport: :uds}` SHALL appear on the bus
@@ -96,6 +105,14 @@ its own is readable only by a caller of `snapshot_all/0`.
 #### Scenario: A slot with no metric line reaches no exporter
 - **WHEN** a heartbeat counter is given a liveness slot and this source is left unchanged
 - **THEN** the counter SHALL reach no signal, no sink and no exporter
+
+#### Scenario: A runner-global counter is counted once per runner
+- **WHEN** one runner holds three secondary streams and its heartbeat carries `timers_fired: 1` on each
+- **THEN** this source SHALL emit `timers_fired` with count 1, and the same value whether the runner holds one stream or eight
+
+#### Scenario: Both readers collapse the same way
+- **WHEN** the stall classifier and this source read one runner's channel rows
+- **THEN** both SHALL reach the same per-runner value through one shared function, so a slot cannot be collapsed in one reader and summed in the other
 
 ### Requirement: Built-in bounded-mailbox source
 

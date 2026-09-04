@@ -6,7 +6,8 @@ defmodule Flezha.Transport.LivenessCounters do
   `:counters` array and bumps slots locally (single-process, no contention).
   The ref is registered in a public ETS table so the `:flezha_transport`
   observability source and the convergence stall classifier can read every
-  channel/operative's counters in one lock-free scan.
+  channel/operative's counters in one lock-free scan, and collapse a runner's
+  channel rows to one with `by_runner/1`.
 
   Cardinality is bounded: one entry per channel (runner + stream name) and
   one per operative instance — never per frame. Entries whose owner process has
@@ -81,6 +82,13 @@ defmodule Flezha.Transport.LivenessCounters do
     :stale_writer_refused,
     :send_gate_held
   ]
+  # The slots that are one fact about the runner rather than about a channel:
+  # every mirrored `hb_<key>` but `hb_count`, which counts the frames that
+  # carried it. Derived from the layout so a mirrored slot cannot land in one
+  # list and not the other; `by_runner/1` says what the distinction buys.
+  @runner_global_slots Enum.filter(@channel_slots, fn slot ->
+                         slot != :hb_count and String.starts_with?(Atom.to_string(slot), "hb_")
+                       end)
   @operative_slots [:io_in_received, :forwarded, :filtered_nil, :parked_drops]
   @channel_size length(@channel_slots)
   @operative_size length(@operative_slots)
@@ -258,6 +266,28 @@ defmodule Flezha.Transport.LivenessCounters do
         %{channels: channels, operatives: operatives}
     end
   end
+
+  @doc """
+  Collapse channel rows to one row per runner, keyed by runner id.
+
+  A mirrored heartbeat slot — every `hb_<key>` but the frame count `hb_count` —
+  is one fact about the runner that every channel row of that runner repeats,
+  so it keeps its value with `max/2`; read per channel it would be multiplied
+  by the size of the runner's stream pool. Every other counter sums, and
+  `last_send_ms`, a timestamp, keeps the latest. An SDK that does not send the
+  self-report never advances a mirrored slot, so it reads 0.
+  """
+  @spec by_runner([map()]) :: %{term() => map()}
+  def by_runner(channels) do
+    Enum.reduce(channels, %{}, fn c, acc ->
+      row = Map.new(@channel_slots, &{&1, Map.fetch!(c, &1)})
+      Map.update(acc, c.runner_id, row, fn seen -> Map.merge(seen, row, &collapse/3) end)
+    end)
+  end
+
+  defp collapse(slot, a, b) when slot in @runner_global_slots, do: max(a, b)
+  defp collapse(:last_send_ms, a, b), do: max(a, b)
+  defp collapse(_slot, a, b), do: a + b
 
   defp channel_snapshot(runner_id, name, ref) do
     snapshot(@channel_slots, ref, %{runner_id: runner_id, name: name})

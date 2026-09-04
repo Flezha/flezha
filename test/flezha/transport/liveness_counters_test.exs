@@ -78,6 +78,57 @@ defmodule Flezha.Transport.LivenessCountersTest do
     assert find_operative(operative) == nil
   end
 
+  # The collapse is owned by the slot layout so the two readers cannot
+  # disagree: a mirrored heartbeat slot is one fact about the runner and keeps
+  # its value across the runner's channels; a frame count or a credit session
+  # is one fact about the channel and sums; the send stamp keeps the latest.
+  test "by_runner/1 keeps a heartbeat slot once per runner and sums the per-channel ones" do
+    exec = "exec_#{System.unique_integer([:positive])}"
+    a = LivenessCounters.register_channel(exec, :secondary_1)
+    b = LivenessCounters.register_channel(exec, :secondary_2)
+    mirrored = for key <- Flezha.Runner.StreamChannel.heartbeat_keys(), do: :"hb_#{key}"
+
+    for ref <- [a, b] do
+      for slot <- mirrored, do: LivenessCounters.set_channel(ref, slot, 5)
+      LivenessCounters.bump_channel(ref, :hb_count)
+      LivenessCounters.bump_channel(ref, :send_frame_calls)
+      LivenessCounters.bump_channel(ref, :io_in_received)
+      LivenessCounters.set_channel(ref, :credit_active, 1)
+    end
+
+    # One stream took a later heartbeat than the other.
+    for slot <- mirrored, do: LivenessCounters.set_channel(b, slot, 6)
+    LivenessCounters.set_channel(a, :last_send_ms, 100)
+    LivenessCounters.set_channel(b, :last_send_ms, 200)
+
+    rows = Enum.filter(LivenessCounters.snapshot_all().channels, &(&1.runner_id == exec))
+    assert %{^exec => row} = LivenessCounters.by_runner(rows)
+
+    for slot <- mirrored, do: assert({slot, row[slot]} == {slot, 6})
+    assert row.hb_count == 2
+    assert row.send_frame_calls == 2
+    assert row.io_in_received == 2
+    assert row.credit_active == 2
+    assert row.last_send_ms == 200
+  end
+
+  test "by_runner/1 keeps runners apart and reads an SDK without the self-report as zero" do
+    exec_a = "exec_a_#{System.unique_integer([:positive])}"
+    exec_b = "exec_b_#{System.unique_integer([:positive])}"
+    a = LivenessCounters.register_channel(exec_a, :secondary_1)
+    _b = LivenessCounters.register_channel(exec_b, :secondary_1)
+    LivenessCounters.set_channel(a, :hb_timers_fired, 9)
+
+    rows =
+      Enum.filter(LivenessCounters.snapshot_all().channels, &(&1.runner_id in [exec_a, exec_b]))
+
+    by_runner = LivenessCounters.by_runner(rows)
+
+    assert Map.keys(by_runner) |> Enum.sort() == Enum.sort([exec_a, exec_b])
+    assert by_runner[exec_a].hb_timers_fired == 9
+    assert by_runner[exec_b].hb_timers_fired == 0
+  end
+
   defp find_channel(exec, name) do
     LivenessCounters.snapshot_all().channels
     |> Enum.find(fn c -> c.runner_id == exec and c.name == name end)

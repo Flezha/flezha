@@ -9,6 +9,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Convergence.StallClassifier
+  alias Flezha.Transport.LivenessCounters
 
   @now 1_000_000
 
@@ -588,21 +589,14 @@ defmodule Flezha.Convergence.StallClassifierTest do
     }
   end
 
+  # A whole layout row, as `LivenessCounters.snapshot_all/0` returns one.
   defp channel(opts) do
-    %{
+    LivenessCounters.channel_slots()
+    |> Map.new(&{&1, Keyword.get(opts, &1, 0)})
+    |> Map.merge(%{
       runner_id: Keyword.get(opts, :runner_id, "exec-1"),
-      name: Keyword.get(opts, :name, :chan_1),
-      io_in_received: Keyword.get(opts, :io_in_received, 0),
-      send_frame_calls: Keyword.get(opts, :send_frame_calls, 0),
-      nil_drops: Keyword.get(opts, :nil_drops, 0),
-      flz_data_received: Keyword.get(opts, :flz_data_received, 0),
-      last_send_ms: Keyword.get(opts, :last_send_ms, 0),
-      hb_count: Keyword.get(opts, :hb_count, 0),
-      hb_dispatches: Keyword.get(opts, :hb_dispatches, 0),
-      hb_blocked_parks: Keyword.get(opts, :hb_blocked_parks, 0),
-      hb_inflight: Keyword.get(opts, :hb_inflight, 0),
-      hb_inflight_oldest_ms: Keyword.get(opts, :hb_inflight_oldest_ms, 0)
-    }
+      name: Keyword.get(opts, :name, :chan_1)
+    })
   end
 
   defp operative(opts) do

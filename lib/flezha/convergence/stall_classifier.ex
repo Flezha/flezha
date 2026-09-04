@@ -64,6 +64,8 @@ defmodule Flezha.Convergence.StallClassifier do
   empty and those five clauses do not fire.
   """
 
+  alias Flezha.Transport.LivenessCounters
+
   @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
   @type verdict :: {atom(), map()} | :ok
 
@@ -308,37 +310,6 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  # Per-channel facts: one runner's channels each count their own.
-  @summed_slots [:send_frame_calls, :hb_count]
-  # Runner self-report: process-global on the runner, so every channel of one
-  # runner carries the same value and max() collapses the duplicates. An SDK
-  # that does not send the self-report never advances these, so they read 0 —
-  # "no handout is outstanding", which never stalls, and "no producer is
-  # blocked", which leaves the wedge check as it was.
-  @reported_slots [
-    :hb_dispatches,
-    :hb_blocked_parks,
-    :hb_inflight,
-    :hb_inflight_oldest_ms,
-    :hb_pending_pushes,
-    :hb_pending_push_oldest_ms
-  ]
-
-  # Aggregate per-channel counters to one row per runner. Adding a reported
-  # counter is one entry above, not two lists to keep in step.
-  defp group_channels_by_runner(channels) do
-    Enum.reduce(channels, %{}, fn c, acc ->
-      row = Map.new(@summed_slots ++ @reported_slots, fn slot -> {slot, Map.get(c, slot, 0)} end)
-
-      Map.update(acc, c.runner_id, row, fn seen ->
-        Map.merge(seen, row, fn
-          slot, a, b when slot in @summed_slots -> a + b
-          _slot, a, b -> max(a, b)
-        end)
-      end)
-    end)
-  end
-
   # ---------- BEAM checks ----------
 
   defp channel_not_sending(current, previous) do
@@ -496,15 +467,17 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  # Pair each runner's aggregated row with its previous one and judge only a
+  # Pair each runner's collapsed row with its previous one and judge only a
   # runner that is demonstrably still being fed AND still answering — the
   # "is it actually being fed?" precondition in its runner-scoped form, so the
-  # self-report checks differ in nothing but the counter they read.
+  # self-report checks differ in nothing but the counter they read. A mirrored
+  # slot an SDK never sends reads 0 there — nothing outstanding, nothing
+  # blocked, a dispatch count the wedge check does not judge — so it never stalls.
   defp find_runner(current, previous, fun) do
-    prev_index = group_channels_by_runner(previous.channels)
+    prev_index = LivenessCounters.by_runner(previous.channels)
 
     current.channels
-    |> group_channels_by_runner()
+    |> LivenessCounters.by_runner()
     |> find_first(fn {runner_id, cur} ->
       case Map.get(prev_index, runner_id) do
         nil ->

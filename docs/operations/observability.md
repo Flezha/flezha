@@ -57,7 +57,10 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   re-forwards from a durable log, so a climbing value sizes that loss), `timers_armed` and
   `timers_fired` (the wake list's occupancy and its firings: armed climbing while fired stays
   flat is promotion wedged rather than an idle Operative);
-  gauge `credit_ledger_level`. No bytes in/out. Reading them:
+  gauge `credit_ledger_level`. No bytes in/out. A counter the runner reports in its heartbeat
+  (`credit_parked`, the four `mailbox_*`, `restore_discarded_inputs`, `timers_armed`, `timers_fired`)
+  is counted once per runner however many secondary streams mirror it, then summed across runners;
+  a per-channel counter sums across channels. Reading them:
   [../internals/transport_liveness.md](../internals/transport_liveness.md).
   **The self-report needs a NIF driver.** The `:native` in-node transport has none, so a
   native-only controller emits no `driver_*` metric — including `driver_write_buffer_dropped`, the

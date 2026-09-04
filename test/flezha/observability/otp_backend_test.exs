@@ -162,9 +162,9 @@ defmodule Flezha.Observability.OtpBackendTest do
       assert drops.metadata[:scope] == :data_plane
     end
 
-    # A liveness slot does not surface by itself: `poll_beam_counters/0` calls
-    # `emit_sum/3` once per hard-coded metric and nothing iterates the layout,
-    # so a heartbeat counter with no line there is readable only by a caller of
+    # A liveness slot does not surface by itself: `poll_beam_counters/0` walks
+    # a table with one row per metric and nothing iterates the layout, so a
+    # heartbeat counter with no row there is readable only by a caller of
     # `snapshot_all/0` and reaches no signal, no sink and no exporter.
     test "the heartbeat's rebind-discard and timer counters reach the data-plane aggregates" do
       arm(:flezha_transport)
@@ -191,6 +191,40 @@ defmodule Flezha.Observability.OtpBackendTest do
         assert signal, "#{name} never reached a signal"
         assert signal.measurements[:count] >= value
         assert signal.metadata[:scope] == :data_plane
+      end
+    end
+
+    # A heartbeat counter is one fact about the runner, and the runner sends
+    # the same heartbeat on every secondary stream it holds, so the controller
+    # mirrors one value into every channel row of that runner. Counted per
+    # channel, a metric reads the runner's value times its stream-pool size.
+    # The value is large so the check tells the collapse from the multiplier
+    # under any small leftover another live channel contributes to the global
+    # sum: once per runner reads in `[value, 2 * value)`; per channel reads
+    # three times it.
+    test "a runner-global heartbeat counter is counted once per runner, not once per channel" do
+      arm(:flezha_transport)
+
+      runner = "obs_pool_#{System.unique_integer([:positive])}"
+      slots = [hb_timers_fired: 1_000_003, hb_blocked_parks: 2_000_003]
+
+      for name <- [:secondary_1, :secondary_2, :secondary_3] do
+        ref = LivenessCounters.register_channel(runner, name)
+        for {slot, value} <- slots, do: LivenessCounters.set_channel(ref, slot, value)
+      end
+
+      {:ok, pid} = TransportSource.start_link([])
+      poll(pid, 1)
+      :ok = GenServer.stop(pid)
+
+      signals = RingBufferSink.query(:flezha_transport, 0)
+
+      for {name, value} <- [timers_fired: 1_000_003, mailbox_blocked: 2_000_003] do
+        signal = Enum.find(signals, fn s -> s.name == name end)
+        assert signal, "#{name} never reached a signal"
+
+        assert signal.measurements[:count] in value..(2 * value - 1),
+               "#{name} read #{signal.measurements[:count]} for one runner whose value is #{value}"
       end
     end
   end

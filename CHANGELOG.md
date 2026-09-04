@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fixed — a runner's self-report is counted once per runner (`count-a-runner-self-report-once`)
+
+**The value of eight `:flezha_transport` metrics changes on any runner with more
+than one secondary stream**: `credit_parked`, `mailbox_blocked`,
+`mailbox_drops_newest`, `mailbox_drops_oldest`, `mailbox_pending_pushes`,
+`restore_discarded_inputs`, `timers_armed` and `timers_fired`. A runner sends the
+same heartbeat on every secondary stream it holds and the controller mirrors it
+into every channel row, so each of these read the runner's value multiplied by
+its stream-pool size and moved when the pool was resized. They now read the
+runner's value once per runner, summed across runners; a per-channel counter
+(`credit_active_sessions`, `credit_overrun_total`, `send_gate_held`, the
+`channel_*` io counters) is unchanged.
+
+- **One collapse, owned by the slot layout.** `Flezha.Transport.LivenessCounters.by_runner/1`
+  collapses a runner's channel rows to one; the transport source and the
+  convergence stall classifier both read it, and which slots are runner-global
+  is derived from the layout rather than listed.
+
 ### Fixed — an Elixir Entity holds a change record the wire refused (`hold-a-failed-record-in-the-elixir-sdk`)
 
 The Elixir SDK already held a plugin-bound output no stream would take and
