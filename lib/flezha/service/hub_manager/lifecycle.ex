@@ -12,6 +12,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Parallel
+  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Shutdown.Coordinator
@@ -59,7 +61,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   @spec recovery_state(atom()) :: {:ok, atom()} | {:error, :unknown_hub}
   def recovery_state(hub_id) when is_atom(hub_id) do
     cond do
-      not ProcessHub.is_alive?(hub_id) ->
+      not Hub.alive?(hub_id) ->
         {:error, :unknown_hub}
 
       true ->
@@ -84,7 +86,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   defp do_wait_until_hub_alive(hub_id, deadline) do
     cond do
-      ProcessHub.is_alive?(hub_id) ->
+      Hub.alive?(hub_id) ->
         :ok
 
       System.monotonic_time(:millisecond) >= deadline ->
@@ -113,18 +115,12 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   defp drain_step(%{namespaces: namespaces, phase_start_ms: phase_start_ms}, budget) do
     total = length(namespaces)
 
-    stream =
-      Task.async_stream(
-        namespaces,
-        fn ns -> drain_hub(ns, budget_ms: budget) end,
-        max_concurrency: max(total, 1),
-        timeout: budget + Durations.get(:forced_handover_grace_ms),
-        on_timeout: :kill_task
-      )
-
     {migrated, forced} =
       namespaces
-      |> Enum.zip(stream)
+      |> Parallel.results(fn ns -> drain_hub(ns, budget_ms: budget) end,
+        max_concurrency: max(total, 1),
+        timeout: budget + Durations.get(:forced_handover_grace_ms)
+      )
       |> Enum.with_index(1)
       |> Enum.reduce({0, 0}, fn {{ns, task_result}, idx}, {m_acc, f_acc} ->
         # A task killed by the async_stream timeout degrades like any other

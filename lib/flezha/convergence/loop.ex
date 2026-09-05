@@ -17,6 +17,7 @@ defmodule Flezha.Convergence.Loop do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config
   alias Flezha.Config.Backoff
@@ -92,7 +93,7 @@ defmodule Flezha.Convergence.Loop do
 
   @impl true
   def handle_info(:tick, %State{} = state) do
-    state = run_tick(%{state | tick_pending?: false, tick_timer: nil})
+    state = run_tick(timer_fired(%{state | tick_pending?: false}, :tick))
     {:noreply, schedule_tick(state)}
   end
 
@@ -187,16 +188,13 @@ defmodule Flezha.Convergence.Loop do
   defp request_tick(%State{tick_pending?: true} = state), do: state
 
   defp request_tick(%State{} = state) do
-    if is_reference(state.tick_timer), do: Process.cancel_timer(state.tick_timer)
-    Process.send_after(self(), :tick, 0)
-    %{state | tick_pending?: true, tick_timer: nil}
+    state = arm_timer(state, :tick, 0, :tick)
+    %{state | tick_pending?: true}
   end
 
   defp schedule_tick(%State{tick_pending?: true} = state), do: state
 
-  defp schedule_tick(%State{} = state) do
-    %{state | tick_timer: Process.send_after(self(), :tick, state.tick_ms)}
-  end
+  defp schedule_tick(%State{} = state), do: arm_timer(state, :tick, state.tick_ms, :tick)
 
   # ---------- tick body ----------
 

@@ -13,6 +13,7 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.SafeCall
   alias Flezha.Transport.LivenessCounters
 
   # The send, and the hold the send gate asks for. `send_frame/4` answers
@@ -60,7 +61,16 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   # be missed; the wait is a selective receive, so everything else the caller
   # is holding stays queued.
   def await_send_gate(channel, timeout_ms) do
-    case GenServer.whereis(channel) && GenServer.call(channel, {:await_send_gate, self()}) do
+    held =
+      GenServer.whereis(channel) &&
+        SafeCall.bounded(
+          channel,
+          {:await_send_gate, self()},
+          Durations.get(:control_call_timeout_ms),
+          on_error: :open
+        )
+
+    case held do
       :held ->
         receive do
           {:send_gate, ^channel, result} -> result
@@ -90,8 +100,13 @@ defmodule Flezha.Runner.StreamChannel.Gate do
 
   def notify_on_bind(channel, pid) when is_pid(pid) do
     case GenServer.whereis(channel) do
-      nil -> :no_channel
-      _ -> GenServer.call(channel, {:notify_on_bind, pid})
+      nil ->
+        :no_channel
+
+      _ ->
+        SafeCall.bounded(channel, {:notify_on_bind, pid}, Durations.get(:control_call_timeout_ms),
+          on_error: :no_channel
+        )
     end
   end
 

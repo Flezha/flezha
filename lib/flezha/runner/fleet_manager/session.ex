@@ -18,14 +18,17 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.AuthZ.Verb
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Orchestrator
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
+  alias Flezha.Process.Cspec
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetSupervisor
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.StreamPool
+  alias Flezha.SafeCall
   alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
@@ -318,10 +321,14 @@ defmodule Flezha.Runner.FleetManager.Session do
   # A runner whose tree did not come up is refused rather than allowed to crash
   # this manager.
   defp start_runner_tree(namespace, runner_id, stream_ref, transport) do
-    Supervisor.start_child(FleetSupervisor, %{
-      id: runner_id,
-      start: {RunnerSupervisor, :start_link, [{namespace, runner_id, stream_ref, transport}]}
-    })
+    Supervisor.start_child(
+      FleetSupervisor,
+      Cspec.build(
+        runner_id,
+        {RunnerSupervisor, :start_link, [{namespace, runner_id, stream_ref, transport}]},
+        :worker_permanent
+      )
+    )
 
     case RunnerSupervisor.find_control_channel(runner_id) do
       {:ok, pid} ->
@@ -338,8 +345,13 @@ defmodule Flezha.Runner.FleetManager.Session do
     Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
     Flezha.Transport.Stream.set_active(stream_ref)
 
-    GenServer.call(control_unit, :command_assign_runner_id)
-    GenServer.call(control_unit, :command_sockets_connect)
+    # A control unit that cannot take the handover is a failed connect, not a
+    # silent one: the refusal is thrown the way every other connect fault is.
+    bound = Durations.get(:control_unit_reply_timeout_ms)
+    on_error = &throw({:runner_connect_failed, {:control_unit_unavailable, &1}})
+
+    SafeCall.bounded(control_unit, :command_assign_runner_id, bound, on_error: on_error)
+    SafeCall.bounded(control_unit, :command_sockets_connect, bound, on_error: on_error)
   end
 
   defp refuse(runner_id, namespace, what, reason) do

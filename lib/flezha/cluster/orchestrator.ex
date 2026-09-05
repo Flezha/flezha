@@ -21,6 +21,7 @@ defmodule Flezha.Cluster.Orchestrator do
   require Logger
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:degrade_to_solo, :cluster_update]
 
   @ets_table __MODULE__.State
 
@@ -76,11 +77,13 @@ defmodule Flezha.Cluster.Orchestrator do
 
     # Backstop: declare the cluster ready (solo) if peers never arrive, so a
     # single-node deployment is not blocked forever on the formation gate.
-    Process.send_after(self(), :degrade_to_solo, formation_timeout_ms())
-
-    state = %{
-      discovery_handler: get_discovery_handler()
-    }
+    state =
+      arm_timer(
+        %{discovery_handler: get_discovery_handler()},
+        :degrade_to_solo,
+        formation_timeout_ms(),
+        :degrade_to_solo
+      )
 
     {:ok, state, {:continue, :connect_nodes}}
   end
@@ -89,9 +92,8 @@ defmodule Flezha.Cluster.Orchestrator do
   def handle_continue(:connect_nodes, state) do
     {discovery_handler, expected} = connect_nodes(state.discovery_handler)
     maybe_mark_ready(expected)
-    schedule_cluster_update()
 
-    {:noreply, Map.put(state, :discovery_handler, discovery_handler)}
+    {:noreply, state |> arm_cluster_update() |> Map.put(:discovery_handler, discovery_handler)}
   end
 
   @impl true
@@ -119,9 +121,8 @@ defmodule Flezha.Cluster.Orchestrator do
   def handle_info(:update_cluster, state) do
     {discovery_handler, expected} = connect_nodes(state.discovery_handler)
     maybe_mark_ready(expected)
-    schedule_cluster_update()
 
-    {:noreply, Map.put(state, :discovery_handler, discovery_handler)}
+    {:noreply, state |> arm_cluster_update() |> Map.put(:discovery_handler, discovery_handler)}
   end
 
   @impl true
@@ -207,6 +208,9 @@ defmodule Flezha.Cluster.Orchestrator do
     )
   end
 
+  # A per-node reconnect is a send-later, not a managed timer: no reference is
+  # kept, nothing cancels it, and its callers are connection helpers holding no
+  # process state. `Process.Timer` would add bookkeeping with nothing to book.
   defp schedule_reconnect(node, retries_count) do
     base = Config.get(:reconnect_interval)
 
@@ -223,10 +227,8 @@ defmodule Flezha.Cluster.Orchestrator do
     end
   end
 
-  defp schedule_cluster_update() do
-    interval = Config.get(:cluster_update_interval)
-
-    Process.send_after(self(), :update_cluster, interval)
+  defp arm_cluster_update(state) do
+    arm_timer(state, :cluster_update, Config.get(:cluster_update_interval), :update_cluster)
   end
 
   defp formation_timeout_ms(), do: Durations.get(:cluster_formation_timeout_ms)

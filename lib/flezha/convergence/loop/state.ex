@@ -23,7 +23,7 @@ defmodule Flezha.Convergence.Loop.State do
             # The periodic tick's timer, and whether an immediate one is
             # already on its way — declarations arriving before it runs fold
             # into that one tick.
-            tick_timer: nil,
+            timers: %{},
             tick_pending?: false,
             backoff: Backoff.new(:heal),
             # {kind, target} => %{at, args}: everything a site declared through

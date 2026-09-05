@@ -43,6 +43,7 @@ defmodule Flezha.Operative.Overwatch do
   require Logger
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:wake, :correction]
   use ProcessHub.Strategy.Migration.HotSwap
   use ProcessHub.Strategy.Migration.MigrationConsent
 
@@ -97,7 +98,7 @@ defmodule Flezha.Operative.Overwatch do
     # deadline — rehydrates through the normal bind path.
     suspended: false,
     # Timer ref for the journaled wake deadline while suspended.
-    wake_timer: nil,
+    timers: %{},
     # A park that landed while an un-park task was binding: the task's bound
     # state is stale by the time it reports, and the journaled tail still
     # owes a wake.
@@ -635,7 +636,7 @@ defmodule Flezha.Operative.Overwatch do
   @impl true
   def handle_info(:wake_deadline, %__MODULE__{} = state) do
     _ = ProcInbox.append(state.id, "", %{"flz.wake" => "timer"})
-    {:noreply, Migration.rehydrate(%__MODULE__{state | wake_timer: nil})}
+    {:noreply, Migration.rehydrate(timer_fired(state, :wake))}
   end
 
   # The in-flight `:runner_migrate` task posts its result via a plain `send/2`

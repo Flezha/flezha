@@ -20,6 +20,7 @@ defmodule Flezha.State.DurabilityTier do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Process.Cspec
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
   alias Flezha.State.Paths
@@ -181,12 +182,11 @@ defmodule Flezha.State.DurabilityTier do
       {module, opts} ->
         backend_children(module, opts) ++
           [
-            %{
-              id: :flezha_durability_boot_hydration,
-              start: {Hydrator, :hydrate_on_boot, []},
-              restart: :temporary,
-              type: :worker
-            },
+            Cspec.build(
+              :flezha_durability_boot_hydration,
+              {Hydrator, :hydrate_on_boot, []},
+              :worker_temporary
+            ),
             Shipper
           ]
     end

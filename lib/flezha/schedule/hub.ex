@@ -17,6 +17,7 @@ defmodule Flezha.Schedule.Hub do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:reassert, :retry_hub]
 
   require Logger
 
@@ -139,7 +140,7 @@ defmodule Flezha.Schedule.Hub do
 
   def handle_info(:reassert, state) do
     assert_all()
-    {:noreply, schedule_reassert(state)}
+    {:noreply, arm_reassert(state)}
   end
 
   ## ----- private -----
@@ -148,7 +149,7 @@ defmodule Flezha.Schedule.Hub do
     case HubManager.start_schedule_hub() do
       {:ok, _pid} ->
         assert_all()
-        schedule_reassert(state)
+        arm_reassert(state)
 
       {:error, reason} ->
         :telemetry.execute([:flezha, :schedule, :hub_start_failed], %{count: 1}, %{
@@ -158,14 +159,12 @@ defmodule Flezha.Schedule.Hub do
         # Never crash: this owner sits under the application's one_for_one
         # supervisor, so a restart loop would take the controller down.
         Logger.error("[schedule] schedule hub failed to start: #{inspect(reason)}; retrying")
-        Process.send_after(self(), :retry_hub, Backoff.arm(:hub_retry, 1, :schedule_hub))
-        state
+        arm_timer(state, :retry_hub, Backoff.arm(:hub_retry, 1, :schedule_hub), :retry_hub)
     end
   end
 
-  defp schedule_reassert(state) do
-    Process.send_after(self(), :reassert, Durations.get(:schedule_reassert_interval_ms))
-    state
+  defp arm_reassert(state) do
+    arm_timer(state, :reassert, Durations.get(:schedule_reassert_interval_ms), :reassert)
   end
 
   defp with_live_hub(on_dead, fun) do

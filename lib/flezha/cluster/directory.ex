@@ -13,10 +13,12 @@ defmodule Flezha.Cluster.Directory do
   the executing node, so a stale answer costs at most one failed forward.
   """
 
+  alias Flezha.Process.Cspec
+
   @scope :flz_directory
 
   def child_spec(_opts) do
-    %{id: @scope, start: {:pg, :start_link, [@scope]}}
+    Cspec.build(@scope, {:pg, :start_link, [@scope]}, :worker_permanent)
   end
 
   @doc "Group advertising runners for `factory_id` in `namespace` on the member's node."

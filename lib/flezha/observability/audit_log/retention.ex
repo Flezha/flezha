@@ -14,6 +14,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config
   alias Flezha.Observability.{Bus, Signal}
@@ -40,8 +41,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
       max_total_bytes: Config.get(:audit_log_max_total_bytes)
     }
 
-    schedule(state.interval_ms)
-    {:ok, state}
+    {:ok, arm_tick(state)}
   end
 
   @impl true
@@ -52,7 +52,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
   @impl true
   def handle_info(:tick, state) do
     _ = do_sweep(state)
-    schedule(state.interval_ms)
+    state = arm_tick(state)
     {:noreply, state}
   end
 
@@ -177,5 +177,5 @@ defmodule Flezha.Observability.AuditLog.Retention do
     )
   end
 
-  defp schedule(ms), do: Process.send_after(self(), :tick, ms)
+  defp arm_tick(state), do: arm_timer(state, :tick, state.interval_ms, :tick)
 end

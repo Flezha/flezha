@@ -18,6 +18,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   require Logger
 
   use Fresh
+  use Flezha.Process.Timer, keys: [:idle_check, :poll]
 
   @doc "Default idle-watchdog deadline, in ms."
   @spec default_idle_timeout_ms() :: non_neg_integer()
@@ -96,7 +97,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
           next_req_id: 1,
           cycle: 0,
           poll: nil,
-          poll_timer: nil,
+          timers: Flezha.Process.Timer.new(),
           source_etag: nil,
           last_reconcile: nil,
           last_error: nil,
@@ -139,8 +140,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       }
       |> Map.put(:reconnect_attempt, Backoff.reset(:ws_reconnect, state.plugin_id))
 
-    schedule_idle_check(state)
-    state = Subscription.schedule_subscription_poll(state)
+    state = state |> schedule_idle_check() |> Subscription.schedule_subscription_poll()
 
     # Issue the subscribe via Fresh's reply form so the frame is sent
     # after the upgrade lands. A re-entrant `Fresh.send/2` here races the
@@ -285,8 +285,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
         resubscribe_stale_data(state, now, now - state.last_data_frame_at)
 
       true ->
-        schedule_idle_check(state)
-        {:ok, state}
+        {:ok, schedule_idle_check(state)}
     end
   end
 
@@ -361,8 +360,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   defp resubscribe_stale_data(state, now, data_silence_ms) do
     # Rate-limit guard advances even when the send is skipped, so a
     # transiently-unestablished socket re-tries at most once per window.
-    state = %{state | last_resubscribe_at: now}
-    schedule_idle_check(state)
+    state = schedule_idle_check(%{state | last_resubscribe_at: now})
 
     with true <- Subscription.established(state, "re-subscribe"),
          [_ | _] = frames <- Subscription.subscription_frames(state) do
@@ -400,12 +398,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   @doc false
   def schedule_idle_check(state) do
     case idle_tick_interval(state) do
-      nil ->
-        :ok
-
-      tick ->
-        Process.send_after(self(), :idle_check, tick)
-        :ok
+      nil -> state
+      tick -> arm_timer(state, :idle_check, tick, :idle_check)
     end
   end
 

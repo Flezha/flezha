@@ -18,11 +18,13 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:sweep, :gc]
 
   require Logger
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
+  alias Flezha.SafeCall
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
@@ -41,7 +43,8 @@ defmodule Flezha.State.DurabilityTier.Shipper do
             queued: MapSet.new(),
             manifests: %{},
             writer: nil,
-            adopted: MapSet.new()
+            adopted: MapSet.new(),
+            timers: %{}
 
   # ---------- API ----------
 
@@ -62,11 +65,14 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # running, and none of them may bring down its caller.
   defp call(request) do
     case GenServer.whereis(__MODULE__) do
-      nil -> {:error, :durability_tier_not_running}
-      pid -> GenServer.call(pid, request, Durations.get(:durability_ship_call_ms))
+      nil ->
+        {:error, :durability_tier_not_running}
+
+      pid ->
+        SafeCall.bounded(pid, request, Durations.get(:durability_ship_call_ms),
+          on_error: &{:error, {:shipper_unavailable, &1}}
+        )
     end
-  catch
-    :exit, reason -> {:error, {:shipper_unavailable, reason}}
   end
 
   @doc """
@@ -107,12 +113,13 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
       {module, opts} ->
         ensure_table()
-        schedule(:sweep_tick, DurabilityTier.ship_interval_ms())
-        schedule(:gc_tick, DurabilityTier.gc_interval_ms())
 
         # Read once and held: a writer identity that changed mid-lifetime would
         # split one node's lineage in two and make it bid against itself.
-        state = %__MODULE__{backend: module, opts: opts, writer: DurabilityTier.writer_id()}
+        state =
+          %__MODULE__{backend: module, opts: opts, writer: DurabilityTier.writer_id()}
+          |> arm_sweep()
+          |> arm_gc()
 
         {:ok, state, {:continue, :initial_sweep}}
     end
@@ -167,12 +174,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   def handle_info({:retry, ref}, state), do: {:noreply, push(state, ref)}
 
   def handle_info(:sweep_tick, state) do
-    schedule(:sweep_tick, DurabilityTier.ship_interval_ms())
-    {:noreply, sweep(state)}
+    {:noreply, state |> arm_sweep() |> sweep()}
   end
 
   def handle_info(:gc_tick, state) do
-    schedule(:gc_tick, DurabilityTier.gc_interval_ms())
+    state = arm_gc(state)
     _ = collect_orphans(state)
     {:noreply, state}
   end
@@ -698,7 +704,10 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   defp sha256(bytes), do: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
 
-  defp schedule(message, interval), do: Process.send_after(self(), message, interval)
+  defp arm_sweep(state),
+    do: arm_timer(state, :sweep, DurabilityTier.ship_interval_ms(), :sweep_tick)
+
+  defp arm_gc(state), do: arm_timer(state, :gc, DurabilityTier.gc_interval_ms(), :gc_tick)
 
   defp emit(event, measurements, ref, extra \\ %{}) do
     :telemetry.execute(

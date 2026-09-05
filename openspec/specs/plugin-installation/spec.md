@@ -477,6 +477,17 @@ acts on, and SHALL NOT terminate `PluginManager` itself. A teardown walking many
 operatives SHALL continue past one that cannot be reached, and SHALL report which
 ones it could not disable.
 
+The bound SHALL be applied through the one bounded-call seam rather than a
+`catch` clause written at the site, and the inner bound SHALL stay strictly
+smaller than the bound the caller of `PluginManager` applies, so the two do not
+give up at the same instant.
+
+A teardown that walks many operatives SHALL fan out under one bound rather than
+call them one at a time, so that the walk's cost is one bound and not one bound
+per unreachable operative. The fan-out SHALL NOT relocate work that owns
+caller-scoped state: a step that creates an ETS table, unlinks a process or
+seeds a route naming the caller SHALL run in the calling process.
+
 #### Scenario: An operative is too busy to answer its unsubscribe
 
 - **WHEN** an operative's process does not answer `plugin_unsubscribe` inside the bound
@@ -495,6 +506,14 @@ ones it could not disable.
 - **WHEN** disabling a plugin fails after the durable disable has been written
 - **THEN** the two SHALL be reconciled rather than left in disagreement, so a
   restart does not read a plugin as both disabled and installed
+
+#### Scenario: Many unreachable operatives cost one bound, not one each
+
+- **GIVEN** a namespace whose operatives include several whose processes do not answer
+- **WHEN** the namespace is torn down
+- **THEN** the plugin-disable walk SHALL complete within one bound plus slack,
+  SHALL name every operative it could not disable, and `PluginManager` SHALL be
+  the same running process afterwards
 
 ### Requirement: An installed package's provisions SHALL be rows of the provider table
 

@@ -16,10 +16,12 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
   use GenServer
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Http.Listener
   alias Flezha.Observability.Bus
   alias Flezha.Observability.Export.PrometheusRegistry
   alias Flezha.Observability.Signal
+  alias Flezha.SafeCall
 
   # ---------- Public API ----------
 
@@ -31,8 +33,11 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
   @spec listen_port() :: {:ok, :inet.port_number()} | :error
   def listen_port() do
     case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) -> GenServer.call(pid, :listen_port)
-      _ -> :error
+      pid when is_pid(pid) ->
+        SafeCall.bounded(pid, :listen_port, Durations.get(:listen_port_call_ms), on_error: :error)
+
+      _ ->
+        :error
     end
   end
 

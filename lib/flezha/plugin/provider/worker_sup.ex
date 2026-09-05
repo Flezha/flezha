@@ -16,11 +16,13 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   a worker never has to name the supervisor that started it.
   """
 
+  alias Flezha.Process.Cspec
+
   use Supervisor
 
   def child_spec(opts) do
     name = Keyword.fetch!(opts, :name)
-    %{id: name, start: {__MODULE__, :start_link, [name]}, type: :supervisor}
+    Cspec.build(name, {__MODULE__, :start_link, [name]}, :supervisor_permanent)
   end
 
   def start_link(name), do: Supervisor.start_link(__MODULE__, name, name: name)

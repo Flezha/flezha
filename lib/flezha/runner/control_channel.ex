@@ -21,6 +21,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamPool
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
@@ -31,6 +32,7 @@ defmodule Flezha.Runner.ControlChannel do
   require Logger
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:liveness]
 
   # Control-plane liveness: the SDK keepalive ping (and every other inbound
   # frame) re-arms `last_seen`; a jittered watchdog treats sustained silence
@@ -85,14 +87,14 @@ defmodule Flezha.Runner.ControlChannel do
         # channel while a `ControlUnit` is still blocked here, and an exiting
         # unit loses every waiter in its `response_refs`. Same two clauses
         # `ControlUnit.ping_runner/2` uses one layer up, named for this layer.
-        try do
-          case GenServer.call(control_channel, {:send_control, bin}, timeout_ms) do
-            :ok -> {:ok, ref}
-            {:error, reason} -> {:error, reason}
-          end
-        catch
-          :exit, {:timeout, _} -> {:error, :timeout}
-          :exit, reason -> {:error, {:control_channel_exit, reason}}
+        case SafeCall.bounded(control_channel, {:send_control, bin}, timeout_ms,
+               on_error: %{
+                 timeout: {:error, :timeout},
+                 other: &{:error, {:control_channel_exit, &1}}
+               }
+             ) do
+          :ok -> {:ok, ref}
+          {:error, reason} -> {:error, reason}
         end
     end
   end
@@ -124,8 +126,6 @@ defmodule Flezha.Runner.ControlChannel do
 
   @impl true
   def init({namespace, runner_id, stream_ref, write_fun}) do
-    schedule_liveness_check()
-
     {:ok,
      %{
        namespace: namespace,
@@ -134,9 +134,11 @@ defmodule Flezha.Runner.ControlChannel do
        write_fun: write_fun || (&TStream.send_frame/4),
        control_unit: Identificator.control_unit(runner_id),
        liveness_ref: LivenessCounters.register_channel(runner_id, :control),
-       last_seen: System.monotonic_time(:millisecond)
+       last_seen: System.monotonic_time(:millisecond),
+       timers: Flezha.Process.Timer.new()
      }
-     |> bump_last_seen()}
+     |> bump_last_seen()
+     |> arm_liveness_check()}
   end
 
   @doc """
@@ -153,8 +155,13 @@ defmodule Flezha.Runner.ControlChannel do
     control_channel = Identificator.control_channel(runner_id)
 
     case GenServer.whereis(control_channel) do
-      nil -> {:error, :no_control_channel}
-      pid -> GenServer.call(pid, :reset_stream_ref)
+      nil ->
+        {:error, :no_control_channel}
+
+      pid ->
+        SafeCall.bounded(pid, :reset_stream_ref, Durations.get(:control_call_timeout_ms),
+          on_error: {:error, :no_control_channel}
+        )
     end
   end
 
@@ -302,8 +309,7 @@ defmodule Flezha.Runner.ControlChannel do
 
       handle_connection_closed(state)
     else
-      schedule_liveness_check()
-      {:noreply, state}
+      {:noreply, arm_liveness_check(state)}
     end
   end
 
@@ -347,9 +353,14 @@ defmodule Flezha.Runner.ControlChannel do
     %{state | last_seen: now}
   end
 
-  defp schedule_liveness_check do
+  # A non-positive interval turns the check off: nothing is armed and the key
+  # simply holds no timer.
+  defp arm_liveness_check(state) do
     interval = liveness_interval_ms()
-    if interval > 0, do: Process.send_after(self(), :liveness_tick, jittered(interval))
+
+    if interval > 0,
+      do: arm_timer(state, :liveness, jittered(interval), :liveness_tick),
+      else: state
   end
 
   defp liveness_window_ms,

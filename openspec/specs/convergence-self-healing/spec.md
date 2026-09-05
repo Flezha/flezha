@@ -793,6 +793,23 @@ knob, the hub-call retry's `150 ms → 5 s` in eight attempts, the schedule's
   suite that drives its site — SHALL fail the drill by name, so a new ladder is covered
   with no test edit
 
+### Requirement: A watched process's death SHALL reach the loop on its own tick, never through a monitor the loop holds
+
+The convergence Loop SHALL hold no process monitors. It SHALL learn of a death the way it learns of everything else — by polling on its tick — and no owner of a monitor SHALL call into it.
+
+A monitor exists so its OWNER can maintain its own bookkeeping — drop a route, forget a subscriber, settle an in-flight request. The watch seam SHALL hand that owner the tags it keyed on the dead pid and SHALL decide nothing further: whether the death is a divergence worth repairing is the Loop's judgement, made on the tick it plans on, so no site gains a second, faster clock than the plan.
+
+#### Scenario: An owner reacts at once and the Loop plans on its own tick
+
+- **GIVEN** a route table that watches the process serving an operative
+- **WHEN** that process dies
+- **THEN** the route table SHALL drop its routes at once, and the Loop SHALL reach the same verdict on its next tick rather than being called into directly
+
+#### Scenario: The Loop holds no monitors
+
+- **WHEN** the convergence tree is read
+- **THEN** no module under it SHALL call `Process.monitor/1` and no `:DOWN` clause SHALL exist there
+
 ## Removed Requirements
 
 ### Requirement: `Backoff.schedule_ms/0` is part of the public API

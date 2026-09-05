@@ -26,6 +26,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
   alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.{Codec, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
+  alias Flezha.SafeCall
 
   @sink_name :audit_log
   @default_high_watermark 10_000
@@ -60,8 +61,13 @@ defmodule Flezha.Observability.AuditLog.Sink do
   @spec post_close_dropped() :: non_neg_integer()
   def post_close_dropped() do
     case Process.whereis(__MODULE__) do
-      nil -> 0
-      pid -> GenServer.call(pid, :post_close_dropped)
+      nil ->
+        0
+
+      pid ->
+        SafeCall.bounded(pid, :post_close_dropped, Durations.get(:audit_log_writer_call_ms),
+          on_error: 0
+        )
     end
   end
 

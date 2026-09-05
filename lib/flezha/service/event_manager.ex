@@ -1,16 +1,13 @@
 defmodule Flezha.Service.EventManager do
+  alias Flezha.Process.Cspec
   alias :blockade, as: Blockade
 
   @event_manager :flezha_event_manager
 
   def child_spec(_opts) do
-    %{
-      id: __MODULE__,
-      start: {Blockade, :start_link, [%{name: @event_manager}]},
-      type: :worker,
-      restart: :permanent,
+    Cspec.build(__MODULE__, {Blockade, :start_link, [%{name: @event_manager}]}, :worker_permanent,
       shutdown: 500
-    }
+    )
   end
 
   def start_link(opts) do

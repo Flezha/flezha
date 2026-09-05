@@ -9,6 +9,7 @@ defmodule Flezha.Schedule.JobTest do
   alias Flezha.Schedule.{Cron, Job}
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
+  alias Flezha.Process.Timer
 
   # The job runs in its own process, so stubs must apply beyond the test pid.
   setup :set_mimic_global_until_exit
@@ -89,7 +90,7 @@ defmodule Flezha.Schedule.JobTest do
 
       assert state.target.month == 1
       assert state.target.day == 1
-      assert is_reference(state.timer)
+      assert Timer.armed?(state.timers, :slot)
     end
 
     test "fires a slot inside the grace window on start, through the workflow path" do
@@ -117,8 +118,7 @@ defmodule Flezha.Schedule.JobTest do
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
 
       assert_receive {:spawned, %{id: "job@2026-07-27T08:01:00Z"}}, 2_000
-      assert %{timer: timer} = :sys.get_state(pid)
-      assert is_reference(timer)
+      assert Timer.armed?(:sys.get_state(pid).timers, :slot)
     end
 
     test "an early wake re-arms instead of firing ahead of the slot" do
@@ -143,8 +143,7 @@ defmodule Flezha.Schedule.JobTest do
       pid = start_supervised!({Job, Helper.quiet_entry()})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
 
-      assert %{timer: timer} = :sys.get_state(pid)
-      assert is_reference(timer)
+      assert Timer.armed?(:sys.get_state(pid).timers, :slot)
       assert Process.alive?(pid)
     end
 
@@ -238,9 +237,11 @@ defmodule Flezha.Schedule.JobTest do
       assert log =~ "not started (attempt 1)"
 
       state = :sys.get_state(pid)
-      assert %{slot: ^slot, attempt: 2, timer: timer} = state.pending_retry
+      assert %{slot: ^slot, attempt: 2} = state.pending_retry
+      assert Timer.armed?(state.timers, :retry)
       # First rung of the ladder: the 1s base.
-      remaining = Process.read_timer(timer)
+      {ref, _msg} = Map.fetch!(state.timers, :retry)
+      remaining = Process.read_timer(ref)
       assert is_integer(remaining) and remaining <= 1_000
 
       assert %{last_fire: %{instance_id: "job@2026-07-27T08:01:00Z", outcome: {:retrying, _}}} =
@@ -347,7 +348,9 @@ defmodule Flezha.Schedule.JobTest do
       log =
         capture_log(fn ->
           pid = start_supervised!({Job, Helper.entry(%{cron: "not a cron"})})
-          assert %{timer: nil, target: nil} = :sys.get_state(pid)
+          state = :sys.get_state(pid)
+          assert state.target == nil
+          refute Timer.armed?(state.timers, :slot)
           assert Process.alive?(pid)
         end)
 
@@ -360,7 +363,7 @@ defmodule Flezha.Schedule.JobTest do
       log =
         capture_log(fn ->
           pid = start_supervised!({Job, Helper.entry(%{cron: "0 0 30 2 *"})})
-          assert %{timer: nil} = :sys.get_state(pid)
+          refute Timer.armed?(:sys.get_state(pid).timers, :slot)
           assert Process.alive?(pid)
         end)
 

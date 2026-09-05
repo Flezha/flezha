@@ -14,13 +14,16 @@ defmodule Flezha.Observability.AuditLog.Writer do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:fsync]
   require Logger
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.Codec, as: AuditCodec
   alias Flezha.Observability.AuditLog.Reader
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.Index
+  alias Flezha.SafeCall
 
   @active_filename "audit-current.jsonl"
   @audit_source :audit_log
@@ -60,11 +63,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
   """
   @spec close(timeout()) :: :ok
   def close(timeout \\ 5_000) do
-    try do
-      GenServer.call(__MODULE__, :close, timeout)
-    catch
-      :exit, _ -> :ok
-    end
+    SafeCall.bounded(__MODULE__, :close, timeout, on_error: :ok)
   end
 
   @doc "Rotate the active file. Returns `{:ok, %{rotated_to, size, count, sha256}}`."
@@ -99,11 +98,9 @@ defmodule Flezha.Observability.AuditLog.Writer do
   @doc "True if the writer has been closed (e.g. during shutdown)."
   @spec closed?() :: boolean()
   def closed?() do
-    try do
-      GenServer.call(__MODULE__, :closed?)
-    catch
-      :exit, _ -> true
-    end
+    SafeCall.bounded(__MODULE__, :closed?, Durations.get(:audit_log_writer_call_ms),
+      on_error: true
+    )
   end
 
   # ---------- GenServer ----------
@@ -362,9 +359,10 @@ defmodule Flezha.Observability.AuditLog.Writer do
     state
   end
 
-  defp maybe_sync(%{fsync_mode: :batched, pending_fsync_timer: nil} = state) do
-    timer = Process.send_after(self(), :fsync_now, state.fsync_interval_ms)
-    %{state | pending_fsync_timer: timer}
+  defp maybe_sync(%{fsync_mode: :batched} = state) do
+    if timer_armed?(state, :fsync),
+      do: state,
+      else: arm_timer(state, :fsync, state.fsync_interval_ms, :fsync_now)
   end
 
   defp maybe_sync(state), do: state
@@ -444,12 +442,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
     Reader.head_metadata(path)
   end
 
-  defp cancel_fsync_timer(%{pending_fsync_timer: nil} = state), do: state
-
-  defp cancel_fsync_timer(%{pending_fsync_timer: ref} = state) when is_reference(ref) do
-    Process.cancel_timer(ref)
-    %{state | pending_fsync_timer: nil}
-  end
+  defp cancel_fsync_timer(state), do: cancel_timer(state, :fsync)
 
   defp safe_sync(nil), do: :ok
 

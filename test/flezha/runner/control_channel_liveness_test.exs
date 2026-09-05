@@ -18,6 +18,8 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
 
   @moduletag :capture_log
 
+  alias Flezha.Process.Timer
+
   alias Flezha.Runner.ControlChannel
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -71,7 +73,10 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
     now = System.monotonic_time(:millisecond)
     state = state("ex_ok", now - div(window_ms(), 3))
 
-    assert {:noreply, ^state} = ControlChannel.handle_info(:liveness_tick, state)
+    assert {:noreply, rescheduled} = ControlChannel.handle_info(:liveness_tick, state)
+    # Nothing changes but the tick the watchdog re-arms.
+    assert Map.delete(rescheduled, :timers) == Map.delete(state, :timers)
+    assert Timer.armed?(rescheduled.timers, :liveness)
     refute_received {:liveness_timeout, _m, _meta}
   end
 

@@ -14,7 +14,10 @@ defmodule Flezha.State.WalWriter do
   """
 
   use GenServer, restart: :transient
+  use Flezha.Process.Timer, keys: [:outbox_retry]
 
+  alias Flezha.Config.Durations
+  alias Flezha.SafeCall
   alias Flezha.State.{FsyncBatcher, Metrics, Outbox, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, Settlement, State}
 
@@ -60,7 +63,7 @@ defmodule Flezha.State.WalWriter do
   @spec append(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
           :ok | :duplicate | :awaiting_baseline | {:error, term()}
   def append(server, seq, header, change_bytes, runner_id \\ nil) do
-    GenServer.call(server, {:append, seq, header, change_bytes, runner_id})
+    call(server, {:append, seq, header, change_bytes, runner_id})
   end
 
   @doc """
@@ -95,7 +98,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   @spec fsync(GenServer.server()) :: :ok
-  def fsync(server), do: GenServer.call(server, :fsync)
+  def fsync(server), do: call(server, :fsync)
 
   @doc "Fire-and-forget `fsync/1`: how the batcher's tick syncs every dirty writer at once."
   @spec fsync_async(GenServer.server()) :: :ok
@@ -124,7 +127,7 @@ defmodule Flezha.State.WalWriter do
   @spec append_next(GenServer.server(), binary(), binary(), keyword()) ::
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
   def append_next(server, header, body, opts \\ []),
-    do: GenServer.call(server, {:append_next, header, body, opts})
+    do: call(server, {:append_next, header, body, opts})
 
   @doc """
   `append_next/4` issued with `:gen_server.send_request/4` under `label` into
@@ -153,7 +156,7 @@ defmodule Flezha.State.WalWriter do
   """
   @spec truncate_up_to(GenServer.server(), non_neg_integer(), keyword()) :: :ok | {:error, term()}
   def truncate_up_to(server, seq, opts \\ []),
-    do: GenServer.call(server, {:truncate_up_to, seq, opts})
+    do: call(server, {:truncate_up_to, seq, opts})
 
   @doc "Fire-and-forget `truncate_up_to/3`, for a cut whose caller has no use for the answer."
   @spec truncate_up_to_async(GenServer.server(), non_neg_integer(), keyword()) :: :ok
@@ -177,11 +180,11 @@ defmodule Flezha.State.WalWriter do
   """
   @spec rewind_to(GenServer.server(), non_neg_integer(), non_neg_integer()) ::
           :ok | {:error, term()}
-  def rewind_to(server, seq, epoch), do: GenServer.call(server, {:rewind_to, seq, epoch})
+  def rewind_to(server, seq, epoch), do: call(server, {:rewind_to, seq, epoch})
 
   @doc "Current outbox epoch — the base a deliberate correction bumps from."
   @spec outbox_epoch(GenServer.server()) :: non_neg_integer()
-  def outbox_epoch(server), do: GenServer.call(server, :outbox_epoch)
+  def outbox_epoch(server), do: call(server, :outbox_epoch)
 
   @doc """
   Where a correction for `target_event_time` must rewind to: the last seq whose
@@ -202,7 +205,7 @@ defmodule Flezha.State.WalWriter do
   @spec correction_baseline(GenServer.server(), non_neg_integer()) ::
           {:ok, %{seq: integer(), consumed_offset: integer()}} | {:error, term()}
   def correction_baseline(server, target_event_time),
-    do: GenServer.call(server, {:correction_baseline, target_event_time})
+    do: call(server, {:correction_baseline, target_event_time})
 
   @doc """
   Highest input-log offset consumed at or below `seq` (`-1` when none) — the
@@ -210,10 +213,10 @@ defmodule Flezha.State.WalWriter do
   from.
   """
   @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer() | {:error, term()}
-  def consumed_offset_at(server, seq), do: GenServer.call(server, {:consumed_offset_at, seq})
+  def consumed_offset_at(server, seq), do: call(server, {:consumed_offset_at, seq})
 
   @spec last_persisted_seq(GenServer.server()) :: integer()
-  def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
+  def last_persisted_seq(server), do: call(server, :last_persisted_seq)
 
   @doc """
   Deliver one workflow transactional-outbox entry — its stamped `outputs`, to
@@ -233,10 +236,10 @@ defmodule Flezha.State.WalWriter do
   @doc "Live effectively-once outbox status (`flz state outbox`)."
   @spec outbox_status(GenServer.server(), timeout()) :: map()
   def outbox_status(server, timeout \\ 5_000),
-    do: GenServer.call(server, :outbox_status, timeout)
+    do: call(server, :outbox_status, timeout)
 
   @spec stall_status(GenServer.server()) :: stall_status()
-  def stall_status(server), do: GenServer.call(server, :stall_status)
+  def stall_status(server), do: call(server, :stall_status)
 
   @spec close(GenServer.server()) :: :ok
   def close(server), do: GenServer.stop(server, :normal)
@@ -246,6 +249,15 @@ defmodule Flezha.State.WalWriter do
   end
 
   # ---------- GenServer ----------
+
+  # One writer per entity, so `server` is a resolved pid or registered name that
+  # can be mid-restart or gone. Every entry point declares the same refusal
+  # rather than waiting out the default and dying with it.
+  defp call(server, request, timeout \\ nil) do
+    SafeCall.bounded(server, request, timeout || Durations.get(:wal_writer_call_ms),
+      on_error: &{:error, {:wal_writer_unavailable, &1}}
+    )
+  end
 
   @impl true
   def init(entity_id) do
@@ -523,7 +535,7 @@ defmodule Flezha.State.WalWriter do
   @impl true
   def handle_info(:outbox_retry, state) do
     before = state.outbox_flushed_seq
-    state = Settlement.resettle_outbox(%{state | outbox_retry_timer: nil})
+    state = Settlement.resettle_outbox(timer_fired(state, :outbox_retry))
     state = Settlement.try_dispatch_outbox(state)
 
     state =

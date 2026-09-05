@@ -48,7 +48,7 @@ defmodule Flezha.State.WalWriter.Boot do
       outbox_durable_seq: -1,
       outbox_flushed_seq: -1,
       outbox_epoch: 0,
-      outbox_retry_timer: nil,
+      timers: Flezha.Process.Timer.new(),
       outbox_awaiting: %{},
       outbox_inflight: :queue.new(),
       outbox_last_seq: -1,

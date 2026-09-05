@@ -30,6 +30,7 @@ defmodule Flezha.Shutdown.Coordinator do
   """
 
   use GenServer, shutdown: 30_000
+  use Flezha.Process.Timer, keys: [:phase_timeout]
   require Logger
 
   alias Flezha.Config
@@ -38,6 +39,7 @@ defmodule Flezha.Shutdown.Coordinator do
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Observability.AuditLog.Writer
+  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias Flezha.Shutdown.SignalHandler
@@ -58,7 +60,7 @@ defmodule Flezha.Shutdown.Coordinator do
             captured_local: %{},
             still_local: [],
             outcome: nil,
-            timeout_timer: nil
+            timers: %{}
 
   # ---------- Public API ----------
 
@@ -157,7 +159,7 @@ defmodule Flezha.Shutdown.Coordinator do
   end
 
   def handle_call(:__reset_for_tests__, _from, state) do
-    if is_reference(state.timeout_timer), do: Process.cancel_timer(state.timeout_timer)
+    _ = cancel_timer(state, :phase_timeout)
     Shutdown.node_phase(:idle)
     Facts.declare({:node_drained, node(), %{}})
     {:reply, :ok, %__MODULE__{}}
@@ -276,11 +278,8 @@ defmodule Flezha.Shutdown.Coordinator do
     state
   end
 
-  defp arm_timeout(state) do
-    if is_reference(state.timeout_timer), do: Process.cancel_timer(state.timeout_timer)
-    timer = Process.send_after(self(), :phase_timeout, state.timeout_ms)
-    %{state | timeout_timer: timer}
-  end
+  defp arm_timeout(state),
+    do: arm_timer(state, :phase_timeout, state.timeout_ms, :phase_timeout)
 
   defp finalise_outcome(state) do
     cond do
@@ -292,7 +291,7 @@ defmodule Flezha.Shutdown.Coordinator do
   end
 
   defp finish(state, outcome) do
-    if is_reference(state.timeout_timer), do: Process.cancel_timer(state.timeout_timer)
+    state = cancel_timer(state, :phase_timeout)
     duration_ms = monotonic_ms() - state.start_ms
     outcome_tag = outcome_tag(outcome, state)
 
@@ -330,7 +329,7 @@ defmodule Flezha.Shutdown.Coordinator do
       hub_id = Identificator.hub(ns)
 
       ids =
-        case ProcessHub.is_alive?(hub_id) do
+        case Hub.alive?(hub_id) do
           true ->
             ProcessHub.process_list(hub_id, :local)
             |> Enum.map(fn {operative_id, _pid} -> operative_id end)

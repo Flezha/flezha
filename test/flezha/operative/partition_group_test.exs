@@ -377,8 +377,8 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
 
     registry = FakeStartRegistry.install(seed: seed, runners: ["r1", "r2", "r3", "r4", "r5"])
 
-    stub(PluginManager, :disable_operative_plugins, fn _ns, id ->
-      send(parent, {:sources_off, id})
+    stub(PluginManager, :disable_operatives, fn _ns, ids ->
+      for id <- ids, do: send(parent, {:sources_off, id})
       :ok
     end)
 
@@ -410,8 +410,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   describe "quiesce" do
     test "disables every member's sources before anything else" do
       assert {:ok, _} = PartitionGroup.rescale(@namespace, @group, 2)
-      # The quiesce disables them; the stop that follows disables them again,
-      # which is the ordinary teardown doing its own job.
+      # One request naming every member, so M unreachable ones cost one bound.
       assert :sources_off |> drain() |> Enum.uniq() |> Enum.sort() ==
                ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
     end

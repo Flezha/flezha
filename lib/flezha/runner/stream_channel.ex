@@ -14,6 +14,7 @@ defmodule Flezha.Runner.StreamChannel do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.Process.Watch
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel.Gate
@@ -24,6 +25,7 @@ defmodule Flezha.Runner.StreamChannel do
   require Logger
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:io_liveness]
 
   def start_link({runner_id, name, type}) do
     GenServer.start_link(__MODULE__, {runner_id, type, name}, name: name)
@@ -116,8 +118,6 @@ defmodule Flezha.Runner.StreamChannel do
     # threshold is stalled — a silent data-plane wedge that raises no
     # `{:flz_closed}` write-error. Primary channels are send-only (the
     # runner never writes them), so the check would flag them forever.
-    if type == :secondary, do: schedule_io_liveness_check()
-
     liveness_ref = LivenessCounters.register_channel(runner_id, name)
     publish_stream(name, nil, liveness_ref)
 
@@ -132,7 +132,7 @@ defmodule Flezha.Runner.StreamChannel do
         # resolves in one lookup: `%{pid => {monitor_ref, MapSet of the
         # operative ids naming it}}`. Written only by `Records.put_route/3`,
         # `Records.drop_route/2` and `Records.forget_pid/2`.
-        route_monitors: %{},
+        route_monitors: Watch.new(),
         name: name,
         last_seen: System.monotonic_time(:millisecond),
         liveness_ref: liveness_ref,
@@ -150,8 +150,10 @@ defmodule Flezha.Runner.StreamChannel do
         # channel has no stream yet) and `:send_gate` (its send buffer is over
         # the mark). Each set is cleared by the event that serves it, so
         # neither outlives the window it exists for.
-        waiters: %{bind: MapSet.new(), send_gate: MapSet.new()}
+        waiters: %{bind: MapSet.new(), send_gate: MapSet.new()},
+        timers: Flezha.Process.Timer.new()
       }
+      |> arm_io_liveness_check()
     }
   end
 
@@ -165,12 +167,17 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
-  defp schedule_io_liveness_check do
-    interval =
-      Durations.get(:io_stream_liveness_interval_ms)
+  # Only a SECONDARY stream is heartbeated, and a non-positive interval turns
+  # the check off: either way nothing is armed and the key holds no timer.
+  defp arm_io_liveness_check(%{type: :secondary} = state) do
+    interval = Durations.get(:io_stream_liveness_interval_ms)
 
-    if interval > 0, do: Process.send_after(self(), :io_liveness_check, interval)
+    if interval > 0,
+      do: arm_timer(state, :io_liveness, interval, :io_liveness_check),
+      else: state
   end
+
+  defp arm_io_liveness_check(state), do: state
 
   defp mark_seen(state) do
     LivenessCounters.bump_channel(state[:liveness_ref], :flz_data_received)
@@ -373,7 +380,7 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   def handle_info(:io_liveness_check, state) do
-    schedule_io_liveness_check()
+    state = arm_io_liveness_check(state)
 
     threshold =
       Durations.get(:io_stream_liveness_threshold_ms)

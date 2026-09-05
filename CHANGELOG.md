@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed — one bounded call, one lookup, one timer, one child spec
+
+Five jobs every process in the controller does — call another process, find the
+one that serves an operative, learn that one died, arm a timer, declare a
+supervised child — were done at four hundred-odd sites in as many spellings as
+there were authors. Each is now a seam a site declares into.
+
+What changes for an operator:
+
+- **A wedged process no longer stalls the caller for five seconds.** Every call
+  into a process reached by pid carries an explicit bound and answers a value
+  its caller declared, rather than waiting out a default and taking the caller
+  down with it. A call into a registered node-wide service is deliberately left
+  as it was: a store that is gone is a fault worth crashing on.
+- **Tearing down many operatives at once costs one timeout, not one each.**
+  Where the wait happens inside a single manager, that manager now takes the
+  whole list in one request and overlaps its own calls. Six unreachable
+  operatives took twelve seconds and now take two, and every one that could not
+  be reached is still named in the result.
+- **One vocabulary for "that operative is not there".** The three different
+  error strings for the same fact are down to two, written at one place, and
+  the internal answer distinguishes not-found, dead and hub-unavailable.
+
+Nothing an operator configures changes, and no SDK is affected.
+
 ### Changed — a `flz` verb declares what it takes, and one reader reads it
 
 Every `flz` verb now declares its positional arguments and its options — the

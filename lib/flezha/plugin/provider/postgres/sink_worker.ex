@@ -19,6 +19,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   alias Flezha.State.Outbox
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:linger, :retry]
 
   require Logger
 
@@ -81,11 +82,10 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     :queue_max,
     :retry_backoff_ms,
     :retry_max_backoff_ms,
-    :linger_timer,
-    :retry_timer,
     :last_commit_ms,
     :last_error,
     :missing_tables,
+    timers: %{},
     buffer: :queue.new(),
     buffer_len: 0,
     waiters: [],
@@ -165,11 +165,11 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
     state =
       cond do
-        state.buffer_len >= state.max_batch and is_nil(state.retry_timer) ->
+        state.buffer_len >= state.max_batch and not timer_armed?(state, :retry) ->
           flush(cancel_linger(state))
 
-        is_nil(state.linger_timer) and is_nil(state.retry_timer) ->
-          %{state | linger_timer: Process.send_after(self(), :linger, state.linger_ms)}
+        not timer_armed?(state, :linger) and not timer_armed?(state, :retry) ->
+          arm_timer(state, :linger, state.linger_ms, :linger)
 
         true ->
           state
@@ -215,12 +215,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   # ---------- flush ----------
 
-  defp cancel_linger(%{linger_timer: nil} = state), do: state
-
-  defp cancel_linger(state) do
-    Process.cancel_timer(state.linger_timer)
-    %{state | linger_timer: nil}
-  end
+  defp cancel_linger(state), do: cancel_timer(state, :linger)
 
   defp flush(%{buffer_len: 0} = state), do: state
 

@@ -431,7 +431,7 @@ defmodule Flezha.Operative.PartitionGroup do
   # Until all three hold, moving an Entity's files would move it away from
   # input it has not read yet.
   defp quiesce_group(namespace, members, opts) do
-    Enum.each(members, &PluginManager.disable_operative_plugins(namespace, &1.id))
+    _ = PluginManager.disable_operatives(namespace, Enum.map(members, & &1.id))
 
     with :ok <- refuse_on_parked_entries(members) do
       deadline =

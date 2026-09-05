@@ -17,8 +17,9 @@ defmodule Flezha.Operative.Replay do
   alias Flezha.Config
 
   alias Flezha.Config.Durations
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.Lookup
   alias Flezha.Operative.Overwatch
+  alias Flezha.Process.Timer
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
@@ -87,8 +88,17 @@ defmodule Flezha.Operative.Replay do
     if Map.has_key?(pending, entity_id) do
       %{state | corrections: Map.update!(pending, entity_id, &min(&1, target))}
     else
-      Process.send_after(self(), {:run_correction, entity_id}, correction_debounce_ms())
-      %{state | corrections: Map.put(pending, entity_id, target)}
+      %Overwatch{
+        state
+        | corrections: Map.put(pending, entity_id, target),
+          timers:
+            Timer.arm(
+              state.timers,
+              {:correction, entity_id},
+              correction_debounce_ms(),
+              {:run_correction, entity_id}
+            )
+      }
     end
   end
 
@@ -392,9 +402,9 @@ defmodule Flezha.Operative.Replay do
   # fsync-gated outbox flush resolves its `:on_output` target through it); the
   # fallback covers a state that was never registered, which is only a test's.
   defp owner_pid(%Overwatch{} = state) do
-    case ClassRegistry.overwatch_pid(Overwatch.operative_class(state)) do
+    case Lookup.overwatch(Overwatch.operative_class(state)) do
       {:ok, pid} -> pid
-      :error -> self()
+      {:error, _reason} -> self()
     end
   end
 

@@ -12,6 +12,7 @@ defmodule Flezha.Runner.RunnerSupervisor do
   """
 
   alias Flezha.Identificator
+  alias Flezha.Process.Cspec
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamAcceptor
@@ -33,26 +34,31 @@ defmodule Flezha.Runner.RunnerSupervisor do
 
   defp core_children(namespace, runner_id, stream_ref) do
     [
-      %{
-        id: ControlUnit,
-        start: {ControlUnit, :start_link, [{namespace, runner_id}]}
-      },
-      %{
-        id: ControlChannel.Commits,
-        start: {ControlChannel.Commits, :start_link, [{namespace, runner_id}]}
-      },
-      %{
-        id: ControlChannel,
-        start: {ControlChannel, :start_link, [{namespace, runner_id, stream_ref}]}
-      },
-      %{
-        id: :primary_stream_sup,
-        start: {Flezha.Runner.StreamSup, :start_link, [{runner_id, :primary}]}
-      },
-      %{
-        id: :secondary_stream_sup,
-        start: {Flezha.Runner.StreamSup, :start_link, [{runner_id, :secondary}]}
-      }
+      Cspec.build(
+        ControlUnit,
+        {ControlUnit, :start_link, [{namespace, runner_id}]},
+        :worker_permanent
+      ),
+      Cspec.build(
+        ControlChannel.Commits,
+        {ControlChannel.Commits, :start_link, [{namespace, runner_id}]},
+        :worker_permanent
+      ),
+      Cspec.build(
+        ControlChannel,
+        {ControlChannel, :start_link, [{namespace, runner_id, stream_ref}]},
+        :worker_permanent
+      ),
+      Cspec.build(
+        :primary_stream_sup,
+        {Flezha.Runner.StreamSup, :start_link, [{runner_id, :primary}]},
+        :worker_permanent
+      ),
+      Cspec.build(
+        :secondary_stream_sup,
+        {Flezha.Runner.StreamSup, :start_link, [{runner_id, :secondary}]},
+        :worker_permanent
+      )
     ]
   end
 
@@ -62,14 +68,16 @@ defmodule Flezha.Runner.RunnerSupervisor do
   # acceptors.
   defp acceptor_children(runner_id, :uds) do
     [
-      %{
-        id: :primary_acceptor,
-        start: {StreamAcceptor, :start_link, [{runner_id, :primary}]}
-      },
-      %{
-        id: :secondary_acceptor,
-        start: {StreamAcceptor, :start_link, [{runner_id, :secondary}]}
-      }
+      Cspec.build(
+        :primary_acceptor,
+        {StreamAcceptor, :start_link, [{runner_id, :primary}]},
+        :worker_permanent
+      ),
+      Cspec.build(
+        :secondary_acceptor,
+        {StreamAcceptor, :start_link, [{runner_id, :secondary}]},
+        :worker_permanent
+      )
     ]
   end
 

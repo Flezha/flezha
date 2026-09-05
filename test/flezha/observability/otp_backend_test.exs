@@ -292,7 +292,8 @@ defmodule Flezha.Observability.OtpBackendTest do
                  {source, kinds, :process_backed, budget}
 
         assert state.interval == interval
-        assert Enum.sort(Map.keys(state)) == Enum.sort([:interval | extra])
+        # `:timers` is the poll tick the template arms for every source.
+        assert Enum.sort(Map.keys(state)) == Enum.sort([:interval, :timers | extra])
       end
     end
   end

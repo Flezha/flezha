@@ -44,6 +44,9 @@ defmodule Flezha.Config.DurationRows do
      env: "FLEZHA_CONTROL_LIVENESS_WINDOW_MS",
      derived: {:factor, :control_liveness_interval_ms, 3}},
     {:control_call_timeout_ms, :ms, 5_000, []},
+    {:listen_port_call_ms, :ms, 1_000, []},
+    {:local_stream_call_ms, :ms, 5_000, []},
+    {:stream_pool_bind_call_ms, :ms, 5_000, []},
     {:control_unit_reply_timeout_ms, :ms, 5_000, []},
     {:control_unit_heartbeat_interval_ms, :ms, 15_000, key: true},
     {:control_unit_pending_reply_timeout_ms, :ms, 90_000, key: true},
@@ -59,6 +62,7 @@ defmodule Flezha.Config.DurationRows do
     # ---- runners: lookup, marks, replay ------------------------------------
     {:boot_replay_timeout_ms, :ms, 60_000, key: true, env: "FLEZHA_BOOT_REPLAY_TIMEOUT_MS"},
     {:runner_lookup_ms, :ms, 5_000, []},
+    {:runner_cleanup_slack_ms, :ms, 10_000, []},
     {:runner_min_call_ms, :ms, 25, []},
     {:runner_poll_call_ms, :ms, 250, []},
     {:runner_poll_interval_ms, :ms, 50, []},
@@ -110,7 +114,12 @@ defmodule Flezha.Config.DurationRows do
     {:http_poll_min_interval_ms, :ms, 1_000, []},
     {:installer_auto_save_ms, :ms, 5_000, []},
     {:kafka_linger_ms, :ms, 5_000, []},
+    {:kafka_worker_call_ms, :ms, 5_000, []},
     {:plugin_call_timeout_ms, :ms, 2_000, []},
+    # Strictly inside `plugin_service_call_ms` and strictly outside
+    # `plugin_call_timeout_ms`: an inner bound equal to the outer one is no
+    # bound at all — both give up at the same instant.
+    {:plugin_disable_fanout_ms, :ms, 3_000, []},
     {:plugin_service_call_ms, :ms, 5_000, []},
     {:provider_probe_timeout_ms, :ms, 500, []},
     {:ws_idle_timeout_ms, :ms, 30_000, []},
@@ -149,7 +158,10 @@ defmodule Flezha.Config.DurationRows do
     {:restore_await_timeout_ms, :ms, 15_000, key: true},
     {:time_travel_retention_check_interval_ms, :ms, 60_000,
      key: true, env: "FLEZHA_RETENTION_CHECK_INTERVAL_MS"},
+    {:input_log_call_ms, :ms, 5_000, []},
     {:wal_transfer_call_ms, :ms, 30_000, []},
+    {:wal_writer_call_ms, :ms, 5_000, []},
+    {:outbox_retry_ms, :ms, 1_000, []},
 
     # ---- durability tier ---------------------------------------------------
     {:durability_gc_abandoned_after_ms, :ms, 604_800_000,
@@ -175,6 +187,7 @@ defmodule Flezha.Config.DurationRows do
     {:orchestrator_grace_ms, :ms, nil,
      runtimes: [:shell], derived: {:headroom, :graceful_shutdown_timeout_ms, 15_000}},
     {:shutdown_finalise_call_ms, :ms, 5_000, []},
+    {:signal_handler_status_call_ms, :ms, 5_000, []},
     {:stop_release_timeout_ms, :ms, 15_000, []},
     # A process teardown runs inside the operative stop, keeping 1 s of slack
     # for the stop itself to answer.
@@ -182,9 +195,11 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- observability -----------------------------------------------------
     {:audit_log_block_timeout_ms, :ms, 30_000, []},
+    {:audit_log_writer_call_ms, :ms, 5_000, []},
     {:observability_sweep_interval_ms, :ms, 5_000,
      key: {:observability, :retention_check_interval_ms}},
     {:otlp_request_timeout_ms, :ms, 10_000, []},
+    {:port_counter_reset_ms, :ms, 30_000, []},
 
     # ---- the Elixir SDK ----------------------------------------------------
     {:control_keepalive_ms, :ms, 15_000, runtimes: [:controller, :elixir_sdk, :rust]},

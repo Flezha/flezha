@@ -30,6 +30,10 @@ defmodule Flezha.Observability.OtpBackend.Poller do
       @behaviour Flezha.Observability.OtpBackend.Poller
       @behaviour Flezha.Observability.Source
 
+      # The tick is the foundation's, so its key is declared here rather than
+      # by every source that uses this template.
+      use Flezha.Process.Timer, keys: [:poll]
+
       @source unquote(Keyword.fetch!(opts, :source))
       @kinds unquote(Keyword.fetch!(opts, :kinds))
       @cardinality_budget unquote(Keyword.fetch!(opts, :cardinality_budget))
@@ -56,16 +60,15 @@ defmodule Flezha.Observability.OtpBackend.Poller do
         })
 
         interval = poll_interval_ms()
-        Process.send_after(self(), :poll, interval)
-        {:ok, Map.put(init_state(opts), :interval, interval)}
+        {:ok, opts |> init_state() |> Map.put(:interval, interval) |> arm_poll()}
       end
 
       @impl GenServer
       def handle_info(:poll, state) do
-        new_state = poll(state)
-        Process.send_after(self(), :poll, state.interval)
-        {:noreply, new_state}
+        {:noreply, state |> poll() |> arm_poll()}
       end
+
+      defp arm_poll(state), do: arm_timer(state, :poll, state.interval, :poll)
 
       def handle_info(_msg, state), do: {:noreply, state}
     end

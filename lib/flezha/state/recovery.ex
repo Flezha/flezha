@@ -21,6 +21,7 @@ defmodule Flezha.State.Recovery do
 
   alias Flezha.Config
   alias Flezha.Operative.Replay
+  alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager
   alias Flezha.State.Commands
   alias Flezha.State.Restore
@@ -130,7 +131,14 @@ defmodule Flezha.State.Recovery do
   defp normalize_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}
 
-  defp operative_class(%{start: {_m, _f, [arg]}}) do
+  defp operative_class(cspec) do
+    case Cspec.start_arg(cspec) do
+      {:ok, arg} -> operative_class_from_arg(arg)
+      :error -> nil
+    end
+  end
+
+  defp operative_class_from_arg(arg) do
     case arg do
       {_namespace, operative} when is_map(operative) ->
         operative_class_of(operative)
@@ -142,8 +150,6 @@ defmodule Flezha.State.Recovery do
         nil
     end
   end
-
-  defp operative_class(_), do: nil
 
   defp operative_class_of(operative) do
     Keyword.get(Map.get(operative, :opts, []), :operative_class, Map.get(operative, :id))

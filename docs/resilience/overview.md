@@ -175,6 +175,16 @@ Owner: [`../operations/remote_durability_tier.md`](../operations/remote_durabili
 
 ## Placement, identity and lifecycle
 
+**The controller's process model** — `lib/flezha/process/`,
+`lib/flezha/operative/lookup.ex`. Calling a process that may be wedged, finding
+the one that serves an operative, learning that one died, arming a timer and
+declaring a supervised child are five seams a site declares into. A bound is per
+call with no default, a refusal is a declared value rather than a `catch` clause
+at the site, a call into a registered node-wide singleton is deliberately left
+free to crash its caller, and a walk over many unreachable targets costs one
+bound rather than one each.
+Owner: [`../internals/process_hub.md`](../internals/process_hub.md).
+
 **Orphan reconcile at boot** — `lib/flezha/service/hub_manager.ex`. Every node starts the
 difference between its durable registry (`registry.dets`) and what the cluster holds: on a
 cold cluster that is the whole operative list, joining a live cluster it is empty. The durable

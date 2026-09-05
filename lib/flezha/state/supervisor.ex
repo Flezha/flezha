@@ -11,6 +11,7 @@ defmodule Flezha.State.Supervisor do
   use DynamicSupervisor
 
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Process.Cspec
   alias Flezha.State.FsyncBatcher
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
@@ -18,11 +19,7 @@ defmodule Flezha.State.Supervisor do
   alias Flezha.State.WriterRegistry
 
   def child_spec(_arg) do
-    %{
-      id: __MODULE__,
-      type: :supervisor,
-      start: {__MODULE__, :start_link, [[]]}
-    }
+    Cspec.build(__MODULE__, {__MODULE__, :start_link, [[]]}, :supervisor_permanent)
   end
 
   def start_link(_opts) do
@@ -48,7 +45,7 @@ defmodule Flezha.State.Supervisor do
     # other operative's writer AND the three ETS tables owned above, which the
     # data plane reads. The intensity is therefore sized for independent
     # children; a genuine restart storm still trips it, just not a burst.
-    DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 100, max_seconds: 5)
+    DynamicSupervisor.init([strategy: :one_for_one] ++ Cspec.intensity())
   end
 
   @doc """

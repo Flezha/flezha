@@ -22,7 +22,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.Lookup
   alias Flezha.Operative.Replay
+  alias Flezha.Process.Watch
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.State.CreditLedger
@@ -50,7 +52,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
     %{
       state
       | operative_mapping: Map.put(state.operative_mapping, operative_id, pids),
-        route_monitors: Enum.reduce(pids, state.route_monitors, &watch(&2, &1, operative_id))
+        route_monitors:
+          Enum.reduce(pids, state.route_monitors, &Watch.watch(&2, &1, operative_id))
     }
   end
 
@@ -61,7 +64,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
     %{
       state
       | operative_mapping: mapping,
-        route_monitors: Enum.reduce(pids, state.route_monitors, &unwatch(&2, &1, operative_id))
+        route_monitors:
+          Enum.reduce(pids, state.route_monitors, &Watch.unwatch(&2, &1, operative_id))
     }
   end
 
@@ -74,40 +78,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
   target was still alive, which no design can save.
   """
   def forget_pid(state, pid) do
-    case Map.pop(state.route_monitors, pid) do
-      {nil, _monitors} ->
-        state
-
-      {{_ref, ids}, monitors} ->
-        Enum.reduce(ids, %{state | route_monitors: monitors}, &drop_route(&2, &1))
-    end
-  end
-
-  # One monitor per pid however many operatives name it, so a `:DOWN` arrives
-  # once and the demonitor waits for the last of them to leave. A route that is
-  # not a pid raises here rather than entering the cache unmonitored.
-  defp watch(monitors, pid, operative_id) do
-    case monitors do
-      %{^pid => {ref, ids}} -> Map.put(monitors, pid, {ref, MapSet.put(ids, operative_id)})
-      _ -> Map.put(monitors, pid, {Process.monitor(pid), MapSet.new([operative_id])})
-    end
-  end
-
-  defp unwatch(monitors, pid, operative_id) do
-    case monitors do
-      %{^pid => {ref, ids}} ->
-        ids = MapSet.delete(ids, operative_id)
-
-        if MapSet.size(ids) == 0 do
-          Process.demonitor(ref, [:flush])
-          Map.delete(monitors, pid)
-        else
-          Map.put(monitors, pid, {ref, ids})
-        end
-
-      _ ->
-        monitors
-    end
+    {operative_ids, monitors} = Watch.forget(state.route_monitors, pid)
+    Enum.reduce(operative_ids, %{state | route_monitors: monitors}, &drop_route(&2, &1))
   end
 
   # Emit `output_stall` for each mapped operative whose kind runs the output-stall
@@ -121,11 +93,11 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def route(state, operative_id) do
     case Map.get(state.operative_mapping, operative_id, []) do
       [] ->
-        case ClassRegistry.overwatch_pid(operative_id) do
+        case Lookup.overwatch(operative_id) do
           {:ok, pid} ->
             {:ok, pid}
 
-          :error ->
+          {:error, _reason} ->
             :telemetry.execute(
               [:flezha, :stream, :drop],
               %{count: 1},
@@ -231,7 +203,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
     with {:ok, %{entity_id: {operative_class, _, _} = entity_id, body: body}} <-
            StateWire.decode_frame(frame),
          {:ok, target} <- StateWire.decode_correction_request(body),
-         {:ok, overwatch} <- ClassRegistry.overwatch_pid(operative_class) do
+         {:ok, overwatch} <- Lookup.overwatch(operative_class) do
       Replay.request_correction(overwatch, entity_id, target)
     else
       other ->

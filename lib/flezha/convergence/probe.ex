@@ -11,6 +11,7 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Probe.Judge
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Parallel
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.FleetManager
   alias Flezha.SafeCall
@@ -94,17 +95,13 @@ defmodule Flezha.Convergence.Probe do
       end)
 
     pairs
-    |> Task.async_stream(
-      fn {ref, pid} -> {ref, observe_operative(pid)} end,
+    |> Parallel.results(fn {_ref, pid} -> observe_operative(pid) end,
       max_concurrency: System.schedulers_online() * 4,
-      timeout: Durations.get(:operative_call_timeout_ms) + Durations.get(:health_probe_budget_ms),
-      on_timeout: :kill_task,
-      ordered: true
+      timeout: Durations.get(:operative_call_timeout_ms) + Durations.get(:health_probe_budget_ms)
     )
-    |> Enum.zip(pairs)
     |> Enum.reduce(%{}, fn
-      {{:ok, {ref, observed}}, _pair}, acc -> Map.put(acc, ref, observed)
-      {{:exit, _}, {ref, _pid}}, acc -> Map.put(acc, ref, unreadable())
+      {{ref, _pid}, {:ok, observed}}, acc -> Map.put(acc, ref, observed)
+      {{ref, _pid}, {:exit, _reason}}, acc -> Map.put(acc, ref, unreadable())
     end)
   end
 

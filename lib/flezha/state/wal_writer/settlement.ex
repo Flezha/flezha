@@ -15,8 +15,10 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Config.Durations
+  alias Flezha.Operative.Lookup
   alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, Wire}
+  alias Flezha.Process.Timer
   alias Flezha.State.WalWriter.State
 
   @reserved_entity_keys Paths.reserved_entity_keys()
@@ -82,9 +84,9 @@ defmodule Flezha.State.WalWriter.Settlement do
         else
           {rc, _sh, _pk} = state.entity_id
 
-          case ClassRegistry.overwatch_pid(rc) do
+          case Lookup.overwatch(rc) do
             {:ok, pid} -> dispatch_outbox_window(state, pid)
-            :error -> schedule_outbox_retry(state)
+            {:error, _reason} -> schedule_outbox_retry(state)
           end
         end
     end
@@ -218,12 +220,17 @@ defmodule Flezha.State.WalWriter.Settlement do
     DurabilityTier.on_effect_flushed(state.entity_id, entry.consumed_offset)
   end
 
-  def schedule_outbox_retry(%{outbox_retry_timer: nil} = state) do
-    ref = Process.send_after(self(), :outbox_retry, 1_000)
-    %{state | outbox_retry_timer: ref}
+  def schedule_outbox_retry(state) do
+    if Timer.armed?(state.timers, :outbox_retry) do
+      state
+    else
+      %{
+        state
+        | timers:
+            Timer.arm(state.timers, :outbox_retry, Durations.get(:outbox_retry_ms), :outbox_retry)
+      }
+    end
   end
-
-  def schedule_outbox_retry(state), do: state
 
   # One entry's outstanding delivery: `pending` counts outputs still inside the
   # plugin chain, `holds` the sinks that took ownership of one, `confirms` the
@@ -303,7 +310,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   def resettle_outbox(state) do
     if resettle_due?(state) do
       {rc, _sh, _pk} = state.entity_id
-      overwatch = ClassRegistry.overwatch_pid(rc)
+      overwatch = Lookup.overwatch(rc)
 
       {state, chunks} =
         Enum.reduce(state.outbox_awaiting, {state, []}, fn {key, tally}, {acc, chunks} ->

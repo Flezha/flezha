@@ -18,6 +18,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
   alias Flezha.Plugin.Provider.Websocket.Subscription
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebsocketSourceFixtures
+  alias Flezha.Process.Timer
 
   @sub_template WebsocketSourceFixtures.sub_template()
   @unsub_template WebsocketSourceFixtures.unsub_template()
@@ -108,13 +109,15 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
       s = state(subscription: subscription(%{interval_ms: 60_000}), websocket_established?: false)
 
       assert {:ok, first} = Websocket.Client.handle_connect(101, [], s)
-      assert is_reference(first.poll_timer)
+      assert Timer.armed?(first.timers, :poll)
+      {first_ref, _msg} = Map.fetch!(first.timers, :poll)
 
       assert {:ok, second} = Websocket.Client.handle_connect(101, [], first)
-      assert second.poll_timer != first.poll_timer
+      {second_ref, _msg} = Map.fetch!(second.timers, :poll)
+      assert second_ref != first_ref
       # The first connection's timer is cancelled, not merely forgotten.
-      assert Process.read_timer(first.poll_timer) == false
-      assert is_integer(Process.read_timer(second.poll_timer))
+      assert Process.read_timer(first_ref) == false
+      assert is_integer(Process.read_timer(second_ref))
     end
 
     test "a static plugin schedules no subscription poll" do
@@ -123,7 +126,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
         |> Map.drop([:subscription, :applied, :inflight, :desired, :next_req_id])
 
       assert {:ok, connected} = Websocket.Client.handle_connect(101, [], s)
-      assert is_nil(Map.get(connected, :poll_timer)), "a poll timer was armed"
+      refute Timer.armed?(connected.timers, :poll), "a poll timer was armed"
       refute_received :subscription_poll
     end
   end

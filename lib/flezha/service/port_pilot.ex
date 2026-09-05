@@ -3,11 +3,13 @@ defmodule Flezha.Service.PortPilot do
 
   alias Flezha.Config
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Socket.Support
 
   @port_down_counter 10
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:counter_reset]
 
   def start_link(arg) do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
@@ -243,16 +245,12 @@ defmodule Flezha.Service.PortPilot do
   def init(_) do
     ports = initialize_ports()
 
-    schedule_counter_reset()
-
-    {:ok, %{ports: ports, response_refs: %{}, port_down_counter: 0}}
+    {:ok, arm_counter_reset(%{ports: ports, response_refs: %{}, port_down_counter: 0})}
   end
 
   @impl true
   def handle_info(:reset_counter, state) do
-    schedule_counter_reset()
-
-    {:noreply, Map.put(state, :port_down_counter, 0)}
+    {:noreply, state |> arm_counter_reset() |> Map.put(:port_down_counter, 0)}
   end
 
   @impl true
@@ -321,8 +319,8 @@ defmodule Flezha.Service.PortPilot do
     |> Map.new()
   end
 
-  defp schedule_counter_reset() do
-    Process.send_after(self(), :reset_counter, 30_000)
+  defp arm_counter_reset(state) do
+    arm_timer(state, :counter_reset, Durations.get(:port_counter_reset_ms), :reset_counter)
   end
 
   # A spawned runner reads its own environment, so the controller hands it the

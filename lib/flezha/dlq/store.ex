@@ -23,6 +23,7 @@ defmodule Flezha.Dlq.Store do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:sweep]
 
   require Logger
 
@@ -165,8 +166,7 @@ defmodule Flezha.Dlq.Store do
 
   @impl true
   def init(_opts) do
-    schedule_sweep()
-    {:ok, %{}}
+    {:ok, arm_sweep(%{})}
   end
 
   @impl true
@@ -260,8 +260,7 @@ defmodule Flezha.Dlq.Store do
   @impl true
   def handle_info(:sweep, state) do
     do_sweep()
-    schedule_sweep()
-    {:noreply, state}
+    {:noreply, arm_sweep(state)}
   end
 
   # ---------- append ----------
@@ -432,10 +431,8 @@ defmodule Flezha.Dlq.Store do
     (entry["payload_bytes"] || 0) + 256
   end
 
-  defp schedule_sweep() do
-    interval = Durations.get(:dlq_sweep_interval_ms)
-    Process.send_after(self(), :sweep, interval)
-  end
+  defp arm_sweep(state),
+    do: arm_timer(state, :sweep, Durations.get(:dlq_sweep_interval_ms), :sweep)
 
   # ---------- index file plumbing ----------
 

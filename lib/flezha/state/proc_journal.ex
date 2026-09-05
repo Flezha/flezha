@@ -20,6 +20,7 @@ defmodule Flezha.State.ProcJournal do
   require Logger
 
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.Lookup
 
   alias Flezha.State.{
     Outbox,
@@ -237,9 +238,9 @@ defmodule Flezha.State.ProcJournal do
   defp resolve_overwatch(_instance_id, pid) when is_pid(pid), do: {:ok, pid}
 
   defp resolve_overwatch(instance_id, nil) do
-    case ClassRegistry.overwatch_pid(instance_id) do
+    case Lookup.overwatch(instance_id) do
       {:ok, pid} -> {:ok, pid}
-      :error -> {:error, :no_overwatch}
+      {:error, _reason} -> {:error, :no_overwatch}
     end
   end
 

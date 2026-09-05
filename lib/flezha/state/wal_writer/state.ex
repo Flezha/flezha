@@ -47,7 +47,7 @@ defmodule Flezha.State.WalWriter.State do
     :outbox_durable_seq,
     :outbox_flushed_seq,
     :outbox_epoch,
-    :outbox_retry_timer,
+    :timers,
     # Dispatched but not yet confirmed by the sinks: the per-entry tallies
     # (`Flezha.State.Outbox` keys) and, for a stream writer, the dispatch-order
     # queue of `{seq, at}` the cursor drains in. The cursor may only reach a seq
@@ -104,7 +104,7 @@ defmodule Flezha.State.WalWriter.State do
           outbox_durable_seq: integer(),
           outbox_flushed_seq: integer(),
           outbox_epoch: non_neg_integer(),
-          outbox_retry_timer: reference() | nil,
+          timers: Flezha.Process.Timer.timers(),
           outbox_awaiting: %{optional(Outbox.key()) => map()},
           outbox_inflight: :queue.queue({non_neg_integer(), integer()}),
           outbox_last_seq: integer(),

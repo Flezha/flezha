@@ -106,6 +106,7 @@ lib/flezha/runner/fleet_manager/session.ex -> Flezha.Shutdown.Step
 lib/flezha/runner/stream_channel.ex -> Flezha.State.CreditLedger
 lib/flezha/runner/stream_channel/records.ex -> Flezha.Dlq.Store
 lib/flezha/runner/stream_channel/records.ex -> Flezha.Operative.ClassRegistry
+lib/flezha/runner/stream_channel/records.ex -> Flezha.Operative.Lookup
 lib/flezha/runner/stream_channel/records.ex -> Flezha.Operative.Replay
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.CreditLedger
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Paths

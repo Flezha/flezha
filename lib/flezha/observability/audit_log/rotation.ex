@@ -11,6 +11,7 @@ defmodule Flezha.Observability.AuditLog.Rotation do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config
   alias Flezha.Observability.AuditLog.Writer
@@ -33,8 +34,7 @@ defmodule Flezha.Observability.AuditLog.Rotation do
       max_file_age_seconds: Config.get(:audit_log_max_file_age_seconds)
     }
 
-    schedule(state.interval_ms)
-    {:ok, state}
+    {:ok, arm_tick(state)}
   end
 
   @impl true
@@ -45,7 +45,7 @@ defmodule Flezha.Observability.AuditLog.Rotation do
   @impl true
   def handle_info(:tick, state) do
     maybe_rotate(state)
-    schedule(state.interval_ms)
+    state = arm_tick(state)
     {:noreply, state}
   end
 
@@ -91,5 +91,5 @@ defmodule Flezha.Observability.AuditLog.Rotation do
     end
   end
 
-  defp schedule(ms), do: Process.send_after(self(), :tick, ms)
+  defp arm_tick(state), do: arm_timer(state, :tick, state.interval_ms, :tick)
 end

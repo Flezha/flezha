@@ -18,11 +18,12 @@ defmodule Flezha.State.FsyncBatcher do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config.Durations
   alias Flezha.State.{WalWriter, WriterRegistry}
 
-  defstruct [:dirty_set, :tick_ref, :tick_interval_ms]
+  defstruct [:dirty_set, :tick_interval_ms, timers: %{}]
 
   # ---------- Public API ----------
 
@@ -89,14 +90,11 @@ defmodule Flezha.State.FsyncBatcher do
           ]}}
 
       true ->
-        ref = Process.send_after(self(), :tick, interval)
-
         {:ok,
-         %__MODULE__{
+         arm_tick(%__MODULE__{
            dirty_set: MapSet.new(WriterRegistry.registered_ids()),
-           tick_ref: ref,
            tick_interval_ms: interval
-         }}
+         })}
     end
   end
 
@@ -126,10 +124,10 @@ defmodule Flezha.State.FsyncBatcher do
 
   @impl true
   def handle_info(:tick, state) do
-    new_state = drain(state, :cast)
-    ref = Process.send_after(self(), :tick, state.tick_interval_ms)
-    {:noreply, %{new_state | tick_ref: ref}}
+    {:noreply, state |> drain(:cast) |> arm_tick()}
   end
+
+  defp arm_tick(state), do: arm_timer(state, :tick, state.tick_interval_ms, :tick)
 
   # The tick casts; `flush_now`/`flush_all` call, because their callers need
   # every sync done when they return.

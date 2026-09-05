@@ -21,6 +21,7 @@ defmodule Flezha.Schedule.Job do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:slot, :retry]
 
   require Logger
 
@@ -169,7 +170,7 @@ defmodule Flezha.Schedule.Job do
       entry: entry,
       cron: nil,
       target: nil,
-      timer: nil,
+      timers: Flezha.Process.Timer.new(),
       pending_retry: nil,
       last_fire: nil
     }
@@ -250,9 +251,9 @@ defmodule Flezha.Schedule.Job do
 
       {:error, reason} ->
         backoff = Backoff.arm(:schedule_spawn, attempt, state.entry.name)
-        timer = Process.send_after(self(), {:retry, slot, attempt + 1}, backoff)
+        state = arm_timer(state, :retry, backoff, {:retry, slot, attempt + 1})
         state = record_fire(state, instance_id, {:retrying, inspect(reason)})
-        %{state | pending_retry: %{slot: slot, attempt: attempt + 1, timer: timer}}
+        %{state | pending_retry: %{slot: slot, attempt: attempt + 1}}
     end
   end
 
@@ -262,21 +263,20 @@ defmodule Flezha.Schedule.Job do
 
   defp cancel_pending_retry(%{pending_retry: nil} = state), do: state
 
-  defp cancel_pending_retry(%{pending_retry: %{timer: timer}} = state) do
-    _ = Process.cancel_timer(timer)
-    %{state | pending_retry: nil}
+  defp cancel_pending_retry(%{pending_retry: %{}} = state) do
+    %{cancel_timer(state, :retry) | pending_retry: nil}
   end
 
   defp arm(state, now) do
     case Cron.next_fire(state.cron, state.entry.timezone, now) do
       {:ok, target} ->
-        timer =
+        state =
           case arm_action(target, now) do
-            {:fire, ms} -> Process.send_after(self(), {:fire, target}, ms)
-            {:rearm, ms} -> Process.send_after(self(), :rearm, ms)
+            {:fire, ms} -> arm_timer(state, :slot, ms, {:fire, target})
+            {:rearm, ms} -> arm_timer(state, :slot, ms, :rearm)
           end
 
-        %{state | target: target, timer: timer}
+        %{state | target: target}
 
       :none ->
         dormant(state, "no future slot for #{state.entry.cron}")
@@ -289,7 +289,7 @@ defmodule Flezha.Schedule.Job do
     })
 
     Logger.warning("[schedule] #{state.entry.name} is dormant — #{reason}")
-    %{state | target: nil, timer: nil}
+    %{cancel_all_timers(state) | target: nil}
   end
 
   defp catch_up_floor(entry, now, grace_ms) do

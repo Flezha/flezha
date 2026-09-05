@@ -70,6 +70,7 @@ defmodule Flezha.Healthz.Server do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.{Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
+  alias Flezha.SafeCall
   alias Flezha.State.DurabilityTier
 
   # ---------- Public API ----------
@@ -92,8 +93,11 @@ defmodule Flezha.Healthz.Server do
   @spec listen_port() :: {:ok, :inet.port_number()} | :error
   def listen_port() do
     case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) -> GenServer.call(pid, :listen_port)
-      _ -> :error
+      pid when is_pid(pid) ->
+        SafeCall.bounded(pid, :listen_port, Durations.get(:listen_port_call_ms), on_error: :error)
+
+      _ ->
+        :error
     end
   end
 

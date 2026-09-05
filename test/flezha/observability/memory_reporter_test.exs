@@ -6,6 +6,7 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
 
   alias Flezha.Diagnostics.MemoryReporter
   alias FlezhaTest.Helper.NodeTestHelper
+  alias Flezha.Process.Timer
 
   @key :memory_report_interval_ms
 
@@ -119,7 +120,9 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
       send(pid, :report)
       :sys.get_state(pid)
       assert Process.alive?(pid)
-      assert :sys.get_state(pid) == %{interval_ms: 10_000}
+      state = :sys.get_state(pid)
+      assert state.interval_ms == 10_000
+      assert Timer.armed?(state.timers, :report)
       GenServer.stop(pid)
     end
 

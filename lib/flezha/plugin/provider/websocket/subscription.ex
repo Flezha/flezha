@@ -15,6 +15,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
 
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.HttpFetch
+  alias Flezha.Process.Timer
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   require Logger
@@ -506,21 +507,17 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
     }
   end
 
+  # Armed on the client's behalf, under the `:poll` key that module declares.
+  # A literal item list has no endpoint to poll; its desired set is already
+  # final and the reconcile at connect is the whole loop.
   def schedule_subscription_poll(%{subscription: subscription} = state) do
-    case Map.get(state, :poll_timer) do
-      nil -> :ok
-      ref -> Process.cancel_timer(ref, async: true, info: false)
-    end
-
-    # A literal item list has no endpoint to poll; its desired set is already
-    # final and the reconcile at connect is the whole loop.
     if polled?(subscription) do
       %{
         state
-        | poll_timer: Process.send_after(self(), :subscription_poll, subscription.interval_ms)
+        | timers: Timer.arm(state.timers, :poll, subscription.interval_ms, :subscription_poll)
       }
     else
-      %{state | poll_timer: nil}
+      %{state | timers: Timer.cancel(state.timers, :poll)}
     end
   end
 

@@ -18,6 +18,7 @@ defmodule Flezha.Observability.Registry do
 
   alias Flezha.Config
   alias Flezha.Observability.Signal
+  alias Flezha.Process.Cspec
 
   @sources :flezha_observability_sources
   @sinks :flezha_observability_sinks
@@ -408,12 +409,12 @@ defmodule Flezha.Observability.Registry do
   end
 
   defp start_and_record_sink(entry, module, config) do
-    spec = %{
-      id: entry.name,
-      start: {module, :start_link, [%{name: entry.name, config: config}]},
-      restart: :transient,
-      type: :worker
-    }
+    spec =
+      Cspec.build(
+        entry.name,
+        {module, :start_link, [%{name: entry.name, config: config}]},
+        :worker_transient
+      )
 
     case DynamicSupervisor.start_child(Flezha.Observability.SinkSupervisor, spec) do
       {:ok, pid} ->

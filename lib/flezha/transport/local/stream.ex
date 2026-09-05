@@ -20,6 +20,9 @@ defmodule Flezha.Transport.Local.Stream do
   SDK deployment uses the binary protocol over UDS/QUIC, not this transport.
   """
 
+  alias Flezha.Config.Durations
+  alias Flezha.SafeCall
+
   use GenServer
 
   @enforce_keys [:pid, :id, :side]
@@ -69,11 +72,7 @@ defmodule Flezha.Transport.Local.Stream do
   @spec close(t()) :: :ok
   def close(%__MODULE__{pid: pid, side: side}) do
     if Process.alive?(pid) do
-      try do
-        GenServer.call(pid, {:close, side})
-      catch
-        :exit, _ -> :ok
-      end
+      SafeCall.bounded(pid, {:close, side}, Durations.get(:local_stream_call_ms), on_error: :ok)
     end
 
     :ok
@@ -81,11 +80,9 @@ defmodule Flezha.Transport.Local.Stream do
 
   defp call_if_alive(pid, msg) do
     if Process.alive?(pid) do
-      try do
-        GenServer.call(pid, msg)
-      catch
-        :exit, _ -> {:error, :closed}
-      end
+      SafeCall.bounded(pid, msg, Durations.get(:local_stream_call_ms),
+        on_error: {:error, :closed}
+      )
     else
       {:error, :closed}
     end

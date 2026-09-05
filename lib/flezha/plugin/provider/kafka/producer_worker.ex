@@ -20,8 +20,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   require Logger
 
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias Flezha.Process.Cspec
+  alias Flezha.SafeCall
   alias Flezha.State.Outbox
   alias KafkaEx.Client.NodeSelector
 
@@ -59,13 +62,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
 
   def child_spec(opts) do
-    %{
-      id: {__MODULE__, opts.plugin_id, opts.topic, opts.partition},
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :transient,
-      shutdown: 5_000
-    }
+    Cspec.build(
+      {__MODULE__, opts.plugin_id, opts.topic, opts.partition},
+      {__MODULE__, :start_link, [opts]},
+      :worker_transient
+    )
   end
 
   @doc """
@@ -82,10 +83,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   @spec enqueue(GenServer.server(), binary(), map(), keyword()) ::
           :ok | {:error, term()}
   def enqueue(server, msg, metadata, call_opts \\ []) do
-    GenServer.call(server, {:enqueue, msg, metadata}, Keyword.get(call_opts, :timeout, 35_000))
-  catch
-    :exit, {:timeout, _} -> {:error, {:delivery_failed, :enqueue_timeout}}
-    :exit, {:noproc, _} -> {:error, {:delivery_failed, :no_producer_worker}}
+    SafeCall.bounded(server, {:enqueue, msg, metadata}, Keyword.get(call_opts, :timeout, 35_000),
+      on_error: %{
+        timeout: {:error, {:delivery_failed, :enqueue_timeout}},
+        noproc: {:error, {:delivery_failed, :no_producer_worker}}
+      }
+    )
   end
 
   @doc """
@@ -109,7 +112,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   @spec stats(GenServer.server()) :: map()
   def stats(server) do
-    GenServer.call(server, :stats)
+    SafeCall.bounded(server, :stats, Durations.get(:kafka_worker_call_ms), on_error: %{})
   end
 
   @doc """
@@ -125,9 +128,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp parked?(pid) do
-    match?(%{last_error: {:swap_exhausted, _}}, GenServer.call(pid, :stats, 1_000))
-  catch
-    :exit, _ -> false
+    stats = SafeCall.bounded(pid, :stats, 1_000, on_error: nil, log: :debug)
+    match?(%{last_error: {:swap_exhausted, _}}, stats)
   end
 
   @doc """

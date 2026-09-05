@@ -13,6 +13,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   alias Flezha.Service.PluginManager
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:heartbeat]
 
   use ProviderBehaviour,
     options: [
@@ -50,14 +51,13 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
   @impl GenServer
   def init(opts) do
     interval = Map.fetch!(opts, :heartbeat_interval)
-    schedule_heartbeat(interval)
 
     {:ok,
-     %{
+     arm_heartbeat(%{
        recv_pid: Map.fetch!(opts, :recv_pid),
        plugin_id: Map.fetch!(opts, :plugin_id),
        heartbeat_interval: interval
-     }}
+     })}
   end
 
   @impl GenServer
@@ -67,7 +67,7 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
 
   @impl GenServer
   def handle_info(:schedule_heartbeat_keepalive, state) do
-    schedule_heartbeat(state.heartbeat_interval)
+    state = arm_heartbeat(state)
 
     Process.send(state.recv_pid, {:heartbeat_keepalive, self()}, [])
 
@@ -81,7 +81,12 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     end
   end
 
-  defp schedule_heartbeat(interval) do
-    Process.send_after(self(), :schedule_heartbeat_keepalive, interval)
+  defp arm_heartbeat(state) do
+    arm_timer(
+      state,
+      :heartbeat,
+      state.heartbeat_interval,
+      :schedule_heartbeat_keepalive
+    )
   end
 end

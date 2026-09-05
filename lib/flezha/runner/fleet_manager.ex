@@ -18,18 +18,21 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
+  alias Flezha.Parallel
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
 
   require Logger
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:runner_cleanup]
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -144,19 +147,12 @@ defmodule Flezha.Runner.FleetManager do
   def global_runners(namespace) do
     runners =
       [node() | Directory.runner_nodes(namespace)]
-      |> Enum.uniq()
-      |> Enum.flat_map(fn n ->
-        try do
-          :erpc.call(
-            n,
-            __MODULE__,
-            :active_runners,
-            [namespace],
-            Durations.get(:runner_lookup_ms)
-          )
-        catch
-          _, _ -> []
-        end
+      |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, :active_runners, [namespace]),
+        timeout: Durations.get(:runner_lookup_ms)
+      )
+      |> Enum.flat_map(fn
+        {_node, {:ok, ids}} -> ids
+        {_node, {:exit, _reason}} -> []
       end)
       |> Enum.uniq()
 
@@ -205,8 +201,16 @@ defmodule Flezha.Runner.FleetManager do
     control_unit = Identificator.control_unit(runner_id)
 
     case GenServer.whereis(control_unit) do
-      nil -> {:error, :no_control_unit}
-      _ -> GenServer.call(control_unit, :command_sockets_connect)
+      nil ->
+        {:error, :no_control_unit}
+
+      _ ->
+        SafeCall.bounded(
+          control_unit,
+          :command_sockets_connect,
+          Durations.get(:control_unit_reply_timeout_ms),
+          on_error: {:error, :no_control_unit}
+        )
     end
   end
 
@@ -232,17 +236,15 @@ defmodule Flezha.Runner.FleetManager do
         )
     end
 
-    schedule_runner_cleanup()
-
     Marks.ensure_fence_table()
 
     {:ok,
-     %{
+     arm_runner_cleanup(%{
        runner_namespaces: %{},
        namespace_factories: %{},
        stable_sessions: %{},
        directory_groups: MapSet.new()
-     }}
+     })}
   end
 
   defp boot_recovery_timeout() do
@@ -417,9 +419,7 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_info(:schedule_runner_cleanup, state) do
-    schedule_runner_cleanup()
-
-    {:noreply, state |> runner_cleanup() |> Session.sync_directory()}
+    {:noreply, state |> arm_runner_cleanup() |> runner_cleanup() |> Session.sync_directory()}
   end
 
   @impl true
@@ -429,11 +429,12 @@ defmodule Flezha.Runner.FleetManager do
     {:noreply, state}
   end
 
-  defp schedule_runner_cleanup() do
-    Process.send_after(
-      self(),
-      :schedule_runner_cleanup,
-      get_runner_keepalive() + 10_000
+  defp arm_runner_cleanup(state) do
+    arm_timer(
+      state,
+      :runner_cleanup,
+      get_runner_keepalive() + Durations.get(:runner_cleanup_slack_ms),
+      :schedule_runner_cleanup
     )
   end
 

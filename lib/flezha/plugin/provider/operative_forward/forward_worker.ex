@@ -23,6 +23,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   # kills the owned pid with `:shutdown`, which a permanent child would simply
   # be restarted from.
   use GenServer, restart: :transient
+  use Flezha.Process.Timer, keys: [:retry]
 
   require Logger
 
@@ -37,7 +38,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
     # rather than per payload.
     :labels,
     :inflight,
-    :retry_timer,
+    timers: %{},
     buffer: :queue.new(),
     buffer_len: 0,
     waiters: [],
@@ -172,7 +173,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   end
 
   def handle_info(:retry_delivery, state) do
-    {:noreply, deliver_next(%{state | retry_timer: nil})}
+    {:noreply, deliver_next(timer_fired(state, :retry))}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -180,7 +181,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   # ---------- delivery ----------
 
   defp deliver_next(%{inflight: inflight} = state) when inflight != nil, do: state
-  defp deliver_next(%{retry_timer: timer} = state) when timer != nil, do: state
+  defp deliver_next(state) when :erlang.map_get(:retry, state.timers) != nil, do: state
   defp deliver_next(%{buffer_len: 0} = state), do: state
 
   defp deliver_next(state) do
@@ -251,11 +252,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
       )
     end
 
-    %{
-      state
-      | attempts: attempts,
-        retry_timer: Process.send_after(self(), :retry_delivery, backoff)
-    }
+    arm_timer(%{state | attempts: attempts}, :retry, backoff, :retry_delivery)
   end
 
   defp verdict_tag(:ok), do: :delivered

@@ -7,6 +7,7 @@ defmodule Flezha.Service.HubManager.Placement do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
+  alias Flezha.Process.Cspec
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Service.OperativeManager
@@ -196,13 +197,13 @@ defmodule Flezha.Service.HubManager.Placement do
     end
   end
 
-  defp start_args(%{start: {_m, _f, [{namespace, %{} = operative}]}}),
-    do: {:ok, {namespace, nil, operative}}
-
-  defp start_args(%{start: {_m, _f, [{namespace, recorded_runner, %{} = operative}]}}),
-    do: {:ok, {namespace, recorded_runner, operative}}
-
-  defp start_args(_), do: :error
+  defp start_args(cspec) do
+    case Cspec.start_arg(cspec) do
+      {:ok, {namespace, %{} = operative}} -> {:ok, {namespace, nil, operative}}
+      {:ok, {namespace, runner, %{} = operative}} -> {:ok, {namespace, runner, operative}}
+      _ -> :error
+    end
+  end
 
   # Failing this one child in `start_child` beats raising, which would kill the
   # request before `update_registry` and strand every sibling row in the batch.

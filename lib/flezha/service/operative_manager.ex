@@ -52,11 +52,7 @@ defmodule Flezha.Service.OperativeManager do
   """
   def get_operative_pid(namespace, operative_id, opts \\ []) do
     on_hub_member(namespace, operative_id, opts, :get_operative_pid, fn ->
-      case HubManager.get_pid(namespace, operative_id) do
-        {:ok, pid} -> {:ok, pid}
-        {:error, "no pid found"} -> {:error, "operative not found"}
-        err -> err
-      end
+      HubManager.get_pid(namespace, operative_id)
     end)
   end
 
@@ -530,7 +526,9 @@ defmodule Flezha.Service.OperativeManager do
 
   def create_snapshot(namespace, operative_id) do
     with_operative_pid(namespace, operative_id, fn pid ->
-      GenServer.call(pid, :create_snapshot)
+      SafeCall.bounded(pid, :create_snapshot, Durations.get(:overwatch_call_timeout_ms),
+        on_error: &{:error, {:overwatch_unavailable, &1}}
+      )
     end)
   end
 

@@ -11,6 +11,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
+  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager.Lifecycle
   alias Flezha.Service.HubManager.Placement
   alias Flezha.Service.HubManager.Rows
@@ -197,7 +198,7 @@ defmodule Flezha.Service.HubManager do
     Supervisor.which_children(__MODULE__)
     |> Enum.map(fn {id, _pid, _type, _modules} -> id end)
     |> Enum.filter(&Identificator.hub_id?/1)
-    |> Enum.filter(fn id -> ProcessHub.is_alive?(id) end)
+    |> Enum.filter(fn id -> Hub.alive?(id) end)
   end
 
   @impl true

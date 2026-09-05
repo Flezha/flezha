@@ -19,6 +19,7 @@ defmodule Flezha.State.Watchdog do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:sweep]
 
   require Logger
 
@@ -49,7 +50,8 @@ defmodule Flezha.State.Watchdog do
             catastrophic: %{},
             rpo_breached: MapSet.new(),
             disk_breaches: MapSet.new(),
-            backoff: nil
+            backoff: nil,
+            timers: %{}
 
   # ---------- Public API ----------
 
@@ -104,21 +106,22 @@ defmodule Flezha.State.Watchdog do
     # boot, so accounting drift is bounded by one uptime
     # (finish-platform-authn-authz §6.2).
     rebuild_disk_counters()
-    schedule_sweep()
-    {:ok, %__MODULE__{backoff: Backoff.new(:compaction)}}
+    {:ok, arm_sweep(%__MODULE__{backoff: Backoff.new(:compaction)})}
   end
 
   @impl true
   def handle_info(:sweep_tick, state) do
-    schedule_sweep()
+    state = arm_sweep(state)
     {:noreply, sweep(state)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  defp schedule_sweep() do
+  # A non-positive interval turns the sweep off: nothing is armed and the key
+  # simply holds no timer.
+  defp arm_sweep(state) do
     interval = sweep_interval_ms()
-    if interval > 0, do: Process.send_after(self(), :sweep_tick, interval)
+    if interval > 0, do: arm_timer(state, :sweep, interval, :sweep_tick), else: state
   end
 
   defp sweep_interval_ms(), do: Durations.get(:output_watchdog_interval_ms)

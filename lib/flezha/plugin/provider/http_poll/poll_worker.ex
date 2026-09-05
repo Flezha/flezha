@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   alias Flezha.Plugin.ProviderBehaviour
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:poll]
 
   require Logger
 
@@ -132,8 +133,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
       end
 
     state = %{state | last_settled_at: :erlang.monotonic_time(:millisecond)}
-    Process.send_after(self(), :poll, state.interval_ms)
-    state
+    arm_timer(state, :poll, state.interval_ms, :poll)
   end
 
   # A non-UTF-8 body is a failure rather than a frame: it cannot be carried by

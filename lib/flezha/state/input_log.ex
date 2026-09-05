@@ -23,6 +23,8 @@ defmodule Flezha.State.InputLog do
 
   alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Process.Cspec
+  alias Flezha.SafeCall
 
   alias Flezha.State.{
     CreditLedger,
@@ -96,11 +98,11 @@ defmodule Flezha.State.InputLog do
   # ---------- Public API ----------
 
   def child_spec(operative_class) do
-    %{
-      id: {__MODULE__, operative_class},
-      start: {__MODULE__, :start_link, [operative_class]},
-      restart: :transient
-    }
+    Cspec.build(
+      {__MODULE__, operative_class},
+      {__MODULE__, :start_link, [operative_class]},
+      :worker_transient
+    )
   end
 
   def start_link(operative_class) do
@@ -163,7 +165,7 @@ defmodule Flezha.State.InputLog do
   @spec last_offset(binary()) :: integer() | {:error, term()}
   def last_offset(operative_class) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-    GenServer.call(pid, :last_offset)
+    call(pid, :last_offset)
   end
 
   @doc """
@@ -175,7 +177,7 @@ defmodule Flezha.State.InputLog do
           [{non_neg_integer(), term(), map()}] | {:error, term()}
   def read_range(operative_class, from, to) when from <= to do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-    GenServer.call(pid, {:read_range, from, to})
+    call(pid, {:read_range, from, to})
   end
 
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
@@ -278,7 +280,7 @@ defmodule Flezha.State.InputLog do
   @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil | {:error, term()}
   def offset_before_time(operative_class, ts_ms) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-    GenServer.call(pid, {:offset_before_time, ts_ms})
+    call(pid, {:offset_before_time, ts_ms})
   end
 
   @doc "Drop a hard-deleted Entity's watermark entry so it stops holding truncation."
@@ -320,7 +322,7 @@ defmodule Flezha.State.InputLog do
         # A refused log has no tail to report — the prefix that verified is not
         # the log's end — so it degrades to the same WAL-seq-only classification
         # a tier-off operative gets, rather than reporting a cursor that lies.
-        case GenServer.call(pid, :last_offset) do
+        case call(pid, :last_offset) do
           tail when is_integer(tail) ->
             %{tail: tail, consumed: Map.new(entity_offsets(operative_class))}
 
@@ -334,6 +336,15 @@ defmodule Flezha.State.InputLog do
   end
 
   # ---------- GenServer ----------
+
+  # The log for a class is found or started per call, so `pid` can be a writer
+  # that is mid-restart or already gone. One declared refusal for all four
+  # reads; every caller's spec already carries `{:error, term()}`.
+  defp call(pid, request) do
+    SafeCall.bounded(pid, request, Durations.get(:input_log_call_ms),
+      on_error: &{:error, {:input_log_unavailable, &1}}
+    )
+  end
 
   @impl true
   def init(operative_class) do

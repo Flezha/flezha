@@ -10,6 +10,7 @@ defmodule Flezha.Service.OperativeManager.Init do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
+  alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager.Teardown
   alias Flezha.Service.Validator
@@ -127,30 +128,15 @@ defmodule Flezha.Service.OperativeManager.Init do
     # on Overwatch state — `:registry_runner_set` returns
     # `{:error, _}` instead of crashing the GenServer. The
     # `:exit` catch covers older failure modes (timeout, kill).
-    try do
-      case GenServer.call(pid, :registry_runner_set) do
-        {:ok, runner_id} ->
-          {:ok,
-           %{
-             operative_id: operative.id,
-             runner_id: runner_id,
-             node: operative_node,
-             pid: pid
-           }}
-
-        {:error, reason} ->
-          _ = stop_child_quietly(namespace, operative.id)
-          {:error, %{operative_id: operative.id, node: node(), reason: reason}}
-      end
-    catch
-      # Started, then exited cleanly before we could read its binding —
-      # a run-once workflow operative that already completed, or a concurrent stop. A
-      # clean exit is a successful start, not a failure; no live binding
-      # remains, so `runner_id` is nil.
-      :exit, {reason, _} when reason in [:normal, :noproc] ->
+    # Started, then exited cleanly before we could read its binding — a
+    # run-once workflow operative that already completed, or a concurrent
+    # stop. A clean exit is a successful start, not a failure; no live
+    # binding remains, so `runner_id` is nil.
+    on_exit = fn
+      {reason, _} when reason in [:normal, :noproc] ->
         {:ok, %{operative_id: operative.id, runner_id: nil, node: operative_node, pid: pid}}
 
-      :exit, {reason, _} ->
+      reason ->
         Logger.warning(
           "Operative #{operative.id} appeared in `started` but died during " <>
             "post-init continue (reason=#{inspect(reason)})"
@@ -158,6 +144,26 @@ defmodule Flezha.Service.OperativeManager.Init do
 
         _ = stop_child_quietly(namespace, operative.id)
         {:error, %{operative_id: operative.id, node: node(), reason: reason}}
+    end
+
+    case SafeCall.bounded(pid, :registry_runner_set, Durations.get(:overwatch_call_timeout_ms),
+           on_error: on_exit
+         ) do
+      {:ok, runner_id} ->
+        {:ok,
+         %{
+           operative_id: operative.id,
+           runner_id: runner_id,
+           node: operative_node,
+           pid: pid
+         }}
+
+      {:error, reason} ->
+        _ = stop_child_quietly(namespace, operative.id)
+        {:error, %{operative_id: operative.id, node: node(), reason: reason}}
+
+      answered ->
+        answered
     end
   end
 

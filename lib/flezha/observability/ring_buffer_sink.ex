@@ -13,6 +13,7 @@ defmodule Flezha.Observability.RingBufferSink do
   """
 
   use GenServer, restart: :transient
+  use Flezha.Process.Timer, keys: [:sweep]
 
   @behaviour Flezha.Observability.Sink
 
@@ -105,9 +106,8 @@ defmodule Flezha.Observability.RingBufferSink do
       |> Enum.reduce(state, fn %{name: name}, acc -> ensure_table(acc, name) end)
 
     _ = ObsRegistry.subscribe_registry_events()
-    schedule_sweep(sweep_ms)
 
-    {:ok, state}
+    {:ok, arm_sweep(state)}
   end
 
   @impl true
@@ -141,8 +141,7 @@ defmodule Flezha.Observability.RingBufferSink do
       _ = :ets.select_delete(ref, ms)
     end)
 
-    schedule_sweep(state.sweep_ms)
-    {:noreply, state}
+    {:noreply, arm_sweep(state)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -228,7 +227,7 @@ defmodule Flezha.Observability.RingBufferSink do
     end
   end
 
-  defp schedule_sweep(ms) do
-    Process.send_after(self(), :sweep, ms)
+  defp arm_sweep(state) do
+    arm_timer(state, :sweep, state.sweep_ms, :sweep)
   end
 end

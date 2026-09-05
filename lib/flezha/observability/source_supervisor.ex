@@ -9,6 +9,8 @@ defmodule Flezha.Observability.SourceSupervisor do
   foundation never calls into it.
   """
 
+  alias Flezha.Process.Cspec
+
   use DynamicSupervisor
 
   def start_link(_opts) do
@@ -22,6 +24,6 @@ defmodule Flezha.Observability.SourceSupervisor do
     # (3 restarts in 5 s) would let a handful of them, or one that flaps, take
     # every other source down with the supervisor. Sized for independent
     # children; a genuine restart storm still trips it.
-    DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 100, max_seconds: 5)
+    DynamicSupervisor.init([strategy: :one_for_one] ++ Cspec.intensity())
   end
 end

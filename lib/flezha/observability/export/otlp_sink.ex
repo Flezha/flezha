@@ -16,6 +16,7 @@ defmodule Flezha.Observability.Export.OtlpSink do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:flush]
 
   @behaviour Flezha.Observability.Sink
 
@@ -49,16 +50,14 @@ defmodule Flezha.Observability.Export.OtlpSink do
 
     {:ok, _} = register_self()
 
-    Process.send_after(self(), :flush_tick, flush_ms)
-
     {:ok,
-     %{
+     arm_flush(%{
        buffer: [],
        size: 0,
        flush_ms: flush_ms,
        batch_max: batch_max,
        dropped: 0
-     }}
+     })}
   end
 
   @impl GenServer
@@ -78,12 +77,12 @@ defmodule Flezha.Observability.Export.OtlpSink do
   end
 
   def handle_info(:flush_tick, state) do
-    state = maybe_flush(state, :time)
-    Process.send_after(self(), :flush_tick, state.flush_ms)
-    {:noreply, state}
+    {:noreply, state |> maybe_flush(:time) |> arm_flush()}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp arm_flush(state), do: arm_timer(state, :flush, state.flush_ms, :flush_tick)
 
   # ---------- Internals ----------
 

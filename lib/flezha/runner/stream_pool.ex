@@ -19,8 +19,6 @@ defmodule Flezha.Runner.StreamPool do
   alias Flezha.Identificator
   alias Flezha.SafeCall
 
-  require Logger
-
   @doc "The channel names for `runner_id`'s `type` pool, in pool order."
   @spec stream_ids(binary(), :primary | :secondary) :: [atom()]
   def stream_ids(runner_id, type) do
@@ -107,19 +105,18 @@ defmodule Flezha.Runner.StreamPool do
           nil
 
         pid ->
-          try do
-            case GenServer.call(pid, {:bind, stream_ref}) do
-              :ok -> {:bound, pid, name}
-              :already_bound -> nil
-            end
-          catch
-            :exit, reason ->
-              Logger.debug(
-                "[StreamPool] bind candidate #{inspect(name)} exited during call: " <>
-                  inspect(reason)
-              )
-
-              nil
+          # A candidate that exits mid-bind is a lost race with another binder,
+          # not a fault: it drops out of the candidate list and the next one is
+          # tried.
+          case SafeCall.bounded(
+                 pid,
+                 {:bind, stream_ref},
+                 Durations.get(:stream_pool_bind_call_ms),
+                 on_error: :unavailable,
+                 log: :debug
+               ) do
+            :ok -> {:bound, pid, name}
+            reply when reply in [:already_bound, :unavailable] -> nil
           end
       end
     end)

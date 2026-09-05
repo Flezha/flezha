@@ -12,6 +12,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
 
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
+  alias Flezha.Process.Timer
 
   @telemetry_event [:flezha, :ws, :idle_reconnect]
 
@@ -129,7 +130,9 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   describe "handle_info(:idle_check) — within threshold" do
     test "reschedules next tick at idle_timeout_ms / 2 when silence is below threshold" do
       state = base_state(idle_timeout_ms: 5_000)
-      assert {:ok, ^state} = Websocket.Client.handle_info(:idle_check, state)
+      assert {:ok, ticked} = Websocket.Client.handle_info(:idle_check, state)
+      assert Timer.armed?(ticked.timers, :idle_check)
+      assert Map.delete(ticked, :timers) == Map.delete(state, :timers)
       # idle_timeout_ms / 2 = 2_500 ms; 1-second floor doesn't apply.
       assert Websocket.idle_tick_interval(state) == 2_500
     end

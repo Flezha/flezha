@@ -18,6 +18,7 @@ defmodule Flezha.State.Retention do
   """
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:sweep]
 
   alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
@@ -34,7 +35,7 @@ defmodule Flezha.State.Retention do
     WriterRegistry
   }
 
-  defstruct []
+  defstruct timers: %{}
 
   # ---------- Public API ----------
 
@@ -50,8 +51,7 @@ defmodule Flezha.State.Retention do
 
   @impl true
   def init(_opts) do
-    schedule_sweep()
-    {:ok, %__MODULE__{}}
+    {:ok, arm_sweep(%__MODULE__{})}
   end
 
   @impl true
@@ -64,7 +64,7 @@ defmodule Flezha.State.Retention do
 
   @impl true
   def handle_info(:retention_tick, state) do
-    schedule_sweep()
+    state = arm_sweep(state)
     sweep_all()
     sweep_completed()
     sweep_input_logs()
@@ -73,9 +73,11 @@ defmodule Flezha.State.Retention do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  defp schedule_sweep() do
+  # A non-positive interval turns the sweep off: nothing is armed and the key
+  # simply holds no timer.
+  defp arm_sweep(state) do
     interval = Durations.get(:time_travel_retention_check_interval_ms)
-    if interval > 0, do: Process.send_after(self(), :retention_tick, interval)
+    if interval > 0, do: arm_timer(state, :sweep, interval, :retention_tick), else: state
   end
 
   # ---------- Sweep ----------

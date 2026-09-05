@@ -49,6 +49,8 @@ defmodule Flezha.Shutdown.SignalHandler do
   require Logger
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
+  alias Flezha.SafeCall
   alias Flezha.Shutdown.Coordinator
 
   defstruct count: 0, enabled: true, status: :ok, signal_server: :erl_signal_server
@@ -116,9 +118,9 @@ defmodule Flezha.Shutdown.SignalHandler do
   """
   @spec status() :: :ok | :degraded
   def status() do
-    GenServer.call(__MODULE__, :status)
-  catch
-    :exit, _ -> :degraded
+    SafeCall.bounded(__MODULE__, :status, Durations.get(:signal_handler_status_call_ms),
+      on_error: :degraded
+    )
   end
 
   @impl true

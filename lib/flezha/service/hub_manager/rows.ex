@@ -16,15 +16,16 @@ defmodule Flezha.Service.HubManager.Rows do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
+  alias Flezha.Operative.Lookup
   alias Flezha.Plugin
+  alias Flezha.Process.Cspec
+  alias Flezha.Process.Hub
   alias Flezha.State.DurabilityTier
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
 
-  require Logger
-
   def hub_alive?(namespace) do
-    ProcessHub.is_alive?(Identificator.hub(namespace))
+    Hub.alive?(Identificator.hub(namespace))
   end
 
   @doc """
@@ -45,23 +46,7 @@ defmodule Flezha.Service.HubManager.Rows do
   ETS and raises. A containment is loud, never silent.
   """
   @spec with_live_hub_id(atom(), term(), (atom() -> term())) :: term()
-  def with_live_hub_id(hub_id, on_dead, fun) when is_atom(hub_id) do
-    if ProcessHub.is_alive?(hub_id), do: fun.(hub_id), else: on_dead
-  catch
-    kind, reason when kind in [:exit, :error] ->
-      :telemetry.execute(
-        [:flezha, :hub, :unavailable],
-        %{count: 1},
-        %{hub_id: hub_id, kind: kind, reason: reason}
-      )
-
-      Logger.warning(
-        "[hub_manager] hub #{inspect(hub_id)} went away mid-call " <>
-          "(#{kind} #{inspect(reason)}); answering #{inspect(on_dead)}"
-      )
-
-      on_dead
-  end
+  defdelegate with_live_hub_id(hub_id, on_dead, fun), to: Hub, as: :with_live
 
   def with_live_hub(namespace, on_dead, fun) do
     with_live_hub_id(Identificator.hub(namespace), on_dead, fun)
@@ -86,16 +71,15 @@ defmodule Flezha.Service.HubManager.Rows do
     with_live_hub(namespace, [], fn hub_id -> ProcessHub.nodes(hub_id, opts) end)
   end
 
+  # The one place either published string is written. `Lookup` answers in the
+  # three atoms every resolver shares; this is the boundary where a hub read
+  # becomes the operator-facing wording, and there is no second remap behind it.
   def get_pid(namespace, operative_id) do
-    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
-      case ProcessHub.get_pids(hub_id, operative_id) do
-        [] ->
-          {:error, "no pid found"}
-
-        pids ->
-          {:ok, List.first(pids)}
-      end
-    end)
+    case Lookup.operative(namespace, operative_id) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, :hub_down} -> {:error, "hub not alive"}
+      {:error, _reason} -> {:error, "operative not found"}
+    end
   end
 
   @doc """
@@ -244,11 +228,11 @@ defmodule Flezha.Service.HubManager.Rows do
         nil ->
           {:error, "operative not found"}
 
-        {%{start: {_m, _f, [arg]}}, _node_pids} ->
-          {:ok, normalize_plugins(extract_plugins(arg))}
-
-        {%{start: {_m, _f, [arg]}}, _node_pids, _metadata} ->
-          {:ok, normalize_plugins(extract_plugins(arg))}
+        entry ->
+          case Cspec.start_arg(elem(entry, 0)) do
+            {:ok, arg} -> {:ok, normalize_plugins(extract_plugins(arg))}
+            :error -> {:error, "operative not found"}
+          end
       end
     end)
   end
@@ -257,15 +241,13 @@ defmodule Flezha.Service.HubManager.Rows do
   # `{namespace, operative}` / `{namespace, runner, operative}` arg shapes
   # `alter_child_data/2` rewrites. The durable record of everything a start
   # declared, which is why partition identity lives there.
-  defp cspec_operative(%{start: {_m, _f, [arg]}}) do
-    case arg do
-      {_namespace, %{} = operative} -> operative
-      {_namespace, _runner, %{} = operative} -> operative
+  defp cspec_operative(cspec) do
+    case Cspec.start_arg(cspec) do
+      {:ok, {_namespace, %{} = operative}} -> operative
+      {:ok, {_namespace, _runner, %{} = operative}} -> operative
       _ -> nil
     end
   end
-
-  defp cspec_operative(_), do: nil
 
   @doc "The partition identity a registry entry's cspec carries, or `nil`."
   @spec cspec_partition(map()) :: map() | nil

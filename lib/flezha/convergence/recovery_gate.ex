@@ -17,6 +17,7 @@ defmodule Flezha.Convergence.RecoveryGate do
 
   alias Flezha.Convergence.{Intent, Snapshot}
   alias Flezha.Identificator
+  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
@@ -98,7 +99,7 @@ defmodule Flezha.Convergence.RecoveryGate do
   defp resolve_targets(hub_ids) when is_list(hub_ids), do: hub_ids
 
   defp wait_for_normal(hub_id, timeout) do
-    if ProcessHub.is_alive?(hub_id) do
+    if Hub.alive?(hub_id) do
       case HubRecovery.await_normal(hub_id, timeout) do
         :ok -> :ok
         {:error, :timeout} -> :timeout

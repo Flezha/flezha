@@ -29,7 +29,7 @@ defmodule Flezha.Service.Dlq do
   alias Flezha.Config.Durations
   alias Flezha.AuthZ.Namespace
   alias Flezha.Dlq.Store
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.Lookup
   alias Flezha.Plugin.Host
   alias Flezha.Service.CallerContext
   alias Flezha.Service.OperativeManager
@@ -136,9 +136,9 @@ defmodule Flezha.Service.Dlq do
   defp replayable(_payload), do: :ok
 
   defp resolve_overwatch(operative_class) do
-    case ClassRegistry.overwatch_pid(operative_class) do
+    case Lookup.overwatch(operative_class) do
       {:ok, pid} -> {:ok, pid}
-      :error -> resolve_overwatch_cluster(operative_class)
+      {:error, _reason} -> resolve_overwatch_cluster(operative_class)
     end
   end
 

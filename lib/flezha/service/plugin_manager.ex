@@ -30,8 +30,10 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.PartitionGroup
+  alias Flezha.Parallel
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Process.Hub
   alias Flezha.SafeCall
   alias Flezha.Service.CallerContext
   alias Flezha.Service.OperativeManager
@@ -166,6 +168,26 @@ defmodule Flezha.Service.PluginManager do
     call_service({:disable_operative_plugins, namespace, operative_id})
   end
 
+  @doc """
+  Disable every plugin of `operative_ids`, in ONE request.
+
+  A caller that walked the ids itself paid the per-operative `Overwatch`
+  unsubscribe bound M times over: every item funnels into this single
+  registered manager, which serves one message at a time, so a caller-side
+  fan-out only fills its mailbox and the waits still run end to end. The
+  overlap has to be created where the serialisation is — here — so the
+  mailbox is occupied once and M unreachable operatives cost one bound, not M.
+
+  Answers `:ok`, or `{:error, {:undisabled, plugin_ids}}` naming the ones that
+  could not be unsubscribed. Each is named and stepped over, never a reason to
+  abandon the operatives behind it.
+  """
+  @spec disable_operatives(binary(), [binary()]) :: :ok | {:error, {:undisabled, [binary()]}}
+  def disable_operatives(namespace, operative_ids)
+      when is_binary(namespace) and is_list(operative_ids) do
+    call_service({:disable_operatives, namespace, operative_ids})
+  end
+
   def disable_namespace_plugins(namespace) when is_binary(namespace) do
     call_service({:disable_namespace_plugins, namespace})
   end
@@ -291,18 +313,34 @@ defmodule Flezha.Service.PluginManager do
   end
 
   def handle_call({:disable_operative_plugins, namespace, operative_id}, _from, state) do
-    matching = targets(state, fn ns, rid -> ns == namespace and rid == operative_id end)
+    disable_matching(state, fn ns, rid -> ns == namespace and rid == operative_id end)
+  end
+
+  def handle_call({:disable_operatives, namespace, operative_ids}, _from, state) do
+    ids = MapSet.new(operative_ids)
+    disable_matching(state, fn ns, rid -> ns == namespace and MapSet.member?(ids, rid) end)
+  end
+
+  # Every matching registration is disabled concurrently, so the per-operative
+  # `Overwatch` unsubscribe waits overlap inside this one turn. The work is a
+  # cspec write and a bounded call and nothing else — it creates no ETS table,
+  # unlinks nothing and seeds no route — which is what makes it safe to run off
+  # this process.
+  defp disable_matching(state, match?) do
+    outcomes =
+      state
+      |> targets(match?)
+      |> Parallel.results(
+        fn {plugin_id, ns, rid} ->
+          _ = write_disable_to_cspec(ns, rid, plugin_id)
+          unsubscribe(ns, rid, plugin_id)
+        end,
+        timeout: Durations.get(:plugin_disable_fanout_ms)
+      )
 
     {new_state, undisabled} =
-      Enum.reduce(matching, {state, []}, fn {plugin_id, ns, rid}, {acc, failed} ->
-        _ = write_disable_to_cspec(ns, rid, plugin_id)
-
-        failed =
-          case unsubscribe(ns, rid, plugin_id) do
-            :ok -> failed
-            {:error, _} -> [plugin_id | failed]
-          end
-
+      Enum.reduce(outcomes, {state, []}, fn {{plugin_id, _ns, _rid}, outcome}, {acc, failed} ->
+        failed = if outcome == {:ok, :ok}, do: failed, else: [plugin_id | failed]
         {Map.delete(acc, plugin_id), failed}
       end)
 
@@ -429,7 +467,7 @@ defmodule Flezha.Service.PluginManager do
     hub_id = Identificator.hub(namespace)
 
     cond do
-      not ProcessHub.is_alive?(hub_id) ->
+      not Hub.alive?(hub_id) ->
         {:error, :registry_unavailable}
 
       true ->

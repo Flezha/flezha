@@ -275,6 +275,52 @@ cspec persists *which* plugins, the WAL persists *how far* an Entity has progres
 - One control channel carries the handshake and protobuf commands; primary and secondary data
   streams carry operative I/O (see [NIF transport](nif_transport.md)).
 
+## The controller's process model
+
+Five jobs every process in the controller does are seams a site declares into,
+not patterns it re-implements. All five live in `lib/flezha/process/` except the
+lookup, which has to name what it resolves against and so lives with the
+operative.
+
+| Job | Seam | What a site declares |
+|---|---|---|
+| Call a process that may be wedged, mid-restart or gone | `Flezha.SafeCall.bounded/4` | its bound, and the reason → result mapping as DATA |
+| Fan out over independent targets | `Flezha.Parallel.results/3`, `map_nodes/3` | its bound and its `on_timeout` |
+| Learn that a watched process died | `Flezha.Process.Watch` | the tags it keyed on the pid |
+| Arm, cancel and re-arm a timer | `use Flezha.Process.Timer, keys: [...]` | the keys its module holds |
+| Declare a supervised child | `Flezha.Process.Cspec.build/4` | a restart KIND from one policy table |
+| Reach a namespace hub | `Flezha.Process.Hub.with_live/3` | the value to answer when the hub is gone |
+| Find the process serving an operative | `Flezha.Operative.Lookup` | nothing — one resolver per key kind answers |
+
+Four rules the seams exist to hold:
+
+- **A bound is per call, and there is no default.** A nested pair is only
+  bounded when the inner bound is strictly smaller than the outer one; a shared
+  default would make both give up at the same instant, and the outer would
+  report a reachable target as unreachable.
+- **A refusal is a declared value, never a `catch` clause.**
+  `bounded/4` answers the reply verbatim on success and the site's declared
+  value on a refusal, so a hand-written `try/catch` folds into it with no caller
+  change. A reason the site does not name keeps propagating.
+- **A call into a registered node-wide singleton is NOT bounded here.** A store
+  or manager that is gone is a fault to propagate, and such a call is free to
+  crash its caller. Only a call into a resolved pid is a declared refusal.
+- **A monitor's owner reacts; the convergence Loop plans.** `Watch` hands the
+  owner the tags it keyed on the dead pid and decides nothing further. The Loop
+  holds no monitors and reaches its verdict on its own tick.
+
+A fan-out may not relocate work that owns caller-scoped state: an ETS table
+belongs to the process that created it, an unlink acts on the caller, and a
+route seeded by a step names the caller's own pid. Where the serialisation is
+inside a single registered manager, the overlap is created THERE — the manager
+takes the whole list in one request and fans out its own per-target calls — so
+its mailbox is occupied once and M unreachable targets cost one bound, not M.
+
+`test/flezha/process/process_seam_test.exs` is what makes a bypass fail rather
+than merely be absent: one clause per mechanism, read from the tree, plus a
+declaration test that goes red when a resolver, a restart kind or a timer key
+exists without its row.
+
 ## What does not exist
 
 - **No persistent FleetManager state.** Runner sessions and advertised factories live in the
@@ -290,6 +336,8 @@ cspec persists *which* plugins, the WAL persists *how far* an Entity has progres
 
 | Concern | Location |
 |---|---|
+| Bounded call, fan-out, watch, timer, child spec, hub guard | `lib/flezha/process/` |
+| Which process serves an operative | `lib/flezha/operative/lookup.ex` |
 | Hub spec, hooks, `alter_child_data`, `declared_operatives/1`, `drain_hub/2` | `lib/flezha/service/hub_manager.ex` |
 | Runner selection, start/stop authority | `lib/flezha/service/operative_manager.ex` |
 | Registry transforms shipped with `propagate: true` | `lib/flezha/service/registry_update.ex` |

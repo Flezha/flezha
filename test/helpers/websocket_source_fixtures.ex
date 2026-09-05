@@ -68,7 +68,7 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
         next_req_id: 1,
         cycle: 0,
         poll: nil,
-        poll_timer: nil,
+        timers: Flezha.Process.Timer.new(),
         source_etag: nil,
         last_reconcile: nil,
         last_error: nil,

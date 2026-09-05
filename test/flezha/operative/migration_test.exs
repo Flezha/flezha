@@ -18,6 +18,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Identificator
+  alias Flezha.Process.Timer
   alias Flezha.Operative.{Builder, ClassRegistry, Overwatch}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{ProcInbox, ProcJournal, TestHelpers}
@@ -104,7 +105,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     assert suspended.suspended
     assert suspended.runner_id == nil
     assert suspended.channel == nil
-    assert suspended.wake_timer == nil, "no wake_after declared ⇒ wait for input alone"
+    refute Timer.armed?(suspended.timers, :wake), "no wake_after declared ⇒ wait for input alone"
   end
 
   test "a turn that landed while the loop was parking is never stranded" do
@@ -144,8 +145,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     {:noreply, suspended, :hibernate} =
       Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
 
-    assert is_reference(suspended.wake_timer)
-    assert Process.read_timer(suspended.wake_timer) > 40_000
+    assert Timer.armed?(suspended.timers, :wake)
+    assert Process.read_timer(elem(Map.fetch!(suspended.timers, :wake), 0)) > 40_000
   end
 
   test "input for a suspended instance is journaled and rehydrates it" do
@@ -188,7 +189,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     {:noreply, rehydrating} = Overwatch.handle_info(:wake_deadline, suspended)
 
     assert rehydrating.migrate_task != nil
-    assert rehydrating.wake_timer == nil
+    refute Timer.armed?(rehydrating.timers, :wake)
 
     assert [%{offset: 1, message: "", metadata: %{"flz.wake" => "timer"}}] =
              ProcInbox.undelivered(inst),
@@ -250,7 +251,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     assert booted.suspended, "the boot never binds a suspended instance to a runner"
     assert booted.runner_id == nil
-    assert is_reference(booted.wake_timer), "the journaled wake deadline is re-armed"
+    assert Timer.armed?(booted.timers, :wake), "the journaled wake deadline is re-armed"
 
     # Undelivered input outranks the park: an instance with work waiting binds
     # instead of coming back suspended.

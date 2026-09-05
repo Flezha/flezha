@@ -9,7 +9,7 @@ defmodule Flezha.Service.Cli.State do
   """
 
   alias Flezha.Config
-  alias Flezha.Operative.ClassRegistry
+  alias Flezha.Operative.Lookup
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Operative.Replay
   alias Flezha.Partition
@@ -447,9 +447,9 @@ defmodule Flezha.Service.Cli.State do
   end
 
   defp resolve_replay_overwatch(operative_class) do
-    case ClassRegistry.overwatch_pid(operative_class) do
+    case Lookup.overwatch(operative_class) do
       {:ok, pid} -> {:ok, pid}
-      :error -> {:error, {:not_running, operative_class}}
+      {:error, _reason} -> {:error, {:not_running, operative_class}}
     end
   end
 

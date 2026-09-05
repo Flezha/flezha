@@ -126,6 +126,10 @@ flz_core/src/flusher.rs:Bounded — a gated Entity
 *:SafeCall\.bounded
 *:bounded\(target\(\)
 *:def bounded\(server
+# The drill that exercises `SafeCall.bounded/4` against wedged, killed and
+# absent callees: a TIME-LIMITED call, the same sense as the seam it drives.
+*:BoundedCallDrillTest
+*:bounded_call_drill
 *:(?<![A-Za-z0-9_])(?:un)?bounded_put
 docs/dev_notes/wire-frame-limits.md:slice-bounded
 flz_transport/src/service/payloader.rs:length_bounded_by_enclosing_payload

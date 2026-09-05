@@ -22,6 +22,7 @@ defmodule Flezha.Diagnostics.MemoryReporter do
   alias Flezha.Config
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:report]
 
   require Logger
 
@@ -115,16 +116,16 @@ defmodule Flezha.Diagnostics.MemoryReporter do
 
   @impl true
   def init(%{interval_ms: interval_ms}) do
-    Process.send_after(self(), :report, interval_ms)
-    {:ok, %{interval_ms: interval_ms}}
+    {:ok, arm_report(%{interval_ms: interval_ms})}
   end
 
   @impl true
-  def handle_info(:report, %{interval_ms: interval_ms} = state) do
+  def handle_info(:report, state) do
     emit_reading()
-    Process.send_after(self(), :report, interval_ms)
-    {:noreply, state}
+    {:noreply, arm_report(state)}
   end
+
+  defp arm_report(state), do: arm_timer(state, :report, state.interval_ms, :report)
 
   ## ----- internals ----------------------------------------------------------
 

@@ -24,6 +24,7 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
+  alias Flezha.Process.Timer
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.Runner.StreamPool
@@ -446,25 +447,20 @@ defmodule Flezha.Operative.Lifecycle do
   # ---------------------------------------------------------------
 
   # The durable timer: a `parked` record's wake deadline, re-armed from the
-  # journal on every boot, so it survives a controller redeploy.
-  def arm_wake_timer(nil), do: nil
+  # journal on every boot, so it survives a controller redeploy. Armed here on
+  # the Overwatch's behalf, under the `:wake` key that module declares.
+  @spec arm_wake_timer(Overwatch.t(), non_neg_integer() | nil) :: Overwatch.t()
+  def arm_wake_timer(%Overwatch{} = state, nil), do: state
 
-  def arm_wake_timer(deadline_ms) do
-    Process.send_after(
-      self(),
-      :wake_deadline,
-      max(deadline_ms - System.system_time(:millisecond), 0)
-    )
+  def arm_wake_timer(%Overwatch{} = state, deadline_ms) do
+    delay = max(deadline_ms - System.system_time(:millisecond), 0)
+    %Overwatch{state | timers: Timer.arm(state.timers, :wake, delay, :wake_deadline)}
   end
 
   # Cancel the journaled wake timer, if one is armed.
   @spec cancel_wake_timer(Overwatch.t()) :: Overwatch.t()
-  def cancel_wake_timer(%Overwatch{wake_timer: nil} = state), do: state
-
-  def cancel_wake_timer(%Overwatch{wake_timer: ref} = state) do
-    _ = Process.cancel_timer(ref)
-    %Overwatch{state | wake_timer: nil}
-  end
+  def cancel_wake_timer(%Overwatch{} = state),
+    do: %Overwatch{state | timers: Timer.cancel(state.timers, :wake)}
 
   defp start_operative_sdk(runner_id, operative) do
     Overwatch.with_proc_span(:start_operative, operative.id, fn ->

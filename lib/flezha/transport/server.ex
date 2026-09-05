@@ -30,8 +30,10 @@ defmodule Flezha.Transport.Server do
   alias Flezha.Config
   alias Flezha.Identificator
   alias Flezha.Payloader
+  alias Flezha.Process.Watch
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamPool
+  alias Flezha.SafeCall
   alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Local
@@ -172,11 +174,7 @@ defmodule Flezha.Transport.Server do
   def get_stats(transport) when transport in [:uds, :quic, :native] do
     case Process.whereis(name(transport)) do
       pid when is_pid(pid) ->
-        try do
-          GenServer.call(pid, :get_stats, 1_000)
-        catch
-          :exit, _ -> {:error, :not_running}
-        end
+        SafeCall.bounded(pid, :get_stats, 1_000, on_error: {:error, :not_running})
 
       _ ->
         {:error, :not_running}
@@ -323,7 +321,7 @@ defmodule Flezha.Transport.Server do
            # back to its conn id so the binding is dropped when the session ends,
            # keeping the map bounded to live connections.
            quic_conn_runners: %{},
-           quic_conn_monitors: %{}
+           quic_conn_monitors: Watch.new()
          }}
 
       {:error, reason} ->
@@ -441,13 +439,13 @@ defmodule Flezha.Transport.Server do
   # routing binding so the map stays bounded to live connections.
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case Map.pop(Map.get(state, :quic_conn_monitors, %{}), ref) do
-      {nil, _monitors} ->
+    case Watch.down(Map.get(state, :quic_conn_monitors) || Watch.new(), ref) do
+      {:unknown, _monitors} ->
         {:noreply, state}
 
-      {conn_id, monitors} ->
+      {conn_ids, monitors} ->
         state = %{state | quic_conn_monitors: monitors}
-        {:noreply, update_in(state, [:quic_conn_runners], &Map.delete(&1, conn_id))}
+        {:noreply, update_in(state, [:quic_conn_runners], &Map.drop(&1, conn_ids))}
     end
   end
 
@@ -531,8 +529,7 @@ defmodule Flezha.Transport.Server do
 
     case GenServer.whereis(Identificator.control_channel(runner_id)) do
       pid when is_pid(pid) ->
-        ref = Process.monitor(pid)
-        put_in(state, [:quic_conn_monitors, ref], conn_id)
+        update_in(state, [:quic_conn_monitors], &Watch.watch(&1, pid, conn_id))
 
       _ ->
         state

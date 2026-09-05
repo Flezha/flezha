@@ -18,6 +18,8 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   require Logger
 
   alias Flezha.Config.Durations
+  alias Flezha.Process.Cspec
+  alias Flezha.SafeCall
 
   @type host :: {binary(), pos_integer()}
   @type identity :: %{
@@ -37,13 +39,11 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   end
 
   def child_spec(opts) do
-    %{
-      id: Keyword.get(opts, :name, __MODULE__),
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent,
-      shutdown: 5_000
-    }
+    Cspec.build(
+      Keyword.get(opts, :name, __MODULE__),
+      {__MODULE__, :start_link, [opts]},
+      :worker_permanent
+    )
   end
 
   @spec acquire(identity(), GenServer.server()) :: {:ok, pid(), ref()} | {:error, term()}
@@ -53,7 +53,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
   @spec release(ref(), GenServer.server()) :: :ok
   def release(ref, server \\ __MODULE__) do
-    GenServer.call(server, {:release, ref})
+    SafeCall.bounded(server, {:release, ref}, Durations.get(:kafka_worker_call_ms), on_error: :ok)
   end
 
   @doc """
@@ -108,7 +108,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
   @doc false
   @spec inspect_state(GenServer.server()) :: map()
   def inspect_state(server \\ __MODULE__) do
-    GenServer.call(server, :inspect_state)
+    SafeCall.bounded(server, :inspect_state, Durations.get(:kafka_worker_call_ms), on_error: %{})
   end
 
   @impl true

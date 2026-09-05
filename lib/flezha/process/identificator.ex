@@ -6,14 +6,10 @@ defmodule Flezha.Identificator do
   started with the registry's own `child_spec/1`.
   """
 
+  alias Flezha.Process.Cspec
+
   def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent,
-      shutdown: 500
-    }
+    Cspec.build(__MODULE__, {__MODULE__, :start_link, [opts]}, :worker_permanent, shutdown: 500)
   end
 
   def start_link(_) do

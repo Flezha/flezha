@@ -156,9 +156,9 @@ defmodule Flezha.Operative.Migration do
       Lifecycle.cancel_wake_timer(state)
       | suspended: true,
         runner_id: nil,
-        channel: nil,
-        wake_timer: Lifecycle.arm_wake_timer(deadline)
+        channel: nil
     }
+    |> Lifecycle.arm_wake_timer(deadline)
   end
 
   # Drop the operative from its runner and release the registry's runner tag —

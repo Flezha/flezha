@@ -16,8 +16,10 @@ defmodule Flezha.Runner.ControlUnit do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
+  alias Flezha.SafeCall
 
   use GenServer
+  use Flezha.Process.Timer, keys: [:heartbeat]
 
   require Logger
 
@@ -53,14 +55,18 @@ defmodule Flezha.Runner.ControlUnit do
         {:error, :no_control_unit}
 
       _ ->
-        try do
-          GenServer.call(control_unit, {:ping_runner, timeout_ms}, timeout_ms + 500)
-        catch
-          :exit, {:timeout, _} -> {:error, :timeout}
-          :exit, reason -> {:error, {:control_unit_exit, reason}}
-        end
+        SafeCall.bounded(control_unit, {:ping_runner, timeout_ms}, timeout_ms + 500,
+          on_error: refusal()
+        )
     end
   end
+
+  # One refusal for every call into this runner's control unit: a wedged unit
+  # is a timeout the caller can retry, anything else names the exit it died of.
+  # A function rather than an attribute, because the `other` arm quotes the raw
+  # exit reason and a closure cannot be escaped into one.
+  defp refusal(),
+    do: %{timeout: {:error, :timeout}, other: &{:error, {:control_unit_exit, &1}}}
 
   defp default_ping_timeout_ms,
     do: Durations.get(:overwatch_ping_timeout_ms)
@@ -122,15 +128,13 @@ defmodule Flezha.Runner.ControlUnit do
         {:error, :no_control_unit}
 
       _pid ->
-        GenServer.call(
+        SafeCall.bounded(
           Identificator.control_unit(runner_id),
           {:send_control, command, Keyword.get(opts, :metadata, false)},
-          Keyword.get(opts, :timeout, Durations.get(:control_unit_reply_timeout_ms))
+          Keyword.get(opts, :timeout, Durations.get(:control_unit_reply_timeout_ms)),
+          on_error: refusal()
         )
     end
-  catch
-    :exit, {:timeout, _} -> {:error, :timeout}
-    :exit, reason -> {:error, {:control_unit_exit, reason}}
   end
 
   @doc """
@@ -217,16 +221,14 @@ defmodule Flezha.Runner.ControlUnit do
 
   @impl true
   def init({namespace, runner_id}) do
-    schedule_heartbeat()
-
     {
       :ok,
-      %{
+      arm_heartbeat(%{
         namespace: namespace,
         runner_id: runner_id,
         response_refs: %{},
         env: Config.get(:env)
-      }
+      })
     }
   end
 
@@ -484,7 +486,7 @@ defmodule Flezha.Runner.ControlUnit do
   # liveness/eviction is the `ControlChannel` watchdog's job, not this sweep.
   @impl true
   def handle_info(:heartbeat, state) do
-    schedule_heartbeat()
+    state = arm_heartbeat(state)
 
     now = System.monotonic_time(:millisecond)
     timeout_ms = pending_reply_timeout_ms()
@@ -526,9 +528,11 @@ defmodule Flezha.Runner.ControlUnit do
     end)
   end
 
-  defp schedule_heartbeat() do
+  # A non-positive interval turns the heartbeat off: nothing is armed and the
+  # key simply holds no timer.
+  defp arm_heartbeat(state) do
     interval = heartbeat_interval_ms()
-    if interval > 0, do: Process.send_after(self(), :heartbeat, interval)
+    if interval > 0, do: arm_timer(state, :heartbeat, interval, :heartbeat), else: state
   end
 
   defp heartbeat_interval_ms,
