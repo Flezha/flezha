@@ -149,7 +149,19 @@ LAYERS = {
 # permanent debt nobody could ever close, which is how a gate teaches people to
 # stop reading it. One entry per module, and only where the directory's rank is
 # wrong for that module.
-MODULE_LAYERS = {"Flezha.Http.Client": 0}
+#
+# The rank is read on both sides — the module a file names and the module the
+# file defines — because a feature directory holds its whole feature. A
+# service API filed with its feature takes a caller context, binds an AuthZ
+# verb and answers data; it is at service height wherever its file sits, and
+# ranking it by the directory would record its every call to AuthZ, to a
+# manager or to the state layer as debt nobody could close.
+MODULE_LAYERS = {
+    "Flezha.Http.Client": 0,
+    "Flezha.Service.Dlq": 5,
+    "Flezha.Service.Namespace": 5,
+    "Flezha.Service.Workflow": 5,
+}
 
 DEFMODULE = re.compile(r"^\s*defmodule\s+([A-Z][\w.]*)\s+do", re.M)
 # `Flezha.A.B` — dotted segments while they are capitalised, so a call's
@@ -241,11 +253,14 @@ def census():
     # is resolved to a directory rather than to its own name.
     home = {}
     bodies = {}
+    defines = {}
     for rel in files:
         with open(rel, encoding="utf-8") as fh:
             text = fh.read()
         bodies[rel] = expand_multi(strip_prose(text))
-        for name in DEFMODULE.findall(text):
+        names = DEFMODULE.findall(text)
+        defines[rel] = names[0] if names else ""
+        for name in names:
             home.setdefault(name, rel)
 
     def rank_named(ref, fallback):
@@ -274,7 +289,7 @@ def census():
         if owner is None:
             found.add(f"{rel} -> (no directory owns it)")
             continue
-        rank = LAYERS[owner]
+        rank = rank_named(defines[rel], LAYERS[owner])
         for ref in set(REF.findall(bodies[rel])):
             target = layer_named(ref)
             if target is None or target == owner:
@@ -385,6 +400,14 @@ defmodule Flezha.State.Paths do
   # One directory, two layers: the outbound client is foundation and the
   # inbound listener is the top, so only the second is a finding.
   def go, do: {Flezha.Http.Client, Flezha.Http.Listener}
+end
+""",
+        # A service API filed with its feature: the directory is layer 4, the
+        # module MODULE_LAYERS ranks 5, and the call up to a manager is
+        # therefore not a finding. Delete the entry and this line becomes one.
+        "lib/flezha/dlq/dlq.ex": """
+defmodule Flezha.Service.Dlq do
+  def go, do: Flezha.Service.Manager
 end
 """,
         "lib/flezha/state/wire.ex": "defmodule Flezha.State.Wire do\nend\n",

@@ -57,7 +57,6 @@ lib/flezha/operative/partition_group.ex -> Flezha.Plugin.SpecDecoder
 lib/flezha/operative/partition_group.ex -> Flezha.Service.HubManager
 lib/flezha/operative/partition_group.ex -> Flezha.Service.OperativeManager
 lib/flezha/operative/partition_group.ex -> Flezha.Service.PluginManager
-lib/flezha/operative/partition_group.ex -> Flezha.Service.Validator
 lib/flezha/operative/partition_group.ex -> Flezha.State.InputLog
 lib/flezha/operative/partition_group.ex -> Flezha.State.Paths
 lib/flezha/operative/partition_group.ex -> Flezha.State.WalTransfer
@@ -76,6 +75,7 @@ lib/flezha/operative/replay.ex -> Flezha.State.Restore
 lib/flezha/operative/replay.ex -> Flezha.State.Supervisor
 lib/flezha/operative/replay.ex -> Flezha.State.WalTransfer
 lib/flezha/operative/replay.ex -> Flezha.State.WalWriter
+lib/flezha/operative/validator.ex -> Flezha.Service.HubManager
 lib/flezha/plugin.ex -> (no directory owns it)
 lib/flezha/plugin/installer.ex -> Flezha.Service.PluginManager
 lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManager
@@ -116,7 +116,6 @@ lib/flezha/runner/stream_channel/records.ex -> Flezha.State.WalWriter
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Watchdog
 lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Wire
 lib/flezha/sdk.ex -> (no directory owns it)
-lib/flezha/service/controller.ex -> Flezha.Shutdown.Coordinator
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Boot.RecoveryHooks
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Coordinator
 lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Step

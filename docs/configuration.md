@@ -466,7 +466,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:observability[:ring_buffer_retention_ms]` / `[:ring_buffer_max_entries_per_source]` | `900_000` / `10_000` | `lib/flezha/observability/ring_buffer_sink.ex` |
 | `:observability[:overflow_policy]` | `:drop` | `lib/flezha/observability/registry.ex` |
 | `:observability[:cardinality_budget_per_source]` | `1_000` | `lib/flezha/observability/registry.ex` |
-| `:observability[:pubsub_sink_enabled]` | `true` (`false` in test) | `lib/flezha/observability/default_sinks.ex`, `lib/flezha/service/observability.ex` |
+| `:observability[:pubsub_sink_enabled]` | `true` (`false` in test) | `lib/flezha/observability/default_sinks.ex`, `lib/flezha/observability/service.ex` |
 | `:observability[:data_plane_liveness]` | `true` | `lib/flezha/transport/liveness_counters.ex` |
 | `:observability[:otp_backend_enabled]` | `true` (`false` in test) | `lib/flezha/observability/otp_backend/supervisor.ex` |
 | `:observability[:otp_backend][:poll_intervals]` | `beam_vm: 1_000, host: 5_000, processhub: 1_000, flezha_transport: 1_000, flezha_bounded_mailbox: 1_000` | `lib/flezha/observability/otp_backend/poller.ex` |
