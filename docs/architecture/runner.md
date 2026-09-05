@@ -345,6 +345,39 @@ to the C ABI: `TypedBuffer<S>` serializes `S::Change` on the flusher's linger th
 erased entry parsers and edge closures evaluate on the wire-reader/routing thread. Both are the
 documented in-process forms of what the byte boundary removes for FFI hosts.
 
+## Running the graph without a controller
+
+A runner does not need a controller to execute a graph. Everything a procedure
+does to a value is runner-side: the entry channel's decode and parse ladder,
+edge transforms and keying, one Entity per resolved key with its mailbox and
+overflow policy, the retry ladder, and the inter-procedure hop —
+`route_to_consumers` is a mailbox push, and nothing about it crosses the wire.
+
+**Local mode** is that fact made reachable. It builds the same `StreamInstance`
+a deployed runner builds, feeds it through the same dispatch entry a stream
+reader uses, and differs in exactly one thing: the outbound sink. A
+`FlezhaStream::Local` takes what production writes and hands it to a callback in
+process, and a null `state_sink` discards every durable record at the outbound
+edge — so the record path still runs and still costs what it costs. There is no
+second routing path and no second entity implementation; the difference is
+supplied, never branched on.
+
+What is on the controller's side of that line, and therefore absent locally:
+durability of any kind (write-ahead log, snapshots, crash-resume, point-in-time
+query), effectively-once delivery (an output rides its effect record and the
+controller releases it once that record is durable — a declaration that asks for
+the tier is refused at local startup, naming it), plugins, placement, migration
+and rescale, partitioning (a member's key-group range arrives with
+`AddOperative`, so it is not declarable and a local run is unpartitioned by
+construction), the dead-letter queue, observability export, authz and
+multi-runner scale.
+
+Local mode ships in the Rust SDK, the Java SDK and the Elixir SDK. Node, Python,
+Ruby and PHP do not carry it yet — they reach the kernel through the C ABI
+rather than the JNI glue, and their entry points are owed by
+`carry-local-mode-in-veneers`. User-facing walk-through:
+[`../quickstart.md`](../quickstart.md).
+
 ## One change, every SDK
 
 The kernel has six hosts today: the Rust SDK (the crate), the Java SDK (`flz_core_ffi` over
@@ -482,6 +515,7 @@ SDK.
 
 ## Where to go next
 
+- Running a graph with no controller → [`../quickstart.md`](../quickstart.md)
 - The poll boundary in mechanism detail → [`../sdk/poll_core.md`](../sdk/poll_core.md)
 - Authoring an operative → [`../sdk/rust_operative_architecture.md`](../sdk/rust_operative_architecture.md)
 - Proving an SDK still works → [`../sdk/conformance.md`](../sdk/conformance.md)

@@ -8,6 +8,38 @@ the binary protocol, indistinguishable from a Rust runner to the Controller. Eve
 the transport seam is shared code with identical semantics in both modes. The SDK inherits
 nothing from `flz_core` ([`../architecture/runner.md`](../architecture/runner.md#one-change-every-sdk)).
 
+## Local mode: run a graph with no controller
+
+The shortest way to see an operative work, and a third way to run one beside
+the two modes below: **no controller at all**. `Flezha.SDK.Local.start/2` takes
+the `Flezha.SDK.StreamOperative` module you deploy, compiles the topology its
+`channels/1` already declares, and hands sink output to a function:
+
+```elixir
+{:ok, run} = Flezha.SDK.Local.start(WordCount)
+:ok = Flezha.SDK.Local.on_sink(run, "counts", &IO.puts(&1.payload))
+:ok = Flezha.SDK.Local.feed(run, "lines", "the quick brown fox")
+:ok = Flezha.SDK.Local.run_until_idle(run, 5_000)
+:ok = Flezha.SDK.Local.stop(run)
+```
+
+`on_sink/3` registers against the sink's **channel** name, which is the
+producing procedure's name unless the declaration `named/2` gave it one.
+`feed/3` enters through the same `Flezha.SDK.Operative.Inbox.input/4` a frame
+off a bound data stream enters, so the channel's declared decode and admission
+run as deployed. A worked two-procedure example is in
+[`../quickstart.md`](../quickstart.md).
+
+**State is held in memory and nothing is durable** — no write-ahead log, no
+snapshots, no dead-letter queue. Every run says so on stderr and it is not
+suppressible. Durability, effectively-once delivery, plugins, placement and
+migration, the dead-letter queue, observability export, authz and multi-runner
+scale need a controller; a declaration asking for one of those is refused at
+startup, naming it. This SDK expresses local mode in its own core, as it does
+everything else. Local mode also ships in the Rust and Java SDKs; Node, Python,
+Ruby and PHP do not carry it yet. Walk-through:
+[`../quickstart.md`](../quickstart.md).
+
 ## Choosing a mode
 
 | | In-node (`:native`) | Standalone (`:uds` / `:quic`) |

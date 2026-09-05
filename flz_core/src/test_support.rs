@@ -81,7 +81,6 @@ pub(crate) mod host_class {
                  "procedures":[{procs}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
-        let topology = crate::operative::registry::get_class(id).expect("class registered");
-        StreamInstance::new(topology, Arc::from(format!("{id}_inst").as_str()))
+        StreamInstance::of_class(id, &format!("{id}_inst")).expect("class registered")
     }
 }

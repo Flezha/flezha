@@ -17,13 +17,24 @@ use std::net::Shutdown;
 use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+use std::sync::Arc;
 
 use quic::QuicBidiStream;
+
+/// Where a frame written to a [`FlezhaStream::Local`] goes: the in-process
+/// owner of the run parses it and delivers it, instead of a socket carrying
+/// it to a controller. Installed only by the local driver; the dialling path
+/// never builds one.
+pub type LocalFrameSink = Arc<dyn Fn(&[u8]) -> io::Result<()> + Send + Sync>;
 
 pub enum FlezhaStream {
     #[cfg(unix)]
     Unix(UnixStream),
     Quic(QuicBidiStream),
+    /// A run with no controller: writes are handed to the owner in process
+    /// and reads are at end of stream, so every writer on this seam keeps the
+    /// one code path it has.
+    Local(LocalFrameSink),
 }
 
 impl FlezhaStream {
@@ -32,6 +43,7 @@ impl FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => Ok(FlezhaStream::Unix(stream.try_clone()?)),
             FlezhaStream::Quic(stream) => Ok(FlezhaStream::Quic(stream.clone_handle())),
+            FlezhaStream::Local(sink) => Ok(FlezhaStream::Local(Arc::clone(sink))),
         }
     }
 
@@ -43,6 +55,7 @@ impl FlezhaStream {
                 let _ = nonblocking;
                 Ok(()) // QUIC manages this internally
             }
+            FlezhaStream::Local(_) => Ok(()),
         }
     }
 
@@ -54,6 +67,7 @@ impl FlezhaStream {
             // there (a no-op here would silently skip control-channel liveness
             // when FLEZHA_TRANSPORT=quic).
             FlezhaStream::Quic(stream) => stream.set_read_timeout(timeout),
+            FlezhaStream::Local(_) => Ok(()),
         }
     }
 
@@ -65,6 +79,7 @@ impl FlezhaStream {
                 let _ = how;
                 Ok(()) // QUIC streams are closed when dropped
             }
+            FlezhaStream::Local(_) => Ok(()),
         }
     }
 
@@ -72,7 +87,7 @@ impl FlezhaStream {
     pub fn as_raw_fd(&self) -> Option<i32> {
         match self {
             FlezhaStream::Unix(stream) => Some(stream.as_raw_fd()),
-            FlezhaStream::Quic(_) => None,
+            FlezhaStream::Quic(_) | FlezhaStream::Local(_) => None,
         }
     }
 }
@@ -83,6 +98,7 @@ impl Read for FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.read(buf),
             FlezhaStream::Quic(stream) => stream.read(buf),
+            FlezhaStream::Local(_) => Ok(0),
         }
     }
 }
@@ -93,6 +109,7 @@ impl Write for FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.write(buf),
             FlezhaStream::Quic(stream) => stream.write(buf),
+            FlezhaStream::Local(sink) => sink(buf).map(|()| buf.len()),
         }
     }
 
@@ -101,6 +118,7 @@ impl Write for FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => stream.flush(),
             FlezhaStream::Quic(stream) => stream.flush(),
+            FlezhaStream::Local(_) => Ok(()),
         }
     }
 }
@@ -112,6 +130,7 @@ impl Read for &FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => (&*stream).read(buf),
             FlezhaStream::Quic(stream) => (&*stream).read(buf),
+            FlezhaStream::Local(_) => Ok(0),
         }
     }
 }
@@ -122,6 +141,7 @@ impl Write for &FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => (&*stream).write(buf),
             FlezhaStream::Quic(stream) => (&*stream).write(buf),
+            FlezhaStream::Local(sink) => sink(buf).map(|()| buf.len()),
         }
     }
 
@@ -130,6 +150,7 @@ impl Write for &FlezhaStream {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => (&*stream).flush(),
             FlezhaStream::Quic(stream) => (&*stream).flush(),
+            FlezhaStream::Local(_) => Ok(()),
         }
     }
 }

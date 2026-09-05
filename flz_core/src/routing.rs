@@ -293,15 +293,7 @@ fn deliver_static(
 /// the frame thread after every slice frame, so no Entity is still receiving
 /// members when its slice closes.
 pub fn end_replay_slice(instance: &StreamInstance) {
-    let statics = instance.entities.iter().flatten().cloned();
-    let dynamics = instance.dynamic_registries.iter().flatten().flat_map(|r| {
-        r.entities
-            .iter()
-            .map(|e| Arc::clone(e.value()))
-            .collect::<Vec<_>>()
-    });
-
-    for slot in statics.chain(dynamics) {
+    for slot in instance.all_slots() {
         slot.replay_open.store(false, Ordering::Release);
         // The drain may already have run dry and exited with the slice still
         // buffered — it had no way to know more was coming. Wake it so it can

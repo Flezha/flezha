@@ -216,6 +216,55 @@ pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
     })
 }
 
+/// Start the declared class as a local run: no controller, no socket. The
+/// host keeps its own poll loop, which is what runs the procedures.
+pub fn local_start(ctx: CtxPtr, factory_id: &CStr, operative_id: &CStr) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_local_start(ctx.get(), factory_id.as_ptr(), operative_id.as_ptr())
+    })
+}
+
+/// Queue the sink named `channel` for [`local_next_output`].
+pub fn local_on_sink(ctx: CtxPtr, channel: &CStr) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_local_on_sink(ctx.get(), channel.as_ptr())
+    })
+}
+
+/// Feed one value's wire bytes to a declared entry channel.
+pub fn local_feed(ctx: CtxPtr, channel: &CStr, payload: &[u8]) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_local_feed(ctx.get(), channel.as_ptr(), payload.as_ptr(), payload.len())
+    })
+}
+
+/// The next released sink output as encoded bytes, or `None` when none
+/// arrived within `timeout_ms`.
+pub fn local_next_output(ctx: CtxPtr, timeout_ms: u64) -> Result<Option<Vec<u8>>, Refusal> {
+    let (status, copied) = with_buffer(
+        FLZ_POLL_ACTIVATION,
+        |buf, len| unsafe { crate::flz_core_local_next_output(ctx.get(), timeout_ms, buf, len) },
+        <[u8]>::to_vec,
+    );
+    match (status, copied) {
+        (FLZ_POLL_ACTIVATION, Some(bytes)) => Ok(Some(bytes)),
+        (FLZ_POLL_TIMEOUT, _) => Ok(None),
+        _ => Err(core(ctx)),
+    }
+}
+
+/// Block until the graph is idle; a timeout is a refusal.
+pub fn local_run_until_idle(ctx: CtxPtr, timeout_ms: u64) -> Result<(), Refusal> {
+    verdict(ctx, unsafe {
+        crate::flz_core_local_run_until_idle(ctx.get(), timeout_ms)
+    })
+}
+
+/// End the local run; a context with none is a no-op.
+pub fn local_stop(ctx: CtxPtr) {
+    unsafe { crate::flz_core_local_stop(ctx.get()) };
+}
+
 pub fn workflow_emit(ctx: CtxPtr, instance: &CStr, payload: &[u8]) -> Result<(), Refusal> {
     let status = unsafe {
         crate::flz_core_workflow_emit(

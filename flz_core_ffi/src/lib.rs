@@ -30,6 +30,7 @@
 mod error;
 #[cfg(feature = "jni")]
 mod jni_glue;
+mod local;
 // `napi-derive` emits the module-registration constructor only outside
 // `cfg(test)`, so under the test harness every exported entry point looks
 // unreferenced. The allow is scoped to that build, and to these two modules,
@@ -57,6 +58,9 @@ use flz_core::entry_input::{Episode, IdleWatch};
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::schema;
+/// The local-mode entry points, exported from the crate root like every other
+/// C symbol: the module is a source-file split, not an ABI boundary.
+pub use local::*;
 
 /// Poll produced an activation; the out buffer holds its encoded bytes.
 pub const FLZ_POLL_ACTIVATION: i32 = 1;
@@ -94,6 +98,24 @@ pub struct FlzContext {
     last_error: Mutex<Option<CString>>,
     started: AtomicBool,
     declared: Arc<RwLock<Vec<String>>>,
+    /// The local run this context drives and the channel its sinks release
+    /// onto, when it has one. A started context dials a controller and never
+    /// holds one; the two are alternatives.
+    local: Mutex<Option<LocalSession>>,
+    /// The host's end of that channel, held apart from the run so a thread
+    /// parked in [`flz_core_local_next_output`] holds nothing `feed` needs.
+    local_outputs: Mutex<Option<std::sync::mpsc::Receiver<Vec<u8>>>>,
+}
+
+/// Where a registered sink's releases go: the host takes them back through
+/// [`flz_core_local_next_output`].
+type LocalReleases = std::sync::mpsc::Sender<Vec<u8>>;
+
+/// What a local run is, from the ABI's side: the run itself, and the sender
+/// its registered sinks release onto.
+struct LocalSession {
+    run: Arc<flz_core::local::LocalRun>,
+    releases: std::sync::mpsc::Sender<Vec<u8>>,
 }
 
 thread_local! {
@@ -136,6 +158,18 @@ impl FlzContext {
             .remove(&token)
             .map(|(_, act)| act)
             .ok_or_else(|| self.fail(Error::UnknownToken(token)))
+    }
+
+    /// This context's local run and its release channel, cloned out of the
+    /// lock so a call that blocks holds nothing. `Err` is the refusal a
+    /// local-mode call gets on a context that has none.
+    fn local_session(&self) -> Result<(Arc<flz_core::local::LocalRun>, LocalReleases), Error> {
+        self.local
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|session| (Arc::clone(&session.run), session.releases.clone()))
+            .ok_or(Error::NoLocalRun)
     }
 
     /// Spawn-or-deliver a workflow instance and wait for the controller's
@@ -204,6 +238,8 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
         last_error: Mutex::new(None),
         started: AtomicBool::new(false),
         declared: Arc::new(RwLock::new(Vec::new())),
+        local: Mutex::new(None),
+        local_outputs: Mutex::new(None),
     }))
 }
 

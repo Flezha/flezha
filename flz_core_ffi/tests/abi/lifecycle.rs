@@ -43,6 +43,8 @@ fn c_abi_full_scenario() {
     let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
     assert!(!ctx.is_null(), "matching schema creates a context");
 
+    a_local_mode_call_on_a_context_with_no_local_run_is_refused(ctx);
+
     let controller = Controller::start(&socket_dir());
     declares_and_starts(ctx, &controller);
 
@@ -65,6 +67,31 @@ fn c_abi_full_scenario() {
     crate::shutdown::shutdown_ships_state_then_wakes_the_poller(ctx, &controller);
 
     unsafe { flz_core_context_free(ctx) };
+}
+
+/// Local mode is an alternative to `flz_core_start`, not an addition to it:
+/// a context that holds no local run refuses every local-mode call rather
+/// than answering as if it did. Run before the controller connect, because
+/// after it this context is a started runner and can never hold one.
+fn a_local_mode_call_on_a_context_with_no_local_run_is_refused(ctx: *mut FlzContext) {
+    let channel = CString::new("lines").expect("a channel name");
+    let status = unsafe { flz_core_local_feed(ctx, channel.as_ptr(), b"x".as_ptr(), 1) };
+    assert_eq!(status, FLZ_ERR, "a feed with no local run must refuse");
+    assert!(
+        last_error(ctx).contains("no local run"),
+        "the refusal says what is missing: {}",
+        last_error(ctx)
+    );
+    assert_eq!(
+        unsafe { flz_core_local_run_until_idle(ctx, 1) },
+        FLZ_ERR,
+        "so must an idle wait"
+    );
+    assert_eq!(
+        unsafe { flz_core_local_stop(ctx) },
+        FLZ_OK,
+        "stopping a run that never started is a no-op, so a host's close path needs no test of its own"
+    );
 }
 
 /// A shim built against an incompatible schema is refused at creation, with

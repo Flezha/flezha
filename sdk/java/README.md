@@ -16,7 +16,36 @@ durability tier, and delivery guarantee available there is available here.
 **New here? Read [`flezha-sdk-examples/`](flezha-sdk-examples/README.md).** Seven
 worked, compiled examples from "hello world" to a durable suspended agent.
 
-## Quickstart
+## Local mode: run a graph with no controller
+
+The shortest way to see an operative work. `LocalOperative.start(..)` takes the
+class you would deploy, runs its declared `channels()` graph in this JVM, and
+hands sink output to a callback — no controller, no socket, no container:
+
+```java
+try (LocalOperative run = LocalOperative.start(WordCount.class)) {
+    run.onSink("totals", out -> System.out.println(new String(out.payload(), UTF_8)));
+    run.feed("lines", "the quick brown fox");
+    run.runUntilIdle(Duration.ofSeconds(5));
+}
+```
+
+`onSink` registers against the sink's **channel** name, which is the producing
+procedure's name unless the declaration `named` it. `feed` takes the wire bytes
+the channel's declared decoder parses, and blocks while the consumer's mailbox
+is full. Worked example:
+[`E13_LocalMode`](flezha-sdk-examples/src/main/java/com/flezha/examples/E13_LocalMode.java).
+
+**State is held in memory and nothing is durable** — no write-ahead log, no
+snapshots, no dead-letter queue. Every run says so on stderr and it is not
+suppressible. Durability, effectively-once delivery, plugins, placement and
+migration, the dead-letter queue, observability export, authz and multi-runner
+scale need a controller; a declaration asking for one of those is refused at
+startup, naming it. Local mode also ships in the Rust and Elixir SDKs; Node,
+Python, Ruby and PHP do not carry it yet. Walk-through:
+`docs/quickstart.md`.
+
+## Quickstart: connect to a controller
 
 Three pieces: a **Procedure** (the unit of work), an **Operative** (the topology
 wiring Procedures to Channels), and **registration** before boot.

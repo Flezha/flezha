@@ -1,14 +1,47 @@
 # Flezha
 
-## Description
-Distributed stateful operatives. Provides static and dynamic creation of operatives.
+Distributed stateful operatives: a compute graph of procedures, each with its
+own durable per-Entity state, placed and migrated across a cluster by a
+controller, with static and dynamic creation of operatives.
 
-**Start here:** [`docs/architecture/`](docs/architecture/README.md) — the durable-compute
+## Try it without any of that
+
+You do not need a controller, a container or a socket to see one run. **Local
+mode** takes the operative class you would deploy, runs its declared graph in
+your own process, and hands you the output:
+
+```rust
+let run = LocalOperative::start::<WordCount>()?;
+run.on_sink("totals", |out| println!("{}", String::from_utf8_lossy(&out.payload)))?;
+run.feed("lines", "the quick brown fox")?;
+run.run_until_idle(Duration::from_secs(5))?;
+```
+
+```bash
+cargo run -p flezha_runner --example local_word_count
+```
+
+**Local mode holds state in memory and nothing is durable** — no write-ahead
+log, no snapshots, no dead-letter queue, and nothing survives the process. It
+runs the deployed machinery (entry decode, edge transforms and keying, one
+Entity per key with its own mailbox, the retry ladder, inter-procedure
+delivery); durability, plugins, placement and migration, the dead-letter queue,
+observability export, authz and multi-runner scale need a controller. It ships
+in the Rust, Java and Elixir SDKs; Node, Python, Ruby and PHP do not carry it
+yet.
+
+**[`docs/quickstart.md`](docs/quickstart.md)** walks through it in five
+minutes.
+
+## Reading further
+
+[`docs/architecture/`](docs/architecture/README.md) — the durable-compute
 kernel, the two operative profiles, and the diagrams. Vocabulary:
 [`docs/glossary.md`](docs/glossary.md). Every knob, by layer:
 [`docs/configuration.md`](docs/configuration.md).
 
 ## Features
+- Run a whole graph in process, with no controller ([`docs/quickstart.md`](docs/quickstart.md))
 - Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
 - Per-Entity durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))

@@ -60,32 +60,7 @@ public final class FlezhaImpl implements RunnerHandle {
         this.declared = declared;
         this.onTerminated = onTerminated;
         this.pollHost = new PollHost(
-                new PollHost.CoreCalls() {
-                    @Override
-                    @Nullable
-                    public byte[] poll(long timeoutMs) {
-                        return FlzCore.poll(core, timeoutMs);
-                    }
-
-                    @Override
-                    public void complete(@Nonnull byte[] result) {
-                        FlzCore.complete(core, result);
-                    }
-
-                    @Override
-                    public int waitStarvation(long timeoutMs) {
-                        return FlzCore.waitStarvation(core, timeoutMs);
-                    }
-
-                    @Override
-                    public void abandon(long token) {
-                        FlzCore.abandon(core, token);
-                    }
-                },
-                dispatcher::dispatch,
-                fetchers,
-                fetcherMax,
-                terminationLatch::countDown);
+                PollHost.of(core), dispatcher::dispatch, fetchers, fetcherMax, terminationLatch::countDown);
     }
 
     /**

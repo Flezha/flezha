@@ -258,6 +258,13 @@ pub fn decode_activation(bytes: &[u8]) -> Result<Activation, postcard::Error> {
     postcard::from_bytes(bytes)
 }
 
+/// One [`Output`] on its own — what local mode hands a host for a value its
+/// graph released on a sink, in the shape the host already decodes off a
+/// completion.
+pub fn encode_output(o: &Output) -> Vec<u8> {
+    postcard::to_stdvec(o).expect("output encoding is infallible")
+}
+
 pub fn encode_result(r: &ActivationResult) -> Vec<u8> {
     postcard::to_stdvec(r).expect("activation-result encoding is infallible")
 }

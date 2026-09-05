@@ -82,6 +82,14 @@ impl<Payload: Send + 'static> Mailbox<Payload> {
             .is_ok()
     }
 
+    /// Whether a drainer holds this mailbox's round — queued for a poller or
+    /// already inside one. With an empty queue, `false` is the whole of "this
+    /// Entity has nothing left to do".
+    #[inline]
+    pub fn is_inflight(&self) -> bool {
+        self.inflight.load(Ordering::Acquire)
+    }
+
     /// Clear inflight; the caller re-checks the queue afterwards.
     #[inline]
     pub fn release_inflight(&self) {

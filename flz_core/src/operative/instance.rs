@@ -160,6 +160,30 @@ impl StreamInstance {
         })
     }
 
+    /// A live instance of the class already registered under `factory_id` —
+    /// the one constructor a local run and this crate's own class fixtures
+    /// share, so neither can drift from how a registered class is built.
+    pub fn of_class(factory_id: &str, instance_id: &str) -> Result<Arc<Self>, crate::error::Error> {
+        let topology = crate::operative::registry::get_class(factory_id).ok_or_else(|| {
+            crate::error::Error::Declaration(format!(
+                "no operative class is registered as `{factory_id}`"
+            ))
+        })?;
+        Ok(Self::new(topology, Arc::from(instance_id)))
+    }
+
+    /// Every Entity this instance holds right now, static and dynamic alike.
+    pub fn all_slots(&self) -> Vec<Arc<EntitySlot>> {
+        let statics = self.entities.iter().flatten().cloned();
+        let dynamics = self.dynamic_registries.iter().flatten().flat_map(|r| {
+            r.entities
+                .iter()
+                .map(|e| Arc::clone(e.value()))
+                .collect::<Vec<_>>()
+        });
+        statics.chain(dynamics).collect()
+    }
+
     pub fn persistence_enabled(&self) -> bool {
         self.persistence_enabled
     }

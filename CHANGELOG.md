@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Added — run a declared operative graph in your own process, with no controller
+
+`LocalOperative` (Rust, Java) and `Flezha.SDK.Local` (Elixir) take the operative
+class you would deploy, run the `channels()` graph it already declares in the
+host process, and hand each value released on a sink to a callback. There is no
+local-mode member on the class and no second declaration: the same type
+registers against a controller unchanged. Input is fed by the caller on a
+declared entry channel and enters where a frame off the wire enters, so the
+channel's decode, the parse ladder and admission all run; feeding blocks while
+the consumer's mailbox is full, exactly as the deployed entry path does.
+
+What runs is the deployed machinery: edge transforms and keying, one Entity per
+resolved key with its own mailbox and overflow policy, the retry ladder, and
+inter-procedure delivery performed by the runtime through the same routing seam
+live delivery and replay travel. Local mode installs a different outbound sink
+rather than branching anything: a new `FlezhaStream::Local` variant takes what
+production writes and delivers it in process, and a null durable sink discards
+every record at the outbound edge, so the change log, the fold and the effect
+path still run.
+
+**Local mode holds state in memory and nothing is durable.** Every run says so
+on stderr before it does any work, from the runtime core rather than from each
+host SDK, and it is not suppressible by ordinary configuration. Durability,
+effectively-once delivery, plugins, placement and migration, the dead-letter
+queue, observability export, authz and multi-runner scale need a controller; a
+declaration asking for one of those is refused at startup, naming the
+capability. A value released on a sink with no registered callback is reported
+by name rather than discarded, and an idle wait that reaches its budget is an
+error rather than a silent success.
+
+New: `docs/quickstart.md`, `sdk/rust/examples/local_word_count.rs`, Java example
+`E13_LocalMode`, and `scripts/check-local-mode-naming.sh`, which fails a
+local-mode symbol or documentation page named as testing material. Node,
+Python, Ruby and PHP do not carry local mode yet.
+
 ### Changed — one health verdict per subject, read by every surface
 
 The controller now judges "is this healthy" once per tick and publishes one

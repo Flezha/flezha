@@ -46,6 +46,38 @@ public final class FlzCore {
     public static native void start(long ctx, String namespace);
 
     /**
+     * Start the declared class as a local run: no controller, no socket. The
+     * alternative to {@link #start}, not an addition to it — the host still
+     * drives {@link #poll} / {@link #complete}, which is what runs the
+     * procedures. Throws, naming the capability, when the declaration needs a
+     * controller.
+     */
+    public static native void localStart(long ctx, String factoryId, String operativeId);
+
+    /** Queue the sink named {@code channel} for {@link #localNextOutput}. */
+    public static native void localOnSink(long ctx, String channel);
+
+    /**
+     * Feed one value's wire bytes to a declared entry channel — the same
+     * bytes a controller would forward. Blocks while the consumer's mailbox
+     * is full.
+     */
+    public static native void localFeed(long ctx, String channel, byte[] payload);
+
+    /**
+     * Block up to {@code timeoutMs} for the next value the graph released on
+     * a queued sink. {@code null} = timeout; otherwise the postcard-encoded
+     * Output bytes.
+     */
+    public static native byte[] localNextOutput(long ctx, long timeoutMs);
+
+    /** Block until the graph is idle; throws when {@code timeoutMs} elapses first. */
+    public static native void localRunUntilIdle(long ctx, long timeoutMs);
+
+    /** End the local run. A context with none is a no-op. */
+    public static native void localStop(long ctx);
+
+    /**
      * Block up to {@code timeoutMs} for one activation. {@code null} = timeout;
      * a zero-length array = shutting down (an encoded activation is never
      * empty); otherwise the postcard-encoded Activation bytes.

@@ -53,6 +53,36 @@ final class PollHost implements AutoCloseable {
      * the supervisor are testable without the native library — the production
      * implementation is a set of {@code FlzCore} calls on one context.
      */
+    /**
+     * The production {@link CoreCalls}: the four native calls over one core
+     * handle. One definition, because a deployed runner and a local run drive
+     * the same seam and a second copy would be free to drift from it.
+     */
+    static CoreCalls of(long core) {
+        return new CoreCalls() {
+            @Override
+            @Nullable
+            public byte[] poll(long timeoutMs) {
+                return FlzCore.poll(core, timeoutMs);
+            }
+
+            @Override
+            public void complete(@Nonnull byte[] result) {
+                FlzCore.complete(core, result);
+            }
+
+            @Override
+            public int waitStarvation(long timeoutMs) {
+                return FlzCore.waitStarvation(core, timeoutMs);
+            }
+
+            @Override
+            public void abandon(long token) {
+                FlzCore.abandon(core, token);
+            }
+        };
+    }
+
     interface CoreCalls {
         /**
          * @return {@code null} when the poll timed out, a zero-length array
@@ -366,6 +396,18 @@ final class PollHost implements AutoCloseable {
             // wedged, so this is a log line and not an escalation.
             LOG.warn("abandoning activation {} failed: {}", token, t.toString());
         }
+    }
+
+    /**
+     * Stop fetching without the core's word. A local run ends while the
+     * process-wide poll core keeps running — there is no controller session
+     * to shut down, and shutting the core would stop every later run in the
+     * process — so the flag is raised first and the fetchers leave on their
+     * next poll timeout instead.
+     */
+    void stopFetching() {
+        closing.set(true);
+        close();
     }
 
     /**

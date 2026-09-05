@@ -37,6 +37,7 @@ pub mod error;
 pub mod flusher;
 pub mod header;
 pub mod host;
+pub mod local;
 #[doc(hidden)]
 pub mod mailbox;
 pub mod operative;

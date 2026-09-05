@@ -74,6 +74,107 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_contextNew(
     }
 }
 
+/// Start the declared class as a local run: no controller, no socket. The
+/// JVM keeps driving `poll`/`complete`, which is what runs the procedures.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localStart(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    factory_id: JString,
+    operative_id: JString,
+) {
+    let ctx = ctx_of(ctx);
+    let outcome = c_string(&mut env, "factory id", &factory_id).and_then(|factory| {
+        c_string(&mut env, "operative id", &operative_id)
+            .and_then(|operative| veneer::local_start(ctx, &factory, &operative))
+    });
+    report(&mut env, outcome);
+}
+
+/// Queue the sink named `channel` for `localNextOutput`.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localOnSink(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    channel: JString,
+) {
+    let ctx = ctx_of(ctx);
+    let outcome = c_string(&mut env, "sink channel", &channel)
+        .and_then(|channel| veneer::local_on_sink(ctx, &channel));
+    report(&mut env, outcome);
+}
+
+/// Feed one value's wire bytes to a declared entry channel.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localFeed(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    channel: JString,
+    payload: JByteArray,
+) {
+    let ctx = ctx_of(ctx);
+    let outcome = c_string(&mut env, "entry channel", &channel).and_then(|channel| {
+        bytes_of(&mut env, "entry payload", &payload)
+            .and_then(|bytes| veneer::local_feed(ctx, &channel, &bytes))
+    });
+    report(&mut env, outcome);
+}
+
+/// One encoded `Output` for a value the graph released on a sink, or null
+/// when none arrived within `timeoutMs`.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localNextOutput(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    timeout_ms: jlong,
+) -> jbyteArray {
+    let ctx = ctx_of(ctx);
+    match veneer::local_next_output(ctx, timeout_ms.max(0) as u64) {
+        Ok(Some(bytes)) => match env.byte_array_from_slice(&bytes) {
+            Ok(array) => array.into_raw(),
+            Err(e) => {
+                throw(
+                    &mut env,
+                    &Refusal::Shape(format!("sink output copy failed: {e}")),
+                );
+                std::ptr::null_mut()
+            }
+        },
+        Ok(None) => std::ptr::null_mut(),
+        Err(refusal) => {
+            throw(&mut env, &refusal);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Block until the graph is idle; a timeout throws rather than returning.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localRunUntilIdle(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    timeout_ms: jlong,
+) {
+    let ctx = ctx_of(ctx);
+    let outcome = veneer::local_run_until_idle(ctx, timeout_ms.max(0) as u64);
+    report(&mut env, outcome);
+}
+
+/// End the local run; a context with none is a no-op.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_localStop(
+    _env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+) {
+    veneer::local_stop(ctx_of(ctx));
+}
+
 /// Declare one host class from its JSON declaration. Throws the refusal.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_declareClass(

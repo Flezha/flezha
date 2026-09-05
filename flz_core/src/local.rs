@@ -1,0 +1,281 @@
+//! Running a declared operative graph in this process, with no controller.
+//!
+//! A [`LocalRun`] adds no engine. It builds the `StreamInstance` a deployed
+//! runner builds, feeds it through the [`OperativeDispatchHandle::dispatch`]
+//! a stream reader uses, and takes sink output where production frames it —
+//! a [`FlezhaStream::Local`] whose writes are parsed in process instead of
+//! reaching a socket. Entity lifecycle, key resolution, routing, mailboxes,
+//! overflow and the retry ladder are the deployed ones, untouched.
+//!
+//! What a local run has not got: durability of any kind (a null sink discards
+//! every record at the outbound edge, so the record path still runs and still
+//! costs what it costs), plugins, placement and migration, the dead-letter
+//! queue, observability export, authz and multi-runner scale. Every one of
+//! those needs a controller.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+use flz_transport::service::payloader;
+use flz_transport::transport::FlezhaStream;
+
+use crate::channel::ChannelKind;
+use crate::error::Error;
+use crate::operative::instance::StreamInstance;
+use crate::operative::registry::OperativeRegistry;
+use crate::poll_core::PollCore;
+use crate::routing::OperativeDispatchHandle;
+
+/// What every local run states before it does any work. Emitted by the core,
+/// so a host SDK cannot ship a local mode that looks durable.
+pub const NON_DURABILITY_NOTICE: &str = "[flezha] LOCAL MODE: state is held in memory and NOTHING is durable — \
+no write-ahead log, no snapshots, no dead-letter queue. Everything this run computes is gone when the process \
+exits. Durability, plugins, placement and migration, the dead-letter queue, observability export, authz and \
+multi-runner scale all need a controller.";
+
+static NOTICES_EMITTED: AtomicU64 = AtomicU64::new(0);
+static UNHANDLED_SINK_OUTPUTS: AtomicU64 = AtomicU64::new(0);
+
+/// Non-durability notices emitted in this process; one per started run.
+pub fn notices_emitted() -> u64 {
+    NOTICES_EMITTED.load(Ordering::Relaxed)
+}
+
+/// Values released on a sink no callback claimed. Each is reported as it
+/// happens; the count is what a run can assert on afterwards.
+pub fn unhandled_sink_outputs() -> u64 {
+    UNHANDLED_SINK_OUTPUTS.load(Ordering::Relaxed)
+}
+
+/// One value a graph released on a plugin-bound sink, carrying the identity
+/// and metadata a deployed run would have put on the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SinkOutput {
+    pub channel: String,
+    pub payload: Vec<u8>,
+    pub metadata: HashMap<String, String>,
+}
+
+/// What a caller registers for one declared sink name.
+pub type SinkCallback = Arc<dyn Fn(SinkOutput) + Send + Sync>;
+
+/// The registered callbacks, and the parse a written frame goes through to
+/// reach one.
+#[derive(Default)]
+struct SinkTable {
+    by_channel: RwLock<HashMap<String, SinkCallback>>,
+}
+
+impl SinkTable {
+    fn register(&self, channel: &str, callback: SinkCallback) {
+        self.by_channel
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(channel.to_string(), callback);
+    }
+
+    /// One framed plugin write, decoded exactly as the controller decodes it
+    /// and handed to the callback the sink's declared name registered.
+    fn deliver(&self, frame: &[u8]) -> std::io::Result<()> {
+        let (payload_id, payload, metadata) = payloader::extract_payload(frame)?;
+        let channel = metadata
+            .get("channel")
+            .cloned()
+            .unwrap_or_else(|| payload_id.clone());
+        let callback = self
+            .by_channel
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&channel)
+            .map(Arc::clone);
+        match callback {
+            Some(callback) => callback(SinkOutput {
+                channel,
+                payload,
+                metadata,
+            }),
+            None => {
+                UNHANDLED_SINK_OUTPUTS.fetch_add(1, Ordering::Relaxed);
+                eprintln!(
+                    "[flezha] local mode: {} bytes were released on sink `{channel}`, \
+                     which has no registered callback",
+                    payload.len()
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One operative graph running in this process.
+pub struct LocalRun {
+    instance: Arc<StreamInstance>,
+    dispatch: OperativeDispatchHandle,
+    stream: Arc<FlezhaStream>,
+    sinks: Arc<SinkTable>,
+}
+
+impl LocalRun {
+    /// Start the class already registered under `factory_id`. Refuses before
+    /// building anything when the declaration asks for something only a
+    /// controller can answer.
+    pub fn start(factory_id: &str, operative_id: &str) -> Result<Self, Error> {
+        refuse_controller_only(factory_id)?;
+        let instance = StreamInstance::of_class(factory_id, operative_id)?;
+        let sinks = Arc::new(SinkTable::default());
+        let frames = Arc::clone(&sinks);
+        let stream = Arc::new(FlezhaStream::Local(Arc::new(move |frame: &[u8]| {
+            frames.deliver(frame)
+        })));
+        // Durability is removed by supplying a different sink, never by
+        // branching: the change log, the fold and the effect path all still
+        // run, and their frames are discarded at the outbound edge.
+        crate::state_sink::install_global_sink(Arc::new(|_payload_id: &str, _frame: &[u8]| Ok(())));
+        let registry = Arc::new(OperativeRegistry::new());
+        registry.register_stream(Arc::clone(&instance));
+        NOTICES_EMITTED.fetch_add(1, Ordering::Relaxed);
+        eprintln!("{NON_DURABILITY_NOTICE}");
+        Ok(LocalRun {
+            instance,
+            dispatch: OperativeDispatchHandle { registry },
+            stream,
+            sinks,
+        })
+    }
+
+    /// Deliver every value released on the sink `channel` to `callback`, in
+    /// release order, on the thread that released it.
+    pub fn on_sink(&self, channel: &str, callback: SinkCallback) -> Result<(), Error> {
+        self.channel_of_kind(channel, ChannelKind::PluginBound)?;
+        self.sinks.register(channel, callback);
+        Ok(())
+    }
+
+    /// Feed one value to a declared entry channel, entering exactly where a
+    /// frame off a socket enters. Blocks while the consumer's mailbox is
+    /// full: the entry path's own backpressure, unmodified.
+    pub fn feed(&self, channel: &str, payload: Vec<u8>) -> Result<(), Error> {
+        self.channel_of_kind(channel, ChannelKind::Entry)?;
+        let metadata = HashMap::from([("channel".to_string(), channel.to_string())]);
+        self.dispatch.dispatch(
+            &self.instance.instance_id,
+            payload,
+            &metadata,
+            Arc::clone(&self.stream),
+        );
+        Ok(())
+    }
+
+    /// Block until every Entity has drained and nothing is in flight, or
+    /// `budget` elapses — which is reported, never passed off as done.
+    pub fn run_until_idle(&self, budget: Duration) -> Result<(), Error> {
+        let deadline = Instant::now() + budget;
+        let core = crate::poll_core::global();
+        // Two consecutive idle observations, because an Entity between its
+        // pop and its next push is momentarily idle by every counter.
+        let mut idle_seen = 0;
+        while Instant::now() < deadline {
+            idle_seen = if self.working(core) { 0 } else { idle_seen + 1 };
+            if idle_seen == 2 {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Err(Error::Routing(format!(
+            "operative `{}` was still working after {budget:?}",
+            self.instance.instance_id
+        )))
+    }
+
+    /// The live instance, for a caller that wants to read its Entities.
+    pub fn instance(&self) -> &Arc<StreamInstance> {
+        &self.instance
+    }
+
+    fn working(&self, core: &PollCore) -> bool {
+        core.outstanding_count() > 0
+            || core.pending_push_count() > 0
+            || self
+                .instance
+                .all_slots()
+                .iter()
+                .any(|slot| !slot.mailbox.is_empty() || slot.mailbox.is_inflight())
+    }
+
+    /// The declared channel of that kind; the refusal names the channel and
+    /// the operative, because a name nothing matches is otherwise a value
+    /// that vanishes.
+    fn channel_of_kind(&self, channel: &str, kind: ChannelKind) -> Result<(), Error> {
+        let topology = &self.instance.topology;
+        match topology
+            .lookup_channel_id(channel)
+            .and_then(|id| topology.channel(id))
+        {
+            Some(declared) if declared.kind == kind => Ok(()),
+            Some(declared) => Err(Error::Routing(format!(
+                "operative `{}` channel `{channel}` is {:?}, not {kind:?}",
+                self.instance.instance_id, declared.kind
+            ))),
+            None => Err(Error::Routing(format!(
+                "operative `{}` has no channel `{channel}`; it declares {kind:?} {}",
+                self.instance.instance_id,
+                self.declared_names(kind)
+            ))),
+        }
+    }
+
+    /// The declared channel names of one kind, so a refusal answers the
+    /// question it raises. A sink channel takes the producing procedure's
+    /// name unless the declaration `named` it.
+    fn declared_names(&self, kind: ChannelKind) -> String {
+        let names: Vec<&str> = self
+            .instance
+            .topology
+            .channels
+            .iter()
+            .filter(|c| c.kind == kind)
+            .map(|c| &*c.name)
+            .collect();
+        format!("{names:?}")
+    }
+}
+
+impl Drop for LocalRun {
+    fn drop(&mut self) {
+        self.instance.shutdown_background_threads();
+    }
+}
+
+/// What a declaration can ask for that only a controller answers. Each is
+/// refused by name rather than run as a graph whose work would go nowhere.
+/// Partitioning is absent from this list because it is absent from the
+/// declaration: a member's key-group range arrives with `AddOperative`, so a
+/// local run is unpartitioned by construction.
+fn refuse_controller_only(factory_id: &str) -> Result<(), Error> {
+    let workflow = crate::workflow::registry::get_class(factory_id).is_some();
+    let tier = crate::operative::registry::get_class(factory_id)
+        .is_some_and(|topology| topology.effectively_once);
+    let (capability, why) = if workflow {
+        (
+            "a workflow",
+            "a workflow's steps are driven from the controller's inbox, and its \
+          commit barriers are durable",
+        )
+    } else if tier {
+        (
+            "effectively_once",
+            "under the tier an output rides its effect record, and the \
+          controller releases it once that record is durable — local mode has no durable \
+         store to release from",
+        )
+    } else {
+        // Neither registry has it, or it asks for nothing a controller owns;
+        // `of_class` reports an unregistered class by name.
+        return Ok(());
+    };
+    Err(Error::Declaration(format!(
+        "class `{factory_id}` declares {capability}, which requires a controller: {why}"
+    )))
+}

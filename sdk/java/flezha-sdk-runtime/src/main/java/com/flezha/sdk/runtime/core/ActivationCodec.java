@@ -66,6 +66,21 @@ public final class ActivationCodec {
     }
 
     // ------------------------------------------------------------------
+    // Output on its own
+    // ------------------------------------------------------------------
+
+    /** One {@link Output} released on a sink in local mode. */
+    @Nonnull
+    public static Output decodeOutput(@Nonnull byte[] bytes) {
+        Postcard.Reader r = new Postcard.Reader(bytes);
+        Output output = decodeOutput(r);
+        if (!r.exhausted()) {
+            throw new IllegalArgumentException("postcard: trailing bytes after Output at " + r.pos());
+        }
+        return output;
+    }
+
+    // ------------------------------------------------------------------
     // Activation internals
     // ------------------------------------------------------------------
 

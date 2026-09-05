@@ -23,6 +23,9 @@ pub enum Error {
     SpawnArgsUtf8,
     #[error("context already started")]
     AlreadyStarted,
+    /// A local-mode call on a context that holds no local run.
+    #[error("no local run on this context: start one before feeding it")]
+    NoLocalRun,
     #[error("controller connect not confirmed within 10s")]
     ConnectUnconfirmed,
     #[error("no control plane: spawn request could not be routed")]
