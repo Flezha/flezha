@@ -244,6 +244,11 @@ defmodule Flezha.State.TestHelpers do
   now that restore actually rehydrates a operative from its WAL on (re)bind,
   leftover state from a prior test would leak into the next one. Call from a
   `setup` block so each test starts from empty entities.
+
+  The root comes from `Paths.state_root/0` — the one resolver the writers, the
+  bind-time restore and the operative teardown all use. Deriving it here from
+  the application env alone empties a different directory the moment a teardown
+  has deleted `:state_root` while `FLEZHA_STATE_DIR` is still set.
   """
   @spec reset_all_entities() :: :ok
   def reset_all_entities() do
@@ -253,7 +258,7 @@ defmodule Flezha.State.TestHelpers do
       DynamicSupervisor.terminate_child(sup, pid)
     end
 
-    state_root = Application.get_env(:flezha, :state_root, "app_data/state")
+    state_root = Paths.state_root()
     File.rm_rf(state_root)
     File.mkdir_p(state_root)
     :ok

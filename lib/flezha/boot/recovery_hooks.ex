@@ -27,7 +27,6 @@ defmodule Flezha.Boot.RecoveryHooks do
   require Logger
 
   alias Flezha.Identificator
-  alias Flezha.Service.HubManager
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
 
@@ -41,38 +40,32 @@ defmodule Flezha.Boot.RecoveryHooks do
   ]
 
   @doc """
-  Take `hub_id`'s recovery hooks, or refuse for that namespace.
+  Take `hub_id`'s recovery hooks.
 
-  This runs inside `FleetManager`'s own `handle_call`, so a hub that dies in the
-  window between starting and taking its hooks must be an answer here rather
-  than an exit: the node shares that process with every other namespace, and
-  its runner roster and acceptor go with it. The guarded seam every hub call in
-  this codebase goes through catches the two dialects a dying hub speaks — its
-  coordinator exits, its registry raises — and deliberately not `:throw`, which
-  the runner-connect path uses through this depth.
+  Called only from `HubManager.Lifecycle.on_hub_started/3`, which holds the
+  liveness guard: this runs inside `FleetManager`'s own `handle_call`, so a hub
+  that dies in the window between starting and taking its hooks must be an
+  answer to that caller rather than an exit — the node shares that process with
+  every other namespace, and its runner roster and acceptor go with it. The
+  guard belongs to the caller because `service` may name `boot` and `boot` may
+  not name `service`.
   """
-  @spec register(atom()) :: :ok | {:error, {:hub_unavailable, String.t()}}
+  @spec register(atom()) :: :ok
   def register(hub_id) when is_atom(hub_id) do
     case Application.get_env(:flezha, :auto_restore_enabled, true) do
       false ->
         :ok
 
       _ ->
-        namespace = Identificator.namespace_from_hub(hub_id)
-
-        HubManager.with_live_hub_id(hub_id, {:error, {:hub_unavailable, namespace}}, fn id ->
-          Enum.each(@handlers, fn {hook, handler} ->
-            ProcessHub.register_hook_handlers(id, hook.(), [
-              %HookManager{
-                id: {__MODULE__, handler, id},
-                m: __MODULE__,
-                f: handler,
-                a: [id, :_]
-              }
-            ])
-          end)
-
-          :ok
+        Enum.each(@handlers, fn {hook, handler} ->
+          ProcessHub.register_hook_handlers(hub_id, hook.(), [
+            %HookManager{
+              id: {__MODULE__, handler, hub_id},
+              m: __MODULE__,
+              f: handler,
+              a: [hub_id, :_]
+            }
+          ])
         end)
     end
   end

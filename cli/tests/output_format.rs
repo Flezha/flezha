@@ -322,7 +322,7 @@ const CASES: &[(&[&str], Want)] = &[
         Refused("--duration-ms requires a value"),
     ),
     // `flz reset` reads its root and its format through the same scanner, so
-    // its own walk no longer needs to say this twice.
+    // one case here covers both.
     (
         &["reset", "--dry-run", "--app-data-root"],
         Refused("--app-data-root requires a value"),

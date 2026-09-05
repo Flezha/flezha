@@ -171,9 +171,10 @@ A crash mid-rescale is recoverable: before step 4 nothing durable has moved, eac
 atomic per Entity, and re-running `flz operative scale` re-derives the remaining moves from
 what is on disk. **One rescale of a group runs at a time, cluster-wide** — a second command
 is refused, and the lock is released if the controller holding it dies. **Forwards into the
-group follow it**: every forwarding plugin is nudged to re-read the member set as the rescale
-finishes (a surviving member keeps its worker and queued payloads, a removed member's queue is
-re-routed to the new owner) and the command reports how many were re-pointed.
+group follow it**: a forwarding plugin whose resolved members no longer match the group reports
+itself unhealthy, and the convergence loop restarts it so it re-reads the member set (a
+surviving member keeps its worker and queued payloads, a removed member's queue is re-routed to
+the new owner). The rescale command itself reports the move, not the forwards.
 
 ## Hot keys: two-stage aggregation
 

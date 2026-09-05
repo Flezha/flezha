@@ -1,12 +1,17 @@
 defmodule Flezha.State.TestHelpersTest do
   @moduledoc """
-  `tmp_app_data_dir/0` hands back a state root nothing else owns — the
-  precondition every persistence module's `setup` rests on.
+  The two roots every persistence module's `setup` rests on:
+  `tmp_app_data_dir/0` hands back one nothing else owns, and
+  `reset_all_entities/0` empties the one the writers resolve.
   """
+
   # async: false: the planted band is a range of `flezha_state_test_<n>` names
   # that `tmp_app_data_dir/0` itself mints from, and this test removes every
   # one of them on exit. The sync phase is what keeps it off a live one.
   use ExUnit.Case, async: false
+
+  alias Flezha.State.{Paths, Restore, Supervisor, TestHelpers}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # The defect is across BEAMs — `System.unique_integer([:positive])` restarts
   # low in every run, so run N+1 re-mints run N's names — and it is reproduced
@@ -45,6 +50,49 @@ defmodule Flezha.State.TestHelpersTest do
 
     refute Map.has_key?(planted, base), "handed back a state root it did not create: #{base}"
     assert File.ls!(base) == []
+  end
+
+  # The state a test run reaches once a teardown has deleted `:state_root` from
+  # the application env while `FLEZHA_STATE_DIR` is still set. Every writer,
+  # the bind-time restore and the operative teardown resolve
+  # `Paths.state_root/0`, so a reset deriving a root of its own empties a
+  # directory nothing wrote to and the previous test's Entity rehydrates on the
+  # next bind. The identity is the one the suite really leaked on.
+  test "the reset empties the root the writers resolve, not one of its own" do
+    root = NodeTestHelper.claim_tmp_dir("flezha_reset_root")
+    # Taken for its restore closure, before the drift below removes the key.
+    restore_app = TestHelpers.override_env(:state_root, root)
+    previous_var = System.get_env("FLEZHA_STATE_DIR")
+    Application.delete_env(:flezha, :state_root)
+    System.put_env("FLEZHA_STATE_DIR", root)
+
+    on_exit(fn ->
+      if previous_var,
+        do: System.put_env("FLEZHA_STATE_DIR", previous_var),
+        else: System.delete_env("FLEZHA_STATE_DIR")
+
+      restore_app.()
+      File.rm_rf(root)
+    end)
+
+    entity_id = {"operative_2", "store_input_procedure", "_"}
+    TestHelpers.write_wal_of_lang(entity_id, 0)
+    # The second thing a rebind restores from, and it sits beside the WAL.
+    input_log = Paths.input_log_path("operative_2")
+    File.write!(input_log, "queued-input")
+    {:ok, writer} = Supervisor.find_or_start(entity_id)
+
+    assert Restore.has_persisted_state?(entity_id)
+    assert File.exists?(input_log)
+
+    TestHelpers.reset_all_entities()
+
+    refute Process.alive?(writer), "the reset returned with a writer still live"
+
+    refute Restore.has_persisted_state?(entity_id),
+           "the reset left #{Paths.wal_path(entity_id)} for the next bind to rehydrate"
+
+    refute File.exists?(input_log), "the reset left #{input_log} for the next bind to replay"
   end
 
   # Two stream draws and one claim, in a BEAM whose counter genuinely starts

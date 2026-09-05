@@ -18,7 +18,19 @@ scripts/format-check.sh        # every formatter, reuse lint, third-party notice
 scripts/check-sdk-boundary.sh  # the Elixir SDK must not reach into controller internals
 scripts/check-kind-naming.sh   # operative kinds are `stream` and `workflow`
 scripts/check-mimic-global.sh  # a test must release Mimic's global mode
+scripts/check-layer-direction.sh  # a lower directory must not name a higher one
 ```
+
+`check-layer-direction.sh` reads `lib/flezha/` against the controller's
+dependency order: a file in one directory may not name a module whose own file
+lives in a higher one, and every module should live in some directory. A
+module's layer is where its FILE sits, not what it is called, so moving a file
+into the directory that owns its feature is what closes an entry.
+`scripts/layer-direction-baseline.txt` records what the tree held when the gate
+landed — the gate fails on anything outside that list and on any entry the tree
+no longer holds, so the list may only shrink. A directory the gate's layer
+table does not rank makes it exit 2: rank the new directory in the script
+before adding code to it.
 
 `format-check.sh` reports every language it can and ends on one of three
 non-zero statuses: **1** when something is unformatted, **2** when a formatter

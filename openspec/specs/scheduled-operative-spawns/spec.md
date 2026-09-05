@@ -163,6 +163,6 @@ the decoder reads verbatim, SHALL be carried as text whatever it parses as.
 
 #### Scenario: No schedule verb exceeds the arity ceiling
 
-- **WHEN** the lint gate reads `lib/flezha/service/cli/schedule.ex`
+- **WHEN** the lint gate reads `lib/flezha/cli/schedule.ex`
 - **THEN** no function SHALL take more parameters than the ceiling the gate enforces
 

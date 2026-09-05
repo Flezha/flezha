@@ -1114,3 +1114,81 @@ exact version.
 - **WHEN** a manifest entry the reader is asked for is a range rather than an exact version
 - **THEN** the reader SHALL exit non-zero and the install step SHALL fail
 
+### Requirement: A durable-state reset in the test harness SHALL be complete when it returns
+
+A test helper that removes durable state SHALL return only when nothing it
+terminated can still write to that state and nothing can restore from what it
+removed, so that a test which calls it starts from the state it declares
+whatever the previous test left running. A reset that returns while a writer is
+still flushing, or before a teardown it depends on has finished, produces a
+failure that lands on a different test on every run, and a module that passes
+alone and fails in the suite cannot be verified by any run of the module.
+
+Such a helper SHALL wait on the exit of what it terminated, never on time.
+
+#### Scenario: An operative stopped by the previous test cannot leak into the next
+
+- **WHEN** a test stops an operative in its teardown, the next test resets durable
+  state and starts an operative under the same id
+- **THEN** the new operative's Entity SHALL hold no input the previous test sent,
+  on every run and at every seed
+
+#### Scenario: The full suite is as green as the module
+
+- **WHEN** a module whose setup resets durable state is run inside the full suite
+- **THEN** it SHALL pass at every seed it passes alone, and a failure that appears
+  only in the full run SHALL be treated as this defect rather than as load
+
+### Requirement: A module's file SHALL live in the directory that owns its feature
+
+Every module under `lib/flezha/` SHALL sit in the directory that owns the feature it
+implements, and a file SHALL remain at `lib/flezha/` only when it is the public facade
+of a directory of the same name or the OTP application callback named in `mix.exs`.
+One directory SHALL own one feature: where two jobs with different reasons to change
+share a directory, they SHALL be separated, or the layer table SHALL name their
+modules individually and the change SHALL record why the directory stays whole.
+
+#### Scenario: A new module has one place to go
+
+- **WHEN** a module implementing part of an existing feature is added
+- **THEN** it SHALL be written into that feature's directory, without a registration
+  step and without a second candidate location
+
+#### Scenario: A file at the top level is a facade
+
+- **WHEN** a file sits directly at `lib/flezha/`
+- **THEN** it SHALL be either the OTP application callback or the facade of a
+  directory of the same name, and any other top-level file SHALL be moved into the
+  directory that owns it
+
+### Requirement: Moving a module's file SHALL NOT change its name
+
+A change that relocates a module SHALL leave its `defmodule` line byte-identical,
+because an Elixir file path does not determine a module name and a rename is a
+separate decision with a separate cost. A relocation SHALL therefore produce a diff
+of renames with no content hunks, and a change that both moves and renames SHALL be
+refused and split.
+
+A module name reached over the wire, persisted in durable state, or expanded from
+`__MODULE__` into a registry key or a table name SHALL be treated as unchanged by a
+move, and the change SHALL prove it by the suite rather than by assertion.
+
+#### Scenario: A move produces a rename-only diff
+
+- **WHEN** a change relocates modules
+- **THEN** `git diff -M` SHALL show renames and no content hunk for the moved files,
+  and no `defmodule` line SHALL appear in the diff
+
+#### Scenario: A path and a module name may diverge
+
+- **GIVEN** a module whose name records the directory it used to live in
+- **WHEN** its file moves to the directory that owns its feature
+- **THEN** the divergence SHALL be accepted and recorded, and the rename SHALL be
+  left to a change that carries the migration its persistence requires
+
+#### Scenario: A move and a rename are not combined
+
+- **WHEN** a change proposes to relocate a module and rename it at once
+- **THEN** the change SHALL be split, so that the move can be proved by a rename-only
+  diff and the rename judged on its own migration cost
+

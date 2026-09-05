@@ -57,6 +57,10 @@ import pathlib
 import re
 import sys
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, "scripts")
+import naming_gate
+
 SPEC = "openspec/specs/java-sdk/spec.md"
 BASELINE = "scripts/java-spec-coverage-baseline.txt"
 TESTS = "sdk/java"
@@ -138,9 +142,7 @@ uncovered = {entry for entry, (_, scenario) in scenarios.items()
              if not any(fingerprint(scenario) in name for name in named)}
 
 try:
-    with open(BASELINE, encoding="utf-8") as fh:
-        baseline = {line.strip() for line in fh
-                    if line.strip() and not line.startswith("#")}
+    baseline = naming_gate.load_baseline(BASELINE)
 except OSError as exc:
     fail(f"cannot read {BASELINE}, so no gap can be told from the recorded debt: {exc}")
 

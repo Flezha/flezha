@@ -23,6 +23,12 @@ error the gate exists to catch.
 
 `check-sdk-boundary.sh` writes its own `check` because its violation is a
 reference outside an allowed set, not a spelling.
+
+A third kind of gate judges a whole tree against a recorded list rather than a
+line against a pattern — `check-java-spec-coverage.sh` and
+`check-layer-direction.sh`. They do not share the walk, because their finding
+is a set difference and not a line, but they share the list format and the rule
+that goes with it: `load_baseline`.
 """
 
 import os
@@ -47,6 +53,24 @@ def load_allowlist(path):
             scope, _, pattern = line.partition(":")
             rules.append((scope, re.compile(pattern)))
     return rules
+
+
+def load_baseline(path):
+    """Parse a gate's recorded-debt list into a set of entries.
+
+    A baseline is not an allowlist. An allowlist erases a legitimate sense from
+    every line for ever; a baseline records what the tree held when a gate
+    landed and MAY ONLY SHRINK — a gate that reads one fails both on an entry
+    outside it and on an entry it carries that the tree no longer holds, so a
+    list nobody prunes rots into an exemption. One entry per line, `#` comments
+    and blank lines ignored.
+    """
+    with open(path, encoding="utf-8") as fh:
+        return {
+            line.strip()
+            for line in fh
+            if line.strip() and not line.lstrip().startswith("#")
+        }
 
 
 def tracked_files(pathspec=()):

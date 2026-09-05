@@ -116,7 +116,7 @@ docs/plugins/http_poll.md:would be unbounded$
 *:(?<![A-Za-z0-9_])[Bb]ounded,
 *:\((?:un)?bounded\)
 *:visible, bounded
-lib/flezha/parallel.ex:shape, bounded —
+lib/flezha/process/parallel.ex:shape, bounded —
 flz_core/src/flusher.rs:Bounded — a gated Entity
 
 # --- identifiers in the English sense -----------------------------------

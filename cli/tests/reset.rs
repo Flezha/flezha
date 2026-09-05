@@ -438,8 +438,8 @@ fn a_resolution_refusal_keeps_the_socket_root_and_clears_the_rest() {
 
 /// A socket root that resolves but cannot be read is the same outcome as one
 /// that cannot be resolved: reported, skipped, and the remaining roots still
-/// cleared. It is no longer a resolution refusal, because the run no longer
-/// tries to establish the directory in order to find that out.
+/// cleared. It is not a resolution refusal — the run does not try to establish
+/// the directory in order to find that out.
 #[test]
 fn an_unreadable_socket_root_is_reported_and_the_rest_is_cleared() {
     let f = Fixture::populated();

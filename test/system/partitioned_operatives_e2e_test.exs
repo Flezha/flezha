@@ -285,8 +285,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
     # ETH-USD (key group 213) belongs to downstream p1 of two and to p2 of three.
     # An upstream that kept routing by the pre-rescale ranges would queue the
     # payload behind a worker whose member is gone, and it would never arrive.
-    assert {:ok, rescaled} = PartitionGroup.rescale(namespace, downstream, 3)
-    assert rescaled.forwards_refreshed >= 1
+    assert {:ok, _rescaled} = PartitionGroup.rescale(namespace, downstream, 3)
 
     moved_key = "ETH-USD"
     new_target = owner(downstream, 3, moved_key)

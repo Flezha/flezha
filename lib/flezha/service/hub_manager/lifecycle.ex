@@ -29,13 +29,24 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     # Advertise placement cluster-wide; membership dies with the hub pid,
     # so stop/crash/nodedown need no leave call.
     Directory.join_hub(pid, namespace)
-    _ = RecoveryHooks.register(hub_id)
-    # Seed the snapshot cache with the coordinator's current state. The
-    # recovery telemetry fired during recovery overwrites this entry as
-    # the lifecycle progresses; the seed only matters when a hub boots
-    # straight into `:normal` (auto-recovery off) and no telemetry event
-    # will follow.
-    _ = Snapshot.observe_recovery(hub_id, HubRecovery.recovery_state(hub_id))
+
+    # Everything below reaches into the hub, and this runs inside
+    # `FleetManager`'s own `handle_call`: a hub that dies in the window between
+    # the wait above and the last of these calls must be an answer here rather
+    # than an exit, or one namespace's teardown takes the node's runner roster
+    # and its acceptor with it. The guard is the caller's because `service` may
+    # name `boot` and `boot` may not name `service`.
+    Rows.with_live_hub_id(hub_id, :ok, fn id ->
+      RecoveryHooks.register(id)
+
+      # Seed the snapshot cache with the coordinator's current state. The
+      # recovery telemetry fired during recovery overwrites this entry as
+      # the lifecycle progresses; the seed only matters when a hub boots
+      # straight into `:normal` (auto-recovery off) and no telemetry event
+      # will follow.
+      _ = Snapshot.observe_recovery(id, HubRecovery.recovery_state(id))
+      :ok
+    end)
   end
 
   @doc """

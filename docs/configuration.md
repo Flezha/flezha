@@ -367,7 +367,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:server_cert_path` / `:server_key_path` | `"app_data/certs/server.pem"` / `"app_data/certs/server.key"` | `lib/flezha/transport/cert_generator.ex`, `lib/flezha/transport/server.ex` |
 | `:client_cert_path` / `:client_key_path` | `"app_data/certs/client.pem"` / `"app_data/certs/client.key"` | `lib/flezha/transport/cert_generator.ex` |
 | `:quic_client_ca_path` | `"app_data/certs/ca.pem"` | `lib/flezha/transport/server.ex` |
-| `:socket_files_path` | — | `lib/flezha/service/port_pilot.ex`, `lib/flezha/socket/support.ex` |
+| `:socket_files_path` | — | `lib/flezha/service/port_pilot.ex`, `lib/flezha/transport/socket/support.ex` |
 | `:external_processes` | — | `lib/flezha/service/port_pilot.ex` |
 | `:concurrent_channel_count` | `0` | `lib/flezha/config.ex` |
 | `:send_gate_hold_ms` | `5_000` | `lib/flezha/runner/stream_channel.ex` — how long a sender held on a stream's raised send gate waits for the driver to report the buffer drained. **The gate's own lost-wake fallback**, the counterpart of `FLEZHA_CREDIT_PARK_INTERVAL_MS` above: the release arrives on the crossing, and this bounds only a drain report that never came. Running out returns `{:error, :send_buffer_full}` to the caller with the frame still unsent — nothing was discarded on the way, so it is the caller's decision, not a loss |
@@ -446,7 +446,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:control_liveness_window_ms` / `:control_liveness_interval_ms` | `45_000` / `15_000` | `lib/flezha/runner/control_channel.ex` |
 | `:io_stream_liveness_interval_ms` / `:io_stream_liveness_threshold_ms` | `10_000` / `30_000` | `lib/flezha/runner/stream_channel.ex` |
 | `:graceful_shutdown_enabled` | `true` | `lib/flezha/application.ex`, `lib/flezha/shutdown/coordinator.ex`, `lib/flezha/shutdown/signal_handler.ex` |
-| `:graceful_shutdown_timeout_ms` | `60_000` | `lib/flezha/shutdown/coordinator.ex`, `lib/flezha/service/cli_manager.ex` |
+| `:graceful_shutdown_timeout_ms` | `60_000` | `lib/flezha/shutdown/coordinator.ex`, `lib/flezha/cli/cli_manager.ex` |
 | `:convergence_health_enabled` | `true` | `lib/flezha/application.ex` |
 | `:convergence_tick_ms` | `5_000` | `lib/flezha/convergence/loop.ex`, `lib/flezha/healthz/server.ex` |
 | `:convergence_output_stall_grace_ms` | `60_000` | `lib/flezha/convergence/loop.ex` |
@@ -502,7 +502,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:plugin_installer_data_dir` | unset | `lib/flezha/plugin/installer/store.ex` — overrides `plugin_root` when set |
 | `:dlq[:dir]` | `"app_data/dlq"` | `lib/flezha/dlq/store.ex` |
 | `:dlq[:retention_seconds]` / `[:max_total_bytes]` / `[:retention_check_interval_ms]` | `30 * 86_400` / `4_294_967_296` / `3_600_000` | `lib/flezha/dlq/store.ex` |
-| `:dlq[:replay_grace_ms]` | `5_000` | `lib/flezha/service/cli_manager.ex` — how long `flz dlq replay` waits for a re-park |
+| `:dlq[:replay_grace_ms]` | `5_000` | `lib/flezha/cli/cli_manager.ex` — how long `flz dlq replay` waits for a re-park |
 | `:schedules[:dir]` / `[:misfire_grace_ms]` | `"app_data/schedules"` / `120_000` | `lib/flezha/schedule/store.ex`, `lib/flezha/schedule/job.ex` |
 | `:schedules[:application_managed]` | `true` (`false` in test) | `lib/flezha/application.ex` |
 

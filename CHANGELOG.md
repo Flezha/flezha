@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+### Fixed — `flz operative rescale` prints its summary again
+
+The rescale summary line still asked the result for the count of forwarding
+plugins it had re-pointed, a field the command stopped returning when forwards
+started following a rescale through their own health verdict instead of a nudge.
+Every successful rescale therefore ended in a `KeyError` instead of the summary,
+after the work had already been done. The line now reports what the result
+carries, and a CLI test in the default suite pins it — the drill that caught this
+runs only in the nightly tier.
+
+### Changed — every module lives in the directory that owns its feature (`one-directory-per-feature`)
+
+`lib/flezha/` now says what the system is made of. The operator CLI — sixteen
+modules, the whole `flz` surface — has left `service/`, which was both the
+control-plane RPC layer and the entire command surface, and become `cli/`. Three
+shared process primitives that sat loose at the top level became `process/`, the
+compile-time constants became `config/`, and the two directories that held one
+file each (`socket/`, `diagnostics/`) folded into `transport/` and
+`observability/`. Seven more loose files moved to the directory that owns them.
+Every file that remains at the top of `lib/flezha/` is either the OTP callback
+or the public facade beside a directory of its own name.
+
+Thirty-four files changed path and not one line of code changed with them: no
+module was renamed, because module names here are durable state on disk. The
+layer gate reads where a file sits rather than what its module is called, so its
+recorded debt fell from 135 entries to 126 — seven loose modules that now have a
+home, one upward call that stopped being upward, and two calls to the outbound
+HTTP client, which the gate now ranks as the foundation it is rather than as the
+top layer its neighbour occupies.
+
+### Added — a gate that a lower directory never names a higher one (`settle-the-structure-ratchet`)
+
+The repository has had a written dependency order for its Elixir controller and
+nothing that checked it: the structure instrument counts dependency cycles,
+which say a cycle exists and never say which way an edge points.
+`scripts/check-layer-direction.sh` now fails when a file in one directory names
+a module whose own file lives in a higher one, and when a module still lives
+loose at the top of `lib/flezha/`. It reads where a file sits rather than what
+its module is called, because module names here are durable and a restructuring
+moves files without renaming anything — so the count falls when a file moves
+into the directory that owns its feature. What the tree holds today is recorded
+in `scripts/layer-direction-baseline.txt`; the gate blocks anything new and
+that list may only shrink.
+
+### Fixed — a dying hub can no longer exit the fleet manager from the post-start path (`settle-the-structure-ratchet`)
+
+Seeding a new hub's recovery snapshot reached into the hub outside every
+liveness guard. A hub torn down in that window exited `FleetManager`, which
+serves every runner on the node, taking the runner roster and the acceptor with
+it. The whole post-start body is now inside the one guarded seam.
+
+### Fixed — the test harness resets the state root the writers actually use (`settle-the-handover-race`)
+
+The full test suite was red in roughly one run in three, always somewhere in
+`FlezhaTest.Handover` and on a different test each time, while the module passed
+alone at every seed. The reset every one of its tests starts from resolved the
+state root a second time, on its own, instead of asking
+`Flezha.State.Paths.state_root/0` like the writers, the bind-time restore and
+the operative teardown do. Once any teardown had deleted the `:state_root`
+application key — the run configures it and twenty-six teardowns delete rather
+than restore it — the reset emptied a directory in the checkout while the live
+state tree sat elsewhere, so it did nothing and the module ran with no isolation
+between its tests. Whether it landed after the first such teardown was decided
+by the seed, never by load. The reset now uses the one resolver, which also
+covers the durable input log, since that lives under the same root.
+
 ### Changed — every remedy is a planner op, and every teardown one ordered walk (`route-every-remedy-through-the-planner`)
 
 Choosing what to do about a failure used to happen in nine places besides the
@@ -1357,8 +1423,9 @@ as before.
   plugin reported healthy while the worker for a removed member retried
   forever against an operative that no longer existed — until its queue
   saturated and back-pressured the **source** operative's output chain. A
-  rescale now nudges every forward that targets the group to re-read the member
-  set, and reports how many it re-pointed. Surviving members keep their workers
+  forward whose resolved members no longer match the group now reports itself
+  unhealthy, and the convergence loop restarts it so it re-reads the member
+  set. Surviving members keep their workers
   and their queued payloads; a removed member hands its queue back before its
   worker stops and each payload is re-routed to whoever owns its key now, in
   order and without loss. A restarted provider that exports no `activate/1`

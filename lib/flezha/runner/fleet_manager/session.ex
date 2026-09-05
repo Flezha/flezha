@@ -266,66 +266,85 @@ defmodule Flezha.Runner.FleetManager.Session do
     put_in(state.runner_namespaces[namespace], [runner_id], runner)
   end
 
+  @doc """
+  Admit a connecting runner, or `throw` `{:runner_connect_failed, reason}`.
+
+  Four pieces of state, in the order they must be taken: the namespace's hub,
+  that hub's operative-insertion hook, this runner's supervision tree, and the
+  stream itself. Each step refuses by throwing rather than by crashing —
+  `FleetManager` serves every runner on the node, and its acceptor goes with
+  it.
+  """
   def runner_connect(stream_ref, namespace, transport) do
     runner_id = Identificator.unique_id(namespace)
-    control_unit = Identificator.control_unit(runner_id)
 
+    ensure_hub(namespace)
+    register_insertion_hook(namespace, runner_id)
+    control_channel_pid = start_runner_tree(namespace, runner_id, stream_ref, transport)
+    hand_over_stream(stream_ref, control_channel_pid, Identificator.control_unit(runner_id))
+
+    {:ok, namespace, runner_id}
+  end
+
+  # Gate on-demand hub creation on cluster formation: a runner connecting
+  # during the boot window must not create a singleton hub before the node has
+  # joined the cluster. Bounded by the degrade-to-solo timeout, so a genuinely
+  # single-node deployment still proceeds.
+  defp ensure_hub(namespace) do
     if !HubManager.hub_alive?(namespace) do
-      # Gate on-demand hub creation on cluster formation: a runner connecting
-      # during the boot window must not create a singleton hub before the node
-      # has joined the cluster. Bounded by the degrade-to-solo timeout, so a
-      # genuinely single-node deployment still proceeds.
       _ = Orchestrator.await_cluster_ready()
       HubManager.start_hub(namespace)
     end
+  end
 
-    # A hub that is gone, or terminating under a drain, cannot take this
-    # runner's operative-insertion hook. Refusing here is what keeps one
-    # namespace's teardown from travelling out of this call as an exit and
-    # killing the manager and the node's acceptor with it.
+  # A hub that is gone, or terminating under a drain, cannot take this runner's
+  # operative-insertion hook. Refusing here is what keeps one namespace's
+  # teardown from travelling out of this call as an exit.
+  defp register_insertion_hook(namespace, runner_id) do
     case HubManager.register_handler(namespace, runner_id) do
       :ok ->
         :ok
 
       {:error, reason} ->
-        Logger.error(
-          "runner #{runner_id} on #{namespace} could not register its operative-insertion " <>
-            "hook (#{inspect(reason)}); refusing the connect"
+        refuse(
+          runner_id,
+          namespace,
+          "could not register its operative-insertion hook (#{inspect(reason)})",
+          {:hub_unavailable, namespace}
         )
-
-        throw({:runner_connect_failed, {:hub_unavailable, namespace}})
     end
+  end
 
+  # A runner whose tree did not come up is refused rather than allowed to crash
+  # this manager.
+  defp start_runner_tree(namespace, runner_id, stream_ref, transport) do
     Supervisor.start_child(FleetSupervisor, %{
       id: runner_id,
       start: {RunnerSupervisor, :start_link, [{namespace, runner_id, stream_ref, transport}]}
     })
 
-    # Transfer ownership of the stream to the ControlChannel process. A runner
-    # whose tree did not come up is refused rather than allowed to crash this
-    # manager, which serves every other runner on the node.
-    control_channel_pid =
-      case RunnerSupervisor.find_control_channel(runner_id) do
-        {:ok, pid} ->
-          pid
+    case RunnerSupervisor.find_control_channel(runner_id) do
+      {:ok, pid} ->
+        pid
 
-        {:error, reason} ->
-          Logger.error(
-            "runner #{runner_id} on #{namespace} has no control channel " <>
-              "(#{inspect(reason)}); refusing the connect"
-          )
+      {:error, reason} ->
+        refuse(runner_id, namespace, "has no control channel (#{inspect(reason)})", reason)
+    end
+  end
 
-          throw({:runner_connect_failed, reason})
-      end
-
+  # Ownership of the stream passes to the ControlChannel process, and only then
+  # is the runner told who it is.
+  defp hand_over_stream(stream_ref, control_channel_pid, control_unit) do
     Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
     Flezha.Transport.Stream.set_active(stream_ref)
 
-    # Send setup commands
     GenServer.call(control_unit, :command_assign_runner_id)
     GenServer.call(control_unit, :command_sockets_connect)
+  end
 
-    {:ok, namespace, runner_id}
+  defp refuse(runner_id, namespace, what, reason) do
+    Logger.error("runner #{runner_id} on #{namespace} #{what}; refusing the connect")
+    throw({:runner_connect_failed, reason})
   end
 
   # The SDK's self-owned, durable stable identity, presented on every connect.

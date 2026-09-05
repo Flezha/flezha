@@ -1,0 +1,137 @@
+# Upward references and unplaced modules under lib/flezha/ when
+# scripts/check-layer-direction.sh recorded this tree. Recorded debt, not an
+# exemption: the gate fails on any entry outside this list, and on any entry
+# here the tree no longer holds.
+#
+# The list may only shrink. Close an entry by moving the file into the
+# directory that owns its feature, or by turning the upward call into a
+# downward one, then delete the line.
+#
+# One `<file> -> <module>` per line, sorted; `(no directory owns it)` is a
+# module still loose at the top of lib/flezha/.
+lib/flezha/application.ex -> (no directory owns it)
+lib/flezha/authz.ex -> (no directory owns it)
+lib/flezha/config.ex -> (no directory owns it)
+lib/flezha/observability.ex -> (no directory owns it)
+lib/flezha/observability/export/prometheus_http.ex -> Flezha.Http.Listener
+lib/flezha/operative/class_registry.ex -> Flezha.State.Paths
+lib/flezha/operative/handover.ex -> Flezha.Plugin.Extension.Table
+lib/flezha/operative/handover.ex -> Flezha.State.WalWriter
+lib/flezha/operative/handover.ex -> Flezha.State.WriterRegistry
+lib/flezha/operative/ingest.ex -> Flezha.State.InputLog
+lib/flezha/operative/ingest.ex -> Flezha.State.ProcInbox
+lib/flezha/operative/lifecycle.ex -> Flezha.Convergence.Facts
+lib/flezha/operative/lifecycle.ex -> Flezha.Service.HubManager
+lib/flezha/operative/lifecycle.ex -> Flezha.Service.OperativeManager
+lib/flezha/operative/lifecycle.ex -> Flezha.State.Commands
+lib/flezha/operative/lifecycle.ex -> Flezha.State.DurabilityTier
+lib/flezha/operative/lifecycle.ex -> Flezha.State.PersistenceResolver
+lib/flezha/operative/lifecycle.ex -> Flezha.State.ProcInbox
+lib/flezha/operative/lifecycle.ex -> Flezha.State.Restore
+lib/flezha/operative/migration.ex -> Flezha.Plugin.Extension.Table
+lib/flezha/operative/migration.ex -> Flezha.Service.HubManager
+lib/flezha/operative/migration.ex -> Flezha.Service.OperativeManager
+lib/flezha/operative/migration.ex -> Flezha.Shutdown.Step
+lib/flezha/operative/migration.ex -> Flezha.State.PersistenceResolver
+lib/flezha/operative/migration.ex -> Flezha.State.ProcInbox
+lib/flezha/operative/migration.ex -> Flezha.State.ProcJournal
+lib/flezha/operative/overwatch.ex -> Flezha.Convergence.Facts
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.IO
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Init
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Msg
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Snapshot
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Terminate
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Tick
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Extension.Table
+lib/flezha/operative/overwatch.ex -> Flezha.Plugin.Host
+lib/flezha/operative/overwatch.ex -> Flezha.Service.HubManager
+lib/flezha/operative/overwatch.ex -> Flezha.State.Outbox
+lib/flezha/operative/overwatch.ex -> Flezha.State.Paths
+lib/flezha/operative/overwatch.ex -> Flezha.State.PersistenceResolver
+lib/flezha/operative/overwatch.ex -> Flezha.State.ProcInbox
+lib/flezha/operative/overwatch.ex -> Flezha.State.ProcJournal
+lib/flezha/operative/partition_group.ex -> Flezha.AuthZ.Quotas
+lib/flezha/operative/partition_group.ex -> Flezha.Dlq
+lib/flezha/operative/partition_group.ex -> Flezha.Plugin.Extension.Table
+lib/flezha/operative/partition_group.ex -> Flezha.Plugin.SpecDecoder
+lib/flezha/operative/partition_group.ex -> Flezha.Service.HubManager
+lib/flezha/operative/partition_group.ex -> Flezha.Service.OperativeManager
+lib/flezha/operative/partition_group.ex -> Flezha.Service.PluginManager
+lib/flezha/operative/partition_group.ex -> Flezha.Service.Validator
+lib/flezha/operative/partition_group.ex -> Flezha.State.InputLog
+lib/flezha/operative/partition_group.ex -> Flezha.State.Paths
+lib/flezha/operative/partition_group.ex -> Flezha.State.WalTransfer
+lib/flezha/operative/plugins.ex -> Flezha.Plugin.Extension
+lib/flezha/operative/plugins.ex -> Flezha.Plugin.Extension.Ctx
+lib/flezha/operative/plugins.ex -> Flezha.Plugin.Extension.Table
+lib/flezha/operative/plugins.ex -> Flezha.Service.PluginManager
+lib/flezha/operative/replay.ex -> Flezha.State.Commands
+lib/flezha/operative/replay.ex -> Flezha.State.DurabilityTier
+lib/flezha/operative/replay.ex -> Flezha.State.InputLog
+lib/flezha/operative/replay.ex -> Flezha.State.Paths
+lib/flezha/operative/replay.ex -> Flezha.State.PersistenceResolver
+lib/flezha/operative/replay.ex -> Flezha.State.ProcInbox
+lib/flezha/operative/replay.ex -> Flezha.State.ProcJournal
+lib/flezha/operative/replay.ex -> Flezha.State.Restore
+lib/flezha/operative/replay.ex -> Flezha.State.Supervisor
+lib/flezha/operative/replay.ex -> Flezha.State.WalTransfer
+lib/flezha/operative/replay.ex -> Flezha.State.WalWriter
+lib/flezha/plugin.ex -> (no directory owns it)
+lib/flezha/plugin/installer.ex -> Flezha.Service.PluginManager
+lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManager
+lib/flezha/plugin/provider/operative_forward.ex -> Flezha.Service.HubManager
+lib/flezha/plugin/provider/operative_forward.ex -> Flezha.Service.OperativeManager
+lib/flezha/plugin/provider/operative_forward/forward_worker.ex -> Flezha.Service.OperativeManager
+lib/flezha/runner/control_channel.ex -> Flezha.Operative.Migration
+lib/flezha/runner/control_channel.ex -> Flezha.Service.HubManager
+lib/flezha/runner/control_channel.ex -> Flezha.Service.OperativeManager
+lib/flezha/runner/control_channel.ex -> Flezha.State.Completion
+lib/flezha/runner/control_channel.ex -> Flezha.State.ProcJournal
+lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Commands
+lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
+lib/flezha/runner/control_channel/commits.ex -> Flezha.State.Paths
+lib/flezha/runner/control_channel/commits.ex -> Flezha.State.ProcInbox
+lib/flezha/runner/control_channel/commits.ex -> Flezha.State.ProcJournal
+lib/flezha/runner/control_unit.ex -> Flezha.Partition
+lib/flezha/runner/fleet_manager.ex -> Flezha.Service.HubManager
+lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Operative.ClassRegistry
+lib/flezha/runner/fleet_manager/factories.ex -> Flezha.Service.HubManager
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.QuotaCounters
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Quotas
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.AuthZ.Verb
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.Convergence.Facts
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.EventManager
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.Service.HubManager
+lib/flezha/runner/fleet_manager/session.ex -> Flezha.Shutdown.Step
+lib/flezha/runner/stream_channel.ex -> Flezha.State.CreditLedger
+lib/flezha/runner/stream_channel/records.ex -> Flezha.Dlq.Store
+lib/flezha/runner/stream_channel/records.ex -> Flezha.Operative.ClassRegistry
+lib/flezha/runner/stream_channel/records.ex -> Flezha.Operative.Replay
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.CreditLedger
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Paths
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.PersistenceResolver
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Snapshot
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Supervisor
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.WalWriter
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Watchdog
+lib/flezha/runner/stream_channel/records.ex -> Flezha.State.Wire
+lib/flezha/sdk.ex -> (no directory owns it)
+lib/flezha/service/controller.ex -> Flezha.Shutdown.Coordinator
+lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Boot.RecoveryHooks
+lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Coordinator
+lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Step
+lib/flezha/service/operative_manager/teardown.ex -> Flezha.Shutdown.Step
+lib/flezha/service/plugin_manager.ex -> Flezha.Shutdown.Step
+lib/flezha/shutdown.ex -> (no directory owns it)
+lib/flezha/state/durability_tier/artifact.ex -> Flezha.AuthZ.Config
+lib/flezha/state/durability_tier/artifact.ex -> Flezha.Schedule.Store
+lib/flezha/state/persistence_resolver.ex -> Flezha.AuthZ.NamespaceStore
+lib/flezha/state/recovery.ex -> Flezha.Service.HubManager
+lib/flezha/state/wal_writer/admission.ex -> Flezha.Convergence.Facts
+lib/flezha/state/watchdog.ex -> Flezha.AuthZ.NamespaceStore
+lib/flezha/state/watchdog.ex -> Flezha.AuthZ.Quotas
+lib/flezha/state/watchdog.ex -> Flezha.Convergence.Backoff
+lib/flezha/state/watchdog.ex -> Flezha.Convergence.Facts
+lib/flezha/state/watchdog.ex -> Flezha.Convergence.Snapshot
+lib/flezha/transport/server.ex -> Flezha.Runner.FleetManager
+lib/flezha/transport/server.ex -> Flezha.Runner.StreamPool

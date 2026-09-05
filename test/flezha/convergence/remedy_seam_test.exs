@@ -393,7 +393,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       "lib/flezha/state/paths.ex",
       "lib/flezha/service/hub_manager/lifecycle.ex",
       "lib/flezha/plugin/installer.ex",
-      "lib/flezha/socket/support.ex"
+      "lib/flezha/transport/socket/support.ex"
     ],
     {File, :rm_rf!} => ["lib/flezha/plugin/installer.ex"]
   }

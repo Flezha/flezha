@@ -17,10 +17,10 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.Boot.RecoveryHooks
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias Flezha.Service.HubManager.Lifecycle
   alias Flezha.Transport.Server
   alias FlezhaTest.Helper.MessageTestHelper
 
@@ -98,8 +98,8 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
     on_exit(fn -> HubManager.stop_hub(ns) end)
 
     # Armed only now: `config/test.exs` holds auto-restore off, and a hub started
-    # with it on boots into `:recovering` and holds there. `register/1` is a
-    # no-op while it is off, so the call under test needs it on.
+    # with it on boots into `:recovering` and holds there. Hook registration is
+    # a no-op while it is off, so the call under test needs it on.
     previous = Application.get_env(:flezha, :auto_restore_enabled)
     Application.put_env(:flezha, :auto_restore_enabled, true)
     on_exit(fn -> Application.put_env(:flezha, :auto_restore_enabled, previous) end)
@@ -107,16 +107,21 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
     hub_pid = Process.whereis(hub_id)
     assert is_pid(hub_pid)
 
-    # `register/1` runs inside `FleetManager`'s own `handle_call`, so an exit
-    # here takes the node's runner roster and its acceptor with it. The stand-in
-    # is a monitored caller: what must survive is the process that called.
+    # `on_hub_started/3` runs inside `FleetManager`'s own `handle_call`, so an
+    # exit here takes the node's runner roster and its acceptor with it. The
+    # stand-in is a monitored caller: what must survive is the process that
+    # called. Driven through the post-start hook the hub's own start path runs,
+    # not through the hook registrar it reaches — the registrar carries no
+    # guard of its own, because `boot` may not name `service`.
     :ok = :sys.suspend(hub_pid)
 
     test = self()
     MessageTestHelper.forward_telemetry([:flezha, :hub, :unavailable], :hub_unavailable)
 
     {caller, caller_ref} =
-      spawn_monitor(fn -> send(test, {:registered, RecoveryHooks.register(hub_id)}) end)
+      spawn_monitor(fn ->
+        send(test, {:started, Lifecycle.on_hub_started(hub_id, hub_pid, ns)})
+      end)
 
     assert wait_for_queued_call(hub_pid), "the registration never reached the hub coordinator"
 
@@ -124,13 +129,13 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
 
     receive do
       {:DOWN, ^caller_ref, :process, ^caller, reason} ->
-        flunk("register/1 exited its caller on a dying hub: #{inspect(reason)}")
+        flunk("on_hub_started/3 exited its caller on a dying hub: #{inspect(reason)}")
 
-      {:registered, answer} ->
-        assert answer == {:error, {:hub_unavailable, ns}},
+      {:started, answer} ->
+        assert answer == :ok,
                "a dying hub must be the caller's answer, got #{inspect(answer)}"
     after
-      10_000 -> flunk("register/1 neither answered nor died")
+      10_000 -> flunk("on_hub_started/3 neither answered nor died")
     end
 
     # A containment is loud: the namespace's own failure is reported as one, so

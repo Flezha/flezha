@@ -206,6 +206,33 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
   end
 
+  describe "operative scale rendering" do
+    # The summary line reads the rescale result key by key, so a key the
+    # producer stops returning raises on the success path rather than being
+    # rendered blank.
+    test "a rescale prints the summary the result can actually answer" do
+      stub(PartitionGroup, :rescale, fn _ns, "ohlc", 3, _opts ->
+        {:ok,
+         %{
+           group: "ohlc",
+           from: 2,
+           to: 3,
+           entities_moved: 1,
+           vacated: ["ohlc#p2"],
+           members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
+           warnings: ["more partitions than runners"]
+         }}
+      end)
+
+      out = capture_io(fn -> CliManager.operative_scale("default", "ohlc", "3", "{}") end)
+
+      assert out =~ "WARNING: more partitions than runners"
+      assert out =~ "Operative ohlc rescaled 2 -> 3"
+      assert out =~ "1 entities moved, 1 trees removed"
+      assert out =~ "  ohlc#p0"
+    end
+  end
+
   describe "operative stop" do
     test "a group id stops every member" do
       members = for index <- 0..2, do: member_row("ohlc", index, 3)
