@@ -3,9 +3,17 @@ defmodule Flezha.Observability.TelemetryBridge do
   Single dispatching `:telemetry` handler that lifts existing
   `[:flezha, ...]` telemetry events onto the observability bus.
 
-  No producer call-site is rewritten — the bridge listens for every
-  event named in `@mapping` and emits a `Signal` per execution. New
-  bridged events are a one-line change to the mapping table.
+  No producer call-site is rewritten. The mapping is two halves: the hand-kept
+  lifecycle half in `@mapping`, and a half DERIVED from the convergence loop's
+  detector table — every event a detector entry declares is bridged by that
+  declaration, so a new detector needs no edit here. Where both halves name one
+  event the hand-kept line wins, because its source, name and kind are a
+  deliberate choice a derivation cannot know.
+
+  Every `[:flezha, …]` event executed in the controller must be a key of the
+  merged mapping or a member of `exempt/0`, which names the change that owes it
+  a sink. The suite fails on any other, naming the file, the line and the
+  event, and pins `exempt/0`'s length so the list can only shrink.
 
   A broken bridge must never crash a producer: handler bodies are
   wrapped in `try`. On error the `:telemetry_bridge_failures` counter
@@ -16,6 +24,7 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   require Logger
 
+  alias Flezha.Convergence.Probe.Table
   alias Flezha.Observability.{Bus, Counters, Registry, Signal}
 
   @handler_id :flezha_observability_telemetry_bridge
@@ -63,8 +72,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :reconcile, :action] => {:flezha_reconcile, :action, :event},
     [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event},
     [:flezha, :stream, :drop] => {:flezha_stream, :drop, :metric},
-    [:flezha, :data_plane, :stall_localized] => {:flezha_data_plane, :stall_localized, :event},
-    [:flezha, :convergence, :operative_stuck] => {:flezha_convergence, :operative_stuck, :event},
     [:flezha, :convergence, :intent_mismatch] => {:flezha_convergence, :intent_mismatch, :event},
     [:flezha, :dlq, :parked] => {:flezha_dlq, :dlq_parked_total, :metric},
     [:flezha, :dlq, :retention_dropped] =>
@@ -84,6 +91,70 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :operative, :parked] => {:flezha_operative, :operative_parked_total, :metric}
   }
 
+  # Executed `[:flezha, …]` events with no bridge line yet. Every one is
+  # lifecycle telemetry whose sink is `count-once-export-by-declaration`'s to
+  # declare: that change owns the counters and the export table these feed. The
+  # list is a RATCHET — the suite pins its length, so an event may leave it and
+  # none may join.
+  @exempt_owner :count_once_export_by_declaration
+
+  @exempt [
+    [:flezha, :boot, :reconcile_round],
+    [:flezha, :cluster, :ready],
+    [:flezha, :convergence, :tick],
+    [:flezha, :correction, :completed],
+    [:flezha, :correction, :refused],
+    [:flezha, :correction, :retention_derived],
+    [:flezha, :hub, :pid_removed],
+    [:flezha, :operative, :requested_spawn],
+    [:flezha, :plugin, :kafka, :metadata, :refresh],
+    [:flezha, :plugin, :kafka, :produce, :dropped],
+    [:flezha, :plugin, :kafka, :produce, :failed],
+    [:flezha, :plugin, :kafka, :produce, :ok],
+    [:flezha, :plugin, :kafka, :produce, :retry],
+    [:flezha, :plugin, :kafka, :topic, :created],
+    [:flezha, :plugin, :kafka, :worker, :swapped],
+    [:flezha, :runner, :factory_language_conflict],
+    [:flezha, :runner, :quota_refused],
+    [:flezha, :schedule, :dormant],
+    [:flezha, :schedule, :fired],
+    [:flezha, :schedule, :hub_start_failed],
+    [:flezha, :schedule, :spawn_failed],
+    [:flezha, :sdk, :dynamic],
+    [:flezha, :sdk, :mailbox],
+    [:flezha, :sdk, :retry],
+    [:flezha, :sdk, :timers],
+    [:flezha, :state, :claim_superseded],
+    [:flezha, :state, :compaction_completed],
+    [:flezha, :state, :compaction_failed],
+    [:flezha, :state, :compaction_gave_up],
+    [:flezha, :state, :disk_quota_breach],
+    [:flezha, :state, :inbox_duplicate],
+    [:flezha, :state, :input_log_frozen_watermark],
+    [:flezha, :state, :input_log_syncer_died],
+    [:flezha, :state, :record_frame, :refused],
+    [:flezha, :state, :record_frame, :repaired],
+    [:flezha, :state, :restore_refused],
+    [:flezha, :state, :schema_migration],
+    [:flezha, :state, :wal_moved],
+    [:flezha, :state, :wal_pull_failed],
+    [:flezha, :state, :wal_pulled],
+    [:flezha, :state, :wal_rewind],
+    [:flezha, :stream, :fanout_warning],
+    [:flezha, :workflow, :completed],
+    [:flezha, :workflow, :rehydrating],
+    [:flezha, :workflow, :rewind],
+    [:flezha, :ws, :reconcile]
+  ]
+
+  # Derived at COMPILE time from the detector table, so adding a detector
+  # recompiles this module and its event is bridged with no edit here.
+  @derived Map.new(Table.events(), fn event ->
+             {event, {:flezha_health, List.last(event), :event}}
+           end)
+
+  @all_mapping Map.merge(@derived, @mapping)
+
   # ---------- Public API ----------
 
   def start_link(opts \\ []) do
@@ -96,7 +167,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   """
   @spec bridged_sources() :: [{atom(), [Signal.kind()]}]
   def bridged_sources() do
-    @mapping
+    mapping()
     |> Map.values()
     |> Enum.group_by(fn {source, _name, _kind} -> source end, fn {_s, _n, k} -> k end)
     |> Enum.map(fn {source, kinds} -> {source, Enum.uniq(kinds)} end)
@@ -106,9 +177,29 @@ defmodule Flezha.Observability.TelemetryBridge do
   @spec handler_id() :: atom()
   def handler_id(), do: @handler_id
 
-  @doc false
+  @doc """
+  The bridged events: the derived half under the hand-kept one. A detector's
+  declared event maps to `{:flezha_health, <last segment>, :event}` unless the
+  hand-kept half already names it.
+  """
   @spec mapping() :: %{[atom()] => {atom(), atom(), Signal.kind()}}
-  def mapping(), do: @mapping
+  def mapping(), do: @all_mapping
+
+  @doc "The half derived from the convergence loop's detector declarations."
+  @spec derived() :: %{[atom()] => {atom(), atom(), Signal.kind()}}
+  def derived(), do: @derived
+
+  @doc """
+  Executed `[:flezha, …]` events that reach no sink yet, each naming the change
+  that owes it one. A ratchet: the suite pins this list's length, so an event
+  can leave it and none may join.
+  """
+  @spec exempt() :: [[atom()]]
+  def exempt(), do: @exempt
+
+  @doc "The change that owes every exempt event a sink."
+  @spec exempt_owner() :: atom()
+  def exempt_owner(), do: @exempt_owner
 
   # ---------- :telemetry handler entry point ----------
 
@@ -126,7 +217,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   end
 
   defp do_handle_event(event, measurements, metadata) do
-    case Map.fetch(@mapping, event) do
+    case Map.fetch(@all_mapping, event) do
       {:ok, {source, name, kind}} ->
         signal =
           Signal.new(%{
@@ -174,7 +265,7 @@ defmodule Flezha.Observability.TelemetryBridge do
         })
     end)
 
-    events = Map.keys(@mapping)
+    events = Map.keys(@all_mapping)
 
     :ok =
       :telemetry.attach_many(@handler_id, events, &__MODULE__.handle_event/4, nil)

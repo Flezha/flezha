@@ -268,10 +268,10 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       %{plugin_id: id}
     end
 
-    test "a health/1 that raises reports healthy AND emits", %{plugin_id: id} do
+    test "a health/1 that raises answers fail-open AND emits", %{plugin_id: id} do
       {table, []} = activate_quietly(subscribed(RaisingHealthProvider, id))
 
-      assert Table.health(table) == %{id => :healthy}
+      assert %{^id => {:fail_open, {:raised, _}}} = Table.health(table)
 
       assert_receive {:fail_open, %{count: 1}, meta}
       assert meta.plugin_id == id
@@ -279,22 +279,25 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       assert {:raised, %RuntimeError{message: "probe blew up"}} = meta.reason
     end
 
-    test "a health/1 returning an unrecognised value reports healthy AND emits", %{plugin_id: id} do
+    test "a health/1 returning an unrecognised value answers fail-open AND emits", %{
+      plugin_id: id
+    } do
       {table, []} = activate_quietly(subscribed(GarbageHealthProvider, id))
 
-      assert Table.health(table) == %{id => :healthy}
+      assert Table.health(table) == %{id => {:fail_open, {:invalid_return, :probably_fine}}}
 
       assert_receive {:fail_open, %{count: 1}, meta}
       assert meta.reason == {:invalid_return, :probably_fine}
     end
 
-    test "a provider that reports its own uncertainty reads healthy AND emits", %{plugin_id: id} do
+    test "a provider that reports its own uncertainty is carried AND emits", %{plugin_id: id} do
       {table, []} = activate_quietly(subscribed(UncertainHealthProvider, id))
 
       # This is the wedged-worker path every worker-backed provider takes: the
       # provider cannot complete its probe, says so, and the table — which knows
-      # the plugin id — turns it into the one fail-open event.
-      assert Table.health(table) == %{id => :healthy}
+      # the plugin id — turns it into the one fail-open event. The uncertainty
+      # travels unjudged; the convergence judge is what folds it to healthy.
+      assert Table.health(table) == %{id => {:fail_open, :probe_timeout}}
 
       assert_receive {:fail_open, %{count: 1}, meta}
       assert meta.plugin_id == id
@@ -318,13 +321,13 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
       # `:telemetry.execute/3` runs every attached handler in the emitting
       # process, so the task returning means this test's handler has already
       # decided on that event — the refute below is a decision, not a race.
-      assert Task.await(foreign) == :healthy
+      assert Task.await(foreign) == {:fail_open, :not_this_test}
       refute_received {:fail_open, _, _}
 
       # ... and the filter is not one that simply matches nothing: this test's
       # own emit still arrives, on the same handler, straight after.
       {table, []} = activate_quietly(subscribed(UncertainHealthProvider, id))
-      assert Table.health(table) == %{id => :healthy}
+      assert Table.health(table) == %{id => {:fail_open, :probe_timeout}}
       assert_receive {:fail_open, %{count: 1}, %{plugin_id: ^id, reason: :probe_timeout}}
     end
   end

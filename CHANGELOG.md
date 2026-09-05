@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed — one health verdict per subject, read by every surface
+
+The controller now judges "is this healthy" once per tick and publishes one
+record per subject — a runner, an operative, a plugin, a channel or a driver —
+in one closed vocabulary (`healthy`, `degraded`, `failed`, `unbound`, `parked`,
+`suspended`, `unknown`). `/healthz`, `flz operative info`, `flz operative list`,
+`flz cluster status` and the published `Flezha.Service.Operative.operative_rows/2`
+all read that record, so they can no longer describe one operative in
+contradictory words. An operative that is parked, bound to a runner the roster no
+longer holds, or missing a declared plugin reads `degraded` on `/healthz` — with
+`parked`, `dead_runner` or `plugin_unhealthy` among the joined reasons — where it
+could previously read `healthy`; a dead binding is no longer counted in
+`bound_operatives`, and the body gains `unknown_operatives`. `flz operative info`
+reports `parked` as an operative's health where it reported `degraded`.
+
+Every detector's `[:flezha, …]` event now reaches the observability bus by the
+detector table's own declaration of it, including the control-plane watchdog's
+liveness timeout, the plugin fail-open, the catastrophic-dataflow stop and the
+four runner heal events; `[:flezha, :health, :verdict]` is emitted on every
+verdict-state transition.
+
 ### Fixed — three frames the Elixir SDK wrote to nothing are now held and replayed
 
 An Entity evicted while no secondary stream was bound lost its

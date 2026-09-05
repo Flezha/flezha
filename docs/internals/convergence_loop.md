@@ -47,7 +47,11 @@ through `HubManager.drain_hub/2` from the shutdown plan only.
 | `Convergence.Facts` | The one intake (`declare/1`) and the table of what may be declared: per kind, the Diff field that consumes it, the reason its op keys on, whether its key resets inline or on evidence, its grace and whether a new key ticks at once. Names no other module, so a declaring site depends on an abstraction that names no remedy |
 | `Convergence.Intent` | Reads the hub's declared set (`HubManager.declared_operatives/1`) plus each operative's declared plugins from the durable cspec. With durable starts off (`HubManager.durable_starts?/0`) intent degrades to the live registry |
 | `Convergence.Probe` | Reads live reality: per-operative Overwatch state (bound runner, factory, parked/suspended, running plugins, provider health via `Extension.Table.health/1`), active runners per namespace, factory placement (local runners vs other nodes' fleets), hub recovery states |
-| `Convergence.Diff` | Pure: intent + reality + signals → `%Diff{unbound_operatives, misbound_operatives, parked_operatives, replace_operatives, stalled_operatives, resync_entities, missing_plugins, extra_plugins, unhealthy_plugins, stale_tags, data_plane_wedge, data_plane_layer, draining}` |
+| `Convergence.Verdict` | The health record and the one health vocabulary: `%Verdict{subject, state, reason, phase, since_ms, threshold, facts}` with `state` one of `healthy \| degraded \| failed \| unbound \| parked \| suspended \| unknown`, `rank/1` (the one order every listing sorts by) and `fold/2` (the one `/healthz` table) |
+| `Convergence.Probe.Table` | Every detector declared once: its fact reader, the subject kind it speaks about, the thresholds it cites and the `[:flezha, …]` events it executes. A new detector is one entry — no surface and no bridge line changes |
+| `Convergence.Probe.Readers` | One fact reader per table entry, each returning `[%Probe.Fact{}]`. A reader reads; it decides nothing |
+| `Convergence.Probe.Judge` | The one place a fact becomes a state: folds the readers' facts per subject in one fixed rule order into one `%Verdict{}` (`Probe.judge/2`) |
+| `Convergence.Diff` | Pure: intent + reality + verdict records → `%Diff{unbound_operatives, misbound_operatives, parked_operatives, replace_operatives, stalled_operatives, resync_entities, missing_plugins, extra_plugins, unhealthy_plugins, stale_tags, data_plane_wedge, data_plane_layer, draining}` |
 | `Convergence.Planner` | Pure: `%Diff{}` + `%Backoff{}` → ordered, cooldown-filtered op list capped at `max_ops` (default 20). The one place a divergence becomes an op |
 | `Convergence.Heal` | The primitive table: ten idempotent primitives, each naming its executor and the evidence that resets its key — `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` |
 | `Convergence.Backoff` | The one cooldown table: 5 s → 30 s → 60 s → 300 s, held at 300 s. Keyed `{primitive, target}`, `{primitive, {operative, plugin}}` for a plugin op, or `{reason, target}` for one carrying a declared reason |
@@ -63,13 +67,13 @@ also runs at once when a declared fact opens a key the loop does not hold; a re-
 key it holds refreshes the time and costs no tick, so a Watchdog re-flagging a frozen Entity every
 sweep, or thirty operatives losing one runner, drives one tick and not thirty. Within a tick:
 
-1. Classify the data plane (`StallClassifier.classify/3`) when `LivenessCounters.poll_enabled?/0`; carry the verdict and its consecutive-poll streak.
+1. Classify the data plane (`StallClassifier.classify/3`) when `LivenessCounters.poll_enabled?/0`, carrying the verdict, its consecutive-poll streak and the per-runner liveness facts; then the producing-liveness pass (`StallClassifier.classify_producing/3`). Both run BEFORE the plan, because the judge folds them into the records the Diff consumes.
 2. `Intent.declared/0`, `Probe.snapshot/0`.
 3. **Settle the facts** against the probe: drop the ones reality shows repaired, the ones nothing still names, and the ones past `:convergence_output_stall_grace_ms`, releasing the ladder each one walked; adopt a park the probe observed that nobody declared.
 4. **Recovery gate:** `RecoveryGate.ready_namespaces/1` keeps namespaces whose hub is `:normal` or `:skipped`; `:recovering` / `:recovery_pending` hubs are excluded (no heal against a half-replayed registry); `:timeout` hubs (replay window expired, live ring healthy) are included with a `Logger.warning`, so one stuck hub does not disable healing elsewhere.
-5. `Diff.compute/3` over the ready subset with `%{verdict, facts}`; apply the misbound-streak gate; drop `missing_plugins` whose enable is in flight (`PluginManager.pending_ids/0` — cspec first, subscribe second, so a heal would subscribe twice).
+5. **Judge**: `Probe.judge/2` folds every detector's facts into one `%Verdict{}` per subject and executes `[:flezha, :health, :verdict]` for each state that changed. Then `Diff.compute/3` over the ready subset, whose third argument is that record map; apply the misbound-streak gate; drop `missing_plugins` whose enable is in flight (`PluginManager.pending_ids/0` — cspec first, subscribe second, so a heal would subscribe twice).
 6. `Planner.plan/2`, then `Heal.execute/1` per op, each outcome recorded in `Backoff`. A plan that filled `max_ops` re-ticks at once, so the cap bounds one tick's blast radius and never becomes a rate.
-7. Report-only inputs: producing-liveness verdicts and the intent-mismatch check.
+7. Report-only input: the intent-mismatch check.
 8. `Snapshot.publish/1` over the **full** intent, so `/healthz` sees the true intended count.
 
 ## The intake
@@ -243,6 +247,16 @@ healthy — the loop never escalates on uncertainty.
 | `operative_websocket` | `:no_connection`, `:not_alive`, `:connection_idle`, `:data_idle` |
 | `operative_http_poll` | `:no_poller`, `:poller_dead`, `{:poll_failing, reason}` after `failure_threshold` (default 3) consecutive failed polls |
 
+The provider's answer travels **unjudged**: `Extension.Table.health/1` returns `:healthy`,
+`{:unhealthy, reason}` or `{:fail_open, reason}` — one shape, normalised by
+`ProviderBehaviour.normalise/1`, the only normaliser — and the loop's judge is what turns it into a
+state. A plugin gets its own verdict record: `degraded` when it is not subscribed, when its owned
+pid crashed, or when its provider self-reports unhealthy; `healthy` with reason `prepared` when it
+is subscribed and has not activated (its PHASE, not its health, is the authority on whether it is
+running); `healthy` with the fail-open reason when the probe could not answer; `unknown` when it
+was never probed. An operative whose declared plugin is not running carries that as its own
+`degraded` reason, so the two surfaces agree without either re-reading the other.
+
 A declared, subscribed, unhealthy plugin diffs into `unhealthy_plugins` and is healed by
 `restart_plugin` under the standard backoff. A subscriber that CRASHES is the same divergence
 declared from the other side: the extension table records its phase as `{:down, reason}`, declares
@@ -255,12 +269,38 @@ are published as `plugin_degraded_operatives`; the loop logs set transitions onl
 After each tick the Loop calls `Snapshot.publish/1`; `Healthz.Server` reads `Snapshot.current/0`
 and holds no state of its own. The published map:
 
-- `intended_operatives` (declared), `bound_operatives` (observed running), `producing_operatives` = bound − |stalled ∪ stuck ∪ plugin-degraded|; `stalled_operatives`, `plugin_degraded_operatives`, `last_tick_at`.
+- `operative_health` — the tick's verdict records, `{kind, id} => %Verdict{}`, written from exactly one site (`Loop.Summary.publish/3`) and read by every surface: `/healthz`, `flz operative info`, `flz operative list`, `flz cluster status` and the published `Flezha.Service.Operative.operative_rows/2`. `Snapshot.operative_health/2` answers a record's state, `Snapshot.verdict/2` the record, `Snapshot.record/1` a record for any subject.
+- `intended_operatives`, `bound_operatives`, `producing_operatives` and `unknown_operatives` are DERIVED from those records (`Verdict.counts/1`): bound counts records that are neither `unbound`, `failed` nor `unknown` and not suspended — so a dead binding is never counted as bound — and producing counts the `healthy` ones. `plugin_degraded_operatives`, `last_tick_at`.
 - `stuck_operatives` — producing-liveness verdicts (`StallClassifier.classify_producing/3` over per-Entity progress markers from `Watchdog.entity_statuses/0` joined with `InputLog.cursors/1`, one input-log read per operative per tick). Every verdict carries the fed precondition: flat markers with no input is **IDLE** and counts as producing; fed but flat past `:convergence_output_stall_grace_ms` is **STUCK** with detail `wal_frozen` (persisted seq frozen while Changes arrive), `watermark_frozen` (input-log tail grew, this Entity's consumed offset did not) or `outbox_flat` (output-bearing records accumulate while the flush cursor is flat, or the oldest dispatched output is unconfirmed past the grace). Cursor checks compare against a baseline at least one grace window old and are skipped when absent, so a tier-off operative degrades to WAL-seq-only. One deepest verdict per operative. Report-only: healing stays on the ladder.
 - `data_plane_layer` / `data_plane_streak` — this tick's classifier verdict and how many consecutive polls reported that same layer.
 - `intent_mismatch` — operative ids with durable evidence of intent (operative-class directories under the namespaced state root, mtime-cached, plus durable-registry rows of running hubs) absent from the live intended set, excluding finished workflows retained for inspection. A wiped registry is invisible to the live registry alone; the durable evidence is the witness. A deliberate decommission clears it by deleting the state (`flz state delete` / `flz reset`).
 - `unmet_intent_ms` — how long `bound < intended` has held while no hub is recovering (`nil` otherwise); `pending_restore` — `HubManager.durable_registry_pending?/0`: durable rows exist for a hub not yet loaded, which `bound < intended` cannot catch.
-- `operative_health` — `{namespace, operative_id} => :healthy | :degraded | :failed | :unbound | :suspended | :unknown`, classified from the same probed reality the Diff uses; the source of the `HEALTH` column in `flz operative list` and the `Operative health:` rollup in `flz cluster status` (`HubManager.operative_rows/1` reads `Snapshot.operative_health/2`). `:unknown` only before the first tick observes an operative or on a failed read that tick — never permanent.
+
+### The verdict record
+
+One record per subject per tick, and every state names ONE owner of the next step:
+
+| State | Owner of the next step |
+|---|---|
+| `healthy` | nobody |
+| `degraded` | the loop, in place (`restart_plugin`, `resync_runner`, a rebind on a stall) |
+| `failed` | the loop, by rebinding — the runner is gone |
+| `unbound` | the loop, by binding |
+| `parked` | an operator or a plugin fix; the loop does not touch it |
+| `suspended` | nobody until the committed boundary — planned, not a fault |
+| `unknown` | the next tick; an uncertain probe escalates nothing |
+
+`phase` is the subject's own lifecycle word and is never derived from `state`, so a parked operative
+is `phase: parked, state: parked` while a suspended one that also carries a park reason stays
+`phase: suspended, state: suspended`. `facts` carries what the readers read — for a runner the
+control silence, the data silence, whether heartbeats and dispatches are advancing, and its roster
+membership, side by side, so a live session over a dead data plane is two fields of one row.
+
+The states a kind can reach are declared and tested: a plugin and a driver reach `healthy`,
+`degraded` and `unknown`; a channel and a runner add `failed`; an operative reaches all seven. Which
+reader a verdict goes to is its subject KIND: a `driver` record is read by `/healthz` alone and the
+Diff plans nothing for it; every other kind is read by the Diff and reaches `/healthz` only as
+`degraded`.
 
 **Sensor freshness.** Periodic sensors stamp their own completed pass with
 `Snapshot.observe_sensor/3` (`{:sensor, name} => {at_ms, period_ms}`); `State.Watchdog` stamps
@@ -281,14 +321,15 @@ malformed 400. `GET /healthz` answers JSON with a `status` and, in every respons
 | 503 | `unhealthy` | `tick_stale` | no tick for > 24 × `:convergence_tick_ms` |
 | 503 | `unhealthy` | `data_plane_fabric_wedged` | a `:fabric` layer (`driver_loop_frozen`, `nif_queue_backing_up`) held for ≥ `:convergence_fabric_503_polls` polls — no BEAM-level heal reaches a wedged NIF driver thread |
 | 200 | `recovering` | `tick_resuming` | tick gap > 3 × tick (BEAM suspended, not wedged) |
-| 200 | `degraded` | `operatives_unbound` | `bound < intended` for longer than `:convergence_unmet_intent_grace_ms` |
-| 200 | `recovering` | `operatives_rebinding` | `bound < intended` within the grace |
+| 200 | `recovering` | `operatives_rebinding` | any operative record `unbound` or `failed` within `:convergence_unmet_intent_grace_ms` |
 | 200 | `recovering` | `restoring_registry` | `pending_restore` |
 | 200 | `degraded` | `durability_rpo_exceeded` | a remote-tier RPO breach (`DurabilityTier.breaches/0`) |
-| 200 | `degraded` | `output_stalled`, `plugin_unhealthy`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+` | `producing < bound` or any of those sets non-empty; a pipeline-scoped data-plane layer stays here |
-| 200 | `healthy` | — | otherwise |
+| 200 | `degraded` | `output_stalled`, `plugin_unhealthy`, `parked`, `dead_runner`, `operatives_unbound`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+` | any operative record `degraded` or `parked`, any `unbound`/`failed` past the grace, any plugin record `degraded`, a non-empty intent mismatch, a stale sensor, or a pipeline-scoped data-plane layer |
+| 200 | `healthy` | — | otherwise: every record `healthy`, `suspended` or `unknown`. The body carries `unknown_operatives` — an uncertain probe is counted, never escalated |
 
-503 is reserved for what only an orchestrator restart can clear; a restart cannot re-bind a
+The fold is one ordered table in `Verdict.fold/2`, so the endpoint renders and never judges: the
+words, their order and the joined reasons are the record module's, and `flz operative list` sorts a
+group's worst member by the same `Verdict.rank/1`. 503 is reserved for what only an orchestrator restart can clear; a restart cannot re-bind a
 runner-orphaned operative, repair missing intent or restart a supervisor-owned sensor, so those
 are never 503.
 

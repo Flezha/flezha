@@ -14,7 +14,7 @@ defmodule Flezha.ShutdownTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Convergence.{Backoff, Diff, Intent, Planner}
+  alias Flezha.Convergence.{Backoff, Intent, Planner}
   alias Flezha.Service.{HubManager, PluginManager}
   alias Flezha.Shutdown
 
@@ -164,7 +164,7 @@ defmodule Flezha.ShutdownTest do
         }
       }
 
-      Diff.compute(intent, reality, %{facts: facts})
+      FlezhaTest.Helper.ConvergenceFixtures.diff(intent, reality, %{facts: facts})
     end
 
     test "a tick during a declared drain plans nothing local" do

@@ -156,9 +156,13 @@ reads as a stall. Defaults: `driver_freeze_ms` 5 000, `stall_ms` 30 000, `queue_
 | `:operative_not_forwarding` | operative `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
 | `:producer_push_stalled` | per runner: `hb_pending_pushes` > 0 and `hb_pending_push_oldest_ms` > `entity_stall_ms` — an Entity withheld work because a consumer will not take its output. **Declares no scope**: the thing that is behind is the CONSUMER, and rebinding the producer would move the congestion rather than clear it, so this is a report and mints no op. The runner names both ends in its own `flezha::mailbox` log; the heartbeat carries counters, not identities |
 
-Each layer declares its **scope** (`StallClassifier.layer_scope/1`) beside the check that mints it, so
-every verdict has exactly one consumer. The verdict is passed into `Diff.compute/3` in-process on the
-tick that computed it; the Diff resolves the scope against the same probed reality every other invariant
+Each layer declares its **scope** (`StallClassifier.layer_scope/1`) beside the check that mints it.
+The scope is what gives a verdict exactly one consumer, and it says so through the SUBJECT KIND of
+the health record the convergence loop mints from it (`Convergence.Verdict`): `:fabric` becomes a
+`driver` record, which `/healthz` reads and the Diff plans nothing for; `:runner`, `:connection` and
+`:operative` become `runner`, `channel` and `operative` records, which the Diff reads and which reach
+`/healthz` only as `degraded`. The verdict is judged and passed into `Diff.compute/3` in-process on
+the tick that computed it; the Diff resolves the scope against the same probed reality every other invariant
 uses (a verdict naming a runner or operative the probe did not observe heals nothing and is dropped),
 and the Planner picks the remedy:
 

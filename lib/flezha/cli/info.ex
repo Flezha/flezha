@@ -6,6 +6,7 @@ defmodule Flezha.Service.Cli.Info do
 
   alias Flezha.AuthZ.Namespace
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Convergence.Verdict
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
@@ -59,7 +60,7 @@ defmodule Flezha.Service.Cli.Info do
               runner_id: state.runner_id,
               namespace: state.namespace,
               kind: operative_kind(state),
-              phase: operative_phase(state),
+              phase: operative_phase(namespace_display, operative_id, state),
               health: Snapshot.operative_health(namespace_display, operative_id),
               uptime_ms: operative_uptime_ms(state),
               default_input_type: state.default_input_type,
@@ -228,16 +229,17 @@ defmodule Flezha.Service.Cli.Info do
   defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
   defp operative_kind(_), do: "stream"
 
-  # The operative's own lifecycle state, in the order the convergence loop
-  # classifies it. "suspended": the loop is parked at a committed iteration
-  # boundary — still registered, still addressable, holding zero runner
-  # resources until an input (or its wake deadline) rehydrates it
-  # (`workflow-durable-suspension`). "parked": `Lifecycle.park/2` stored a
-  # failure reason and the Overwatch stayed alive, so it is registered and
-  # readable but processes nothing until the reconciler un-parks it.
-  defp operative_phase(%{suspended: true}), do: "suspended"
-  defp operative_phase(%{init_error: reason}) when not is_nil(reason), do: "parked"
-  defp operative_phase(_state), do: "running"
+  # The operative's own lifecycle state, read from the verdict record the
+  # convergence loop published for it — the same field `flz operative list`,
+  # `/healthz` and the console read, so no two surfaces describe one operative
+  # in contradictory words. An operative the loop has not judged yet still gets
+  # a phase, derived from its own state by the record module's one derivation.
+  defp operative_phase(namespace, operative_id, state) do
+    case Snapshot.verdict(namespace, operative_id) do
+      %Verdict{phase: phase} when not is_nil(phase) -> to_string(phase)
+      _ -> to_string(Verdict.phase_of(state))
+    end
+  end
 
   defp operative_uptime_ms(%{started_at: started}) when is_integer(started),
     do: max(0, System.system_time(:millisecond) - started)
@@ -299,7 +301,7 @@ defmodule Flezha.Service.Cli.Info do
   defp display_operative_info(operative_id, state, namespace) do
     IO.puts("Operative: #{operative_id}")
     IO.puts("  Kind: #{operative_kind(state)}")
-    IO.puts("  Phase: #{operative_phase(state)}")
+    IO.puts("  Phase: #{operative_phase(namespace, operative_id, state)}")
     IO.puts("  Health: #{Snapshot.operative_health(namespace, operative_id)}")
     IO.puts("  Runner ID: #{state.runner_id}")
     IO.puts("  Group ID: #{state.namespace}")

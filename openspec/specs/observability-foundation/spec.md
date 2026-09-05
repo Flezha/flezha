@@ -166,7 +166,9 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 
 ### Requirement: Telemetry bridge lifts existing `:telemetry` events onto the bus
 
-The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping table SHALL be defined inside the bridge module and SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :ws, :idle_reconnect]`, `[:flezha, :ws, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`. Existing call-sites SHALL NOT be modified.
+The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL be two halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :ws, :idle_reconnect]`, `[:flezha, :ws, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares — including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason` — so a detector's event is bridged by its declaration and never by a bridge edit. Existing call-sites SHALL NOT be modified.
+
+Every `[:flezha, ...]` event executed anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit exemption list inside the bridge module, each exemption naming the change that owes it a sink. The exemption list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an executed event that is neither mapped nor exempted SHALL fail the suite naming the file, the line and the event.
 
 #### Scenario: Bridged event becomes a signal
 - **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{operative: "r1"})`
@@ -184,6 +186,18 @@ The foundation SHALL attach a single dispatching `:telemetry` handler at supervi
 #### Scenario: Bridge failure does not crash producer
 - **WHEN** the bridge's mapping function raises for a specific event
 - **THEN** the original `:telemetry.execute` call SHALL return normally, a `:dispatcher_failure_count` counter SHALL increment, and an error SHALL be logged once with the offending event name
+
+#### Scenario: A detector's declared event is bridged with no bridge edit
+- **WHEN** the control-plane watchdog executes `[:flezha, :runner, :liveness_timeout]`, or the plugin fact seam executes `[:flezha, :plugin, :health, :fail_open]`, or the watchdog executes `[:flezha, :state, :catastrophic_dataflow_stop]`
+- **THEN** a signal for it SHALL appear on the bus, mapped from the detector table's declaration, and the bridge module's hand-kept half SHALL hold no line for it
+
+#### Scenario: A verdict transition is bridged
+- **WHEN** an operative's verdict record changes state from `healthy` to `parked`
+- **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :operative`, the operative id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
+
+#### Scenario: An event nobody bridges fails the suite
+- **WHEN** a `:telemetry.execute` of a `[:flezha, ...]` event is added to the controller and the event is neither a key of the merged mapping nor a member of the exemption list
+- **THEN** the suite SHALL fail naming the file, the line and the event, and adding the event to the exemption list past its pinned length SHALL fail the suite too
 
 ### Requirement: Service-API surface
 

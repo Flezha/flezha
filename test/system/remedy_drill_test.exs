@@ -23,7 +23,14 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
-    only: [boot_runner: 3, os_pid: 1, produces?: 5, sigkill: 1, unique_id_path: 1]
+    only: [
+      boot_runner: 3,
+      os_pid: 1,
+      produces?: 5,
+      sigkill: 1,
+      stop_namespace: 1,
+      unique_id_path: 1
+    ]
 
   alias Flezha.Convergence.{Backoff, Heal, Loop}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
@@ -70,13 +77,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     on_exit(fn ->
       Application.delete_env(:flezha, :overwatch_ping_fn)
 
-      for f <- [&OperativeManager.stop_all_operatives/1, &FleetManager.stop_namespace/1] do
-        try do
-          f.(namespace)
-        catch
-          _, _ -> :ok
-        end
-      end
+      stop_namespace(namespace)
     end)
 
     %{namespace: namespace}

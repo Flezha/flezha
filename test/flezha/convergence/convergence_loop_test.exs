@@ -11,7 +11,7 @@ defmodule Flezha.Convergence.LoopTest do
   use Mimic
 
   alias Flezha.Convergence.{Diff, Intent}
-  alias Flezha.Convergence.Loop.{Progress, Summary}
+  alias Flezha.Convergence.Loop.Progress
   alias Flezha.State.Completion
 
   describe "Loop.apply_misbound_streak/2 (B5)" do
@@ -42,131 +42,6 @@ defmodule Flezha.Convergence.LoopTest do
       {streaks, _} = Loop.apply_misbound_streak(streaks, %Diff{misbound_operatives: []})
       {_streaks, tick} = Loop.apply_misbound_streak(streaks, delta)
       assert tick.misbound_operatives == []
-    end
-  end
-
-  describe "Summary.operative_health_map/3 (operator health surface)" do
-    alias Flezha.Convergence.{Intent, Loop}
-
-    defp intent_operative(ns, rid),
-      do: %{namespace: ns, operative_id: rid, factory_id: nil, plugins: []}
-
-    defp reality(ns, observed_operatives, active),
-      do: %{operatives: observed_operatives, active_runners: %{ns => active}}
-
-    test "a bound operative on a live runner is :healthy" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-
-      reality =
-        reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
-
-      health = Summary.operative_health_map(intent.operatives, reality, %Loop.State{})
-      assert health == %{{ns, "r"} => :healthy}
-    end
-
-    test "a operative bound to no runner is :unbound" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_runner: nil}}, MapSet.new(["e1"]))
-
-      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
-               {ns, "r"} => :unbound
-             }
-    end
-
-    test "a operative bound to a dead runner is :failed" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_runner: "gone"}}, MapSet.new(["e1"]))
-
-      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
-               {ns, "r"} => :failed
-             }
-    end
-
-    test "a bound-but-stalled operative is :degraded" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-
-      reality =
-        reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
-
-      state = %Loop.State{
-        facts: %{{:output_stall, "r"} => %{at: System.monotonic_time(:millisecond), args: %{}}}
-      }
-
-      assert Summary.operative_health_map(intent.operatives, reality, state) == %{
-               {ns, "r"} => :degraded
-             }
-    end
-
-    test "a bound operative with a degraded plugin is :degraded" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-
-      reality =
-        reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
-
-      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{
-               plugin_degraded: ["r"]
-             }) ==
-               %{{ns, "r"} => :degraded}
-    end
-
-    test "an unobservable operative (failed read) is :unknown for the tick, not classified" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_runner: :unknown}}, MapSet.new(["e1"]))
-
-      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
-               {ns, "r"} => :unknown
-             }
-    end
-
-    test "a operative whose namespace live-runner read failed is :unknown, not :failed" do
-      ns = "ns"
-      intent = %Intent{operatives: [intent_operative(ns, "r")]}
-      reality = reality(ns, %{{ns, "r"} => %{bound_runner: "e1"}}, :unknown)
-
-      assert Summary.operative_health_map(intent.operatives, reality, %Loop.State{}) == %{
-               {ns, "r"} => :unknown
-             }
-    end
-  end
-
-  describe "OperativeManager.pick_runner/2 — deterministic HRW placement (C1p)" do
-    alias Flezha.Service.OperativeManager
-
-    test "empty candidate set yields nil" do
-      assert OperativeManager.pick_runner([], "r") == nil
-    end
-
-    test "same (operative_id, set) always picks the same runner" do
-      set = ["e1", "e2", "e3"]
-      pick = OperativeManager.pick_runner(set, "btc")
-      assert pick in set
-      assert OperativeManager.pick_runner(Enum.shuffle(set), "btc") == pick
-    end
-
-    test "removing only the chosen runner moves only that operative (stable)" do
-      set = ["e1", "e2", "e3", "e4"]
-      operatives = for i <- 1..40, do: "operative_#{i}"
-      before = Map.new(operatives, fn r -> {r, OperativeManager.pick_runner(set, r)} end)
-
-      victim = "e2"
-      after_set = set -- [victim]
-
-      for r <- operatives do
-        new_pick = OperativeManager.pick_runner(after_set, r)
-
-        if before[r] == victim do
-          assert new_pick in after_set
-        else
-          # operatives not on the removed runner keep their placement
-          assert new_pick == before[r]
-        end
-      end
     end
   end
 

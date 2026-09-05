@@ -8,6 +8,8 @@ defmodule Flezha.Convergence.HealTest do
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
 
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.ConvergenceFixtures, only: [diff: 2, diff: 3]
   use Mimic
 
   alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Snapshot}
@@ -41,7 +43,7 @@ defmodule Flezha.Convergence.HealTest do
 
     defp plan_for(verdict) do
       wedge_intent()
-      |> Diff.compute(wedge_reality(), %{verdict: verdict})
+      |> diff(wedge_reality(), %{stall_verdict: verdict})
       |> Planner.plan(Backoff.new())
     end
 
@@ -88,7 +90,7 @@ defmodule Flezha.Convergence.HealTest do
     end
 
     test "an :ok verdict clears the recorded wedge" do
-      delta = Diff.compute(wedge_intent(), wedge_reality(), %{verdict: :ok})
+      delta = diff(wedge_intent(), wedge_reality(), %{stall_verdict: :ok})
       assert delta.data_plane_wedge == nil
       assert delta.data_plane_layer == nil
       assert Diff.empty?(delta)
@@ -103,7 +105,7 @@ defmodule Flezha.Convergence.HealTest do
         |> Backoff.update(Planner.ladder_key(:data_plane_wedge, "rc_b"), :error, now)
 
       assert wedge_intent()
-             |> Diff.compute(wedge_reality(), %{verdict: verdict})
+             |> diff(wedge_reality(), %{stall_verdict: verdict})
              |> Planner.plan(backoff) == []
     end
 
@@ -133,7 +135,7 @@ defmodule Flezha.Convergence.HealTest do
 
       assert [%{primitive: :evict_runner, namespace: :ns, target: "e_live", args: ^args}] =
                wedge_intent()
-               |> Diff.compute(wedge_reality(), %{verdict: verdict})
+               |> diff(wedge_reality(), %{stall_verdict: verdict})
                |> Planner.plan(backoff)
     end
 
@@ -228,22 +230,12 @@ defmodule Flezha.Convergence.HealTest do
 
   describe "Snapshot" do
     test "publish/current round-trips" do
-      Snapshot.publish(%{
-        last_tick_at: 42,
-        stalled_operatives: ["x"],
-        bound_operatives: 1,
-        producing_operatives: 1
-      })
+      Snapshot.publish(%{last_tick_at: 42, stuck_operatives: %{"x" => :outbox_flat}})
 
       assert Snapshot.current().last_tick_at == 42
-      assert Snapshot.current().stalled_operatives == ["x"]
+      assert Snapshot.current().stuck_operatives == %{"x" => :outbox_flat}
       # reset for other suites
-      Snapshot.publish(%{
-        last_tick_at: nil,
-        stalled_operatives: [],
-        bound_operatives: 0,
-        producing_operatives: 0
-      })
+      Snapshot.publish(%{last_tick_at: nil, stuck_operatives: %{}})
     end
 
     test "observe_recovery caches per-hub state" do
@@ -329,7 +321,7 @@ defmodule Flezha.Convergence.HealTest do
         operatives: %{{@stall_ns, operative_id} => Enum.into(extra, %{bound_runner: "e_live"})}
       }
 
-      Diff.compute(intent, reality, %{
+      diff(intent, reality, %{
         facts: %{{:output_stall, operative_id} => %{at: 0, args: %{}}}
       })
     end
@@ -342,7 +334,7 @@ defmodule Flezha.Convergence.HealTest do
       # Not declared, or declared in a namespace still mid-recovery — the
       # caller passes only the recovery-ready operatives.
       delta =
-        Diff.compute(%Intent{operatives: []}, %{}, %{
+        diff(%Intent{operatives: []}, %{}, %{
           facts: %{{:output_stall, "ghost"} => %{at: 0, args: %{}}}
         })
 
@@ -461,7 +453,7 @@ defmodule Flezha.Convergence.HealTest do
         }
       }
 
-      assert Planner.plan(Diff.compute(intent, reality), Backoff.new()) == []
+      assert Planner.plan(diff(intent, reality), Backoff.new()) == []
     end
   end
 

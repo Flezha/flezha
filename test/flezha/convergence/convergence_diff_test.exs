@@ -8,6 +8,8 @@ defmodule Flezha.Convergence.DiffTest do
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
 
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.ConvergenceFixtures, only: [diff: 2]
   use Mimic
 
   alias Flezha.Convergence.{Backoff, Diff, Intent, Planner}
@@ -52,7 +54,7 @@ defmodule Flezha.Convergence.DiffTest do
   describe "a declared plugin that is not running is a divergence (D1)" do
     test "a declared plugin stuck in :prepared is missing and yields a start_plugin op" do
       delta =
-        Diff.compute(
+        diff(
           plugin_intent(["src"]),
           plugin_reality(%{running_plugins: [], subscribed_plugins: ["src"]})
         )
@@ -69,7 +71,7 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "a running declared plugin yields no divergence and no op" do
       delta =
-        Diff.compute(
+        diff(
           plugin_intent(["src"]),
           plugin_reality(%{running_plugins: ["src"], subscribed_plugins: ["src"]})
         )
@@ -83,7 +85,7 @@ defmodule Flezha.Convergence.DiffTest do
             %{running_plugins: ["src", "stray"], subscribed_plugins: ["src", "stray"]},
             %{running_plugins: ["src"], subscribed_plugins: ["src", "stray"]}
           ] do
-        delta = Diff.compute(plugin_intent(["src"]), plugin_reality(observed))
+        delta = diff(plugin_intent(["src"]), plugin_reality(observed))
 
         assert delta.extra_plugins == [{{:ns, "r"}, "stray", self()}],
                "an undeclared plugin must be torn down whatever its phase, got " <>
@@ -96,7 +98,7 @@ defmodule Flezha.Convergence.DiffTest do
         observed =
           Map.merge(%{running_plugins: [], subscribed_plugins: ["src", "stray"]}, gate)
 
-        delta = Diff.compute(plugin_intent(["src"]), plugin_reality(observed))
+        delta = diff(plugin_intent(["src"]), plugin_reality(observed))
 
         assert delta.missing_plugins == []
         assert delta.extra_plugins == []
@@ -105,7 +107,7 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "a heal that keeps failing settles onto the backoff ladder, not every tick" do
       delta =
-        Diff.compute(
+        diff(
           plugin_intent(["src"]),
           plugin_reality(%{running_plugins: [], subscribed_plugins: ["src"]})
         )
@@ -175,7 +177,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
 
       assert delta.unbound_operatives == [{:ns, "unbound"}]
       assert delta.misbound_operatives == [{{:ns, "stale"}, "e_dead", :probe}]
@@ -193,7 +195,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      assert Diff.empty?(Diff.compute(intent, reality))
+      assert Diff.empty?(diff(intent, reality))
     end
 
     test "a declared operative with no observation is the reconcile's to start, not a heal's" do
@@ -209,7 +211,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      assert Diff.empty?(Diff.compute(intent, reality))
+      assert Diff.empty?(diff(intent, reality))
     end
 
     test "re-places instead of rebinding when the factory is only served elsewhere" do
@@ -230,7 +232,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
 
       assert delta.unbound_operatives == []
       assert delta.misbound_operatives == []
@@ -253,7 +255,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.unbound_operatives == [{:ns, "r"}]
       assert delta.replace_operatives == []
     end
@@ -270,7 +272,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.unbound_operatives == [{:ns, "r"}]
       assert delta.replace_operatives == []
     end
@@ -297,7 +299,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
 
       assert delta.missing_plugins == [{{:ns, "r"}, "declared", p}]
       assert delta.extra_plugins == [{{:ns, "r"}, "stray", self()}]
@@ -322,7 +324,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
 
       assert delta.missing_plugins == []
       assert delta.extra_plugins == []
@@ -348,7 +350,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
 
       assert delta.missing_plugins == []
       assert delta.extra_plugins == []
@@ -367,7 +369,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.missing_plugins == []
       assert delta.extra_plugins == []
     end
@@ -392,7 +394,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.missing_plugins == []
       assert delta.extra_plugins == []
     end
@@ -419,7 +421,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.unhealthy_plugins == [{{:ns, "r"}, "ws_in", p, :connection_idle}]
       assert delta.missing_plugins == []
       refute Diff.empty?(delta)
@@ -456,7 +458,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.missing_plugins == [{{:ns, "r"}, "gone", missing}]
       assert delta.unhealthy_plugins == [{{:ns, "r"}, "shaky", shaky, :produce_stalled}]
     end
@@ -476,7 +478,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.missing_plugins == []
     end
 
@@ -500,7 +502,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.misbound_operatives == []
       assert delta.unbound_operatives == []
     end
@@ -516,7 +518,7 @@ defmodule Flezha.Convergence.DiffTest do
         stalled_operatives: MapSet.new()
       }
 
-      delta = Diff.compute(intent, reality)
+      delta = diff(intent, reality)
       assert delta.misbound_operatives == []
       assert delta.unbound_operatives == []
       assert delta.missing_plugins == []

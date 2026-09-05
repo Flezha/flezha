@@ -19,6 +19,7 @@ defmodule Flezha.Convergence.Loop do
   use GenServer
 
   alias Flezha.Convergence.{Backoff, Diff, Facts, Heal, Intent, Planner, Probe, RecoveryGate}
+  alias Flezha.Convergence.Verdict
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
   alias Flezha.Service.{EventManager, HubManager, PluginManager}
@@ -237,9 +238,10 @@ defmodule Flezha.Convergence.Loop do
   # consumed. Returns the tick's intent and reality so the report pass reads the
   # same two snapshots the heals were planned against.
   defp heal_pass(%State{} = state, started_at) do
-    # The data-plane verdict is computed BEFORE the plan because the Diff
-    # consumes it: a wedged layer is a divergence like any other.
-    state = Liveness.classify(state)
+    # The data-plane verdict and the producing-liveness markers are read BEFORE
+    # the plan because the judge folds both into the records the Diff consumes:
+    # one sample, one judgement, one set of records every surface then reads.
+    state = Progress.classify(Liveness.classify(state), started_at)
 
     intent = Intent.declared()
     reality = Probe.snapshot()
@@ -247,26 +249,9 @@ defmodule Flezha.Convergence.Loop do
     # Facts the probe shows repaired leave the map and release their ladder
     # BEFORE the plan, so a rung never fires for a fault already gone.
     state = settle_facts(state, reality, started_at)
+    state = judge(state, intent, reality, started_at)
 
-    # Per-namespace recovery gate: heal only operatives whose hub has finished
-    # recovery. A namespace mid-replay is skipped (no heal against a
-    # half-restored registry) without blocking healing for ready namespaces.
-    ready = RecoveryGate.ready_namespaces(intent)
-    heal_operatives = Enum.filter(intent.operatives, &MapSet.member?(ready, &1.namespace))
-
-    delta =
-      Diff.compute(%Intent{operatives: heal_operatives}, reality, %{
-        verdict: state.stall_verdict,
-        facts: state.facts
-      })
-
-    {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
-    state = %{state | misbound_streaks: streaks}
-
-    delta = without_pending_enables(delta)
-    plugin_degraded = plugin_degraded_operatives(delta)
-    maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
-    state = %{state | plugin_degraded: plugin_degraded}
+    {state, delta} = plan_delta(state, intent, reality)
 
     plan = Planner.plan(delta, state.backoff)
     {backoff, issued} = execute_plan(plan, state.backoff)
@@ -279,17 +264,54 @@ defmodule Flezha.Convergence.Loop do
     # becomes a rate.
     state = if issued >= Planner.max_ops(), do: request_tick(state), else: state
 
-    elapsed = System.monotonic_time(:millisecond) - started_at
-
-    {state, intent, reality, issued, elapsed}
+    {state, intent, reality, issued, System.monotonic_time(:millisecond) - started_at}
   end
 
-  # Report-only /healthz inputs: producing-liveness verdicts from durable
-  # progress markers and the durable-evidence-vs-intent diff. Neither
-  # feeds a heal decision.
-  defp report_pass(%State{} = state, intent, reality, started_at) do
-    state = Progress.classify(state, started_at)
+  # One verdict record per subject, judged once from the tick's facts. Every
+  # reader after this — the Diff, the snapshot, `/healthz` and the CLI — reads
+  # these and never re-derives a health word of its own.
+  defp judge(%State{} = state, intent, reality, now) do
+    verdicts =
+      Probe.judge(Probe.context(intent, reality, signals(state), now), state.verdicts)
 
+    Verdict.emit_transitions(state.verdicts, verdicts)
+    plugin_degraded = Verdict.plugin_degraded(verdicts)
+    maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
+
+    %{state | verdicts: verdicts, plugin_degraded: plugin_degraded}
+  end
+
+  # The divergence this tick will act on: diffed over the recovery-ready
+  # operatives only — a namespace mid-replay is skipped, so no heal runs
+  # against a half-restored registry — then streak-gated and stripped of the
+  # plugins an enable already has in flight.
+  defp plan_delta(%State{} = state, intent, reality) do
+    ready = RecoveryGate.ready_namespaces(intent)
+    heal_operatives = Enum.filter(intent.operatives, &MapSet.member?(ready, &1.namespace))
+
+    delta =
+      Diff.compute(%Intent{operatives: heal_operatives}, reality, state.verdicts, state.facts)
+
+    {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
+
+    {%{state | misbound_streaks: streaks}, without_pending_enables(delta)}
+  end
+
+  # The signals the fact readers name, lifted out of the Loop's struct: the
+  # declared facts, the producing-liveness markers and the data-plane sample.
+  defp signals(%State{} = state) do
+    %{
+      facts: state.facts,
+      stuck: state.stuck_operatives,
+      stall_verdict: state.stall_verdict,
+      runner_facts: state.runner_facts,
+      liveness: state.prev_liveness
+    }
+  end
+
+  # Report-only /healthz inputs: the durable-evidence-vs-intent diff, which
+  # feeds no heal decision.
+  defp report_pass(%State{} = state, intent, reality, _started_at) do
     {mismatch, cache} =
       Intent.detect_mismatch(intent, state.intent_mismatch, state.evidence_cache)
 
@@ -373,15 +395,8 @@ defmodule Flezha.Convergence.Loop do
     }
   end
 
-  # Operatives whose declared plugins diverge from production reality this tick:
-  # missing (not subscribed) or self-reported unhealthy. Sorted for a stable
-  # transition compare.
-  defp plugin_degraded_operatives(%Diff{} = delta) do
-    missing = Enum.map(delta.missing_plugins, fn {{_ns, rid}, _id, _plugin} -> rid end)
-    unhealthy = Enum.map(delta.unhealthy_plugins, fn {{_ns, rid}, _id, _plugin, _r} -> rid end)
-    Enum.uniq(missing ++ unhealthy) |> Enum.sort()
-  end
-
+  # The plugin-degraded set changed: log the transition, never the steady
+  # state — the set itself is on the snapshot for `/healthz` to read.
   defp maybe_log_plugin_degraded(same, same), do: :ok
 
   defp maybe_log_plugin_degraded(new, old) do

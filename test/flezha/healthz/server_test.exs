@@ -20,6 +20,8 @@ defmodule Flezha.Healthz.ServerTest do
 
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.ConvergenceFixtures, only: [verdicts: 1]
+
   alias Flezha.Boot.Readiness
   alias Flezha.Convergence.Snapshot
   alias Flezha.Healthz.Server
@@ -45,7 +47,7 @@ defmodule Flezha.Healthz.ServerTest do
       # not bleed into other suites.
       Snapshot.publish(%{
         last_tick_at: nil,
-        stalled_operatives: [],
+        operative_health: %{},
         bound_operatives: 0,
         producing_operatives: 0
       })
@@ -61,19 +63,34 @@ defmodule Flezha.Healthz.ServerTest do
     {:ok, port: port}
   end
 
-  # Publish a convergence snapshot the way the Loop would, so the reader
-  # under test has live state to format. `producing_operatives` is derived as
-  # `bound - stalled`, mirroring the Loop.
+  # Publish a convergence snapshot the way the Loop would: one verdict record
+  # per operative, which is what the endpoint folds. `bound` operatives are
+  # minted healthy and the ones named in `stalled` degraded, so the counts the
+  # body reports are DERIVED here exactly as the Loop derives them.
   defp publish_tick(stalled, bound \\ 0, age_ms \\ 0) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond) - age_ms,
-      stalled_operatives: stalled,
-      bound_operatives: bound,
-      producing_operatives: max(bound - length(stalled), 0),
+      operative_health: operative_records(stalled, bound),
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
     })
   end
+
+  # `bound` operatives, the first `length(stalled)` of them named by `stalled`
+  # and output-stalled, the rest healthy and producing.
+  defp operative_records(stalled, bound) do
+    healthy = for i <- 1..max(bound - length(stalled), 0)//1, do: "healthy_#{i}"
+
+    verdicts(
+      for(
+        id <- stalled,
+        do: {op(id), :degraded, reason: {:stalled, :output_stall}, phase: :running}
+      ) ++
+        for(id <- healthy, do: {op(id), :healthy, reason: :producing, phase: :running})
+    )
+  end
+
+  defp op(id), do: {:operative, {"ns", id}}
 
   @sensor_period_ms 10_000
 
@@ -84,12 +101,9 @@ defmodule Flezha.Healthz.ServerTest do
   defp publish_verdict(layer, polls) do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operatives: [],
       stuck_operatives: %{},
       intent_mismatch: [],
-      intended_operatives: 1,
-      bound_operatives: 1,
-      producing_operatives: 1,
+      operative_health: operative_records([], 1),
       pending_restore: false,
       data_plane_layer: layer,
       data_plane_streak: polls
@@ -157,10 +171,12 @@ defmodule Flezha.Healthz.ServerTest do
     # One of two bound operatives has declared plugins missing/unhealthy.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operatives: [],
-      plugin_degraded_operatives: ["btc_kraken"],
-      bound_operatives: 2,
-      producing_operatives: 1
+      operative_health:
+        verdicts([
+          {op("btc_kraken"), :degraded,
+           reason: {:plugin_unhealthy, "src", :not_running}, phase: :running},
+          {op("healthy_1"), :healthy, reason: :producing, phase: :running}
+        ])
     })
 
     {status, _headers, body} = get(port, "/healthz")
@@ -184,10 +200,12 @@ defmodule Flezha.Healthz.ServerTest do
     # but-not-ready must read recovering, never healthy.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operatives: [],
-      intended_operatives: 3,
-      bound_operatives: 1,
-      producing_operatives: 1,
+      operative_health:
+        verdicts([
+          {op("bound"), :healthy, reason: :producing, phase: :running},
+          {op("rebinding_a"), :unbound, reason: :no_binding},
+          {op("rebinding_b"), :unbound, reason: :no_binding}
+        ]),
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
     })
@@ -218,10 +236,7 @@ defmodule Flezha.Healthz.ServerTest do
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operatives: [],
-      intended_operatives: 1,
-      bound_operatives: 0,
-      producing_operatives: 0,
+      operative_health: verdicts([{op("orphan"), :unbound, reason: :no_binding}]),
       unmet_intent_ms: 5_000,
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
@@ -315,12 +330,10 @@ defmodule Flezha.Healthz.ServerTest do
     # the Loop counts as producing — flat-because-idle is not degraded.
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operatives: [],
       stuck_operatives: %{},
       intent_mismatch: [],
-      intended_operatives: 5,
-      bound_operatives: 5,
-      producing_operatives: 5,
+      operative_health:
+        verdicts(for i <- 1..5, do: {op("idle_#{i}"), :healthy, reason: :idle, phase: :running}),
       pending_restore: false
     })
 
@@ -339,12 +352,13 @@ defmodule Flezha.Healthz.ServerTest do
   test "STUCK operative (fed but frozen) → 200 degraded with per-reason detail", %{port: port} do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
-      stalled_operatives: [],
       stuck_operatives: %{"btc_kraken" => %{detail: :wal_frozen, entity: "proc/k1"}},
       intent_mismatch: [],
-      intended_operatives: 2,
-      bound_operatives: 2,
-      producing_operatives: 1,
+      operative_health:
+        verdicts([
+          {op("btc_kraken"), :degraded, reason: {:stuck, :wal_frozen}, phase: :running},
+          {op("healthy_1"), :healthy, reason: :producing, phase: :running}
+        ]),
       pending_restore: false
     })
 

@@ -8,6 +8,7 @@ defmodule Flezha.Convergence.Probe do
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Convergence.Probe.Judge
   alias Flezha.Convergence.Snapshot
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.FleetManager
@@ -33,6 +34,31 @@ defmodule Flezha.Convergence.Probe do
           writers: MapSet.t() | :unknown,
           tick_at: integer()
         }
+
+  @doc """
+  Fold the tick's facts into one verdict record per subject. The Probe observes
+  and the judge decides; `Flezha.Convergence.Probe.Judge` holds the rules.
+  """
+  @spec judge(Flezha.Convergence.Probe.Readers.context(), %{
+          term() => Flezha.Convergence.Verdict.t()
+        }) ::
+          %{term() => Flezha.Convergence.Verdict.t()}
+  defdelegate judge(context, previous), to: Judge
+
+  @doc """
+  The tick's judging context: the declared operatives, the probed reality, the
+  loop signals the readers name (`facts`, `stuck`, `stall_verdict`,
+  `runner_facts`, `liveness`) and the tick instant.
+
+  A plain map rather than the Loop's struct, so a fact reader depends on the
+  signals it names and on nothing else — and so a test can judge one tick
+  through exactly the path the Loop takes.
+  """
+  @spec context(Flezha.Convergence.Intent.t(), reality(), map(), integer()) ::
+          Flezha.Convergence.Probe.Readers.context()
+  def context(%Flezha.Convergence.Intent{operatives: operatives}, reality, signals, now) do
+    %{operatives: operatives, reality: reality, signals: signals, now: now}
+  end
 
   # ---------- reality ----------
 

@@ -144,7 +144,11 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       Registry.register_sink(%{
         name: conv_sink,
         module: Counting,
-        config: %{counter_ref: ref, parent: self(), sources: [:flezha_convergence]}
+        config: %{
+          counter_ref: ref,
+          parent: self(),
+          sources: [:flezha_convergence, :flezha_health]
+        }
       })
 
     on_exit(fn -> Registry.unregister_sink(conv_sink) end)
@@ -158,7 +162,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     stuck =
       receive_until(
-        fn s -> s.source == :flezha_convergence and s.name == :operative_stuck end,
+        fn s -> s.source == :flezha_health and s.name == :operative_stuck end,
         500
       )
 

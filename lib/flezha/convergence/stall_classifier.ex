@@ -64,6 +64,7 @@ defmodule Flezha.Convergence.StallClassifier do
   empty and those five clauses do not fire.
   """
 
+  alias Flezha.Convergence.Verdict
   alias Flezha.Transport.LivenessCounters
 
   @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
@@ -108,10 +109,42 @@ defmodule Flezha.Convergence.StallClassifier do
     producer_push_stalled: nil
   }
 
+  @doc "The classifier's own threshold defaults, by name — read by the probe table."
+  @spec defaults() :: map()
+  def defaults(), do: @defaults
+
   @doc "The layer a verdict names, or `nil` for `:ok`."
   @spec layer(verdict()) :: atom() | nil
   def layer(:ok), do: nil
   def layer({layer, _ctx}), do: layer
+
+  @doc """
+  The runner a verdict's context names, directly or through its data transport
+  key; `nil` when it names none. The one reading of that context — the probe
+  table resolves a verdict to its subject with it, and the Diff resolves the
+  same verdict to a heal target.
+  """
+  @spec runner_of(map()) :: binary() | nil
+  def runner_of(%{runner_id: id}) when is_binary(id), do: id
+  def runner_of(%{transport: {:uds_data, id, _type}}) when is_binary(id), do: id
+  def runner_of(_ctx), do: nil
+
+  @doc """
+  Every operative the probe saw bound to the runner a verdict's context names,
+  sorted; `[]` when the context names no runner or nothing is bound to it. The
+  one reading of "who does this wedge reach": the probe table mints one fact
+  per operative from it, and the Diff plans one heal per operative from the
+  same list.
+  """
+  @spec operatives_of(map(), map()) :: [term()]
+  def operatives_of(observed, ctx) do
+    case runner_of(ctx) do
+      nil -> []
+      id -> observed |> Enum.filter(&bound_to?(&1, id)) |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+    end
+  end
+
+  defp bound_to?({_ref, obs}, id), do: is_map(obs) and Map.get(obs, :bound_runner) == id
 
   @doc "Which kind of thing `layer` says is wedged; `nil` for no/unknown layer."
   @spec layer_scope(atom() | nil) :: :fabric | :runner | :connection | :operative | nil
@@ -357,10 +390,6 @@ defmodule Flezha.Convergence.StallClassifier do
 
   @producing_defaults %{grace_ms: 60_000}
 
-  # Deepest first: a frozen WAL freezes the min-watermark and the outbox
-  # cursor as a consequence, so one root cause yields one verdict.
-  @stuck_rank %{wal_frozen: 3, watermark_frozen: 2, outbox_flat: 1}
-
   @doc """
   Per-operative producing-liveness from durable progress markers, compared at
   the convergence tick cadence.
@@ -399,7 +428,7 @@ defmodule Flezha.Convergence.StallClassifier do
           marker_verdict(m, Map.get(base, {m.operative_id, m.entity}), now, o.grace_ms)
         end)
 
-      {operative_id, Enum.max_by(verdicts, &verdict_rank/1)}
+      {operative_id, Enum.max_by(verdicts, &Verdict.producing_rank/1)}
     end)
   end
 
@@ -449,10 +478,6 @@ defmodule Flezha.Convergence.StallClassifier do
   end
 
   defp accumulating?(_m, _base), do: false
-
-  defp verdict_rank({:stuck, detail, _ctx}), do: {2, Map.get(@stuck_rank, detail, 0)}
-  defp verdict_rank(:advancing), do: {1, 0}
-  defp verdict_rank(:idle), do: {0, 0}
 
   # ---------- helpers ----------
 

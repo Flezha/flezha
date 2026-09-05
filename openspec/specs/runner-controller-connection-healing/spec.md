@@ -673,3 +673,25 @@ its byte length, rather than surfacing as a listener that failed to start.
 - **WHEN** the Overwatch handles the failure
 - **THEN** it SHALL park at once with the reason, declare `{:operative_parked, ns, id, reason}`, and issue no second attempt of its own; the next attempt SHALL be the loop's `rebind_operative`
 
+### Requirement: The runner's verdict record SHALL carry the control silence and the data silence as two facts
+
+The convergence loop SHALL publish one verdict record per connected runner whose facts carry `control_silent_ms` — the age of the last inbound control frame, which `Flezha.Runner.ControlChannel` SHALL stamp into the shared liveness counters on every inbound control frame beside the `last_seen` it keeps for its own watchdog — `data_silent_ms`, `heartbeats_advancing?`, `dispatches_advancing?` and the runner's roster membership. The record's state SHALL be `failed` when the roster holds the runner as inactive or not at all, `degraded` with the runner-scoped layer as reason when the data-plane classifier proves it wedged, `unknown` when its facts could not be read, and `healthy` otherwise. The session watchdog, its window and its close SHALL be unchanged: the record reports the two silences side by side and decides nothing about the session, so a session that is alive over a data plane that is dead is readable as one row, and the control-plane watchdog's `[:flezha, :runner, :liveness_timeout]` SHALL reach the observability bus through the detector table's declaration of it.
+
+#### Scenario: a live session over a dead data plane is one row
+
+- **GIVEN** a runner whose keepalive pings keep arriving while its data-plane counters stopped advancing past the stall window
+- **WHEN** the convergence loop ticks
+- **THEN** the runner's record SHALL show a control silence under the liveness window and a data silence over the stall window, and its state SHALL be `degraded` naming the runner-scoped layer
+
+#### Scenario: a runner the roster dropped is failed
+
+- **GIVEN** a runner whose control session the watchdog closed after the liveness window
+- **WHEN** the convergence loop ticks
+- **THEN** the runner's record SHALL be `failed`, every operative bound to it SHALL be `failed` with reason `dead_runner`, and the loop's remedy SHALL be the existing rebind
+
+#### Scenario: the watchdog is unchanged and its event reaches a sink
+
+- **GIVEN** no inbound control frame arrives for longer than the configured liveness window
+- **WHEN** the watchdog fires
+- **THEN** it SHALL close the session exactly as before, and the `[:flezha, :runner, :liveness_timeout]` it executes SHALL appear on the observability bus as a signal with no hand-written bridge line
+

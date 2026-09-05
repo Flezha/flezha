@@ -26,17 +26,15 @@ defmodule Flezha.Convergence.Snapshot do
 
   use GenServer
 
+  alias Flezha.Convergence.Verdict
   alias ProcessHub.Constant.Hook
 
   @table __MODULE__
 
   @default_current %{
     last_tick_at: nil,
-    stalled_operatives: [],
     stuck_operatives: %{},
     intent_mismatch: [],
-    bound_operatives: 0,
-    producing_operatives: 0,
     operative_health: %{}
   }
 
@@ -62,16 +60,36 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   @doc """
-  Per-operative health for `{namespace, operative_id}`, classified by the Loop on its
-  last tick. `:unknown` before the first tick or for a operative the Loop has not
-  observed (e.g. a durable-registry row with no live placement). One of
-  `:healthy | :degraded | :failed | :unbound | :unknown`.
+  The Loop's verdict record for `{namespace, operative_id}`, or `nil` for an
+  operative it has not judged yet (before the first tick, or a durable-registry
+  row with no live placement).
   """
-  @spec operative_health(String.t(), term()) :: atom()
+  @spec verdict(String.t(), term()) :: Verdict.t() | nil
+  def verdict(namespace, operative_id), do: record({:operative, {namespace, operative_id}})
+
+  @doc """
+  The Loop's verdict record for any subject — a runner, a plugin, a channel or
+  a driver as well as an operative — or `nil` for one it has not judged. The
+  one read of the published health map, so no reader digs into the snapshot's
+  shape for itself.
+  """
+  @spec record({Verdict.kind(), term()}) :: Verdict.t() | nil
+  def record(subject) do
+    current() |> Map.get(:operative_health, %{}) |> Map.get(subject)
+  end
+
+  @doc """
+  Per-operative health for `{namespace, operative_id}`: the state of the one
+  verdict record the Loop published for it. `:unknown` for an operative it has
+  not judged. One of `:healthy | :degraded | :failed | :unbound | :parked |
+  :suspended | :unknown`.
+  """
+  @spec operative_health(String.t(), term()) :: Verdict.state()
   def operative_health(namespace, operative_id) do
-    current()
-    |> Map.get(:operative_health, %{})
-    |> Map.get({namespace, operative_id}, :unknown)
+    case verdict(namespace, operative_id) do
+      %Verdict{state: state} -> state
+      _ -> :unknown
+    end
   end
 
   @doc """
@@ -97,6 +115,14 @@ defmodule Flezha.Convergence.Snapshot do
   @doc "All observed `{hub_id => state}` recovery entries."
   @spec recovery_states() :: %{atom() => atom()}
   def recovery_states(), do: tagged_rows(:recovery)
+
+  @doc """
+  Whether a hub recovery state means a planned recovery is still running. The
+  one place the recovery vocabulary is read, so `/healthz` and the convergence
+  loop cannot disagree about which states count as recovering.
+  """
+  @spec recovering?(atom()) :: boolean()
+  def recovering?(state), do: state in [:recovery_pending, :recovering, :timeout]
 
   @doc """
   Record an observed recovery transition from a non-telemetry source —

@@ -42,9 +42,23 @@ instead of the loop recording a repair it did not achieve.
 
 Three fail-open rules compose here and each is deliberate: `:prepared` is healthy (it holds no
 upstream resources), an uncertain probe is healthy (the loop must never escalate on a probe it
-could not finish), and an idle operative is not stalled. A probe that cannot be completed is
-reported upward as `{:fail_open, reason}` and emitted once, by the extension table, as
-`[:flezha, :plugin, :health, :fail_open]` — fail-open stays, but stops being invisible. A source
+could not finish), and an idle operative is not stalled. All three are the convergence loop's
+judge, in one rule order, rather than three rules composed per site. A probe that cannot be
+completed is reported upward as `{:fail_open, reason}` and emitted once, by the extension table, as
+`[:flezha, :plugin, :health, :fail_open]` — the judge folds it to healthy, and the event reaches
+the observability bus by the probe table's own declaration of it, so fail-open stops being
+invisible without a hand-written bridge line.
+
+Every detector's event reaches a sink the same way. The convergence loop's detector table declares
+the `[:flezha, …]` events each detector executes, and the telemetry bridge derives half its mapping
+from that declaration — so the control-plane watchdog's `[:flezha, :runner, :liveness_timeout]`,
+the Watchdog's `[:flezha, :state, :catastrophic_dataflow_stop]`, the bounded call's
+`[:flezha, :convergence, :safe_call]`, the heal's four `runner :restarted|:reconnected|
+:reconnected_reassigned|:evicted` events and the loop's own `[:flezha, :convergence, :heal]` are
+all on the bus. `[:flezha, :health, :verdict]` joins them: it fires on every verdict-state
+transition with `kind`, the subject id, the new `state` and its reason, and on nothing else — a
+state that holds is what `/healthz` is for. Any executed event that is neither mapped nor on the
+bridge's ratcheted exemption list fails the suite by file, line and name. A source
 provider that has stopped completing work self-reports: `http_poll` is unhealthy once its last
 SETTLED poll ages past its idle window, mirroring `websocket`'s data-liveness watchdog.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).

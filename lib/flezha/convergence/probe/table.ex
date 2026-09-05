@@ -1,0 +1,159 @@
+defmodule Flezha.Convergence.Probe.Table do
+  @moduledoc """
+  Every health detector, declared once: the fact reader it runs, the subject
+  kind it speaks about, the threshold names it cites and the `[:flezha, …]`
+  events it executes.
+
+  The table is the extension point. A new detector is one entry here — its
+  subjects are judged, published and rendered on every surface, and its events
+  are bridged by `Flezha.Observability.TelemetryBridge`'s derived half, with no
+  edit to the Diff, the snapshot, `/healthz`, the CLI or the bridge.
+
+  Three entries declare events and read nothing (`facts: nil`): the judge's own
+  transition event, the runner-side SDK hold whose fact belongs to the runner,
+  and the bounded call whose two facts are fields of the binding row. They exist
+  so those events reach a sink by declaration rather than by a hand-written
+  bridge line.
+  """
+
+  alias Flezha.Convergence.Probe.Readers
+  alias Flezha.Convergence.StallClassifier
+  alias Flezha.Plugin.ProviderBehaviour
+
+  @detectors [
+    %{id: :binding, kind: :operative, facts: &Readers.binding/1, events: []},
+    %{
+      id: :park,
+      kind: :operative,
+      facts: &Readers.park/1,
+      events: [[:flezha, :operative, :parked]]
+    },
+    %{
+      id: :suspension,
+      kind: :operative,
+      facts: &Readers.suspension/1,
+      events: [
+        [:flezha, :workflow, :parked],
+        [:flezha, :workflow, :suspended],
+        [:flezha, :workflow, :failed]
+      ]
+    },
+    %{
+      id: :output_stall,
+      kind: :operative,
+      facts: &Readers.output_stall/1,
+      events: [
+        [:flezha, :state, :output_stall],
+        [:flezha, :state, :catastrophic_dataflow_stop]
+      ],
+      thresholds: [:output_stall_timeout_ms, :catastrophic_dataflow_timeout_ms]
+    },
+    %{
+      id: :progress,
+      kind: :operative,
+      facts: &Readers.progress/1,
+      events: [[:flezha, :convergence, :operative_stuck]],
+      thresholds: [:convergence_output_stall_grace_ms]
+    },
+    %{
+      id: :plugin_health,
+      kind: :plugin,
+      facts: &Readers.plugin_health/1,
+      events: [[:flezha, :plugin, :health, :fail_open]],
+      thresholds: [:probe_budget_ms]
+    },
+    %{
+      id: :session,
+      kind: :runner,
+      facts: &Readers.session/1,
+      events: [
+        [:flezha, :runner, :liveness_timeout],
+        [:flezha, :runner, :restarted],
+        [:flezha, :runner, :reconnected],
+        [:flezha, :runner, :reconnected_reassigned],
+        [:flezha, :runner, :evicted],
+        [:flezha, :transport, :connect_rejected]
+      ],
+      thresholds: [:control_liveness_window_ms, :runner_keepalive]
+    },
+    # Two entries, because "what exists" and "what is wedged" are two reads: a
+    # verdict the classifier could not compute leaves the population standing
+    # and every driver and channel in it `unknown`, rather than reporting none.
+    %{
+      id: :data_plane_population,
+      kind: :by_scope,
+      facts: &Readers.data_plane_population/1,
+      events: []
+    },
+    %{
+      id: :data_plane,
+      kind: :by_scope,
+      facts: &Readers.data_plane/1,
+      events: [[:flezha, :data_plane, :stall_localized]],
+      thresholds: [:driver_freeze_ms, :stall_ms, :queue_high, :entity_stall_ms]
+    },
+    # Declaration-only: whether the bounded call answered is `observed?` and
+    # `bound_runner: :unknown` on the binding row, so a second reader would
+    # only re-derive it.
+    %{
+      id: :bounded_call,
+      kind: :operative,
+      facts: nil,
+      events: [
+        [:flezha, :convergence, :safe_call],
+        [:flezha, :convergence, :heal],
+        [:flezha, :hub, :unavailable]
+      ]
+    },
+    # Declaration-only: the hold is the runner's own fact and reaches the
+    # controller as nothing else, so the entry exists to give the event a sink.
+    %{id: :sdk_hold, kind: :operative, facts: nil, events: [[:flezha, :sdk, :parked]]},
+    # The judge's own entry. Every state transition executes it, and the
+    # derived bridge half maps it from here rather than from a bridge edit.
+    %{id: :verdict, kind: :any, facts: nil, events: [[:flezha, :health, :verdict]]}
+  ]
+
+  @doc "Every declared detector, in judge order."
+  @spec detectors() :: [map()]
+  def detectors(), do: @detectors
+
+  @doc "Every `[:flezha, …]` event any detector declares."
+  @spec events() :: [[atom()]]
+  def events(), do: @detectors |> Enum.flat_map(& &1.events) |> Enum.uniq()
+
+  @doc """
+  The live value behind a declared threshold name. Every name a detector cites
+  must answer here — the conformance test asserts it, so a detector cannot cite
+  a knob nothing configures.
+  """
+  @spec threshold(atom()) :: non_neg_integer() | nil
+  def threshold(:output_stall_timeout_ms),
+    do: env(:default_output_stall_timeout_ms, 60_000)
+
+  def threshold(:catastrophic_dataflow_timeout_ms),
+    do: env(:catastrophic_dataflow_timeout_ms, 60_000)
+
+  def threshold(:convergence_output_stall_grace_ms),
+    do: env(:convergence_output_stall_grace_ms, 60_000)
+
+  def threshold(:probe_budget_ms), do: ProviderBehaviour.probe_budget_ms()
+  def threshold(:control_liveness_window_ms), do: env(:control_liveness_window_ms, 45_000)
+  def threshold(:runner_keepalive), do: env(:runner_keepalive, 30_000)
+
+  def threshold(name) do
+    case Map.fetch(StallClassifier.defaults(), name) do
+      {:ok, value} -> value
+      :error -> nil
+    end
+  end
+
+  defp env(key, default) do
+    case Application.get_env(:flezha, key, default) do
+      value when is_integer(value) -> value
+      value when is_binary(value) -> String.to_integer(value)
+      _ -> default
+    end
+  rescue
+    _ -> default
+  end
+end

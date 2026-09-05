@@ -213,7 +213,27 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       reason: reason
     })
 
-    :healthy
+    {:fail_open, reason}
+  end
+
+  @doc """
+  The ONE normaliser: run `fun` and turn whatever it answers — including a
+  raise, a throw or nonsense — into a `probe_result()`. Every provider answer
+  in the system passes through here, so "what shapes can a health answer take"
+  is settled in one place and the judge sees one vocabulary.
+  """
+  @spec normalise((-> term())) :: probe_result()
+  def normalise(fun) do
+    case fun.() do
+      :healthy -> :healthy
+      {:unhealthy, _reason} = unhealthy -> unhealthy
+      {:fail_open, _reason} = uncertain -> uncertain
+      other -> {:fail_open, {:invalid_return, other}}
+    end
+  rescue
+    error -> {:fail_open, {:raised, error}}
+  catch
+    kind, reason -> {:fail_open, {kind, reason}}
   end
 
   @doc """
@@ -289,16 +309,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     end
   end
 
-  defp safe_verdict(verdict_fun, pid) do
-    case verdict_fun.(pid) do
-      :healthy -> :healthy
-      {:unhealthy, _reason} = unhealthy -> unhealthy
-      {:fail_open, _reason} = uncertain -> uncertain
-      other -> {:fail_open, {:invalid_return, other}}
-    end
-  catch
-    kind, reason -> {:fail_open, {kind, reason}}
-  end
+  defp safe_verdict(verdict_fun, pid), do: normalise(fn -> verdict_fun.(pid) end)
 
   @doc """
   Ask a provider-owned worker for a health fact over a bare `{tag, from, ref}`

@@ -180,6 +180,25 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     pid
   end
 
+  @doc """
+  Stop every operative and every runner a namespace holds, tolerating a manager
+  that is already gone. The teardown every system-tier module owes its
+  namespace: a leaked Overwatch or runner outlives the module and the next one
+  boots into it.
+  """
+  @spec stop_namespace(binary()) :: :ok
+  def stop_namespace(namespace) do
+    for stop <- [&OperativeManager.stop_all_operatives/1, &FleetManager.stop_namespace/1] do
+      try do
+        stop.(namespace)
+      catch
+        _, _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
   def sigkill(os_pid) do
     {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
   end

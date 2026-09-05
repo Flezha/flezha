@@ -58,6 +58,7 @@ defmodule Flezha.Transport.LivenessCounters do
   # the send-side mirror of `hb_credit_parked`: advancing while `nil_drops`
   # stays flat is congestion being absorbed, not data being lost.
   @channel_slots [
+    :last_control_frame_ms,
     :io_in_received,
     :send_frame_calls,
     :nil_drops,
@@ -89,6 +90,9 @@ defmodule Flezha.Transport.LivenessCounters do
   @runner_global_slots Enum.filter(@channel_slots, fn slot ->
                          slot != :hb_count and String.starts_with?(Atom.to_string(slot), "hb_")
                        end)
+  # Slots holding a monotonic stamp rather than a count: collapsing them per
+  # runner keeps the LATEST, because summing two clocks means nothing.
+  @timestamp_slots [:last_send_ms, :last_control_frame_ms]
   @operative_slots [:io_in_received, :forwarded, :filtered_nil, :parked_drops]
   @channel_size length(@channel_slots)
   @operative_size length(@operative_slots)
@@ -268,14 +272,47 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   @doc """
+  The five facts about one runner, side by side: how long its control session
+  has been silent, how long its data plane has, and whether its heartbeats and
+  its dispatches are still advancing.
+
+  Read from the same two liveness samples the stall classifier compares, so the
+  session-open question and the data-flowing question are answered from one
+  sample and never disagree about which tick they describe. A stamp that was
+  never written reads `nil` — "not measured", never "silent forever".
+  """
+  @spec runner_liveness([map()], [map()] | nil, integer()) :: %{term() => map()}
+  def runner_liveness(channels, previous_channels, now) do
+    previous = by_runner(previous_channels || [])
+
+    Map.new(by_runner(channels), fn {runner_id, row} ->
+      prev = Map.get(previous, runner_id)
+
+      {runner_id,
+       %{
+         control_silent_ms: silence(now, row.last_control_frame_ms),
+         data_silent_ms: silence(now, row.last_send_ms),
+         heartbeats_advancing?: advancing?(row, prev, :hb_count),
+         dispatches_advancing?: advancing?(row, prev, :hb_dispatches)
+       }}
+    end)
+  end
+
+  defp silence(_now, 0), do: nil
+  defp silence(now, at), do: max(now - at, 0)
+
+  defp advancing?(_row, nil, _slot), do: nil
+  defp advancing?(row, prev, slot), do: Map.fetch!(row, slot) > Map.fetch!(prev, slot)
+
+  @doc """
   Collapse channel rows to one row per runner, keyed by runner id.
 
   A mirrored heartbeat slot — every `hb_<key>` but the frame count `hb_count` —
   is one fact about the runner that every channel row of that runner repeats,
   so it keeps its value with `max/2`; read per channel it would be multiplied
-  by the size of the runner's stream pool. Every other counter sums, and
-  `last_send_ms`, a timestamp, keeps the latest. An SDK that does not send the
-  self-report never advances a mirrored slot, so it reads 0.
+  by the size of the runner's stream pool. Every other counter sums, and a
+  timestamp slot keeps the latest. An SDK that does not send the self-report
+  never advances a mirrored slot, so it reads 0.
   """
   @spec by_runner([map()]) :: %{term() => map()}
   def by_runner(channels) do
@@ -286,7 +323,7 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   defp collapse(slot, a, b) when slot in @runner_global_slots, do: max(a, b)
-  defp collapse(:last_send_ms, a, b), do: max(a, b)
+  defp collapse(slot, a, b) when slot in @timestamp_slots, do: max(a, b)
   defp collapse(_slot, a, b), do: a + b
 
   defp channel_snapshot(runner_id, name, ref) do

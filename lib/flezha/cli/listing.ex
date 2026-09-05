@@ -4,6 +4,7 @@ defmodule Flezha.Service.Cli.Listing do
   """
 
   alias Flezha.AuthZ.Namespace
+  alias Flezha.Convergence.Verdict
   alias Flezha.Partition
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Controller
@@ -11,7 +12,6 @@ defmodule Flezha.Service.Cli.Listing do
 
   # A group is exactly as healthy as its sickest member: an aggregate that
   # rounded up would hide the one partition that stopped serving its keys.
-  @health_order [:healthy, :degraded, :unbound, :failed]
 
   @doc "Lists all running namespaces."
   def list_namespaces(output_format, _call) do
@@ -119,15 +119,11 @@ defmodule Flezha.Service.Cli.Listing do
     }
   end
 
+  # The worst row of a group, by the record module's one rank — the same order
+  # `/healthz` folds by, so a group and the endpoint cannot disagree about
+  # which member is the problem.
   defp worst_health(rows) do
-    rows
-    |> Enum.map(& &1.health)
-    |> Enum.max_by(fn health ->
-      case Enum.find_index(@health_order, &(&1 == health)) do
-        nil -> length(@health_order)
-        index -> index
-      end
-    end)
+    rows |> Enum.map(& &1.health) |> Enum.max_by(&Verdict.rank/1)
   end
 
   defp render_operative_list(rows, namespace, "json") do

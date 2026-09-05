@@ -17,8 +17,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   import ExUnit.CaptureIO
 
-  alias Flezha.Convergence.Loop
-  alias Flezha.Convergence.Loop.Summary
+  alias Flezha.Convergence.Intent
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
@@ -101,6 +100,17 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     }
   end
 
+  # The records one convergence tick would mint for this operative — judged
+  # through the same two calls the Loop makes, so the surfaces under test read
+  # what the loop would really publish.
+  defp judged(state) do
+    intent = %Intent{
+      operatives: [%{namespace: @namespace, operative_id: "op-1", factory_id: nil, plugins: []}]
+    }
+
+    FlezhaTest.Helper.ConvergenceFixtures.judge(intent, reality(state))
+  end
+
   defp reality(state) do
     %{
       operatives: %{{@namespace, "op-1"} => observed(state)},
@@ -135,29 +145,23 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     assert proc["phase"] == "suspended"
   end
 
-  test "info and the convergence health map agree about one parked operative" do
+  test "info and the loop's verdict record agree about one parked operative" do
     state = parked_state()
     stub_one(state)
 
-    health =
-      Summary.operative_health_map(
-        [%{namespace: @namespace, operative_id: "op-1", factory_id: nil, plugins: []}],
-        reality(state),
-        %Loop.State{}
-      )
-
-    assert health == %{{@namespace, "op-1"} => :degraded}
+    health = judged(state)
+    assert health[{:operative, {@namespace, "op-1"}}].state == :parked
 
     Snapshot.publish(Map.put(Snapshot.current(), :operative_health, health))
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
     %{"operatives" => [proc]} = Jason.decode!(out)
 
-    assert proc["health"] == "degraded"
+    assert proc["health"] == "parked"
     assert proc["phase"] == "parked"
 
     text = capture_io(fn -> CliManager.operative_info(@namespace, "text") end)
-    assert text =~ "Health: degraded"
+    assert text =~ "Health: parked"
     assert text =~ "Phase: parked"
   end
 
@@ -165,14 +169,8 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     state = workflow_state(0)
     stub_one(state)
 
-    health =
-      Summary.operative_health_map(
-        [%{namespace: @namespace, operative_id: "op-1", factory_id: nil, plugins: []}],
-        reality(state),
-        %Loop.State{}
-      )
-
-    assert health == %{{@namespace, "op-1"} => :healthy}
+    health = judged(state)
+    assert health[{:operative, {@namespace, "op-1"}}].state == :healthy
 
     Snapshot.publish(Map.put(Snapshot.current(), :operative_health, health))
 

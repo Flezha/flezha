@@ -25,6 +25,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
       %{
         state
         | prev_liveness: current,
+          runner_facts: runner_facts(current, state.prev_liveness),
           stall_verdict: verdict,
           stall_streak: stall_streak(state, verdict)
       }
@@ -37,6 +38,18 @@ defmodule Flezha.Convergence.Loop.Liveness do
       state
   catch
     _, _ -> state
+  end
+
+  # The runner facts the judge reads, taken from the SAME two samples the
+  # classifier compares — so "the session is open" and "the data plane is
+  # draining" are two fields of one sample rather than two detectors that
+  # disagree about which tick they describe.
+  defp runner_facts(current, previous) do
+    LivenessCounters.runner_liveness(
+      current.channels,
+      previous && previous.channels,
+      System.monotonic_time(:millisecond)
+    )
   end
 
   # Consecutive polls reporting the SAME layer. A different layer (or `:ok`)

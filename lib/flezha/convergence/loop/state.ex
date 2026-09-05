@@ -45,6 +45,14 @@ defmodule Flezha.Convergence.Loop.State do
             prev_liveness: nil,
             stall_verdict: :ok,
             stall_streak: 0,
+            # Per-runner liveness facts read from the same two samples the
+            # classifier compares: the two silences side by side, and whether
+            # heartbeats and dispatches are still advancing.
+            runner_facts: %{},
+            # subject => %Flezha.Convergence.Verdict{} from the last tick. The
+            # one health answer every surface reads, and what lets a state that
+            # holds keep its `since_ms` instead of being re-stamped every tick.
+            verdicts: %{},
             # operative_id => %{detail:, entity:} producing-liveness STUCK
             # verdicts (fed but progress markers flat past grace). Report-only:
             # healing stays on the output-stall ladder.

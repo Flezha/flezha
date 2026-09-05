@@ -450,7 +450,16 @@ The container exposes `epmd` 4369/TCP, `quic` 4433/UDP and `healthz`
 9569/TCP. Startup (period 10 s, 30 failures) and liveness (period 10 s, timeout
 5 s, 3 failures) probes `GET /healthz`; the endpoint answers 503 only on a
 genuine wedge, and a planned recovery reports `recovering` with 200 so the
-kubelet does not restart mid-replay. The readiness probe (same period, timeout
+kubelet does not restart mid-replay. `/healthz` is a fold of the convergence
+loop's one health record per subject: an operative that is parked, bound to a
+dead runner or missing a declared plugin reads `degraded` with `parked`,
+`dead_runner` or `plugin_unhealthy` among the joined reasons, never `healthy`,
+and the body's `unknown_operatives` counts the ones the loop could not read this
+tick — an uncertain probe is reported, never escalated. The fabric arm needs a
+NIF driver to judge: both server transports produce one, so a UDS or QUIC
+controller's `200` is evidence about the data plane, while a `:native`
+in-node controller runs no driver and its `200` is evidence about the loop, the
+operatives and the plugins alone. The readiness probe (same period, timeout
 and threshold) reads `GET /readyz` instead, because readiness is the opposite
 question: it answers 200 only once the boot sequence has completed, every
 namespace hub has left the recovery state machine and the durable registry has

@@ -3,26 +3,23 @@ defmodule Flezha.Convergence.Loop.Summary do
   The tick's per-tick summary and its publication to `Convergence.Snapshot` —
   the one source `/healthz`, the CLI and telemetry all read.
 
+  The verdict records the judge minted ARE the summary: every reader derives
+  its own counts from them with `Verdict.counts/1` — the published map carries
+  no second copy — so a dead binding can never be counted as bound on one
+  surface and not on another. This is the one site that writes
+  `operative_health` into the published snapshot.
+
   `bound < intended` is a recovery window, not a fault: after a restart the
   controller is up while its operatives are not yet rebound. The unmet-intent
   clock runs only while that holds and nothing is recovering.
   """
 
-  alias Flezha.Convergence.{Facts, Intent, Snapshot, StallClassifier}
+  alias Flezha.Convergence.{Intent, Snapshot, StallClassifier, Verdict}
   alias Flezha.Convergence.Loop.State
   alias Flezha.Service.HubManager
 
-  def publish(%Intent{operatives: operatives}, reality, %State{} = state) do
-    # `intended` = declared operatives (what should be bound); `bound` = operatives
-    # actually observed running on runners. After a restart the controller is
-    # up but its operatives are not yet rebound (bound < intended) — that is a
-    # recovery window, NOT healthy, even though nothing is "stalled".
-    intended = length(operatives)
-    bound = map_size(Map.get(reality, :operatives, %{}))
-    stalled = Facts.targets(state.facts, :output_stall)
-    stuck = Map.keys(state.stuck_operatives)
-    non_producing = Enum.uniq(stalled ++ stuck ++ state.plugin_degraded)
-    producing = max(bound - length(non_producing), 0)
+  def publish(%Intent{}, reality, %State{} = state) do
+    counts = Verdict.counts(state.verdicts)
 
     # After a restart the durable registry may hold operatives that are not yet
     # bound to a live pid — either the hub has not started (lazy on runner
@@ -38,23 +35,18 @@ defmodule Flezha.Convergence.Loop.Summary do
 
     unmet_intent_since =
       cond do
-        bound >= intended or any_recovering?(reality) -> nil
+        counts.bound >= counts.intended or any_recovering?(reality) -> nil
         is_integer(state.unmet_intent_since) -> state.unmet_intent_since
         true -> now
       end
 
     Snapshot.publish(%{
       last_tick_at: now,
-      stalled_operatives: stalled,
       stuck_operatives: state.stuck_operatives,
-      plugin_degraded_operatives: state.plugin_degraded,
       intent_mismatch: state.intent_mismatch,
-      intended_operatives: intended,
-      bound_operatives: bound,
-      producing_operatives: producing,
       pending_restore: pending_restore,
       unmet_intent_ms: unmet_intent_since && now - unmet_intent_since,
-      operative_health: operative_health_map(operatives, reality, state),
+      operative_health: state.verdicts,
       data_plane_layer: StallClassifier.layer(state.stall_verdict),
       data_plane_streak: state.stall_streak
     })
@@ -62,53 +54,10 @@ defmodule Flezha.Convergence.Loop.Summary do
     %{state | unmet_intent_since: unmet_intent_since}
   end
 
-  # Per-operative health for the operator surfaces (`flz operative list`,
-  # `flz cluster status`), keyed `{namespace, operative_id}`. Derives the same
-  # authoritative reality the Diff classifies against, so the CLI sees exactly
-  # what the loop sees. A operative only appears `:unknown` here while a tick has
-  # not yet observed it or its read failed — never permanently. Mirrors the
-  # bound/misbound cond in `Diff.compute/2`, extended with the produce signals.
-  @doc false
-  @spec operative_health_map([Intent.operative()], map(), State.t()) :: %{
-          {atom(), binary()} => atom()
-        }
-  def operative_health_map(operatives, reality, %State{} = state) do
-    observed = Map.get(reality, :operatives, %{})
-    active = Map.get(reality, :active_runners, %{})
-    plugin_degraded = MapSet.new(state.plugin_degraded)
-    stalled = MapSet.new(Facts.targets(state.facts, :output_stall))
-
-    Map.new(operatives, fn %{namespace: ns, operative_id: rid} ->
-      obs = Map.get(observed, {ns, rid}, %{})
-      bound = Map.get(obs, :bound_runner)
-      live = Map.get(active, ns, MapSet.new())
-
-      health =
-        cond do
-          # An observation failed this tick (operative state or live-runner read);
-          # no authoritative signal, so report `:unknown` for this tick only.
-          bound == :unknown -> :unknown
-          # Evicted at a committed iteration boundary, not broken.
-          Map.get(obs, :suspended?, false) -> :suspended
-          is_nil(bound) -> :unbound
-          live == :unknown -> :unknown
-          # Bound to a runner that is not live — the loop will rebind.
-          not MapSet.member?(live, bound) -> :failed
-          Map.get(obs, :parked?, false) -> :degraded
-          MapSet.member?(stalled, rid) -> :degraded
-          Map.has_key?(state.stuck_operatives, rid) -> :degraded
-          MapSet.member?(plugin_degraded, rid) -> :degraded
-          true -> :healthy
-        end
-
-      {{ns, rid}, health}
-    end)
-  end
-
   defp any_recovering?(reality) do
     reality
     |> Map.get(:recovery, %{})
     |> Map.values()
-    |> Enum.any?(&(&1 in [:recovery_pending, :recovering, :timeout]))
+    |> Enum.any?(&Snapshot.recovering?/1)
   end
 end

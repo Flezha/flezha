@@ -20,11 +20,12 @@ defmodule Flezha.Plugin.Extension.Table.Health do
   "owned pid alive (or absent) ⇒ healthy".
 
   A probe that could not be completed — the provider reported
-  `{:fail_open, reason}`, raised, or answered with nonsense — is reported
-  `:healthy` so the reconciler never escalates on uncertainty, AND emitted as
-  telemetry naming this plugin.
+  `{:fail_open, reason}`, raised, or answered with nonsense — is returned as
+  `{:fail_open, reason}` and emitted as telemetry naming this plugin. The
+  answer travels UNJUDGED: folding uncertainty to healthy is the convergence
+  loop's judge, which is the only place a fact becomes a state.
   """
-  @spec probe(map()) :: %{binary() => ProviderBehaviour.health_verdict()}
+  @spec probe(map()) :: %{binary() => ProviderBehaviour.probe_result()}
   def probe(table) do
     Map.new(table.plugins, fn {plugin_id, plugin} ->
       {plugin_id, plugin_health(table, plugin_id, plugin)}
@@ -50,7 +51,7 @@ defmodule Flezha.Plugin.Extension.Table.Health do
         {:unhealthy, :provider_not_loaded}
 
       function_exported?(provider, :health, 1) ->
-        safe_health(plugin_id, provider, opts, owned_pid)
+        probe_provider(plugin_id, provider, opts, owned_pid)
 
       is_nil(owned_pid) ->
         :healthy
@@ -63,23 +64,18 @@ defmodule Flezha.Plugin.Extension.Table.Health do
     end
   end
 
-  # An uncertain probe reports healthy so the reconciler never escalates on one
-  # — but it is emitted, because a wedged provider is otherwise
-  # indistinguishable from a working one at every layer above this call. This is
-  # the single place that happens: a provider reports its own uncertainty as
-  # `{:fail_open, reason}` and this is the only layer that knows which plugin
-  # to name.
-  defp safe_health(plugin_id, provider, opts, owned_pid) do
-    case provider.health(Map.put(opts || %{}, :owned_pid, owned_pid)) do
-      :healthy -> :healthy
-      {:unhealthy, _reason} = unhealthy -> unhealthy
+  # An uncertain probe is emitted here and nowhere else: a wedged provider is
+  # otherwise indistinguishable from a working one at every layer above this
+  # call, and this is the only layer that knows which plugin to name. The
+  # SHAPE of the answer is normalised by the fact seam, so this function holds
+  # no second vocabulary of its own.
+  defp probe_provider(plugin_id, provider, opts, owned_pid) do
+    fun = fn -> provider.health(Map.put(opts || %{}, :owned_pid, owned_pid)) end
+
+    case ProviderBehaviour.normalise(fun) do
       {:fail_open, reason} -> ProviderBehaviour.fail_open(plugin_id, provider, reason)
-      other -> ProviderBehaviour.fail_open(plugin_id, provider, {:invalid_return, other})
+      verdict -> verdict
     end
-  rescue
-    error -> ProviderBehaviour.fail_open(plugin_id, provider, {:raised, error})
-  catch
-    kind, reason -> ProviderBehaviour.fail_open(plugin_id, provider, {kind, reason})
   end
 
   @doc "The phase a restarted plugin re-enters: `:prepared` when it can activate."

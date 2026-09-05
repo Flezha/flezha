@@ -122,7 +122,12 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       # must read the loop's published per-operative health instead.
       inject_operative(@health_ns, "operative_health", [{node(), self()}])
 
-      Snapshot.publish(%{operative_health: %{{@health_ns, "operative_health"} => :healthy}})
+      Snapshot.publish(%{
+        operative_health:
+          FlezhaTest.Helper.ConvergenceFixtures.verdicts([
+            {{:operative, {@health_ns, "operative_health"}}, :healthy}
+          ])
+      })
 
       row = Enum.find(HubManager.operative_rows(@health_ns), &(&1.id == "operative_health"))
       assert row.health == :healthy

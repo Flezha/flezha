@@ -199,7 +199,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 ### Requirement: /healthz never lies
 
-The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. `producing_operatives` MUST be derived from the producing-liveness classification (durable progress markers with the fed precondition) — an IDLE operative counts as producing, a STUCK operative does not. It returns `200 healthy`, `200 degraded` (bound ≠ producing, plugin-degraded, non-empty intent mismatch, or `sensor_stale`), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (`driver_loop_frozen` or `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
+The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, `unknown_operatives`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader, and the per-operative and per-plugin words it folds MUST be the verdict records that snapshot carries. It MUST NOT compute these from independent paths, and it MUST NOT judge: the fold from records to one endpoint word is one ordered table owned by the verdict record module, and the endpoint renders its result. `producing_operatives` MUST be the count of operative records whose state is `healthy` — an IDLE operative counts as producing, a STUCK operative does not — and `bound_operatives` the count of records that are neither `unbound`, `failed` nor `unknown` and not suspended, so a dead binding is never counted as bound. It returns `200 healthy` (every operative record `healthy`, `suspended` or `unknown`; the body carries `unknown_operatives`), `200 degraded` (any operative record `degraded` or `parked`, any operative `unbound` or `failed` past the unmet-intent grace, any plugin record `degraded`, non-empty intent mismatch, `sensor_stale`, or an RPO breach — the body's reason joins the records' reasons, e.g. `dead_runner+parked+plugin_unhealthy`), `200 recovering`/`restoring_registry` (planned recovery, a gapped tick, an operative `unbound` or `failed` inside the unmet-intent grace, or a pending restore — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (a `driver` record `degraded` with a wedged layer — `driver_loop_frozen` or `nif_queue_backing_up` — sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An `unknown` record MUST NOT degrade the endpoint: an uncertain probe never escalates. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
 The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MUST be stated wherever the guarantee is**. Both server drivers, UDS and QUIC, produce the self-report the fabric verdicts are computed from, so a controller on either transport is covered and its `/healthz` is evidence about the data plane. The `:native` in-node transport runs no driver thread and produces none, so on a native-only controller no driver measurement is emitted and `driver_loop_frozen` and `nif_queue_backing_up` cannot be minted; its `200` is evidence about the convergence loop, the operative population and the plugin set alone. The endpoint's own documentation and the classifier's driver clauses MUST carry that limitation so an operator does not read a green probe as a data-plane guarantee it cannot give.
 
@@ -254,6 +254,24 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 - **WHEN** the data-plane classifier runs and `/healthz` is queried
 - **THEN** driver measurements are emitted for it, `driver_loop_frozen` is minted naming the QUIC transport, and the endpoint moves toward the fabric `503` on the same sustained-poll rule a UDS controller follows
 - **AND** the `/healthz` endpoint documentation and the classifier's driver clauses state which transports carry a driver, so the limit that remains — a native-only controller — is not left to inference
+
+#### Scenario: a parked operative is degraded at once
+
+- **GIVEN** an operative the Controller has parked, whatever the park reason
+- **WHEN** `/healthz` is queried
+- **THEN** the status is `200 degraded` with `parked` among the joined reasons, and never `200 healthy`
+
+#### Scenario: an operative whose runner is absent is recovering, then degraded
+
+- **GIVEN** a bound operative whose runner process has died and left the roster
+- **WHEN** `/healthz` is queried inside the unmet-intent grace and again after it
+- **THEN** the first response is `200 recovering`, the second is `200 degraded` with `dead_runner` among the joined reasons, and neither counts the dead binding in `bound_operatives`
+
+#### Scenario: an unobserved operative is counted, not judged
+
+- **GIVEN** an operative whose fact reader timed out on the last tick
+- **WHEN** `/healthz` is queried
+- **THEN** the status is `200 healthy` when nothing else degrades it, the body's `unknown_operatives` is 1, and no `503` and no `degraded` follows from the uncertainty alone
 
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 
@@ -360,12 +378,12 @@ extension table, so that fail-open is observable rather than silent.
 
 ### Requirement: Plugin-degraded operatives surface on /healthz and telemetry
 
-A operative with at least one declared plugin that is missing or self-reported unhealthy SHALL be published to the convergence snapshot as plugin-degraded. While any operative is plugin-degraded, `/healthz` SHALL report `degraded` with HTTP 200 and a `plugin_unhealthy` reason — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (degraded set becomes non-empty, changes membership, or clears), not steady-state. A suspended workflow instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
+A declared plugin SHALL carry its own verdict record: `degraded` when it is not subscribed at all, when its owning process crashed, or when its provider self-reports unhealthy. An operative with at least one declared plugin that is not RUNNING — whichever of those it is, and including a plugin subscribed but left `prepared` by a failed activation — SHALL carry that divergence as its own `degraded` reason naming the plugin, so the operative surface and the plugin surface agree without either re-reading the other, and the snapshot's plugin-degraded set SHALL be derived from those records rather than kept as a second list. While any plugin record is `degraded`, `/healthz` SHALL report `degraded` with HTTP 200 and a reason that names `plugin_unhealthy` — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (a record's state changes, the degraded set changes membership, or it clears), not steady-state. A suspended workflow instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
 
 #### Scenario: pluginless running operative is degraded, not healthy
 - **GIVEN** a running operative whose declared cspec lists plugins that are not subscribed
 - **WHEN** `/healthz` is queried before the heal completes
-- **THEN** the response is HTTP 200 with status `degraded` and reason `plugin_unhealthy`.
+- **THEN** the response is HTTP 200 with status `degraded` and a reason naming `plugin_unhealthy`.
 
 #### Scenario: a suspended instance is not degraded
 - **GIVEN** a parked workflow instance whose cspec declares plugins and whose extension table runs none
@@ -375,7 +393,7 @@ A operative with at least one declared plugin that is missing or self-reported u
 #### Scenario: verdict clears after heal
 - **GIVEN** a plugin-degraded operative
 - **WHEN** the loop re-attaches or successfully restarts the affected plugins
-- **THEN** the snapshot's plugin-degraded set empties and `/healthz` returns to `healthy` with a single transition log line.
+- **THEN** every plugin record for it returns to `healthy` and `/healthz` returns to `healthy` with a single transition log line.
 
 ### Requirement: Fresh-process runner takeover is atomic
 
@@ -654,6 +672,91 @@ edit.
 #### Scenario: The drill plans each primitive from its own fault
 - **WHEN** the system-tier drill injects, for every primitive, the fault the Diff plans it for
 - **THEN** `[:flezha, :convergence, :heal]` SHALL fire naming that primitive and target, the tick summary SHALL report the advanced rung while the fault is held, and the tick after repair SHALL plan nothing for the target
+
+### Requirement: One verdict record per subject SHALL be judged once and read everywhere
+
+The convergence loop SHALL mint, on every tick, exactly one verdict record per health
+subject — a runner, an operative, a plugin, a channel or a driver — carrying the subject,
+one state of a closed vocabulary (`healthy`, `degraded`, `failed`, `unbound`, `parked`,
+`suspended`, `unknown`), the reason, the subject's own lifecycle phase as a fact never
+derived from the state, the monotonic instant the state was first minted, the named
+threshold it was judged by, and the raw facts it was judged from. Every state SHALL
+name one owner of the next step and no two states SHALL share an owner: `healthy`
+nobody, `degraded` the loop in place, `failed` the loop by rebinding, `unbound` the loop
+by binding, `parked` an operator or a plugin fix, `suspended` nobody until the committed
+boundary, `unknown` the next tick. The states a subject kind can reach SHALL be declared
+and tested: a plugin and a driver reach `healthy`, `degraded` and `unknown`; a channel
+and a runner add `failed`; an operative reaches all seven.
+
+Every detector SHALL be one entry of a declaration table naming its fact reader, the
+subject kind it speaks about, the threshold names it cites and the `[:flezha, …]` events
+it executes; a detector SHALL read facts and SHALL NOT decide. One judge SHALL fold the
+facts per subject in one fixed rule order — an unobserved reader wins, then suspension,
+then no binding, then a binding to a runner the roster does not hold, then a park, then
+the deepest of a stall, a stuck marker or a degraded plugin, otherwise healthy — and the
+three fail-open rules SHALL be the judge's: a `:prepared` plugin is `healthy`, a probe
+that answered uncertainly is `healthy`, and an operative whose markers are flat with no
+input-side advance is `healthy` with reason `idle`. A reader that raises or times out
+SHALL yield `unknown` for its subjects, `unknown` SHALL escalate nothing, and the tick
+SHALL complete.
+
+The judged records SHALL be the Diff's input in place of an open signals map, SHALL be
+published to the snapshot from exactly one site, and `bound_operatives`,
+`producing_operatives` and `unknown_operatives` SHALL be derived from them. A classifier
+verdict SHALL reach exactly one reader by its subject kind: a `driver` record is read by
+`/healthz` alone and the Diff SHALL plan nothing for it; every other kind is read by the
+Diff alone and reaches `/healthz` only as `degraded`. The five facts — session open, data
+plane draining, WAL advancing, process alive, probe answered — SHALL stay five readers
+with five thresholds; the fold is of the vocabulary and the record, never of the facts,
+so a session that is alive over a data plane that is dead is two fields of one record.
+
+#### Scenario: A detector that raises yields unknown and the tick completes
+
+- **GIVEN** a detector entry whose fact reader raises on this tick
+- **WHEN** the judge runs
+- **THEN** every subject that entry speaks about SHALL be `unknown` with a reason naming
+  the failure, no heal SHALL be planned on its account, and the tick SHALL publish a
+  snapshot
+
+#### Scenario: An idle operative is healthy, not stalled
+
+- **GIVEN** a bound operative whose progress markers are flat and whose input side has
+  not advanced
+- **WHEN** the judge runs
+- **THEN** its record SHALL be `healthy` with reason `idle` and it SHALL count as
+  producing
+
+#### Scenario: A suspended instance with a park reason is suspended
+
+- **GIVEN** a durable workflow instance evicted at a committed boundary that also carries
+  a park reason
+- **WHEN** the judge runs
+- **THEN** its record SHALL be `state: suspended, phase: suspended`, and a parked
+  operative that is not suspended SHALL be `state: parked, phase: parked`
+
+#### Scenario: A driver verdict plans nothing
+
+- **GIVEN** the classifier reports a fabric-scoped layer
+- **WHEN** the judge and the Diff run
+- **THEN** a `driver` record SHALL be minted `degraded` with the wedged layer as its
+  reason, the Diff SHALL issue no op for it, and no runner, channel or operative record
+  SHALL reach the fabric arm of `/healthz`
+
+#### Scenario: A live session over a dead data plane is one record with two facts
+
+- **GIVEN** a runner whose keepalive pings keep arriving while its data-plane counters
+  have stopped advancing past the stall window
+- **WHEN** the judge runs
+- **THEN** the runner's record SHALL carry a small control silence and a large data
+  silence side by side, and its state SHALL be `degraded` with a wedged-layer reason
+
+#### Scenario: A new detector is one table entry
+
+- **WHEN** a detector entry is added to the table with a fact reader and its declared
+  events
+- **THEN** its subjects SHALL be judged, published and rendered on every surface, and its
+  events SHALL be bridged, with no change to the Diff, the snapshot, `/healthz`, the CLI
+  readers or the bridge
 
 ## Removed Requirements
 

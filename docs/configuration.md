@@ -146,7 +146,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD` | `2` | `:convergence_plugin_strike_threshold` — set by `runtime.exs`, read by nothing in `lib/`; inert |
 | `FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS` | `1000` | `:convergence_tick_latency_threshold_ms` — set by `runtime.exs`, read by nothing in `lib/`; inert |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | `:convergence_fabric_503_polls` (not in test); consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503 |
-| `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1` |
+| `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_operatives` |
 | `FLEZHA_HEALTHZ_PORT` | `9569` | `:healthz_port` (not in test) |
 | `FLEZHA_HEALTHZ_BIND` | `0.0.0.0` | `:healthz_bind` (not in test) |
 | `FLEZHA_DATA_PLANE_LIVENESS` | `true` | `:observability[:data_plane_liveness]`; `false` drops the driver poll and the stall classifier, the counters stay |

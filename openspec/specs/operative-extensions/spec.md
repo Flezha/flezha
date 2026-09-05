@@ -376,18 +376,24 @@ introduce new ones — healthy means its connection-liveness `last_frame_at` (an
 their windows, per the "Websocket connection-liveness watchdog" / "Websocket data-liveness
 watchdog" requirements already in this capability. The Kafka producer provider SHALL
 report healthy only when its worker is alive, not permanently parked, and its queue is
-draining. The reconciler /
-`Extension.Table` SHALL query `health/1` and escalate — restarting an unhealthy provider
-under a bounded governor — only when the provider's own fast in-process recovery has
-repeatedly failed to restore health. The providers' in-process reconnect/retry detectors
-are retained; the health contract adds escalation, it does not replace them.
+draining. The provider's answer is a FACT: `ProviderBehaviour.worker_health/3` SHALL be
+the one place it is normalised into the probe-result shape (`:healthy`,
+`{:unhealthy, reason}` or `{:fail_open, reason}`), keeping each provider's reason words,
+and no second normaliser SHALL exist. The reconciler / `Extension.Table` SHALL query
+`health/1` through that seam and hand the result, unjudged, to the convergence loop's
+probe table, whose judge mints the plugin's one verdict record — `healthy`, `degraded` or
+`unknown` — and escalates, restarting an unhealthy provider under a bounded governor, only
+when the provider's own fast in-process recovery has repeatedly failed to restore health.
+The providers' in-process reconnect/retry detectors are retained; the health contract
+adds escalation, it does not replace them.
 
-A plugin in the `:prepared` phase SHALL be reported `:healthy` by `Table.health/1` — it
+A plugin in the `:prepared` phase SHALL be judged `healthy` with reason `prepared` — it
 has acquired no upstream resources, so it has nothing to be unhealthy about — and that
-verdict SHALL NOT be read anywhere as evidence that the plugin is running. The phase, not
-the health verdict, is the authority on whether a plugin is doing its work; a consumer
-that needs "is this plugin running" SHALL read the phase (see "A declared plugin that is
-not running is a divergence" in `convergence-self-healing`).
+verdict SHALL NOT be read anywhere as evidence that the plugin is running: the record's
+`phase` is `prepared`, and the phase, not the health state, is the authority on whether
+a plugin is doing its work. A consumer that needs "is this plugin running" SHALL read the
+phase (see "A declared plugin that is not running is a divergence" in
+`convergence-self-healing`).
 
 #### Scenario: Unhealthy provider is restarted
 - **GIVEN** an operative whose Kafka producer worker is alive but permanently parked (not draining)
@@ -402,9 +408,14 @@ not running is a divergence" in `convergence-self-healing`).
 
 #### Scenario: A prepared plugin is healthy but is not running
 - **GIVEN** a declared plugin whose `activate/1` failed, leaving it in the `:prepared` phase
-- **WHEN** `Table.health/1` is queried
-- **THEN** the verdict SHALL be `:healthy`
+- **WHEN** its verdict record is read
+- **THEN** the state SHALL be `healthy` with reason `prepared` and the phase SHALL be `prepared`
 - **AND** the plugin SHALL NOT be reported as running to any consumer that asks which plugins are running
+
+#### Scenario: One normaliser, one record
+- **GIVEN** a provider whose `health/1` returns an unrecognised value
+- **WHEN** the reconciler queries it
+- **THEN** `ProviderBehaviour.worker_health/3` SHALL be the only function that turns the answer into a probe result, the probe table SHALL be the only place that turns the probe result into a state, and the plugin SHALL have exactly one verdict record on the snapshot
 
 ### Requirement: Recovered operatives SHALL NOT reuse dead or parked plugin workers
 
@@ -516,23 +527,33 @@ same call is a no-op for one that needs nothing.
 
 ### Requirement: An uncertain health probe SHALL be observable
 
-`Extension.Table` SHALL keep reporting `:healthy` when a provider's `health/1`
-raises, times out, or returns an unrecognised value — an uncertain probe MUST
-never drive a heal — and SHALL emit telemetry naming the plugin id, the provider
-and the reason it fell back. A worker that is alive but no longer answering is
-otherwise indistinguishable from a healthy one at every layer of the system.
+The plugin fact seam SHALL answer `{:fail_open, reason}` when a provider's `health/1`
+raises, times out, or returns an unrecognised value, and SHALL emit
+`[:flezha, :plugin, :health, :fail_open]` once, where the fact was read, naming the
+plugin id, the provider and the reason it fell back. The convergence loop's judge SHALL
+mint that plugin's record `healthy` with reason `{:fail_open, reason}` — an uncertain
+probe MUST never drive a heal — and a probe that could not run at all SHALL be judged
+`unknown`. The fail-open event SHALL reach the observability bus by the probe table's
+own declaration of it, so it is never invisible: a worker that is alive but no longer
+answering is otherwise indistinguishable from a healthy one at every layer of the
+system.
 
 #### Scenario: a wedged worker's fail-open verdict is emitted
 - **GIVEN** a running plugin whose provider `health/1` does not answer within the probe budget
-- **WHEN** `Table.health/1` is queried
-- **THEN** the verdict SHALL be `:healthy`
+- **WHEN** the plugin's health is probed
+- **THEN** the verdict record SHALL be `healthy` with a fail-open reason
 - **AND** telemetry SHALL be emitted naming the plugin id, the provider and the fallback reason
 
 #### Scenario: a definite verdict emits nothing
 - **GIVEN** a running plugin whose provider `health/1` returns `:healthy` or `{:unhealthy, reason}`
-- **WHEN** `Table.health/1` is queried
-- **THEN** that verdict SHALL be returned
+- **WHEN** the plugin's health is probed
+- **THEN** that fact SHALL reach the judge unchanged and the record SHALL be `healthy` or `degraded` accordingly
 - **AND** no fail-open telemetry SHALL be emitted
+
+#### Scenario: the fail-open event reaches a sink
+- **GIVEN** the observability subsystem is running with its default sinks
+- **WHEN** a provider's `health/1` times out and the fail-open event is emitted
+- **THEN** a signal carrying the plugin id, the provider and the reason SHALL appear on the bus with no hand-written bridge line for the event
 
 ### Requirement: Subscription sub-options SHALL have a declared type per extension kind
 

@@ -55,9 +55,9 @@ defmodule Flezha.Plugin.Extension.TableHealthTest do
     assert Table.health(t) == %{"b" => :healthy}
   end
 
-  test "a raising health/1 is treated as healthy (no escalation on uncertainty)" do
+  test "a raising health/1 answers fail-open, unjudged — the fold is the loop's" do
     t = table(%{"r" => plugin(RaisingProvider)}, %{"r" => :running})
-    assert Table.health(t) == %{"r" => :healthy}
+    assert %{"r" => {:fail_open, {:raised, %RuntimeError{}}}} = Table.health(t)
   end
 
   test "provider without health/1: an alive owned pid is healthy" do

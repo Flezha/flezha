@@ -1,14 +1,16 @@
 defmodule Flezha.Convergence.Diff do
   @moduledoc """
   One pure function — `compute/3` — turning declared `Intent`, probed
-  reality, and this tick's `signals` (the data-plane verdict and the facts the
-  sites declared) into a structured `Delta` enumerating every invariant
-  violation. This is NOT a per-failure-mode dispatch: each `Delta` field
+  reality, and this tick's verdict records into a structured `Delta`
+  enumerating every invariant violation. The records are the health input in
+  place of an open signals map: the binding classification reads a record's
+  `state` and `reason`, never `bound_runner`/`parked?`/`suspended?` of its own,
+  and a `driver` record is planned for by nobody — `/healthz` owns it. This is NOT a per-failure-mode dispatch: each `Delta` field
   corresponds to one invariant, every declared kind is consumed by exactly one
   field, and all catalogue rows reduce to populating these fields.
   """
 
-  alias Flezha.Convergence.{Facts, StallClassifier}
+  alias Flezha.Convergence.{Facts, StallClassifier, Verdict}
 
   @type operative_ref :: {atom(), binary()}
 
@@ -24,16 +26,8 @@ defmodule Flezha.Convergence.Diff do
           | {:connection, [operative_ref()]}
           | {:operative, [operative_ref()]}
 
-  @typedoc """
-  What the loop knows this tick beyond what the Probe observed: the data-plane
-  classifier `:verdict` and the `:facts` map the sites declared. Every entry
-  is optional — a Diff computed without them simply reports no divergence in
-  those fields.
-  """
-  @type signals :: %{
-          optional(:verdict) => StallClassifier.verdict(),
-          optional(:facts) => Facts.t()
-        }
+  @typedoc "One judged record per subject, keyed by subject — the tick's health input."
+  @type verdicts :: %{term() => Verdict.t()}
 
   @typedoc "Why an operative is misbound: the probe saw its runner gone, or the fleet declared the disconnect."
   @type misbound_reason :: :probe | :runner_disconnected
@@ -97,18 +91,16 @@ defmodule Flezha.Convergence.Diff do
     :stale_tags
   ]
 
-  @spec compute(Flezha.Convergence.Intent.t(), map(), signals()) :: t()
-  def compute(intent, reality, signals \\ %{})
+  @spec compute(Flezha.Convergence.Intent.t(), map(), verdicts(), Facts.t()) :: t()
+  def compute(intent, reality, verdicts \\ %{}, facts \\ %{})
 
-  def compute(%Flezha.Convergence.Intent{operatives: declared}, reality, signals) do
-    active = Map.get(reality, :active_runners, %{})
+  def compute(%Flezha.Convergence.Intent{operatives: declared}, reality, verdicts, facts) do
     observed = Map.get(reality, :operatives, %{})
     placement = Map.get(reality, :placement, %{})
-    verdict = Map.get(signals, :verdict, :ok)
-    facts = Map.get(signals, :facts, %{})
+    verdict = wedge_verdict(verdicts)
 
     {unbound, misbound, parked, replace} =
-      binding_divergence(declared, observed, active, placement, facts)
+      binding_divergence(declared, observed, verdicts, placement, facts)
 
     {missing, extra, unhealthy} = plugin_divergence(declared, observed)
 
@@ -117,13 +109,13 @@ defmodule Flezha.Convergence.Diff do
       misbound_operatives: Enum.reverse(misbound),
       parked_operatives: Enum.reverse(parked),
       replace_operatives: Enum.reverse(replace),
-      stalled_operatives: stalled_refs(declared, Facts.targets(facts, :output_stall)),
+      stalled_operatives: stalled_refs(declared, verdicts),
       resync_entities: resync_entities(facts),
       missing_plugins: missing,
       extra_plugins: extra,
       unhealthy_plugins: unhealthy,
       stale_tags: stale_tags(declared, observed),
-      data_plane_wedge: resolve_wedge(verdict, active, observed),
+      data_plane_wedge: resolve_wedge(verdict, Map.get(reality, :active_runners, %{}), observed),
       data_plane_layer: StallClassifier.layer(verdict),
       draining: Facts.targets(facts, :node_draining) != []
     }
@@ -138,7 +130,7 @@ defmodule Flezha.Convergence.Diff do
 
   # The per-operative binding classification, the sibling of `plugin_divergence/2`:
   # one pass over the declared set answering `{unbound, misbound, parked, replace}`.
-  defp binding_divergence(declared, observed, active, placement, facts) do
+  defp binding_divergence(declared, observed, verdicts, placement, facts) do
     disconnected = disconnected_runners(facts)
 
     Enum.reduce(declared, {[], [], [], []}, fn %{namespace: ns, operative_id: rid},
@@ -148,7 +140,7 @@ defmodule Flezha.Convergence.Diff do
       case classify(
              ref,
              Map.get(observed, ref),
-             Map.get(active, ns, MapSet.new()),
+             Map.get(verdicts, {:operative, ref}),
              placement,
              facts,
              disconnected
@@ -163,51 +155,62 @@ defmodule Flezha.Convergence.Diff do
   end
 
   # What one declared operative's binding diverges into, or `:skip` when this
-  # tick has no authoritative answer for it.
-  defp classify(ref, observed_operative, live, placement, facts, disconnected) do
+  # tick has no authoritative answer for it. The judged record IS the answer:
+  # every state below names one owner of the next step, and the ones the loop
+  # does not own (`:unknown`, `:suspended`, `:healthy`, `:degraded`) plan
+  # nothing here.
+  defp classify(ref, observed_operative, verdict, placement, facts, disconnected) do
     bound = observed_operative && Map.get(observed_operative, :bound_runner)
 
-    cond do
-      # Declared but not observed running at all: starting it is the hub
-      # reconcile's job through the idempotent start authority — a heal op
-      # can only act on a live Overwatch.
-      observed_operative == nil ->
+    case verdict do
+      # Declared but not observed running at all, or an observation that
+      # failed: starting it is the hub reconcile's job, and acting on a read
+      # that failed mass-migrates healthy operatives on a transient race.
+      nil ->
         :skip
 
-      # `:unknown` = an observation failed this tick — either the operative's
-      # own state read (`bound`) or the namespace's live-runner read
-      # (`live`, Probe could not reach FleetManager). With no authoritative
-      # signal we must NOT classify it: acting on an empty/failed read
-      # mass-migrates healthy operatives on a transient read race.
-      bound == :unknown ->
+      %Verdict{state: :unknown} ->
         :skip
 
       # Suspended at a committed iteration boundary: unbound BY DESIGN
       # (`workflow-durable-suspension`). Rebinding it would undo the very
       # eviction it asked for; its own wake sources bring it back.
-      Map.get(observed_operative, :suspended?, false) ->
+      %Verdict{state: :suspended} ->
         :skip
 
       # Parked: a failed repair's outcome, reported apart from unbound so the
       # Planner keys it, carrying what the park declared — its reason and
       # what that reason says about the runner's transport.
-      Map.get(observed_operative, :parked?, false) ->
+      %Verdict{state: :parked} ->
         {:parked, {ref, park_args(facts, ref, observed_operative), normalize_runner(bound)}}
 
-      is_nil(bound) ->
+      %Verdict{state: :unbound} ->
         classify_bindable(ref, nil, observed_operative, placement)
 
-      live == :unknown ->
-        :skip
-
-      not MapSet.member?(live, bound) ->
+      %Verdict{state: :failed} ->
         ref
         |> classify_bindable(bound, observed_operative, placement)
         |> with_misbound_reason(ref, disconnected)
 
-      true ->
+      %Verdict{} ->
         :skip
     end
+  end
+
+  # The tick's data-plane verdict, read back off the records the judge minted
+  # from it. `/healthz` owns a `driver` record and the Diff plans nothing for
+  # one, which is the "exactly one consumer" rule expressed as the subject.
+  defp wedge_verdict(verdicts) do
+    Enum.find_value(verdicts, :ok, fn
+      {{:driver, _id}, _record} ->
+        nil
+
+      {_subject, %Verdict{reason: {:wedged, layer}, facts: facts}} ->
+        {layer, Map.get(facts, :wedge_ctx, %{})}
+
+      _ ->
+        nil
+    end)
   end
 
   # A misbound entry carries WHY: the probe saw its runner gone, or the fleet
@@ -256,13 +259,9 @@ defmodule Flezha.Convergence.Diff do
   # what drops a flag for an operative this tick is not healing (an id absent
   # from the declared set, or one in a namespace still mid-recovery — the caller passes only
   # recovery-ready operatives).
-  defp stalled_refs(_declared, []), do: []
-
-  defp stalled_refs(declared, stalled) do
-    ids = MapSet.new(stalled)
-
+  defp stalled_refs(declared, verdicts) do
     for %{namespace: ns, operative_id: rid} <- declared,
-        MapSet.member?(ids, rid),
+        match?(%Verdict{reason: {:stalled, _}}, Map.get(verdicts, {:operative, {ns, rid}})),
         do: {ns, rid}
   end
 
@@ -302,7 +301,7 @@ defmodule Flezha.Convergence.Diff do
   end
 
   defp wedged_runner(ctx, active) do
-    case runner_of(ctx) do
+    case StallClassifier.runner_of(ctx) do
       nil ->
         nil
 
@@ -342,28 +341,22 @@ defmodule Flezha.Convergence.Diff do
 
   defp wedged_operative(_ctx, _observed), do: nil
 
-  # Every operative bound to the runner the verdict names, sorted. Two verdicts
-  # resolve through it: a wedged connection carries all of them, and a runner's
-  # handout self-report is process-global — it proves one activation is stuck,
-  # not which operative owns it — so the runner's operatives are the healable
-  # set either way. A rebind resumes each from durable state, which is safe
-  # whether or not that operative was the stuck one.
+  # Every operative bound to the runner the verdict names. Two verdicts resolve
+  # through it: a wedged connection carries all of them, and a runner's handout
+  # self-report is process-global — it proves one activation is stuck, not
+  # which operative owns it — so the runner's operatives are the healable set
+  # either way. A rebind resumes each from durable state, which is safe whether
+  # or not that operative was the stuck one.
   defp operatives_on_runner(ctx, observed) do
-    with id when is_binary(id) <- runner_of(ctx),
-         [_ | _] = refs <- for({ref, %{bound_runner: ^id}} <- observed, do: ref) do
-      Enum.sort(refs)
-    else
-      _ -> nil
+    case StallClassifier.operatives_of(observed, ctx) do
+      [] -> nil
+      refs -> refs
     end
   end
 
   # A driver verdict names its transport; only the per-runner data transports
   # (`{:uds_data, runner_id, type}`) identify a runner. A control-transport
   # verdict names no runner and heals nothing here.
-  defp runner_of(%{runner_id: id}) when is_binary(id), do: id
-  defp runner_of(%{transport: {:uds_data, id, _type}}) when is_binary(id), do: id
-  defp runner_of(_ctx), do: nil
-
   defp namespace_of_runner(id, active) do
     Enum.find_value(active, fn
       {_ns, :unknown} -> nil

@@ -24,6 +24,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.ProcJournal
+  alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
 
   require Logger
@@ -134,8 +135,10 @@ defmodule Flezha.Runner.ControlChannel do
        stream_ref: stream_ref,
        write_fun: write_fun || (&TStream.send_frame/4),
        control_unit: Identificator.control_unit(runner_id),
+       liveness_ref: LivenessCounters.register_channel(runner_id, :control),
        last_seen: System.monotonic_time(:millisecond)
-     }}
+     }
+     |> bump_last_seen()}
   end
 
   @doc """
@@ -335,8 +338,14 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, state}
   end
 
+  # The watchdog's own `last_seen` and the shared counter are stamped together:
+  # the first is this process's window, the second is the fact the convergence
+  # loop reads beside the data-plane silence, so one row shows a live session
+  # over a dead data plane. The window and its close are unchanged.
   defp bump_last_seen(state) do
-    %{state | last_seen: System.monotonic_time(:millisecond)}
+    now = System.monotonic_time(:millisecond)
+    LivenessCounters.set_channel(state[:liveness_ref], :last_control_frame_ms, now)
+    %{state | last_seen: now}
   end
 
   defp schedule_liveness_check do

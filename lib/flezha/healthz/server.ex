@@ -24,9 +24,9 @@ defmodule Flezha.Healthz.Server do
         (`sensor_stale`). None is a restart signal — kubelet must leave the
         pod alone while the Loop rebinds / the operator resumes or deletes
         state.
-      - `200 OK` `{"status":"recovering", ...}` when any hub is in
-        `:recovery_pending | :recovering` (kubelet must NOT restart
-        during a planned recovery).
+      - `200 OK` `{"status":"recovering", ...}` when any hub is still in the
+        recovery state machine (kubelet must NOT restart during a planned
+        recovery).
       - `503 Service Unavailable` `{"status":"unhealthy", ...}` ONLY when
         the convergence Loop itself is wedged (`reason` ∈
         `tick_stale | recovery_failed`) or the controller's own data-plane
@@ -66,7 +66,7 @@ defmodule Flezha.Healthz.Server do
   use GenServer
 
   alias Flezha.Boot.Readiness
-  alias Flezha.Convergence.{Snapshot, StallClassifier}
+  alias Flezha.Convergence.{Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
   alias Flezha.State.DurabilityTier
 
@@ -143,7 +143,7 @@ defmodule Flezha.Healthz.Server do
   # able to find across a fleet without inspecting each node's configuration.
   defp respond_healthz(socket) do
     {status, body} = compute_health()
-    code = if status == :unhealthy, do: 503, else: 200
+    code = Verdict.http_status(status)
 
     body =
       body
@@ -171,200 +171,38 @@ defmodule Flezha.Healthz.Server do
     Listener.send_response(socket, code, "application/json", body)
   end
 
-  # Reads the single published convergence snapshot and the per-hub
-  # recovery cache. No local state, no telemetry.
-  # The decision table. Every arm's `why` lives on the body it returns, so the
-  # ranking is readable as one list: fabric and tick-stale outrank every
-  # degraded case, and nothing below them can reach 503.
+  # Reads the single published convergence snapshot and the per-hub recovery
+  # cache, and RENDERS what `Verdict.fold/2` decides. No local state, no
+  # telemetry, and no verdict word: the ranking, the words and the reasons are
+  # the record module's, so this endpoint and the CLI can never drift apart.
   defp compute_health() do
-    f = facts()
-
-    cond do
-      any_recovering?(f.recovery_states) -> recovering_body(f)
-      loop_hard_wedged?(f.last_tick_at) -> tick_stale_body(f)
-      match?({:fabric, _layer, _polls}, f.data_plane) -> fabric_body(f)
-      loop_tick_gapped?(f.last_tick_at) -> tick_resuming_body(f)
-      f.bound < f.intended -> unbound_body(f)
-      f.pending_restore -> restoring_body(f)
-      f.rpo_breaches != [] -> rpo_body(f)
-      f.producing < f.bound or f.degraded != [] -> degraded_body(f)
-      true -> healthy_body(f)
-    end
+    current = Snapshot.current()
+    Verdict.fold(Map.get(current, :operative_health, %{}), facts(current))
   end
 
-  # Everything the arms below read, sampled once so no two arms can disagree
+  # The tick's NON-verdict facts: everything the fold weighs that is about the
+  # node rather than about a subject. Sampled once so no two arms can disagree
   # about the same tick.
-  defp facts() do
-    current = Snapshot.current()
-    bound = Map.get(current, :bound_operatives, 0)
-    stalled = Map.get(current, :stalled_operatives, [])
-    stuck = Map.get(current, :stuck_operatives, %{})
-    plugin_degraded = Map.get(current, :plugin_degraded_operatives, [])
-    mismatch = Map.get(current, :intent_mismatch, [])
-    stale_sensors = stale_sensors()
-    data_plane = data_plane_verdict(current)
+  defp facts(current) do
+    recovery_states = collect_recovery_states()
+    last_tick_at = Map.get(current, :last_tick_at)
 
     %{
-      recovery_states: collect_recovery_states(),
-      bound: bound,
-      intended: Map.get(current, :intended_operatives, bound),
-      producing: Map.get(current, :producing_operatives, 0),
-      stalled: stalled,
-      stuck: stuck,
-      plugin_degraded: plugin_degraded,
-      mismatch: mismatch,
+      recovery_states: recovery_states,
+      recovering?: any_recovering?(recovery_states),
+      tick_stale?: loop_hard_wedged?(last_tick_at),
+      tick_gapped?: loop_tick_gapped?(last_tick_at),
+      tick_age_ms: tick_age(last_tick_at),
+      stuck: Map.get(current, :stuck_operatives, %{}),
+      intent_mismatch: Map.get(current, :intent_mismatch, []),
       pending_restore: Map.get(current, :pending_restore, false),
       unmet_intent_ms: Map.get(current, :unmet_intent_ms),
-      last_tick_at: Map.get(current, :last_tick_at),
+      unmet_intent_grace_ms: unmet_intent_grace_ms(),
       rpo_breaches: DurabilityTier.breaches(),
-      stale_sensors: stale_sensors,
-      data_plane: data_plane,
-      degraded:
-        degraded_reasons(stalled, plugin_degraded, stuck, mismatch, stale_sensors, data_plane)
+      stale_sensors: stale_sensors(),
+      data_plane: data_plane_verdict(current)
     }
   end
-
-  # Four of the ten bodies deliberately carry no operative counts. Merging them
-  # into `respond_healthz/1` would add the keys to those four, which changes the
-  # JSON an operator and a kubelet read.
-  defp recovering_body(f),
-    do:
-      {:recovering,
-       %{status: "recovering", recovery_state: pick_recovery_state(f.recovery_states)}}
-
-  defp tick_stale_body(f),
-    do:
-      {:unhealthy,
-       %{status: "unhealthy", reason: "tick_stale", tick_age_ms: tick_age(f.last_tick_at)}}
-
-  # The controller's own driver thread is wedged and has stayed wedged. Ranked
-  # with `tick_stale`, above every degraded case: a heal issued from this
-  # controller would travel through the very thread that is not moving, so only
-  # the orchestrator's restart can clear it.
-  defp fabric_body(f) do
-    {:fabric, layer, polls} = f.data_plane
-
-    {:unhealthy,
-     %{
-       status: "unhealthy",
-       reason: "data_plane_fabric_wedged",
-       layer: to_string(layer),
-       polls: polls
-     }}
-  end
-
-  # One large tick gap means the whole BEAM was suspended (host sleep/hibernate,
-  # `docker pause`, long GC) — the Loop is resuming, not wedged. Report
-  # recovering so kubelet does not restart during a planned wake; this
-  # escalates to 503 only once the gap exceeds the hard bound.
-  defp tick_resuming_body(f),
-    do:
-      {:recovering,
-       %{status: "recovering", reason: "tick_resuming", tick_age_ms: tick_age(f.last_tick_at)}}
-
-  # Declared but not all bound: recovering within the grace, degraded past it.
-  # Always 200 — a restart can't re-bind a runner-orphaned operative.
-  defp unbound_body(f) do
-    if is_integer(f.unmet_intent_ms) and f.unmet_intent_ms > unmet_intent_grace_ms() do
-      {:degraded,
-       %{
-         status: "degraded",
-         reason: "operatives_unbound",
-         intended_operatives: f.intended,
-         bound_operatives: f.bound,
-         producing_operatives: f.producing,
-         unmet_intent_ms: f.unmet_intent_ms
-       }}
-    else
-      {:recovering,
-       %{
-         status: "recovering",
-         reason: "operatives_rebinding",
-         intended_operatives: f.intended,
-         bound_operatives: f.bound,
-         producing_operatives: f.producing
-       }}
-    end
-  end
-
-  # Intent is empty (intended == 0) only because hubs start lazily on runner
-  # reconnect and the durable registry has not been read back since this
-  # controller (re)started — operatives.dets exists on disk for a hub that is not
-  # running yet. `bound < intended` cannot catch this (0 < 0 is false), so
-  # without this the system reports vacuously `healthy`. Recovering, never
-  # healthy, until the registry is loaded.
-  defp restoring_body(f),
-    do:
-      {:recovering,
-       %{
-         status: "recovering",
-         reason: "restoring_registry",
-         intended_operatives: f.intended,
-         bound_operatives: f.bound,
-         producing_operatives: f.producing
-       }}
-
-  # A remote-durability RPO breach is degraded, never 503: local durability is
-  # intact and a kubelet restart cannot reach the backend that is not answering.
-  # The alarm belongs on the probe all the same — a widening RPO that is only
-  # visible in the backend is the failure this tier exists to prevent.
-  defp rpo_body(f),
-    do:
-      {:degraded,
-       %{
-         status: "degraded",
-         reason: "durability_rpo_exceeded",
-         rpo_breached_refs: length(f.rpo_breaches),
-         bound_operatives: f.bound,
-         producing_operatives: f.producing
-       }}
-
-  # Never 503 on intent mismatch or a dead sensor: the data plane may be
-  # legitimately stopped, and a kubelet restart repairs neither missing intent
-  # nor a supervisor-restartable sensor.
-  defp degraded_body(f),
-    do:
-      {:degraded,
-       %{
-         status: "degraded",
-         reason: degraded_reason(f.degraded),
-         tick_age_ms: tick_age(f.last_tick_at),
-         bound_operatives: f.bound,
-         producing_operatives: f.producing,
-         stalled_operatives: f.stalled,
-         stuck_operatives: f.stuck,
-         plugin_degraded_operatives: f.plugin_degraded,
-         intent_mismatch: f.mismatch,
-         stale_sensors: f.stale_sensors,
-         data_plane_layer: pipeline_layer(f.data_plane)
-       }}
-
-  defp healthy_body(f),
-    do:
-      {:healthy,
-       %{
-         status: "healthy",
-         tick_age_ms: tick_age(f.last_tick_at),
-         bound_operatives: f.bound,
-         producing_operatives: f.producing
-       }}
-
-  # Every reason this tick is degraded. The list IS the branch condition, so
-  # the condition and the reported reason cannot drift apart.
-  defp degraded_reasons(stalled, plugin_degraded, stuck, mismatch, stale_sensors, data_plane) do
-    [
-      if(stalled != [] or map_size(stuck) > 0, do: "output_stalled"),
-      if(plugin_degraded != [], do: "plugin_unhealthy"),
-      if(mismatch != [], do: "intent_mismatch"),
-      if(stale_sensors != [], do: "sensor_stale"),
-      if(match?({:pipeline, _layer}, data_plane), do: "data_plane_wedged")
-    ]
-    |> Enum.reject(&is_nil/1)
-  end
-
-  # A producing shortfall with no per-operative attribution still owes a reason.
-  defp degraded_reason([]), do: "output_stalled"
-  defp degraded_reason(parts), do: Enum.join(parts, "+")
 
   # A sensor is stale once its last completed pass is older than 3× its own
   # cadence — enough headroom for one missed pass under load, short enough that
@@ -384,19 +222,7 @@ defmodule Flezha.Healthz.Server do
     Snapshot.recovery_states() |> Map.values()
   end
 
-  defp any_recovering?(states),
-    do: Enum.any?(states, &(&1 in [:recovery_pending, :recovering, :timeout]))
-
-  defp pick_recovery_state([]), do: "unknown"
-
-  defp pick_recovery_state(states) do
-    cond do
-      :recovering in states -> "recovering"
-      :recovery_pending in states -> "recovery_pending"
-      :timeout in states -> "timeout"
-      true -> Atom.to_string(List.first(states))
-    end
-  end
+  defp any_recovering?(states), do: Enum.any?(states, &Snapshot.recovering?/1)
 
   # 503 only when the Loop has genuinely STOPPED ticking far longer than any
   # pause/wake could explain. Tick age is the only authoritative liveness
@@ -429,9 +255,6 @@ defmodule Flezha.Healthz.Server do
       _ -> {:pipeline, layer}
     end
   end
-
-  defp pipeline_layer({:pipeline, layer}), do: to_string(layer)
-  defp pipeline_layer(_verdict), do: nil
 
   defp fabric_503_polls(),
     do: Application.get_env(:flezha, :convergence_fabric_503_polls, 3)

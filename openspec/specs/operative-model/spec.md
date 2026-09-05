@@ -245,10 +245,9 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 - **WHEN** the id claim is refused but no live instance holds `demo`
 - **THEN** the command exits non-zero with the id-in-use error, unchanged from today
 
-
 ### Requirement: `flz operative info` SHALL report the operative's phase and the loop's health verdict
 
-`flz operative info` SHALL report each live operative's lifecycle phase as one of `running`, `suspended` or `parked`, read from the operative's own state, and SHALL report `parked` — never `running` — for an operative the Controller has parked, whatever the park reason. It SHALL additionally report the per-operative health verdict published by the convergence loop, read through the same seam `flz operative list` and `flz cluster status` read, so no two operator surfaces describe one operative in contradictory words. `info` SHALL NOT derive a health verdict of its own. Both the text and the JSON rendering SHALL carry both fields. A finished workflow operative, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
+`flz operative info` SHALL report each live operative's lifecycle phase as one of `running`, `suspended` or `parked`, and its health as the state of the one verdict record the convergence loop publishes for it, both read from that record — the phase is the record's own fact, read from the operative's state, and the health is the record's state, one of `healthy`, `degraded`, `failed`, `unbound`, `parked`, `suspended` or `unknown`. It SHALL report `parked` — never `running` — for an operative the Controller has parked, whatever the park reason. `flz operative list`, `flz cluster status`, the published `Flezha.Service.Operative.operative_rows/2` and `/healthz` SHALL read the same record, so no two operator surfaces describe one operative in contradictory words. `info` SHALL NOT derive a phase or a health verdict of its own, and no surface SHALL keep a second vocabulary or a second rank order: the worst row of a listing is chosen by the record module's one rank. Both the text and the JSON rendering SHALL carry both fields. A finished workflow operative, surfaced from its retained completion record rather than from a live Overwatch, SHALL keep reporting phase `finished`.
 
 #### Scenario: A parked operative is not reported as running
 
@@ -269,6 +268,11 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 - **WHEN** the convergence loop has not yet observed the operative
 - **THEN** its health SHALL be reported `unknown` rather than invented, and its phase SHALL still be reported from the operative's own state
+
+#### Scenario: Every surface reports one word for one operative
+
+- **WHEN** an operative is parked, or its runner is dead, or it is declared and unbound
+- **THEN** `flz operative info`, `flz operative list`, `operative_rows/2` and the health verdict event on the observability bus SHALL all report the same state — `parked`, `failed` or `unbound` — and `/healthz` SHALL fold that state to `degraded` or `recovering` and never to `healthy`
 
 ### Requirement: A park is reported, not only logged
 
@@ -295,3 +299,4 @@ Reporting a park SHALL NOT change when one happens: an unloadable provider modul
 
 - **WHEN** one plugin in an operative's list has an unloadable provider and healthy plugins follow it
 - **THEN** the operative SHALL park exactly as before and the plugins after the failing one SHALL still never be attempted
+
