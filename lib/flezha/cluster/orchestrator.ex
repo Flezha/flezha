@@ -14,6 +14,7 @@ defmodule Flezha.Cluster.Orchestrator do
   alias Flezha.Cluster.DiscoveryProtocol
   alias Flezha.Cluster.K8sPodDiscovery
   alias Flezha.Cluster.ManualDiscovery
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
 
@@ -125,7 +126,7 @@ defmodule Flezha.Cluster.Orchestrator do
 
   @impl true
   def handle_info({:scheduled_reconnect, node, retries}, state) do
-    max_reconnects = Application.fetch_env!(:flezha, :max_reconnects)
+    max_reconnects = Config.get(:max_reconnects)
 
     if retries >= max_reconnects do
       # Stop active reconnect attempts and unmonitor. The periodic
@@ -207,7 +208,7 @@ defmodule Flezha.Cluster.Orchestrator do
   end
 
   defp schedule_reconnect(node, retries_count) do
-    base = Application.fetch_env!(:flezha, :reconnect_interval)
+    base = Config.get(:reconnect_interval)
 
     case base do
       0 ->
@@ -223,7 +224,7 @@ defmodule Flezha.Cluster.Orchestrator do
   end
 
   defp schedule_cluster_update() do
-    interval = Application.fetch_env!(:flezha, :cluster_update_interval)
+    interval = Config.get(:cluster_update_interval)
 
     Process.send_after(self(), :update_cluster, interval)
   end
@@ -232,27 +233,27 @@ defmodule Flezha.Cluster.Orchestrator do
 
   defp get_discovery_handler() do
     result =
-      case Application.fetch_env!(:flezha, :cluster_discovery) do
+      case Config.get(:cluster_discovery) do
         "manual_discovery" ->
           {:ok,
            %ManualDiscovery{
-             initial_nodes: Application.fetch_env!(:flezha, :initial_nodes)
+             initial_nodes: Config.get(:initial_nodes)
            }}
 
         "k8s_pod_discovery" ->
           {:ok,
            %K8sPodDiscovery{
-             service_account_path: Application.fetch_env!(:flezha, :k8s_service_account_path),
-             cluster_domain: Application.fetch_env!(:flezha, :k8s_cluster_domain),
-             namespace: Application.fetch_env!(:flezha, :k8s_namespace),
-             node_base_name: Application.fetch_env!(:flezha, :node_base_name),
-             ip_lookup_mode: Application.fetch_env!(:flezha, :k8s_ip_lookup_mode),
-             cluster_name: Application.fetch_env!(:flezha, :k8s_cluster_name),
-             service_name: Application.fetch_env!(:flezha, :k8s_service_name),
-             selector: Application.fetch_env!(:flezha, :k8s_selector),
-             master_name: Application.fetch_env!(:flezha, :k8s_master_name),
-             master_port: Application.fetch_env!(:flezha, :k8s_master_port),
-             host_identifier: Application.fetch_env!(:flezha, :k8s_host_identifier)
+             service_account_path: Config.get(:k8s_service_account_path),
+             cluster_domain: Config.get(:k8s_cluster_domain),
+             namespace: Config.get(:k8s_namespace),
+             node_base_name: Config.get(:node_base_name),
+             ip_lookup_mode: Config.get(:k8s_ip_lookup_mode),
+             cluster_name: Config.get(:k8s_cluster_name),
+             service_name: Config.get(:k8s_service_name),
+             selector: Config.get(:k8s_selector),
+             master_name: Config.get(:k8s_master_name),
+             master_port: Config.get(:k8s_master_port),
+             host_identifier: Config.get(:k8s_host_identifier)
            }}
 
         handler ->

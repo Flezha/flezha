@@ -140,7 +140,7 @@ static HOLDBACK_MAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 pub(crate) fn nonparking_enabled() -> bool {
     match NONPARKING.load(Ordering::Relaxed) {
         0 => {
-            let on = crate::util::env_flag(ENV_NONPARKING);
+            let on = crate::util::env_bool(ENV_NONPARKING, false);
             NONPARKING.store(1 + u8::from(on), Ordering::Relaxed);
             on
         }

@@ -312,6 +312,9 @@ end
 
 defmodule Flezha.Bench.BenchCheckpoint do
   @moduledoc false
+
+  alias Flezha.Config
+
   @behaviour Flezha.SDK.StreamOperative
   def factory_id, do: "bench_checkpoint"
 
@@ -325,11 +328,11 @@ defmodule Flezha.Bench.BenchCheckpoint do
     c =
       c
       |> effectively_once()
-      |> checkpoint_every(env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500))
+      |> checkpoint_every(Config.get(:bench_checkpoint_every))
 
     c =
-      if System.get_env("FLEZHA_BENCH_CHECKPOINT_OUTPUTS") == "at_checkpoint",
-        do: outputs_at_checkpoint(c, env_int("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50)),
+      if Config.get(:bench_checkpoint_outputs) == "at_checkpoint",
+        do: outputs_at_checkpoint(c, Config.get(:bench_checkpoint_delay_ms)),
         else: c
 
     c
@@ -339,15 +342,6 @@ defmodule Flezha.Bench.BenchCheckpoint do
     |> named("sink")
     |> keyed()
     |> sink("tier_sink")
-  end
-
-  # The reference's lenient parse: anything that is not an integer is the
-  # default.
-  defp env_int(key, default) do
-    case Integer.parse(System.get_env(key, "")) do
-      {n, ""} -> n
-      _ -> default
-    end
   end
 end
 

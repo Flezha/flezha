@@ -15,6 +15,7 @@ defmodule Flezha.Observability.Export.OtlpClient do
 
   use GenServer
 
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Http.Client, as: HttpClient
@@ -156,7 +157,7 @@ defmodule Flezha.Observability.Export.OtlpClient do
   end
 
   defp load_endpoint() do
-    case Application.get_env(:flezha, :observability_export, []) |> Keyword.get(:otlp_endpoint) do
+    case Config.get(:otlp_endpoint) do
       nil ->
         nil
 
@@ -169,9 +170,7 @@ defmodule Flezha.Observability.Export.OtlpClient do
   end
 
   defp load_headers() do
-    Application.get_env(:flezha, :observability_export, [])
-    |> Keyword.get(:otlp_headers, %{})
-    |> Map.to_list()
+    Config.get(:otlp_headers) |> Map.to_list()
   end
 
   defp parse_url(url) do

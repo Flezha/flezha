@@ -13,6 +13,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   `bench` profile) — the same line the e2e harness renders for its `test` profile.
   """
 
+  alias Flezha.Config
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
   alias Flezha.Service.OperativeManager
@@ -74,7 +75,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   """
   def setup(namespace, count, extra_env) do
     runtime = runtime()
-    transport = Application.get_env(:flezha, :transport, :uds)
+    transport = Config.get(:transport)
 
     if runtime in [:rust, :java] and transport == :native do
       raise "runtime=#{runtime} cannot run the :native transport (that mode is the " <>
@@ -117,7 +118,7 @@ defmodule Mix.Tasks.Bench.Fleet do
     command = PortPilot.manifest(runtime)["build"]["bench"]
 
     cond do
-      System.get_env("FLEZHA_BENCH_SKIP_BUILD") in ["1", "true"] ->
+      Config.get(:bench_skip_build) ->
         IO.puts("Skipping the #{runtime} bench build (FLEZHA_BENCH_SKIP_BUILD)")
         :skipped
 

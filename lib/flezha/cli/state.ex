@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.State do
   the action, so an unbound caller learns nothing about what exists on disk.
   """
 
+  alias Flezha.Config
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Operative.Replay
@@ -474,7 +475,7 @@ defmodule Flezha.Service.Cli.State do
   def state_retention(operative_class, hours_string, _call) do
     case Integer.parse(hours_string) do
       {hours, ""} when hours >= 0 ->
-        current = Application.get_env(:flezha, :time_travel_retention_hours, %{})
+        current = Config.get(:time_travel_retention_hours)
         updated = Map.put(current, operative_class, hours)
         Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
 

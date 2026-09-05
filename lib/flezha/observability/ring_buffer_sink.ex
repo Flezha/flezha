@@ -16,6 +16,7 @@ defmodule Flezha.Observability.RingBufferSink do
 
   @behaviour Flezha.Observability.Sink
 
+  alias Flezha.Config
   alias Flezha.Observability.Registry, as: ObsRegistry
 
   @index_table :flezha_observability_ring_buffer_index
@@ -83,11 +84,9 @@ defmodule Flezha.Observability.RingBufferSink do
 
   @impl true
   def init(_opts) do
-    config = observability_config()
-
-    retention_ms = Keyword.get(config, :ring_buffer_retention_ms, 900_000)
-    max_entries = Keyword.get(config, :ring_buffer_max_entries_per_source, 10_000)
-    sweep_ms = Keyword.get(config, :retention_check_interval_ms, 5_000)
+    retention_ms = Config.get(:observability_ring_buffer_retention_ms)
+    max_entries = Config.get(:observability_ring_buffer_max_entries_per_source)
+    sweep_ms = Config.get(:observability_sweep_interval_ms)
 
     ensure_index_table()
 
@@ -231,9 +230,5 @@ defmodule Flezha.Observability.RingBufferSink do
 
   defp schedule_sweep(ms) do
     Process.send_after(self(), :sweep, ms)
-  end
-
-  defp observability_config() do
-    Application.get_env(:flezha, :observability, [])
   end
 end

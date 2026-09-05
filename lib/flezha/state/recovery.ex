@@ -19,6 +19,7 @@ defmodule Flezha.State.Recovery do
 
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Operative.Replay
   alias Flezha.Service.HubManager
   alias Flezha.State.Commands
@@ -26,7 +27,7 @@ defmodule Flezha.State.Recovery do
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
   def resync({_rc, _sh, _pk} = entity_id, opts \\ []) do
-    case Application.get_env(:flezha, :state_resync_fun) do
+    case Config.get(:state_resync_fun) do
       fun when is_function(fun, 2) -> fun.(entity_id, opts)
       _ -> do_resync(entity_id, opts)
     end

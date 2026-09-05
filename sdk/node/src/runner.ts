@@ -11,6 +11,7 @@
 import { pathToFileURL } from 'node:url';
 
 import type { ClassSpec } from './authoring.js';
+import { envPositive } from './env.js';
 import { toHostClassDecl, validate } from './graph.js';
 import { installDeterminismWarnings, uninstallDeterminismWarnings } from './determinism.js';
 import { EntryIdleWatcher, lastEntryDelivery, type IdleObserver } from './entry-idle.js';
@@ -122,7 +123,7 @@ export function workflowContext(native: Native, instanceId: string): WorkflowSes
 
 export class Runner {
   private readonly specifiers: string[] = [];
-  private workerCount = Number(process.env.FLEZHA_NODE_WORKERS ?? 0) || 0;
+  private workerCount = envPositive('FLEZHA_NODE_WORKERS', 0);
   private fetcherCount: number | undefined;
   private native: Native | null = null;
   private registry: Registry | null = null;

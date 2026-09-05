@@ -13,6 +13,7 @@ defmodule Flezha.State.DurabilityTier.Backend.Config do
   through it.
   """
 
+  alias Flezha.Config
   alias Flezha.State.DurabilityTier.Backend
 
   @doc """
@@ -26,12 +27,12 @@ defmodule Flezha.State.DurabilityTier.Backend.Config do
   """
   @spec resolve() :: {module(), Backend.opts()} | :none
   def resolve() do
-    config = Application.get_env(:flezha, :durability_tier, [])
+    opts = Config.group({:durability_tier, :backend_opts})
 
-    case Keyword.get(config, :backend, :none) do
-      :postgres -> {Backend.Postgres, Keyword.get(config, :backend_opts, [])}
-      :s3 -> {Backend.S3, Keyword.get(config, :backend_opts, [])}
-      :local_path -> {Backend.LocalPath, Keyword.get(config, :backend_opts, [])}
+    case Config.get(:durability_backend) do
+      :postgres -> {Backend.Postgres, opts}
+      :s3 -> {Backend.S3, opts}
+      :local_path -> {Backend.LocalPath, opts}
       {module, opts} when is_atom(module) and is_list(opts) -> {module, opts}
       _ -> :none
     end

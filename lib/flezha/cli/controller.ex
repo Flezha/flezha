@@ -4,6 +4,8 @@ defmodule Flezha.Service.Cli.Controller do
   handler, and the controller status block.
   """
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
@@ -219,8 +221,7 @@ defmodule Flezha.Service.Cli.Controller do
           shutdown_in_progress: false,
           shutdown_phase: nil,
           signal_handler_status: :unknown,
-          graceful_shutdown_enabled:
-            Application.get_env(:flezha, :graceful_shutdown_enabled, true),
+          graceful_shutdown_enabled: Config.get(:graceful_shutdown_enabled),
           graceful_shutdown_timeout_ms: Durations.get(:graceful_shutdown_timeout_ms)
         }
     end

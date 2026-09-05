@@ -60,7 +60,12 @@ public final class FlezhaEnv {
         return new ResolvedConfig(count, Math.max(count, max));
     }
 
-    private static int parsePositive(String name, String raw, int fallback) {
+    /**
+     * The one count rule every Flezha runtime shares: unset, blank, zero,
+     * negative or unparsable text all read as {@code fallback}, so a knob
+     * nobody meant to set never shrinks a pool to nothing.
+     */
+    public static int parsePositive(String name, String raw, int fallback) {
         if (raw == null || raw.isBlank()) {
             return fallback;
         }

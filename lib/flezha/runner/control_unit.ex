@@ -225,7 +225,7 @@ defmodule Flezha.Runner.ControlUnit do
         namespace: namespace,
         runner_id: runner_id,
         response_refs: %{},
-        env: Application.get_env(:flezha, :env)
+        env: Config.get(:env)
       }
     }
   end
@@ -262,7 +262,7 @@ defmodule Flezha.Runner.ControlUnit do
 
   @impl true
   def handle_call(:command_sockets_connect, from, state) do
-    sockets_count = Config.concurrent_channel_count()
+    sockets_count = Config.get(:concurrent_channel_count)
 
     case ControlChannel.send_control(
            state.runner_id,

@@ -16,6 +16,8 @@ defmodule Flezha.State.Paths do
   `decode_entity_key/1` reverses the encoding.
   """
 
+  alias Flezha.Config
+
   @type entity_id ::
           {operative_class :: binary(), procedure_id :: binary(), entity_key :: binary()}
 
@@ -89,12 +91,7 @@ defmodule Flezha.State.Paths do
     do: wal_path(inbox_id(instance_id))
 
   @spec state_root() :: binary()
-  def state_root() do
-    case Application.fetch_env(:flezha, :state_root) do
-      {:ok, root} -> root
-      :error -> System.get_env("FLEZHA_STATE_DIR") || "app_data/state"
-    end
-  end
+  def state_root(), do: Config.get(:state_root)
 
   # ----- namespace resolution (finish-platform-authn-authz) -----
   #

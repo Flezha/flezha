@@ -13,6 +13,7 @@ defmodule Flezha.Plugin.Installer do
 
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Plugin
   alias Flezha.Plugin.Installer.Checksums
   alias Flezha.Plugin.Installer.Compiler
@@ -126,12 +127,10 @@ defmodule Flezha.Plugin.Installer do
   @rollback_key :flz_installer_rollback
 
   defp do_install(path, opts) do
-    cfg = config()
-
     authorise = &authorise_install(&1, opts)
 
-    with_staging(cfg, fn staging ->
-      with {:ok, staged} <- stage_and_vet(path, cfg, staging, &noop_vet/1, authorise),
+    with_staging(fn staging ->
+      with {:ok, staged} <- stage_and_vet(path, staging, &noop_vet/1, authorise),
            {:ok, plugin} <- finish_install(staged) do
         {:ok, plugin}
       else
@@ -167,8 +166,8 @@ defmodule Flezha.Plugin.Installer do
 
   # The staging bracket both pipelines run inside: one rollback stack per
   # attempt, and the staging tree removed however the attempt ends.
-  defp with_staging(cfg, fun) do
-    staging = stage_path(cfg)
+  defp with_staging(fun) do
+    staging = stage_path()
     Process.put(@rollback_key, [])
     push_rollback({:rm_dir, staging})
 
@@ -184,8 +183,8 @@ defmodule Flezha.Plugin.Installer do
   # `authorise` after the signature is accepted; the two pipelines differ only
   # in what they put there. Both run at the position they occupied before, so
   # a package that fails two checks still reports the same one.
-  defp stage_and_vet(path, cfg, staging, vet, authorise) do
-    with :ok <- Package.extract(path, staging, package_opts(cfg)),
+  defp stage_and_vet(path, staging, vet, authorise) do
+    with :ok <- Package.extract(path, staging, package_opts()),
          :ok <- Package.validate_layout(staging),
          {:ok, manifest_src} <- File.read(Path.join(staging, "manifest.exs")),
          {:ok, manifest} <- Manifest.parse(manifest_src),
@@ -196,15 +195,15 @@ defmodule Flezha.Plugin.Installer do
          :ok <-
            Signature.gate(
              signature_present?: signature_present?,
-             require_signature: Keyword.get(cfg, :require_signature, false),
-             allow_unsigned: Keyword.get(cfg, :allow_unsigned, true),
+             require_signature: Config.get(:plugin_require_signature),
+             allow_unsigned: Config.get(:plugin_allow_unsigned),
              plugin_id: manifest.id
            ),
-         :ok <- maybe_verify_signature(staging, signature_bytes, cfg),
+         :ok <- maybe_verify_signature(staging, signature_bytes),
          :ok <- authorise.(manifest),
          :ok <- check_module_collisions(manifest.modules, manifest.id),
          {:ok, beams} <- Compiler.compile(Path.join(staging, "src"), manifest.modules),
-         install_dir = install_dir_for(cfg, manifest.id, manifest.version),
+         install_dir = install_dir_for(manifest.id, manifest.version),
          :ok <- push_rollback({:rm_dir, install_dir}),
          :ok <- write_install_dir(staging, install_dir) do
       {:ok,
@@ -239,21 +238,20 @@ defmodule Flezha.Plugin.Installer do
       old_row ->
         old_modules = Loader.modules_of(plugin_id)
         old_status = old_row[:status]
-        cfg = config()
 
-        with_staging(cfg, fn staging ->
-          stage_upgrade(new_path, cfg, staging, plugin_id, old_row, old_status, old_modules, opts)
+        with_staging(fn staging ->
+          stage_upgrade(new_path, staging, plugin_id, old_row, old_status, old_modules, opts)
         end)
     end
   end
 
-  defp stage_upgrade(new_path, cfg, staging, plugin_id, old_row, old_status, old_modules, opts) do
+  defp stage_upgrade(new_path, staging, plugin_id, old_row, old_status, old_modules, opts) do
     vet = &ensure_ids_match(&1.id, plugin_id)
 
     authorise =
       &DependencyResolver.validate_upgrade(&1, plugin_id, DependencyResolver.live_catalog())
 
-    case stage_and_vet(new_path, cfg, staging, vet, authorise) do
+    case stage_and_vet(new_path, staging, vet, authorise) do
       {:ok, staged} ->
         upgraded(staged, plugin_id, old_row, old_status, old_modules, opts)
 
@@ -610,31 +608,30 @@ defmodule Flezha.Plugin.Installer do
   end
 
   defp plugin_root_for(plugin_id) do
-    cfg = config()
-    Path.join([Keyword.get(cfg, :plugin_root, "app_data/plugins"), "installed", plugin_id])
+    Path.join([Config.get(:plugin_root), "installed", plugin_id])
   end
 
-  defp install_dir_for(cfg, plugin_id, version) do
+  defp install_dir_for(plugin_id, version) do
     Path.join([
-      Keyword.get(cfg, :plugin_root, "app_data/plugins"),
+      Config.get(:plugin_root),
       "installed",
       plugin_id,
       version
     ])
   end
 
-  defp stage_path(cfg) do
+  defp stage_path() do
     Path.join([
-      Keyword.get(cfg, :plugin_root, "app_data/plugins"),
+      Config.get(:plugin_root),
       "staging",
       Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
     ])
   end
 
-  defp package_opts(cfg) do
+  defp package_opts() do
     [
-      max_package_bytes: Keyword.get(cfg, :max_package_bytes, 50_000_000),
-      max_source_files: Keyword.get(cfg, :max_source_files, 200)
+      max_package_bytes: Config.get(:plugin_max_package_bytes),
+      max_source_files: Config.get(:plugin_max_source_files)
     ]
   end
 
@@ -656,17 +653,15 @@ defmodule Flezha.Plugin.Installer do
     end
   end
 
-  defp maybe_verify_signature(_staging, nil, _cfg), do: :ok
+  defp maybe_verify_signature(_staging, nil), do: :ok
 
-  defp maybe_verify_signature(staging_dir, sig, cfg) do
+  defp maybe_verify_signature(staging_dir, sig) do
     checksums_path = Path.join(staging_dir, "CHECKSUMS.sha256")
 
     with {:ok, msg} <- File.read(checksums_path) do
-      Signature.verify(msg, sig, Keyword.get(cfg, :trusted_keys, []))
+      Signature.verify(msg, sig, Config.get(:plugin_trusted_keys))
     end
   end
-
-  defp config, do: Application.get_env(:flezha, :plugin_installer, [])
 
   ## Module-collision check — runs BEFORE compile
   #

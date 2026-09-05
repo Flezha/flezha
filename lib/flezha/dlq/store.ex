@@ -26,14 +26,12 @@ defmodule Flezha.Dlq.Store do
 
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry
   alias Flezha.State.DurabilityTier
 
   @entries_file "entries.jsonl"
-
-  @default_retention_seconds 30 * 86_400
-  @default_max_total_bytes 4_294_967_296
 
   # ---------- public API ----------
 
@@ -160,10 +158,8 @@ defmodule Flezha.Dlq.Store do
   def path_component(component), do: safe(component)
 
   defp root() do
-    config()[:dir] || "app_data/dlq"
+    Config.get(:dlq_dir)
   end
-
-  defp config(), do: Application.get_env(:flezha, :dlq, [])
 
   # ---------- GenServer ----------
 
@@ -383,9 +379,8 @@ defmodule Flezha.Dlq.Store do
   # ---------- retention (age AND total size, more restrictive wins) ----------
 
   defp do_sweep() do
-    cfg = config()
-    retention_s = cfg[:retention_seconds] || @default_retention_seconds
-    max_bytes = cfg[:max_total_bytes] || @default_max_total_bytes
+    retention_s = Config.get(:dlq_retention_seconds)
+    max_bytes = Config.get(:dlq_max_total_bytes)
     cutoff_ms = System.system_time(:millisecond) - retention_s * 1000
 
     all =

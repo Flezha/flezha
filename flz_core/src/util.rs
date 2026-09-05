@@ -1,7 +1,6 @@
 //! The monotonic anchor, env parsing, lock poison recovery, big-endian reads
 //! and nonces; not a stable surface.
 
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
@@ -42,31 +41,11 @@ pub fn sleep_interruptible(duration: Duration, stop: Option<&AtomicBool>) -> boo
     }
 }
 
-pub fn env_parse<T: FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
-}
-
-/// A default-OFF knob: set and not a negative spelling means on.
-pub fn env_flag(key: &str) -> bool {
-    std::env::var(key).is_ok_and(|v| {
-        !matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "off" | "no"
-        )
-    })
-}
-
-/// [`env_parse`] for `usize`, with `0` read as unset.
-pub fn env_parse_positive(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(default)
-}
+/// The environment readers, re-exported so a crate above this one reaches one
+/// parse rule per type without naming the transport crate for it.
+pub use flz_transport::env::{
+    env_bool, env_dir, env_ms, env_parse, env_parse_positive, env_raw, env_string,
+};
 
 /// For uniqueness only, never for ordering.
 pub fn nonce_suffix() -> u128 {

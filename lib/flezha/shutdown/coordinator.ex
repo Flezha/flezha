@@ -32,6 +32,8 @@ defmodule Flezha.Shutdown.Coordinator do
   use GenServer, shutdown: 30_000
   require Logger
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
@@ -166,7 +168,7 @@ defmodule Flezha.Shutdown.Coordinator do
       shutdown_in_progress: state.phase in [:quiescing, :draining, :finalising],
       shutdown_phase: external_phase(state.phase),
       signal_handler_status: SignalHandler.status(),
-      graceful_shutdown_enabled: Application.get_env(:flezha, :graceful_shutdown_enabled, true),
+      graceful_shutdown_enabled: Config.get(:graceful_shutdown_enabled),
       graceful_shutdown_timeout_ms: configured_timeout_ms()
     }
 

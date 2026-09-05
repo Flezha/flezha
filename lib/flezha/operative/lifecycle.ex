@@ -354,7 +354,7 @@ defmodule Flezha.Operative.Lifecycle do
   # pid).
   defp ping_runner(runner_id) do
     cond do
-      not Application.get_env(:flezha, :overwatch_ping_enabled, true) ->
+      not Config.get(:overwatch_ping_enabled) ->
         :ok
 
       fun = test_hook(:overwatch_ping_fn) ->
@@ -368,8 +368,8 @@ defmodule Flezha.Operative.Lifecycle do
   defp normalize_ping({:ok, :pong}), do: :ok
   defp normalize_ping({:error, _} = err), do: err
 
-  defp test_hook(key) do
-    case Application.get_env(:flezha, key) do
+  defp test_hook(name) do
+    case Config.get(name) do
       fun when is_function(fun, 1) -> fun
       _ -> nil
     end
@@ -433,7 +433,7 @@ defmodule Flezha.Operative.Lifecycle do
   # synthetic runners with no real SDK behind the cu.
   defp runner_ready?(runner_id) do
     if OperativeManager.runner_registered?(runner_id) do
-      if Application.get_env(:flezha, :overwatch_ping_enabled, true),
+      if Config.get(:overwatch_ping_enabled),
         do: ping_runner(runner_id) == :ok,
         else: true
     else
@@ -482,7 +482,7 @@ defmodule Flezha.Operative.Lifecycle do
 
   defp attach_channel(operative_id, runner_id) do
     operative_int = String.to_charlist(operative_id) |> Enum.sum()
-    count = Config.concurrent_channel_count()
+    count = Config.get(:concurrent_channel_count)
     channel_index = rem(operative_int, count)
 
     StreamPool.stream_ids(runner_id, :primary) |> Enum.at(channel_index)

@@ -18,6 +18,8 @@ defmodule Flezha.Transport.LivenessCounters do
   instrumentation.
   """
 
+  alias Flezha.Config
+
   @table :flezha_liveness_counters
 
   # Slot layouts — the single source of truth for both the `:counters` index of
@@ -112,8 +114,7 @@ defmodule Flezha.Transport.LivenessCounters do
   """
   @spec poll_enabled?() :: boolean()
   def poll_enabled?() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:data_plane_liveness, true)
+    Config.get(:observability_data_plane_liveness)
   end
 
   # ---------- table lifecycle ----------

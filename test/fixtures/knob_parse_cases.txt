@@ -1,0 +1,58 @@
+# One parse rule per knob type, and the same rule in every runtime.
+#
+# `type|input|expected`, one case per line. `expected` is the value the text
+# means, or `error` when the text is not a value of that type at all — a reader
+# answers its row's default for those, and the controller's boot refuses on
+# every type but `positive_int` and `bool`, because an operator who sets a knob
+# and silently gets the default back has been told a knob exists that does
+# nothing.
+#
+# `<empty>` is the empty string. Inputs are trimmed before they are parsed, so
+# a value pasted with a stray space still means what it looks like.
+#
+# Every runtime's own suite feeds this file to its own reader:
+#   test/flezha/config/parse_test.exs          the controller and the Elixir SDK
+#   flz_transport/src/env.rs                   the crates and the Rust SDK
+#   sdk/java/.../FlezhaEnvTest.java            Java
+#   sdk/node/test/env.test.mjs                 Node
+#   sdk/python/tests/test_env.py               Python
+#   sdk/ruby/test/env_test.rb                  Ruby
+#   sdk/php/tests/EnvTest.php                  PHP
+
+positive_int|5|5
+positive_int| 7 |7
+positive_int|1048576|1048576
+positive_int|1|1
+positive_int|0|error
+positive_int|-1|error
+positive_int|abc|error
+positive_int|3x|error
+positive_int|<empty>|error
+
+ms|0|0
+ms|250|250
+ms| 900 |900
+ms|-1|error
+ms|1.5|error
+ms|abc|error
+ms|<empty>|error
+
+int|42|42
+int|-3|-3
+int|0|0
+int|4.5|error
+int|abc|error
+int|<empty>|error
+
+bool|1|true
+bool|true|true
+bool|TRUE|true
+bool|yes|true
+bool|On|true
+bool|0|false
+bool|false|false
+bool|No|false
+bool|OFF|false
+bool|maybe|error
+bool|2|error
+bool|<empty>|error

@@ -48,6 +48,7 @@ defmodule Flezha.Shutdown.SignalHandler do
   use GenServer, shutdown: 5_000
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Shutdown.Coordinator
 
   defstruct count: 0, enabled: true, status: :ok, signal_server: :erl_signal_server
@@ -124,7 +125,7 @@ defmodule Flezha.Shutdown.SignalHandler do
   def init(opts) do
     enabled =
       Keyword.get_lazy(opts, :enabled, fn ->
-        Application.get_env(:flezha, :graceful_shutdown_enabled, true)
+        Config.get(:graceful_shutdown_enabled)
       end)
 
     state = %__MODULE__{

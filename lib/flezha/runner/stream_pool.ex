@@ -24,7 +24,7 @@ defmodule Flezha.Runner.StreamPool do
   @doc "The channel names for `runner_id`'s `type` pool, in pool order."
   @spec stream_ids(binary(), :primary | :secondary) :: [atom()]
   def stream_ids(runner_id, type) do
-    for x <- 1..Config.concurrent_channel_count() do
+    for x <- 1..Config.get(:concurrent_channel_count) do
       case type do
         :primary -> Identificator.stream_channel_primary(runner_id, x)
         :secondary -> Identificator.stream_channel_secondary(runner_id, x)

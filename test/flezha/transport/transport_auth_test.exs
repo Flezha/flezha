@@ -30,12 +30,12 @@ defmodule Flezha.Transport.TransportAuthTest do
     base = Path.join(@tmp_base, name)
 
     Application.put_env(:flezha, :socket_files_path, base)
-    if group, do: System.put_env("FLEZHA_SOCKET_DIR_GROUP", group)
+    if group, do: Application.put_env(:flezha, :socket_dir_group, group)
 
     try do
       fun.(base)
     after
-      System.delete_env("FLEZHA_SOCKET_DIR_GROUP")
+      Application.delete_env(:flezha, :socket_dir_group)
       Application.put_env(:flezha, :socket_files_path, previous)
     end
   end

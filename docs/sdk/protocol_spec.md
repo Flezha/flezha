@@ -162,8 +162,8 @@ the logical id.
 
 | Knob | Default | Meaning |
 |------|---------|---------|
-| `FLEZHA_MAX_FRAME_BYTES` | 64 MiB | Largest declared payload length either parser accepts; read once at boot |
-| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | 8 MiB | Per-stream send-buffer cap in the UDS and QUIC drivers |
+| `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | Largest declared payload length either parser accepts; read once at boot |
+| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | Per-stream send-buffer cap in the UDS and QUIC drivers |
 
 Both are defined once (`max_frame_bytes()` / `max_write_buffer_bytes()` in
 `flz_transport/src/transport/config.rs`) and shared by the runner-side

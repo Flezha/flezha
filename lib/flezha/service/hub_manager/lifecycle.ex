@@ -9,6 +9,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Cluster.Directory
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.HubManager
@@ -239,7 +240,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   end
 
   def wipe_registry_dir(hub_id) do
-    root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+    root = Config.get(:process_hub_registry_root)
     File.rm_rf(Path.join(root, Atom.to_string(hub_id)))
   end
 
@@ -272,17 +273,16 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   # operative can never outlive the graceful-shutdown window.
   @doc false
   def consent_settings do
-    opts = Application.get_env(:flezha, :migration_consent, [])
-
     %ProcessHub.Strategy.Migration.MigrationConsent{
       consent_timeout: Durations.get(:migration_consent_timeout_ms),
       retry_interval: Durations.get(:migration_retry_interval_ms),
-      max_defer_time: Keyword.get(opts, :max_defer_ms) || Coordinator.configured_timeout_ms()
+      max_defer_time:
+        Durations.get(:migration_max_defer_ms) || Coordinator.configured_timeout_ms()
     }
   end
 
   defp registry_path(hub_id) do
-    root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+    root = Config.get(:process_hub_registry_root)
     dir = Path.join(root, Atom.to_string(hub_id))
     File.mkdir_p!(dir)
     Path.join(dir, "registry.dets")

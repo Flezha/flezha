@@ -15,6 +15,7 @@ defmodule Flezha.Runner.FleetManager do
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
@@ -437,7 +438,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp get_runner_keepalive() do
-    keepalive = Application.get_env(:flezha, :runner_keepalive, "30000")
+    keepalive = Config.get(:runner_keepalive)
 
     cond do
       is_binary(keepalive) -> String.to_integer(keepalive)

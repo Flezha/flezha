@@ -14,6 +14,8 @@ defmodule Flezha.Observability.Supervisor do
 
   use Supervisor
 
+  alias Flezha.Config
+
   alias Flezha.Observability.{
     Counters,
     DefaultSinks,
@@ -58,7 +60,6 @@ defmodule Flezha.Observability.Supervisor do
   end
 
   defp enabled?() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:enabled, true)
+    Config.get(:observability_enabled)
   end
 end

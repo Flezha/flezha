@@ -15,6 +15,7 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
 
   use GenServer
 
+  alias Flezha.Config
   alias Flezha.Http.Listener
   alias Flezha.Observability.Bus
   alias Flezha.Observability.Export.PrometheusRegistry
@@ -39,9 +40,8 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
 
   @impl true
   def init(_opts) do
-    config = Application.get_env(:flezha, :observability_export, [])
-    port = Keyword.get(config, :prometheus_port, 9568)
-    bind = Keyword.get(config, :prometheus_bind, "127.0.0.1")
+    port = Config.get(:prometheus_port)
+    bind = Config.get(:prometheus_bind)
 
     case Listener.listen(port, bind) do
       {:ok, listen_socket, actual_port} ->

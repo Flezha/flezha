@@ -19,11 +19,11 @@ defmodule Flezha.Diagnostics.MemoryReporter do
         binary_alloc_carriers_size=<bytes>
   """
 
+  alias Flezha.Config
+
   use GenServer
 
   require Logger
-
-  @env_var "FLEZHA_MEMORY_REPORT_INTERVAL_MS"
 
   ## ----- Public API ---------------------------------------------------------
 
@@ -34,15 +34,9 @@ defmodule Flezha.Diagnostics.MemoryReporter do
   """
   @spec configured_interval_ms() :: {:ok, pos_integer()} | :disabled
   def configured_interval_ms do
-    case System.get_env(@env_var) do
-      nil ->
-        :disabled
-
-      raw ->
-        case Integer.parse(raw) do
-          {ms, ""} when ms > 0 -> {:ok, ms}
-          _ -> :disabled
-        end
+    case Config.get(:memory_report_interval_ms) do
+      ms when is_integer(ms) and ms > 0 -> {:ok, ms}
+      _ -> :disabled
     end
   end
 

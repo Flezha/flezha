@@ -15,6 +15,7 @@ defmodule Flezha.Observability do
   `caller_context` and emits audit events.
   """
 
+  alias Flezha.Config
   alias Flezha.Observability.PubSubSink
 
   @pubsub Flezha.Observability.PubSub
@@ -47,8 +48,7 @@ defmodule Flezha.Observability do
 
   @spec enabled?() :: boolean()
   def enabled?() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:enabled, true)
+    Config.get(:observability_enabled)
   end
 
   defp pubsub_running?() do

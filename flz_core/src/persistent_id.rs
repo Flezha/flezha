@@ -19,9 +19,7 @@ const DEFAULT_ID_PATH: &str = "/var/lib/flezha-runner/id";
 static STABLE_ID: OnceLock<String> = OnceLock::new();
 
 pub fn id_path() -> PathBuf {
-    std::env::var(ENV_ID_PATH)
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_ID_PATH))
+    PathBuf::from(crate::util::env_string(ENV_ID_PATH, DEFAULT_ID_PATH))
 }
 
 /// The runner's stable identity: loaded, or derived from `namespace` and

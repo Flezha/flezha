@@ -16,6 +16,7 @@ defmodule Flezha.Service.Observability do
   use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ
+  alias Flezha.Config
   alias Flezha.Observability
   alias Flezha.Observability.{Registry, RingBufferSink}
   alias Flezha.Service.CallerContext
@@ -133,11 +134,9 @@ defmodule Flezha.Service.Observability do
   # ---------- Internal helpers ----------
 
   defp check_pubsub_sink() do
-    enabled? =
-      Application.get_env(:flezha, :observability, [])
-      |> Keyword.get(:pubsub_sink_enabled, true)
-
-    if enabled?, do: :ok, else: {:error, :pubsub_sink_disabled}
+    if Config.get(:observability_pubsub_sink_enabled),
+      do: :ok,
+      else: {:error, :pubsub_sink_disabled}
   end
 
   # Filter ring-buffer query results to signals visible to the

@@ -13,6 +13,7 @@ defmodule Flezha.Operative.Handover do
   states defer rather than move.
   """
 
+  alias Flezha.Config
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
@@ -183,7 +184,7 @@ defmodule Flezha.Operative.Handover do
         serialized_data
 
       {:error, reason} ->
-        if Application.get_env(:flezha, :env) !== :test do
+        if Config.get(:env) !== :test do
           Logger.error("Failed to serialize operative: #{inspect(reason)}")
         end
 

@@ -35,20 +35,11 @@ defmodule Flezha.AuthZ.Supervisor do
   def init(_opts) do
     # Enforcement is the default posture; any disabled boot is an explicit
     # opt-out and stays loud for as long as it remains set.
-    cond do
-      Config.env_force_disabled?() ->
-        Logger.warning(
-          "[authz] FLEZHA_AUTHZ_ENABLED=false explicit override active; authn/authz is OFF"
-        )
-
-      not Config.config_enabled?() ->
-        Logger.warning(
-          "[authz] authn/authz disabled by configuration; every caller is trusted. " <>
-            "Remove the opt-out (or unset FLEZHA_AUTHZ_ENABLED) to restore the enforced default."
-        )
-
-      true ->
-        :ok
+    unless Config.config_enabled?() do
+      Logger.warning(
+        "[authz] authn/authz is OFF; every caller is trusted. Remove the opt-out " <>
+          "(or unset #{Flezha.Config.env_name(:authz_enabled)}) to restore the enforced default."
+      )
     end
 
     # The strict refusal-to-start policy (refuse when enabled is

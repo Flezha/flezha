@@ -22,6 +22,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
   @behaviour Flezha.Observability.Sink
 
   alias Flezha.AuthZ.Verbs
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.{Codec, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
@@ -142,8 +143,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
 
   defp compute_allow_list() do
     extra =
-      Application.get_env(:flezha, :audit_log, [])
-      |> Keyword.get(:extra_subscriptions, [])
+      Config.get(:audit_log_extra_subscriptions)
       |> Enum.filter(&valid_entry?/1)
 
     @system_allow_list ++ Enum.map(Verbs.audit_sources(), &{&1, :any}) ++ extra

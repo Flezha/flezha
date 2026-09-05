@@ -448,8 +448,8 @@ final class Runner
 
     private static function budgetFromEnvironment(): ?int
     {
-        $declared = (string) (getenv('FLEZHA_MAX_ACTIVATIONS') ?: '');
+        $raw = getenv('FLEZHA_MAX_ACTIVATIONS');
 
-        return ctype_digit($declared) && (int) $declared > 0 ? (int) $declared : null;
+        return Env::parsePositive($raw === false ? null : $raw);
     }
 }

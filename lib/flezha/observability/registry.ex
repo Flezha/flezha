@@ -16,6 +16,7 @@ defmodule Flezha.Observability.Registry do
 
   use GenServer
 
+  alias Flezha.Config
   alias Flezha.Observability.Signal
 
   @sources :flezha_observability_sources
@@ -491,8 +492,7 @@ defmodule Flezha.Observability.Registry do
   defp public_sink(entry), do: Map.drop(entry, [:counters])
 
   defp default_budget() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:cardinality_budget_per_source, 1_000)
+    Config.get(:observability_cardinality_budget_per_source)
   end
 
   # Counter slot mapping ---------------------------------------------------

@@ -202,15 +202,30 @@ instruct a reader to run it.
 
 ### Requirement: Two sessions on one checkout SHALL NOT collide on a fixed port or state root
 
-A test or bench run SHALL derive its controller state root and its listening ports
-from something unique to the run. Two sessions working one checkout SHALL be able to
-run their suites at the same time without one failing on `EADDRINUSE` or reading the
-other's durable state.
+A test or bench run SHALL derive its controller state root, its socket directory, its
+listening ports, its node name and its ProcessHub registry root from something unique to
+the run, through one derivation entry per resource over one run token, applied only when
+the resource's variable is unset. Two sessions working one checkout SHALL be able to run
+their suites at the same time without one failing on `EADDRINUSE`, reading the other's
+durable state, or meeting the other's sockets. An explicit variable SHALL win for every
+resource in every environment.
 
 #### Scenario: Two suites run at once on one checkout
 
 - **WHEN** two sessions start a suite that binds the data-plane port
 - **THEN** neither SHALL fail to bind, and neither SHALL read state the other wrote
+
+#### Scenario: Two suites do not meet on the socket directory or the registry root
+
+- **WHEN** two sessions start a suite on one checkout with no Flezha variables set
+- **THEN** each creates its control socket in its own directory and its ProcessHub registry
+  under its own state root, and neither boot removes anything the other wrote
+
+#### Scenario: An explicit variable pins a resource in a test run
+
+- **WHEN** a session runs a suite with `FLEZHA_SOCKET_FILES_PATH` set
+- **THEN** the controller creates its sockets in that directory, exactly as it would outside
+  `mix test`
 
 ### Requirement: Published operator documentation SHALL NOT drive material the repository excludes
 

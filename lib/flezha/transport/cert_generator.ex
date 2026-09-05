@@ -6,22 +6,24 @@ defmodule Flezha.Transport.CertGenerator do
   in the configured cert directory on first run.
   """
 
+  alias Flezha.Config
+
   require Logger
 
   @validity_days 365 * 10
 
   def ensure_certs do
-    ca_cert_path = Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")
+    ca_cert_path = Config.get(:ca_cert_path)
 
     server_cert_path =
-      Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
+      Config.get(:server_cert_path)
 
-    server_key_path = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
+    server_key_path = Config.get(:server_key_path)
 
     client_cert_path =
-      Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem")
+      Config.get(:client_cert_path)
 
-    client_key_path = Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key")
+    client_key_path = Config.get(:client_key_path)
 
     paths = [ca_cert_path, server_cert_path, server_key_path, client_cert_path, client_key_path]
 

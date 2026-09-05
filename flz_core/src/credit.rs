@@ -320,11 +320,7 @@ mod tests {
     /// other test in this binary.
     #[test]
     fn the_park_interval_comes_from_the_environment_or_its_default() {
-        let expected = std::env::var(PARK_INTERVAL_VAR)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&ms| ms > 0)
-            .unwrap_or(DEFAULT_PARK_INTERVAL_MS);
+        let expected = crate::util::env_parse_positive(PARK_INTERVAL_VAR, DEFAULT_PARK_INTERVAL_MS);
 
         assert_eq!(park_interval(), Duration::from_millis(expected as u64));
     }

@@ -7,6 +7,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
   """
 
   alias Flezha.Cluster.DiscoveryProtocol
+  alias Flezha.Config
   alias Flezha.Config.Durations
 
   require Logger
@@ -123,7 +124,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     end
 
     defp validate_pod_ip_lookup() do
-      ip_lookup_mode = Application.fetch_env!(:flezha, :k8s_ip_lookup_mode)
+      ip_lookup_mode = Config.get(:k8s_ip_lookup_mode)
 
       if ip_lookup_mode in [:endpoints, :pods] do
         :ok
@@ -133,7 +134,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     end
 
     defp validate_service_account_path() do
-      service_account_path = Application.fetch_env!(:flezha, :k8s_service_account_path)
+      service_account_path = Config.get(:k8s_service_account_path)
 
       if File.dir?(service_account_path) do
         :ok
@@ -143,7 +144,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     end
 
     defp validate_cluster_domain() do
-      cluster_domain = Application.fetch_env!(:flezha, :k8s_cluster_domain)
+      cluster_domain = Config.get(:k8s_cluster_domain)
 
       if String.valid?(cluster_domain) && String.length(cluster_domain) > 0 do
         :ok

@@ -15,6 +15,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
 
   use GenServer
 
+  alias Flezha.Config
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.{Index, Writer}
 
@@ -32,13 +33,11 @@ defmodule Flezha.Observability.AuditLog.Retention do
 
   @impl true
   def init(_opts) do
-    config = Application.get_env(:flezha, :audit_log, [])
-
     state = %{
-      dir: Keyword.get(config, :dir, "app_data/audit"),
-      interval_ms: Keyword.get(config, :retention_check_interval_ms, 3_600_000),
-      retention_seconds: Keyword.get(config, :retention_seconds, 30 * 86_400),
-      max_total_bytes: Keyword.get(config, :max_total_bytes, 4_294_967_296)
+      dir: Config.get(:audit_log_dir),
+      interval_ms: Config.get(:audit_log_retention_check_interval_ms),
+      retention_seconds: Config.get(:audit_log_retention_seconds),
+      max_total_bytes: Config.get(:audit_log_max_total_bytes)
     }
 
     schedule(state.interval_ms)

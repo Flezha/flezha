@@ -35,3 +35,9 @@
 # no file and is not meant to. No file in this repository has such a stem, so
 # erasing the shape cannot hide a live pointer.
 *:(?<![A-Za-z0-9_])[a-z]\.(?:ex|exs|rs|java|py|rb|php|js|ts|md|sh)(?![A-Za-z0-9_])
+
+# --- a placeholder knob name ---------------------------------------------
+# A requirement scenario names the knob a later change might add, to say what
+# the gate does with one. `FLEZHA_NEW_KNOB` is that placeholder and no source
+# will ever declare it, so erasing the exact name hides no live variable.
+openspec/specs/controller-configuration/spec.md:FLEZHA_NEW_KNOB

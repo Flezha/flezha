@@ -42,13 +42,14 @@ def logger(name: str) -> logging.Logger:
 def configure(level: str | int | None = None, *, stream: object | None = None) -> logging.Logger:
     """Turn the SDK's diagnostics on, at a documented default.
 
-    The default level is ``FLEZHA_LOG_LEVEL`` or ``warning``: a runner that says
+    The default level is ``FLEZHA_LOG_LEVEL`` or ``warn`` -- the one spelling
+    every SDK's runner defaults to: a runner that says
     nothing about a wedge is the failure mode diagnostics exist to close, and
     one that narrates every activation is noise. The default destination is
     standard error, so a runner's output stays on the stream the harness reads.
     """
     if level is None:
-        level = os.environ.get("FLEZHA_LOG_LEVEL", "warning")
+        level = os.environ.get("FLEZHA_LOG_LEVEL", "warn")
     if isinstance(level, str):
         level = logging.getLevelNamesMapping().get(level.upper(), logging.WARNING)
 

@@ -11,6 +11,8 @@ defmodule Flezha.Service.HubManager.Rows do
   `UndefinedFunctionError`.
   """
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
@@ -339,7 +341,7 @@ defmodule Flezha.Service.HubManager.Rows do
   """
   @spec durable_starts?() :: boolean()
   def durable_starts?() do
-    Application.get_env(:flezha, :auto_restore_enabled, true) != false
+    Config.get(:auto_restore_enabled) != false
   end
 
   @doc """

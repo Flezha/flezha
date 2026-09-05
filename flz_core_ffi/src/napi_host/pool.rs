@@ -9,6 +9,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use flz_core::util::env_parse_positive;
+
 use super::DEFAULT_FETCHERS;
 
 /// How long a thread above the base may sit idle before it retires.
@@ -195,22 +197,14 @@ impl BlockingPool {
 
 static POOL: OnceLock<Arc<BlockingPool>> = OnceLock::new();
 
-pub(crate) fn env_usize(key: &str) -> Option<usize> {
-    std::env::var(key).ok()?.trim().parse().ok()
-}
-
 /// The process's blocking pool, sized from the existing worker-pool
 /// configuration rather than a knob minted for Node:
 /// `FLEZHA_WORKER_POOL_SIZE` is the base and `FLEZHA_WORKER_POOL_MAX` the
 /// ceiling, defaulting to ten times the base and never below it.
 pub(crate) fn blocking_pool() -> &'static Arc<BlockingPool> {
     POOL.get_or_init(|| {
-        let base = env_usize("FLEZHA_WORKER_POOL_SIZE")
-            .filter(|n| *n > 0)
-            .unwrap_or(DEFAULT_FETCHERS as usize);
-        let ceiling = env_usize("FLEZHA_WORKER_POOL_MAX")
-            .filter(|n| *n > 0)
-            .unwrap_or(base * 10);
+        let base = env_parse_positive("FLEZHA_WORKER_POOL_SIZE", DEFAULT_FETCHERS as usize);
+        let ceiling = env_parse_positive("FLEZHA_WORKER_POOL_MAX", base * 10);
         BlockingPool::new(base, ceiling)
     })
 }

@@ -1,6 +1,7 @@
 defmodule Flezha.Service.PortPilot do
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Config.Backoff
   alias Flezha.Socket.Support
 
@@ -24,20 +25,20 @@ defmodule Flezha.Service.PortPilot do
     socket_files_path = Support.socket_dir()
 
     transport =
-      Keyword.get(opts, :transport, Application.get_env(:flezha, :transport, :uds))
+      Keyword.get(opts, :transport, Config.get(:transport))
       |> to_string()
 
-    ca_cert_path = Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")
+    ca_cert_path = Config.get(:ca_cert_path)
 
-    quic_address = Application.get_env(:flezha, :quic_listen_address, "0.0.0.0:4433")
+    quic_address = Config.get(:quic_listen_address)
     # Convert 0.0.0.0 to 127.0.0.1 for the SDK (client can't connect to 0.0.0.0)
     client_address = String.replace(quic_address, "0.0.0.0", "127.0.0.1")
 
     base_env = [
-      {~c"FLEZHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)},
-      {~c"FLEZHA_TRANSPORT", String.to_charlist(transport)},
-      {~c"FLEZHA_CA_CERT_PATH", String.to_charlist(ca_cert_path)},
-      {~c"FLEZHA_QUIC_ADDRESSES", String.to_charlist(client_address)}
+      {var(:socket_files_path), String.to_charlist(socket_files_path)},
+      {var(:transport), String.to_charlist(transport)},
+      {var(:ca_cert_path), String.to_charlist(ca_cert_path)},
+      {var(:quic_addresses), String.to_charlist(client_address)}
     ]
 
     extra_env =
@@ -174,11 +175,9 @@ defmodule Flezha.Service.PortPilot do
       "repo" => repo,
       "namespace" => namespace,
       "socket_dir" => socket_dir,
-      "ca_cert" => absolute(Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")),
-      "client_cert" =>
-        absolute(Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem")),
-      "client_key" =>
-        absolute(Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key"))
+      "ca_cert" => absolute(Config.get(:ca_cert_path)),
+      "client_cert" => absolute(Config.get(:client_cert_path)),
+      "client_key" => absolute(Config.get(:client_key_path))
     }
 
     Regex.replace(~r/\{(\w+)\}/, manifest["command"][profile_key], fn whole, name ->
@@ -314,7 +313,7 @@ defmodule Flezha.Service.PortPilot do
   end
 
   defp initialize_ports() do
-    external_processes = Application.fetch_env!(:flezha, :external_processes)
+    external_processes = Config.get(:external_processes)
 
     Enum.map(external_processes, fn command ->
       open_port(command)
@@ -325,4 +324,8 @@ defmodule Flezha.Service.PortPilot do
   defp schedule_counter_reset() do
     Process.send_after(self(), :reset_counter, 30_000)
   end
+
+  # A spawned runner reads its own environment, so the controller hands it the
+  # names the table declares rather than four literals of its own.
+  defp var(name), do: String.to_charlist(Config.env_name(name))
 end

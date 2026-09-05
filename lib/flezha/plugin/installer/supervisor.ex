@@ -12,6 +12,8 @@ defmodule Flezha.Plugin.Installer.Supervisor do
   rather than silently accepting signatures against an empty trust root.
   """
 
+  alias Flezha.Config
+
   use Supervisor
 
   def start_link(opts \\ []) do
@@ -42,9 +44,8 @@ defmodule Flezha.Plugin.Installer.Supervisor do
   """
   @spec validate_config() :: :ok | {:error, atom()}
   def validate_config do
-    cfg = Application.get_env(:flezha, :plugin_installer, [])
-    require_signature = Keyword.get(cfg, :require_signature, false)
-    trusted_keys = Keyword.get(cfg, :trusted_keys, [])
+    require_signature = Config.get(:plugin_require_signature)
+    trusted_keys = Config.get(:plugin_trusted_keys)
 
     if require_signature and trusted_keys == [], do: {:error, :trusted_keys_empty}, else: :ok
   end

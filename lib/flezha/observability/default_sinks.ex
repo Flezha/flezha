@@ -8,6 +8,7 @@ defmodule Flezha.Observability.DefaultSinks do
 
   use GenServer, restart: :temporary
 
+  alias Flezha.Config
   alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink}
 
   def start_link(opts \\ []) do
@@ -39,7 +40,6 @@ defmodule Flezha.Observability.DefaultSinks do
   def handle_continue(:stop, state), do: {:stop, :normal, state}
 
   defp pubsub_sink_enabled?() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:pubsub_sink_enabled, true)
+    Config.get(:observability_pubsub_sink_enabled)
   end
 end

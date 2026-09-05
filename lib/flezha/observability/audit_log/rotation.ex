@@ -12,6 +12,7 @@ defmodule Flezha.Observability.AuditLog.Rotation do
 
   use GenServer
 
+  alias Flezha.Config
   alias Flezha.Observability.AuditLog.Writer
 
   def start_link(opts \\ []) do
@@ -26,12 +27,10 @@ defmodule Flezha.Observability.AuditLog.Rotation do
 
   @impl true
   def init(_opts) do
-    config = Application.get_env(:flezha, :audit_log, [])
-
     state = %{
-      interval_ms: Keyword.get(config, :rotation_check_interval_ms, 60_000),
-      max_file_bytes: Keyword.get(config, :max_file_bytes, 67_108_864),
-      max_file_age_seconds: Keyword.get(config, :max_file_age_seconds, 86_400)
+      interval_ms: Config.get(:audit_log_rotation_check_interval_ms),
+      max_file_bytes: Config.get(:audit_log_max_file_bytes),
+      max_file_age_seconds: Config.get(:audit_log_max_file_age_seconds)
     }
 
     schedule(state.interval_ms)

@@ -31,12 +31,8 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
   @impl true
   def init(_opts) do
     cond do
-      Config.env_force_disabled?() ->
-        # Operator opted out explicitly; do not write a bootstrap token.
-        :ignore
-
       not Config.config_enabled?() ->
-        # Auth subsystem is disabled by config; nothing to write.
+        # The subsystem is off, however it was turned off; nothing to write.
         :ignore
 
       # Break-glass first: a REBOOTSTRAP marker invalidates the claimed

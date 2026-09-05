@@ -27,6 +27,7 @@ defmodule Flezha.Transport.Server do
     correct StreamChannel based on the most recently established compute engine.
   """
 
+  alias Flezha.Config
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
@@ -152,7 +153,7 @@ defmodule Flezha.Transport.Server do
   """
   @spec list_active_transports() :: [:uds | :quic]
   def list_active_transports() do
-    Application.get_env(:flezha, :transports, [:uds])
+    Config.get(:transports)
     |> Enum.filter(fn t ->
       case Process.whereis(name(t)) do
         pid when is_pid(pid) -> Process.alive?(pid)
@@ -190,7 +191,7 @@ defmodule Flezha.Transport.Server do
   """
   @spec stop_all() :: :ok
   def stop_all() do
-    transports = Application.get_env(:flezha, :transports, [:uds])
+    transports = Config.get(:transports)
 
     Enum.each(transports, fn t ->
       pid = Process.whereis(name(t))
@@ -260,14 +261,15 @@ defmodule Flezha.Transport.Server do
   def warn_if_transport_auth_disabled do
     unless transport_auth_required?() do
       Logger.warning(
-        "[Transport.Server] FLEZHA_TRANSPORT_AUTH=off — peer authentication is DISABLED; " <>
+        "[Transport.Server] #{Config.env_name(:transport_auth_required)}=off — " <>
+          "peer authentication is DISABLED; " <>
           "any client that can reach the endpoint is accepted. Unset to restore the secure default."
       )
     end
   end
 
   defp transport_auth_required? do
-    Application.get_env(:flezha, :transport_auth_required, true)
+    Config.get(:transport_auth_required)
   end
 
   defp init_uds do
@@ -288,13 +290,13 @@ defmodule Flezha.Transport.Server do
     # Ensure TLS certificates exist before starting QUIC server.
     CertGenerator.ensure_certs()
 
-    bind_address = Application.get_env(:flezha, :quic_listen_address, "0.0.0.0:4433")
-    cert_path = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
-    key_path = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
+    bind_address = Config.get(:quic_listen_address)
+    cert_path = Config.get(:server_cert_path)
+    key_path = Config.get(:server_key_path)
 
     client_ca_path =
       if transport_auth_required?() do
-        Application.get_env(:flezha, :quic_client_ca_path, "app_data/certs/ca.pem")
+        Config.get(:quic_client_ca_path)
       else
         ""
       end

@@ -202,15 +202,14 @@ pub fn spawn_reaper(
 
 /// `FLEZHA_REAP_INTERVAL_MS`, else `min(idle_ttl / 4, 30s)`, at least 1 ms.
 fn reap_interval(idle_ttl: Duration) -> Duration {
-    std::env::var(ENV_REAP_INTERVAL_MS)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .map(|ms| Duration::from_millis(ms.max(1)))
-        .unwrap_or(
-            (idle_ttl / 4)
-                .min(MAX_SWEEP_INTERVAL)
-                .max(Duration::from_millis(1)),
-        )
+    let computed = (idle_ttl / 4)
+        .min(MAX_SWEEP_INTERVAL)
+        .max(Duration::from_millis(1));
+
+    match crate::util::env_parse_positive(ENV_REAP_INTERVAL_MS, 0) {
+        0 => computed,
+        ms => Duration::from_millis(ms as u64),
+    }
 }
 
 fn sleep_responsive(total: Duration, stop: &AtomicBool) {

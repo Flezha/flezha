@@ -19,6 +19,7 @@ defmodule Flezha.Observability.Export.OtlpSink do
 
   @behaviour Flezha.Observability.Sink
 
+  alias Flezha.Config
   alias Flezha.Config.Backoff
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.Export.{OtlpClient, OtlpCodec}
@@ -43,9 +44,8 @@ defmodule Flezha.Observability.Export.OtlpSink do
 
   @impl GenServer
   def init(_opts) do
-    config = Application.get_env(:flezha, :observability_export, [])
-    flush_ms = Keyword.get(config, :otlp_flush_interval_ms, 10_000)
-    batch_max = Keyword.get(config, :otlp_batch_max, 512)
+    flush_ms = Config.get(:otlp_flush_interval_ms)
+    batch_max = Config.get(:otlp_batch_max)
 
     {:ok, _} = register_self()
 

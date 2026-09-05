@@ -1,46 +1,15 @@
 import Config
 
 config :flezha,
-  # The environment the application is running in.
+  # The environment the application is running in. The one key `Mix.env()`
+  # answers; every other knob is a row of `Flezha.Config.Keys` and its
+  # per-environment default is that row's `env_default`.
   env: Mix.env(),
 
-  # ------------------------------------------------------------------------------------------------
-  # Validator hooks to run before and after boot.
+  # Validator hooks to run before and after boot: function bodies, not values,
+  # so they are written where they are read.
   pre_hooks: [],
-  post_hooks: [],
-
-  # ------------------------------------------------------------------------------------------------
-  # Installable plugin subsystem (Jenkins-style runtime plugin lifecycle).
-  # See `lib/flezha/plugin/installer/` and `docs/plugins/installation.md`.
-  #
-  # - `plugin_installer_enabled`: master feature flag. When `false`, the
-  #   `Flezha.Plugin.Installer.Supervisor` subtree is not started, so no
-  #   installed package is hydrated at boot and a plugin resolves only against
-  #   the `plugin_providers` catalog above. Enablement itself is unaffected: it
-  #   replays from the operative's ProcessHub child spec at bind, through
-  #   `Overwatch.init/1` -> `Lifecycle.complete_init/4` -> `Plugins.prepare/2`.
-  # - `:plugin_installer` keyword list:
-  #   - `plugin_root`: filesystem root for staging + installed plugins.
-  #     `staging/<uuid>/` holds in-flight extractions;
-  #     `installed/<id>/<version>/` holds the canonical layout per plugin.
-  #   - `trusted_keys`: list of Ed25519 public keys (raw 32-byte binaries or
-  #     PEM-encoded strings) used to verify `signature.sig` over
-  #     `CHECKSUMS.sha256` bytes.
-  #   - `require_signature`: when `true`, packages without `signature.sig`
-  #     are rejected. Implies `allow_unsigned: false`.
-  #   - `allow_unsigned`: when `false`, packages without `signature.sig` are
-  #     rejected even if `require_signature: false`.
-  #   - `max_package_bytes`: uncompressed-size ceiling for `.fpz` archives.
-  #   - `max_source_files`: upper bound on files under `src/` per package.
-  plugin_installer_enabled: false,
-  plugin_installer: [
-    plugin_root: "app_data/plugins",
-    trusted_keys: [],
-    require_signature: false,
-    allow_unsigned: true,
-    max_package_bytes: 50_000_000,
-    max_source_files: 200
-  ]
+  post_hooks: []
 
 config :logger,
   handle_sasl_reports: true,
@@ -51,12 +20,11 @@ config :logger, :console,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id, :module, :function]
 
+# The path, level and rotation are rows of `Flezha.Config.Keys`, written here
+# by `config/runtime.exs`. The format and the metadata are the logger's own.
 config :logger, :file_log,
-  path: "logs/flezha.log",
-  level: :info,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :module, :function, :line],
-  rotate: %{max_bytes: 10_485_760, keep: 5}
+  metadata: [:request_id, :module, :function, :line]
 
 config :kafka_ex,
   # A list of brokers to connect to. This can be in either of the following formats

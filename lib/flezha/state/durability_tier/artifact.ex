@@ -169,7 +169,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def state_key({:control, {store, _writer}}), do: store
 
   defp cspec_root(),
-    do: Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+    do: Flezha.Config.get(:process_hub_registry_root)
 
   @doc "Local snapshot files of `ref`, oldest first. Only Entities have them."
   @spec snapshots(ref()) :: [{non_neg_integer(), binary()}]

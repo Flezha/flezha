@@ -1,5 +1,6 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
+  alias Flezha.Config
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
@@ -129,7 +130,7 @@ defmodule Mix.Tasks.Bench do
         {"runtime", "#{runtime} (#{Report.dispatch_note(runtime)})"},
         {"runner", runner_mode()},
         {"toolchain", Report.toolchain(runtime)},
-        {"transport", to_string(Application.get_env(:flezha, :transport, :uds))},
+        {"transport", to_string(Config.get(:transport))},
         {"shape", to_string(shape)},
         {"durability", durability_backend()},
         {"operatives", to_string(num_operatives)},
@@ -250,12 +251,12 @@ defmodule Mix.Tasks.Bench do
   # `:native` is the in-process Elixir SDK: there is no runner process to
   # spawn, and the distinction is a property of the transport, not of the SDK.
   defp runner_mode() do
-    if Application.get_env(:flezha, :transport, :uds) == :native,
+    if Config.get(:transport) == :native,
       do: "embedded (in-process)",
       else: "spawned"
   end
 
-  defp durability_backend(), do: System.get_env("FLEZHA_DURABILITY_BACKEND") || "none"
+  defp durability_backend(), do: to_string(Config.get(:durability_backend))
 
   # `bench-<runtime>-<shape>`; `Report.finish/2` stamps the run id and places it.
   defp report_name(shape), do: "bench-#{Fleet.runtime()}-#{shape}"

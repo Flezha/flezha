@@ -7,11 +7,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   use Flezha.Constant
 
+  alias Flezha.Config
+  alias Flezha.Config.Environment
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.EventManager
   alias Flezha.Service.PortPilot
-  alias Flezha.Socket.Support
 
   @doc """
   The name this run's node is distributed under: `<base>@<host>` from the two
@@ -54,7 +55,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     {:ok, peer_pid, node_name} =
       :peer.start_link(%{
         host: ~c"127.0.0.1",
-        name: name,
+        name: peer_name(name),
         args: [args]
       })
 
@@ -90,8 +91,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # `registry.dets`. A caller may hand it this node's value instead — a
     # cross-controller state transfer needs the peer to hold this node's files,
     # and a co-location scenario drives the misconfiguration deliberately.
-    for key <- @owned_resources do
-      value = Keyword.get_lazy(opts, key, fn -> own_resource(key, node_name) end)
+    for {key, value} <- peer_resources(node_name, opts) do
       :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
     end
 
@@ -137,11 +137,25 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end)
   end
 
-  defp own_resource(:socket_files_path, node_name),
-    do: Path.join(Path.dirname(Support.socket_dir()), "#{node_name}")
+  # A peer's resources come from the same derivation the run's own do
+  # (`Flezha.Config.Environment.per_run/2`), shifted by the peer's name — so a
+  # resource is added to the peer by adding it to the table, not here. A caller
+  # may still hand the peer this node's value instead: a cross-controller state
+  # transfer needs the peer to hold this node's files, and a co-location
+  # scenario drives the misconfiguration deliberately.
+  defp peer_resources(node_name, opts) do
+    derived = Environment.per_run(Config.get(:run_token), node_name)
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(derived.state_root) end)
 
-  defp own_resource(:state_root, node_name), do: peer_dir(node_name, "state")
-  defp own_resource(:process_hub_registry_root, node_name), do: peer_dir(node_name, "hub")
+    for key <- @owned_resources,
+        do: {key, Keyword.get_lazy(opts, key, fn -> Map.fetch!(derived, key) end)}
+  end
+
+  # `System.unique_integer/1` restarts low in every BEAM, so the run token is
+  # what keeps two suites on one host from minting the same peer name.
+  defp peer_name(name) do
+    :"#{name}_#{Config.get(:run_token)}_#{System.unique_integer([:positive])}"
+  end
 
   @doc """
   Claim a fresh `<prefix>_<n>` directory under `System.tmp_dir!/0`.
@@ -159,15 +173,6 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       {:error, :eexist} -> claim_tmp_dir(prefix)
       {:error, reason} -> raise File.Error, reason: reason, action: "make directory", path: dir
     end
-  end
-
-  # A durable tree this peer alone owns, cleared with the test that spawned it.
-  # Not a `claim_tmp_dir/1` caller: the name is deliberately stable per peer and
-  # carries no per-BEAM counter to re-mint.
-  defp peer_dir(node_name, purpose) do
-    dir = Path.join(System.tmp_dir!(), "flezha_peer_#{purpose}_#{node_name}")
-    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
-    dir
   end
 
   def stop_peer_node(peer_pid, peer_node) do

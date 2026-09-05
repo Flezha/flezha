@@ -9,6 +9,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
   the classifier must never cost the tick its heals or its publish.
   """
 
+  alias Flezha.Config
   alias Flezha.Convergence.Loop.State
   alias Flezha.Convergence.StallClassifier
   alias Flezha.Transport.{LivenessCounters, Native}
@@ -66,7 +67,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
   # The classifier's own defaults, with the one knob an operator whose
   # Procedures legitimately run long has to raise.
   defp classifier_opts() do
-    case Application.get_env(:flezha, :convergence_entity_stall_ms) do
+    case Config.get(:convergence_entity_stall_ms) do
       ms when is_integer(ms) and ms > 0 -> %{entity_stall_ms: ms}
       _ -> %{}
     end

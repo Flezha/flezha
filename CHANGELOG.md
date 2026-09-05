@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed — every configuration knob is one row of one table
+
+Every environment variable and application-env key the controller, its SDKs, its
+crates and its shell wrappers read is now declared once in
+`Flezha.Config.Keys` — its name, key, variable, type, default, the runtimes that
+read it and the operator surface that shows it — and read through
+`Flezha.Config.get/1`. `config/runtime.exs` derives the whole `:flezha`
+configuration from that table in one call instead of translating each variable by
+hand, and a per-environment default is a field on the row rather than a line in a
+per-environment config file. Adding a knob is writing a row.
+
+Several documented variables now do what they say. `FLEZHA_SOCKET_FILES_PATH` is
+honoured under `mix test`, where a boot hook used to write the key before the
+ladder could read it; fourteen more, among them `FLEZHA_HEALTHZ_BIND` and the
+Prometheus and OTLP settings, were skipped entirely in the test environment. A
+value that is not a number, an address or a member of an enumeration now refuses
+the boot naming the variable, the value and the type — a pool size or a flag
+still falls back to its default, because `"0"` already means "unset" in every
+runtime. `/healthz` binds `0.0.0.0` everywhere, the address the documentation has
+always given.
+
+Two variables that were set by configuration and read by nothing —
+`FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD` and
+`FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS` — are removed with their
+documentation rows.
+
 ### Changed — a plugin provider is one declaration
 
 A provider now declares its whole lifecycle: every option it takes as a row with

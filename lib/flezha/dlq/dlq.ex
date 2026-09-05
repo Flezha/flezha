@@ -26,6 +26,7 @@ defmodule Flezha.Service.Dlq do
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.Config.Durations
   alias Flezha.AuthZ.Namespace
   alias Flezha.Dlq.Store
   alias Flezha.Operative.ClassRegistry
@@ -180,6 +181,6 @@ defmodule Flezha.Service.Dlq do
   # after the window simply creates a fresh entry (same content identity,
   # generation 1).
   defp replay_grace_ms do
-    Application.get_env(:flezha, :dlq, [])[:replay_grace_ms] || 5_000
+    Durations.get(:dlq_replay_grace_ms)
   end
 end

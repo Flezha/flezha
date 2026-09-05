@@ -12,10 +12,11 @@ defmodule Flezha.Socket.Support do
 
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Transport.Native
 
-  @group_var "FLEZHA_SOCKET_DIR_GROUP"
-  @dir_var "FLEZHA_SOCKET_FILES_PATH"
+  @group_var Flezha.Config.env_name(:socket_dir_group)
+  @dir_var Flezha.Config.env_name(:socket_files_path)
 
   @doc """
   Establish this controller's socket directory, clearing whatever a previous
@@ -49,7 +50,7 @@ defmodule Flezha.Socket.Support do
   """
   @spec socket_dir() :: String.t()
   def socket_dir() do
-    case Application.get_env(:flezha, :socket_files_path) do
+    case Config.get(:socket_files_path) do
       nil -> resolve_socket_dir()
       path -> path |> String.replace_trailing("/", "") |> Path.expand()
     end
@@ -102,7 +103,7 @@ defmodule Flezha.Socket.Support do
   # Owner-only unless the operator has widened the boundary to one named group,
   # which is warned on every boot for as long as it is set.
   defp apply_access_boundary(path) do
-    case System.get_env(@group_var) do
+    case Config.get(:socket_dir_group) do
       empty when empty in [nil, ""] ->
         File.chmod(path, 0o700)
 

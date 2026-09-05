@@ -15,6 +15,7 @@ defmodule Mix.Tasks.Bench.Report do
   adding nothing a rule does not.
   """
 
+  alias Flezha.Config
   alias Flezha.Observability.OtpBackend.ProcParser
   alias Flezha.Service.PortPilot
 
@@ -180,7 +181,7 @@ defmodule Mix.Tasks.Bench.Report do
   @spec apply_log_level() :: :ok
   def apply_log_level() do
     level =
-      case System.get_env("FLEZHA_BENCH_LOG") do
+      case Config.get(:bench_log) do
         nil -> :warning
         name -> String.to_existing_atom(name)
       end
@@ -485,7 +486,7 @@ defmodule Mix.Tasks.Bench.Report do
   defp durability_warning(_), do: nil
 
   defp skip_build_warning() do
-    if System.get_env("FLEZHA_BENCH_SKIP_BUILD") in ["1", "true"],
+    if Config.get(:bench_skip_build),
       do:
         "FLEZHA_BENCH_SKIP_BUILD is set — the artifact measured is whatever was on disk, " <>
           "which is not necessarily the tree you are in"

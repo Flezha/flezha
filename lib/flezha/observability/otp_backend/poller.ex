@@ -84,9 +84,7 @@ defmodule Flezha.Observability.OtpBackend.Poller do
       def config_schema(), do: %{}
 
       defp poll_interval_ms() do
-        Application.get_env(:flezha, :observability, [])
-        |> Keyword.get(:otp_backend, [])
-        |> Keyword.get(:poll_intervals, %{})
+        Flezha.Config.get(:observability_poll_intervals)
         |> Map.get(@source, @default_poll_ms)
       end
 

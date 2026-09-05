@@ -14,6 +14,7 @@ defmodule Flezha.Observability.AuditLog.Supervisor do
 
   use Supervisor
 
+  alias Flezha.Config
   alias Flezha.Observability.AuditLog.{Retention, Rotation, Sink, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
 
@@ -45,8 +46,7 @@ defmodule Flezha.Observability.AuditLog.Supervisor do
   @doc false
   @spec enabled?() :: boolean()
   def enabled?() do
-    Application.get_env(:flezha, :audit_log, [])
-    |> Keyword.get(:enabled, false)
+    Config.get(:audit_log_enabled)
   end
 
   defp register_audit_source() do

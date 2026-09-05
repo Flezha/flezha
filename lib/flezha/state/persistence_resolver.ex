@@ -1,9 +1,9 @@
 defmodule Flezha.State.PersistenceResolver do
   @moduledoc """
   Resolves per-Operative persistence configuration from three sources, in order
-  of precedence: a runner runtime override (`Application.get_env(:flezha, <key>)
-  :: %{<OperativeClass> => value}`), the per-instance metadata shipped with
-  `AddOperative`, then a hard-coded global default.
+  of precedence: the operator's override map for this key (`%{<OperativeClass>
+  => value}`), the per-instance metadata shipped with `AddOperative`, then the
+  row's own default.
 
   One resolver per key, each named for the key it resolves. The keys and their
   defaults are `docs/internals/state_persistence.md`'s configuration table,
@@ -16,6 +16,7 @@ defmodule Flezha.State.PersistenceResolver do
   """
 
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.InputLog
@@ -24,11 +25,6 @@ defmodule Flezha.State.PersistenceResolver do
   require Logger
 
   @default_persistence_enabled true
-  @default_retention_hours 6
-  @default_wal_high_watermark_bytes 16 * 1024 * 1024
-  @default_compact_after_bytes 8 * 1024 * 1024
-  @default_workflow_completed_retention_hours 72
-  @default_record_log_cut_after_bytes 64 * 1024
 
   @spec persistence_enabled?(binary(), map()) :: boolean()
   def persistence_enabled?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
@@ -69,13 +65,7 @@ defmodule Flezha.State.PersistenceResolver do
   def retention_hours(operative_class, metadata \\ %{}) when is_binary(operative_class) do
     resolve(:time_travel_retention_hours, :time_travel_retention_hours, operative_class, metadata,
       valid: &non_neg_int?/1,
-      default: fn ->
-        Application.get_env(
-          :flezha,
-          :default_time_travel_retention_hours,
-          @default_retention_hours
-        )
-      end
+      default: fn -> Config.get(:default_time_travel_retention_hours) end
     )
   end
 
@@ -95,13 +85,7 @@ defmodule Flezha.State.PersistenceResolver do
       operative_class,
       metadata,
       valid: &non_neg_int?/1,
-      default: fn ->
-        Application.get_env(
-          :flezha,
-          :default_workflow_completed_retention_hours,
-          @default_workflow_completed_retention_hours
-        )
-      end
+      default: fn -> Config.get(:default_workflow_completed_retention_hours) end
     )
   end
 
@@ -132,7 +116,7 @@ defmodule Flezha.State.PersistenceResolver do
         v
 
       _ ->
-        Application.get_env(:flezha, :default_compact_after_bytes, @default_compact_after_bytes)
+        Config.get(:default_compact_after_bytes)
     end
   end
 
@@ -155,7 +139,7 @@ defmodule Flezha.State.PersistenceResolver do
 
   @spec output_stall_timeout_ms(binary(), map()) :: non_neg_integer()
   def output_stall_timeout_ms(operative_class, metadata \\ %{}) when is_binary(operative_class) do
-    resolve(:output_stall_timeout_ms, :output_stall_timeout_ms, operative_class, metadata,
+    resolve(:output_stall_timeout_overrides, :output_stall_timeout_ms, operative_class, metadata,
       valid: &non_neg_int?/1,
       default: fn -> Durations.get(:output_stall_timeout_ms) end
     )
@@ -197,7 +181,7 @@ defmodule Flezha.State.PersistenceResolver do
 
   @spec compaction_timeout_ms() :: non_neg_integer()
   def compaction_timeout_ms(),
-    do: global_non_neg(:compaction_timeout_ms, Durations.default(:compaction_timeout_ms))
+    do: global_non_neg(:compaction_timeout_ms)
 
   @doc """
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
@@ -209,7 +193,7 @@ defmodule Flezha.State.PersistenceResolver do
   """
   @spec wal_high_watermark_bytes() :: pos_integer()
   def wal_high_watermark_bytes(),
-    do: Application.get_env(:flezha, :wal_high_watermark_bytes, @default_wal_high_watermark_bytes)
+    do: Config.get(:wal_high_watermark_bytes)
 
   @doc """
   WAL age at which the Watchdog triggers a compaction, per operative.
@@ -230,7 +214,7 @@ defmodule Flezha.State.PersistenceResolver do
   def compact_after_age_ms(operative_class \\ nil, metadata \\ %{})
 
   def compact_after_age_ms(nil, _metadata),
-    do: global_non_neg(:compact_after_age_ms, Durations.default(:compact_after_age_ms))
+    do: global_non_neg(:compact_after_age_ms)
 
   def compact_after_age_ms(operative_class, metadata) when is_binary(operative_class) do
     case configured_compact_after_age_ms(operative_class, metadata) do
@@ -248,9 +232,7 @@ defmodule Flezha.State.PersistenceResolver do
       when is_binary(operative_class) do
     resolve(:compact_after_age_ms, :compact_after_age_ms, operative_class, metadata,
       valid: &(is_integer(&1) and &1 >= 0),
-      default: fn ->
-        global_non_neg(:compact_after_age_ms, Durations.default(:compact_after_age_ms))
-      end
+      default: fn -> global_non_neg(:compact_after_age_ms) end
     )
   end
 
@@ -263,14 +245,14 @@ defmodule Flezha.State.PersistenceResolver do
   """
   @spec record_log_cut_after_bytes() :: non_neg_integer()
   def record_log_cut_after_bytes(),
-    do: global_non_neg(:record_log_cut_after_bytes, @default_record_log_cut_after_bytes)
+    do: global_non_neg(:record_log_cut_after_bytes)
 
-  # Global (non-per-Operative) knob: app env if a valid non-negative
-  # integer, else the compile-time default.
-  defp global_non_neg(key, default) do
-    case Application.get_env(:flezha, key, default) do
+  # Global (non-per-Operative) knob: the configured value when it is a valid
+  # non-negative integer, else the row's own.
+  defp global_non_neg(name) do
+    case Config.get(name) do
       v when is_integer(v) and v >= 0 -> v
-      _ -> default
+      _ -> Config.default(name)
     end
   end
 
@@ -301,8 +283,8 @@ defmodule Flezha.State.PersistenceResolver do
 
   defp non_neg_int?(v), do: is_integer(v) and v >= 0
 
-  defp operator_override(key, operative_class) do
-    case Application.get_env(:flezha, key) do
+  defp operator_override(name, operative_class) do
+    case Config.get(name) do
       %{} = m ->
         case Map.fetch(m, operative_class) do
           {:ok, v} -> {:ok, v}

@@ -19,6 +19,8 @@ defmodule Flezha.Plugin.Installer.Store do
 
   require Logger
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
 
   @table :flz_installed_plugins
@@ -244,13 +246,6 @@ defmodule Flezha.Plugin.Installer.Store do
   # so the catalog sits next to the installed package trees the installer
   # manages.
   defp installer_data_dir do
-    case Application.get_env(:flezha, :plugin_installer_data_dir) do
-      nil ->
-        Application.get_env(:flezha, :plugin_installer, [])
-        |> Keyword.get(:plugin_root, "app_data/plugins")
-
-      dir ->
-        dir
-    end
+    Config.get(:plugin_installer_data_dir) || Config.get(:plugin_root)
   end
 end

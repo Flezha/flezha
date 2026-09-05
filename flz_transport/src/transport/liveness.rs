@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use crate::env::env_ms;
 use crate::utility::noise::noise;
 
 /// Payload id for the steady-state keepalive round-trip. Carried on its own
@@ -24,15 +25,6 @@ const DEFAULT_ACK_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_IDLE_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_KEEPALIVE_MS: u64 = 15_000;
 const DEFAULT_DATA_HEARTBEAT_MS: u64 = 10_000;
-
-fn env_ms(key: &str, default_ms: u64) -> Duration {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|&ms| ms > 0)
-        .map(Duration::from_millis)
-        .unwrap_or(Duration::from_millis(default_ms))
-}
 
 /// First-frame ack-deadline (the assign-runner-id ack). Default 10 s.
 pub fn control_ack_timeout() -> Duration {

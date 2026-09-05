@@ -7,33 +7,35 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
   alias Flezha.Diagnostics.MemoryReporter
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @env_var "FLEZHA_MEMORY_REPORT_INTERVAL_MS"
+  @key :memory_report_interval_ms
 
   describe "configured_interval_ms/0" do
-    test "returns :disabled when env var unset" do
-      System.delete_env(@env_var)
+    setup do
+      on_exit(fn -> Application.delete_env(:flezha, @key) end)
+      :ok
+    end
+
+    test "returns :disabled when the interval is unset" do
+      Application.delete_env(:flezha, @key)
       assert MemoryReporter.configured_interval_ms() == :disabled
     end
 
-    test "returns :disabled for non-positive or non-integer values" do
-      for raw <- ["0", "-1", "abc", "1.5", "10ms", ""] do
-        System.put_env(@env_var, raw)
-        assert MemoryReporter.configured_interval_ms() == :disabled, "raw=#{inspect(raw)}"
+    test "returns :disabled for a non-positive interval" do
+      for value <- [0, -1] do
+        Application.put_env(:flezha, @key, value)
+        assert MemoryReporter.configured_interval_ms() == :disabled, "value=#{inspect(value)}"
       end
-
-      System.delete_env(@env_var)
     end
 
     test "returns {:ok, ms} for a positive integer" do
-      System.put_env(@env_var, "60000")
+      Application.put_env(:flezha, @key, 60_000)
       assert MemoryReporter.configured_interval_ms() == {:ok, 60_000}
-      System.delete_env(@env_var)
     end
   end
 
   describe "child_spec/1" do
-    test "returns :ignore when env var unset and no explicit interval" do
-      System.delete_env(@env_var)
+    test "returns :ignore when the interval is unset and none is explicit" do
+      Application.delete_env(:flezha, @key)
       assert MemoryReporter.child_spec([]) == :ignore
     end
 

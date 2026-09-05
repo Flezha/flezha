@@ -17,7 +17,7 @@ defmodule Flezha.Boot.StateRootLock do
   alias Flezha.State.Paths
   alias Flezha.Transport.Native
 
-  @var "FLEZHA_STATE_DIR"
+  @var Flezha.Config.env_name(:state_root)
 
   @doc """
   Claim `root` for this controller, or refuse naming its holder. Returns the

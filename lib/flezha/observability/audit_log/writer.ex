@@ -16,6 +16,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
   use GenServer
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Observability.AuditLog.Codec, as: AuditCodec
   alias Flezha.Observability.AuditLog.Reader
   alias Flezha.Observability.{Bus, Signal}
@@ -109,12 +110,11 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
   @impl true
   def init(opts) do
-    config = Application.get_env(:flezha, :audit_log, [])
-    dir = Keyword.get(opts, :dir) || Keyword.get(config, :dir, "app_data/audit")
+    dir = Keyword.get(opts, :dir) || Config.get(:audit_log_dir)
     File.mkdir_p!(dir)
 
-    fsync_mode = Keyword.get(config, :fsync_mode, :per_record)
-    fsync_interval_ms = Keyword.get(config, :fsync_interval_ms, 100)
+    fsync_mode = Config.get(:audit_log_fsync_mode)
+    fsync_interval_ms = Config.get(:audit_log_fsync_interval_ms)
 
     catalog =
       case Index.load(dir) do

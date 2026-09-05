@@ -15,6 +15,8 @@ defmodule Flezha.Boot.Loader do
 
   use GenServer
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
   alias Flezha.Service.HubManager
   alias Flezha.Socket.Support
@@ -28,7 +30,7 @@ defmodule Flezha.Boot.Loader do
   def init(_) do
     run_pre_hooks()
 
-    transports = Application.get_env(:flezha, :transports, [:uds])
+    transports = Config.get(:transports)
 
     if :uds in transports do
       Support.prepare_socket_dir()
@@ -65,18 +67,18 @@ defmodule Flezha.Boot.Loader do
   """
   @spec attach_line() :: String.t() | nil
   def attach_line() do
-    transports = Application.get_env(:flezha, :transports, [:uds])
+    transports = Config.get(:transports)
 
     parts =
       Enum.concat([
         if(:uds in transports,
           do: [
-            "runners attach with FLEZHA_SOCKET_FILES_PATH=#{Support.socket_dir()}"
+            "runners attach with #{Config.env_name(:socket_files_path)}=#{Support.socket_dir()}"
           ],
           else: []
         ),
         if(:quic in transports,
-          do: ["QUIC listening on #{Application.get_env(:flezha, :quic_listen_address)}"],
+          do: ["QUIC listening on #{Config.get(:quic_listen_address)}"],
           else: []
         )
       ])
@@ -124,12 +126,12 @@ defmodule Flezha.Boot.Loader do
   end
 
   defp run_pre_hooks() do
-    Application.get_env(:flezha, :pre_hooks, [])
+    Config.get(:pre_hooks)
     |> Enum.each(& &1.())
   end
 
   defp run_post_hooks() do
-    Application.get_env(:flezha, :post_hooks, [])
+    Config.get(:post_hooks)
     |> Enum.each(& &1.())
   end
 end

@@ -16,6 +16,7 @@ defmodule Flezha.Convergence.Probe.Table do
   bridge line.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Probe.Readers
   alias Flezha.Convergence.StallClassifier
   alias Flezha.Plugin.ProviderBehaviour
@@ -127,33 +128,22 @@ defmodule Flezha.Convergence.Probe.Table do
   a knob nothing configures.
   """
   @spec threshold(atom()) :: non_neg_integer() | nil
-  def threshold(:output_stall_timeout_ms),
-    do: env(:default_output_stall_timeout_ms, 60_000)
+  def threshold(:output_stall_timeout_ms), do: Durations.get(:output_stall_timeout_ms)
 
   def threshold(:catastrophic_dataflow_timeout_ms),
-    do: env(:catastrophic_dataflow_timeout_ms, 60_000)
+    do: Durations.get(:catastrophic_dataflow_timeout_ms)
 
   def threshold(:convergence_output_stall_grace_ms),
-    do: env(:convergence_output_stall_grace_ms, 60_000)
+    do: Durations.get(:convergence_output_stall_grace_ms)
 
   def threshold(:probe_budget_ms), do: ProviderBehaviour.probe_budget_ms()
-  def threshold(:control_liveness_window_ms), do: env(:control_liveness_window_ms, 45_000)
-  def threshold(:runner_keepalive), do: env(:runner_keepalive, 30_000)
+  def threshold(:control_liveness_window_ms), do: Durations.get(:control_liveness_window_ms)
+  def threshold(:runner_keepalive), do: Durations.get(:runner_keepalive)
 
   def threshold(name) do
     case Map.fetch(StallClassifier.defaults(), name) do
       {:ok, value} -> value
       :error -> nil
     end
-  end
-
-  defp env(key, default) do
-    case Application.get_env(:flezha, key, default) do
-      value when is_integer(value) -> value
-      value when is_binary(value) -> String.to_integer(value)
-      _ -> default
-    end
-  rescue
-    _ -> default
   end
 end

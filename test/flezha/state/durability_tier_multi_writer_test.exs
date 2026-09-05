@@ -451,11 +451,11 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     # The writer id is read once at init, so it only has to be in place across
     # the start — which is also what makes two shippers in one BEAM distinct
     # writers at all, since they share a `node()`.
-    System.put_env("FLEZHA_DURABILITY_WRITER_ID", writer)
+    Application.put_env(:flezha, :durability_writer_id, writer)
     {:ok, pid} = GenServer.start(Shipper, [])
-    # Force the initial-sweep continue to finish before the env goes back.
+    # Force the initial-sweep continue to finish before the id goes back.
     _ = :sys.get_state(pid)
-    System.delete_env("FLEZHA_DURABILITY_WRITER_ID")
+    Application.delete_env(:flezha, :durability_writer_id)
     Application.put_env(:flezha, :state_root, own_root)
     on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     pid

@@ -21,12 +21,13 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use flz_core::schema;
+use flz_core::util::env_parse_positive;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
     ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi_derive::napi;
-pub(crate) use pool::{blocking_pool, env_usize};
+pub(crate) use pool::blocking_pool;
 
 use crate::napi_glue::{context, Values};
 use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
@@ -390,10 +391,7 @@ pub fn start_host(fetchers: Option<u32>) -> Result<()> {
         ));
     }
     let count = fetchers.filter(|n| *n > 0).unwrap_or(DEFAULT_FETCHERS) as usize;
-    let ceiling = env_usize("FLEZHA_WORKER_POOL_MAX")
-        .filter(|n| *n > 0)
-        .unwrap_or(count * 10)
-        .max(count);
+    let ceiling = env_parse_positive("FLEZHA_WORKER_POOL_MAX", count * 10).max(count);
     FETCHER_CEILING.store(ceiling, Ordering::Release);
     // The pool exists before the first activation can be handed off, so a
     // completion never waits on a cold start.

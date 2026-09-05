@@ -220,7 +220,7 @@ provider that overrides nothing is healthy while its declared worker is alive, o
 absent. A `health/1` that raises or exceeds
 `ProviderBehaviour.probe_budget_ms/0` (500 ms) reads as `:healthy`: convergence
 never escalates on an uncertain probe. An unhealthy verdict is what convergence
-restarts the plugin on (`FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD`, default 2).
+restarts the plugin on.
 
 ## In-tree providers
 

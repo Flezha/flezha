@@ -14,6 +14,8 @@ defmodule Flezha.Transport.Native do
     * `{:flz_closed, stream_id, reason}` — stream/connection closed
   """
 
+  alias Flezha.Config
+
   use Rustler,
     otp_app: :flezha,
     crate: "flz_nif",
@@ -122,11 +124,11 @@ defmodule Flezha.Transport.Native do
   def connect_diagnosis(transport),
     do: connect_diagnosis(to_string(transport), socket_dir_env(), quic_env())
 
-  # The BEAM keeps its own environment table, so a value set with
-  # `System.put_env/2` never reaches `std::env::var` in the NIF. Reading it here
-  # is what lets this node's view win without a second copy of the ladder.
-  defp socket_dir_env, do: System.get_env("FLEZHA_SOCKET_FILES_PATH")
-  defp quic_env, do: System.get_env("FLEZHA_QUIC_ADDRESSES")
+  # The NIF reads `std::env::var` in its own thread, which never sees the BEAM's
+  # environment table. Handing it this node's answers is what lets the
+  # controller's view win without a second copy of the ladder.
+  defp socket_dir_env, do: Config.get(:socket_files_path)
+  defp quic_env, do: Config.get(:quic_addresses)
 
   # --- Instance claims ---
   #

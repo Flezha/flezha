@@ -12,7 +12,6 @@ defmodule Flezha.State.PathsTest do
 
   describe "state_root/0" do
     setup do
-      prev_env = System.get_env("FLEZHA_STATE_DIR")
       prev_app = Application.fetch_env(:flezha, :state_root)
       Application.delete_env(:flezha, :state_root)
 
@@ -21,33 +20,23 @@ defmodule Flezha.State.PathsTest do
           {:ok, v} -> Application.put_env(:flezha, :state_root, v)
           :error -> Application.delete_env(:flezha, :state_root)
         end
-
-        case prev_env do
-          nil -> System.delete_env("FLEZHA_STATE_DIR")
-          v -> System.put_env("FLEZHA_STATE_DIR", v)
-        end
       end)
 
       :ok
     end
 
-    # fails when: the controller ignores the operator-configured FLEZHA_STATE_DIR
-    # and silently writes/restores the per-Entity WAL under the default
-    # app_data/state, so a deployment that mounts a dedicated state volume warm-
-    # restarts from an empty tree.
-    test "honors FLEZHA_STATE_DIR when no explicit :state_root is set" do
-      System.put_env("FLEZHA_STATE_DIR", "/tmp/flezha-state-test-root")
-      assert Paths.state_root() == "/tmp/flezha-state-test-root"
-    end
-
-    test "explicit :state_root application config takes precedence over FLEZHA_STATE_DIR" do
-      System.put_env("FLEZHA_STATE_DIR", "/tmp/env-root")
+    # fails when: the controller ignores the configured root and silently
+    # writes/restores the per-Entity WAL under the default `app_data/state`, so
+    # a deployment that mounts a dedicated state volume warm-restarts from an
+    # empty tree. The variable that fills the key at boot is the runtime
+    # drill's; this is the read every site makes afterwards.
+    test "the configured root is what every site reads" do
       Application.put_env(:flezha, :state_root, "/tmp/app-config-root")
       assert Paths.state_root() == "/tmp/app-config-root"
     end
 
-    test "falls back to app_data/state when neither is configured" do
-      System.delete_env("FLEZHA_STATE_DIR")
+    test "falls back to the declared default when nothing configures one" do
+      assert Paths.state_root() == Flezha.Config.default(:state_root)
       assert Paths.state_root() == "app_data/state"
     end
   end

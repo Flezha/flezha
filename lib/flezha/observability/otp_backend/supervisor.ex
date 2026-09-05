@@ -15,6 +15,8 @@ defmodule Flezha.Observability.OtpBackend.Supervisor do
 
   use Supervisor
 
+  alias Flezha.Config
+
   alias Flezha.Observability.OtpBackend.{
     BeamVmSource,
     BoundedMailboxSource,
@@ -48,8 +50,7 @@ defmodule Flezha.Observability.OtpBackend.Supervisor do
   end
 
   defp enabled?() do
-    Application.get_env(:flezha, :observability, [])
-    |> Keyword.get(:otp_backend_enabled, true)
+    Config.get(:observability_otp_backend_enabled)
   end
 
   @doc false

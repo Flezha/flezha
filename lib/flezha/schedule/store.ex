@@ -12,6 +12,7 @@ defmodule Flezha.Schedule.Store do
   use GenServer
   use Flezha.Constant
 
+  alias Flezha.Config
   alias Flezha.DetsStore
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
@@ -90,8 +91,7 @@ defmodule Flezha.Schedule.Store do
   @doc "Directory holding the durable schedule definitions."
   @spec dir() :: String.t()
   def dir() do
-    Application.get_env(:flezha, :schedules, [])
-    |> Keyword.get(:dir, "app_data/schedules")
+    Config.get(:schedule_dir)
   end
 
   ## ----- GenServer -----

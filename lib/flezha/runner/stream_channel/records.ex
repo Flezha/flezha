@@ -17,6 +17,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
   registry behind it.
   """
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
@@ -330,7 +332,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def offer_credit_window(state, operative_class) do
     session = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     window = PersistenceResolver.credit_window_bytes(operative_class)
-    low = Application.get_env(:flezha, :credit_low_watermark_bytes, div(window, 2))
+    # Unset means half the window, and the window is resolved per operative
+    # class, so the halving is the site's rather than a row's.
+    low = Config.get(:credit_low_watermark_bytes) || div(window, 2)
 
     parent = self()
     runner_id = state.runner_id
@@ -404,7 +408,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   def credit_enabled?() do
-    Application.get_env(:flezha, :credit_flow_control_enabled, true)
+    Config.get(:credit_flow_control_enabled)
   end
 
   # Writing a snapshot fsyncs and truncates the per-entity WAL (a call back

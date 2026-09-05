@@ -25,10 +25,7 @@ pub fn ok_effect() -> ItemEffect {
 /// `FLEZHA_BENCH_MEASUREMENT_SECS`, or `default` when it is unset — each row
 /// keeps the window it measures.
 pub fn measurement_secs_default(default: u64) -> u64 {
-    std::env::var("FLEZHA_BENCH_MEASUREMENT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
+    crate::util::env_parse("FLEZHA_BENCH_MEASUREMENT_SECS", default)
 }
 
 /// `FLEZHA_BENCH_MEASUREMENT_SECS`, default 30.

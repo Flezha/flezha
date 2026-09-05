@@ -16,9 +16,13 @@ to when nothing is set; `(derived)` marks a default computed from another knob.
 | 4. Plugin options | the plugin's `opts` map when it is installed | one plugin instance | re-install the plugin |
 
 Layers 1 and 2 overlap on purpose: most environment variables exist only to
-set an application-env key at boot, and `config/runtime.exs` is the mapping.
-Prefer the variable in a container, the config file for an embedded or local
-node.
+set an application-env key at boot. **Both layers are one table**:
+`lib/flezha/config/keys.ex` declares every knob once — its name, the
+application-env key, the environment variable, the type, the default, the
+runtimes that read it and the surface an operator observes it on — and
+`config/runtime.exs` is one call over that table rather than a translation of
+its own. Prefer the variable in a container, the config file for an embedded or
+local node.
 
 Layer 3 is the one that surprises people. Anything an operative declares —
 its delivery tier, its acknowledgement granularity, its correction window — is
@@ -30,8 +34,12 @@ them. The effectively-once, checkpoint and output-batching options are all
 
 ## Layer 1: environment variables
 
-Read at boot by `config/runtime.exs` unless the notes say otherwise. Boolean
-variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
+Read at boot by `config/runtime.exs`, which asks the table, unless the notes say
+otherwise. Booleans accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`
+case-insensitively; a value that is neither leaves the default standing, as does
+a count that is zero, negative or not a number. Every other type — a duration,
+an address, a member of an enumeration — refuses the boot naming the variable,
+the value and the type.
 
 ### Transport and TLS
 
@@ -39,7 +47,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 |---|---|---|
 | `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds`, `quic` or `native` (the in-node Elixir SDK transport, never chosen implicitly); any other value is refused at boot |
 | `FLEZHA_TRANSPORTS` | the value of `FLEZHA_TRANSPORT` (`uds,quic` in test) | `:transports`, comma list validated against the same three names |
-| `FLEZHA_TRANSPORT_AUTH` | required | `:transport_auth_required`; `off`/`false`/`0`/`no` disables peer authentication and is warned on every boot |
+| `FLEZHA_TRANSPORT_AUTH` | `true` (required) | `:transport_auth_required`; `off`/`false`/`0`/`no` disables peer authentication and is warned on every boot |
 | `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` (`:test` derives the port from the run) | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, below) |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `:ca_cert_path` |
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/server.pem` | `:server_cert_path` |
@@ -106,12 +114,20 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_DURABILITY_GC_GRACE_MS` | `3600000` | `:durability_tier[:gc_grace_ms]` |
 | `FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS` | `604800000` | `:durability_tier[:gc_abandoned_after_ms]` |
 | `FLEZHA_DURABILITY_PATH` | unset | `backend_opts[:path]` for `local_path` — a directory that outlives the node's own disk |
-| `FLEZHA_DURABILITY_PG_HOST` / `_PORT` / `_DATABASE` / `_USERNAME` | `localhost` / `5432` / `flezha` / `flezha` | `backend_opts` for `postgres` |
+| `FLEZHA_DURABILITY_PG_HOST` | `localhost` | `backend_opts[:hostname]` for `postgres` |
+| `FLEZHA_DURABILITY_PG_PORT` | `5432` | `backend_opts[:port]` for `postgres` |
+| `FLEZHA_DURABILITY_PG_DATABASE` | `flezha` | `backend_opts[:database]` for `postgres` |
+| `FLEZHA_DURABILITY_PG_USERNAME` | `flezha` | `backend_opts[:username]` for `postgres` |
 | `FLEZHA_DURABILITY_PG_PASSWORD_ENV` | unset | names the variable holding the password — never the password itself |
-| `FLEZHA_DURABILITY_PG_SSL` / `_TABLE` / `_AUTO_CREATE` | `false` / `flezha_durability_artifacts` / `true` | `backend_opts` for `postgres` |
-| `FLEZHA_DURABILITY_S3_ENDPOINT` / `_BUCKET` / `_ACCESS_KEY_ID` | unset | `backend_opts` for `s3` |
+| `FLEZHA_DURABILITY_PG_SSL` | `false` | `backend_opts[:ssl]` for `postgres` |
+| `FLEZHA_DURABILITY_PG_TABLE` | `flezha_durability_artifacts` | `backend_opts[:table]` for `postgres` |
+| `FLEZHA_DURABILITY_PG_AUTO_CREATE` | `true` | `backend_opts[:auto_create]` for `postgres` |
+| `FLEZHA_DURABILITY_S3_ENDPOINT` | unset | `backend_opts[:endpoint]` for `s3` |
+| `FLEZHA_DURABILITY_S3_BUCKET` | unset | `backend_opts[:bucket]` for `s3` |
+| `FLEZHA_DURABILITY_S3_ACCESS_KEY_ID` | unset | `backend_opts[:access_key_id]` for `s3` |
 | `FLEZHA_DURABILITY_S3_SECRET_ENV` | unset | names the variable holding the secret key |
-| `FLEZHA_DURABILITY_S3_REGION` / `_PREFIX` | `us-east-1` / `flezha` | `backend_opts` for `s3` |
+| `FLEZHA_DURABILITY_S3_REGION` | `us-east-1` | `backend_opts[:region]` for `s3` |
+| `FLEZHA_DURABILITY_S3_PREFIX` | `flezha` | `backend_opts[:prefix]` for `s3` |
 
 ### Runner and operative lifecycle
 
@@ -143,13 +159,13 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `60000` | `:convergence_output_stall_grace_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `120000` | `:convergence_unmet_intent_grace_ms` (not in test) |
 | `FLEZHA_CONVERGENCE_ENTITY_STALL_MS` | `300000` | `:convergence_entity_stall_ms` (not in test) |
-| `FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD` | `2` | `:convergence_plugin_strike_threshold` — set by `runtime.exs`, read by nothing in `lib/`; inert |
-| `FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS` | `1000` | `:convergence_tick_latency_threshold_ms` — set by `runtime.exs`, read by nothing in `lib/`; inert |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | `:convergence_fabric_503_polls` (not in test); consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503 |
 | `FLEZHA_HEALTHZ_ENABLED` | `false` | `:healthz_enabled` (not in test); true only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`parked`, `dead_runner`, `plugin_unhealthy`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_operatives` |
 | `FLEZHA_HEALTHZ_PORT` | `9569` | `:healthz_port` (not in test) |
 | `FLEZHA_HEALTHZ_BIND` | `0.0.0.0` | `:healthz_bind` (not in test) |
 | `FLEZHA_DATA_PLANE_LIVENESS` | `true` | `:observability[:data_plane_liveness]`; `false` drops the driver poll and the stall classifier, the counters stay |
+| `FLEZHA_MEMORY_REPORT_INTERVAL_MS` | unset | `:memory_report_interval_ms`; unset or non-positive starts no reporter. See [`operations/memory_drift.md`](operations/memory_drift.md) |
+| `FLEZHA_TESTNET_WS_PORT` | `4500` (`:test` derives the port from the run) | `:testnet_ws_port`, the port `Flezha.Testnet` binds; the prod image entrypoint starts the daemon only when it is set explicitly |
 
 ### Observability and audit
 
@@ -165,7 +181,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_AUDIT_DIR` | `app_data/audit` | `:audit_log[:dir]` |
 | `FLEZHA_AUDIT_RETENTION_DAYS` | `30` | `:audit_log[:retention_seconds]` (× 86 400) |
 | `FLEZHA_LOG_PATH` | `logs/flezha.log` | `:logger, :file_log` path |
-| `FLEZHA_LOG_LEVEL` | `info` | `:logger, :file_log` level |
+| `FLEZHA_LOG_LEVEL` | `info` (controller), `warn` (runner) | `:logger, :file_log` level for the controller; the runner default is the level every SDK starts its own diagnostics at |
 | `FLEZHA_LOG_MAX_BYTES` | `10485760` | `:logger, :file_log` rotation size |
 | `FLEZHA_LOG_KEEP_FILES` | `5` | `:logger, :file_log` rotated files kept |
 
@@ -193,9 +209,9 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | `50000000` | `:plugin_installer[:max_package_bytes]` |
 | `FLEZHA_PLUGIN_MAX_SOURCE_FILES` | `200` | `:plugin_installer[:max_source_files]` |
 
-The `FLEZHA_PLUGIN_*` family (other than the enabled toggle) is parsed by
-`Flezha.Plugin.Installer.RuntimeConfig`, and only when at least one of them is
-present; otherwise the `config/config.exs` defaults stand.
+Each `FLEZHA_PLUGIN_*` name is a row of the table like every other knob, so an
+unset one leaves the row's own default standing rather than the family being
+skipped as a block.
 
 ### Build-time and image variables
 
@@ -233,10 +249,10 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operative::poll_pool`, `FlezhaEnv` |
 | `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operative::poll_pool`, `FlezhaEnv`) |
 | `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` |
-| `FLEZHA_DROP_NOTHING_NONPARKING` | off | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Entity cannot deliver is held in that Entity's push holdback and the Entity is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
+| `FLEZHA_DROP_NOTHING_NONPARKING` | `false` (off) | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Entity cannot deliver is held in that Entity's push holdback and the Entity is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
 | `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Entity may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
-| `FLEZHA_FLUSH_BEFORE_EMIT` | on | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
+| `FLEZHA_FLUSH_BEFORE_EMIT` | `true` (on) | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
 | `FLEZHA_REAP_INTERVAL_MS` | `min(entity_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` and the Elixir SDK's Operative — idle-Entity reaper cadence |
 | `FLEZHA_RECONNECT_RING_CAPACITY` | `1024` | `flz_core::state_sink` and the Elixir SDK — frames held while no stream will take them, replayed when one binds, oldest dropped on overflow and counted as a drop-oldest shed. In `flz_core` one ring holds persistence records and plugin/workflow output frames alike; the Elixir SDK reads the same knob at four holders — the Operative's plugin-bound outputs, the frames a stopping Entity hands to it, each Entity's own change records, and the workflow driver's writes the runner relays — and a rebind replays a stopped Entity's frames first, then an Entity's records, then the outputs of the same dispatch |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` / `FLEZHA_BROKEN_PIPE_WINDOW_MS` | `10` / `5000` | `flz_core::state_sink` — write failures inside the window that request a reconnect |
@@ -348,19 +364,16 @@ the deletion checklist.
 
 ## Layer 2: application env keys
 
-Read via `Application.get_env(:flezha, key, default)`; `Read in` names the
-module that reads the key. Most keys are set for you by `config/runtime.exs`
-from the variables above. `—` means the key is always set in `config/` and the
-read site has no inline default (`fetch_env!`); keyword-list keys are shown as
-`:parent[:child]`.
+Read via `Flezha.Config.get/1` by row name; `Read in` names the module that
+reads the key. Most keys are filled for you at boot from the variables above.
+`—` means the key is always set and the read site carries no default of its own;
+keyword-list keys are shown as `:parent[:child]`.
 
-**Every millisecond default below is declared once**, as a row of
-`lib/flezha/config/durations.ex` — the name, the default, the application-env
-key an operator overrides it with, the environment variable `runtime.exs`
-translates into that key, and, where one quantity is another's multiple, the
-derivation. A site reads `Flezha.Config.Durations.get/1`; no module holds a
-millisecond literal of its own, and `config/runtime.exs` carries no second
-default. A retry ladder is the same story one level up: every wait before a
+**No read site carries a default.** Every default below is the row's, declared
+once in `lib/flezha/config/keys.ex`, and the millisecond rows live beside it in
+`lib/flezha/config/duration_rows.ex` with the derivations that keep one
+quantity's multiple of another from drifting; a site reads
+`Flezha.Config.Durations.get/1` for those. A retry ladder is the same story one level up: every wait before a
 retry is a row of `lib/flezha/config/backoff.ex`, announced on
 `[:flezha, :backoff, :wait]`.
 

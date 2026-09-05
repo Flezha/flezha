@@ -1,5 +1,7 @@
 package com.flezha.sdk.runtime.operative.builder;
 
+import com.flezha.sdk.runtime.config.FlezhaEnv;
+
 /**
  * Resolves a Procedure's per-Entity mailbox capacity per the Rust SDK's
  * three-tier precedence rule:
@@ -40,19 +42,6 @@ public final class MailboxCapacityResolver {
         if (overridden) {
             return declared;
         }
-        Integer parsed = parsePositive(envValue);
-        return parsed != null ? parsed : DEFAULT_MAILBOX_CAPACITY;
-    }
-
-    private static Integer parsePositive(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        try {
-            int v = Integer.parseInt(raw.trim());
-            return v > 0 ? v : null;
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return FlezhaEnv.parsePositive(ENV_MAILBOX_CAPACITY, envValue, DEFAULT_MAILBOX_CAPACITY);
     }
 }

@@ -144,10 +144,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   # one on-disk layout, so a controller restart never orphans WAL/snapshot files.
   describe "resolver/migrator coherence" do
     setup do
-      on_exit(fn ->
-        Application.delete_env(:flezha, :state_root)
-        System.delete_env("FLEZHA_STATE_DIR")
-      end)
+      on_exit(fn -> Application.delete_env(:flezha, :state_root) end)
 
       :ok
     end
@@ -171,10 +168,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
       assert pid in Paths.all_entities()
     end
 
-    test "FLEZHA_STATE_DIR is the single source for both resolver and migrator" do
-      # With :state_root unset, the resolver falls back to FLEZHA_STATE_DIR.
-      Application.delete_env(:flezha, :state_root)
-
+    test "one configured root is the single source for both resolver and migrator" do
       dir =
         Path.join([
           System.tmp_dir!(),
@@ -183,7 +177,7 @@ defmodule Flezha.Boot.StatePathMigratorTest do
 
       File.mkdir_p!(dir)
       on_exit(fn -> File.rm_rf!(dir) end)
-      System.put_env("FLEZHA_STATE_DIR", dir)
+      Application.put_env(:flezha, :state_root, dir)
 
       assert Paths.state_root() == dir
 

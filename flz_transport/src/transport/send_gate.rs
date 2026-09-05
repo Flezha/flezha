@@ -50,8 +50,8 @@ pub const LOW_WATER_VAR: &str = "FLEZHA_SEND_GATE_LOW_WATER";
 /// The two marks a gate runs with, read from the environment.
 fn configured_fractions() -> (f64, f64) {
     fractions_from(
-        std::env::var(HIGH_WATER_VAR).ok().as_deref(),
-        std::env::var(LOW_WATER_VAR).ok().as_deref(),
+        crate::env::env_raw(HIGH_WATER_VAR).as_deref(),
+        crate::env::env_raw(LOW_WATER_VAR).as_deref(),
     )
 }
 

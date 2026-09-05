@@ -11,6 +11,7 @@ use std::{env, fmt, fs};
 
 use ring::digest::{digest, SHA256};
 
+use crate::env::env_dir;
 use crate::utility::last_good::LastGood;
 use crate::utility::socket_probe::{probe, Reach};
 
@@ -391,20 +392,6 @@ fn create_dir(path: &Path) -> std::io::Result<()> {
         ));
     }
     Ok(())
-}
-
-fn env_dir(key: &str) -> Option<PathBuf> {
-    match env::var(key) {
-        Ok(value) => {
-            let trimmed = value.trim_end_matches('/');
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(trimmed))
-            }
-        }
-        Err(_) => None,
-    }
 }
 
 fn absolutise(path: &Path) -> PathBuf {

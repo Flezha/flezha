@@ -5,6 +5,7 @@ defmodule Flezha.Cluster.ManualDiscovery do
   """
 
   alias Flezha.Cluster.DiscoveryProtocol
+  alias Flezha.Config
 
   @type t() :: %__MODULE__{
           initial_nodes: [node()]
@@ -26,7 +27,7 @@ defmodule Flezha.Cluster.ManualDiscovery do
 
     @impl true
     def validate_settings(_struct) do
-      static_nodes = Application.fetch_env!(:flezha, :static_nodes)
+      static_nodes = Config.get(:static_nodes)
 
       if is_list(static_nodes) do
         {:ok, __MODULE__}

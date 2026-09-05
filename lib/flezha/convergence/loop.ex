@@ -18,6 +18,7 @@ defmodule Flezha.Convergence.Loop do
 
   use GenServer
 
+  alias Flezha.Config
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Probe, RecoveryGate}
   alias Flezha.Convergence.Verdict
@@ -56,7 +57,7 @@ defmodule Flezha.Convergence.Loop do
       Keyword.get(
         opts,
         :tick_ms,
-        Application.get_env(:flezha, :convergence_tick_ms, State.default_tick_ms())
+        Config.get(:convergence_tick_ms)
       )
 
     grace_ms =

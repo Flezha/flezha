@@ -4,6 +4,7 @@ defmodule Flezha.Application do
   alias Flezha.Boot.Readiness
   alias Flezha.Boot.StatePathMigrator
   alias Flezha.Boot.StateRootLock
+  alias Flezha.Config
   alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -28,7 +29,7 @@ defmodule Flezha.Application do
     # servers, no HubManager, no convergence, no state-path migration, no
     # boot-ready gate — leaving the host app to run SDK processes via
     # `Flezha.SDK.child_spec/1` under its own supervisor.
-    if Application.get_env(:flezha, :controller_enabled, true) do
+    if Config.get(:controller_enabled) do
       start_controller()
     else
       require Logger
@@ -68,10 +69,10 @@ defmodule Flezha.Application do
   @impl true
   def prep_stop(state) do
     cond do
-      not Application.get_env(:flezha, :controller_enabled, true) ->
+      not Config.get(:controller_enabled) ->
         state
 
-      Application.get_env(:flezha, :graceful_shutdown_enabled, true) ->
+      Config.get(:graceful_shutdown_enabled) ->
         drain_on_prep_stop()
 
       true ->
@@ -191,7 +192,7 @@ defmodule Flezha.Application do
   # gates the child spec so prod boots without the module. Prepended, never
   # appended: the harness must be listening before anything connects.
   defp prepend_testnet(children) do
-    if Application.get_env(:flezha, :testnet_enabled) and
+    if Config.get(:testnet_enabled) and
          Code.ensure_loaded?(Flezha.Testnet) do
       [{Flezha.Testnet, []} | children]
     else
@@ -200,7 +201,7 @@ defmodule Flezha.Application do
   end
 
   defp installer_children do
-    if Application.get_env(:flezha, :plugin_installer_enabled, false) do
+    if Config.get(:plugin_installer_enabled) do
       [Flezha.Plugin.Installer.Supervisor]
     else
       []
@@ -213,9 +214,7 @@ defmodule Flezha.Application do
   # against a per-test tmp `auth_dir`. The flag defaults `true` so
   # production and dev boot the subsystem unconditionally.
   defp authz_children do
-    cfg = Application.get_env(:flezha, :authn_authz, [])
-
-    if Keyword.get(cfg, :application_managed, true) do
+    if Config.get(:authz_application_managed) do
       [Flezha.AuthZ.Supervisor]
     else
       []
@@ -233,7 +232,7 @@ defmodule Flezha.Application do
   # in prod; tests turn it off so the global app boot does not tick
   # across suites. The `Snapshot` it publishes to is always started.
   defp convergence_loop_children do
-    if Application.get_env(:flezha, :convergence_health_enabled, true) do
+    if Config.get(:convergence_health_enabled) do
       [Flezha.Convergence.Loop]
     else
       []
@@ -244,9 +243,7 @@ defmodule Flezha.Application do
   # so tests can bring up isolated Store/Hub singletons against a per-test
   # tmp dir. The Hub owner starts the `:flz_schedules` hub off the boot path.
   defp schedule_children do
-    cfg = Application.get_env(:flezha, :schedules, [])
-
-    if Keyword.get(cfg, :application_managed, true) do
+    if Config.get(:schedule_application_managed) do
       [Flezha.Schedule.Store, Flezha.Schedule.Hub]
     else
       []
@@ -257,7 +254,7 @@ defmodule Flezha.Application do
   # listener. Off by default — only flezha_market opts in via its
   # ConfigMap so bare-metal users keep their own probe shape.
   defp healthz_children do
-    if Application.get_env(:flezha, :healthz_enabled, false) do
+    if Config.get(:healthz_enabled) do
       [Flezha.Healthz.Server]
     else
       []
@@ -265,7 +262,7 @@ defmodule Flezha.Application do
   end
 
   defp transport_children do
-    transports = Application.get_env(:flezha, :transports, [:uds])
+    transports = Config.get(:transports)
 
     Enum.map(transports, fn transport ->
       Supervisor.child_spec(

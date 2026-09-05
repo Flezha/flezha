@@ -14,6 +14,8 @@ defmodule Flezha.Observability.Export.Supervisor do
 
   use Supervisor
 
+  alias Flezha.Config
+
   alias Flezha.Observability.Export.{
     OtlpClient,
     OtlpSink,
@@ -68,13 +70,11 @@ defmodule Flezha.Observability.Export.Supervisor do
   end
 
   defp prometheus_enabled?() do
-    Application.get_env(:flezha, :observability_export, [])
-    |> Keyword.get(:prometheus_enabled, false)
+    Config.get(:prometheus_enabled)
   end
 
   defp otlp_enabled?() do
-    Application.get_env(:flezha, :observability_export, [])
-    |> Keyword.get(:otlp_enabled, false)
+    Config.get(:otlp_enabled)
   end
 
   @doc false

@@ -12,6 +12,7 @@ defmodule Flezha.Config.BackoffSeamTest do
 
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
+  alias FlezhaTest.Helper.SourceWalk
 
   @ladder_seam "lib/flezha/config/backoff.ex"
   @duration_seam "lib/flezha/config/durations.ex"
@@ -22,7 +23,7 @@ defmodule Flezha.Config.BackoffSeamTest do
   @ladder_shape ~r/ProviderBehaviour\.retry_backoff_ms\(|backoff_with_jitter\(|wait_with_jitter\(|Integer\.pow\(2, ?(?:retries|attempt)|Bitwise\.bsl\(1, ?(?:min\(attempt|min\(n|attempt)|@backoffs_ms|@schedule_ms|@retry_base_ms|@retry_cap_ms|@retry_max_ms|@max_retry_delay_ms|@retry_base_delay_ms|Jitter\.jitter\(|@no_response_retry_initial_ms|@reconnect_cap_ms|@retry_backoff_cap_ms|@default_retry_backoff_ms|@stable_uptime_ms|@force_replace_throttle_ms|@park_resend_ms|@hub_retry_ms|@proc_outbox_retry_ms|@backoff_ms|jitter_fn\.\(/
   @duration_shape ~r/^\s*@[a-z_]+_ms\s+[0-9_]+|get_env\(:flezha, :[a-z_]+_ms, [0-9_]+\)/m
 
-  defp lib_files(), do: Path.wildcard("lib/flezha/**/*.ex")
+  defp lib_files(), do: SourceWalk.files(["lib/flezha"], [".ex"])
 
   defp offences(shape, allow) do
     for path <- lib_files(),
@@ -53,7 +54,8 @@ defmodule Flezha.Config.BackoffSeamTest do
     test "every duration row is named by a site, a derivation or the config that fills it" do
       readers =
         read_text(
-          (lib_files() -- [@duration_seam]) ++ Path.wildcard("config/*.exs") ++ [__ENV__.file]
+          (lib_files() -- [@duration_seam]) ++
+            SourceWalk.files(["config"], [".exs"]) ++ [__ENV__.file]
         )
 
       parents =
@@ -231,7 +233,7 @@ defmodule Flezha.Config.BackoffSeamTest do
   defp cap_of(%{cap: cap}) when is_atom(cap) and not is_nil(cap), do: Durations.get(cap)
   defp cap_of(%{cap: cap}), do: cap
 
-  defp read_text(paths), do: Enum.map_join(paths, "\n", &File.read!/1)
+  defp read_text(paths), do: SourceWalk.text(paths)
 
   defp named?(text, name), do: String.contains?(text, ":#{name}")
 

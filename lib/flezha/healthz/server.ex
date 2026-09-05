@@ -66,6 +66,7 @@ defmodule Flezha.Healthz.Server do
   use GenServer
 
   alias Flezha.Boot.Readiness
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Convergence.{Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
@@ -100,8 +101,8 @@ defmodule Flezha.Healthz.Server do
 
   @impl true
   def init(_opts) do
-    port = Application.get_env(:flezha, :healthz_port, 9569)
-    bind = Application.get_env(:flezha, :healthz_bind, default_bind())
+    port = Config.get(:healthz_port)
+    bind = Config.get(:healthz_bind)
 
     case Listener.listen(port, bind) do
       {:ok, listen_socket, actual_port} ->
@@ -268,7 +269,7 @@ defmodule Flezha.Healthz.Server do
   end
 
   defp fabric_503_polls(),
-    do: Application.get_env(:flezha, :convergence_fabric_503_polls, 3)
+    do: Config.get(:convergence_fabric_503_polls)
 
   defp tick_ms(), do: Durations.get(:convergence_tick_ms)
 

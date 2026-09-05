@@ -69,8 +69,7 @@ module Flezha
     # host is the Rust host's model, and a second vocabulary for the same
     # decision is what makes a fleet hard to reason about.
     def base_size
-      declared = ENV["FLEZHA_WORKER_POOL_SIZE"].to_i
-      declared.positive? ? declared : Etc.nprocessors
+      Env.positive("FLEZHA_WORKER_POOL_SIZE", Etc.nprocessors)
     end
 
     # When a drain must be finished by.
@@ -99,8 +98,7 @@ module Flezha
     # never below the base — a ceiling under the floor would retire the pool
     # the runner was told to keep.
     def ceiling_size(base)
-      declared = ENV["FLEZHA_WORKER_POOL_MAX"].to_i
-      declared.positive? ? [declared, base].max : base * 10
+      [Env.positive("FLEZHA_WORKER_POOL_MAX", base * 10), base].max
     end
   end
 

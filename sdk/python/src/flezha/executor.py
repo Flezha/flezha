@@ -24,6 +24,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from . import env
 from .dispatch import DispatchDeps, close_thread_loop, dispatch, dispatch_now
 from .errors import FlezhaError
 from .logger import logger
@@ -107,8 +108,7 @@ def base_size() -> int:
     host's model, and a second vocabulary for the same decision is what makes a
     fleet hard to reason about.
     """
-    declared = _positive_env("FLEZHA_WORKER_POOL_SIZE")
-    return declared or (os.cpu_count() or 1)
+    return env.positive("FLEZHA_WORKER_POOL_SIZE", os.cpu_count() or 1)
 
 
 def ceiling_size(base: int) -> int:
@@ -116,16 +116,7 @@ def ceiling_size(base: int) -> int:
 
     A ceiling under the floor would retire the pool the runner was told to keep.
     """
-    declared = _positive_env("FLEZHA_WORKER_POOL_MAX")
-    return max(declared, base) if declared else base * 10
-
-
-def _positive_env(name: str) -> int:
-    try:
-        value = int(os.environ.get(name, "") or 0)
-    except ValueError:
-        return 0
-    return max(0, value)
+    return max(env.positive("FLEZHA_WORKER_POOL_MAX", base * 10), base)
 
 
 def _deadline() -> float:

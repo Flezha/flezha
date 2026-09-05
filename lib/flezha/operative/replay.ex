@@ -14,6 +14,8 @@ defmodule Flezha.Operative.Replay do
   `self()` is not the Overwatch.
   """
 
+  alias Flezha.Config
+
   alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
@@ -233,7 +235,7 @@ defmodule Flezha.Operative.Replay do
   end
 
   defp restore_concurrency,
-    do: Application.get_env(:flezha, :bind_restore_concurrency, 16)
+    do: Config.get(:bind_restore_concurrency)
 
   # Persisted, restorable Entities of this class — empty when the kind/class
   # combination has no persistent state.

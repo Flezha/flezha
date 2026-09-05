@@ -1,6 +1,8 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::OnceLock;
-use std::{env, fmt, io};
+use std::{fmt, io};
+
+use crate::env::{env_parse_positive, env_raw, env_string};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransportType {
@@ -23,20 +25,15 @@ const DEFAULT_MAX_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 /// per-frame hot path, so the knob is boot-time configuration.
 pub fn max_frame_bytes() -> usize {
     static CACHE: OnceLock<usize> = OnceLock::new();
-    *CACHE.get_or_init(|| {
-        parse_positive_bytes(
-            env::var("FLEZHA_MAX_FRAME_BYTES").ok().as_deref(),
-            DEFAULT_MAX_FRAME_BYTES,
-        )
-    })
+    *CACHE.get_or_init(|| env_parse_positive("FLEZHA_MAX_FRAME_BYTES", DEFAULT_MAX_FRAME_BYTES))
 }
 
 /// Per-stream send-buffer ceiling. Every send buffer in the tree derives its
 /// bound from this one number, and every one of them reaches it through
 /// [`super::send_gate::SendGate`]: both server drivers, and the QUIC client.
 pub fn max_write_buffer_bytes() -> usize {
-    parse_positive_bytes(
-        env::var("FLEZHA_MAX_WRITE_BUFFER_BYTES").ok().as_deref(),
+    env_parse_positive(
+        "FLEZHA_MAX_WRITE_BUFFER_BYTES",
         DEFAULT_MAX_WRITE_BUFFER_BYTES,
     )
 }
@@ -53,15 +50,9 @@ pub fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize)
     buffered != 0 && buffered + incoming > cap
 }
 
-fn parse_positive_bytes(raw: Option<&str>, default: usize) -> usize {
-    raw.and_then(|v| v.parse().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(default)
-}
-
 pub fn get_transport_type() -> TransportType {
-    match env::var("FLEZHA_TRANSPORT").as_deref() {
-        Ok("quic") => TransportType::Quic,
+    match env_raw("FLEZHA_TRANSPORT").as_deref() {
+        Some("quic") => TransportType::Quic,
         _ => TransportType::Uds,
     }
 }
@@ -214,13 +205,13 @@ pub fn quic_addresses() -> Result<Vec<QuicEntry>, QuicListError> {
 /// The candidate list, with the caller's own view of the list variable — see
 /// `socket_dir::resolve_socket_dir` for why a host supplies one.
 pub fn quic_addresses_with(list: Option<&str>) -> Result<Vec<QuicEntry>, QuicListError> {
-    let from_env = env::var(QUIC_ADDRESSES_VAR).ok();
+    let from_env = env_raw(QUIC_ADDRESSES_VAR);
     let list = list
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .or(from_env.as_deref());
 
-    parse_quic_addresses(list, env::var(RETIRED_QUIC_ADDRESS_VAR).ok().as_deref())
+    parse_quic_addresses(list, env_raw(RETIRED_QUIC_ADDRESS_VAR).as_deref())
 }
 
 fn parse_quic_addresses(
@@ -249,7 +240,7 @@ fn parse_quic_addresses(
 }
 
 pub fn ca_cert_path() -> String {
-    env::var("FLEZHA_CA_CERT_PATH").unwrap_or_else(|_| "app_data/certs/ca.pem".to_string())
+    env_string("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem")
 }
 
 /// Client certificate presented to a QUIC server that requires peer
@@ -257,38 +248,28 @@ pub fn ca_cert_path() -> String {
 /// runner sharing `app_data/` authenticates out of the box; remote runners
 /// point these at operator-provisioned certs.
 pub fn quic_client_cert_path() -> String {
-    env::var("FLEZHA_QUIC_CLIENT_CERT").unwrap_or_else(|_| "app_data/certs/client.pem".to_string())
+    env_string("FLEZHA_QUIC_CLIENT_CERT", "app_data/certs/client.pem")
 }
 
 pub fn quic_client_key_path() -> String {
-    env::var("FLEZHA_QUIC_CLIENT_KEY").unwrap_or_else(|_| "app_data/certs/client.key".to_string())
+    env_string("FLEZHA_QUIC_CLIENT_KEY", "app_data/certs/client.key")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The pure parser is tested instead of the env accessors themselves: the
-    // frame-limit accessor's OnceLock cache is process-global, so an
-    // env-mutating test would race other tests in the same binary.
+    // The shared count rule is what the byte knobs take, tested where it is
+    // written (`crate::env`); the env accessors themselves are not driven here
+    // because the frame-limit accessor's OnceLock cache is process-global and
+    // an env-mutating test would race every other test in this binary.
     #[test]
-    fn byte_knob_override_honoured_and_default_otherwise() {
-        assert_eq!(
-            parse_positive_bytes(Some("1024"), DEFAULT_MAX_FRAME_BYTES),
-            1024
-        );
-        assert_eq!(
-            parse_positive_bytes(None, DEFAULT_MAX_FRAME_BYTES),
-            DEFAULT_MAX_FRAME_BYTES
-        );
-        assert_eq!(
-            parse_positive_bytes(Some("nonsense"), DEFAULT_MAX_FRAME_BYTES),
-            DEFAULT_MAX_FRAME_BYTES
-        );
-        assert_eq!(
-            parse_positive_bytes(Some("0"), DEFAULT_MAX_FRAME_BYTES),
-            DEFAULT_MAX_FRAME_BYTES
-        );
+    fn a_byte_knob_takes_the_shared_count_rule_and_its_default_otherwise() {
+        use crate::env::parse_positive;
+
+        assert_eq!(parse_positive("1024"), Some(1024));
+        assert_eq!(parse_positive("nonsense"), None);
+        assert_eq!(parse_positive("0"), None);
         assert_eq!(max_write_buffer_bytes(), DEFAULT_MAX_WRITE_BUFFER_BYTES);
     }
 
