@@ -670,8 +670,13 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
         if id == base, do: two, else: []
       end)
 
+      # The plugin says so itself — routes naming a member outside the group
+      # are unhealthy, which is what the loop restarts it from.
+      assert OperativeForward.health(opts) == {:unhealthy, :stale_members}
+
       assert {:ok, fresh, _pid} = OperativeForward.init_provider(opts)
       assert Enum.map(fresh.routes, & &1.id) == Enum.map(two, & &1.id)
+      assert OperativeForward.health(fresh) == :healthy
 
       # The orphaned worker is gone, and what it owed arrived at the new owner —
       # in the order it was queued, before anything emitted afterwards.

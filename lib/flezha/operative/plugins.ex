@@ -155,21 +155,20 @@ defmodule Flezha.Operative.Plugins do
   end
 
   @doc """
-  Convergence heal for a declared plugin whose provider self-reports unhealthy:
-  tear down (kills the owned pid) and re-subscribe from the declared manifest so
-  `activate/1` reopens upstream resources.
+  The convergence loop's `restart_plugin`, for a declared plugin whose
+  provider self-reports unhealthy or whose subscriber crashed: re-run its
+  provider from the declared manifest (`Table.attempt_restart/3`) and activate
+  it, so `activate/1` reopens upstream resources.
 
-  On a failed re-subscribe the plugin stays unsubscribed — the next tick diffs it
-  as missing and retries via `start_plugin` under backoff.
+  On a failed restart the plugin is recorded down, so the next tick diffs it as
+  unhealthy and retries it on the loop's table.
   """
   @spec restart(Overwatch.t(), term(), Plugin.t()) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
   def restart(%Overwatch{} = state, plugin_id, %Plugin{} = plugin) do
-    table = unregister(Table.unsubscribe(state.extensions, plugin_id))
-
-    case Table.subscribe(table, plugin_id, plugin) do
+    case Table.attempt_restart(state.extensions, plugin_id, plugin) do
       {:ok, table} -> activated(state, table, plugin_id)
-      {:error, reason} -> {:error, reason, %{state | extensions: table}}
+      {:error, reason, table} -> {:error, reason, %{state | extensions: table}}
     end
   end
 

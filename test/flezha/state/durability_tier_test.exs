@@ -514,6 +514,11 @@ defmodule Flezha.State.DurabilityTierTest do
       peer_ref = {:cspec, {hub_id, "peer-controller"}}
       assert :ok = Shipper.ship_now(peer_ref)
 
+      # `shipped_at_ms` is wall-clock milliseconds and equal stamps break on the
+      # writer id, so the two ships have to land in different milliseconds for
+      # "newest" to name the second one at all.
+      await_next_millisecond()
+
       File.write!(path, "local-registry")
       own_ref = {:cspec, {hub_id, DurabilityTier.writer_id()}}
       assert :ok = Shipper.ship_now(own_ref)
@@ -717,5 +722,12 @@ defmodule Flezha.State.DurabilityTierTest do
   defp seqs_in_wal(entity_id) do
     {lo, hi} = Artifact.seq_bounds({:entity, entity_id})
     Enum.to_list(lo..hi)
+  end
+
+  # Spin to the next wall-clock millisecond. A sleep would do the same job less
+  # precisely and this waits under a millisecond.
+  defp await_next_millisecond() do
+    now = System.system_time(:millisecond)
+    if System.system_time(:millisecond) > now, do: :ok, else: await_next_millisecond()
   end
 end

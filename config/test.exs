@@ -104,11 +104,6 @@ config :flezha,
   # `/healthz` is opt-in everywhere (off in prod by default too); tests
   # that exercise it bring up the listener inline.
   healthz_enabled: false,
-  # Bounded retry on top of `:start_operative` keeps test wall-clock down —
-  # one short attempt is enough, and the parked-retry timer is disabled
-  # so a failed startup does not periodically re-fire during a test.
-  overwatch_retry_backoff_ms: [10, 10, 10],
-  overwatch_retry_park_interval_ms: 0,
   overwatch_ping_timeout_ms: 500,
   # Tests that hit the real test runners leave ping enabled and rely on
   # the SDK's `Ping` handler. Tests that drive the retry/parked-state

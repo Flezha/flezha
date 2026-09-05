@@ -79,8 +79,8 @@ unknown suffixes, so nothing surfaces as a phantom Entity.
 `state_root` is node-local and never assumed shared, so durable state pins an Operative to the
 controller whose disk holds it. A HotSwap handover normally carries state in-band, but
 `Flezha.Operative.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
-the runner, so the one migration triggered by a runner's death (`hub_migrate`, a controller losing
-its last runner for a namespace) ships an empty payload. The handover stamps `source_node`; on an
+the runner, so a migration triggered by that runner's death (the loop's `replace_operative`, when
+a controller loses its last runner for a namespace) ships an empty payload. The handover stamps `source_node`; on an
 empty payload the destination runs `WalTransfer.pull_operative/3` against that node before the
 ordinary replay. The transfer is destination-driven — the source only answers reads
 (`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source dying mid-transfer fails
@@ -467,9 +467,12 @@ takeover the first `entity_state_change` on an empty WAL (`last_persisted_seq ==
 shed (counted in `wal_shed_total`; the SDK is not disconnected), `[:flezha, :state, :baseline_seed]`
 fires once per episode and a `CompactEntity` is dispatched; further gap frames shed quietly until
 the snapshot lands, its seq becomes `last_persisted_seq` and the next delta appends contiguously.
-The pull is retried every `:wal_resync_retry_interval_ms` (default 1 s) while the Entity waits —
-a pull that failed to dispatch (a torn control channel answers `:no_control_channel`) would
-otherwise strand it in permanent shed — with at most one in flight per Entity per interval.
+The gap is DECLARED once per episode (`{:seq_gap, entity_id}`, carrying the runner that emitted
+it) and the convergence loop plans the `resync_runner` that pulls, retrying it on the loop's own
+5 s → 30 s → 60 s → 300 s table while the Entity waits — a pull that failed to dispatch (a torn
+control channel answers `:no_control_channel`) would otherwise strand it in permanent shed. The
+baseline landing, or any contiguous append, declares `{:seq_gap_closed, entity_id}`, which ends
+the episode and releases the ladder.
 
 ## What a restore does to queued input
 
@@ -532,7 +535,6 @@ instance metadata → SDK declaration → global default.
 | `:credit_flow_control_enabled` | `true` (`FLEZHA_CREDIT_FLOW_CONTROL`) | `false` skips the `CreditWindowInit` offer. |
 | `:credit_window_bytes` | `%{}` (default `wal_high_watermark_bytes`, capped by `max_mailbox_bytes_total`) | Per-class state-stream window. |
 | `:credit_low_watermark_bytes` | `window / 2` | Grant trigger. |
-| `:wal_resync_retry_interval_ms` | `1_000` | Floor between resync attempts for one Entity. |
 | `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed before the flush waits. |
 | `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back. |
 | `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before a reserved log (journal/inbox) cuts its prefix. |

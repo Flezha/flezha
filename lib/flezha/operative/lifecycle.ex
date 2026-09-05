@@ -1,11 +1,12 @@
 defmodule Flezha.Operative.Lifecycle do
   @moduledoc """
-  The operative bind state machine: unbound → binding → bound, and the retry
-  ladder that gets there.
+  The operative bind state machine: unbound → binding → bound, or parked.
 
-  Bind and the SDK start are one module because they are one cycle: a bind
-  cancels the wake timer a suspension left behind and delivers its inbox tail,
-  and the un-park task re-enters `complete_init/4`.
+  A bind is ONE attempt: a failure parks the operative with the attempt's
+  reason, and the park is declared to the convergence loop, which drives the
+  un-park on its own table. Bind and the SDK start are one module because they
+  are one cycle: a bind cancels the wake timer a suspension left behind and
+  delivers its inbox tail, and the un-park task re-enters `complete_init/4`.
 
   Everything that takes an operative OFF its runner — suspend, rehydrate,
   rewind, terminate, migrate — is `Flezha.Operative.Migration`, a sibling above
@@ -16,13 +17,13 @@ defmodule Flezha.Operative.Lifecycle do
   """
 
   alias Flezha.Config
+  alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
   alias Flezha.Operative.Replay
   alias Flezha.Runner.ControlUnit
-  alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
@@ -34,11 +35,6 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.State.Restore
 
   require Logger
-
-  # Defaults for the bounded-retry governor. Tuned to ~19 s aggregate so a
-  # transient control-channel rebind (raspberrypi5 cold-start hits ~5–10 s)
-  # recovers within one burst without spinning the supervisor.
-  @default_retry_backoff_ms [200, 500, 1_000, 2_000, 5_000, 10_000]
 
   # ---------------------------------------------------------------
   # Process API — the lifecycle messages the Overwatch answers to
@@ -67,8 +63,8 @@ defmodule Flezha.Operative.Lifecycle do
          end) do
       {:ok, runner_id} ->
         case complete_init(state, runner_id, operative) do
-          # `complete_init` re-resolves the runner on every start attempt, so the
-          # binding to publish is the one it ended on, not the one awaited.
+          # `complete_init` re-resolves the runner before its one attempt, so
+          # the binding to publish is the one it ended on, not the one awaited.
           {:ok, new_state} ->
             {:noreply, publish_rebind(new_state, stale_runner_id)}
 
@@ -127,14 +123,14 @@ defmodule Flezha.Operative.Lifecycle do
   end
 
   # Bring the operative up on `runner_id`: prepare plugins, resolve init state,
-  # start the SDK operative under the bounded retry ladder, apply the class's
-  # declarations, restore durable state, activate plugins, and deliver whatever
-  # the durable inbox still owes. Both ways in — a fresh bind and an un-park —
-  # funnel through here, which is what keeps them one path.
+  # make the one SDK start attempt, apply the class's declarations, restore
+  # durable state, activate plugins, and deliver whatever the durable inbox
+  # still owes. Both ways in — a fresh bind and an un-park — funnel through
+  # here, which is what keeps them one path.
   #
   # `owner` is the Overwatch process itself. It is passed explicitly because the
-  # un-park path runs this inside a task (so the heavy bounded-retry never blocks
-  # the Overwatch), and `self()` there is the TASK — registering it as the
+  # un-park path runs this inside a task (so a slow start never blocks the
+  # Overwatch), and `self()` there is the TASK — registering it as the
   # operative's Overwatch would point the journal's outbox flush at a process that
   # exits moments later, silently dropping the output.
   @spec complete_init(Overwatch.t(), binary(), map(), pid() | nil) ::
@@ -152,8 +148,7 @@ defmodule Flezha.Operative.Lifecycle do
          {:ok, state, operative} <- Plugins.resolve_init_state(state, operative),
          operative =
            with_resume_state(operative, state.builder.kind, Overwatch.operative_class(state)),
-         {:ok, final_runner_id, add_operative_raw, state} <-
-           start_operative_sdk_with_retry(state, operative),
+         {:ok, final_runner_id, add_operative_raw, state} <- start_once(state, operative),
          # The class's SDK-side declarations ride the AddOperative response;
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
@@ -298,51 +293,27 @@ defmodule Flezha.Operative.Lifecycle do
     %{operative | opts: opts}
   end
 
-  # Returns `{:ok, runner_id, add_operative_raw_data, state}` on success or `{:error, reason,
-  # state}` on exhaustion. On every attempt the runner is re-resolved
-  # so a fresh runner that came online during a backoff window is
-  # picked up.
-  defp start_operative_sdk_with_retry(%Overwatch{} = state, operative) do
-    do_start_with_retry(state, operative, retry_backoff_ms(), 1)
-  end
-
-  defp do_start_with_retry(state, _operative, [], _attempt) do
-    {:error, :exhausted, state}
-  end
-
-  defp do_start_with_retry(%Overwatch{} = state, operative, [delay | rest], attempt) do
+  # The one attempt. The runner is re-resolved first so a runner that came
+  # online since the bind was awaited is the one used; the state carries the
+  # runner the attempt was made on either way, so a park names it.
+  defp start_once(%Overwatch{} = state, operative) do
     runner_id =
       resolve_runner(state.namespace, operative.factory_id, operative.id, state.runner_id)
 
     state = %Overwatch{state | runner_id: runner_id}
 
-    case attempt_ping_and_start(operative, runner_id, last_attempt?: rest == []) do
-      {:ok, raw_data} ->
-        {:ok, runner_id, raw_data, state}
-
-      {:error, reason} when rest == [] ->
-        {:error, reason, state}
-
-      {:error, reason} ->
-        Logger.warning(
-          "[Overwatch] operative #{operative.id} startup attempt #{attempt} failed: " <>
-            "#{inspect(reason)} — retrying within #{delay} ms"
-        )
-
-        wait_with_jitter(delay)
-        do_start_with_retry(state, operative, rest, attempt + 1)
+    case attempt_ping_and_start(operative, runner_id) do
+      {:ok, raw_data} -> {:ok, runner_id, raw_data, state}
+      {:error, reason} -> {:error, reason, state}
     end
   end
 
   # `:start_operative` is only issued AFTER the ping confirms the round trip
-  # works. A ping failure that says the transport is dead resets the
-  # `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it
-  # via the rebind path (`runner-controller-connection-healing`). A ping that
-  # merely TIMED OUT is a busy runner until the retry ladder says otherwise:
-  # the channel it would reset is live and carries every other instance on
-  # that runner, so only the ladder's last attempt may reset on a timeout.
+  # works. A ping failure parks the operative with its reason; whether the
+  # runner's channel is then cut is the loop's decision, read off the reason
+  # through `transport_verdict/1`.
   @doc false
-  def attempt_ping_and_start(operative, runner_id, opts \\ []) do
+  def attempt_ping_and_start(operative, runner_id) do
     case ping_runner(runner_id) do
       :ok ->
         case start_operative_sdk(runner_id, operative) do
@@ -351,28 +322,32 @@ defmodule Flezha.Operative.Lifecycle do
         end
 
       {:error, reason} ->
-        if reset_on_ping_failure?(reason, Keyword.get(opts, :last_attempt?, false)) do
-          _ = reset_control_channel(runner_id)
-        end
-
         {:error, {:ping_failed, reason}}
     end
   end
 
-  defp reset_on_ping_failure?(reason, last_attempt?),
-    do: last_attempt? or not timeout_class?(reason)
+  @doc """
+  What a park's reason says about the runner's transport: `:dead` when the
+  bind's ping reported the transport gone, `:busy` when it merely timed out,
+  `nil` when the reason is not a ping failure at all. A busy runner shows up
+  as a timeout in three shapes: the ping's own, the ControlUnit's call into a
+  channel that is busy, and the ControlUnit having exited on such a call.
+  None of them says the transport is dead.
+  """
+  @spec transport_verdict(term()) :: :dead | :busy | nil
+  def transport_verdict({:ping_failed, reason}),
+    do: if(timeout_class?(reason), do: :busy, else: :dead)
 
-  # A busy runner shows up as a timeout in three shapes: the ping's own, the
-  # ControlUnit's call into a channel that is busy, and the ControlUnit
-  # having exited on such a call. None of them says the transport is dead.
+  def transport_verdict(_reason), do: nil
+
   defp timeout_class?(:timeout), do: true
   defp timeout_class?({:control_unit_exit, {{:timeout, _}, _}}), do: true
   defp timeout_class?({:control_unit_exit, {:timeout, _}}), do: true
   defp timeout_class?(_), do: false
 
-  # `:overwatch_ping_fn` / `:overwatch_reset_channel_fn` are test-only
-  # function-injection hooks (Mimic cannot stub across the dist_sup-spawned
-  # Overwatch process boundary from a test pid).
+  # `:overwatch_ping_fn` is a test-only function-injection hook (Mimic cannot
+  # stub across the dist_sup-spawned Overwatch process boundary from a test
+  # pid).
   defp ping_runner(runner_id) do
     cond do
       not Application.get_env(:flezha, :overwatch_ping_enabled, true) ->
@@ -389,13 +364,6 @@ defmodule Flezha.Operative.Lifecycle do
   defp normalize_ping({:ok, :pong}), do: :ok
   defp normalize_ping({:error, _} = err), do: err
 
-  defp reset_control_channel(runner_id) do
-    case test_hook(:overwatch_reset_channel_fn) do
-      nil -> FleetManager.reset_control_channel(runner_id)
-      fun -> fun.(runner_id)
-    end
-  end
-
   defp test_hook(key) do
     case Application.get_env(:flezha, key) do
       fun when is_function(fun, 1) -> fun
@@ -410,35 +378,25 @@ defmodule Flezha.Operative.Lifecycle do
     end
   end
 
-  defp retry_backoff_ms,
-    do: Application.get_env(:flezha, :overwatch_retry_backoff_ms, @default_retry_backoff_ms)
-
-  # Idle the GenServer for `1..delay` ms. The empty receive consumes no
-  # mailbox messages — it only fires the `after` branch on timeout, so
-  # casts and infos arriving during the wait stay queued for the next
-  # dispatch. Equivalent to `Process.sleep/1` minus the dedicated
-  # sleep primitive.
-  defp wait_with_jitter(0), do: :ok
-
-  defp wait_with_jitter(delay) when is_integer(delay) and delay > 0 do
-    receive do
-    after
-      :rand.uniform(delay) -> :ok
-    end
-  end
-
   # Transition the Overwatch into the parked-error state: store the failure
   # reason and stay alive (no `:stop`, no supervisor restart).
   #
-  # Plugins remain in `:prepared` so no upstream I/O fires while parked. The
-  # reconciler drives the event-driven un-park (`runner_migrate`) once a healthy
-  # runner for the operative's factory is available.
+  # Plugins remain in `:prepared` so no upstream I/O fires while parked. A park
+  # is an outcome, not a remedy: it is declared to the convergence loop, which
+  # drives the un-park (`runner_migrate`) on the `{:parked, id}` ladder of its
+  # own table and cuts the runner's channel first when the reason says the
+  # transport is dead.
   #
-  # Every park funnels through here, so it is the one point that can report one.
-  # The reason rides the event whole: a plugin park's already names both the
-  # plugin and its provider module.
+  # Every park funnels through here, so it is the one point that can report and
+  # declare one. The reason rides the event whole: a plugin park's already names
+  # both the plugin and its provider module.
   @spec park(Overwatch.t(), term()) :: Overwatch.t()
   def park(%Overwatch{} = state, reason) do
+    Facts.declare(
+      {:operative_parked, {state.namespace, state.id},
+       %{reason: reason, transport: transport_verdict(reason)}}
+    )
+
     :telemetry.execute(
       [:flezha, :operative, :parked],
       %{count: 1},

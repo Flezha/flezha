@@ -18,17 +18,24 @@ defmodule Flezha.Convergence.LoopTest do
     alias Flezha.Convergence.Loop
 
     test "a operative misbound for one tick is not yet migrated; two ticks releases it" do
-      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead"}]}
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]}
 
       {streaks, tick1} = Loop.apply_misbound_streak(%{}, delta)
       assert tick1.misbound_operatives == []
 
       {_streaks, tick2} = Loop.apply_misbound_streak(streaks, delta)
-      assert tick2.misbound_operatives == [{{:ns, "r"}, "e_dead"}]
+      assert tick2.misbound_operatives == [{{:ns, "r"}, "e_dead", :probe}]
+    end
+
+    test "a declared disconnect is not streak-gated: the fleet observed the close" do
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
+
+      {_streaks, tick1} = Loop.apply_misbound_streak(%{}, delta)
+      assert tick1.misbound_operatives == [{{:ns, "r"}, "e_dead", :runner_disconnected}]
     end
 
     test "a operative seen bound again resets its streak" do
-      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead"}]}
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]}
       {streaks, _} = Loop.apply_misbound_streak(%{}, delta)
 
       # Bound again this tick → drops out → streak resets.
@@ -85,7 +92,9 @@ defmodule Flezha.Convergence.LoopTest do
       reality =
         reality(ns, %{{ns, "r"} => %{bound_runner: "e1", pid: self()}}, MapSet.new(["e1"]))
 
-      state = %Loop.State{stalled_operatives: %{"r" => System.monotonic_time(:millisecond)}}
+      state = %Loop.State{
+        facts: %{{:output_stall, "r"} => %{at: System.monotonic_time(:millisecond), args: %{}}}
+      }
 
       assert Summary.operative_health_map(intent.operatives, reality, state) == %{
                {ns, "r"} => :degraded

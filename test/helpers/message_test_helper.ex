@@ -5,6 +5,20 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
   """
 
   @doc """
+  Stand in for the convergence loop: register the calling process under the
+  loop's name so every `Flezha.Convergence.Facts.declare/1` a site makes lands
+  here as `{:declare, kind, target, args}`. The loop is off in the test
+  config, so the name is free; it dies with the test process.
+
+      become_loop()
+      assert_receive {:declare, :seq_gap, ^entity_id, %{runner_id: "e1"}}
+  """
+  def become_loop() do
+    Process.register(self(), Flezha.Convergence.Loop)
+    :ok
+  end
+
+  @doc """
   Forward every occurrence of `event` to the calling process as
   `{tag, measurements, metadata}` for the duration of the test, so a telemetry
   signal can be awaited with `assert_receive` like any other message. The

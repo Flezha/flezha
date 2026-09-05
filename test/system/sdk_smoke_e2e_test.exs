@@ -198,8 +198,8 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
         target = Enum.find([first, second], &(&1 != info.runner_id))
 
-        # The production rebind seam (`Convergence.Heal.rebind/2`): a HotSwap
-        # handover the operative confirms before its binding flips.
+        # The migrate the loop's `rebind_operative` drives: a HotSwap handover
+        # the operative confirms before its binding flips.
         {:ok, pid} = OperativeManager.get_operative_pid(ctx.namespace, operative_id)
         assert :ok = GenServer.call(pid, {:runner_migrate, target}, 60_000)
 

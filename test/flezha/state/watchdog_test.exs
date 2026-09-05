@@ -11,6 +11,8 @@ defmodule Flezha.State.WatchdogTest do
 
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
+
   import Flezha.State.TestHelpers, only: [uniq: 0]
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
@@ -192,7 +194,8 @@ defmodule Flezha.State.WatchdogTest do
     refute_received {:compaction_timeout, _, %{key: ^key}}
   end
 
-  test "repeated compaction failures back off and give up loudly with a real resync" do
+  test "repeated compaction failures back off and give up loudly, declaring the give-up" do
+    become_loop()
     {_, _, key} = entity_id = TestHelpers.sample_entity_id("giveup_" <> uniq())
 
     # Drive four timeouts (compaction_started bypasses the backoff-gated trigger
@@ -212,11 +215,22 @@ defmodule Flezha.State.WatchdogTest do
     assert log =~ "compaction GAVE UP after 4 failed attempts"
     assert log =~ "key=#{key}"
 
-    # The fourth crossing also dispatches a real resync carrying the runner_id
-    # the WalWriter status held — the fix for the old silent no-op.
-    assert_receive {:resync_called, ^entity_id, opts}, 1_000
-    assert opts[:reason] == :compaction_gave_up
-    assert opts[:runner_id] == "exec-giveup"
+    # The fourth crossing declares the give-up, with the runner the WalWriter
+    # status held, to the loop — which plans the resync. The Watchdog itself
+    # resyncs nothing.
+    assert_receive {:declare, :compaction_gave_up, ^entity_id, %{runner_id: "exec-giveup"}}, 1_000
+    refute_received {:resync_called, ^entity_id, _}
+  end
+
+  test "a completed compaction is declared as the counter-fact of a give-up" do
+    become_loop()
+    entity_id = TestHelpers.sample_entity_id("compdone_" <> uniq())
+
+    Watchdog.compaction_started(entity_id, "exec-done")
+    Watchdog.compaction_completed(entity_id)
+    :ok = Watchdog.sweep_now()
+
+    assert_receive {:declare, :compaction_completed, ^entity_id, %{}}, 1_000
   end
 
   test "a compaction that completes before the bound never times out" do

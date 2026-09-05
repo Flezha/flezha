@@ -1,0 +1,598 @@
+defmodule FlezhaTest.System.RemedyDrillTest do
+  @moduledoc """
+  Every remedy driven end to end: one row per primitive of `Heal.primitives/0`,
+  each injecting the fault the Diff plans that primitive for — through the
+  real transport, against the Rust runner fixture, with a real
+  `Convergence.Loop` — and asserting that `[:flezha, :convergence, :heal]`
+  fires naming THAT primitive and target, that a fault held across the next
+  window advances the primitive's key, and that repair resets it.
+
+  The row set is read from the primitive table, so a new primitive fails here
+  by name until its fault is written; a row whose fault this tier cannot
+  inject is a recorded deferral, never a skip of the module. The drain — the
+  one remedy-shaped action outside the primitives — has its own row.
+
+  Tagged `:system`; run with
+  `mix test --include system test/system/remedy_drill_test.exs`.
+  """
+
+  use FlezhaTest.SystemCase, capability: :runner_lifecycle
+  use Mimic
+  import FlezhaTest.Helper.MimicGlobal
+
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
+  import FlezhaTest.Helper.TierE2EHarness,
+    only: [boot_runner: 3, os_pid: 1, produces?: 5, sigkill: 1, unique_id_path: 1]
+
+  alias Flezha.Convergence.{Backoff, Heal, Loop}
+  alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
+  alias Flezha.Identificator
+  alias Flezha.Operative.{Builder, Overwatch}
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Service.{HubManager, OperativeManager, PluginManager}
+  alias Flezha.Shutdown.Coordinator
+  alias Flezha.State.{Commands, TestHelpers, WalWriter, Watchdog, WriterRegistry}
+  alias Flezha.Transport.LivenessCounters
+  alias ProcessHub.Service.ProcessRegistry
+
+  setup :set_mimic_global_until_exit
+
+  @tick_ms 1_000
+  @grace_ms 30_000
+  @heartbeat_ms 300
+
+  # A provider whose `init_provider/1` owns a pid: what a crashed subscriber is.
+  defmodule OwnedPidProvider do
+    def init_provider(opts) do
+      pid = spawn(fn -> receive(do: (_ -> :ok)) end)
+      {:ok, Map.put(opts || %{}, :conn, pid), pid}
+    end
+
+    def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
+  end
+
+  setup do
+    namespace = "remedy_drill_#{System.unique_integer([:positive])}"
+    parent = self()
+
+    # BEFORE any hub exists: the cache is cleared so a hub another suite left
+    # mid-recovery cannot hold this loop's gate shut, and this namespace's own
+    # hub then seeds itself `:normal` as it starts. Clearing it afterwards
+    # would drop that seed and the gate would exclude every namespace, so the
+    # loop would plan nothing at all.
+    ConvergenceSnapshot.reset_recovery_states()
+    collect(parent, [:flezha, :convergence, :heal], :heal)
+    collect(parent, [:flezha, :convergence, :tick], :tick)
+
+    on_exit(fn ->
+      Application.delete_env(:flezha, :overwatch_ping_fn)
+
+      for f <- [&OperativeManager.stop_all_operatives/1, &FleetManager.stop_namespace/1] do
+        try do
+          f.(namespace)
+        catch
+          _, _ -> :ok
+        end
+      end
+    end)
+
+    %{namespace: namespace}
+  end
+
+  # The rows this tier cannot drive, each with the reason recorded.
+  @deferred %{
+    replace_operative:
+      "needs a peer BEAM's fleet advertising the factory (the multi_node tier); recorded deferral",
+    reset_control_channel:
+      "needs an operative that is PARKED and still in the hub's declared set: the start " <>
+        "authority stops a child whose start fails, and an Overwatch started outside it is " <>
+        "not declared, so the loop never sees it. The park-to-cut path is proved by " <>
+        "`Flezha.Convergence.DiffTest` (the Planner cuts a dead transport before the rebind, " <>
+        "and a timed-out one only after two rungs) and by `lifecycle_test` (the park declares " <>
+        "its reason and its transport verdict)"
+  }
+
+  # Two rows drive a fixture of another capability, so each declares its own
+  # below rather than riding the module's: a row is tagged with the capability
+  # whose fixture it needs.
+  @own_capability [:resync_runner, :restart_runner]
+
+  for primitive <- Heal.primitives(), primitive not in @own_capability do
+    @tag primitive: primitive
+    @tag skip: Map.get(@deferred, primitive)
+    @tag timeout: 120_000
+    test "#{primitive}: the loop plans and executes it from its own fault", %{
+      primitive: primitive,
+      namespace: namespace
+    } do
+      row(primitive, namespace)
+    end
+  end
+
+  # `resync_runner` needs an Entity with persisted state, so it drives the
+  # `store_input` fixture.
+  describe "resync_runner" do
+    @describetag capability: :state_persistence,
+                 skip: FlezhaTest.SystemCase.deferral(:state_persistence)
+    @describetag timeout: 120_000
+
+    test "the loop plans and executes it from every fault that names an Entity", %{
+      namespace: namespace
+    } do
+      row(:resync_runner, namespace)
+    end
+  end
+
+  # `restart_runner` needs a runner that can be wedged, so it drives the
+  # `wedge_probe` fixture; the wedge itself is a second deferral inside.
+  describe "restart_runner" do
+    @describetag capability: :liveness, skip: FlezhaTest.SystemCase.deferral(:liveness)
+    @describetag timeout: 180_000
+
+    test "the loop plans and executes it from the pool wedge", %{namespace: namespace} do
+      row(:restart_runner, namespace)
+    end
+  end
+
+  @tag timeout: 120_000
+  test "the drain declares itself, and the loop plans nothing local while it stands", %{
+    namespace: namespace
+  } do
+    row(:drain, namespace)
+  end
+
+  # ---------- the rows ----------
+
+  # A runner dies with no survivor: the declared disconnect plans the rebind,
+  # which fails and walks the key; a runner arriving is the repair.
+  defp row(:rebind_operative, namespace) do
+    {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "rebound")
+    assert bound_runner(namespace, id) == runner_a
+    start_loop()
+
+    sigkill(os_pid(port_a))
+    assert_receive {:heal, %{primitive: :rebind_operative, target: ^id}}, 30_000
+
+    assert wait_until(fn -> attempt({:runner_disconnected, id}) >= 1 end, 10_000),
+           "a rebind with nowhere to place did not advance its key"
+
+    {_port_b, runner_b} = boot_runner(namespace, unique_id_path("drill"), [])
+
+    assert wait_until(fn -> bound_runner(namespace, id) == runner_b end, 30_000),
+           "the operative never rebound onto the arriving runner"
+
+    assert wait_until(fn -> attempt({:runner_disconnected, id}) == 0 end, 10_000)
+    assert quiet_tick()
+  end
+
+  # The dead runner's eviction is the first op of the same plan.
+  defp row(:evict_runner, namespace) do
+    {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "evicted")
+    assert bound_runner(namespace, id) == runner_a
+    start_loop()
+
+    sigkill(os_pid(port_a))
+    assert_receive {:heal, %{primitive: :evict_runner, target: ^runner_a}}, 30_000
+    refute runner_a in FleetManager.active_runners(namespace)
+    assert attempt({:evict_runner, runner_a}) == 0, "an idempotent eviction resets its key"
+  end
+
+  # A killed subscriber: the table records it down, the Overwatch declares it,
+  # the loop restarts it. The key stays armed until the stable window.
+  defp row(:restart_plugin, namespace) do
+    {_port, _runner} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "restarted")
+    plugin_id = id <> "_owned"
+    :ok = enable_plugin(namespace, id, plugin_id)
+    {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
+    start_loop()
+
+    {owned, _ref} = owned_pid(pid, plugin_id)
+    Process.exit(owned, :kill)
+
+    assert wait_until(fn -> Loop.tick_now() == :ok and heal?(:restart_plugin, id) end, 30_000),
+           "the loop never planned restart_plugin for the crashed subscriber"
+
+    assert wait_until(
+             fn ->
+               case owned_pid(pid, plugin_id) do
+                 {new, _} when new != owned -> Process.alive?(new)
+                 _ -> false
+               end
+             end,
+             10_000
+           ),
+           "the subscriber was never restarted"
+
+    assert attempt({:restart_plugin, {id, plugin_id}}) >= 1,
+           "a restart is a ladder: the key stays armed until the stable window"
+  end
+
+  # A bind whose ping reports the transport dead: the park is declared, the
+  # channel is cut before the rebind, the parked ladder walks; the runner
+  # coming back is the repair.
+  # A registry write landing after the bind names the old runner: the hook
+  # declares it, the probe reads the row beside the binding, and the row is
+  # re-published. Inline: the key resets on the publish's own `:ok`.
+  defp row(:publish_binding, namespace) do
+    {_port, runner} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "republished")
+    assert bound_runner(namespace, id) == runner
+    start_loop()
+
+    for _ <- 1..2 do
+      write_stale_tag(namespace, id, "runner_from_a_previous_boot")
+      assert_receive {:heal, %{primitive: :publish_binding, target: ^id}}, 30_000
+      assert wait_until(fn -> registry_tag(namespace, id) == runner end, 10_000)
+      assert attempt({:publish_binding, id}) == 0
+    end
+
+    assert quiet_tick()
+  end
+
+  # Three faults, one primitive: a seq gap the WAL declares, a compaction the
+  # Watchdog gives up on, and an output stall — each keyed on its own reason.
+  defp row(:resync_runner, namespace) do
+    {_port, runner} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "resynced", factory: "store_input")
+    entity = {id, "store_input_procedure", ""}
+    feed(namespace, id, 5)
+    {:ok, writer} = wait_for_writer(entity)
+    start_loop()
+
+    # --- a frame dropped on the secondary stream: the WAL sees a gap --------
+    last = WalWriter.last_persisted_seq(writer)
+    WalWriter.append_async(writer, last + 100, TestHelpers.stub_header(), "gap", runner)
+    assert_receive {:heal, %{primitive: :resync_runner, target: ^entity}}, 30_000
+    assert wait_until(fn -> attempt({:seq_gap, entity}) >= 1 end, 10_000)
+    # The next contiguous append closes the episode.
+    feed(namespace, id, 1)
+    assert wait_until(fn -> attempt({:seq_gap, entity}) == 0 end, 30_000)
+
+    # --- a compaction request never answered for four sweeps ----------------
+    on_exit(TestHelpers.override_env(:compaction_timeout_ms, 50))
+
+    for _ <- 1..4 do
+      Watchdog.compaction_started(entity, runner)
+      age_compaction(entity, 200)
+      :ok = Watchdog.sweep_now()
+    end
+
+    assert_receive {:heal, %{primitive: :resync_runner, target: ^entity}}, 30_000
+    assert wait_until(fn -> attempt({:compaction_gave_up, entity}) >= 1 end, 10_000)
+    # A real compaction completing is the counter-fact.
+    {:ok, _ref} = Commands.dispatch_compact_entity(runner, entity)
+    assert wait_until(fn -> attempt({:compaction_gave_up, entity}) == 0 end, 30_000)
+
+    # --- the persisted seq stops advancing under input -----------------------
+    on_exit(TestHelpers.override_env(:default_output_stall_timeout_ms, 200))
+    TestHelpers.age_writer(writer, 1_000)
+
+    :duplicate =
+      WalWriter.append(
+        writer,
+        WalWriter.last_persisted_seq(writer),
+        TestHelpers.stub_header(),
+        "dup"
+      )
+
+    :ok = Watchdog.sweep_now()
+
+    assert_receive {:heal, %{primitive: :resync_runner, target: ^id, namespace: ^namespace}},
+                   30_000
+
+    assert wait_until(fn -> attempt({:output_stall, id}) >= 1 end, 10_000)
+    # The Watchdog going quiet past the grace is the evidence.
+    assert wait_until(fn -> attempt({:output_stall, id}) == 0 end, @grace_ms + 10_000)
+    assert quiet_tick()
+  end
+
+  # A declared plugin unsubscribed is started again.
+  defp row(:start_plugin, namespace) do
+    {_port, _runner} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "started")
+    plugin_id = id <> "_declared"
+    :ok = enable_plugin(namespace, id, plugin_id)
+    {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
+    start_loop()
+
+    :ok = Overwatch.plugin_unsubscribe(pid, plugin_id)
+    refute running?(pid, plugin_id)
+
+    assert wait_until(fn -> Loop.tick_now() == :ok and heal?(:start_plugin, id) end, 30_000),
+           "the loop never planned start_plugin for the missing declared plugin"
+
+    assert wait_until(fn -> running?(pid, plugin_id) end, 10_000)
+    assert attempt({:start_plugin, {id, plugin_id}}) == 0, "an inline repair resets its key"
+  end
+
+  # An undeclared plugin subscribed is torn down.
+  defp row(:stop_plugin, namespace) do
+    {_port, _runner} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "stopped")
+    :ok = enable_plugin(namespace, id, id <> "_declared")
+    {:ok, pid} = OperativeManager.get_operative_pid(namespace, id)
+    start_loop()
+
+    undeclared = id <> "_undeclared"
+
+    :ok =
+      Overwatch.plugin_subscribe(pid, undeclared, %Plugin{
+        id: undeclared,
+        provider: OwnedPidProvider,
+        opts: %{},
+        subscriptions: [{:on_input, [position: 1]}],
+        namespace: namespace,
+        operative_id: id
+      })
+
+    assert wait_until(fn -> Loop.tick_now() == :ok and heal?(:stop_plugin, id) end, 30_000),
+           "the loop never planned stop_plugin for the undeclared plugin"
+
+    assert wait_until(fn -> not subscribed?(pid, undeclared) end, 10_000)
+    assert attempt({:stop_plugin, {id, undeclared}}) == 0
+  end
+
+  # The pool wedge: the verdict's first rung is the terminal restart.
+  defp row(:restart_runner, namespace) do
+    if reason = FlezhaTest.SystemCase.deferral(:pool_wedge) do
+      IO.puts("restart_runner: #{reason}")
+    else
+      collect(self(), [:flezha, :data_plane, :stall_localized], :verdict)
+
+      {port_a, runner_a} =
+        boot_runner(namespace, unique_id_path("drill"),
+          env: heartbeat_env(),
+          port_opts: [:exit_status]
+        )
+
+      id = start_operative(namespace, "wedged", factory: "wedge_probe", plugins: [sink(self())])
+      assert produces?(id, namespace, "one", "ok:one", 60_000)
+
+      OperativeManager.send_io(id, namespace, "wedge", %{"input_type" => "2"})
+      assert wait_until(fn -> inflight?(runner_a) end, 30_000), "the wedge never reached a worker"
+      feeder = start_feeder(id, namespace, self())
+      {_port_b, runner_b} = boot_runner(namespace, unique_id_path("drill"), env: heartbeat_env())
+      start_loop()
+
+      assert_receive {:verdict, %{layer: :runner_pool_wedged, runner_id: ^runner_a}}, 60_000
+      assert_receive {:heal, %{primitive: :restart_runner, target: ^runner_a}}, 60_000
+      assert_receive {^port_a, {:exit_status, status}}, 60_000
+      assert status != 0
+      send(feeder, :stop)
+
+      assert wait_until(fn -> bound_runner(namespace, id) == runner_b end, 120_000)
+      assert produces?(id, namespace, "after", "ok:after", 60_000)
+    end
+  end
+
+  # The exception: the drain declares itself; while it stands the loop plans
+  # nothing onto the node, and the fact clears at finalise. The rebind AFTER a
+  # drain is not asserted here — the drain stops the hub manager, so there is
+  # no hub left in this VM to rebind into; `Flezha.ShutdownTest` proves the
+  # Planner's suppression against a populated Diff.
+  defp row(:drain, namespace) do
+    {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
+    id = start_operative(namespace, "drained")
+    assert bound_runner(namespace, id) == runner_a
+    start_loop()
+
+    stub(Flezha.State.FsyncBatcher, :flush_all, fn -> :ok end)
+    stub(Flezha.Transport.Server, :stop_all, fn -> :ok end)
+    on_exit(fn -> Coordinator.__reset_for_tests__() end)
+
+    # The runner dies mid-drain: a disconnect the loop would rebind on any
+    # other day. While the drain stands it plans nothing local.
+    test_pid = self()
+
+    stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+      sigkill(os_pid(port_a))
+      assert wait_until(fn -> draining?() end, 10_000), "the drain was never declared"
+      :ok = Loop.tick_now()
+      send(test_pid, :ticked_under_the_drain)
+      {:error, :no_target_nodes}
+    end)
+
+    assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
+    assert_receive :ticked_under_the_drain, 30_000
+    refute heal?(:rebind_operative, id)
+
+    # Finalise clears the fact.
+    assert wait_until(fn -> not draining?() end, 10_000),
+           "the drain fact outlived finalise"
+  end
+
+  # ---------- helpers ----------
+
+  defp start_loop() do
+    start_supervised!({Loop, tick_ms: @tick_ms, output_stall_grace_ms: @grace_ms})
+    assert_receive {:tick, _}, 10_000
+  end
+
+  defp start_operative(namespace, label, opts \\ []) do
+    id = "#{label}_#{System.unique_integer([:positive])}"
+
+    builder = %Builder{
+      id: id,
+      factory_id: Keyword.get(opts, :factory, "do_nothing"),
+      init_values: %{},
+      opts: [plugins: Keyword.get(opts, :plugins, [])]
+    }
+
+    assert {:ok, _} = OperativeManager.start_operative(namespace, builder)
+    id
+  end
+
+  # The loop reads the DECLARED plugin set from the durable cspec, which only
+  # `PluginManager.enable_plugin/2` writes — a plugin handed to the builder is
+  # prepared on the Overwatch and invisible to the Intent.
+  defp enable_plugin(namespace, operative_id, plugin_id) do
+    {:ok, "plugin enabled"} =
+      PluginManager.enable_plugin(plugin_id, %Plugin{
+        id: plugin_id,
+        namespace: namespace,
+        operative_id: operative_id,
+        provider: OwnedPidProvider,
+        opts: %{},
+        subscriptions: [{:on_input, [position: 0]}]
+      })
+
+    :ok
+  end
+
+  defp sink(recv_pid) do
+    %Plugin{
+      id: "drill_sink",
+      namespace: nil,
+      operative_id: nil,
+      provider: Flezha.Plugin.Provider.BeamMsgForward,
+      opts: %{recv_pid: recv_pid, include_metadata: true},
+      subscriptions: [{:on_output, []}]
+    }
+  end
+
+  defp owned_pid(pid, plugin_id),
+    do: Map.get(:sys.get_state(pid).extensions.owned_pids, plugin_id)
+
+  defp running?(pid, plugin_id),
+    do: plugin_id in Flezha.Plugin.Extension.Table.running_ids(:sys.get_state(pid).extensions)
+
+  defp subscribed?(pid, plugin_id),
+    do: plugin_id in Flezha.Plugin.Extension.Table.subscribed_ids(:sys.get_state(pid).extensions)
+
+  # Every heal event collected so far names `primitive` for `target`. The
+  # collector delivers into this process's mailbox, so a row can drive ticks
+  # and ask, instead of racing one `assert_receive`.
+  defp heal?(primitive, target) do
+    Enum.any?(drain_heals(), &(&1.primitive == primitive and &1.target == target))
+  end
+
+  defp drain_heals(acc \\ []) do
+    receive do
+      {:heal, meta} -> drain_heals([meta | acc])
+    after
+      0 ->
+        Enum.each(acc, &send(self(), {:heal, &1}))
+        acc
+    end
+  end
+
+  defp attempt(key), do: Backoff.attempt(:sys.get_state(Loop).backoff, key)
+  defp draining?(), do: Map.has_key?(:sys.get_state(Loop).facts, {:node_draining, node()})
+
+  # The tick after repair plans nothing: drain the collected ticks, take the
+  # next fresh one and read its count.
+  defp quiet_tick() do
+    :ok = Loop.tick_now()
+    flush_ticks()
+    :ok = Loop.tick_now()
+    assert_receive {:tick, %{actions_issued: issued}}, 10_000
+    issued == 0
+  end
+
+  defp flush_ticks() do
+    receive do
+      {:tick, _} -> flush_ticks()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp bound_runner(namespace, operative_id) do
+    with {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_id),
+         %{runner_id: runner_id} <- :sys.get_state(pid) do
+      runner_id
+    else
+      _ -> nil
+    end
+  end
+
+  defp registry_tag(namespace, id), do: HubManager.operative_runner_tag(namespace, id)
+
+  # Byte-for-byte what a start's late `update_registry` writes when it wins the
+  # race: the altered child_data's metadata, carrying the runner alter resolved.
+  defp write_stale_tag(namespace, id, stale) do
+    hub_id = Identificator.hub(namespace)
+    hub = ProcessHub.Coordinator.get_hub(hub_id)
+    {cspec, node_pids, _meta} = ProcessRegistry.lookup(hub_id, id, with_metadata: true)
+
+    :ok =
+      ProcessRegistry.insert(hub_id, cspec, node_pids,
+        metadata: %{tag: stale},
+        hook_storage: hub.storage.hook
+      )
+  end
+
+  defp feed(namespace, id, n) do
+    for i <- 1..n do
+      OperativeManager.send_io(
+        id,
+        namespace,
+        "line-#{i}-#{System.unique_integer([:positive])}",
+        %{
+          "input_type" => "2"
+        }
+      )
+    end
+  end
+
+  defp wait_for_writer(entity) do
+    wait_until(fn -> match?({:ok, _}, WriterRegistry.lookup(entity)) end, 30_000)
+    WriterRegistry.lookup(entity)
+  end
+
+  defp age_compaction(entity_id, ms) do
+    :sys.replace_state(Watchdog, fn state ->
+      case Map.get(state.compactions, entity_id) do
+        {started_at, runner} ->
+          %{state | compactions: Map.put(state.compactions, entity_id, {started_at - ms, runner})}
+
+        nil ->
+          state
+      end
+    end)
+  end
+
+  defp heartbeat_env(), do: [{"FLEZHA_DATA_HEARTBEAT_MS", Integer.to_string(@heartbeat_ms)}]
+
+  defp inflight?(runner_id) do
+    LivenessCounters.snapshot_all().channels
+    |> Enum.any?(&(&1.runner_id == runner_id and Map.get(&1, :hb_inflight, 0) >= 1))
+  end
+
+  defp start_feeder(operative_id, namespace, owner) do
+    spawn(fn ->
+      Process.monitor(owner)
+      feed_loop(operative_id, namespace)
+    end)
+  end
+
+  defp feed_loop(operative_id, namespace) do
+    receive do
+      :stop -> :ok
+      {:DOWN, _ref, :process, _pid, _reason} -> :ok
+    after
+      100 ->
+        OperativeManager.send_io(operative_id, namespace, "feed", %{"input_type" => "2"})
+        feed_loop(operative_id, namespace)
+    end
+  end
+
+  defp collect(parent, event, tag) do
+    id = "remedy-drill-#{tag}-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      id,
+      event,
+      fn _e, meas, meta, _ -> send(parent, {tag, Map.merge(meas, meta)}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+  end
+end

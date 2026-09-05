@@ -8,18 +8,25 @@ it; the model they compose into is in [`../architecture/`](../architecture/READM
 ## Detection and self-healing
 
 **Convergence loop** — `lib/flezha/convergence/`. The controller's single self-healer runs
-`Intent → Probe → Diff → Planner → Heal` every 5 s and immediately on a declared event, through
-eight idempotent primitives (`rebind_operative`, `replace_operative`, `resync_runner`,
-`start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`), at most 20
-procs per tick, each `{primitive, target}` backed off 5 s → 30 s → 60 s → 300 s. A rebind needs
-two consecutive misbound ticks, a failed read is `:unknown` rather than "gone", and an uncaught
-error is a skipped tick, never a crashed loop.
+`Intent → Probe → Diff → Planner → Heal` every 5 s and immediately on a declared fact, through
+ten idempotent primitives (`rebind_operative`, `replace_operative`, `resync_runner`,
+`start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`,
+`reset_control_channel`, `publish_binding`), at most 20 ops per tick, each key backed off
+5 s → 30 s → 60 s → 300 s. **Every remedy is one of those primitives**: a site that observes
+something — a runner disconnected, a bind parked, a compaction given up, a seq gap opened, a
+subscriber crashed, a registry row written — declares it through `Convergence.Facts.declare/1`
+and decides nothing, so no ladder, counter or clock for choosing a remedy exists anywhere else.
+A probe-observed rebind needs two consecutive misbound ticks (a declared disconnect does not), a
+failed read is `:unknown` rather than "gone", and an uncaught error is a skipped tick, never a
+crashed loop.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md); model:
 [`../architecture/kernel.md` "Health and liveness"](../architecture/kernel.md#health-and-liveness).
 
-**Per-operative Overwatch** — `lib/flezha/operative/`. Does the bind work the loop asks for and
-retries on failure with jittered backoff 200 ms → 500 ms → 1 s → 2 s → 5 s → 10 s. The loop
-calls Overwatch; Overwatch never calls back.
+**Per-operative Overwatch** — `lib/flezha/operative/`. Does the bind work the loop asks for, in
+ONE attempt. A failed attempt parks the operative with its reason and declares the park; the loop
+drives the un-park on its own table, cutting the runner's control channel first when the reason
+reports a dead transport. A park is an outcome, never a remedy: nothing is repaired by it, it is
+what a failed repair leaves behind. The loop calls Overwatch; Overwatch never calls back.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
 
 **Plugin liveness** — `lib/flezha/plugin/extension/table.ex`,
@@ -45,7 +52,8 @@ Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
 **Output-stall watchdog** — `lib/flezha/state/watchdog.ex`. Sweeps every 10 s; an Entity still
 receiving changes whose seq has not advanced in `output_stall_timeout_ms` (60 s) emits
 `[:flezha, :state, :output_stall]` and nothing else — the remedy is the loop's. A `CompactEntity`
-unanswered past `compaction_timeout_ms` (30 s) triggers a resync. A sweep that stops completing
+unanswered past `compaction_timeout_ms` (30 s) strikes its backoff, and a give-up after four
+strikes is DECLARED to the loop, which plans the resync; the Watchdog resyncs nothing itself. A sweep that stops completing
 reads `sensor_stale` on `/healthz`.
 Owner: [`../internals/state_persistence.md`](../internals/state_persistence.md).
 
@@ -96,8 +104,9 @@ and a bound stream silent past `:io_stream_liveness_threshold_ms` (30 s) is an o
 Owner: [`../internals/transport_liveness.md`](../internals/transport_liveness.md).
 
 **Seq-gap self-heal** — `lib/flezha/state/wal_writer.ex`. A change frame with
-`seq > last_persisted_seq + 1` emits `[:flezha, :state, :seq_gap]` and drives a rate-limited
-resync; an empty WAL pulls a baseline snapshot instead. Silent and automatic.
+`seq > last_persisted_seq + 1` emits `[:flezha, :state, :seq_gap]` and declares the gap once per
+episode; the loop plans the resync on its own table and the next contiguous append closes the
+episode. An empty WAL pulls a baseline snapshot instead. Silent and automatic.
 Owner: [`../internals/state_persistence.md`](../internals/state_persistence.md).
 
 **Health endpoint** — `lib/flezha/healthz/server.ex`, opt-in via `FLEZHA_HEALTHZ_ENABLED`; reads
@@ -157,8 +166,15 @@ being evicted and re-placed.
 Owner: [`../internals/runner_identity.md`](../internals/runner_identity.md); fencing:
 [`../architecture/kernel.md` "Ownership and fencing"](../architecture/kernel.md#ownership-and-fencing).
 
-**Graceful shutdown** — `lib/flezha/shutdown/`, `flz_core/src/shutdown.rs`. The controller
-quiesces, drains operatives to peers and finalises (a third signal escapes with
+**Graceful shutdown, and teardown at every scope** — `lib/flezha/shutdown/`,
+`flz_core/src/shutdown.rs`. Every teardown is ONE walk of a declared, ordered step list:
+`Shutdown.run(scope, target, budget)` folds the `Shutdown.Step` implementations of that scope —
+`:process`, `:operative`, `:namespace`, `:node` — each once, each handed the budget still
+remaining, naming what it did not run. The operator's operative stop, the Overwatch's terminate,
+the namespace stop and the node drain are its four callers, so a new resource with a teardown is
+one new step and no stop path is edited. The node drain is the one remedy-shaped action outside
+the heal primitives: it declares itself to the loop, which plans nothing onto a draining node.
+The controller quiesces, drains operatives to peers and finalises (a third signal escapes with
 `:erlang.halt(143)`); the SDK ships every operative's final state and waits for
 `RunnerShutdownAck` (2 s per operative, in parallel) before exiting.
 Owner: [`../operations/graceful_shutdown.md`](../operations/graceful_shutdown.md).

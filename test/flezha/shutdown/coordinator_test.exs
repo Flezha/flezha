@@ -6,8 +6,11 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
+  alias Flezha.Convergence.Facts
   alias Flezha.Service.HubManager
+  alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
@@ -38,9 +41,10 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
   end
 
-  describe "shutting_down?/0" do
-    test "false at idle" do
-      refute Coordinator.shutting_down?()
+  describe "Shutdown.quiesced?/2" do
+    test "false at idle, for the node and for any namespace" do
+      refute Shutdown.quiesced?(:node, nil)
+      refute Shutdown.quiesced?(:namespace, "default")
     end
   end
 
@@ -271,6 +275,36 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   end
 
   # ---------- helpers ----------
+
+  # The one remedy-shaped action outside the heal primitives: an operator verb
+  # the loop is told about and never chooses.
+  describe "the drain is declared to the convergence loop" do
+    test "the drain declares itself at quiesce, runs as the node walk's step, and clears with finalise" do
+      become_loop()
+      stub_local_operatives()
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+
+      test_pid = self()
+
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+        send(test_pid, {:drain_ran, Shutdown.quiesced?(:node, nil)})
+        {:ok, %{migrated: 1, forced: 0}}
+      end)
+
+      assert [%{name: :drain}] = Shutdown.steps(:node)
+      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
+
+      node = node()
+      assert_receive {:declare, :node_draining, ^node, %{deadline: _}}
+      assert_receive {:drain_ran, true}
+      assert_receive {:declare, :node_drained, ^node, %{}}
+
+      # The counter-fact clears the fact the loop holds.
+      {facts, :new} = Facts.put(%{}, :node_draining, node, %{deadline: 0}, 0)
+      {facts, :cleared} = Facts.put(facts, :node_drained, node, %{}, 1)
+      assert facts == %{}
+    end
+  end
 
   defp reset_coordinator!() do
     Coordinator.__reset_for_tests__()

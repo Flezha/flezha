@@ -598,7 +598,8 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
         {:ok, table} = Table.subscribe(Table.new(@catalog), "heal", plugin)
 
-        {table, log} = with_log(fn -> Table.retry(table, "heal") end)
+        {{:error, _reason, table}, log} =
+          with_log(fn -> Table.attempt_restart(table, "heal", plugin) end)
 
         assert %Table{} = table
         assert log =~ "init_provider"

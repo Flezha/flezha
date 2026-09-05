@@ -5,13 +5,17 @@ defmodule Flezha.Plugin.Extension.Table do
 
   The struct is owned here and the three companions mutate disjoint parts of
   it: `Subscription` the subscriber lists, `Chain` the compiled closures and
-  the `active_mask`, `Health` the monitors, retries and restart backoff. None
-  of them names this module, so effects and lifecycle stay here.
+  the `active_mask`, `Health` the health verdicts and the monitor, timer and
+  pid hygiene. None of them names this module, so effects and lifecycle stay
+  here.
 
   Plugins enter in the `:prepared` phase — `init_provider/1` has run and the
   GenServer is registered, but no upstream resource is held. `bulk_activate/1`
   moves them to `:running` once the SDK side is bound, firing each provider's
-  optional `activate/1` exactly once per binding.
+  optional `activate/1` exactly once per binding. A subscriber whose owned pid
+  crashes is recorded as `{:down, reason}`; the table holds no retry counter,
+  timer or policy — the restart is the convergence loop's, through
+  `attempt_restart/3`.
   """
 
   alias Flezha.Plugin
@@ -33,7 +37,6 @@ defmodule Flezha.Plugin.Extension.Table do
             monitors: %{},
             owned_pids: %{},
             timers: %{},
-            retries: %{},
             started_at: %{},
             host_pid: nil,
             # Operative-level facts resolved at bind time (currently
@@ -162,14 +165,21 @@ defmodule Flezha.Plugin.Extension.Table do
     {table, Enum.reverse(failed)}
   end
 
+  # A down subscriber has no provider to activate: its `init_provider/1` must
+  # be re-run first (`attempt_restart/3`), which is the loop's restart.
   defp activate_if_prepared({plugin_id, plugin}, {acc, failed}) do
-    if Map.get(acc.phases, plugin_id, :prepared) == :running do
-      {acc, failed}
-    else
-      case activate_plugin(acc, plugin_id, plugin) do
-        {activated, :ok} -> {activated, failed}
-        {activated, {:error, reason}} -> {activated, [{plugin_id, reason} | failed]}
-      end
+    case Map.get(acc.phases, plugin_id, :prepared) do
+      :running ->
+        {acc, failed}
+
+      {:down, _reason} ->
+        {acc, failed}
+
+      _ ->
+        case activate_plugin(acc, plugin_id, plugin) do
+          {activated, :ok} -> {activated, failed}
+          {activated, {:error, reason}} -> {activated, [{plugin_id, reason} | failed]}
+        end
     end
   end
 
@@ -248,12 +258,30 @@ defmodule Flezha.Plugin.Extension.Table do
     do: %{table | phases: Map.put(table.phases, plugin_id, phase)}
 
   @doc """
-  Return the lifecycle phase of `plugin_id`: `:prepared`, `:running`, or
-  `:unknown` if the plugin is not registered on this table.
+  Return the lifecycle phase of `plugin_id`: `:prepared`, `:running`,
+  `{:down, reason}` once its subscriber crashed, or `:unknown` if the plugin is
+  not registered on this table.
   """
-  @spec phase(t(), binary()) :: :prepared | :running | :unknown
+  @spec phase(t(), binary()) :: :prepared | :running | {:down, term()} | :unknown
   def phase(%__MODULE__{phases: phases}, plugin_id) when is_binary(plugin_id) do
     Map.get(phases, plugin_id, :unknown)
+  end
+
+  @doc "The subscribers whose owned pid crashed, with the exit reason each recorded."
+  @spec down_ids(t()) :: %{binary() => term()}
+  def down_ids(%__MODULE__{phases: phases}) do
+    for {id, {:down, reason}} <- phases, into: %{}, do: {id, reason}
+  end
+
+  @doc """
+  How long each running subscriber's owned pid has been up, in milliseconds —
+  the evidence the loop reads to call a restarted plugin repaired.
+  """
+  @spec uptimes(t()) :: %{binary() => non_neg_integer()}
+  def uptimes(%__MODULE__{phases: phases, started_at: started_at}) do
+    now = :erlang.monotonic_time(:millisecond)
+
+    for {id, at} <- started_at, Map.get(phases, id) == :running, into: %{}, do: {id, now - at}
   end
 
   @doc """
@@ -331,8 +359,9 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
-  Handle a `{:DOWN, ref, :process, pid, reason}` from the host. If `ref` is
-  owned by a subscriber, applies the kind-appropriate restart policy.
+  Handle a `{:DOWN, ref, :process, pid, reason}` from the host. A subscriber
+  that exited `:normal` is unsubscribed; one that crashed is recorded as
+  `{:down, reason}` for the host to declare — the table restarts nothing.
   Returns `{:ok, table}` or `:ignore`.
   """
   @spec handle_down(t(), reference(), pid(), term(), keyword()) ::
@@ -354,30 +383,50 @@ defmodule Flezha.Plugin.Extension.Table do
 
           _ ->
             Logger.error("[Extension.Table] subscriber #{plugin_id} crashed: #{inspect(reason)}")
-
-            {:ok,
-             table
-             |> Health.reset_retries_if_stable(plugin_id)
-             |> Health.schedule_retry(plugin_id)}
+            {:ok, put_phase(table, plugin_id, {:down, reason})}
         end
     end
   end
 
   @doc """
-  Retry a failing subscriber. Called when a `{:retry_plugin_restart, plugin_id}`
-  message is delivered to the host.
+  Re-run a plugin's provider: release whatever owned pid it still holds, run
+  `init_provider/1` afresh, and re-register its subscriptions against the fresh
+  instance. The plugin re-enters `:prepared` when its provider can activate
+  (the caller activates it), `:running` otherwise. On a failed
+  `init_provider/1` the plugin is recorded `{:down, reason}`, so it keeps
+  diffing as one the loop must restart.
+
+  It re-runs from the entry the TABLE holds, and only falls back to `plugin` —
+  the loop's declared manifest — for one the table does not hold: a provider
+  that commits durable state of its own (the websocket provider's applied
+  subscription set) writes it back through `put_plugin_opt/4`, and re-running
+  from the manifest would silently discard it.
+
+  The one restart path: the convergence loop's `restart_plugin` reaches it
+  through `Flezha.Operative.Plugins.restart/3`.
   """
-  @spec retry(t(), binary(), keyword()) :: t()
-  def retry(%__MODULE__{} = table, plugin_id, _opts \\ []) do
-    Logger.info("[Extension.Table] retry firing plugin_id=#{plugin_id}")
+  @spec attempt_restart(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term(), t()}
+  def attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = declared) do
+    Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
+    %Plugin{} = held = Map.get(table.plugins, plugin_id, declared)
+    plugin = %Plugin{held | id: plugin_id}
+    table = release_owned_pid(table, plugin_id, plugin)
 
-    case Map.get(table.plugins, plugin_id) do
-      nil ->
-        Logger.warning("[Extension.Table] retry requested for unknown plugin #{plugin_id}")
-        table
+    case run_init_provider(plugin) do
+      {:ok, fresh_plugin, owned_pid} ->
+        table =
+          %{table | plugins: Map.put(table.plugins, plugin_id, fresh_plugin)}
+          |> put_phase(plugin_id, Health.restarted_phase(plugin))
+          |> track_owned_pid(plugin_id, owned_pid)
 
-      plugin ->
-        attempt_restart(table, plugin_id, plugin)
+        {:ok, resubscribe(table, plugin_id, fresh_plugin)}
+
+      {:error, reason} ->
+        Logger.error(
+          "[Extension.Table] init_provider failed for plugin_id=#{plugin_id} reason=#{inspect(reason)}"
+        )
+
+        {:error, reason, put_phase(table, plugin_id, {:down, reason})}
     end
   end
 
@@ -569,37 +618,40 @@ defmodule Flezha.Plugin.Extension.Table do
   ## Private — unsubscribe
 
   defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{subscriptions: subs} = plugin) do
-    terminate_provider(table, plugin_id, plugin)
+    table = release_owned_pid(table, plugin_id, plugin)
 
     table =
       Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->
         acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
       end)
 
-    # Release monitor + pid if still present
-    table =
-      case Map.get(table.owned_pids, plugin_id) do
-        nil ->
-          table
-
-        {pid, ref} ->
-          Health.safe_demonitor(ref)
-          Health.safe_kill(pid)
-
-          %{
-            table
-            | owned_pids: Map.delete(table.owned_pids, plugin_id),
-              monitors: Map.delete(table.monitors, ref)
-          }
-      end
-
     %{
       table
       | plugins: Map.delete(table.plugins, plugin_id),
         phases: Map.delete(table.phases, plugin_id),
-        retries: Map.delete(table.retries, plugin_id),
         started_at: Map.delete(table.started_at, plugin_id)
     }
+  end
+
+  # Let the provider release what it holds, then drop the owned pid and its
+  # monitor if still present — the half of an unsubscribe a restart shares.
+  defp release_owned_pid(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
+    terminate_provider(table, plugin_id, plugin)
+
+    case Map.get(table.owned_pids, plugin_id) do
+      nil ->
+        table
+
+      {pid, ref} ->
+        Health.safe_demonitor(ref)
+        Health.safe_kill(pid)
+
+        %{
+          table
+          | owned_pids: Map.delete(table.owned_pids, plugin_id),
+            monitors: Map.delete(table.monitors, ref)
+        }
+    end
   end
 
   # Let a provider release what the host cannot see. `:owned_pid` is the one
@@ -638,11 +690,8 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private — lookups
 
-  ## Private — restart/retry
+  ## Private — restart
 
-  # Reset the backoff counter only when the just-crashed owned pid stayed up
-  # long enough to count as a real recovery; a fast-failing provider keeps
-  # its accumulated count so `retry_delay/1` grows.
   # Re-register the plugin's subscriptions against its fresh instance: every
   # entry carries a copy of the provider opts, so a restart that kept the old
   # entries would dispatch to state the provider does not hold.
@@ -661,48 +710,5 @@ defmodule Flezha.Plugin.Extension.Table do
       |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
       |> Chain.refresh(name)
     end)
-  end
-
-  defp attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
-    Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
-
-    prior_phase = Map.get(table.phases, plugin_id, :prepared)
-
-    case run_init_provider(plugin) do
-      {:ok, fresh_plugin, owned_pid} ->
-        table = %{table | plugins: Map.put(table.plugins, plugin_id, fresh_plugin)}
-        # Restart drops back to :prepared so a downstream re-activate fires
-        # the provider's `activate/1` to reopen upstream resources — but a
-        # provider that exports none has nothing to reopen, and leaving it
-        # :prepared would have `plugin_health/3` report it healthy without ever
-        # probing until the next bind. Same rule `activate_plugin/3` applies.
-        table = %{
-          table
-          | phases: Map.put(table.phases, plugin_id, Health.restarted_phase(plugin))
-        }
-
-        table = track_owned_pid(table, plugin_id, owned_pid)
-        new_table = resubscribe(table, plugin_id, fresh_plugin)
-
-        # NB: do NOT reset the retry counter here. `init_provider/1` only
-        # prepares the provider; the upstream connection opens later in
-        # `activate/1` and may still fail. Resetting on prepare made a
-        # connection that keeps failing (e.g. a 429-throttled WS) retry at
-        # the base delay forever. The counter is reset only after an owned
-        # pid stays up `@stable_uptime_ms` (see `reset_retries_if_stable/2`).
-        if prior_phase == :running do
-          {activated, _outcome} = activate_plugin(new_table, plugin_id, fresh_plugin)
-          activated
-        else
-          new_table
-        end
-
-      {:error, reason} ->
-        Logger.error(
-          "[Extension.Table] init_provider failed for plugin_id=#{plugin_id} reason=#{inspect(reason)}"
-        )
-
-        Health.schedule_retry(table, plugin_id)
-    end
   end
 end

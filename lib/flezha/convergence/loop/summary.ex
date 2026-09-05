@@ -8,7 +8,7 @@ defmodule Flezha.Convergence.Loop.Summary do
   clock runs only while that holds and nothing is recovering.
   """
 
-  alias Flezha.Convergence.{Intent, Snapshot, StallClassifier}
+  alias Flezha.Convergence.{Facts, Intent, Snapshot, StallClassifier}
   alias Flezha.Convergence.Loop.State
   alias Flezha.Service.HubManager
 
@@ -19,7 +19,7 @@ defmodule Flezha.Convergence.Loop.Summary do
     # recovery window, NOT healthy, even though nothing is "stalled".
     intended = length(operatives)
     bound = map_size(Map.get(reality, :operatives, %{}))
-    stalled = Map.keys(state.stalled_operatives)
+    stalled = Facts.targets(state.facts, :output_stall)
     stuck = Map.keys(state.stuck_operatives)
     non_producing = Enum.uniq(stalled ++ stuck ++ state.plugin_degraded)
     producing = max(bound - length(non_producing), 0)
@@ -76,6 +76,7 @@ defmodule Flezha.Convergence.Loop.Summary do
     observed = Map.get(reality, :operatives, %{})
     active = Map.get(reality, :active_runners, %{})
     plugin_degraded = MapSet.new(state.plugin_degraded)
+    stalled = MapSet.new(Facts.targets(state.facts, :output_stall))
 
     Map.new(operatives, fn %{namespace: ns, operative_id: rid} ->
       obs = Map.get(observed, {ns, rid}, %{})
@@ -94,7 +95,7 @@ defmodule Flezha.Convergence.Loop.Summary do
           # Bound to a runner that is not live — the loop will rebind.
           not MapSet.member?(live, bound) -> :failed
           Map.get(obs, :parked?, false) -> :degraded
-          Map.has_key?(state.stalled_operatives, rid) -> :degraded
+          MapSet.member?(stalled, rid) -> :degraded
           Map.has_key?(state.stuck_operatives, rid) -> :degraded
           MapSet.member?(plugin_degraded, rid) -> :degraded
           true -> :healthy

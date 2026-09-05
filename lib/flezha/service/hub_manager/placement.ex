@@ -4,6 +4,8 @@ defmodule Flezha.Service.HubManager.Placement do
   the refusals an unplaceable runner earns, and the runner-assignment wait.
   """
 
+  alias Flezha.Convergence.Facts
+  alias Flezha.Identificator
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Service.OperativeManager
@@ -127,21 +129,25 @@ defmodule Flezha.Service.HubManager.Placement do
   end
 
   @doc """
-  Hub-wide `child_registered` handler: tells each local Overwatch that its
-  durable row was just rewritten.
+  Hub-wide `child_registered` handler: ships the cspec to the durability tier
+  and declares each local operative's rewritten row to the convergence loop.
 
   A start request writes the row after its children are already running, so the
   `metadata.tag` it carries can name a runner an Overwatch has since rebound
-  away from. Dispatching from inside the write orders the re-assert after it
-  instead of racing it.
+  away from. The loop's next tick reads the row beside the binding and
+  re-publishes the binding when they differ; nothing is decided here.
   """
-  def hook_reassert_binding(hub_id, %{child_id: operative_id} = hook_data) do
+  def hook_registry_written(hub_id, %{child_id: operative_id} = hook_data) do
     local = node()
+    namespace = Identificator.namespace_from_hub(hub_id)
     DurabilityTier.ship_cspec(hub_id)
 
     Enum.each(Map.get(hook_data, :node_pids, []), fn
-      {^local, pid} when is_pid(pid) -> send(pid, {:reassert_binding, operative_id})
-      _ -> :ok
+      {^local, pid} when is_pid(pid) ->
+        Facts.declare({:registry_written, {namespace, operative_id}, %{}})
+
+      _ ->
+        :ok
     end)
   end
 

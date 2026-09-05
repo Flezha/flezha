@@ -261,12 +261,12 @@ defmodule Flezha.State.TestHelpers do
 
   @doc """
   Move a live writer's clocks `ms` into the past — its advance window, its
-  last-seen Change, its oldest un-snapshotted record and its last resync — so
-  a check judging age sees the window lapsed without the test waiting it out.
+  last-seen Change and its oldest un-snapshotted record — so a check judging
+  age sees the window lapsed without the test waiting it out.
   """
   def age_writer(writer, ms) do
     :sys.replace_state(writer, fn state ->
-      [:last_advance_at, :last_change_seen_at, :oldest_unsnapshotted_at, :last_resync_at]
+      [:last_advance_at, :last_change_seen_at, :oldest_unsnapshotted_at]
       |> Enum.reduce(state, fn key, acc -> age_field(acc, key, ms) end)
     end)
 

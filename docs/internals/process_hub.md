@@ -86,7 +86,7 @@ when auto-restore is off.
 | Hook | Handler | Purpose |
 |---|---|---|
 | `child_data_alter` | `HubManager.alter_child_data/2` | rewrite the cspec start args with the assigned runner and set `metadata.tag` |
-| `child_registered` | `HubManager.hook_reassert_binding/2` (hub-wide) | ship the cspec to the durability tier; tell each local Overwatch its row was rewritten |
+| `child_registered` | `HubManager.hook_registry_written/2` (hub-wide) | ship the cspec to the durability tier; declare `{:registry_written, …}` for each local operative, so the loop reads the row beside the binding and re-publishes it when they differ |
 | `child_registered` | `HubManager.hook_insert_pid/2` (one per runner, registered by `register_handler/2` on connect, cancelled on disconnect) | push the new local pid into that runner's stream channels so I/O routes |
 | `recovery_state_changed` | `Convergence.Snapshot.handle_recovery_transition/2` | cache the hub's recovery state for `/healthz` and the boot gate |
 | `pre_recovery_replay`, `post_recovery_replay`, `reconcile_round`, `reconcile_duplicate` | `Flezha.Boot.RecoveryHooks` | forward to telemetry; `reconcile_round` also triggers an immediate convergence tick; `reconcile_duplicate` is an alarm. Not registered when auto-restore is off |
@@ -179,19 +179,14 @@ enabled, otherwise it stays on that node's disk until it returns.
 **Node returns.** The ring is recomputed; operatives may or may not move back — there is no
 snap-back. A move goes through `child_data_alter` on the rejoining node.
 
-**Runner restart** (invisible to the hub; `FleetManager.handle_runner_disconnect`):
+**Runner restart** (invisible to the hub; `FleetManager.Session.handle_runner_disconnect/3`): the
+session drops the runner from the active set, declares `{:runner_disconnected, ns, runner_id}` to
+the convergence loop and migrates nothing itself. The loop chooses per operative on its next tick,
+which the declaration triggers at once:
 
-- *Other runners in this namespace on this controller* — `runner_reroute/3`: per operative,
-  `Convergence.Heal.rebind/2` (factory-filtered rendezvous pick, `{:runner_migrate, target}` to
-  the Overwatch, registry tag flip only on a confirmed answer, then a WAL resync), spawned off
-  the FleetManager process.
-- *No runner here, peers serve the namespace* — `hub_migrate/3` drains the local hub with a
-  5 s budget (short on purpose: a drain holds this node out of the distribution and a runner may
-  reconnect seconds later), then `stop_hub_if_vacant/1`. The dead runner cannot serialize
-  state, so the handover is empty and the destination pulls the Entity files
-  (`Flezha.State.WalTransfer`). Whatever misses the window stays visible and misbound for the
-  convergence loop.
-- *Last runner in the namespace cluster* — `runner_preserve/3` marks it `:inactive` with a
+- *Other runners in this namespace on this controller* — the Diff marks each of the runner's operatives misbound with reason `:runner_disconnected` (not streak-gated: a closed session is not a probe miss) and the Planner plans `rebind_operative`, keyed `{:runner_disconnected, operative_id}`, at most `max_ops` per tick with the plan re-ticking until the set is walked.
+- *No runner here, peers serve the namespace* — the Diff's `replace_operatives` (no local runner for the factory, a peer fleet has one) plans `replace_operative` per child, through `Migration.migrate_child/3` and the migration-consent gate with live handover. Nothing is forced and no drain runs: a child that defers stays put, visible and misbound, for the next tick, and the namespace hub stays addressable so a runner reconnecting seconds later finds its node in the distribution. The dead runner cannot serialize state, so the handover is empty and the destination pulls the Entity files (`Flezha.State.WalTransfer`).
+- *Last runner in the namespace cluster* — `Session.runner_preserve/3` marks it `:inactive` with a
   timestamp; the cleanup tick (`FLEZHA_RUNNER_KEEPALIVE` + 10 s) reaps it once
   `FLEZHA_RUNNER_KEEPALIVE` (default 30 000 ms) has elapsed and reclaims the hub if vacant.
 
@@ -247,9 +242,10 @@ migrate the child back, and the loop re-applies.
   Entity files from `source_node` (`state_root` is node-local, never assumed shared), then
   `Replay.kick_restore_for_bound_runner/2` issues `RestoreInitState` per persisted Entity.
 - **Same-node rebind** (`{:runner_migrate, runner_id}`) — the binding commits only once the new
-  runner has answered; `Heal.rebind/2` then runs `State.Recovery.resync_for_overwatch/2`, which
-  replays the per-Entity WAL into the new binding. A parked or suspended operative un-parks
-  through the same call (`Operative.Migration.spawn_migrate_task/1`).
+  runner has answered; the `rebind_operative` primitive then runs
+  `State.Recovery.resync_for_overwatch/2`, which replays the per-Entity WAL into the new binding.
+  A parked or suspended operative un-parks through the same call
+  (`Operative.Migration.spawn_migrate_task/1`).
 - **Cold boot** — the durable registry plus the per-Entity WAL and snapshots under
   `app_data/state/...` ([state persistence](state_persistence.md)). There is no periodic
   in-memory snapshot loop and no cluster-wide snapshot CLI.

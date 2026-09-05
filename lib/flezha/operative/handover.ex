@@ -18,7 +18,6 @@ defmodule Flezha.Operative.Handover do
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
-  alias Flezha.State.WalTransfer
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
 
@@ -108,25 +107,18 @@ defmodule Flezha.Operative.Handover do
 
   # An empty handover means the source runner was already gone, so the source
   # controller's DISK holds the only surviving state — and `state_root` is
-  # node-local, never assumed shared. Pull it before replaying, off-process:
-  # this runs inside ProcessHub's migration call and the copy is bounded by
-  # file size, not by anything this process should block on.
-  defp adopt_source_state(%Overwatch{runner_id: runner_id} = state, source_node)
+  # node-local, never assumed shared. The bind's one restore step pulls it
+  # (off-process, bounded by file size) before replaying, the same step a
+  # convergence resync runs; the source node rides the operative's opts so a
+  # later restore pulls too.
+  defp adopt_source_state(
+         %Overwatch{runner_id: runner_id, builder: %{opts: opts} = builder} = state,
+         source_node
+       )
        when is_atom(source_node) and source_node != nil and is_binary(runner_id) do
-    operative_class = Overwatch.operative_class(state)
-    overwatch = self()
-
-    spawn(fn ->
-      if WalTransfer.pull_operative(source_node, operative_class) > 0 do
-        # The sanctioned restore trigger — the same one the convergence heal
-        # reaches through `State.Recovery.resync_for_overwatch/2`. Its
-        # `arrived_via_hotswap?` gate is false here precisely because the
-        # handover was empty.
-        Replay.kick_restore_for_bound_runner(overwatch, runner_id)
-      end
-    end)
-
-    state
+    opts = Keyword.put(opts, :state_source_node, source_node)
+    Replay.dispatch_restore(state, opts, runner_id)
+    %Overwatch{state | builder: %{builder | opts: opts}}
   end
 
   # No source to pull from, or nothing bound yet to replay onto — the ordinary

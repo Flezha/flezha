@@ -20,6 +20,8 @@ defmodule Flezha.Service.PluginManager do
   """
 
   use GenServer
+
+  @behaviour Flezha.Shutdown.Step
   use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ.Namespace
@@ -168,6 +170,19 @@ defmodule Flezha.Service.PluginManager do
 
   def disable_namespace_plugins(namespace) when is_binary(namespace) do
     call_service({:disable_namespace_plugins, namespace})
+  end
+
+  # The `:namespace` walk's plugins step: every registration of the namespace
+  # is dropped — the operatives are gone with the hub, and the registry is the
+  # only thing that survives without explicit cleanup.
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [%{scope: :namespace, order: 30, name: :plugins, run: &plugins_step/2}]
+  end
+
+  defp plugins_step(%{namespace: namespace}, _budget) do
+    _ = disable_namespace_plugins(to_string(namespace))
+    :ok
   end
 
   def register_plugin(plugin_id, info) do

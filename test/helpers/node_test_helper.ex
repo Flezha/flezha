@@ -108,6 +108,13 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       :erpc.call(node_name, Application, :put_env, [:flezha, key, []])
     end
 
+    # Extra `:flezha` env for this peer, applied before its boot: the way a
+    # caller gives the peer a controller role the suite's own config turns off,
+    # such as the convergence Loop every real controller runs.
+    for {key, value} <- Keyword.get(opts, :app_env, []) do
+      :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
+    end
+
     # Start the flezha application on the peer node.
     :erpc.call(node_name, Application, :ensure_all_started, [:flezha], @peer_boot_timeout_ms)
 

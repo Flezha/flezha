@@ -4,17 +4,20 @@ defmodule Flezha.Convergence.Planner do
   backoff-filtered list of primitive ops. Each op is a map
   `%{primitive: atom, namespace: atom, target: term, args: map}`.
 
-  Ordering rules: a operative is bound (`rebind_operative`) before its plugins
-  start; a runner is evicted (`evict_runner`) before another binding
-  claims its operatives. Ops still inside their `Backoff` cooldown are dropped,
-  and the per-tick op count is capped at `max_ops`.
+  Ordering rules: a runner is evicted (`evict_runner`) and a dead channel cut
+  (`reset_control_channel`) before another binding claims their operatives; a
+  operative is bound (`rebind_operative`) before its plugins start; a row is
+  re-published (`publish_binding`) after every move. Ops still inside their
+  `Backoff` cooldown are dropped, and the per-tick op count is capped at
+  `max_ops`.
 
   This is the ONE place a divergence becomes an op. Adding a failure mode does
   NOT touch the Planner — it surfaces through an existing `Delta` field healed
-  by one of the existing primitives.
+  by one of the existing primitives — and adding a remedy is one primitive
+  entry plus the one rule in `rules/0` that plans it.
   """
 
-  alias Flezha.Convergence.{Backoff, Diff}
+  alias Flezha.Convergence.{Backoff, Diff, Facts}
 
   @type op :: %{primitive: atom(), namespace: atom() | nil, target: term(), args: map()}
 
@@ -28,6 +31,33 @@ defmodule Flezha.Convergence.Planner do
   # Reasons whose evidence is "this target is demonstrably not producing", as
   # opposed to a structural divergence (misbound, unbound, plugin drift).
   @proved_not_producing [@ladder_reason, @wedge_reason]
+
+  # The plugin primitives key on `{primitive, {operative_id, plugin_id}}`: one
+  # crashing plugin must never throttle its siblings' starts.
+  @plugin_primitives [:start_plugin, :stop_plugin, :restart_plugin]
+
+  # A parked operative whose bind's ping merely timed out is a busy runner:
+  # its channel is live and carries every other instance on it, so the
+  # channel is cut only once the parked ladder has walked this many rungs.
+  @busy_runner_cut_at 2
+
+  # Every `%Diff{}` field a rule reads, and the primitives that rule can plan.
+  # The seam test holds this table to the Diff, the primitive table and the
+  # declared kinds: a kind nobody plans, a primitive no rule names, or a field
+  # planned twice fails there by name.
+  @rules [
+    misbound_operatives: [:evict_runner, :rebind_operative],
+    replace_operatives: [:evict_runner, :replace_operative],
+    parked_operatives: [:reset_control_channel, :rebind_operative],
+    data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_operative],
+    unbound_operatives: [:rebind_operative],
+    resync_entities: [:resync_runner],
+    missing_plugins: [:start_plugin],
+    extra_plugins: [:stop_plugin],
+    unhealthy_plugins: [:restart_plugin],
+    stale_tags: [:publish_binding],
+    stalled_operatives: [:resync_runner, :rebind_operative]
+  ]
 
   @spec plan(Diff.t(), Backoff.t(), keyword()) :: [op()]
   def plan(%Diff{} = delta, %Backoff{} = backoff, opts \\ []) do
@@ -45,17 +75,27 @@ defmodule Flezha.Convergence.Planner do
     planned ++ stall_ops(delta, backoff, planned)
   end
 
-  @doc """
-  Backoff key for an op: `{primitive, target}`.
+  @doc "The per-tick op cap when the caller names none."
+  @spec max_ops() :: pos_integer()
+  def max_ops(), do: @default_max_ops
 
-  The two ladders are the exception: every rung of one keys on
-  `ladder_key/2`, so escalating (`resync_runner` → `rebind_operative`;
-  `restart_runner` → `evict_runner`) walks ONE cooldown instead of restarting
-  the throttle under a fresh key — which is also what makes the attempt count
-  the rung.
+  @doc "The Diff fields a rule reads, in prerequisite order, with the primitives it plans."
+  @spec rules() :: [{atom(), [atom()]}]
+  def rules(), do: @rules
+
+  @doc """
+  Backoff key for an op: `{primitive, target}`; for a plugin op
+  `{primitive, {operative_id, plugin_id}}`; for an op carrying a declared
+  reason `{reason, target}`, so every rung of that reason's ladder walks ONE
+  cooldown instead of restarting the throttle under a fresh key — which is
+  also what makes the attempt count the rung.
   """
   @spec key(op()) :: Backoff.key()
-  def key(%{target: target, args: %{reason: reason}}) when reason in @proved_not_producing,
+  def key(%{primitive: primitive, target: target, args: %{plugin_id: plugin_id}})
+      when primitive in @plugin_primitives,
+      do: {primitive, {target, plugin_id}}
+
+  def key(%{target: target, args: %{reason: reason}}) when is_atom(reason),
     do: ladder_key(reason, target)
 
   def key(%{primitive: primitive, target: target}), do: {primitive, target}
@@ -69,15 +109,14 @@ defmodule Flezha.Convergence.Planner do
   def ladder_key(target), do: ladder_key(@ladder_reason, target)
 
   @doc """
-  Whether an op is a ladder rung. Its `:ok` means the remedy was APPLIED, not
-  that the stall cleared, so the Loop advances the cooldown on either outcome
-  — that is what reaches the next rung instead of re-firing this one. Both
-  proved-not-producing ladders qualify: only fresh evidence on a later tick
-  proves the target still needs healing.
+  Whether an op is a ladder rung: its `:ok` means the remedy was APPLIED, not
+  that the fault cleared, so the Loop advances the cooldown on either outcome
+  and resets it only on the declared evidence. Read from the declared kinds —
+  the op's reason, or its primitive — never from a case here.
   """
   @spec ladder?(op()) :: boolean()
-  def ladder?(%{args: %{reason: reason}}), do: reason in @proved_not_producing
-  def ladder?(_op), do: false
+  def ladder?(%{args: %{reason: reason}}) when is_atom(reason), do: Facts.ladder_reason?(reason)
+  def ladder?(%{primitive: primitive}), do: Facts.ladder_primitive?(primitive)
 
   @doc """
   Whether this op's reason PROVES its target is not producing.
@@ -123,15 +162,19 @@ defmodule Flezha.Convergence.Planner do
     end
   end
 
-  # Prerequisite order: evictions, then (re)binds, then re-placements, then
-  # plugin starts. Each group preserves Delta order within it. The data-plane
-  # wedge sits between them because it is at most one op and may be either kind.
+  # Prerequisite order: evictions and channel resets, then the data-plane
+  # wedge (at most one op, of either kind), then (re)binds, re-placements,
+  # Entity resyncs, plugin starts, and the row re-publish last. Each group
+  # preserves Delta order within it.
   defp ordered_ops(%Diff{} = d, backoff) do
     eviction_ops(d) ++
+      reset_ops(d, backoff) ++
       wedge_ops(d, backoff) ++
       bind_ops(d) ++
       replace_ops(d) ++
-      plugin_ops(d)
+      resync_ops(d) ++
+      plugin_ops(d) ++
+      publish_ops(d)
   end
 
   # The tick's classifier verdict, already resolved to the entity that can be
@@ -174,11 +217,33 @@ defmodule Flezha.Convergence.Planner do
     dead_from_replace = for {_ref, dead} <- replace, is_binary(dead), do: dead
 
     misbound
-    |> Enum.map(fn {_ref, dead_runner} -> dead_runner end)
+    |> Enum.map(fn {_ref, dead_runner, _reason} -> dead_runner end)
     |> Enum.concat(dead_from_replace)
     |> Enum.uniq()
     |> Enum.map(&op(:evict_runner, nil, &1, %{}))
   end
+
+  # A parked operative's bind reported its runner's transport dead: cut the
+  # channel before anything is placed on it. A ping that merely timed out says
+  # the runner is busy — its channel is live and carries every other instance
+  # on it — so it is retried, and cut only once the parked ladder has walked
+  # `@busy_runner_cut_at` rungs. The verdict rides the fact: the bind that
+  # failed is what knows what its own failure meant.
+  defp reset_ops(%Diff{parked_operatives: parked}, backoff) do
+    parked
+    |> Enum.filter(fn {{_ns, id}, args, runner} ->
+      is_binary(runner) and
+        cut_channel?(args[:transport], Backoff.attempt(backoff, {:parked, id}))
+    end)
+    |> Enum.map(fn {{ns, id}, _args, runner} ->
+      op(:reset_control_channel, ns, runner, %{operative_id: id})
+    end)
+    |> Enum.uniq_by(& &1.target)
+  end
+
+  defp cut_channel?(:dead, _attempt), do: true
+  defp cut_channel?(:busy, attempt), do: attempt >= @busy_runner_cut_at
+  defp cut_channel?(_unclassified, _attempt), do: false
 
   # An operative whose factory only another node's fleet serves: the local
   # bind is doomed, so the op moves the operative through the existing
@@ -189,18 +254,44 @@ defmodule Flezha.Convergence.Planner do
 
   defp bind_ops(%Diff{} = d) do
     rebind =
-      Enum.map(d.misbound_operatives, fn {{ns, rid}, _dead} ->
-        op(:rebind_operative, ns, rid, %{})
+      Enum.map(d.misbound_operatives, fn {{ns, rid}, _dead, reason} ->
+        op(:rebind_operative, ns, rid, reasoned(reason))
       end)
 
-    # Unbound (incl. parked) operatives bind via the same rebind primitive: it
-    # resolves a runner and sends `:runner_migrate`, which un-parks them.
+    # A parked operative binds via the same rebind primitive on the
+    # `{:parked, id}` ladder: it resolves a runner and sends `:runner_migrate`,
+    # which un-parks it; the outcome is only visible later, when the probe sees
+    # it bound.
+    unpark =
+      Enum.map(d.parked_operatives, fn {{ns, rid}, args, _runner} ->
+        op(:rebind_operative, ns, rid, %{reason: :parked, park: args[:reason]})
+      end)
+
+    # Unbound operatives bind via the same rebind primitive too.
     start =
       Enum.map(d.unbound_operatives, fn {ns, rid} ->
         op(:rebind_operative, ns, rid, %{})
       end)
 
-    rebind ++ start
+    rebind ++ unpark ++ start
+  end
+
+  # A probe-observed misbound keys on its primitive; a declared disconnect keys
+  # on the fact, so the streak gate and the key both read the same reason.
+  defp reasoned(:probe), do: %{}
+  defp reasoned(reason), do: %{reason: reason}
+
+  # An Entity resync against the runner the fact named, keyed on the fact's
+  # reason and the Entity — the same primitive the output-stall ladder starts
+  # with, aimed one level down.
+  defp resync_ops(%Diff{resync_entities: entities}) do
+    Enum.map(entities, fn {entity_id, runner_id, reason} ->
+      op(:resync_runner, nil, entity_id, %{
+        reason: reason,
+        entity_id: entity_id,
+        runner_id: runner_id
+      })
+    end)
   end
 
   defp plugin_ops(%Diff{} = d) do
@@ -215,11 +306,17 @@ defmodule Flezha.Convergence.Planner do
       end)
 
     unhealthy =
-      Enum.map(d.unhealthy_plugins, fn {{ns, rid}, plugin_id, plugin, reason} ->
-        op(:restart_plugin, ns, rid, %{plugin_id: plugin_id, plugin: plugin, reason: reason})
+      Enum.map(d.unhealthy_plugins, fn {{ns, rid}, plugin_id, plugin, verdict} ->
+        op(:restart_plugin, ns, rid, %{plugin_id: plugin_id, plugin: plugin, verdict: verdict})
       end)
 
     missing ++ extra ++ unhealthy
+  end
+
+  defp publish_ops(%Diff{stale_tags: stale}) do
+    Enum.map(stale, fn {{ns, rid}, tag, bound} ->
+      op(:publish_binding, ns, rid, %{tag: tag, bound: bound})
+    end)
   end
 
   defp op(primitive, namespace, target, args) do

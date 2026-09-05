@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed — every remedy is a planner op, and every teardown one ordered walk (`route-every-remedy-through-the-planner`)
+
+Choosing what to do about a failure used to happen in nine places besides the
+convergence loop, each with its own retry ladder, counter or clock, and the loop
+never saw any of them. Now every site that notices something — a runner
+disconnected, a bind parked, a compaction given up, a seq gap opened, a
+subscriber crashed, a registry row rewritten, the node draining — simply says so
+through one intake and decides nothing. The loop reads those facts beside what
+it probed, picks the remedy, and applies it as one of ten primitives under one
+cooldown table. Two primitives are new: clearing a runner's stale control
+channel so its next data stream can claim it, and re-writing a durable row that
+a late registry write left naming the wrong runner.
+
+Operators see a few differences. A failed bind is now one attempt: the operative
+parks with its reason and the loop retries it on the standard 5 s → 30 s → 60 s
+→ 300 s schedule instead of six jittered attempts inside the operative, and a
+runner arriving in the namespace releases every parked operative at once. A
+controller losing its last runner for a namespace moves its operatives one by
+one through the consent gate instead of draining the hub under a five-second
+budget, and once it holds none of them it leaves that namespace's cluster, so a
+node with no fleet is not handed work it cannot run.
+A crashed plugin subscriber is restarted by the loop, per plugin, so one
+crashing plugin no longer delays its siblings. Two knobs are gone,
+`:overwatch_retry_backoff_ms` and `:wal_resync_retry_interval_ms`, because
+nothing has a second schedule to configure any more.
+
+Stopping things is one mechanism too. An operator stopping an operative, an
+Overwatch terminating, a namespace being stopped and a node draining all fold
+over the same declared, ordered list of teardown steps under one budget, so a
+plugin table is torn down once instead of twice, on-disk state is deleted
+through one guard instead of four places with three different ones, and adding a
+resource with a teardown means adding one step rather than editing four paths.
+
 ### Changed — every operator verb is declared once, and one seam applies it (`declare-every-operator-verb`)
 
 Authorizing an operator verb used to be decided at every site, in six

@@ -98,6 +98,6 @@ connection**, never by an SDK-echoed token — no SDK-side stream tagging, no wi
 ## See also
 
 - [`transport_liveness.md`](transport_liveness.md) — the watchdog that closes a session so a reconnect/swap can happen
-- [`convergence_loop.md`](convergence_loop.md) — `Heal.rebind/2` and `replace_operative`, the binding primitives this path shares
+- [`convergence_loop.md`](convergence_loop.md) — `rebind_operative` and `replace_operative`, the binding primitives this path shares
 - [`state_persistence.md`](state_persistence.md) — the WAL epoch and owner the fence protects
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — the `connect_control_channel` handshake and `AssignRunnerId`

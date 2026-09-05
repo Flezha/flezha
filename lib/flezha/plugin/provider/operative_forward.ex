@@ -237,6 +237,11 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   worker that is gone is, and with a fan-out the worst verdict is the one that
   matters.
   """
+  # A forward resolves its target's member set once, at `init_provider/1`, so
+  # a group that changed shape underneath it routes by yesterday's ranges:
+  # payloads for a member absent from the group queue behind a worker that
+  # will never deliver. The verdict names it, the convergence loop restarts
+  # the plugin, and the re-prepare re-routes what the vanished member held.
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
@@ -245,11 +250,26 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
         routes
         |> Enum.map(&worker_verdict(Map.put(opts, :worker_pid, &1.pid)))
         |> Enum.find(:healthy, &(&1 != :healthy))
+        |> stale_members(opts, routes)
+
+      routes when is_list(routes) ->
+        opts |> worker_verdict() |> stale_members(opts, routes)
 
       _ ->
         worker_verdict(opts)
     end
   end
+
+  defp stale_members(:healthy, opts, routes) do
+    resolved = Enum.map(routes, & &1.id)
+    live = target_members(Map.get(opts, :target_operative_id), Map.get(opts, :source_namespace))
+
+    if Enum.sort(resolved) == Enum.sort(Enum.map(live, &elem(&1, 0))),
+      do: :healthy,
+      else: {:unhealthy, :stale_members}
+  end
+
+  defp stale_members(verdict, _opts, _routes), do: verdict
 
   defp worker_verdict(opts) do
     ProviderBehaviour.worker_health(

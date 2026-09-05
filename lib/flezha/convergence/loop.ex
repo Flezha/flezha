@@ -1,24 +1,27 @@
 defmodule Flezha.Convergence.Loop do
   @moduledoc """
   The single convergence GenServer — the four-seam declarative reconciler.
-  Every tick (and on declared events) it reads `Intent`, probes `Probe`
-  reality, computes a `Diff`, the `Planner` turns the diff into
-  backoff-filtered primitive ops, and `Heal` executes them. The resulting
-  reality + health summary is published to `Flezha.Convergence.Snapshot` so
-  `/healthz`, the CLI, and telemetry all read one source of truth.
+  Every tick (and on a declared fact) it reads `Intent`, probes `Probe`
+  reality, computes a `Diff` over reality and the held facts, the `Planner`
+  turns the diff into backoff-filtered primitive ops, and `Heal` executes
+  them. The resulting reality + health summary is published to
+  `Flezha.Convergence.Snapshot` so `/healthz`, the CLI, and telemetry all read
+  one source of truth.
 
   Reality-matches-intent is the *event*, not the default: the loop heals
-  every divergence it finds, not only ones triggered by a specific
-  signal. Declared events (`:output_stall`, `:runner_connected`) just
-  shorten detection latency by triggering an immediate tick.
+  every divergence it finds, not only ones triggered by a specific signal. A
+  declared fact (`Flezha.Convergence.Facts.declare/1`) shortens detection
+  latency by ticking at once when its key is new, and carries the reason the
+  Planner keys the remedy on; every site that observes something declares it
+  here and decides nothing.
   """
 
   use GenServer
 
-  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Probe, RecoveryGate}
+  alias Flezha.Convergence.{Backoff, Diff, Facts, Heal, Intent, Planner, Probe, RecoveryGate}
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
-  alias Flezha.Service.{EventManager, PluginManager}
+  alias Flezha.Service.{EventManager, HubManager, PluginManager}
 
   require Logger
 
@@ -81,44 +84,21 @@ defmodule Flezha.Convergence.Loop do
 
     # First tick immediately so the recovery gate + first publish happen
     # without waiting `tick_ms`.
-    Process.send_after(self(), :tick, 0)
-
-    {:ok,
-     %State{
-       tick_ms: tick_ms,
-       output_stall_grace_ms: grace_ms
-     }}
+    {:ok, request_tick(%State{tick_ms: tick_ms, fact_grace_ms: grace_ms})}
   end
 
   @impl true
   def handle_info(:tick, %State{} = state) do
-    state = run_tick(state)
-    Process.send_after(self(), :tick, state.tick_ms)
-    {:noreply, state}
+    state = run_tick(%{state | tick_pending?: false, tick_timer: nil})
+    {:noreply, schedule_tick(state)}
   end
 
-  def handle_info({:runner_connected_event, {_namespace, _runner_id}}, %State{} = state) do
-    {:noreply, run_tick(state)}
+  def handle_info({:declare, kind, target, args}, %State{} = state) do
+    {:noreply, declared(state, kind, target, args)}
   end
 
-  # An already-recorded stall only refreshes its timestamp: the Watchdog
-  # re-flags a frozen Entity every sweep, and the ladder for that operative is
-  # already walking on the periodic tick. Ticking per re-flag instead would make
-  # a handful of stalled Entities drive the whole loop at sweep cadence.
-  def handle_info({:output_stall, operative_id}, %State{} = state)
-      when is_binary(operative_id) do
-    known? = Map.has_key?(state.stalled_operatives, operative_id)
-    now = System.monotonic_time(:millisecond)
-    state = %{state | stalled_operatives: Map.put(state.stalled_operatives, operative_id, now)}
-
-    if known?, do: {:noreply, state}, else: {:noreply, run_tick(state)}
-  end
-
-  # A reconcile round that started orphans: converge against them now rather
-  # than at the next tick, so the plan adopts what the round just started
-  # instead of a later tick finding them half-bound.
-  def handle_info(:reconcile_started, %State{} = state) do
-    {:noreply, run_tick(state)}
+  def handle_info({:runner_connected_event, {namespace, runner_id}}, %State{} = state) do
+    {:noreply, declared(state, :runner_connected, {namespace, runner_id}, %{})}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -137,12 +117,9 @@ defmodule Flezha.Convergence.Loop do
   # ---------- telemetry callback ----------
 
   @doc false
-  def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, loop_pid) do
+  def handle_telemetry([:flezha, :state, :output_stall], _measurements, metadata, _loop_pid) do
     operative_id = Map.get(metadata, :operative_instance)
-
-    if is_binary(operative_id) and is_pid(loop_pid),
-      do: send(loop_pid, {:output_stall, operative_id})
-
+    if is_binary(operative_id), do: Facts.declare({:output_stall, operative_id, %{}})
     :ok
   catch
     _, _ -> :ok
@@ -151,9 +128,9 @@ defmodule Flezha.Convergence.Loop do
   # The hook fires at round COMPLETION, so this is an adopt-and-converge
   # trigger, not a hold. A quiet round (`started = 0`) changed nothing and
   # costs nothing.
-  def handle_telemetry([:flezha, :boot, :reconcile_round], measurements, _metadata, loop_pid) do
-    if Map.get(measurements, :started, 0) > 0 and is_pid(loop_pid),
-      do: send(loop_pid, :reconcile_started)
+  def handle_telemetry([:flezha, :boot, :reconcile_round], measurements, metadata, _loop_pid) do
+    if Map.get(measurements, :started, 0) > 0,
+      do: Facts.declare({:reconcile_started, Map.get(metadata, :hub_id), %{}})
 
     :ok
   catch
@@ -161,6 +138,62 @@ defmodule Flezha.Convergence.Loop do
   end
 
   def handle_telemetry(_event, _measurements, _metadata, _config), do: :ok
+
+  # ---------- the intake ----------
+
+  # One declaration: a known key refreshes its time and costs no tick, a new
+  # key ticks at once when its kind says so, a counter-fact clears its fact,
+  # and a runner arriving in a namespace releases every parked ladder in it —
+  # the world changed, so the parked operatives are retried at once.
+  defp declared(%State{} = state, kind, target, args) do
+    now = System.monotonic_time(:millisecond)
+    {facts, what} = Facts.put(state.facts, kind, target, args, now)
+    state = %{state | facts: facts}
+    state = release(state, kind, target, what, now)
+    if Facts.ticks?(kind, what), do: request_tick(state), else: state
+  end
+
+  # A counter-fact is the evidence its fact's ladder was waiting for, so it
+  # releases the key as well as dropping the fact — `settle_facts/3` never sees
+  # a fact cleared this way. A runner connecting releases every parked key in
+  # its namespace: the world changed, which is what the deleted per-attempt
+  # runner re-resolution used to buy.
+  defp release(%State{} = state, kind, target, :cleared, now) do
+    case Facts.cleared_key(kind, target) do
+      nil -> state
+      key -> %{state | backoff: Backoff.update(state.backoff, key, :ok, now)}
+    end
+  end
+
+  defp release(%State{} = state, :runner_connected, {namespace, _runner_id}, _what, now) do
+    backoff =
+      state.facts
+      |> Facts.targets(:operative_parked)
+      |> Enum.filter(fn {ns, _id} -> ns == namespace end)
+      |> Enum.reduce(state.backoff, fn {_ns, id}, acc ->
+        Backoff.update(acc, {:parked, id}, :ok, now)
+      end)
+
+    %{state | backoff: backoff}
+  end
+
+  defp release(%State{} = state, _kind, _target, _what, _now), do: state
+
+  # An immediate tick, folded: declarations that land while one is pending
+  # ride the tick already on its way, so a burst of facts costs one probe.
+  defp request_tick(%State{tick_pending?: true} = state), do: state
+
+  defp request_tick(%State{} = state) do
+    if is_reference(state.tick_timer), do: Process.cancel_timer(state.tick_timer)
+    Process.send_after(self(), :tick, 0)
+    %{state | tick_pending?: true, tick_timer: nil}
+  end
+
+  defp schedule_tick(%State{tick_pending?: true} = state), do: state
+
+  defp schedule_tick(%State{} = state) do
+    %{state | tick_timer: Process.send_after(self(), :tick, state.tick_ms)}
+  end
 
   # ---------- tick body ----------
 
@@ -204,18 +237,16 @@ defmodule Flezha.Convergence.Loop do
   # consumed. Returns the tick's intent and reality so the report pass reads the
   # same two snapshots the heals were planned against.
   defp heal_pass(%State{} = state, started_at) do
-    # Age out stalled entries the Watchdog has stopped re-flagging: a
-    # operative that resumed producing leaves the set without a manual clear,
-    # and its ladder cooldown is released with it.
-    state = expire_stalled(state, started_at)
-    stalled = state.stalled_operatives
-
     # The data-plane verdict is computed BEFORE the plan because the Diff
     # consumes it: a wedged layer is a divergence like any other.
     state = Liveness.classify(state)
 
     intent = Intent.declared()
     reality = Probe.snapshot()
+
+    # Facts the probe shows repaired leave the map and release their ladder
+    # BEFORE the plan, so a rung never fires for a fault already gone.
+    state = settle_facts(state, reality, started_at)
 
     # Per-namespace recovery gate: heal only operatives whose hub has finished
     # recovery. A namespace mid-replay is skipped (no heal against a
@@ -226,7 +257,7 @@ defmodule Flezha.Convergence.Loop do
     delta =
       Diff.compute(%Intent{operatives: heal_operatives}, reality, %{
         verdict: state.stall_verdict,
-        stalled: Map.keys(stalled)
+        facts: state.facts
       })
 
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
@@ -237,11 +268,20 @@ defmodule Flezha.Convergence.Loop do
     maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
     state = %{state | plugin_degraded: plugin_degraded}
 
-    {backoff, issued} = execute_plan(Planner.plan(delta, state.backoff), state.backoff)
+    plan = Planner.plan(delta, state.backoff)
+    {backoff, issued} = execute_plan(plan, state.backoff)
+    state = %{state | backoff: backoff}
+
+    reclaim_vacant_hubs(reality)
+
+    # A plan that filled the per-tick cap may have been cut: re-tick without
+    # waiting `tick_ms`, so the cap bounds one tick's blast radius and never
+    # becomes a rate.
+    state = if issued >= Planner.max_ops(), do: request_tick(state), else: state
 
     elapsed = System.monotonic_time(:millisecond) - started_at
 
-    {%{state | backoff: backoff}, intent, reality, issued, elapsed}
+    {state, intent, reality, issued, elapsed}
   end
 
   # Report-only /healthz inputs: producing-liveness verdicts from durable
@@ -269,39 +309,48 @@ defmodule Flezha.Convergence.Loop do
     )
   end
 
+  # A hub on a node whose fleet does not serve its namespace, holding none of
+  # its operatives here, is reclaimed: the node leaves that namespace's cluster
+  # rather than being handed children it cannot host. Idempotent, and it stops
+  # nothing while a local operative is still there — which is what makes it
+  # safe to run beside the plan that is still moving them off.
+  defp reclaim_vacant_hubs(%{active_runners: active}) do
+    for {namespace, runners} <- active,
+        runners != :unknown,
+        MapSet.size(runners) == 0,
+        do: HubManager.stop_hub_if_vacant(namespace)
+
+    :ok
+  end
+
   # A operative must be misbound for @misbound_min_ticks consecutive ticks before
   # it is migrated. Operatives not misbound this tick drop out of the streak map
-  # (reset), so a operative seen bound again clears immediately.
+  # (reset), so a operative seen bound again clears immediately. A declared
+  # disconnect is a closed session the fleet manager observed, not a probe
+  # miss, so it is not gated by the streak.
   @doc false
   def apply_misbound_streak(streaks, %Diff{misbound_operatives: misbound} = delta) do
     new_streaks =
-      Enum.reduce(misbound, %{}, fn {ref, _dead}, acc ->
+      Enum.reduce(misbound, %{}, fn {ref, _dead, _reason}, acc ->
         Map.put(acc, ref, Map.get(streaks, ref, 0) + 1)
       end)
 
     ready =
-      Enum.filter(misbound, fn {ref, _dead} ->
-        Map.get(new_streaks, ref) >= @misbound_min_ticks
+      Enum.filter(misbound, fn {ref, _dead, reason} ->
+        reason != :probe or Map.get(new_streaks, ref) >= @misbound_min_ticks
       end)
 
     {new_streaks, %{delta | misbound_operatives: ready}}
   end
 
-  # Drop stalled entries past the grace and release their ladder cooldown with
-  # them: the cooldown records how far up the ladder a LIVE stall has walked, so
-  # a operative that resumed producing must start from the cheap rung again.
-  defp expire_stalled(%State{} = state, now) do
-    {kept, expired} =
-      Enum.split_with(state.stalled_operatives, fn {_operative, since} ->
-        now - since < state.output_stall_grace_ms
-      end)
-
-    backoff =
-      Enum.reduce(expired, state.backoff, fn {operative_id, _since}, acc ->
-        Backoff.update(acc, Planner.ladder_key(operative_id), :ok, now)
-      end)
-
-    %{state | stalled_operatives: Map.new(kept), backoff: backoff}
+  # Drop the facts reality shows repaired or that outlived their grace, and
+  # release the ladder each one walked: the cooldown records how far up the
+  # ladder a LIVE fault has walked, so a repaired target starts from the cheap
+  # rung again.
+  defp settle_facts(%State{} = state, reality, now) do
+    {facts, released} = Facts.settle(state.facts, reality, state.fact_grace_ms, now)
+    backoff = Enum.reduce(released, state.backoff, &Backoff.update(&2, &1, :ok, now))
+    %{state | facts: facts, backoff: backoff}
   end
 
   # An enable in flight has written its cspec and not yet subscribed — that is
@@ -359,8 +408,8 @@ defmodule Flezha.Convergence.Loop do
     end)
   end
 
-  # Only the Watchdog going quiet proves a stall cleared, and `expire_stalled/2`
-  # is where that resets the entry — so a ladder rung advances its cooldown on
-  # either outcome (see `Planner.ladder?/1`).
+  # A ladder rung's `:ok` means the remedy was APPLIED, not that the fault
+  # cleared — only the declared evidence proves that, and `settle_facts/3` is
+  # where it resets the key — so a rung advances its cooldown on either outcome.
   defp ladder_outcome(op, result), do: if(Planner.ladder?(op), do: :error, else: result)
 end

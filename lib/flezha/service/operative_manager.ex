@@ -15,10 +15,8 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.Service.OperativeManager.Init
   alias Flezha.Service.OperativeManager.Placement
   alias Flezha.Service.OperativeManager.Teardown
-  alias Flezha.Service.PluginManager
+  alias Flezha.Shutdown
   alias Flezha.State.Paths
-
-  require Logger
 
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
   defdelegate await_runner(arg1, arg2, arg3, arg4, arg5 \\ fn _ -> true end), to: Placement
@@ -174,7 +172,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp do_start_operative(namespace, operative) do
-    with :ok <- Admission.check_not_shutting_down(),
+    with :ok <- Admission.check_not_shutting_down(namespace),
          :ok <- Admission.validate_operative(namespace, operative),
          :ok <- Admission.refuse_group_base_claim(namespace, operative),
          :ok <- Admission.validate_factory(namespace, operative.factory_id),
@@ -261,9 +259,11 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @doc """
-  Hard teardown: stop the operative, disable its plugins, delete its on-disk
-  state, and release its quota. Drives `RemOperative` (terminal) — the converged
-  teardown for both an explicit stop and a `WorkflowCompleted`.
+  Hard teardown: the `:operative` walk of the shutdown plan — flush the runner's
+  channels, stop the child through the hub, delete its on-disk state, release
+  its quota — under the one operative-stop budget. Drives `RemOperative`
+  (terminal) — the converged teardown for both an explicit stop and a
+  `WorkflowCompleted`.
   """
   @spec stop_operative(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_operative(namespace, operative_id, opts \\ []) do
@@ -274,93 +274,47 @@ defmodule Flezha.Service.OperativeManager do
 
   defp do_stop_operative(namespace, operative_id, preserve_state?) do
     with_operative_pid(namespace, operative_id, fn _operative_pid ->
-      # Read the entity count before the stop tears the operative down — the
-      # operative is gone afterwards and the count is needed to release the
-      # `:max_entities_per_operative` quota symmetrically with start.
-      seg_count = operative_entity_count(namespace, operative_id)
+      # Read the binding and the entity count before the stop tears the
+      # operative down — the operative is gone afterwards, the flush needs its
+      # runner and the quota step needs the count to release
+      # `:max_entities_per_operative` symmetrically with the start.
+      {runner_id, entity_count} = stop_facts(namespace, operative_id)
 
-      case stop_via_hub(namespace, operative_id) do
-        :ok ->
-          _ = PluginManager.disable_operative_plugins(namespace, operative_id)
-          # A stop that is a move — a rescale taking the group down to
-          # redistribute its Entities — keeps the files: they are the state
-          # about to be handed to another member, not garbage.
-          unless preserve_state?, do: Teardown.delete_operative_state_dir(operative_id)
-          _ = Quotas.record_deallocation(namespace, :max_operatives, 1)
+      target = %{
+        namespace: namespace,
+        operative_id: operative_id,
+        runner_id: runner_id,
+        preserve_state?: preserve_state?,
+        entity_count: entity_count
+      }
 
-          if seg_count > 0 do
-            _ =
-              Quotas.record_deallocation(
-                namespace,
-                :max_entities_per_operative,
-                seg_count
-              )
-          end
-
-          :ok
-
-        {:error, reason} ->
-          {:error, reason}
+      case Shutdown.run(:operative, target, Shutdown.stop_timeout_ms()) do
+        {:ok, _report} -> :ok
+        {:partial, %{errors: [{_step, reason} | _]}} -> {:error, reason}
+        {:partial, %{skipped: skipped}} -> {:error, {:timeout, skipped}}
       end
     end)
   end
 
-  defp stop_via_hub(namespace, operative_id) do
-    case Teardown.hub_stop_children(namespace, [operative_id], 15_000) do
-      :ok ->
-        :ok
-
-      {:error, errors} when is_list(errors) ->
-        case List.keyfind(errors, operative_id, 0) do
-          {_cid, reason} -> {:error, reason}
-          nil -> {:error, :stop_failed}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp operative_entity_count(namespace, operative_id) do
+  defp stop_facts(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
-      {:ok, %{builder: builder}} -> Admission.entity_count(builder)
-      _ -> 0
+      {:ok, %{builder: builder} = ow} ->
+        {normalize_runner(Map.get(ow, :runner_id)), Admission.entity_count(builder)}
+
+      _ ->
+        {nil, 0}
     end
   end
+
+  defp normalize_runner(runner_id) when is_binary(runner_id), do: runner_id
+  defp normalize_runner(_), do: nil
 
   @doc """
-  Stop every operative in `namespace` and hand its state directory to
-  `Teardown`.
-
-  The walk is the whole point: an operative whose plugins cannot be disabled —
-  a wedged Overwatch, a manager too busy to answer — is named in the log and
-  stepped over, never a reason to abandon the operatives behind it.
+  Stop every operative in `namespace` through the hub and reclaim their state
+  directories — the `:namespace` walk's first step, callable on its own for a
+  namespace whose runners stay.
   """
-  def stop_all_operatives(namespace) do
-    operatives = HubManager.get_all_operatives(namespace)
-    operative_ids = Enum.map(operatives, fn {id, _pid} -> id end)
-
-    undisabled =
-      Enum.reject(operative_ids, fn operative_id ->
-        PluginManager.disable_operative_plugins(namespace, operative_id) == :ok
-      end)
-
-    if undisabled != [] do
-      Logger.warning(
-        "[operative_manager] teardown of #{namespace} could not disable plugins for " <>
-          "#{length(undisabled)} of #{length(operative_ids)} operative(s): " <>
-          "#{inspect(undisabled)}; stopping them anyway"
-      )
-    end
-
-    if operative_ids != [] do
-      _ = Teardown.hub_stop_children(namespace, operative_ids, 15_000)
-
-      Enum.each(operative_ids, &Teardown.delete_operative_state_dir/1)
-    end
-
-    :ok
-  end
+  def stop_all_operatives(namespace), do: Teardown.stop_all(namespace, Shutdown.stop_timeout_ms())
 
   def send_io(operative_id, namespace, message, metadata) do
     with_operative_pid(namespace, operative_id, fn pid ->

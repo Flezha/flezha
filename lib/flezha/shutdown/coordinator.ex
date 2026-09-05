@@ -3,18 +3,19 @@ defmodule Flezha.Shutdown.Coordinator do
   Drives the controller's three-phase graceful shutdown
   (`quiesce → drain → finalise`) on `shutdown/2`.
 
-  - **Quiesce** sets a process-tree-visible flag (`shutting_down?/0`)
+  - **Quiesce** marks the node as quiescing (`Flezha.Shutdown.quiesced?/2`)
     so `Flezha.Service.OperativeManager.start_operative/2` returns
     `{:error, :shutting_down}` and `Flezha.Runner.FleetManager`
-    rejects new runner connect attempts.
-  - **Drain** migrates locally-hosted Operatives to peers while they
-    are still alive: `ProcessHub.Service.Migration.drain/2` per running
-    namespace hub redistributes each child through the migration-consent
-    gate (live HotSwap handover) and force-migrates what still defers at
-    the deadline. The hub supervisor stops only after the drains return.
-    Solo nodes (`{:error, :no_target_nodes}`) skip the migration wait;
-    other drain preconditions degrade to the same path rather than
-    wedging shutdown.
+    rejects new runner connect attempts, and declares `{:node_draining, …}`
+    to the convergence loop so it plans nothing onto this node meanwhile.
+  - **Drain** is the `:node` walk of the shutdown plan: it migrates
+    locally-hosted Operatives to peers while they are still alive —
+    `ProcessHub.Service.Migration.drain/2` per running namespace hub, through
+    the one drain seam, redistributes each child through the migration-consent
+    gate (live HotSwap handover) and force-migrates what still defers at the
+    deadline. The hub supervisor stops only after the drains return. Solo
+    nodes (`{:error, :no_target_nodes}`) skip the migration wait; other drain
+    preconditions degrade to the same path rather than wedging shutdown.
   - **Finalise** flushes `Flezha.State.FsyncBatcher` and stops
     transports so file descriptors/sockets are torn down before the
     application supervision tree's normal shutdown takes over.
@@ -31,14 +32,14 @@ defmodule Flezha.Shutdown.Coordinator do
   use GenServer, shutdown: 30_000
   require Logger
 
+  alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Observability.AuditLog.Writer
   alias Flezha.Service.HubManager
+  alias Flezha.Shutdown
   alias Flezha.Shutdown.SignalHandler
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
-
-  @ets_table __MODULE__.State
 
   @finalise_call_timeout_ms 5_000
   # Slack reserved off the drain budget so finalise still runs inside the
@@ -101,31 +102,11 @@ defmodule Flezha.Shutdown.Coordinator do
     GenServer.call(__MODULE__, :__reset_for_tests__)
   end
 
-  @doc """
-  Hot-path read: returns `true` while the coordinator is in
-  `:quiescing | :draining | :finalising`. Backed by an ETS table so
-  callers do not pay for a GenServer hop.
-  """
-  @spec shutting_down?() :: boolean()
-  def shutting_down?() do
-    case :ets.whereis(@ets_table) do
-      :undefined ->
-        false
-
-      _ ->
-        case :ets.lookup(@ets_table, :phase) do
-          [{:phase, p}] when p in [:quiescing, :draining, :finalising] -> true
-          _ -> false
-        end
-    end
-  end
-
   # ---------- GenServer ----------
 
   @impl true
   def init(_) do
-    :ets.new(@ets_table, [:set, :protected, :named_table, read_concurrency: true])
-    :ets.insert(@ets_table, {:phase, :idle})
+    Shutdown.create_table()
     {:ok, %__MODULE__{}}
   end
 
@@ -156,6 +137,9 @@ defmodule Flezha.Shutdown.Coordinator do
     else
       Logger.info("[shutdown] phase=quiesce reason=#{inspect(reason)}")
       state = transition(state, :quiescing, now)
+      # The loop is told the node is leaving, so it plans nothing onto it
+      # while the drain moves its operatives away.
+      Facts.declare({:node_draining, node(), %{deadline: now + timeout_ms}})
       emit_telemetry(:phase_started, %{}, %{phase: :quiesce})
       send(self(), :do_quiesce)
       {:noreply, state}
@@ -173,7 +157,8 @@ defmodule Flezha.Shutdown.Coordinator do
 
   def handle_call(:__reset_for_tests__, _from, state) do
     if is_reference(state.timeout_timer), do: Process.cancel_timer(state.timeout_timer)
-    :ets.insert(@ets_table, {:phase, :idle})
+    Shutdown.node_phase(:idle)
+    Facts.declare({:node_drained, node(), %{}})
     {:reply, :ok, %__MODULE__{}}
   end
 
@@ -242,6 +227,7 @@ defmodule Flezha.Shutdown.Coordinator do
 
   def handle_info(:do_finalise, %__MODULE__{phase: :finalising} = state) do
     now = monotonic_ms()
+    Facts.declare({:node_drained, node(), %{}})
     safe_close_audit_writer()
     safe_flush_fsync_batcher()
     safe_stop_transports()
@@ -278,7 +264,7 @@ defmodule Flezha.Shutdown.Coordinator do
   # ---------- Phase helpers ----------
 
   defp transition(state, new_phase, now) do
-    :ets.insert(@ets_table, {:phase, new_phase})
+    Shutdown.node_phase(new_phase)
     %{state | phase: new_phase, phase_start_ms: now}
   end
 
@@ -318,7 +304,7 @@ defmodule Flezha.Shutdown.Coordinator do
     )
 
     Enum.each(state.waiters, fn from -> GenServer.reply(from, outcome) end)
-    :ets.insert(@ets_table, {:phase, :done})
+    Shutdown.node_phase(:done)
 
     {:noreply, %{state | phase: :done, outcome: outcome, waiters: []}}
   end
@@ -363,83 +349,18 @@ defmodule Flezha.Shutdown.Coordinator do
     )
   end
 
-  # Runs the per-hub drains off the coordinator loop; one `:drain_progress`
-  # per completed hub, one `{:drain_done, totals}` at the end. Unlinked on
-  # purpose — a crash here is covered by the `:phase_timeout` backstop.
+  # Runs the `:node` walk off the coordinator loop: the drain step drains
+  # every hub concurrently and emits one `:drain_progress` per hub; one
+  # `{:drain_done, totals}` lands here at the end. Unlinked on purpose — a
+  # crash here is covered by the `:phase_timeout` backstop.
   defp start_drain_runner(coordinator, namespaces, budget, phase_start_ms) do
     spawn(fn ->
-      total = length(namespaces)
+      {_outcome, report} =
+        Shutdown.run(:node, %{namespaces: namespaces, phase_start_ms: phase_start_ms}, budget)
 
-      stream =
-        Task.async_stream(
-          namespaces,
-          fn ns -> drain_hub(ns, budget) end,
-          max_concurrency: total,
-          timeout: budget + 2_000,
-          on_timeout: :kill_task
-        )
-
-      {migrated, forced} =
-        namespaces
-        |> Enum.zip(stream)
-        |> Enum.with_index(1)
-        |> Enum.reduce({0, 0}, fn {{ns, task_result}, idx}, {m_acc, f_acc} ->
-          # A task killed by the async_stream timeout degrades like any
-          # other drain error.
-          result =
-            case task_result do
-              {:ok, drain_result} -> drain_result
-              {:exit, reason} -> {:error, {:task_exit, reason}}
-            end
-
-          {m, f} = fold_drain_outcome(ns, result)
-
-          emit_telemetry(
-            :drain_progress,
-            %{
-              migrated: m,
-              forced: f,
-              remaining_hubs: total - idx,
-              elapsed_ms: monotonic_ms() - phase_start_ms
-            },
-            %{namespace: ns}
-          )
-
-          {m_acc + m, f_acc + f}
-        end)
-
-      send(coordinator, {:drain_done, %{migrated: migrated, forced: forced}})
+      totals = Map.get(report.results, :drain, %{migrated: 0, forced: 0})
+      send(coordinator, {:drain_done, totals})
     end)
-  end
-
-  defp drain_hub(ns, budget), do: HubManager.drain_hub(ns, budget_ms: budget)
-
-  # One hub's drain verdict → `{migrated, forced}`. Every error degrades to
-  # the no-peer path: the operatives terminate with the hub supervisor and
-  # the next boot restores them from on-disk WAL/snapshot — never a wedge.
-  defp fold_drain_outcome(ns, {:ok, %{migrated: migrated, forced: forced}}) do
-    if forced > 0 do
-      Logger.warning("[shutdown] drain ns=#{ns} force-migrated #{forced} deferred operative(s)")
-    end
-
-    {migrated, forced}
-  end
-
-  defp fold_drain_outcome(_ns, {:error, :no_target_nodes}) do
-    Logger.info(
-      "[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot"
-    )
-
-    {0, 0}
-  end
-
-  defp fold_drain_outcome(ns, {:error, reason}) do
-    Logger.warning(
-      "[shutdown] drain ns=#{ns} degraded (#{inspect(reason)}); " <>
-        "local operatives terminate and restore on next boot"
-    )
-
-    {0, 0}
   end
 
   defp safe_close_audit_writer() do

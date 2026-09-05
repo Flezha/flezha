@@ -97,7 +97,7 @@ defmodule Flezha.State.Retention do
   # Finished-job retention: reclaim a finished workflow operative's retained
   # state + completion record once `finished_at + completed_retention_hours`
   # is in the past. A finished operative is fully torn down (no live writer), so
-  # the whole class dir is safe to remove wholesale.
+  # the whole class dir goes, through the one guard every state deletion passes.
   defp sweep_completed() do
     now = System.system_time(:second)
 
@@ -106,7 +106,7 @@ defmodule Flezha.State.Retention do
              Completion.read(operative_class),
            window = PersistenceResolver.completed_retention_hours(operative_class),
            true <- finished_at + window * 3600 < now do
-        _ = File.rm_rf(Paths.class_dir(operative_class))
+        Paths.delete_class_dir(operative_class)
       else
         _ -> :ok
       end

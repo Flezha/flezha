@@ -23,12 +23,15 @@ defmodule Flezha.Operative.Migration do
   alias Flezha.Runner.ControlUnit
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Shutdown
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
   alias ProcessHub.Service.Migration, as: HubMigration
 
   require Logger
+
+  @behaviour Flezha.Shutdown.Step
 
   @doc """
   Suspend a workflow instance parked at the committed boundary of iteration
@@ -265,30 +268,65 @@ defmodule Flezha.Operative.Migration do
   end
 
   @doc """
-  Process teardown — the one teardown seam, deliberate stops included: the hub
-  stop path terminates the Overwatch through its supervisor, so everything a
-  stop owes runs here. Evicts the in-memory class entry; the durable sidecar
-  stays for the process-less retention sweep over any retained finished-job
-  state.
+  Process teardown — the `:process` walk of the shutdown plan, deliberate stops
+  included: the hub stop path terminates the Overwatch through its supervisor,
+  so everything a stop owes runs here, as the steps this module declares.
+  Evicts the in-memory class entry; the durable sidecar stays for the
+  process-less retention sweep over any retained finished-job state.
   """
   @spec terminate(Overwatch.t(), term()) :: :ok
   def terminate(%Overwatch{} = state, reason) do
-    # Kill any in-flight un-park task FIRST: left running, it would bind a
-    # runner for an operative that is being torn down.
-    state = terminate_migrate_task(state)
-
-    _ = ClassRegistry.delete(Overwatch.operative_class(state))
-
-    unless is_nil(state.runner_id) do
-      ControlUnit.stop_operative_async(state.runner_id, state.id)
-      Plugins.fire_on_terminate(state, reason)
-      _ = Plugins.unregister(Table.teardown_all(state.extensions))
-    end
+    _ = Shutdown.run(:process, {state, reason}, Shutdown.process_budget_ms())
 
     Logger.info(
       "Terminating operative #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
     )
 
+    :ok
+  end
+
+  # The `:process` steps, in order: the in-flight un-park task FIRST (left
+  # running, it would bind a runner for an operative that is being torn down),
+  # the class entry, the runner's copy of the operative, and the plugin table
+  # ONCE — the on-terminate hooks of a bound operative, then every subscriber
+  # and its registration, bound or not, so a prepared provider's pid never
+  # outlives its host.
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [
+      %{scope: :process, order: 10, name: :migrate_task, run: &migrate_task_step/2},
+      %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
+      %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
+      %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
+    ]
+  end
+
+  defp migrate_task_step({state, _reason}, _budget) do
+    _ = terminate_migrate_task(state)
+    :ok
+  end
+
+  defp class_registry_step({state, _reason}, _budget) do
+    _ = ClassRegistry.delete(Overwatch.operative_class(state))
+    :ok
+  end
+
+  defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
+
+  # A runner whose control unit has already gone holds nothing of this
+  # operative left to release, so there is nothing to tell it — and the walk
+  # must go on to the plugin table rather than halt with the subscribers'
+  # owned pids still alive.
+  defp control_unit_step({state, _reason}, _budget) do
+    case ControlUnit.stop_operative_async(state.runner_id, state.id) do
+      {:error, :no_control_unit} -> :ok
+      other -> other
+    end
+  end
+
+  defp plugin_table_step({state, reason}, _budget) do
+    unless is_nil(state.runner_id), do: Plugins.fire_on_terminate(state, reason)
+    _ = Plugins.unregister(Table.teardown_all(state.extensions))
     :ok
   end
 
@@ -354,8 +392,8 @@ defmodule Flezha.Operative.Migration do
   # terminate / result-application surface is reviewable as a single unit.
   # ---------------------------------------------------------------
 
-  # Terminate any in-flight un-park task so teardown is never blocked by
-  # the bounded-retry ladder running inside it.
+  # Terminate any in-flight un-park task so teardown is never blocked by the
+  # bind running inside it.
   @spec terminate_migrate_task(Overwatch.t()) :: Overwatch.t()
   def terminate_migrate_task(%Overwatch{migrate_task: nil} = state), do: state
 
@@ -366,8 +404,9 @@ defmodule Flezha.Operative.Migration do
   end
 
   @doc """
-  Run `complete_init/4` in a task so the heavy bounded-retry path never blocks
-  the Overwatch. Returns the task's `{ref, pid}`.
+  Run `complete_init/4` in a task so a slow bind never blocks the Overwatch.
+  The task reports its outcome and decides nothing: a failure is a park the
+  Overwatch declares. Returns the task's `{ref, pid}`.
   """
   @spec spawn_migrate_task({:unpark, Overwatch.t(), binary()}) :: {reference(), pid()}
   def spawn_migrate_task({:unpark, state, new_runner_id}) do

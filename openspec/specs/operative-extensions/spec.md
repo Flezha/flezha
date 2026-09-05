@@ -153,11 +153,11 @@ For `:fold`, `:transform`, and `:fanout` extensions, the system SHALL build the 
 
 ### Requirement: Subscriber lifecycle owned by Extension.Table
 
-The system SHALL place all subscriber-owned runtime state — monitor refs for spawned subscriber pids, timer refs for `:timer` subscriptions, retry-backoff counters, and `PluginManager` registrations — inside `Flezha.Plugin.Extension.Table`. The host process SHALL forward `{:DOWN, ref, :process, pid, reason}`, `{:extension_timer, name, plugin_id}`, and `{:retry_plugin_restart, plugin_id}` messages into the table, which MUST resolve them to the owning subscriber and apply the extension-kind-appropriate policy.
+The system SHALL place all subscriber-owned runtime state — monitor refs for spawned subscriber pids, timer refs for `:timer` subscriptions, each subscriber's lifecycle phase with its `started_at`, and `PluginManager` registrations — inside `Flezha.Plugin.Extension.Table`. The host process SHALL forward `{:DOWN, ref, :process, pid, reason}` and `{:extension_timer, name, plugin_id}` messages into the table, which MUST resolve them to the owning subscriber. The table SHALL hold no retry counter, retry timer or restart policy: a subscriber's `DOWN` is recorded as the phase `{:down, reason}` and declared to the convergence loop as `{:plugin_down, namespace, operative_id, plugin_id}`, and the restart is the loop's `restart_plugin` primitive, executed through `Extension.Table.attempt_restart/3` and keyed per plugin. The stable-uptime rule survives as that primitive's evidence: its key resets only on `:running` observed for the stable window, read from the table's `started_at`.
 
 #### Scenario: DOWN for subscriber-owned pid
 - **WHEN** the host process receives `{:DOWN, ref, :process, pid, reason}` where `ref` belongs to a subscriber
-- **THEN** `Extension.Table.handle_down/5` MUST resolve `ref` to the owning plugin, apply its restart policy, and return updated table state
+- **THEN** `Extension.Table.handle_down/5` MUST resolve `ref` to the owning plugin, record its phase as `{:down, reason}`, declare `{:plugin_down, …}` and return updated table state; it MUST NOT spawn a restart or arm a timer
 
 #### Scenario: DOWN for unrelated pid
 - **WHEN** the host process receives `{:DOWN, ref, :process, pid, reason}` where `ref` does not belong to any subscriber
@@ -166,6 +166,11 @@ The system SHALL place all subscriber-owned runtime state — monitor refs for s
 #### Scenario: Teardown releases every resource
 - **WHEN** `Extension.Table.teardown_all/1` is invoked
 - **THEN** every subscriber-owned monitor MUST be demonitored, every timer ref MUST be cancelled, every subscriber-owned pid MUST be signalled to stop, and every `PluginManager` registration MUST be released
+
+#### Scenario: A crashing plugin throttles no sibling
+- **GIVEN** an operative with two declared plugins, one crashing on every start
+- **WHEN** the loop plans across ticks
+- **THEN** the crashing plugin's `{restart_plugin, {id, plugin_id}}` key walks the table while the sibling's key is untouched, and the sibling's start is never delayed by the crash
 
 ### Requirement: Subscription ordering for ordered kinds
 

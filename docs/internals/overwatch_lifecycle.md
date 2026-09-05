@@ -31,10 +31,10 @@ ingest entry points. What the convergence loop does *to* an Overwatch is in
      `Flezha.Plugin.Extension.Table` and open no upstream connection.
    - **resolve init values** — `Plugins.resolve_init_state/2` runs the
      `:on_operative_init` fold chain unless inline `init_values` are non-empty.
-   - **start the SDK with retry** — `start_operative_sdk_with_retry/2` repeats
-     ping → `AddOperative` under the retry ladder below, re-resolving the live
-     runner on every attempt so a runner that came online during a backoff is
-     picked up; the binding is committed to the runner the ladder ended on.
+   - **start the SDK, once** — the live runner is re-resolved, then ONE
+     ping → `AddOperative` attempt is made; the binding is committed to the
+     runner it was made on. A failure parks; the next attempt is the
+     convergence loop's.
    - **decode declarations** — the class's SDK-side declarations ride the
      `AddOperative` response (`effectively_once`, `correction_window_ms`) and
      are resolved before activation so source adapters pick the tier's
@@ -49,29 +49,33 @@ ingest entry points. What the convergence loop does *to* an Overwatch is in
 
 ## Ping before `AddOperative`
 
-Each attempt issues a `Ping` control-channel round trip
+The attempt issues a `Ping` control-channel round trip
 (`Flezha.Runner.ControlUnit.ping_runner/2`, deadline
 `:overwatch_ping_timeout_ms`) before `AddOperative`. It traverses the same
 `ControlChannel → SDK → ControlChannel` path, so a successful round trip proves
 the channel is bound and the reply path intact. The gate is
 `:overwatch_ping_enabled` (default `true`).
 
-A ping failure resets the runner's control channel
-(`Flezha.Runner.FleetManager.reset_control_channel/1`, clearing the
-`ControlChannel`'s `stream_ref` so the SDK's next data stream claims it through
-the rebind path) only when the failure is **not** a timeout, or on the
-ladder's **last** attempt whatever the reason. A timeout on an earlier attempt
-never resets: the runner is busy, the channel is live and carries every other
-instance on that runner, and one instance's timeout must not cut it for all of
-them. The timeout class is `:timeout`, `{:control_unit_exit, {{:timeout, _}, _}}`
-and `{:control_unit_exit, {:timeout, _}}`.
+A ping failure does not reset the channel here. The attempt parks the operative
+with the ping's reason, and `Lifecycle.park/2` classifies what that reason says
+about the transport (`transport_verdict/1`: `:dead`, `:busy`, or unclassified)
+and declares both to the convergence loop. The loop plans
+`reset_control_channel` for the runner — before the rebind when the transport is
+dead, and only once the `{:parked, id}` key has walked two rungs when the ping
+merely timed out, because the channel is live and carries every other instance
+on that runner. The timeout class is `:timeout`,
+`{:control_unit_exit, {{:timeout, _}, _}}` and `{:control_unit_exit, {:timeout, _}}`.
 
-## Retry ladder and the parked-error state
+## One attempt, and the parked-error state
 
-`:overwatch_retry_backoff_ms` (default `[200, 500, 1_000, 2_000, 5_000,
-10_000]`) is the per-attempt delay schedule; each wait is `1..delay` ms (full
-jitter). When the ladder exhausts, the Overwatch **parks** instead of crashing
-its supervisor:
+There is no retry ladder in the Overwatch: it holds no delay list, no jitter and
+no per-attempt runner re-resolution. When the one attempt fails the Overwatch
+**parks** instead of crashing its supervisor, declares
+`{:operative_parked, namespace, operative_id, reason}`, and the loop drives the
+un-park `rebind_operative` on the `{:parked, operative_id}` key of its own table
+— eligible at the declaring tick, then 5 s, 30 s, 60 s, 300 s. A runner
+connecting in the namespace releases every parked key in it, so a runner
+arriving mid-cooldown is used at once.
 
 | While parked | Behaviour |
 |---|---|
@@ -132,7 +136,6 @@ these verdicts: [`../plugins/operative_forward.md`](../plugins/operative_forward
 
 | Key | Default | Purpose |
 |---|---|---|
-| `:overwatch_retry_backoff_ms` | `[200, 500, 1_000, 2_000, 5_000, 10_000]` | per-attempt delay schedule, full jitter |
 | `:overwatch_runner_wait_ms` | `30_000` | how long the bind waits for an active runner |
 | `:overwatch_ping_timeout_ms` | `2_000` | per-ping deadline |
 | `:overwatch_ping_enabled` | `true` | gate for the ping pre-check |

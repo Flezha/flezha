@@ -7,26 +7,32 @@ defmodule Flezha.Convergence.Loop.State do
   that owns it — a sibling naming its parent is a dependency cycle, and the
   struct is the one thing all four genuinely share.
 
-  Field groups, in order: the two resolved intervals; the heal backoff; the
-  per-operative streak and stall bookkeeping the tick carries between ticks;
-  the data-plane and producing-liveness verdicts; and the intent-mismatch
-  evidence cache.
+  Field groups, in order: the two resolved intervals and the tick timer; the
+  heal backoff; the declared facts and the per-operative streak the tick
+  carries between ticks; the data-plane and producing-liveness verdicts; and
+  the intent-mismatch evidence cache.
   """
 
   alias Flezha.Convergence.Backoff
 
   @default_tick_ms 5_000
-  @default_output_stall_grace_ms 60_000
+  @default_grace_ms 60_000
 
   defstruct tick_ms: @default_tick_ms,
-            output_stall_grace_ms: @default_output_stall_grace_ms,
+            # Grace after which a declared fact nothing re-declares ages out,
+            # and the STUCK grace of the producing-liveness classifier.
+            fact_grace_ms: @default_grace_ms,
+            # The periodic tick's timer, and whether an immediate one is
+            # already on its way — declarations arriving before it runs fold
+            # into that one tick.
+            tick_timer: nil,
+            tick_pending?: false,
             backoff: Backoff.new(),
+            # {kind, target} => %{at, args}: everything a site declared through
+            # `Flezha.Convergence.Facts.declare/1` that is not yet repaired.
+            facts: %{},
             # {namespace, operative_id} => consecutive ticks observed misbound.
             misbound_streaks: %{},
-            # operative_instance => monotonic_ms when last flagged stalled.
-            # Reported to /healthz as degraded and healed by the output-stall
-            # ladder (resync, then rebind). Entries age out after the grace.
-            stalled_operatives: %{},
             # operative_ids whose declared plugins were missing or self-reported
             # unhealthy on the last tick. Reported to /healthz as degraded;
             # kept only to log set transitions, not steady state.
@@ -62,7 +68,7 @@ defmodule Flezha.Convergence.Loop.State do
   @spec default_tick_ms() :: pos_integer()
   def default_tick_ms, do: @default_tick_ms
 
-  @doc "Output-stall grace when neither an option nor app config sets one."
+  @doc "Fact grace when neither an option nor app config sets one."
   @spec default_output_stall_grace_ms() :: pos_integer()
-  def default_output_stall_grace_ms, do: @default_output_stall_grace_ms
+  def default_output_stall_grace_ms, do: @default_grace_ms
 end

@@ -1,13 +1,112 @@
 defmodule Flezha.Service.OperativeManager.Teardown do
   @moduledoc """
-  Stopping children through the hub and reclaiming what they leave on disk.
+  What an operative stop owes, as the `:operative` steps of the shutdown plan:
+  the runner's stream channels flushed, the child stopped through the hub, the
+  state directory reclaimed, and the quota released — each once, in that
+  order. The `:namespace` walk stops every child of a namespace through the
+  same seam.
   """
 
-  require Logger
-
+  alias Flezha.AuthZ.Quotas
   alias Flezha.Identificator
+  alias Flezha.Runner.StreamPool
+  alias Flezha.Service.HubManager
   alias Flezha.State.Completion
   alias Flezha.State.Paths
+
+  @behaviour Flezha.Shutdown.Step
+
+  @typedoc """
+  The `:operative` walk's target: the operative, the runner it is bound to (or
+  `nil`), whether its state stays on disk (a rescale moving it), and the
+  Entity count its start allocated.
+  """
+  @type target :: %{
+          namespace: binary(),
+          operative_id: binary(),
+          runner_id: binary() | nil,
+          preserve_state?: boolean(),
+          entity_count: non_neg_integer()
+        }
+
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [
+      %{scope: :operative, order: 10, name: :stream_flush, run: &stream_flush_step/2},
+      %{scope: :operative, order: 20, name: :hub_stop, run: &hub_stop_step/2},
+      %{scope: :operative, order: 30, name: :state_dir, run: &state_dir_step/2},
+      %{scope: :operative, order: 40, name: :quota, run: &quota_step/2},
+      %{scope: :namespace, order: 10, name: :operatives, run: &operatives_step/2}
+    ]
+  end
+
+  # Flush the runner's stream channels before the child is deregistered: a
+  # frame already queued there is routed, never counted, so nothing the runner
+  # wrote is lost to the teardown (`fix-workflow-teardown-drain`).
+  defp stream_flush_step(%{runner_id: nil}, _budget), do: :ok
+
+  defp stream_flush_step(%{runner_id: runner_id}, _budget) do
+    _ = StreamPool.flush_channels(runner_id)
+    :ok
+  catch
+    # A runner whose channels are already gone has nothing left to flush.
+    _kind, _reason -> :ok
+  end
+
+  defp hub_stop_step(%{namespace: namespace, operative_id: operative_id}, budget) do
+    case hub_stop_children(namespace, [operative_id], budget) do
+      :ok ->
+        :ok
+
+      {:error, errors} when is_list(errors) ->
+        case List.keyfind(errors, operative_id, 0) do
+          {_cid, reason} -> {:error, reason}
+          nil -> {:error, :stop_failed}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # A stop that is a move — a rescale taking the group down to redistribute
+  # its Entities — keeps the files: they are the state about to be handed to
+  # another member, not garbage.
+  defp state_dir_step(%{preserve_state?: true}, _budget), do: :ok
+
+  defp state_dir_step(%{operative_id: operative_id}, _budget),
+    do: delete_operative_state_dir(operative_id)
+
+  # Released symmetrically with the start: the operative, and the Entities its
+  # class declared.
+  defp quota_step(%{namespace: namespace, entity_count: count}, _budget) do
+    _ = Quotas.record_deallocation(namespace, :max_operatives, 1)
+
+    if count > 0,
+      do: _ = Quotas.record_deallocation(namespace, :max_entities_per_operative, count)
+
+    :ok
+  end
+
+  defp operatives_step(%{namespace: namespace}, budget), do: stop_all(namespace, budget)
+
+  @doc """
+  Stop every operative in `namespace` through the hub, in one call, and
+  reclaim each one's state directory. Quotas are not released: the namespace
+  is going away with its ledger.
+  """
+  @spec stop_all(binary(), non_neg_integer()) :: :ok
+  def stop_all(namespace, budget) do
+    operative_ids =
+      namespace |> HubManager.get_all_operatives() |> Enum.map(fn {id, _pid} -> id end)
+
+    if operative_ids != [] do
+      _ = hub_stop_children(namespace, operative_ids, budget)
+      Enum.each(operative_ids, &delete_operative_state_dir/1)
+    end
+
+    :ok
+  end
 
   # The ONE seam flezha stops children through: the hub's precommit removes
   # each declared-set entry BEFORE anything terminates (remove-before-terminate),
@@ -36,10 +135,9 @@ defmodule Flezha.Service.OperativeManager.Teardown do
   # On explicit stop, delete the on-disk state directories owned by the
   # operative. The operative_id is used as the operative_class identifier — the SDK
   # convention is that each operative's entity frames carry the operative_id
-  # as operative_class. State files written under `app_data/state/<operative_id>/`
-  # are removed; any procedure directory containing a `.tmp` or `.rewriting`
-  # marker is skipped (with WARN) because a write is in flight and
-  # truncating it would corrupt the rename ceremony.
+  # as operative_class. A finished workflow operative keeps its state and
+  # completion record for the retention window so the outcome stays
+  # inspectable; `Flezha.State.Retention` reclaims it once the window elapses.
   #
   # `child_unregistered_hook` deliberately does NOT call this — HotSwap
   # source-side and redistribution-away preserve files so the
@@ -48,53 +146,6 @@ defmodule Flezha.Service.OperativeManager.Teardown do
     # Retained or deleted, the writer processes go with the operative.
     Flezha.State.Supervisor.close_writers(operative_id)
 
-    if Completion.exists?(operative_id) do
-      # Finished workflow operative: retain its state + completion record for the
-      # retention window so the outcome stays inspectable; `Flezha.State.Retention`
-      # reclaims it once the window elapses.
-      :ok
-    else
-      do_delete_operative_state_dir(operative_id)
-    end
-  end
-
-  defp do_delete_operative_state_dir(operative_id) do
-    class_dir = Paths.class_dir(operative_id)
-
-    case File.ls(class_dir) do
-      {:ok, procedure_names} ->
-        Enum.each(procedure_names, fn procedure ->
-          procedure_dir = Path.join(class_dir, procedure)
-          maybe_delete_procedure(procedure_dir)
-        end)
-
-        _ = File.rmdir(class_dir)
-        :ok
-
-      {:error, :enoent} ->
-        :ok
-
-      {:error, _reason} ->
-        :ok
-    end
-  end
-
-  defp maybe_delete_procedure(procedure_dir) do
-    case File.ls(procedure_dir) do
-      {:ok, names} ->
-        if Enum.any?(names, fn n ->
-             String.ends_with?(n, ".tmp") or String.ends_with?(n, ".rewriting")
-           end) do
-          Logger.warning(
-            "[operative_manager] skipping state dir #{procedure_dir}: write in flight " <>
-              "(.tmp / .rewriting present)"
-          )
-        else
-          _ = File.rm_rf(procedure_dir)
-        end
-
-      {:error, _} ->
-        :ok
-    end
+    if Completion.exists?(operative_id), do: :ok, else: Paths.delete_class_dir(operative_id)
   end
 end

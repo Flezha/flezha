@@ -403,7 +403,6 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:wal_low_watermark_bytes` | half the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_hard_watermark_bytes` | 4 × the high watermark (derived) | `lib/flezha/state/wal_writer.ex` |
 | `:wal_pending_msg_cap` | `5_000` | `lib/flezha/state/wal_writer.ex` |
-| `:wal_resync_retry_interval_ms` | `1_000` | `lib/flezha/state/wal_writer.ex` |
 | `:outbox_inflight_max` | `1_000` | `lib/flezha/state/wal_writer.ex` |
 | `:outbox_resettle_ms` | `60_000` | `lib/flezha/state/wal_writer.ex` |
 | `:source_credit_window_bytes` | `:wal_high_watermark_bytes` (derived) | `lib/flezha/state/input_log.ex` |
@@ -433,10 +432,8 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:overwatch_ping_enabled` | `true` | `lib/flezha/operative/lifecycle.ex` |
 | `:overwatch_ping_timeout_ms` | `2_000` | `lib/flezha/runner/control_unit.ex` |
 | `:overwatch_proc_warn_ms` | `2_000` | `lib/flezha/operative/overwatch.ex` |
-| `:overwatch_retry_backoff_ms` | `[200, 500, 1_000, 2_000, 5_000, 10_000]` | `lib/flezha/operative/lifecycle.ex` |
 | `:overwatch_runner_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
 | `:stream_bind_wait_ms` | `30_000` | `lib/flezha/operative/lifecycle.ex` |
-| `:plugin_retry_base_delay_ms` | `4_000` | `lib/flezha/plugin/extension/table.ex` |
 | `:correction_debounce_ms` | `200` | `lib/flezha/operative/replay.ex` |
 | `:bind_restore_concurrency` | `16` | `lib/flezha/operative/replay.ex` — how many of a class's Entities a bind restores at once |
 | `:control_unit_heartbeat_interval_ms` | `15_000` | `lib/flezha/runner/control_unit.ex` |

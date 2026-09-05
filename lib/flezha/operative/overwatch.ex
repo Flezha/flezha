@@ -15,6 +15,7 @@ defmodule Flezha.Operative.Overwatch do
   journaled while it runs.
   """
 
+  alias Flezha.Convergence.Facts
   alias Flezha.Operative.Handover
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Lifecycle
@@ -75,7 +76,7 @@ defmodule Flezha.Operative.Overwatch do
     # stall can be localised to "WS plugin stopped feeding" vs "operative stopped
     # forwarding to the channel".
     liveness_ref: nil,
-    # The `:runner_migrate` retry runs in a `Task.Supervisor.async_nolink/3`
+    # The un-park `:runner_migrate` runs in a `Task.Supervisor.async_nolink/3`
     # task so it never blocks the Overwatch; this field carries the in-flight
     # task's reference + pid so `terminate/2` can kill it cleanly. `nil`
     # when no migrate is in flight.
@@ -367,11 +368,11 @@ defmodule Flezha.Operative.Overwatch do
     read_entity_state(state, from, selector)
   end
 
-  # Async `:runner_migrate` for the PARKED un-park path only — that's
-  # where the bounded retry loop (up to 19 s aggregate) actually lives.
-  # The running-migrate path is a single ping + start round-trip; keeping it
-  # synchronous preserves the existing HotSwap handover invariants that depend
-  # on state being applied before the call returns.
+  # Async `:runner_migrate` for the PARKED un-park path only — the whole
+  # bind (prepare, restore, replay) runs there. The running-migrate path is a
+  # single ping + start round-trip; keeping it synchronous preserves the
+  # existing HotSwap handover invariants that depend on state being applied
+  # before the call returns.
   @impl true
   def handle_call({:runner_migrate, _}, _from, %__MODULE__{migrate_task: t} = state)
       when t != nil do
@@ -402,6 +403,17 @@ defmodule Flezha.Operative.Overwatch do
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
+
+  # The convergence loop's `publish_binding`: re-write the durable row and the
+  # runner's route from the binding this process holds. Must run here — the
+  # route points at `self()`.
+  @impl true
+  def handle_call(:publish_binding, _from, %__MODULE__{runner_id: runner_id} = state)
+      when is_binary(runner_id) do
+    {:reply, :ok, Lifecycle.publish_binding(state)}
+  end
+
+  def handle_call(:publish_binding, _from, state), do: {:reply, {:error, :unbound}, state}
 
   @impl true
   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
@@ -684,29 +696,6 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
-  def handle_info({:retry_plugin_restart, plugin_id}, state) do
-    {:noreply, %{state | extensions: Table.retry(state.extensions, plugin_id)}}
-  end
-
-  # Dispatched from inside the registry write, so this runs after it: whoever
-  # wrote last, the row ends up naming the runner this process is bound to.
-  @impl true
-  def handle_info(
-        {:reassert_binding, operative_id},
-        %__MODULE__{id: operative_id, runner_id: runner_id} = state
-      )
-      when is_binary(runner_id) do
-    if HubManager.operative_runner_tag(state.namespace, operative_id) != runner_id do
-      _ = HubManager.operative_set_runner(state.namespace, operative_id, runner_id)
-    end
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({:reassert_binding, _operative_id}, state), do: {:noreply, state}
-
-  @impl true
   def handle_info({:flezha_request, handler_key, payload, reply_to, ref}, state) do
     Plugins.handle_request(state, handler_key, payload, reply_to, ref)
     {:noreply, state}
@@ -726,9 +715,16 @@ defmodule Flezha.Operative.Overwatch do
     end
   end
 
+  # A crashed subscriber is recorded by the table and declared here: the table
+  # is a data structure and decides nothing, and the restart is the loop's.
   defp plugin_down(%__MODULE__{} = state, ref, pid, reason) do
     case Table.handle_down(state.extensions, ref, pid, reason) do
       {:ok, table} ->
+        for plugin_id <-
+              Map.keys(Table.down_ids(table)) -- Map.keys(Table.down_ids(state.extensions)) do
+          Facts.declare({:plugin_down, {state.namespace, state.id, plugin_id}, %{reason: reason}})
+        end
+
         %{state | extensions: table}
 
       :ignore ->

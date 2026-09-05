@@ -104,10 +104,8 @@ defmodule Flezha.Service.HubManager.Rows do
   Returns `nil` when no live pid remains.
 
   This centralises the multi-node-safe access that replaced the former
-  single-element `[{_node, pid}]` matches in `get_all_operatives/1` and
-  `Flezha.Runner.FleetManager.runner_reroute/4` — either of which raised
-  `FunctionClauseError` the moment a operative was registered on more than
-  one node.
+  single-element `[{_node, pid}]` matches, which raised `FunctionClauseError`
+  the moment a operative was registered on more than one node.
   """
   @spec live_pid([{node(), pid()}]) :: pid() | nil
   def live_pid(node_pids) when is_list(node_pids) do
@@ -378,6 +376,21 @@ defmodule Flezha.Service.HubManager.Rows do
   """
   def registered_operatives?(namespace) do
     Identificator.hub(namespace) |> durable_operative_keys() != []
+  end
+
+  @doc """
+  True when THIS node still hosts operatives of `namespace`'s hub — the
+  question a node-local reclaim asks, as opposed to the cluster-wide
+  `registered_operatives?/1`. A hub that cannot be read answers `true`: a
+  read that failed proves nothing, and nothing is torn down on it.
+  """
+  @spec local_operatives?(binary()) :: boolean()
+  def local_operatives?(namespace) do
+    with_live_hub(namespace, true, fn hub_id ->
+      ProcessHub.process_list(hub_id, :local) != []
+    end)
+  catch
+    _kind, _reason -> true
   end
 
   @doc false

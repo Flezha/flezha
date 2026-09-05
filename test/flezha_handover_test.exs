@@ -81,9 +81,19 @@ defmodule FlezhaTest.Handover do
     assert m.migrated >= 1
     assert m.forced == 0
 
-    {:ok, ow_state} = OperativeManager.get_overwatch_state(@default_namespace, operative_id)
-
-    assert ow_state.arrived_via_hotswap?,
+    # The drain reports when the local children are gone, which is the last
+    # step the departing node controls; the registry row naming their new home
+    # converges just after, so poll for it.
+    assert NodeTestHelper.wait_until(
+             fn ->
+               match?(
+                 {:ok, %{arrived_via_hotswap?: true}},
+                 OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+               )
+             end,
+             5_000,
+             25
+           ),
            "expected live HotSwap handover, not a WAL cold restore"
 
     {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
@@ -145,9 +155,20 @@ defmodule FlezhaTest.Handover do
     assert m.forced >= 1
 
     # Forced onto this node through the best-effort handover: state carried,
-    # protocol still live.
-    {:ok, ow_state} = OperativeManager.get_overwatch_state(@default_namespace, operative_id)
-    assert ow_state.arrived_via_hotswap?
+    # protocol still live. The drain reports when the local children are gone,
+    # which is the last step the departing node controls — the registry row
+    # naming their new home converges just after, so poll for it.
+    assert NodeTestHelper.wait_until(
+             fn ->
+               match?(
+                 {:ok, %{arrived_via_hotswap?: true}},
+                 OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+               )
+             end,
+             5_000,
+             25
+           ),
+           "the operative must become addressable at its new home after the forced handover"
 
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "after_force", %{})
     {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
@@ -218,6 +239,13 @@ defmodule FlezhaTest.Handover do
     operative_id_1 = "operative_1"
     operative_id_2 = "operative_2"
 
+    # The disconnect is declared and the LOOP rebinds; nothing reroutes inside
+    # the session handler any more. Reset the recovery cache before any hub
+    # exists, so this namespace's own hub seeds itself `:normal` and the gate
+    # does not exclude it.
+    ConvergenceSnapshot.reset_recovery_states()
+    {:ok, _} = start_supervised({Loop, tick_ms: 1_000})
+
     # Start 2 runners under the same namespace.
     runner_id_1 = NodeTestHelper.start_runner(namespace)
     runner_id_2 = NodeTestHelper.start_runner(namespace)
@@ -247,9 +275,9 @@ defmodule FlezhaTest.Handover do
     # Trigger the runner disconnect.
     NodeTestHelper.stop_runner(namespace, pipe1_op)
 
-    # Make sure all the operatives are migrated to the other runner. The
-    # reroute rebinds each operative off the disconnect handler and commits
-    # only on a confirmed migrate, so the tags land asynchronously.
+    # Make sure all the operatives are migrated to the other runner. The loop
+    # plans `rebind_operative` from the declared disconnect and commits only on
+    # a confirmed migrate, so the tags land asynchronously.
     assert NodeTestHelper.wait_until(
              fn ->
                OperativeManager.operative_registry(namespace)
@@ -408,7 +436,16 @@ defmodule FlezhaTest.Handover do
     num_operatives = 15
     operative_ids = for i <- 1..num_operatives, do: "operative_#{i}"
 
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
+    # Losing the last local runner is the loop's `replace_operative`, per child
+    # through the consent gate — no hub drain. Both controllers heal, as they
+    # do in production: the peer's own Loop is the only one that may re-place
+    # the operatives it hosts.
+    {:ok, _} = start_supervised({Loop, tick_ms: 1_000})
+
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(:anode1,
+        app_env: [convergence_health_enabled: true, convergence_tick_ms: 1_000]
+      )
 
     # Start the runners.
     runner_id_1 = NodeTestHelper.start_runner(namespace)
@@ -539,7 +576,14 @@ defmodule FlezhaTest.Handover do
            ),
            "operative states did not survive the cross-controller migration"
 
-    assert length(HubManager.get_hub_nodes(namespace, true)) === 1
+    # A controller whose fleet does not serve the namespace leaves its
+    # cluster on the loop's next tick after it re-places its last operative,
+    # so this is an eventual property like the two above it.
+    assert NodeTestHelper.wait_until(
+             fn -> length(HubManager.get_hub_nodes(namespace, true)) === 1 end,
+             10_000
+           ),
+           "the peer kept a hub for a namespace its fleet cannot serve"
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end

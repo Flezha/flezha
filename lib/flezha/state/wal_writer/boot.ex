@@ -38,7 +38,7 @@ defmodule Flezha.State.WalWriter.Boot do
       latency_reservoir: :queue.new(),
       backpressured?: false,
       shedding?: false,
-      last_resync_at: nil,
+      gap_open?: false,
       awaiting_baseline?: false,
       oldest_unsnapshotted_at: nil,
       credit_pending: %{},

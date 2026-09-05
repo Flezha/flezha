@@ -1,24 +1,15 @@
 defmodule Flezha.Plugin.Extension.Table.Health do
   @moduledoc """
-  The extension table's health verdicts and its restart-backoff arithmetic:
-  `monitors`, `retries` and `started_at` are the only fields it touches.
+  The extension table's health verdicts, and the monitor, timer and owned-pid
+  hygiene a teardown needs.
 
   It takes the table as a plain map and never names `Extension.Table`, so the
-  dependency runs one way — deciding to restart is here, performing one is the
-  table's.
+  dependency runs one way. It decides no restart: a crashed subscriber is the
+  convergence loop's to restart, on the loop's own table.
   """
 
   alias Flezha.Plugin
   alias Flezha.Plugin.ProviderBehaviour
-
-  require Logger
-
-  # Restart backoff: only reset the retry counter once an owned pid has stayed
-  # up at least this long, so a provider that fails fast (e.g. a WS whose
-  # upstream keeps 429-ing) accumulates backoff instead of hammering.
-  @stable_uptime_ms 60_000
-  @max_retry_delay_ms 60_000
-  @retry_base_delay_ms 4_000
 
   @doc """
   Health verdict for every plugin on the table. Only `:running` plugins are
@@ -91,52 +82,12 @@ defmodule Flezha.Plugin.Extension.Table.Health do
     kind, reason -> ProviderBehaviour.fail_open(plugin_id, provider, {kind, reason})
   end
 
-  @doc "Drop the retry counter once the owned pid has stayed up long enough."
-  @spec reset_retries_if_stable(map(), binary()) :: map()
-  def reset_retries_if_stable(table, plugin_id) do
-    case Map.get(table.started_at, plugin_id) do
-      nil ->
-        table
-
-      started_at ->
-        uptime = :erlang.monotonic_time(:millisecond) - started_at
-
-        if uptime >= @stable_uptime_ms do
-          %{table | retries: Map.delete(table.retries, plugin_id)}
-        else
-          table
-        end
-    end
-  end
-
-  @doc "Arm the next restart attempt for `plugin_id` under the backoff ladder."
-  @spec schedule_retry(map(), binary()) :: map()
-  def schedule_retry(table, plugin_id) do
-    count = Map.get(table.retries, plugin_id, 0)
-    delay = retry_delay(count)
-
-    Logger.info(
-      "[Extension.Table] scheduling retry plugin_id=#{plugin_id} delay_ms=#{delay} attempt=#{count + 1}"
-    )
-
-    Process.send_after(self(), {:retry_plugin_restart, plugin_id}, delay)
-    %{table | retries: Map.put(table.retries, plugin_id, count + 1)}
-  end
-
   @doc "The phase a restarted plugin re-enters: `:prepared` when it can activate."
   @spec restarted_phase(Plugin.t()) :: :prepared | :running
   def restarted_phase(%Plugin{provider: provider}) do
     if Code.ensure_loaded?(provider) and function_exported?(provider, :activate, 1),
       do: :prepared,
       else: :running
-  end
-
-  defp retry_delay(count) do
-    base = Application.get_env(:flezha, :plugin_retry_base_delay_ms, @retry_base_delay_ms)
-
-    # Cap the exponent, not just the product: an unbounded count would build a
-    # bignum the clamp then throws away.
-    ProviderBehaviour.retry_backoff_ms(base, @max_retry_delay_ms, min(count, 20) + 1)
   end
 
   @doc "Demonitor `ref` if there is one."

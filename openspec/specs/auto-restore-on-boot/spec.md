@@ -163,31 +163,6 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 - **WHEN** the destination handles the error
 - **THEN** the `.transferring` artefact SHALL be removed and the destination path SHALL NOT exist
 
-### Requirement: `hub_migrate` SHALL drain the hub so operatives leave with handover
-
-`Flezha.Runner.FleetManager`'s `hub_migrate` path (`do_handle_runner_disconnect/2`, reached when this controller has no runner left for the namespace but peers do) SHALL migrate each child operative to a peer controller through a ProcessHub leave that honors `migration_strategy: HotSwap{handover: true}` — NOT via direct hub teardown, which would kill the Overwatches without a handover and orphan their state.
-
-`ProcessHub.Service.Migration.drain/2` is that function: it removes the node from the distribution cluster-wide, migrates every local child through the migration-consent gate with live handover, force-migrates whatever still defers at the deadline, and dispatches `pre_node_leave`. It is reached through the single seam `Flezha.Service.HubManager.drain_hub/2`, shared with graceful shutdown.
-
-`drain_hub/2` SHALL wait for the local children to actually be gone before its caller proceeds: `drain/2` returns once the deferred list is empty, but the migration start requests are async and HotSwap stops a local child only AFTER the remote start succeeds — stopping the hub on `drain/2`'s return alone kills mid-flight handovers.
-
-The drain SHALL run off the `FleetManager` loop, since it blocks to its deadline and the disconnecting runner's call is waiting on that process. The hub is reclaimed afterwards only if it is vacant (`stop_hub_if_vacant/1`), so a fleet that could not migrate stays addressable.
-
-Its budget SHALL be short relative to graceful shutdown's. A drain holds this node out of the namespace's distribution for its whole duration, and this path is opportunistic — a runner may reconnect here seconds later, and the namespace may be torn down and restarted underneath. Whatever does not migrate inside the window stays put, visible and misbound, for the convergence loop; a long budget buys nothing and widens the window in which a returning runner finds its own node still drained.
-
-#### Scenario: A returning runner is not blocked by a stale drain
-
-- **GIVEN** controller A drained its namespace hub after losing its last runner
-- **WHEN** a runner reconnects to A shortly afterwards
-- **THEN** the drain's hold on A's place in the distribution SHALL already have lapsed, rather than persisting for a shutdown-length budget
-
-#### Scenario: Drain precedes hub teardown
-
-- **GIVEN** controller A whose last runner for a namespace disconnects, with peer controller B in the hub cluster
-- **WHEN** `hub_migrate` runs
-- **THEN** the namespace hub SHALL be drained first, and only then reclaimed if it holds no registered operatives
-- **AND** the `FleetManager` call handling the disconnect SHALL NOT block on the drain
-
 ### Requirement: State-directory cleanup ONLY on explicit operative stop
 
 State files under `app_data/state/{operative_class}/{procedure_id}/{entity_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
@@ -307,4 +282,25 @@ A plain restart of the sole controller SHALL preserve its operative list. The du
 - **GIVEN** a sole controller has operatives bound
 - **WHEN** the controller restarts, with nothing armed beforehand
 - **THEN** the first reconcile round replays the operative list from the durable registry, `/healthz` reports `recovering` until rebound, and the operatives return.
+
+### Requirement: A last-runner loss SHALL move operatives one by one through the planner
+
+When this controller's last runner for a namespace disconnects while a peer controller's fleet advertises the operatives' factory, `Flezha.Runner.FleetManager` SHALL declare the disconnect and run no migration of its own: the convergence Diff's `replace_operatives` (no local runner for the factory, a peer fleet has one) plans `replace_operative` per child, executed through `Migration.migrate_child/3` and ProcessHub's migration-consent gate with live handover (`migration_strategy: HotSwap{handover: true}`), at most the loop's per-tick cap per tick and under the loop's table — NOT via a hub drain, which held this node out of the namespace's distribution for its budget and force-migrated whatever still deferred, and NOT via direct hub teardown, which would kill the Overwatches without a handover and orphan their state. Nothing is forced: a child that defers stays put, visible and misbound, for the next tick. The `FleetManager` call handling the disconnect SHALL NOT block on any move. No `Migration.drain/2` SHALL run, so this node's place in the distribution is never held open by a drain marker that outlives the move: a runner reconnecting while operatives are still leaving is a placement candidate at once.
+
+Once this node's fleet no longer advertises the namespace AND this node hosts none of the namespace's operatives, the convergence loop SHALL reclaim the hub here through `Flezha.Service.HubManager.stop_hub_if_vacant/1`, so a controller that cannot host is not handed children by the distribution. That guard SHALL be node-local: a peer's operatives never keep this node's hub alive, and this node's own — running or durably suspended — always do. A later runner connect starts the hub again, so the reclaim costs a returning runner nothing.
+
+`ProcessHub.Service.Migration.drain/2` remains the function graceful shutdown and the namespace stop reach through the single seam `Flezha.Service.HubManager.drain_hub/2`, callable from `lib/flezha/shutdown/` only. `drain_hub/2` SHALL wait for the local children to actually be gone before its caller proceeds — the migration start requests are async and HotSwap stops a local child only AFTER the remote start succeeds — by monitoring the hub's local children, never by polling.
+
+#### Scenario: A returning runner is not blocked by a stale drain
+
+- **GIVEN** controller A lost its last runner for a namespace and the loop has begun moving its operatives
+- **WHEN** a runner reconnects to A shortly afterwards
+- **THEN** no drain marker SHALL be holding A out of the distribution, the runner SHALL be a placement candidate at once, and the operatives not yet moved SHALL be rebound to it rather than moved
+
+#### Scenario: Nothing is forced, and the vacated hub is reclaimed
+
+- **GIVEN** controller A whose last runner for a namespace disconnects, with peer controller B in the hub cluster
+- **WHEN** the disconnect is declared
+- **THEN** each child SHALL be planned as `replace_operative` and moved through the consent gate with handover, no `Migration.drain/2` SHALL run, and the `FleetManager` call handling the disconnect SHALL NOT block
+- **AND** once A hosts none of the namespace's operatives, the loop SHALL stop A's hub, so B is the only node left in the namespace's cluster
 

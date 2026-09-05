@@ -10,7 +10,8 @@ defmodule Flezha.State.WalWriter.Admission do
   rather than back-pressure.
   """
 
-  alias Flezha.State.{Commands, Metrics, PersistenceResolver, Recovery}
+  alias Flezha.Convergence.Facts
+  alias Flezha.State.{Commands, Metrics, PersistenceResolver}
   alias Flezha.State.WalWriter.State
 
   @reservoir_capacity 1024
@@ -40,38 +41,34 @@ defmodule Flezha.State.WalWriter.Admission do
     end
   end
 
-  # Drive a resync for this Entity off-process. Captures `entity_id` only —
-  # closing over `state` would retain the writer's file handle, metrics and
-  # outbox in the spawned process — and never blocks the writer's append queue.
-  defp spawn_resync(state, runner_id, reason) do
-    entity_id = state.entity_id
-    spawn(fn -> Recovery.resync(entity_id, runner_id: runner_id, reason: reason) end)
+  # A seq gap is one latched fact per episode: the first gap declares
+  # `{:seq_gap, entity_id}` to the convergence loop, which plans the resync on
+  # its own table; every further gap until the next contiguous append rides
+  # the open episode. Shared by the three gap-driven triggers — a gap, a shed,
+  # and a cold-takeover baseline pull — so a sustained flood declares once.
+  @spec open_gap(State.t(), binary(), atom()) :: State.t()
+  def open_gap(%{gap_open?: true} = state, _runner_id, _trigger), do: state
+
+  def open_gap(state, runner_id, trigger) do
+    Facts.declare({:seq_gap, state.entity_id, %{runner_id: runner_id, trigger: trigger}})
+    %{state | gap_open?: true}
   end
 
-  # At most one resync per Entity per interval, shared by every gap-driven
-  # trigger: a sustained flood produces a gap per frame, and one unguarded spawn
-  # each piles up resync processes before any completes. A per-episode latch
-  # would be simpler but cannot heal — a resync can fail (a torn control channel
-  # answers `:no_control_channel`) and the gap itself suppresses the contiguous
-  # append that would re-arm the latch.
-  def resync_rate_limited(state, runner_id, reason) do
-    now = State.now_ms()
+  # A contiguous append, or the pulled baseline, is the evidence the gap
+  # healed: the episode ends, its counter-fact releases the loop's ladder, and
+  # the next gap may declare at once.
+  @spec close_gap(State.t()) :: State.t()
+  def close_gap(%{gap_open?: false} = state), do: state
 
-    if is_integer(state.last_resync_at) and
-         now - state.last_resync_at < resync_retry_interval_ms() do
-      state
-    else
-      spawn_resync(state, runner_id, reason)
-      %{state | last_resync_at: now}
-    end
+  def close_gap(state) do
+    Facts.declare({:seq_gap_closed, state.entity_id, %{}})
+    %{state | gap_open?: false}
   end
 
-  # Drop the Change without writing; the resulting seq gap drives the existing
-  # resync handshake so the SDK (authoritative) re-sends. Resync is spawned once
-  # per shed episode (on the false->true transition) to avoid a resync storm
-  # under a sustained flood. A latch is enough here, unlike the baseline pull:
-  # `append_async` clears it on any successful append, so relieved
-  # back-pressure re-arms it without the resync having to succeed.
+  # Drop the Change without writing; the resulting seq gap is declared so the
+  # loop drives the resync handshake and the SDK (authoritative) re-sends. The
+  # shed episode latches on the false->true transition, so a sustained flood
+  # declares once; `append_async` clears it on any successful append.
   def shed(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
     {rc, sh, pk} = state.entity_id
@@ -91,8 +88,7 @@ defmodule Flezha.State.WalWriter.Admission do
       state
     else
       emit_seq_gap(state.entity_id, state.last_persisted_seq + 1, seq)
-      spawn_resync(state, runner_id, :shed)
-      %{state | shedding?: true}
+      %{open_gap(state, runner_id, :shed) | shedding?: true}
     end
   end
 
@@ -229,11 +225,5 @@ defmodule Flezha.State.WalWriter.Admission do
       outbox_inflight_max: Application.get_env(:flezha, :outbox_inflight_max, 1_000),
       outbox_resettle_ms: Application.get_env(:flezha, :outbox_resettle_ms, 60_000)
     }
-  end
-
-  # Floor between resync attempts for one Entity. Low enough that a genuine gap
-  # heals promptly, high enough that a per-frame gap flood cannot fan out.
-  defp resync_retry_interval_ms() do
-    Application.get_env(:flezha, :wal_resync_retry_interval_ms, 1_000)
   end
 end

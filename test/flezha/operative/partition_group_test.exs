@@ -344,7 +344,6 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.InputLog
@@ -352,7 +351,6 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.State.TestHelpers
   alias Flezha.State.WalTransfer
   alias FlezhaTest.Helper.FakeStartRegistry
-  alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "rescale-test"
   @group "ohlc"
@@ -549,76 +547,6 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   end
 
   describe "dependents and concurrency" do
-    test "a rescale nudges exactly the forwards that target this group" do
-      parent = self()
-      overwatch = spawn_link(&NodeTestHelper.park/0)
-
-      stub(HubManager, :operative_plugins, fn _ns ->
-        [
-          {"upstream",
-           [
-             %Flezha.Plugin{
-               id: "fwd_here",
-               provider: Flezha.Plugin.Provider.OperativeForward,
-               opts: %{target_operative_id: @group}
-             },
-             %Flezha.Plugin{
-               id: "fwd_elsewhere",
-               provider: Flezha.Plugin.Provider.OperativeForward,
-               opts: %{target_operative_id: "other_group"}
-             },
-             %Flezha.Plugin{
-               id: "a_websocket",
-               provider: Flezha.Plugin.Provider.Websocket,
-               opts: %{}
-             }
-           ]}
-        ]
-      end)
-
-      stub(OperativeManager, :get_operative_pid, fn _ns, id ->
-        send(parent, {:resolved, id})
-        {:ok, overwatch}
-      end)
-
-      assert {:ok, %{forwards_refreshed: 1}} = PartitionGroup.rescale(@namespace, @group, 2)
-
-      assert_receive {:resolved, "upstream"}, 500
-      # Only the forward pointing at THIS group is nudged; the other forward and
-      # the unrelated provider are left alone.
-      refute_receive {:resolved, _}, 100
-    end
-
-    test "an unreachable dependent is logged, not fatal — the rescale already succeeded" do
-      stub(HubManager, :operative_plugins, fn _ns ->
-        [
-          {"gone",
-           [
-             %Flezha.Plugin{
-               id: "fwd",
-               provider: Flezha.Plugin.Provider.OperativeForward,
-               opts: %{target_operative_id: @group}
-             }
-           ]}
-        ]
-      end)
-
-      stub(OperativeManager, :get_operative_pid, fn _ns, _id ->
-        {:error, "operative not found"}
-      end)
-
-      on_exit(NodeTestHelper.override_log_level(:warning))
-
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          assert {:ok, %{forwards_refreshed: 0, to: 2}} =
-                   PartitionGroup.rescale(@namespace, @group, 2)
-        end)
-
-      assert log =~ "gone"
-      assert log =~ "unreachable"
-    end
-
     test "a second rescale of the same group is refused while one is running", %{
       registry: registry
     } do

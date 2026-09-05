@@ -9,6 +9,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -254,18 +256,10 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   end
 
   describe "overrun is a counted anomaly (2.5)" do
-    test "a frame past the exhausted ledger is shed, counted, and repaired by seq-gap resync",
+    test "a frame past the exhausted ledger is shed, counted, and its gap declared for repair",
          ctx do
       Application.put_env(:flezha, :credit_window_bytes, %{ctx.class => 200})
-
-      resync_notify = self()
-
-      Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
-        send(resync_notify, {:resync_called, entity_id, opts})
-        :ok
-      end)
-
-      on_exit(fn -> Application.delete_env(:flezha, :state_resync_fun) end)
+      become_loop()
 
       establish_credit(ctx)
 
@@ -288,8 +282,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       assert_receive {:ctl_async, _, {:credit_grant, _}}, 2_000
       :ok = push_frame(ctx.channel, f3)
 
-      assert_receive {:resync_called, {_, _, "k1"}, opts}, 2_000
-      assert opts[:reason] == :seq_gap
+      assert_receive {:declare, :seq_gap, {_, _, "k1"}, %{trigger: :seq_gap}}, 2_000
       assert WalWriter.last_persisted_seq(writer) == 1
     end
   end

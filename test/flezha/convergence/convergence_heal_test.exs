@@ -256,7 +256,7 @@ defmodule Flezha.Convergence.HealTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the eight reachable primitives" do
+    test "the heal surface is exactly the ten reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
                  :rebind_operative,
@@ -266,7 +266,9 @@ defmodule Flezha.Convergence.HealTest do
                  :stop_plugin,
                  :restart_plugin,
                  :evict_runner,
-                 :restart_runner
+                 :restart_runner,
+                 :reset_control_channel,
+                 :publish_binding
                ])
     end
 
@@ -327,7 +329,9 @@ defmodule Flezha.Convergence.HealTest do
         operatives: %{{@stall_ns, operative_id} => Enum.into(extra, %{bound_runner: "e_live"})}
       }
 
-      Diff.compute(intent, reality, %{stalled: [operative_id]})
+      Diff.compute(intent, reality, %{
+        facts: %{{:output_stall, operative_id} => %{at: 0, args: %{}}}
+      })
     end
 
     test "a flagged instance resolves to a stalled divergence carrying its namespace" do
@@ -337,7 +341,11 @@ defmodule Flezha.Convergence.HealTest do
     test "a flag for an operative this tick is not healing resolves to nothing" do
       # Not declared, or declared in a namespace still mid-recovery — the
       # caller passes only the recovery-ready operatives.
-      delta = Diff.compute(%Intent{operatives: []}, %{}, %{stalled: ["ghost"]})
+      delta =
+        Diff.compute(%Intent{operatives: []}, %{}, %{
+          facts: %{{:output_stall, "ghost"} => %{at: 0, args: %{}}}
+        })
+
       assert delta.stalled_operatives == []
       assert Diff.empty?(delta)
     end
@@ -384,7 +392,8 @@ defmodule Flezha.Convergence.HealTest do
     end
 
     test "the ladder is not starved by a plan that filled the per-tick budget" do
-      delta = %Diff{stalled_diff("op_a") | stalled_operatives: [{@stall_ns, "op_a"}]}
+      %Diff{} = stalled = stalled_diff("op_a")
+      delta = %Diff{stalled | stalled_operatives: [{@stall_ns, "op_a"}]}
 
       assert [%{primitive: :resync_runner, target: "op_a"}] =
                Planner.plan(delta, Backoff.new(), max_ops: 0)
@@ -403,29 +412,34 @@ defmodule Flezha.Convergence.HealTest do
 
   describe "reconcile-round cooperation (D7)" do
     alias Flezha.Convergence.Loop
+    import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
-    test "a round that started orphans triggers one immediate tick" do
+    test "a round that started orphans is declared to the loop, which ticks at once" do
+      become_loop()
+
       assert :ok =
                Loop.handle_telemetry(
                  [:flezha, :boot, :reconcile_round],
                  %{started: 2, duplicates: 0, elapsed_ms: 4},
-                 %{first_round: false},
+                 %{first_round: false, hub_id: :ns_hub},
                  self()
                )
 
-      assert_receive :reconcile_started, 500
+      assert_receive {:declare, :reconcile_started, :ns_hub, %{}}, 500
     end
 
-    test "a quiet round triggers nothing — the Loop's cadence is unchanged" do
+    test "a quiet round declares nothing — the Loop's cadence is unchanged" do
+      become_loop()
+
       assert :ok =
                Loop.handle_telemetry(
                  [:flezha, :boot, :reconcile_round],
                  %{started: 0, duplicates: 0, elapsed_ms: 1},
-                 %{first_round: false},
+                 %{first_round: false, hub_id: :ns_hub},
                  self()
                )
 
-      refute_received :reconcile_started
+      refute_received {:declare, :reconcile_started, _, _}
     end
 
     test "the post-round plan adopts what the round started rather than fighting it" do

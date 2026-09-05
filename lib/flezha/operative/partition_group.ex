@@ -22,13 +22,13 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Validator
+  alias Flezha.Shutdown
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias Flezha.State.WalTransfer
@@ -358,45 +358,8 @@ defmodule Flezha.Operative.PartitionGroup do
          from: length(members),
          to: target,
          entities_moved: length(moves),
-         vacated: vacated,
-         forwards_refreshed: refresh_forward_targets(namespace, group_id)
+         vacated: vacated
        })}
-    end
-  end
-
-  # A forward resolves its target's member set once, at `init_provider/1`, so a
-  # group that just changed shape leaves every upstream routing by yesterday's
-  # ranges: payloads for a member absent from the group queue behind a worker
-  # that will never deliver, until the queue saturates and back-pressures the
-  # SOURCE operative. Nudging each dependent to re-prepare is what closes that,
-  # and the provider hands the orphaned queue to its new owner as it does.
-  #
-  # Best effort by design: the rescale itself has already succeeded, so a source
-  # this node cannot reach is logged rather than allowed to fail the command.
-  defp refresh_forward_targets(namespace, group_id) do
-    for {operative_id, plugins} <- HubManager.operative_plugins(namespace),
-        %Plugin{provider: OperativeForward, id: plugin_id, opts: opts} <- plugins,
-        Map.get(opts, :target_operative_id) == group_id,
-        nudge_plugin(namespace, operative_id, plugin_id),
-        reduce: 0 do
-      count -> count + 1
-    end
-  end
-
-  defp nudge_plugin(namespace, operative_id, plugin_id) do
-    case OperativeManager.get_operative_pid(namespace, operative_id) do
-      {:ok, pid} ->
-        send(pid, {:retry_plugin_restart, plugin_id})
-        true
-
-      {:error, reason} ->
-        Logger.warning(
-          "[PartitionGroup] #{operative_id} forwards to a group that just rescaled but is " <>
-            "unreachable (#{inspect(reason)}): its plugin #{plugin_id} keeps the old member " <>
-            "set until it next re-prepares"
-        )
-
-        false
     end
   end
 
@@ -484,7 +447,6 @@ defmodule Flezha.Operative.PartitionGroup do
   end
 
   @peer_call_timeout_ms 30_000
-  @stop_release_timeout_ms 15_000
   @quiesce_timeout_ms 30_000
   @quiesce_poll_ms 250
 
@@ -614,7 +576,7 @@ defmodule Flezha.Operative.PartitionGroup do
     await_ids_released(
       namespace,
       Enum.map(members, & &1.id),
-      System.monotonic_time(:millisecond) + @stop_release_timeout_ms
+      System.monotonic_time(:millisecond) + Shutdown.stop_timeout_ms()
     )
   end
 
@@ -627,7 +589,7 @@ defmodule Flezha.Operative.PartitionGroup do
         if System.monotonic_time(:millisecond) >= deadline do
           {:error,
            "rescale aborted: #{held} was stopped but still holds its id after " <>
-             "#{@stop_release_timeout_ms}ms; nothing was moved — retry once it has gone"}
+             "#{Shutdown.stop_timeout_ms()}ms; nothing was moved — retry once it has gone"}
         else
           Process.sleep(@quiesce_poll_ms)
           await_ids_released(namespace, ids, deadline)
@@ -667,7 +629,7 @@ defmodule Flezha.Operative.PartitionGroup do
     |> Enum.reject(&(&1 in new_member_ids))
     |> Enum.filter(&vacated?/1)
     |> Enum.map(fn class ->
-      _ = File.rm_rf(Paths.class_dir(class))
+      Paths.delete_class_dir(class)
       class
     end)
   end

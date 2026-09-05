@@ -23,13 +23,13 @@ defmodule Flezha.Convergence.Loop.Progress do
         state.progress_history,
         Enum.filter(markers, &tier_cursors?/1),
         now,
-        state.output_stall_grace_ms
+        state.fact_grace_ms
       )
 
     verdicts =
       StallClassifier.classify_producing(markers, baseline, %{
         now: now,
-        grace_ms: state.output_stall_grace_ms
+        grace_ms: state.fact_grace_ms
       })
 
     stuck =

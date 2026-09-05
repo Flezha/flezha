@@ -1,4 +1,6 @@
 defmodule Flezha.State.Paths do
+  require Logger
+
   @moduledoc """
   Path resolution for per-Entity WAL, snapshot, and outbox-dedup files.
 
@@ -170,6 +172,50 @@ defmodule Flezha.State.Paths do
   @spec class_dir(binary()) :: binary()
   def class_dir(operative_class) when is_binary(operative_class) do
     Path.join(namespace_dir(namespace_of_class(operative_class)), operative_class)
+  end
+
+  @doc """
+  Remove a class's state tree — the one guard every deletion of durable state
+  passes: a procedure directory holding a `.tmp` or `.rewriting` marker has a
+  write in flight, and truncating it would corrupt the rename ceremony, so it
+  is skipped (with WARN) and the class directory stays until it is empty.
+  """
+  @spec delete_class_dir(binary()) :: :ok
+  def delete_class_dir(operative_class) when is_binary(operative_class) do
+    class_dir = class_dir(operative_class)
+
+    case File.ls(class_dir) do
+      {:ok, names} ->
+        Enum.each(names, fn name ->
+          path = Path.join(class_dir, name)
+          if File.dir?(path), do: maybe_delete_procedure(path), else: File.rm(path)
+        end)
+
+        _ = File.rmdir(class_dir)
+        :ok
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp maybe_delete_procedure(procedure_dir) do
+    case File.ls(procedure_dir) do
+      {:ok, names} ->
+        if Enum.any?(
+             names,
+             &(String.ends_with?(&1, ".tmp") or String.ends_with?(&1, ".rewriting"))
+           ) do
+          Logger.warning(
+            "[state] skipping state dir #{procedure_dir}: write in flight (.tmp / .rewriting present)"
+          )
+        else
+          _ = File.rm_rf(procedure_dir)
+        end
+
+      {:error, _} ->
+        :ok
+    end
   end
 
   # Claims are keyed by {state_root, class}: a claim is a fact about ONE

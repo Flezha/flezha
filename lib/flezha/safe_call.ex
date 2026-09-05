@@ -25,14 +25,7 @@ defmodule Flezha.SafeCall do
       # names WHERE it is stuck instead of forcing operators to infer the wedge
       # from the caller side. `:noproc` targets are already gone (nothing to probe).
       probe = if classified == :timeout, do: probe_target(server), else: %{}
-
-      # The event name is a published surface (`docs/internals/convergence_loop.md`)
-      # and is deliberately not derived from this module's name.
-      :telemetry.execute(
-        [:flezha, :convergence, :safe_call],
-        %{count: 1},
-        Map.merge(%{result: classified, server: server}, probe)
-      )
+      report(server, classified, probe)
 
       Logger.warning(
         "[convergence] bounded call failed server=#{inspect(server)} " <>
@@ -41,6 +34,16 @@ defmodule Flezha.SafeCall do
       )
 
       {:error, classified}
+  end
+
+  # The event name is a published surface (`docs/internals/convergence_loop.md`)
+  # and is deliberately not derived from this module's name.
+  defp report(server, classified, probe) do
+    :telemetry.execute(
+      [:flezha, :convergence, :safe_call],
+      %{count: 1},
+      Map.merge(%{result: classified, server: server}, probe)
+    )
   end
 
   defp classify({:timeout, _}), do: :timeout

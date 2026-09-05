@@ -21,7 +21,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate consent_settings(), to: Lifecycle
   defdelegate cspec_partition(arg1), to: Rows
   defdelegate declared_operatives(arg1), to: Rows
-  defdelegate drain_hub(arg1, arg2 \\ []), to: Lifecycle
+  defdelegate drain_hub(arg1, arg2), to: Lifecycle
   defdelegate durable_starts?(), to: Rows
   defdelegate get_all_operatives(arg1), to: Rows
   defdelegate get_hub_nodes(arg1, arg2 \\ false), to: Rows
@@ -29,7 +29,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate get_registry(arg1), to: Rows
   defdelegate hook_insert_local_pid(arg1, arg2, arg3), to: Placement
   defdelegate hook_insert_pid(arg1, arg2), to: Placement
-  defdelegate hook_reassert_binding(arg1, arg2), to: Placement
+  defdelegate hook_registry_written(arg1, arg2), to: Placement
   defdelegate hook_remove_pid(arg1, arg2), to: Placement
   defdelegate hub_alive?(arg1), to: Rows
   defdelegate live_node(arg1), to: Rows
@@ -163,15 +163,19 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Reclaim a namespace hub, but only when it holds no registered operatives.
-  Tearing down a hub that still holds durably-suspended operatives would kill
-  their Overwatches and wipe the durable registry, stranding a parked fleet
-  across a runner restart — so runner cleanup and cross-node migration reclaim
-  through this guard. The explicit `stop_hub/1` teardown (operator
-  `stop_namespace`) is intentionally unguarded.
+  Reclaim a namespace hub on THIS node, but only when this node holds none of
+  its operatives. Tearing down a hub that still holds durably-suspended
+  operatives would kill their Overwatches and wipe the durable registry,
+  stranding a parked fleet across a runner restart — so runner cleanup and the
+  loop's vacancy reclaim go through this guard. A peer's operatives are that
+  peer's business: the reclaim is node-local, which is what lets a controller
+  whose fleet does not serve a namespace leave that namespace's cluster
+  while the operatives it re-placed keep running elsewhere. The explicit
+  `stop_hub/1` teardown (operator `stop_namespace`) is intentionally
+  unguarded.
   """
   def stop_hub_if_vacant(namespace) do
-    unless Rows.registered_operatives?(namespace), do: stop_hub(namespace)
+    unless Rows.local_operatives?(namespace), do: stop_hub(namespace)
     :ok
   end
 
@@ -232,9 +236,9 @@ defmodule Flezha.Service.HubManager do
             ],
             Hook.child_registered() => [
               %HookManager{
-                id: :flezha_binding_reassert,
+                id: :flezha_registry_written,
                 m: __MODULE__,
-                f: :hook_reassert_binding,
+                f: :hook_registry_written,
                 a: [hub_id, :_]
               }
             ]

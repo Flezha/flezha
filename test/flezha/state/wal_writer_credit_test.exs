@@ -8,6 +8,8 @@ defmodule Flezha.State.WalWriterCreditTest do
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -29,15 +31,9 @@ defmodule Flezha.State.WalWriterCreditTest do
       :ok
     end)
 
-    Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
-      send(test_pid, {:resync_called, entity_id, opts})
-      :ok
-    end)
-
     on_exit(fn ->
       TestHelpers.reset_all_entities()
       Application.delete_env(:flezha, :state_root)
-      Application.delete_env(:flezha, :state_resync_fun)
       Application.delete_env(:flezha, :wal_high_watermark_bytes)
       Application.delete_env(:flezha, :wal_low_watermark_bytes)
       File.rm_rf!(base)
@@ -90,14 +86,14 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert_receive {:credit_drained, @session, 50}
   end
 
-  test "a gap-rejected Change releases its bytes immediately and resyncs", %{pid: pid} do
+  test "a gap-rejected Change releases its bytes immediately and declares the gap", %{pid: pid} do
+    become_loop()
     append!(pid, 0, "a", opts(40))
     assert sync(pid) == 0
 
     append!(pid, 5, "z", opts(60))
     assert_receive {:credit_drained, @session, 60}
-    assert_receive {:resync_called, _, resync_opts}
-    assert resync_opts[:reason] == :seq_gap
+    assert_receive {:declare, :seq_gap, _, %{trigger: :seq_gap}}
   end
 
   test "a hard-bound shed releases its bytes immediately", %{pid: pid, entity_id: entity_id} do

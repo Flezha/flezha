@@ -23,7 +23,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.HubManager
-  alias Flezha.Service.PluginManager
+  alias Flezha.Shutdown
 
   require Logger
 
@@ -315,22 +315,15 @@ defmodule Flezha.Runner.FleetManager do
           {:namespace_not_found, state.runner_namespaces}
 
         _ ->
-          runner_ids = Roster.get_runner_ids(state, namespace, :active)
+          # The `:namespace` walk: the operatives, the runners, the plugin
+          # registrations and the hub, in that order, with the namespace read
+          # as quiesced for its duration.
+          target = %{
+            namespace: namespace,
+            runner_ids: Roster.get_runner_ids(state, namespace, :active)
+          }
 
-          Enum.each(runner_ids, fn runner_id ->
-            Marks.mark_runner_retiring(runner_id)
-            Session.stop_runner_sup(runner_id)
-          end)
-
-          # Drop every plugin registered for this namespace so a follow-up
-          # test re-using the same namespace does not collide on
-          # `{:error, "plugin already registered"}`. The runtime operative
-          # processes are about to disappear with the namespace's hub —
-          # the registry is the only thing that survives without explicit
-          # cleanup.
-          _ = PluginManager.disable_namespace_plugins(namespace)
-
-          HubManager.stop_hub(namespace)
+          _ = Shutdown.run(:namespace, target, Shutdown.stop_timeout_ms())
 
           {:ok, Map.delete(state.runner_namespaces, namespace)}
       end

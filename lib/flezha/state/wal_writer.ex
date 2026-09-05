@@ -473,12 +473,10 @@ defmodule Flezha.State.WalWriter do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
         Admission.release_credit(credit_opts)
         Admission.emit_seq_gap(new_state.entity_id, expected, got)
-        {:noreply, Admission.resync_rate_limited(new_state, runner_id, :seq_gap)}
+        {:noreply, Admission.open_gap(new_state, runner_id, :seq_gap)}
 
       {:reply, :ok, new_state} ->
-        # A contiguous append is evidence the gap healed, so the episode ends
-        # and the next gap may resync immediately.
-        {:noreply, Admission.track_credit(%{new_state | last_resync_at: nil}, credit_opts)}
+        {:noreply, Admission.track_credit(new_state, credit_opts)}
 
       {:reply, _result, new_state} ->
         Admission.release_credit(credit_opts)
@@ -653,7 +651,10 @@ defmodule Flezha.State.WalWriter do
 
     new_state = Admission.maybe_signal_backpressure(new_state, new_pending)
 
-    {:reply, :ok, new_state}
+    # A contiguous append is the evidence a gap episode healed, whichever path
+    # wrote it: the episode ends and its counter-fact releases the loop's
+    # ladder, so the next gap is declared at once.
+    {:reply, :ok, Admission.close_gap(new_state)}
   end
 
   # ---------- Metrics helpers ----------

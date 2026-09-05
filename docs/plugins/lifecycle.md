@@ -65,13 +65,16 @@ A provider without `activate/1` goes straight to `:running`.
 
 ### Restarts
 
-An owned pid exiting `:normal` unsubscribes the plugin. On any other exit the host re-runs
-`init_provider/1` after a backoff that starts at 4 s (`:plugin_retry_base_delay_ms`),
-doubles per attempt and is capped at 60 s; the counter resets only once an owned pid has
-stayed up 60 s, so a provider that fails fast keeps backing off. A provider with
-`activate/1` drops back to `:prepared` and is re-activated if it was `:running`; one
-without returns to `:running` directly. `activate/1` therefore runs on every restart and
-every bind.
+An owned pid exiting `:normal` unsubscribes the plugin. On any other exit the extension table
+records the subscriber's phase as `{:down, reason}` and arms nothing — it holds no retry counter,
+timer or restart policy. The crash is declared to the convergence loop, which plans
+`restart_plugin` on its own 5 s → 30 s → 60 s → 300 s table, keyed per plugin so one crashing
+plugin never throttles its siblings' starts. The restart re-runs `init_provider/1` from the entry
+the table holds (a provider that committed durable state of its own restores it) and the key
+resets only once the fresh pid has stayed `:running` for 60 s, so a provider that fails fast keeps
+backing off. A provider with `activate/1` drops back to `:prepared` and is re-activated if it was
+`:running`; one without returns to `:running` directly. `activate/1` therefore runs on every
+restart and every bind.
 
 ## Subscription sub-options
 

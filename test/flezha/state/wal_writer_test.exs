@@ -2,6 +2,8 @@ defmodule Flezha.State.WalWriterTest do
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
   use FlezhaTest.StateCase, async: false
 
+  import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
+
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.State.{Metrics, Paths, RecordFrame, Supervisor, TestHelpers, WalWriter}
@@ -97,27 +99,14 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "awaiting baseline (empty-WAL gap)" do
-    @retry_interval_ms 200
-
     setup do
-      parent = self()
-      Application.put_env(:flezha, :wal_resync_retry_interval_ms, @retry_interval_ms)
-
-      # The pull fails to dispatch, as a torn control channel would make it.
-      Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
-        send(parent, {:resync_called, entity_id, opts})
-        {:error, :no_control_channel}
-      end)
-
-      on_exit(fn ->
-        Application.delete_env(:flezha, :state_resync_fun)
-        Application.delete_env(:flezha, :wal_resync_retry_interval_ms)
-      end)
-
+      # The loop plans the pull; here the test stands in for it and reads what
+      # the writer declares.
+      become_loop()
       :ok
     end
 
-    test "a gap flood sheds every frame but pulls at most once per interval", %{entity_id: pid} do
+    test "a gap flood sheds every frame and declares one gap per episode", %{entity_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
@@ -126,50 +115,37 @@ defmodule Flezha.State.WalWriterTest do
         assert :awaiting_baseline = WalWriter.append(srv, seq, header, "d", "exec-cold")
       end
 
-      assert_receive {:resync_called, ^pid, opts}, 1_000
-      assert opts[:reason] == :baseline_seed
-      assert opts[:runner_id] == "exec-cold"
-      refute_receive {:resync_called, _, _}, 50
+      assert_receive {:declare, :seq_gap, ^pid,
+                      %{trigger: :baseline_seed, runner_id: "exec-cold"}},
+                     1_000
+
+      refute_receive {:declare, :seq_gap, ^pid, _}, 50
 
       assert WalWriter.last_persisted_seq(srv) == -1
       assert Metrics.get(Metrics.for_entity(pid), :wal_shed_total) == 50
     end
 
-    test "a pull that failed to dispatch is retried once the interval elapses", %{entity_id: pid} do
+    test "the pulled snapshot establishes the baseline, closes the episode, and appends resume",
+         %{entity_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
       assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
-      assert_receive {:resync_called, ^pid, _}, 1_000
-
-      # Nothing but the pulled snapshot clears the wait, so the next gap frame
-      # after the interval must drive another pull rather than shed forever.
-      TestHelpers.age_writer(srv, @retry_interval_ms + 20)
-      assert :awaiting_baseline = WalWriter.append(srv, 5002, header, "d2", "exec-cold")
-      assert_receive {:resync_called, ^pid, opts}, 1_000
-      assert opts[:reason] == :baseline_seed
-    end
-
-    test "the pulled snapshot establishes the baseline and appends resume", %{entity_id: pid} do
-      {:ok, _} = Supervisor.find_or_start(pid)
-      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
-      header = TestHelpers.stub_header()
-
-      assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
-      assert_receive {:resync_called, ^pid, _}, 1_000
+      assert_receive {:declare, :seq_gap, ^pid, _}, 1_000
 
       # The CompactEntity round-trip lands as a snapshot at the runner's seq.
       assert {:ok, _path} = StateSnapshot.write_snapshot(pid, 5005, header, "full-state")
 
       assert WalWriter.last_persisted_seq(srv) == 5005
+      assert_receive {:declare, :seq_gap_closed, ^pid, %{}}, 1_000
+
       assert :ok = WalWriter.append(srv, 5006, header, "d3", "exec-cold")
       assert WalWriter.last_persisted_seq(srv) == 5006
 
-      # A healed Entity stops pulling.
-      TestHelpers.age_writer(srv, @retry_interval_ms + 20)
+      # A healed Entity declares nothing more.
       assert :ok = WalWriter.append(srv, 5007, header, "d4", "exec-cold")
-      refute_receive {:resync_called, _, _}, 50
+      refute_receive {:declare, :seq_gap, ^pid, _}, 50
     end
   end
 
@@ -291,21 +267,13 @@ defmodule Flezha.State.WalWriterTest do
     # R2c: a WalWriter that cannot drain must not let its mailbox / un-fsynced
     # bytes grow without bound. Past the hard bound, async appends are shed
     # (dropped + counted) and the resulting seq gap drives resync.
-    test "sheds appends past the hard bound, leaving a gap that drives resync",
+    test "sheds appends past the hard bound, declaring the gap that drives the resync",
          %{entity_id: pid} do
       cap = 50
       Application.put_env(:flezha, :wal_pending_msg_cap, cap)
-      parent = self()
+      become_loop()
 
-      Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
-        send(parent, {:resync_called, entity_id, opts})
-        {:ok, make_ref()}
-      end)
-
-      on_exit(fn ->
-        Application.delete_env(:flezha, :wal_pending_msg_cap)
-        Application.delete_env(:flezha, :state_resync_fun)
-      end)
+      on_exit(fn -> Application.delete_env(:flezha, :wal_pending_msg_cap) end)
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
@@ -332,8 +300,9 @@ defmodule Flezha.State.WalWriterTest do
       assert shed > 0
       # The WAL never advanced to k — shed Changes were dropped, not written.
       assert last < k
-      # The shed gap drove a resync (the SDK is authoritative for entity state).
-      assert_receive {:resync_called, ^pid, _opts}, 1_000
+      # The shed gap is declared once for the episode; the loop plans the
+      # resync (the SDK is authoritative for entity state).
+      assert_receive {:declare, :seq_gap, ^pid, %{trigger: :shed}}, 1_000
     end
   end
 

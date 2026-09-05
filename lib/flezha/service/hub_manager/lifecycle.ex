@@ -2,20 +2,23 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   @moduledoc """
   What a hub does around its own start and stop: the post-start hook wiring,
   the aliveness wait, the drain, and the registry directory a stopped hub
-  leaves behind.
+  leaves behind. The drain and the stop are the hub's steps of the shutdown
+  plan — the `:node` drain and the `:namespace` hub stop — and nothing else
+  reaches `drain_hub/2`.
   """
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Cluster.Directory
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Shutdown.Coordinator
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
-  # Default ceiling on one `drain_hub/2`. The graceful-shutdown path passes its
-  # own per-hub slice of the shutdown budget instead.
-  @drain_budget_ms 60_000
+  require Logger
+
+  @behaviour Flezha.Shutdown.Step
 
   # A force pass fires AT the drain deadline and its handover is async, so this
   # window is carved out of the drain timeout to let it land.
@@ -81,6 +84,92 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     end
   end
 
+  # The hub's two steps: the node drain — every running namespace's hub
+  # drained concurrently under the budget the coordinator derived, one
+  # `:drain_progress` per hub — and the namespace stop, which stops the hub
+  # and wipes its registry directory.
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [
+      %{scope: :node, order: 10, name: :drain, run: &drain_step/2},
+      %{scope: :namespace, order: 40, name: :hub, run: &hub_step/2}
+    ]
+  end
+
+  defp hub_step(%{namespace: namespace}, _budget), do: HubManager.stop_hub(namespace)
+
+  defp drain_step(%{namespaces: namespaces, phase_start_ms: phase_start_ms}, budget) do
+    total = length(namespaces)
+
+    stream =
+      Task.async_stream(
+        namespaces,
+        fn ns -> drain_hub(ns, budget_ms: budget) end,
+        max_concurrency: max(total, 1),
+        timeout: budget + @forced_handover_grace_ms,
+        on_timeout: :kill_task
+      )
+
+    {migrated, forced} =
+      namespaces
+      |> Enum.zip(stream)
+      |> Enum.with_index(1)
+      |> Enum.reduce({0, 0}, fn {{ns, task_result}, idx}, {m_acc, f_acc} ->
+        # A task killed by the async_stream timeout degrades like any other
+        # drain error.
+        result =
+          case task_result do
+            {:ok, drain_result} -> drain_result
+            {:exit, reason} -> {:error, {:task_exit, reason}}
+          end
+
+        {m, f} = fold_drain_outcome(ns, result)
+
+        :telemetry.execute(
+          [:flezha, :shutdown, :drain_progress],
+          %{
+            migrated: m,
+            forced: f,
+            remaining_hubs: total - idx,
+            elapsed_ms: System.monotonic_time(:millisecond) - phase_start_ms
+          },
+          %{namespace: ns}
+        )
+
+        {m_acc + m, f_acc + f}
+      end)
+
+    {:ok, %{migrated: migrated, forced: forced}}
+  end
+
+  # One hub's drain verdict → `{migrated, forced}`. Every error degrades to
+  # the no-peer path: the operatives terminate with the hub supervisor and
+  # the next boot restores them from on-disk WAL/snapshot — never a wedge.
+  defp fold_drain_outcome(ns, {:ok, %{migrated: migrated, forced: forced}}) do
+    if forced > 0 do
+      Logger.warning("[shutdown] drain ns=#{ns} force-migrated #{forced} deferred operative(s)")
+    end
+
+    {migrated, forced}
+  end
+
+  defp fold_drain_outcome(_ns, {:error, :no_target_nodes}) do
+    Logger.info(
+      "[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot"
+    )
+
+    {0, 0}
+  end
+
+  defp fold_drain_outcome(ns, {:error, reason}) do
+    Logger.warning(
+      "[shutdown] drain ns=#{ns} degraded (#{inspect(reason)}); " <>
+        "local operatives terminate and restore on next boot"
+    )
+
+    {0, 0}
+  end
+
   @doc """
   Migrate every locally-hosted operative of `namespace` to a peer controller
   through the migration-consent gate (live HotSwap handover), then wait for the
@@ -90,15 +179,16 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   is empty, but the migration start requests are async and HotSwap stops a
   local child only AFTER the remote start succeeds. Locally-empty is the
   completion signal — acting on `drain/2`'s return alone kills mid-flight
-  handovers. `:budget_ms` bounds the whole call; `:handover_grace_ms` is carved
-  off it so the deadline force pass can land before the caller moves on.
+  handovers — and it is read from the children's own exits, never polled.
+  `:budget_ms` is required and bounds the whole call: the caller always hands
+  the drain its slice of the one shutdown budget. `:handover_grace_ms` is
+  carved off it so the deadline force pass can land before the caller moves on.
 
-  The one drain seam: graceful shutdown and the last-runner migration both
-  reach ProcessHub through here.
+  The one drain seam, reached by the `:node` step alone.
   """
   @spec drain_hub(binary(), keyword()) :: {:ok, map()} | {:error, term()} | :deadline
-  def drain_hub(namespace, opts \\ []) do
-    budget = Keyword.get(opts, :budget_ms, @drain_budget_ms)
+  def drain_hub(namespace, opts) do
+    budget = Keyword.fetch!(opts, :budget_ms)
     grace = Keyword.get(opts, :handover_grace_ms, @forced_handover_grace_ms)
     deadline = System.monotonic_time(:millisecond) + budget
 
@@ -111,20 +201,30 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     kind, reason -> {:error, {kind, reason}}
   end
 
+  # Monitor every local child and wait for each exit; the node is quiesced, so
+  # none is started meanwhile. Answers `:deadline` with the monitors flushed
+  # when the budget runs out first.
   defp await_local_children_gone(hub_id, deadline) do
-    cond do
-      ProcessHub.process_list(hub_id, :local) == [] ->
-        :ok
+    monitors =
+      for {_child_id, pid} <- ProcessHub.process_list(hub_id, :local), is_pid(pid) do
+        Process.monitor(pid)
+      end
 
-      System.monotonic_time(:millisecond) >= deadline ->
-        :deadline
-
-      true ->
-        Process.sleep(100)
-        await_local_children_gone(hub_id, deadline)
-    end
+    await_downs(monitors, deadline)
   catch
     _kind, _reason -> :ok
+  end
+
+  defp await_downs([], _deadline), do: :ok
+
+  defp await_downs([ref | rest], deadline) do
+    receive do
+      {:DOWN, ^ref, :process, _pid, _reason} -> await_downs(rest, deadline)
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) ->
+        Enum.each([ref | rest], &Process.demonitor(&1, [:flush]))
+        :deadline
+    end
   end
 
   def wipe_registry_dir(hub_id) do

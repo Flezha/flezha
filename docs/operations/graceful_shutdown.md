@@ -31,7 +31,7 @@ correctly on both the privileged and unprivileged paths.
 
 ## Phases
 
-1. **Quiesce** sets an ETS-backed flag (`Coordinator.shutting_down?/0`):
+1. **Quiesce** marks the node quiescing (`Flezha.Shutdown.quiesced?/2`, ETS-backed) and declares `{:node_draining, deadline}` to the convergence loop, which then plans nothing onto this node:
    `Flezha.Service.OperativeManager.start_operative/3` answers `{:error, :shutting_down}` and
    `Flezha.Runner.FleetManager` refuses new runner connections. Running Operatives and
    connected runners are not touched.

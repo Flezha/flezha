@@ -120,11 +120,11 @@ defmodule Flezha.State.WalWriter.Epoch do
   end
 
   # Cold-takeover shed: no baseline on this controller, so the frame can't
-  # append. Count it and drive a CompactEntity pull via `Recovery.resync`
-  # (routes to the pull because the Entity has no persisted state). The pulled
-  # snapshot encodes the shed deltas' effects. The pull is retried on the
-  # resync interval for as long as the Entity waits: only that snapshot clears
-  # this state, so a pull that failed to dispatch must not be the last one.
+  # append. Count it and declare the gap, so the loop drives a CompactEntity
+  # pull (the resync routes to the pull because the Entity has no persisted
+  # state). The pulled snapshot encodes the shed deltas' effects; only that
+  # snapshot clears this state, and the loop retries the pull on its table
+  # until it does.
   def await_baseline(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
 
@@ -138,7 +138,7 @@ defmodule Flezha.State.WalWriter.Epoch do
       )
     end
 
-    Admission.resync_rate_limited(%{state | awaiting_baseline?: true}, runner_id, :baseline_seed)
+    Admission.open_gap(%{state | awaiting_baseline?: true}, runner_id, :baseline_seed)
   end
 
   # Baseline established: the pulled snapshot's seq supersedes the shed
@@ -148,13 +148,13 @@ defmodule Flezha.State.WalWriter.Epoch do
     now = State.now_ms()
     Metrics.put(state.metrics, :wal_seq, seq)
 
-    state = %{
-      state
-      | awaiting_baseline?: false,
-        last_resync_at: nil,
-        last_persisted_seq: seq,
-        last_advance_at: now
-    }
+    state =
+      Admission.close_gap(%{
+        state
+        | awaiting_baseline?: false,
+          last_persisted_seq: seq,
+          last_advance_at: now
+      })
 
     Settlement.persist_dedup(state)
   end

@@ -278,6 +278,35 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     end
   end
 
+  @doc """
+  Feed `input` until `expected` comes back on the sink, or the deadline passes.
+
+  One frame is not enough to prove an operative cannot produce: a freshly bound
+  operative's sink plugin activates asynchronously, and an emit that beats its
+  subscription is dropped with nothing to re-drive it. A drill asserts that the
+  operative CAN produce, never that one particular frame sufficed — so the
+  input is re-sent, exactly as a real producer would.
+  """
+  @spec produces?(binary(), binary(), binary(), binary(), non_neg_integer()) :: boolean()
+  def produces?(operative_id, namespace, input, expected, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    feed_until(operative_id, namespace, input, expected, deadline)
+  end
+
+  defp feed_until(operative_id, namespace, input, expected, deadline) do
+    OperativeManager.send_io(operative_id, namespace, input, %{"input_type" => "2"})
+
+    cond do
+      await_output(expected, 1_000) -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> feed_until(operative_id, namespace, input, expected, deadline)
+    end
+  end
+
+  defp await_output(expected, timeout) do
+    wait_until(fn -> Enum.any?(peek_outputs(), fn {msg, _md} -> msg == expected end) end, timeout)
+  end
+
   @doc "Consume and return every forwarded output, in arrival order."
   def drain_outputs(acc \\ []) do
     receive do

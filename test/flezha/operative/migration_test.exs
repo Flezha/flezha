@@ -27,10 +27,9 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   setup do
     TestHelpers.tmp_app_data_dir()
     # The rehydrate drives the real (un-park) bind task, which has no runner to
-    # reach in a unit test: bound its wait + retry budget so the assertions about
-    # the state machine do not pay the production backoff.
+    # reach in a unit test: bound its wait so the assertions about the state
+    # machine do not pay the production window.
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 50))
-    on_exit(TestHelpers.override_env(:overwatch_retry_backoff_ms, [1]))
 
     :ok
   end
@@ -223,9 +222,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   # here and so always comes back parked. Awaiting that result is both the
   # stronger assertion — the task the test started actually resolves, and on the
   # missing runner rather than on anything else — and what keeps it from
-  # outliving its test: an abandoned task re-enters the retry ladder once
-  # `on_exit` restores the production backoff, and lands on the next test's
-  # instance-pinned stub carrying this test's id.
+  # outliving its test and landing on the next test's instance-pinned stub
+  # carrying this test's id.
   defp await_migrate_task(%Overwatch{migrate_task: %{pid: pid}}) do
     assert_receive {:migrate_task_result, ^pid, {:park, _parked, {:ping_failed, _}}}, 2_000
     :ok
@@ -492,14 +490,13 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     on_exit(fn ->
       OperativeManager.stop_all_operatives(@namespace)
       Application.delete_env(:flezha, :overwatch_ping_fn)
-      Application.delete_env(:flezha, :overwatch_reset_channel_fn)
     end)
 
     {:ok, test_pid: test_pid, ets: ets}
   end
 
   # `await_active_runner` pings once to confirm the runner is reachable
-  # before the start-retry path runs. To reach the PARKED state these tests
+  # before the one start attempt. To reach the PARKED state these tests
   # need, the readiness gate (first ping) must pass while the START pings
   # fail — otherwise the operative stops with `:runner_not_ready`.
   defp park_after_gate(ets) do
@@ -514,12 +511,10 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   test "stop_operative returns :ok within 1s while a parked-unpark migrate task is in flight",
        %{test_pid: test_pid, ets: ets} do
     # The async migrate path lives on the parked-unpark branch — that's
-    # where the bounded retry loop with the 19 s aggregate budget runs.
-    # Boot a parked operative (start ping fails after the readiness gate) and
-    # then trigger un-park with a ping that blocks for several seconds,
-    # simulating the spec's "~10 s into the backoff schedule" scenario.
+    # where the whole bind runs. Boot a parked operative (start ping fails
+    # after the readiness gate) and then trigger un-park with a ping that
+    # blocks for several seconds.
     Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
-    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     operative = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
 
@@ -572,7 +567,6 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   test "starting a second parked-unpark migrate while one is in flight returns :busy",
        %{test_pid: test_pid, ets: ets} do
     Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
-    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
 
     operative = %Builder{id: "busy_migrate_test", factory_id: @factory, opts: []}
 

@@ -1,14 +1,16 @@
 defmodule Flezha.Runner.FleetManager.Session do
   @moduledoc """
-  One runner session, from the handshake to the last operative rerouted off it.
+  One runner session, from the handshake to the disconnect that ends it.
 
   A session token is minted per connection; a `stable_id` that already has a
   live session is resolved newest-wins — the old token is fenced, its operative
   bindings swap onto the new one, and the old session is evicted.
 
-  Invariant: a disconnect drops the runner from the active set unconditionally.
-  What varies is only what becomes of the operatives it held — preserved,
-  migrated or rerouted.
+  Invariant: a disconnect drops the runner from the active set unconditionally
+  and is declared to the convergence loop, which decides what becomes of the
+  operatives it held. The one thing this module keeps is the keepalive: the
+  last runner of a namespace nobody else serves is held `:inactive` for its
+  window rather than dropped.
   """
 
   alias Flezha.AuthZ.QuotaCounters
@@ -16,7 +18,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.AuthZ.Verb
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Orchestrator
-  alias Flezha.Convergence.Heal
+  alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager.Factories
   alias Flezha.Runner.FleetManager.Marks
@@ -26,18 +28,34 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.EventManager
   alias Flezha.Service.HubManager
-  alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
+  alias Flezha.Shutdown
 
   require Logger
 
-  @migrate_drain_budget_ms 5_000
+  @behaviour Flezha.Shutdown.Step
+
+  # The `:namespace` walk's runners step: every active runner of the namespace
+  # is marked retiring — so its channels read the close as one we asked for —
+  # and its supervision tree stopped. The fleet manager drops the namespace from
+  # its roster once the walk returns.
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [%{scope: :namespace, order: 20, name: :runners, run: &runners_step/2}]
+  end
+
+  defp runners_step(%{runner_ids: runner_ids}, _budget) do
+    Enum.each(runner_ids, fn runner_id ->
+      Marks.mark_runner_retiring(runner_id)
+      stop_runner_sup(runner_id)
+    end)
+
+    :ok
+  end
 
   def check_not_shutting_down(namespace) do
-    if ShutdownCoordinator.shutting_down?() do
+    with {:error, :shutting_down} = refusal <- Shutdown.admit(:namespace, namespace) do
       Logger.info("[shutdown] rejecting runner connect attempt for namespace=#{namespace}")
-      {:error, :shutting_down}
-    else
-      :ok
+      refusal
     end
   end
 
@@ -206,24 +224,25 @@ defmodule Flezha.Runner.FleetManager.Session do
 
     _ = HubManager.unregister_handler(namespace, runner_id)
 
-    runner_ids =
+    other_runners? =
       state
       |> Roster.get_runner_ids(namespace, :active)
-      |> Enum.filter(fn id -> id != runner_id end)
+      |> Enum.any?(fn id -> id != runner_id end)
 
-    other_nodes = HubManager.get_hub_nodes(namespace)
+    other_nodes? = HubManager.get_hub_nodes(namespace) != []
 
+    # The keepalive: the last runner of a namespace nobody else serves is held
+    # `:inactive` for its window, so a reconnect swaps its bindings back rather
+    # than re-placing them. Every other case simply drops it.
     namespace_runners =
-      cond do
-        !Enum.empty?(runner_ids) ->
-          runner_reroute(state, namespace, runner_id)
+      if other_runners? or other_nodes?,
+        do: drop_runner(state, namespace, runner_id),
+        else: runner_preserve(state, namespace, runner_id)
 
-        Enum.empty?(runner_ids) && !Enum.empty?(other_nodes) ->
-          hub_migrate(state, namespace, runner_id)
-
-        Enum.empty?(runner_ids) && Enum.empty?(other_nodes) ->
-          runner_preserve(state, namespace, runner_id)
-      end
+    # The loop chooses what becomes of the operatives this runner held: a
+    # rebind onto a surviving runner, or a re-place onto a peer's fleet, each
+    # under its own key. Nothing is rerouted here.
+    Facts.declare({:runner_disconnected, {namespace, runner_id}, %{}})
 
     EventManager.dispatch(
       :runner_disconnected_event,
@@ -234,108 +253,17 @@ defmodule Flezha.Runner.FleetManager.Session do
     put_in(state, [:runner_namespaces, namespace], namespace_runners)
   end
 
-  # Drop the dead runner from the active set unconditionally. Each branch
-  # of the disconnect handler also performs best-effort operative-migration side
-  # effects against ProcessHub / StreamChannels that can raise `:noproc` while
-  # the hub or a freshly reconnected peer is mid-restart under rapid churn. If
-  # one of those raises, the runner's `:active` entry must still be removed —
-  # otherwise it lingers as a corpse that `active_runners/1` keeps reporting
-  # and operatives get assigned to a dead node (stream ghost accumulation).
+  # Drop the dead runner from the active set unconditionally: a runner that
+  # lingers reads as placeable to `active_runners/1`, and operatives get
+  # assigned to a dead node.
   def drop_runner(state, namespace, runner_id) do
     Map.delete(state.runner_namespaces[namespace] || %{}, runner_id)
-  end
-
-  # This controller has no runner left for the namespace but peers do, so its
-  # operatives cannot run here — they must move to a controller that can host
-  # them. The drain migrates each one through the consent gate with live
-  # handover; the destination pulls the durable files it cannot otherwise reach
-  # (`Flezha.State.WalTransfer`), since `state_root` is node-local.
-  #
-  # Off-process: the drain blocks to its deadline and this runs inside the
-  # FleetManager call that the disconnecting runner is waiting on.
-  #
-  # Deliberately a SHORT budget, unlike graceful shutdown's. A drain takes this
-  # node out of the namespace's distribution for its whole duration, and this
-  # path is opportunistic: a runner may reconnect here seconds later, and the
-  # namespace may even be torn down and restarted underneath. Whatever does not
-  # migrate inside the window simply stays, visible and misbound, for the
-  # convergence loop — so a long budget buys nothing and widens the window in
-  # which a returning runner finds its own node still drained.
-
-  def hub_migrate(_state, namespace, _runner_id) do
-    spawn(fn ->
-      _ = HubManager.drain_hub(namespace, budget_ms: @migrate_drain_budget_ms)
-      HubManager.stop_hub_if_vacant(namespace)
-    end)
-
-    %{}
   end
 
   def runner_preserve(state, namespace, runner_id) do
     runner = {:inactive, DateTime.utc_now() |> DateTime.to_unix(:millisecond)}
 
     put_in(state.runner_namespaces[namespace], [runner_id], runner)
-  end
-
-  def runner_reroute(state, namespace, old_runner) do
-    # Collected BEFORE the drop, while the tag query still names the dead
-    # runner's operatives. A hub that is down or mid-restart during churn
-    # answers `[]` through the guarded seam, so it can never abort the dead
-    # runner's removal from the active set below; the operatives heal on the
-    # next convergence tick instead.
-    operatives = HubManager.runner_operatives(namespace, old_runner)
-
-    # Off-process: each rebind resolves placement back through this
-    # FleetManager (`assign_runner/3`), which would deadlock inside this
-    # handler. The spawned work's calls queue behind the current one, so they
-    # observe the post-drop active set — the dead runner is absent from it
-    # by the time anything is placed.
-    spawn(fn -> reroute_operatives(namespace, old_runner, operatives) end)
-
-    drop_runner(state, namespace, old_runner)
-  end
-
-  # Per-operative confirmed rebinds through the ONE migrate-commit contract
-  # (`Heal.rebind/2`): factory-filtered HRW placement per operative, registry
-  # flip and stream-channel seeding only after the operative confirms the
-  # migrate, WAL resync into the new binding. An unconfirmed operative keeps
-  # its binding and heals on the next convergence tick.
-  def reroute_operatives(namespace, old_runner, operatives) do
-    Enum.each(operatives, fn {operative_id, node_pids} ->
-      # Multi-node-safe: resolve the live/local pid (dropping dead-node
-      # entries) first, so a operative registered on more than one node
-      # neither crashes this path nor blocks on a dead pid.
-      case HubManager.live_pid(node_pids) do
-        nil ->
-          Logger.debug(
-            "[FleetManager] runner_reroute: no live pid for operative #{operative_id}; " <>
-              "it will migrate on its next bind/rebind"
-          )
-
-        _operative_pid ->
-          reroute_one(namespace, old_runner, operative_id)
-      end
-    end)
-  end
-
-  # Isolated per operative: one raising rebind (ProcessHub or a StreamChannel
-  # mid-restart under churn) must not strand its siblings.
-  def reroute_one(namespace, old_runner, operative_id) do
-    case Heal.rebind(namespace, operative_id) do
-      :ok -> :ok
-      :error -> log_reroute_miss(operative_id, old_runner, "did not confirm")
-    end
-  rescue
-    error -> log_reroute_miss(operative_id, old_runner, "raised #{inspect(error)}")
-  catch
-    :exit, reason -> log_reroute_miss(operative_id, old_runner, "exited #{inspect(reason)}")
-  end
-
-  def log_reroute_miss(operative_id, old_runner, what) do
-    Logger.warning(
-      "[FleetManager] reroute of #{operative_id} off #{old_runner} #{what}; " <>
-        "binding left unchanged, heals on next convergence tick"
-    )
   end
 
   def runner_connect(stream_ref, namespace, transport) do

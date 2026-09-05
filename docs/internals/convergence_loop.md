@@ -11,11 +11,13 @@ picture is in [`../architecture/kernel.md`](../architecture/kernel.md#health-and
 ## Architecture
 
 ```text
+Facts.declare(fact)                      ← the ONE intake, from every site
+      │
 Intent.declared()                        ← the hub's declared set
 Probe.snapshot()                         ← reality
-StallClassifier.classify()               ← sensor signals (verdict, stalled ids)
+StallClassifier.classify()               ← the data-plane verdict
       ▼
-Diff.compute(intent, reality, signals)   ← pure
+Diff.compute(intent, reality, signals)   ← pure, over reality AND the held facts
       ▼
 Planner.plan(delta, backoff)             ← pure
       ▼
@@ -24,23 +26,31 @@ Heal.execute(op) → Backoff.update(key, outcome)   ← the only side effects
 Snapshot.publish(summary)                ← /healthz, CLI, telemetry
 ```
 
-`Convergence.Loop` owns the tick timer and the event subscriptions and calls the pure modules in
+`Convergence.Loop` owns the tick timer and the fact map and calls the pure modules in
 sequence; all state mutation happens in `Heal`. **One chain of custody:** sensors sense, exactly
 one actor acts, `/healthz` reads the actor's snapshot, the orchestrator restarts on `/healthz`.
-`State.Watchdog`, `StallClassifier`, `LivenessCounters` and the plugin providers' `health/1` emit
-facts and invoke no remedy of their own; the Loop is the only module that heals.
+`State.Watchdog`, `StallClassifier`, `LivenessCounters`, the WAL admission, the extension table,
+the fleet manager, the bind's park funnel and the registry hooks each record a fact and declare
+it through `Flezha.Convergence.Facts.declare/1`; none of them decides what to fix, none carries a
+retry ladder, counter or clock of its own, and none invokes a remedy entry point directly. The
+Loop is the only module that heals.
+
+The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an
+operator verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached
+through `HubManager.drain_hub/2` from the shutdown plan only.
 
 ## Modules
 
 | Module | Role |
 |---|---|
-| `Convergence.Loop` | GenServer owning the tick timer, the misbound-streak map, the stalled/stuck/plugin-degraded sets, the event subscriptions and the try/rescue guard |
+| `Convergence.Loop` | GenServer owning the tick timer, the declared-fact map, the misbound-streak map, the stuck/plugin-degraded sets and the try/rescue guard |
+| `Convergence.Facts` | The one intake (`declare/1`) and the table of what may be declared: per kind, the Diff field that consumes it, the reason its op keys on, whether its key resets inline or on evidence, its grace and whether a new key ticks at once. Names no other module, so a declaring site depends on an abstraction that names no remedy |
 | `Convergence.Intent` | Reads the hub's declared set (`HubManager.declared_operatives/1`) plus each operative's declared plugins from the durable cspec. With durable starts off (`HubManager.durable_starts?/0`) intent degrades to the live registry |
 | `Convergence.Probe` | Reads live reality: per-operative Overwatch state (bound runner, factory, parked/suspended, running plugins, provider health via `Extension.Table.health/1`), active runners per namespace, factory placement (local runners vs other nodes' fleets), hub recovery states |
-| `Convergence.Diff` | Pure: intent + reality + signals → `%Diff{unbound_operatives, misbound_operatives, replace_operatives, stalled_operatives, missing_plugins, extra_plugins, unhealthy_plugins, data_plane_wedge, data_plane_layer}` |
+| `Convergence.Diff` | Pure: intent + reality + signals → `%Diff{unbound_operatives, misbound_operatives, parked_operatives, replace_operatives, stalled_operatives, resync_entities, missing_plugins, extra_plugins, unhealthy_plugins, stale_tags, data_plane_wedge, data_plane_layer, draining}` |
 | `Convergence.Planner` | Pure: `%Diff{}` + `%Backoff{}` → ordered, cooldown-filtered op list capped at `max_ops` (default 20). The one place a divergence becomes an op |
-| `Convergence.Heal` | Seven idempotent primitives: `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
-| `Convergence.Backoff` | Per-`{primitive, target}` cooldown: 5 s → 30 s → 60 s → 300 s, held at 300 s; `:ok` resets |
+| `Convergence.Heal` | The primitive table: ten idempotent primitives, each naming its executor and the evidence that resets its key — `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` |
+| `Convergence.Backoff` | The one cooldown table: 5 s → 30 s → 60 s → 300 s, held at 300 s. Keyed `{primitive, target}`, `{primitive, {operative, plugin}}` for a plugin op, or `{reason, target}` for one carrying a declared reason |
 | `Convergence.Snapshot` | Public ETS table read by `/healthz`, the CLI and telemetry: `:current` (per-tick summary), `{:recovery, hub_id}`, `{:sensor, name}` |
 | `Convergence.RecoveryGate` | Hub recovery queries: `ready_namespaces/1`; `await_recovery_complete/2` behind `HubManager.await_recovery_complete/1` (the `Boot.Loader` and `FleetManager` boot gates) |
 | `Flezha.SafeCall` | Not a convergence module — the control plane's bounded-call wrapper, at the root and named by five trees. Returns `{:error, reason}` on timeout / `:noproc` / any exit; probes a timed-out local target's mailbox and `current_function` |
@@ -49,18 +59,41 @@ facts and invoke no remedy of their own; the Loop is the only module that heals.
 ## Tick pipeline
 
 One tick per `:convergence_tick_ms` (default 5 000 ms), the first immediately on `init/1`. A tick
-also runs at once on `[:flezha, :state, :output_stall]` for an operative not already in
-`stalled_operatives` (a re-flag only refreshes its timestamp), on `:runner_connected_event`, and
-on a `[:flezha, :boot, :reconcile_round]` that completes with `started > 0`. Within a tick:
+also runs at once when a declared fact opens a key the loop does not hold; a re-declaration of a
+key it holds refreshes the time and costs no tick, so a Watchdog re-flagging a frozen Entity every
+sweep, or thirty operatives losing one runner, drives one tick and not thirty. Within a tick:
 
-1. Age out stalled entries older than `:convergence_output_stall_grace_ms`, releasing their ladder cooldown.
-2. Classify the data plane (`StallClassifier.classify/3`) when `LivenessCounters.poll_enabled?/0`; carry the verdict and its consecutive-poll streak.
-3. `Intent.declared/0`, `Probe.snapshot/0`.
+1. Classify the data plane (`StallClassifier.classify/3`) when `LivenessCounters.poll_enabled?/0`; carry the verdict and its consecutive-poll streak.
+2. `Intent.declared/0`, `Probe.snapshot/0`.
+3. **Settle the facts** against the probe: drop the ones reality shows repaired, the ones nothing still names, and the ones past `:convergence_output_stall_grace_ms`, releasing the ladder each one walked; adopt a park the probe observed that nobody declared.
 4. **Recovery gate:** `RecoveryGate.ready_namespaces/1` keeps namespaces whose hub is `:normal` or `:skipped`; `:recovering` / `:recovery_pending` hubs are excluded (no heal against a half-replayed registry); `:timeout` hubs (replay window expired, live ring healthy) are included with a `Logger.warning`, so one stuck hub does not disable healing elsewhere.
-5. `Diff.compute/3` over the ready subset with `%{verdict, stalled}`; apply the misbound-streak gate; drop `missing_plugins` whose enable is in flight (`PluginManager.pending_ids/0` — cspec first, subscribe second, so a heal would subscribe twice).
-6. `Planner.plan/2`, then `Heal.execute/1` per op, each outcome recorded in `Backoff`.
+5. `Diff.compute/3` over the ready subset with `%{verdict, facts}`; apply the misbound-streak gate; drop `missing_plugins` whose enable is in flight (`PluginManager.pending_ids/0` — cspec first, subscribe second, so a heal would subscribe twice).
+6. `Planner.plan/2`, then `Heal.execute/1` per op, each outcome recorded in `Backoff`. A plan that filled `max_ops` re-ticks at once, so the cap bounds one tick's blast radius and never becomes a rate.
 7. Report-only inputs: producing-liveness verdicts and the intent-mismatch check.
 8. `Snapshot.publish/1` over the **full** intent, so `/healthz` sees the true intended count.
+
+## The intake
+
+`Flezha.Convergence.Facts.declare({kind, target, args})` is the one way a site tells the loop
+something. The loop holds each fact in one map keyed `{kind, target}` with the time of its last
+declaration. A fact leaves when its counter-fact arrives, when the probe shows it repaired, or
+when its grace expires — and the key its remedy walked is released with it.
+
+| Kind | Declared by | Diff field | Remedy, keyed | Cleared by |
+|---|---|---|---|---|
+| `output_stall` | `State.Watchdog` / `StreamChannel` telemetry | `stalled_operatives` | the ladder, `{:output_stall, id}` | the flag stopping, past the grace |
+| `runner_disconnected` | `FleetManager.Session` on a closed session | `misbound_operatives` (reason `:runner_disconnected`) | `rebind_operative`, `{:runner_disconnected, id}` | the runner active again, or no operative naming it |
+| `operative_parked` | `Operative.Lifecycle.park/2`, the one park funnel | `parked_operatives` | `rebind_operative`, `{:parked, id}` | the operative observed bound |
+| `plugin_down` | `Extension.Table.handle_down/5` via the Overwatch | `unhealthy_plugins` | `restart_plugin`, `{:restart_plugin, {id, plugin}}` | `:running` for the stable window |
+| `compaction_gave_up` | `State.Watchdog`'s strike table | `resync_entities` | `resync_runner`, `{:compaction_gave_up, entity}` | `compaction_completed` |
+| `seq_gap` | `WalWriter.Admission` on the first gap of an episode | `resync_entities` | `resync_runner`, `{:seq_gap, entity}` | `seq_gap_closed` (a contiguous append) |
+| `registry_written` | `HubManager`'s `child_registered` hook | `stale_tags` | `publish_binding`, `{:publish_binding, id}` | the row naming the bound runner |
+| `node_draining` | `Shutdown.Coordinator` at quiesce | `draining` | — (it suppresses, never plans) | `node_drained`, at finalise |
+
+`runner_connected` and `reconcile_started` are declared too and held by nothing: they only shorten
+detection latency by ticking at once. A runner connecting also releases every `{:parked, _}` key in
+its namespace — the world changed, so the parked operatives are retried at once rather than at
+their next rung.
 
 **Probe concurrency.** Every Overwatch is read through `Task.async_stream` (`max_concurrency:
 schedulers_online × 4`, per-operative budget 1 000 ms + 3 × the 500 ms plugin probe budget,
@@ -75,7 +108,7 @@ hub's own reconcile through the idempotent start authority; a heal op acts only 
 
 ## Stability guards
 
-- **Misbound-streak gate.** An operative must be observed misbound in ≥ 2 consecutive ticks before `rebind_operative` is planned; a tick on which it is not misbound clears its streak. A runner blip cannot trigger a namespace-wide migration + WAL replay.
+- **Misbound-streak gate.** An operative the PROBE observed misbound must be seen so in ≥ 2 consecutive ticks before `rebind_operative` is planned; a tick on which it is not misbound clears its streak. A runner blip cannot trigger a namespace-wide migration + WAL replay. A DECLARED disconnect is not streak-gated: it is a closed session the fleet manager observed, not a probe miss.
 - **No action on a failed observation.** `:unknown` — a failed `FleetManager.active_runners/1` read (namespace-wide), a failed Overwatch read (per operative) or a failed local `runners_for_factory/2` read (never `[]`) — suppresses misbound/replace classification. `:unknown` is not "no runners".
 - **Suspended operatives are not healed.** A workflow instance evicted at a committed iteration boundary is unbound by design; its own wake sources bring it back.
 - **Plugins diff only on a running operative** (live pid, not suspended, not parked), and `extra_plugins` only against a non-empty declared set — an empty declaration is indistinguishable from a failed cspec read.
@@ -99,13 +132,20 @@ previous runner is alive to serialise it). Emits `[:flezha, :runner, :reconnecte
 `[:flezha, :runner, :reconnected]` with `reason: :convergence_rebind`. `skip_rebind?/4` makes a
 misbound rebind a safe no-op when the bound runner is back in the live, factory-owning set — never
 for an op whose reason proves the target is not producing (`:output_stall`, `:data_plane_wedge`).
-`Heal.rebind/2` is the public entry to the same contract for the runner-disconnect reroute.
+It is reached only from the plan: a runner disconnect is declared, never rerouted at the fleet manager.
 
 **`replace_operative`** — an operative whose factory no local runner advertises while another
 node's fleet does. Runs only on the node hosting the Overwatch, asks
 `Overwatch.migration_consent/1`, picks the destination through the same HRW the start path uses,
 and moves the child with `ProcessHub.Service.Migration.migrate_child/3`. The declared entry never
 changes, so a crash mid-move heals through the hub reconcile.
+
+Each tick also reclaims a hub this node cannot serve: a namespace whose local fleet is empty and
+none of whose operatives this node hosts has its hub stopped here
+(`HubManager.stop_hub_if_vacant/1`), so the distribution stops handing children to a controller
+with no runners. It is not a primitive and is not planned — it names no target, takes no backoff
+and repairs nothing. The guard is node-local: a peer's operatives never keep this node's hub
+alive, this node's own always do, and a later runner connect starts the hub again.
 
 **`resync_runner`** — re-issue `RestoreInitState` for every persisted Entity against the runner
 the operative is **already** bound to: the rung below `rebind_operative`, no placement, no
@@ -127,9 +167,42 @@ rebind; keyed per runner, planned before the rebinds. FleetManager refuses to ev
 in the active set unless the op carries `proved_wedged: true` (a classifier-proved wedge): a
 pool-wedged runner is still connected, which is what stops anything else from dislodging it.
 
-**Planner order:** evictions → the data-plane wedge op (at most one) → rebinds (misbound, then
-unbound) → replacements → plugin starts, stops, restarts; cooldown-filtered and capped at
-`max_ops`, with the output-stall ladder appended past the cap.
+**`reset_control_channel`** — the controller-side reconnect REQUEST, and the only remedy that
+sends nothing: `FleetManager.reset_control_channel/1` clears the runner's `ControlChannel`
+`stream_ref` so the SDK's next data stream claims it through the existing rebind path. Planned
+from a park whose bind reported a dead transport, before the rebind that would otherwise be placed
+on it; a park whose ping merely TIMED OUT is a busy runner whose live channel carries every other
+instance on it, so it is retried and the channel cut only once the `{:parked, id}` key has walked
+two rungs. The bind that failed classifies its own reason, and the verdict rides the fact.
+
+**`publish_binding`** — asks the Overwatch to re-write its durable row and the runner's route from
+the binding it holds. Planned last, from `stale_tags`: a start's registry write can land after a
+rebind and leave `metadata.tag` naming the old runner, which the Probe reads beside the live
+binding.
+
+**Planner order:** evictions and channel resets → the data-plane wedge op (at most one) → rebinds
+(misbound, then parked, then unbound) → replacements → Entity resyncs → plugin starts, stops,
+restarts → row re-publishes; cooldown-filtered and capped at `max_ops`, with the output-stall
+ladder appended past the cap. A rule is one `%Diff{}` field and the primitives it may plan
+(`Planner.rules/0`), so a new remedy is one primitive entry plus the rule that plans it and edits
+no site.
+
+## The key and the evidence rule
+
+One `%Backoff{}` per node, `5 s → 30 s → 60 s → 300 s`. A key is `{primitive, target}`, or
+`{primitive, {operative, plugin}}` for a plugin op — per plugin, so one crashing plugin never
+throttles its siblings' starts — or `{reason, target}` for an op carrying a declared reason, so
+every rung of that reason's ladder walks ONE cooldown and the attempt count IS the rung.
+
+Two reset rules exist and both are THE rule:
+
+- a primitive whose repair is observable inline resets its key on its own `:ok`;
+- a primitive whose repair is only visible later — a **ladder** — records `:error` on every application and resets only when its declared evidence arrives.
+
+Which is which is read from the declared kinds (`Facts.ladder_reason?/1`, `ladder_primitive?/1`),
+never from a case in the loop. A `restart_plugin` that reached `:running` and crashed again a
+second later therefore stays on its rung: only `:running` observed for the whole 60 s stable
+window, read from the extension table's own `started_at`, resets it.
 
 ## The output-stall ladder
 
@@ -151,8 +224,8 @@ Both rungs carry `args: %{reason: :output_stall}` and share one cooldown key
 (`Planner.ladder_key/1`), so escalation walks a single 5 s → 30 s → 60 s → 300 s ladder; the rung
 is `Backoff.attempt/2` on that key. A ladder op's `:ok` means the remedy was *applied*, not that
 the stall cleared — only the Watchdog going quiet proves that — so the Loop records `:error` for
-every ladder op (which is what reaches the next rung) and resets the key when the operative ages
-out of `stalled_operatives` after `:convergence_output_stall_grace_ms`.
+every ladder op (which is what reaches the next rung) and resets the key when the fact ages out
+after `:convergence_output_stall_grace_ms`.
 
 ## Plugin health
 
@@ -171,7 +244,10 @@ healthy — the loop never escalates on uncertainty.
 | `operative_http_poll` | `:no_poller`, `:poller_dead`, `{:poll_failing, reason}` after `failure_threshold` (default 3) consecutive failed polls |
 
 A declared, subscribed, unhealthy plugin diffs into `unhealthy_plugins` and is healed by
-`restart_plugin` under the standard backoff. Operatives with missing or unhealthy declared plugins
+`restart_plugin` under the standard backoff. A subscriber that CRASHES is the same divergence
+declared from the other side: the extension table records its phase as `{:down, reason}`, declares
+`{:plugin_down, …}`, arms no timer and holds no counter, and the loop restarts it through the same
+primitive. Operatives with missing or unhealthy declared plugins
 are published as `plugin_degraded_operatives`; the loop logs set transitions only.
 
 ## Health publishing
@@ -222,7 +298,7 @@ are never 503.
 |---|---|---|---|
 | `FLEZHA_USE_CONVERGENCE_HEALTH` | `:convergence_health_enabled` | `true` | Off switch; `false` removes `Loop` from the supervision tree. `Snapshot` always starts |
 | `FLEZHA_CONVERGENCE_TICK_MS` | `:convergence_tick_ms` | `5000` | Tick interval; also the unit of the `/healthz` tick-age bounds |
-| `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | Age-out window of a recorded stall and the STUCK grace. The immediate tick fires on the first flag regardless. Separate from the Watchdog's `output_stall_timeout_ms` |
+| `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | Age-out window of a declared fact nothing re-declares, and the STUCK grace. The immediate tick fires on the first declaration regardless. Separate from the Watchdog's `output_stall_timeout_ms` |
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `:convergence_unmet_intent_grace_ms` | `120000` | How long `bound < intended` may hold before `/healthz` escalates `recovering → degraded` |
 | `FLEZHA_FABRIC_503_POLLS` | `:convergence_fabric_503_polls` | `3` | Consecutive polls a fabric wedge must hold before 503; `0` disables the fabric 503 |
 | `FLEZHA_HEALTHZ_ENABLED` / `_PORT` / `_BIND` | `:healthz_enabled` / `:healthz_port` / `:healthz_bind` | `false` / `9569` / `0.0.0.0` | `/healthz` listener |

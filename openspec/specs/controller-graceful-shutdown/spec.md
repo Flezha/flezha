@@ -3,16 +3,14 @@
 ## Purpose
 
 The controller-graceful-shutdown capability defines how the Flezha controller (BEAM agent) reacts to operator-initiated and orchestrator-initiated termination signals so that locally hosted Operatives migrate cleanly to peers (or flush WAL state for restart survival), in-flight work is allowed to drain, and the BEAM exits within the orchestrator's grace window. The capability owns a three-phase shutdown coordinator (quiesce → drain → finalise), OS signal trapping wired into `Flezha.Application`, the `flz controller stop` CLI surface, the `Application.prep_stop/1` integration, the configuration knobs that let operators tune or disable the mechanism, the structured-log + telemetry observability surface, and the docker-compose / kubernetes packaging that wires orchestrator grace periods to the BEAM-side timeout.
-
 ## Requirements
-
 ### Requirement: Controller SHALL run a three-phase graceful shutdown coordinated by `Flezha.Shutdown.Coordinator`
 
-`Flezha.Shutdown.Coordinator` is a GenServer started by `Flezha.Application` after `Flezha.Service.HubManager`. On `Coordinator.shutdown(reason, opts)` it SHALL execute three phases in order: **quiesce → drain → finalise**. Each phase SHALL emit one structured log line at start and one telemetry event under `[:flezha, :shutdown, :phase_started | :phase_completed]` with metadata `%{phase: :quiesce | :drain | :finalise, reason: atom()}`.
+`Flezha.Shutdown.Coordinator` is a GenServer started by `Flezha.Application` after `Flezha.Service.HubManager`. On `Coordinator.shutdown(reason, opts)` it SHALL execute three phases in order: **quiesce → drain → finalise** — the `:node`-scope walk of the shutdown plan. Each phase SHALL emit one structured log line at start and one telemetry event under `[:flezha, :shutdown, :phase_started | :phase_completed]` with metadata `%{phase: :quiesce | :drain | :finalise, reason: atom()}`.
 
-**Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Runner.FleetManager` rejects new runner connect attempts with a structured error. Already-running Operatives and already-connected runners SHALL NOT be affected by this phase.
+**Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Runner.FleetManager` rejects new runner connect attempts with a structured error, and SHALL declare `{:node_draining, deadline}` to the convergence loop. Already-running Operatives and already-connected runners SHALL NOT be affected by this phase.
 
-**Drain** SHALL migrate locally hosted Operatives to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub, concurrently via a workflow `Task.async_stream` over the namespace list, where `remaining_budget` is the configured shutdown timeout minus elapsed time (floored at a small positive minimum). `drain/2` redistributes each local child through the migration-consent gate (live HotSwap handover) and force-migrates whatever is still deferred at its deadline. Per-hub outcomes SHALL be folded as follows:
+**Drain** SHALL migrate locally hosted Operatives to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub through the one seam `Flezha.Service.HubManager.drain_hub/2` — reachable from `lib/flezha/shutdown/` only — concurrently via a workflow `Task.async_stream` over the namespace list, where `remaining_budget` is derived downward from the configured shutdown timeout (timeout minus elapsed minus slack, floored at a small positive minimum; per hub minus the handover grace). `drain/2` redistributes each local child through the migration-consent gate (live HotSwap handover) and force-migrates whatever is still deferred at its deadline. The drain is the one remedy-shaped action outside the convergence primitives: an operator verb the loop is told about and never chooses. While the `{:node_draining, _}` fact stands the convergence Planner SHALL plan no op that places onto this node and no `publish_binding` for a local row, so the loop cannot fight the drain. Per-hub outcomes SHALL be folded as follows:
 
 - `{:ok, %{migrated: m, forced: f}}` — counted into the drain outcome; `f > 0` SHALL be logged at WARNING but does not change the overall result.
 - `{:error, :no_target_nodes}` — the solo-node path: log `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot` and proceed (local Operatives terminate when the hub supervisor stops; WAL fsync flushes in finalise).
@@ -20,9 +18,9 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 Only **after** every hub's drain call has returned (or the shutdown timeout fired) SHALL the coordinator call `Flezha.Service.HubManager.stop_hub_manager()` to stop the hub supervisor. The coordinator SHALL emit `[:flezha, :shutdown, :drain_progress]` once per completed hub with `%{migrated: integer(), forced: integer(), remaining_hubs: integer(), elapsed_ms: integer()}`.
 
-**Finalise** SHALL synchronously complete all pending I/O steps: flush `Flezha.State.FsyncBatcher`, close the `Flezha.Observability.AuditLog.Writer` (if running), and stop transports via `Flezha.Transport.Server`. Each step SHALL be wrapped in a shared `safe_finalise_step(label, fun, timeout_ms)` private helper that catches `:exit` and logs a warning with `label` rather than crashing the coordinator. After finalise returns, normal supervision-tree shutdown completes the rest.
+**Finalise** SHALL synchronously complete all pending I/O steps: flush `Flezha.State.FsyncBatcher`, close the `Flezha.Observability.AuditLog.Writer` (if running), and stop transports via `Flezha.Transport.Server`; it SHALL clear the `{:node_draining, _}` fact. Each step SHALL be wrapped in a shared `safe_finalise_step(label, fun, timeout_ms)` private helper that catches `:exit` and logs a warning with `label` rather than crashing the coordinator. After finalise returns, normal supervision-tree shutdown completes the rest.
 
-The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` (default `60_000`, env `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`). On timeout the coordinator SHALL log `[shutdown] timeout phase=<current> still_local=<count>` at ERROR, emit `[:flezha, :shutdown, :timeout]`, advance to finalise, and return `{:partial, still_local}` to the caller. The coordinator SHALL NEVER block the BEAM beyond this bound — orchestrator-side grace period is the wall-clock backstop.
+The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` (default `60_000`, env `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`), the one budget every lower scope derives from. On timeout the coordinator SHALL log `[shutdown] timeout phase=<current> still_local=<count>` at ERROR, emit `[:flezha, :shutdown, :timeout]`, advance to finalise, and return `{:partial, still_local}` to the caller. The coordinator SHALL NEVER block the BEAM beyond this bound — orchestrator-side grace period is the wall-clock backstop.
 
 `Coordinator.shutdown/2` SHALL be idempotent: the first call drives the state machine; subsequent calls during `:quiescing | :draining | :finalising` SHALL log `[shutdown] already in progress (phase=<phase>), joining`, register the caller as a waiter, and return the same outcome to all waiters.
 
@@ -73,6 +71,17 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 - **GIVEN** `FsyncBatcher` has already terminated before the finalise phase runs
 - **WHEN** the coordinator attempts to flush it
 - **THEN** the `:exit` is caught by `safe_finalise_step`, a warning is logged, and the coordinator proceeds to the next finalise step without crashing
+
+#### Scenario: A tick during a declared drain plans nothing local
+
+- **GIVEN** a coordinator that has declared `{:node_draining, deadline}` and a misbound operative whose Overwatch is on this node
+- **WHEN** the convergence loop ticks
+- **THEN** it SHALL plan no `rebind_operative` or `replace_operative` placing onto this node and no `publish_binding` for a local row, and the drain's forced pass SHALL run as the last step inside the budget
+
+#### Scenario: The drain fact clears with finalise
+
+- **WHEN** the finalise phase completes
+- **THEN** the loop SHALL no longer hold `{:node_draining, _}`, and a tick afterwards SHALL plan as on any node
 
 ### Requirement: SIGTERM and SIGINT SHALL trigger graceful shutdown in every BEAM run mode
 
@@ -303,3 +312,53 @@ Operators tuning `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` away from `60000` SHALL u
 - **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting a Operative and a peer service available
 - **WHEN** the operator runs `docker compose stop`
 - **THEN** docker sends SIGTERM, the controller's SignalHandler picks it up, the coordinator drains in ≤ 60 s; docker's 75 s grace period elapses without a SIGKILL; the controller exits cleanly with the Operative migrated to the peer
+
+### Requirement: Teardown at every scope SHALL run one declared, ordered step list under one budget
+
+Every teardown SHALL be one walk, `Flezha.Shutdown.run(scope, target, budget)` — the
+operator's operative stop, the supervisor's terminate, the namespace stop and the node
+drain alike — folding the discovered `Flezha.Shutdown.Step` implementations of that scope
+(`:process | :operative | :namespace | :node`) in their declared order, each once, each
+handed the budget still remaining, stopping at the budget and naming the steps not run in
+its return. A step SHALL run in the CALLER's process, because a teardown releases what the
+caller owns — the links its plugin table holds, the ETS tables its marks live in, the
+routes that name `self()` — and SHALL return inside the budget it is handed; every
+cross-process call inside one is bounded as `Flezha.SafeCall.bounded/3` requires. The walk
+SHALL re-check the deadline between steps, and a step that raises, exits or answers
+`{:error, _}` SHALL halt it. The steps are declared by the resource they tear down — the migrate task first,
+the class registry, the control unit, the plugin table (one step: the on-terminate hooks,
+the teardown and the manager's unregister), the stream-channel flush (flush, never count,
+before deregister), the state directory (one guard: `.tmp`/`.rewriting` or a completion
+record), the quota ledger, the hub — and a new resource with a teardown is one new step,
+editing no stop path. The budget is the node's `:graceful_shutdown_timeout_ms` at `:node`
+and is derived downward from it; the `:operative` stop has one attribute.
+`Flezha.Shutdown.quiesced?/2` SHALL answer per scope and target, so a one-namespace stop
+does not read as the node not shutting down. The offline `flz reset` SHALL share the
+roots declaration the `:node` steps print and none of the mechanism.
+
+#### Scenario: An operator stop tears each resource down once
+- **WHEN** an operator stops an operative
+- **THEN** the `:operative` walk runs, the plugin table is torn down exactly once, the state directory is deleted under the one guard, and the quota ledger is released, in the declared order
+
+#### Scenario: A step that spends the budget leaves the rest unrun, and they are named
+- **GIVEN** a step that returns only once the remaining budget is spent
+- **WHEN** the walk re-checks the deadline
+- **THEN** it SHALL run no further step, and the return SHALL name the ones it did not run
+
+#### Scenario: A step runs where the resource it releases is owned
+- **WHEN** a step unlinks a plugin's owned pid, writes the mark table, or seeds a route naming `self()`
+- **THEN** it SHALL run in the process the walk was called from, so the resource it releases is the one the caller holds
+
+#### Scenario: A teardown outside the steps fails the seam test
+- **WHEN** a state directory is removed, or `Extension.Table.teardown_all/1` is called, from a stop path outside the step implementations
+- **THEN** the seam test SHALL fail naming the module, function and arity
+
+#### Scenario: Every step is discovered and ordered
+- **WHEN** the step implementations are enumerated
+- **THEN** each SHALL have a unique order within its scope, and the four stop entry points SHALL reach `Shutdown.run/3`
+
+#### Scenario: A namespace stop reads as quiesced for that namespace only
+- **GIVEN** one namespace being stopped on a node that is not shutting down
+- **WHEN** a runner connects to another namespace, or an operative is started there
+- **THEN** it SHALL be admitted; `quiesced?(:namespace, ns)` SHALL be true for the stopping namespace and `quiesced?(:node, _)` false
+

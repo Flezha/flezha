@@ -13,6 +13,7 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.Runner.FleetManager
   alias Flezha.SafeCall
   alias Flezha.Service.HubManager
+  alias Flezha.State.WriterRegistry
 
   @operative_call_timeout_ms 1_000
   # Headroom above the Overwatch call for provider health probes. Each plugin's
@@ -29,6 +30,7 @@ defmodule Flezha.Convergence.Probe do
           active_runners: %{binary() => MapSet.t() | :unknown},
           placement: placement(),
           recovery: %{atom() => atom()},
+          writers: MapSet.t() | :unknown,
           tick_at: integer()
         }
 
@@ -44,8 +46,20 @@ defmodule Flezha.Convergence.Probe do
       active_runners: active_runners(namespaces),
       placement: placement(operatives),
       recovery: Snapshot.recovery_states(),
+      writers: live_writers(),
       tick_at: System.monotonic_time(:millisecond)
     }
+  end
+
+  # The Entities with a live writer — the evidence a declared gap or give-up
+  # still has a log to close. `:unknown` on a failed read, never empty: a
+  # missing writer clears a fact, and a read that failed proves nothing.
+  defp live_writers() do
+    WriterRegistry.registered_ids()
+    |> Enum.filter(&(is_tuple(&1) and tuple_size(&1) == 3))
+    |> MapSet.new()
+  catch
+    :exit, _ -> :unknown
   end
 
   # Probe every operative concurrently: one wedged Overwatch costs ~one timeout,
@@ -79,11 +93,15 @@ defmodule Flezha.Convergence.Probe do
         observed(%{
           pid: pid,
           bound_runner: Map.get(ow, :runner_id),
+          registry_tag: registry_tag(ow),
           factory_id: Map.get(ow, :factory_id),
           parked?: Map.get(ow, :init_error) != nil,
+          park_reason: Map.get(ow, :init_error),
           suspended?: Map.get(ow, :suspended, false),
           running_plugins: running_plugins(ow),
           subscribed_plugins: subscribed_plugins(ow),
+          down_plugins: down_plugins(ow),
+          plugin_uptimes: plugin_uptimes(ow),
           plugin_health: plugin_health(pid, ow)
         })
 
@@ -107,11 +125,15 @@ defmodule Flezha.Convergence.Probe do
       %{
         pid: nil,
         bound_runner: nil,
+        registry_tag: nil,
         factory_id: nil,
         parked?: false,
+        park_reason: nil,
         suspended?: false,
         running_plugins: [],
         subscribed_plugins: [],
+        down_plugins: %{},
+        plugin_uptimes: %{},
         plugin_health: %{}
       },
       fields
@@ -127,6 +149,23 @@ defmodule Flezha.Convergence.Probe do
   # The full subscribed set, whatever the phase — what the `extra_plugins`
   # check reads, so an undeclared plugin is torn down in either phase.
   defp subscribed_plugins(ow), do: with_table(ow, [], &Table.subscribed_ids/1)
+
+  # The subscribers whose owned pid crashed, with the reason — a plugin the
+  # loop restarts rather than re-activates.
+  defp down_plugins(ow), do: with_table(ow, %{}, &Table.down_ids/1)
+
+  # How long each running plugin's owned pid has been up: the evidence that
+  # resets a restarted plugin's key.
+  defp plugin_uptimes(ow), do: with_table(ow, %{}, &Table.uptimes/1)
+
+  # The runner the operative's durable row names. A rebind that raced a start's
+  # late registry write leaves it naming the old runner; the Diff reports the
+  # difference and `publish_binding` re-writes it.
+  defp registry_tag(ow) do
+    HubManager.operative_runner_tag(Map.get(ow, :namespace), Map.get(ow, :id))
+  catch
+    _, _ -> nil
+  end
 
   # Provider self-reported health (`Extension.Table.health/1`). Owned plugin
   # pids live on the Overwatch's node, so only the loop running there can probe

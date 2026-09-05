@@ -6,10 +6,11 @@ defmodule Flezha.State.Watchdog do
   telemetry it emits.
 
   This is a **sensor**: it observes and emits, and decides no remedy of its own.
-  The one exception is the compaction handshake it owns end to end — it
-  dispatched the `CompactEntity`, so it also times it out. Each completed sweep
-  stamps `Convergence.Snapshot`, so a Watchdog that wedges without crashing is
-  visible on `/healthz` rather than turning detection off in silence.
+  The compaction handshake it dispatched it also times out, and a compaction it
+  gives up on is declared to the convergence loop, which plans the resync. Each
+  completed sweep stamps `Convergence.Snapshot`, so a Watchdog that wedges
+  without crashing is visible on `/healthz` rather than turning detection off
+  in silence.
 
   Four sweeps run on each pass: **output staleness** (Changes still arriving
   while the persisted seq has not advanced — an idle Entity is not flagged),
@@ -23,7 +24,7 @@ defmodule Flezha.State.Watchdog do
 
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.Quotas
-  alias Flezha.Convergence.{Backoff, Snapshot}
+  alias Flezha.Convergence.{Backoff, Facts, Snapshot}
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
@@ -31,7 +32,6 @@ defmodule Flezha.State.Watchdog do
     DurabilityTier,
     Paths,
     PersistenceResolver,
-    Recovery,
     WalWriter,
     WriterRegistry
   }
@@ -148,6 +148,7 @@ defmodule Flezha.State.Watchdog do
     # A snapshot just replaced the WAL prefix it subsumes — the exact boundary
     # at which the remote copy should move from record bundles to a baseline.
     DurabilityTier.on_compaction_completed(entity_id)
+    Facts.declare({:compaction_completed, entity_id, %{}})
 
     {:noreply,
      %{
@@ -483,30 +484,18 @@ defmodule Flezha.State.Watchdog do
   # Entity fixes nothing and risks availability). At the threshold the WAL has
   # grown across every backoff rung, so the loud alarm fires; and when a
   # `runner_id` is known (the timeout path carries one; the stub-response path
-  # does not), it ALSO dispatches a real resync. Its `{:error, :no_runner_id}`
-  # must not be discarded: a resync that cannot name a runner is a silent no-op.
+  # does not), the give-up is declared to the loop, which plans the resync on
+  # its own table. A give-up that cannot name a runner declares nothing: a
+  # resync with no runner would be a silent no-op.
   defp maybe_give_up({rc, sh, pk} = pid, attempt, runner_id \\ nil) do
     if attempt >= @compaction_give_up_attempts do
       emit_give_up(pid, attempt)
-      if runner_id, do: resync_on_give_up(pid, runner_id)
+      if runner_id, do: Facts.declare({:compaction_gave_up, pid, %{runner_id: runner_id}})
     else
       Logger.debug(
         "[watchdog] compaction unresolved operative=#{rc} procedure=#{sh} key=#{pk} " <>
           "attempt=#{attempt}; retry gated by backoff"
       )
-    end
-  end
-
-  defp resync_on_give_up({rc, sh, pk} = pid, runner_id) do
-    case Recovery.resync(pid, reason: :compaction_gave_up, runner_id: runner_id) do
-      {:ok, _} ->
-        :ok
-
-      other ->
-        Logger.warning(
-          "[watchdog] compaction give-up resync failed operative=#{rc} procedure=#{sh} " <>
-            "key=#{pk}: #{inspect(other)}"
-        )
     end
   end
 

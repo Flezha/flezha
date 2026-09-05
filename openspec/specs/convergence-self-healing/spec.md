@@ -5,23 +5,52 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 ## Requirements
 ### Requirement: Single convergence loop owns all self-healing decisions
 
-The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`). No module other than the Loop emits heal actions (`rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`). Watchdog, FleetManager, HubManager, Healthz, StreamChannel — each emits *events* or *facts*; none of them decide what to fix, and none of them invoke a remediation function directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself; its output-stall handling is emit-only, and its former direct-resync path (including the `last_resync` dedup state) is deleted.
+The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an operator verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
 
 #### Scenario: stall is observed in one place, decision happens in another
 - **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` procedure 0
 - **WHEN** the Watchdog flags the stall
 - **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operative_class, operative_instance, procedure, key}`
 - **AND** the Watchdog performs no heal action of its own — no direct `Recovery.resync`, no dedup bookkeeping
-- **AND** the Convergence Loop records the stalled instance, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_operative`) under per-target backoff.
+- **AND** the Convergence Loop holds the declared stall as a fact, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_operative`) under per-target backoff.
+
+#### Scenario: a compaction give-up is declared, not resynced
+- **GIVEN** the Watchdog's strike table reaches its give-up count for an Entity
+- **WHEN** the sweep gives up
+- **THEN** the Watchdog SHALL declare `{:compaction_gave_up, entity_id, runner_id}` and call nothing, and the loop SHALL plan `resync_runner` for that Entity on the `{:compaction_gave_up, entity_id}` key
+
+#### Scenario: a seq gap is one latched fact per episode
+- **GIVEN** the WAL admission observes a seq gap for an Entity, then more gaps before the next contiguous append
+- **WHEN** the gaps arrive
+- **THEN** the first SHALL declare `{:seq_gap, entity_id, runner_id}` and the rest SHALL refresh the same key, the loop SHALL plan `resync_runner` for the Entity on its table, and the next contiguous append SHALL declare `{:seq_gap_closed, entity_id}`, which resets the key
+
+#### Scenario: a runner disconnect is a declared fact planned per operative
+- **GIVEN** a runner with thirty bound operatives closes its session while another runner advertising their factory is in the fleet
+- **WHEN** the fleet manager observes the close
+- **THEN** it SHALL declare `{:runner_disconnected, ns, runner_id}` and reroute nothing; the loop SHALL tick at once, plan `rebind_operative` for at most twenty of them keyed on the reason, and re-tick without waiting for the rest
+
+#### Scenario: a stale registry tag is re-asserted by the planner
+- **GIVEN** a registry write lands after a rebind naming the old runner
+- **WHEN** the registry hook observes the row
+- **THEN** it SHALL declare `{:registry_written, ns, id}` and re-write nothing; the Diff SHALL report the stale tag and the plan SHALL carry `publish_binding` last
 
 ### Requirement: The reconciler is a pure-function pipeline, not scattered handlers
 
-The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's sensor signals) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). Adding a failure mode means extending the Diff/Planner/Heal seams, NOT adding a new self-healing module or scattering decision branches across services. The heal surface is a fixed, small set of idempotent primitives. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan.
+The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Loop.declare/1` (the one intake — a fact `{kind, target, args}` held in one map keyed `{kind, target}` with the time of its last declaration, refreshed by a re-declaration, cleared by its counter-fact or by its grace expiry, ticking the loop at once when the key is new) → `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's facts) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). The two telemetry subscriptions and the runner-connected handler SHALL be declarations too, so a site tells the loop in one shape. Adding a failure mode means one `declare/1` kind consumed by one Diff field, or one primitive entry with the Diff rule that plans it — NOT a new self-healing module, a site-local ladder, or decision branches scattered across services. The heal surface is a fixed, small set of idempotent primitives, each an entry naming its key rule, its executor and the evidence that resets it. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan. That rule governs remedies: everything that acts on an operative, a runner, a plugin or an Entity. The loop carries one duty outside it — on each tick it reclaims this node's hub for any namespace whose local fleet is empty and none of whose operatives this node hosts. That reclaim names no target, takes no backoff and repairs nothing: it retires a node-local resource the fleet no longer justifies, so it is neither a primitive nor planned.
 
 #### Scenario: a new signal enters through the Diff, not around the plan
 - **WHEN** a sensor produces a fact the Loop must heal from (the data-plane classifier verdict, the Watchdog's stalled instances)
 - **THEN** it is passed into `Diff.compute/3` as a signal alongside the Probe snapshot, surfaces as a `%Diff{}` field, and becomes an op inside `Planner.plan/3`
 - **AND** no module appends, filters, or rewrites ops after the Planner has produced them
+
+#### Scenario: a re-declaration costs no tick
+- **GIVEN** a fact key the loop already holds
+- **WHEN** the same site declares it again
+- **THEN** the loop SHALL refresh the key's time and SHALL NOT tick for it; a key it does not hold SHALL tick at once
+
+#### Scenario: a fact is cleared by its counter-fact or its expiry
+- **WHEN** an operative held as parked is observed bound, a plugin held as down is observed `:running` past the stable window, a disconnected runner is observed active or no operative still names it, or a fact outlives its grace
+- **THEN** the loop SHALL drop the fact and the next tick SHALL plan nothing from it
 
 ### Requirement: A hub stuck in `:recovery_timeout` does not permanently block healing for its namespace
 
@@ -79,7 +108,7 @@ Committing the binding first records `bound_runner ∈ active_runners` for a run
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
-Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick.
+Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by ONE per-node `Convergence.Backoff` table, `5 s → 30 s → 60 s → 300 s`, keyed `{primitive, target}` or, for an op that carries a reason, `{reason, target}`, so a persistent fault is not re-healed every tick and no site holds a ladder, counter or clock of its own. Two reset rules exist and both are THE rule: a primitive whose repair is observable inline resets its key on its own `:ok`; a primitive whose repair is only visible later — a ladder — records `:error` on every application and resets only when its declared evidence arrives (bound, `:running` and stable, gap closed, compaction observed complete, wedge verdict cleared). Which primitives are ladders is read from the declared kinds, not from a case in the loop. The operator keys `:overwatch_retry_backoff_ms` and `:wal_resync_retry_interval_ms` SHALL NOT exist.
 
 The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits at the root. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
 
@@ -87,6 +116,20 @@ The wrapper is control-plane-wide, not a convergence concept: it is named by `co
 - **GIVEN** operative `r1` was just rebound by the Loop
 - **WHEN** the same divergence is observed on the next tick
 - **THEN** the Planner filters the repeat `rebind_operative` op under backoff and does not re-issue it until the backoff window elapses.
+
+#### Scenario: an inline repair resets on success
+- **GIVEN** `publish_binding` is applied for an operative and answers `:ok`
+- **WHEN** the next tick runs
+- **THEN** the key `{publish_binding, id}` SHALL be reset and a later divergence on the same target SHALL be eligible at once
+
+#### Scenario: a ladder resets on evidence only
+- **GIVEN** `restart_plugin` brought a plugin to `:running`, which crashed again a second later
+- **WHEN** the next tick plans
+- **THEN** the key `{restart_plugin, {id, plugin_id}}` SHALL stay on its rung, and only `:running` observed for the stable window SHALL reset it
+
+#### Scenario: the two knobs are gone
+- **WHEN** `config/runtime.exs` and the configuration reference are read
+- **THEN** neither `:overwatch_retry_backoff_ms` nor `:wal_resync_retry_interval_ms` SHALL be named, and the loop's table SHALL be the only schedule a controller-side remedy follows
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
@@ -214,12 +257,7 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 
-When `Flezha.Convergence.Loop` receives an `{:output_stall, operative_id}` message from the Watchdog telemetry handler, it SHALL:
-
-1. Record the stall timestamp in `stalled_operatives` (existing behaviour — for healthz reporting).
-2. Trigger an immediate convergence tick (same as `runner_connected_event`).
-
-On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional ops for every operative whose `operative_id` is in `stalled_operatives` and which is not already covered by the plan, using `args: %{reason: :output_stall}` — laddered: `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_operative` on subsequent eligible attempts while the stall persists. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled operative follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
+An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, operative_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_operative` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, operative_id}` key of the one backoff table, so a persistently stalled operative follows the 5 s → 30 s → 60 s → 300 s cooldown and never a per-tick storm. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
 
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operative's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy operative, which an output-stalled operative is not.
 
@@ -235,7 +273,7 @@ On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject ad
 
 - **GIVEN** operative `btc_kraken` was just resynced due to an output stall 2 seconds ago
 - **WHEN** the Watchdog flags another output stall for `btc_kraken`
-- **THEN** the injected op is filtered out by Backoff (5s cooldown not yet elapsed)
+- **THEN** the planned op is filtered out by Backoff (5s cooldown not yet elapsed)
 - **AND** no op is issued on this tick
 
 ### Requirement: Rolling upgrade preserves producing-operatives count
@@ -284,6 +322,8 @@ When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persi
 
 The convergence loop SHALL judge production liveness of a operative's plugins by the plugin provider's own `health/1` self-report (`Extension.Table.health/1`), never by traffic-volume proxies. A plugin that is declared, currently subscribed, and self-reports `{:unhealthy, reason}` SHALL produce a `restart_plugin` heal op routed through the extension table's existing restart machinery, subject to the loop's per-target exponential backoff. An uncertain health probe (timeout, raise, missing provider callback) SHALL be treated as healthy so the loop never escalates on uncertainty.
 
+A subscriber that crashes is the same divergence declared from the other side: the extension table records its phase as `{:down, reason}` and declares `{:plugin_down, namespace, operative_id, plugin_id}`; the table restarts nothing and holds no counter or timer. The loop plans `restart_plugin` keyed `{restart_plugin, {operative_id, plugin_id}}` — per plugin, so one crashing plugin never throttles its siblings' starts — and the key resets only on `:running` observed for the stable window, read from the table's `started_at` by the Probe, so a fast-failing provider accumulates backoff instead of resetting on every restart.
+
 The health self-report is the authority on whether a RUNNING plugin is producing;
 it is not the authority on whether a plugin is running at all. A declared plugin
 that is not in the `:running` phase SHALL be healed as missing rather than judged
@@ -307,6 +347,16 @@ extension table, so that fail-open is observable rather than silent.
 - **WHEN** the Loop ticks
 - **THEN** the plugin is treated as healthy and no heal op is issued.
 - **AND** telemetry SHALL record that the verdict was a fail-open, naming the plugin and the reason.
+
+#### Scenario: a crashed subscriber is restarted by the loop, not the table
+- **GIVEN** a declared plugin whose subscriber process is killed
+- **WHEN** the table handles the `DOWN`
+- **THEN** it SHALL record `{:down, reason}`, declare `{:plugin_down, …}` and arm no timer; the loop's declaring tick SHALL plan `restart_plugin` for that plugin and no other
+
+#### Scenario: a fast-failing provider accumulates backoff
+- **GIVEN** a plugin that reaches `:running` and crashes again within the stable window on every restart
+- **WHEN** the loop plans across ticks
+- **THEN** its key SHALL walk 5 s → 30 s → 60 s → 300 s and SHALL NOT reset until `:running` is observed for the whole window
 
 ### Requirement: Plugin-degraded operatives surface on /healthz and telemetry
 
@@ -530,6 +580,80 @@ runner restarting repeatedly is visible rather than mysterious.
 #### Scenario: Repeats are throttled and visible
 - **WHEN** a restarted runner's fresh process wedges again after the orchestrator brings it back
 - **THEN** the next restart SHALL be delayed by the standard per-target backoff, and each issued restart SHALL be logged and emitted with the verdict and rung
+
+### Requirement: A park is an outcome declared to the loop, never a primitive
+
+A park SHALL be declared to the convergence loop by the one park funnel
+(`Flezha.Operative.Lifecycle.park/2`) as the fact `{:operative_parked, namespace,
+operative_id, reason}`, and SHALL NOT be a heal primitive: nothing is repaired by a
+park, it is what a failed repair leaves behind. The Diff SHALL report parked operatives
+apart from unbound ones, with the reason, and the Planner SHALL answer with
+`rebind_operative` on the `{:parked, operative_id}` key — eligible at the declaring tick,
+then on the loop's table — planning `reset_control_channel` for the runner first when the
+reason is a dead-transport ping failure, and only once the parked key has walked two
+rungs when the reason is a timeout. A runner connecting in the namespace SHALL release
+every `{:parked, _}` key in it. A bind SHALL be one attempt; the un-park task reports its
+outcome to the Overwatch and decides nothing.
+
+#### Scenario: A failed bind parks once and is retried by the loop
+- **GIVEN** an operative whose one bind attempt fails with a timeout-class reason
+- **WHEN** the Overwatch parks it
+- **THEN** `{:operative_parked, ns, id, reason}` SHALL reach the loop, the loop SHALL tick at once and plan `rebind_operative` for it under the `{:parked, id}` key, and no retry SHALL run inside the Overwatch
+
+#### Scenario: A dead transport is cut before the operative is placed on it
+- **GIVEN** an operative parked because its bind's ping reported a dead transport
+- **WHEN** the loop plans the declaring tick
+- **THEN** it SHALL plan `reset_control_channel` for the runner before `rebind_operative` for the operative
+
+#### Scenario: A busy runner is retried, then cut
+- **GIVEN** an operative parked with a timeout reason whose `{:parked, id}` key has walked two rungs
+- **WHEN** the fault persists into the next eligible tick
+- **THEN** the plan SHALL carry `reset_control_channel` for its runner; a first timeout SHALL NOT cut the channel
+
+#### Scenario: A runner arriving mid-cooldown is used at once
+- **GIVEN** three operatives parked in a namespace, their keys on the 30 s rung
+- **WHEN** a runner advertising their factory connects to that namespace
+- **THEN** every `{:parked, _}` key in the namespace SHALL be released and the immediate tick SHALL plan their rebinds
+
+#### Scenario: The un-park task decides nothing
+- **WHEN** the supervised un-park migrate fails
+- **THEN** it SHALL report the failure to the Overwatch, whose park declares the fact; no ladder SHALL run inside the task
+
+### Requirement: A bypass of the remedy seam SHALL be impossible, and every primitive SHALL pass one conformance test
+
+One table-driven test SHALL walk `Heal.primitives/0` and the declared fact kinds and
+assert: every primitive has a key rule, an executor and an evidence rule and is a no-op
+on a healthy target; every primitive advances its key on `:error` and resets on its
+declared evidence, a ladder op resetting on evidence only; every declared kind is
+consumed by exactly one Diff field and planned by exactly one Planner rule; and a source
+walk over `lib/**/*.ex` finds no call to a remedy entry point — `Recovery.resync/2`,
+`Recovery.resync_for_overwatch/2`, any `Heal` function, `FleetManager.evict_runner/2`,
+`FleetManager.reset_control_channel/1`, `Overwatch.plugin_restart/3`,
+`Extension.Table.attempt_restart/3`, `Migration.migrate_child/3`,
+`Lifecycle.publish_binding/1`, a terminal `ControlUnit.disconnect/2` — outside
+`lib/flezha/convergence/`, nor to `HubManager.drain_hub/2` outside
+`lib/flezha/shutdown/`. One end-to-end drill in the system tier SHALL walk the same
+table and, per primitive, inject its fault through the real transport and assert the
+loop plans and executes that primitive, advances its key while the fault persists and
+resets it on repair. A new primitive or fact kind SHALL be covered by both with no test
+edit.
+
+#### Scenario: A direct resync outside the loop fails the walk
+- **WHEN** a call to `Recovery.resync/2` is added to a module outside `lib/flezha/convergence/`
+- **THEN** the seam test SHALL fail naming the file, the line and the called function
+
+#### Scenario: A primitive nobody plans fails the table
+- **WHEN** a primitive is added to the primitive table with no Diff rule that plans it
+- **THEN** the seam test SHALL fail naming the primitive
+
+#### Scenario: A ladder op does not reset on its own success
+- **GIVEN** a primitive whose repair is only visible later, with its fact standing
+- **WHEN** a stub executor answers `:ok`
+- **THEN** its key SHALL stay armed until the declared evidence arrives
+
+#### Scenario: The drill plans each primitive from its own fault
+- **WHEN** the system-tier drill injects, for every primitive, the fault the Diff plans it for
+- **THEN** `[:flezha, :convergence, :heal]` SHALL fire naming that primitive and target, the tick summary SHALL report the advanced rung while the fault is held, and the tick after repair SHALL plan nothing for the target
 
 ## Removed Requirements
 

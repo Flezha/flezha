@@ -27,7 +27,6 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
-  alias ProcessHub.Service.ProcessRegistry
 
   @namespace "reconnect-binding-test"
   @factory "do_nothing"
@@ -145,32 +144,6 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
              25
            ),
            "the route was seeded into the awaited runner's channels, not the live one's"
-  end
-
-  # fails when: the start request's `update_registry` lands after the Overwatch
-  # published its rebind and clobbers `metadata.tag` back to the dead runner.
-  # Silent and permanent: `Probe` reads the Overwatch's own `runner_id`, never
-  # the tag, so `Diff` never classifies it and nothing repairs it.
-  test "a registry write landing after a rebind does not strand the stale tag" do
-    session = NodeTestHelper.start_runner(@namespace)
-    operative = %Builder{id: "reassert_tag_op", factory_id: @factory}
-    {:ok, _} = OperativeManager.start_operative(@namespace, operative)
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 1_000, 25)
-
-    hub_id = Identificator.hub(@namespace)
-    hub = ProcessHub.Coordinator.get_hub(hub_id)
-    {cspec, node_pids, _meta} = ProcessRegistry.lookup(hub_id, operative.id, with_metadata: true)
-
-    # Byte-for-byte what `update_registry` writes when it wins the race: the
-    # altered child_data's metadata, carrying the runner alter resolved.
-    :ok =
-      ProcessRegistry.insert(hub_id, cspec, node_pids,
-        metadata: %{tag: @stale_runner},
-        hook_storage: hub.storage.hook
-      )
-
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session, operative.id) end, 10_000, 25),
-           "the late registry write left the tag on the dead runner, where no reconciler can see it"
   end
 
   # True when one of `session`'s primary StreamChannels routes `operative_id` to

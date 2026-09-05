@@ -118,12 +118,12 @@ The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateRe
 
 ### Requirement: Runner restart while the Controller is alive SHALL heal stream binding cleanly
 
-When a Runner (Rust/Java SDK) process restarts and its reconnect loop succeeds against the still-alive Controller, the existing `try_migrate_runner` reroute path SHALL continue to issue `AddOperative` for Operatives preserved in the `:inactive` peer entry, AND the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops.
+When a Runner (Rust/Java SDK) process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_KEEPALIVE`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_operative` per affected operative from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler.
 
 #### Scenario: Runner restart with single-replica-in-namespace
 - **GIVEN** Runner A is the only Runner in namespace `ns1` on this Controller, running Operatives `r1` and `r2`
 - **WHEN** Runner A's container restarts and reconnects
-- **THEN** `try_migrate_runner` SHALL re-issue `AddOperative` for `r1` and `r2` against A; data streams MUST rebind to the existing `StreamChannel`s without traffic loss
+- **THEN** the disconnect SHALL have been declared, the loop SHALL re-issue `AddOperative` for `r1` and `r2` against A through `rebind_operative`, and the data streams MUST rebind to the existing `StreamChannel`s without traffic loss
 
 ### Requirement: `FLEZHA_RUNNER_KEEPALIVE` controls inactive-Runner retention
 
@@ -256,9 +256,9 @@ The SDK's `connect_control_channel` init write SHALL NOT panic the reader thread
 
 When the Controller restarts and `Flezha.Operative.Overwatch` GenServers come up from durable registry replay, each Overwatch SHALL probe the resolved Runner's end-to-end control-channel health via a `:ping_runner` round-trip BEFORE issuing `{:start_operative, …}` to the Runner's `ControlUnit`. The ping SHALL traverse the same `ControlChannel → SDK → ControlChannel` path that `AddOperative` uses, so a successful round-trip proves the channel is bound, the SDK is listening, and the reply path is intact.
 
-The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_operative_sdk/2`. On a ping error that reports a dead transport, and on the bounded-retry governor's LAST attempt whatever the reason, the Overwatch SHALL invoke `Flezha.Runner.FleetManager.reset_control_channel/1` (clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path). A ping that merely timed out on an earlier attempt SHALL NOT reset the channel: the channel is live and carries every other instance bound to that runner, and a busy runner is retried, not cut. Every failed attempt SHALL retry the whole sequence under the bounded-retry governor (see "Overwatch bounded retry + parked-error state"). The control-channel reader SHALL NOT perform disk I/O, so a commit storm on a runner cannot by itself push its ping past the timeout.
+The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_operative_sdk/2`. On a ping error the Overwatch SHALL NOT reset the channel itself: the attempt parks the operative with the ping's reason and the park is declared, and the convergence loop plans the primitive `reset_control_channel` (`Flezha.Runner.FleetManager.reset_control_channel/1`, clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path) — before the rebind when the reason reports a dead transport, and only once the parked key has walked two rungs when the ping merely timed out, because the channel is live and carries every other instance bound to that runner, and a busy runner is retried, not cut. The control-channel reader SHALL NOT perform disk I/O, so a commit storm on a runner cannot by itself push its ping past the timeout.
 
-The new `:ping_runner` command and its `PingResponse` SHALL be carried by the existing `CommandRequest` / `CommandResponse` envelopes on the `"control_command"` payload_id; SDKs without the handler SHALL log and ignore (existing Protox unknown-field behaviour).
+The `:ping_runner` command and its `PingResponse` SHALL be carried by the existing `CommandRequest` / `CommandResponse` envelopes on the `"control_command"` payload_id; SDKs without the handler SHALL log and ignore (existing Protox unknown-field behaviour).
 
 #### Scenario: Healthy runner responds to ping and `:start_operative` proceeds
 - **GIVEN** a operative `r1` whose Overwatch has just resolved live runner `e1`
@@ -268,27 +268,17 @@ The new `:ping_runner` command and its `PingResponse` SHALL be carried by the ex
 - **AND** the Overwatch SHALL invoke `start_operative_sdk("e1", r1)` immediately afterwards
 - **AND** `reset_control_channel/1` SHALL NOT be invoked
 
-#### Scenario: Stale control channel causes ping failures, channel reset on the last attempt, retry
+#### Scenario: Stale control channel fails the ping, and the loop resets the channel
 - **GIVEN** a operative `r1` whose Overwatch has just resolved runner `e1`
 - **AND** `e1`'s `ControlChannel` GenServer is registered but its `stream_ref` points to a closed/stale transport (the SDK has reconnected since the last `AddOperative`)
-- **WHEN** the Overwatch issues `ping_runner("e1", timeout_ms: 2_000)` and it fails on every attempt of the bounded-retry governor
-- **THEN** the Overwatch SHALL NOT issue `start_operative_sdk/2` on any failed attempt
-- **AND** the Overwatch SHALL re-resolve the live runner and retry the ping under the governor's backoff delays
-- **AND** on the last attempt the Overwatch SHALL call `FleetManager.reset_control_channel("e1")` which sets the channel's `stream_ref` to `nil`
+- **WHEN** the Overwatch issues `ping_runner("e1", timeout_ms: 2_000)` and it fails reporting a dead transport
+- **THEN** the Overwatch SHALL NOT issue `start_operative_sdk/2`, SHALL park `r1` with that reason and declare the park
+- **AND** the loop's declaring tick SHALL plan `reset_control_channel` for `e1` — which sets the channel's `stream_ref` to `nil` — before `rebind_operative` for `r1`
 
 #### Scenario: A busy runner's timed-out ping does not cut the live channel
 - **GIVEN** runner `e1` is bound to a hundred instances and its control channel is saturated by their starts
-- **WHEN** one Overwatch's first ping attempt returns `{:error, :timeout}` and a later attempt returns `{:ok, :pong}`
-- **THEN** `reset_control_channel("e1")` SHALL NOT have been invoked and no other instance on `e1` SHALL have seen `{:error, :no_connection_available}`
-
-### Requirement: Overwatch bounded retry + parked-error state
-
-`Flezha.Operative.Overwatch` SHALL, before issuing `:start_operative`, gate on an active runner being reachable: `await_active_runner/3` polls `OperativeManager.assign_runner/2` and confirms readiness (`runner_ready?/1` — the CU is registered AND, when `:overwatch_ping_enabled`, an end-to-end ping returns pong) within a bounded window. Only once a runner is confirmed ready does the bounded `:start_operative` retry run; on exhaustion the operative parks with `init_error` (alive, no upstream I/O) and the convergence Loop drives the un-park rebind. The un-park `:runner_migrate` SHALL run in a supervised task so `:stop_operative` stays responsive mid-retry.
-
-#### Scenario: start gates on runner readiness before retrying
-- **GIVEN** a operative is (re)starting and no runner for its factory is reachable yet
-- **WHEN** Overwatch runs `await_active_runner/3`
-- **THEN** it waits for a ready runner before issuing `:start_operative`, and if none becomes ready within the window it stops/parks rather than pinging a dead binding.
+- **WHEN** one Overwatch's ping returns `{:error, :timeout}` and its operative parks
+- **THEN** `reset_control_channel("e1")` SHALL NOT be planned at the declaring tick nor at the next rung, and no other instance on `e1` SHALL have seen `{:error, :no_connection_available}`; only a parked key that has walked two rungs plans it
 
 ### Requirement: Control-channel liveness SHALL be implemented once in shared `flz_transport` and serve both SDKs
 
@@ -668,4 +658,18 @@ its byte length, rather than surfacing as a listener that failed to start.
 #### Scenario: A shortened name is still recognised as Flezha's own
 - **WHEN** a directory holds a data socket whose id field was shortened
 - **THEN** the predicate that decides which files in a socket directory belong to Flezha recognises it, and `flz reset --include-sockets` clears it
+
+### Requirement: A bind is one attempt, and its failure is a park the loop is told about
+
+`Flezha.Operative.Overwatch` SHALL, before issuing `:start_operative`, gate on an active runner being reachable: `await_active_runner/3` polls `OperativeManager.assign_runner/2` and confirms readiness (`runner_ready?/1` — the CU is registered AND, when `:overwatch_ping_enabled`, an end-to-end ping returns pong) within a bounded window. Once a runner is confirmed ready the Overwatch SHALL make ONE `:start_operative` attempt; a failure parks the operative with `init_error` (alive, plugins prepared, no upstream I/O) carrying the attempt's reason, and the park is declared to the convergence loop, which drives the un-park `rebind_operative` on the `{:parked, operative_id}` key of its own table — eligible at the declaring tick, then 5 s, 30 s, 60 s, 300 s. The Overwatch SHALL hold no retry list, no jitter and no per-attempt runner re-resolution; a runner connecting in the namespace releases the parked keys instead. The un-park `:runner_migrate` SHALL run in a supervised task so `:stop_operative` stays responsive, and the task SHALL report its outcome and decide nothing.
+
+#### Scenario: start gates on runner readiness before its one attempt
+- **GIVEN** a operative is (re)starting and no runner for its factory is reachable yet
+- **WHEN** Overwatch runs `await_active_runner/3`
+- **THEN** it waits for a ready runner before issuing `:start_operative`, and if none becomes ready within the window it parks rather than pinging a dead binding, and the park is declared.
+
+#### Scenario: a failed attempt is not retried in place
+- **GIVEN** an operative whose one `:start_operative` attempt fails
+- **WHEN** the Overwatch handles the failure
+- **THEN** it SHALL park at once with the reason, declare `{:operative_parked, ns, id, reason}`, and issue no second attempt of its own; the next attempt SHALL be the loop's `rebind_operative`
 

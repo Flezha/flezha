@@ -178,7 +178,7 @@ defmodule Flezha.Convergence.DiffTest do
       delta = Diff.compute(intent, reality)
 
       assert delta.unbound_operatives == [{:ns, "unbound"}]
-      assert delta.misbound_operatives == [{{:ns, "stale"}, "e_dead"}]
+      assert delta.misbound_operatives == [{{:ns, "stale"}, "e_dead", :probe}]
       refute Diff.empty?(delta)
     end
 
@@ -525,7 +525,7 @@ defmodule Flezha.Convergence.DiffTest do
 
   describe "Planner.plan/3" do
     test "orders eviction before rebind for misbound operatives" do
-      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead"}]}
+      delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]}
       plan = Planner.plan(delta, Backoff.new())
 
       assert [
@@ -579,16 +579,93 @@ defmodule Flezha.Convergence.DiffTest do
       assert args.plugin == p
     end
 
-    test "unhealthy plugins emit restart_plugin carrying the %Plugin{} and reason" do
+    test "unhealthy plugins emit restart_plugin carrying the %Plugin{} and the verdict" do
       p = plugin("p1")
       delta = %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", p, :produce_stalled}]}
 
-      assert [%{primitive: :restart_plugin, namespace: :ns, target: "r", args: args}] =
+      assert [%{primitive: :restart_plugin, namespace: :ns, target: "r", args: args} = op] =
                Planner.plan(delta, Backoff.new())
 
       assert args.plugin_id == "p1"
       assert args.plugin == p
-      assert args.reason == :produce_stalled
+      assert args.verdict == :produce_stalled
+      # Keyed per plugin, so one crashing plugin never throttles its siblings.
+      assert Planner.key(op) == {:restart_plugin, {"r", "p1"}}
+    end
+
+    test "a declared disconnect keys the rebind on the fact, a probed one on the primitive" do
+      declared = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
+      [_evict, rebind] = Planner.plan(declared, Backoff.new())
+      assert Planner.key(rebind) == {:runner_disconnected, "r"}
+      refute Planner.ladder?(rebind)
+
+      probed = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]}
+      [_evict, rebind] = Planner.plan(probed, Backoff.new())
+      assert Planner.key(rebind) == {:rebind_operative, "r"}
+    end
+
+    test "a parked operative rebinds on the parked ladder, cutting a dead transport first" do
+      # The verdict rides the fact: `Lifecycle.park/2` classifies its own
+      # failure reason, so the Planner reads it rather than re-deriving it.
+      dead =
+        %Diff{
+          parked_operatives: [
+            {{:ns, "r"}, %{reason: {:ping_failed, :closed}, transport: :dead}, "e1"}
+          ]
+        }
+
+      assert [
+               %{primitive: :reset_control_channel, target: "e1"},
+               %{primitive: :rebind_operative, target: "r"} = rebind
+             ] = Planner.plan(dead, Backoff.new())
+
+      assert Planner.key(rebind) == {:parked, "r"}
+      assert Planner.ladder?(rebind)
+
+      # A timed-out ping is a busy runner: retried, and cut only once the
+      # parked ladder has walked two rungs.
+      busy =
+        %Diff{
+          parked_operatives: [
+            {{:ns, "r"}, %{reason: {:ping_failed, :timeout}, transport: :busy}, "e1"}
+          ]
+        }
+
+      assert [%{primitive: :rebind_operative}] = Planner.plan(busy, Backoff.new())
+
+      # Two rungs recorded long enough ago that the cooldown has opened, so
+      # the tick plans both the cut and the retry it precedes. The clock is
+      # monotonic and starts wherever the VM says, so the offset is taken from
+      # it rather than from zero.
+      long_ago = System.monotonic_time(:millisecond) - 1_000_000
+
+      walked =
+        Enum.reduce(1..2, Backoff.new(), fn _, b ->
+          Backoff.update(b, {:parked, "r"}, :error, long_ago)
+        end)
+
+      assert [%{primitive: :reset_control_channel, target: "e1"}, %{primitive: :rebind_operative}] =
+               Planner.plan(busy, walked)
+    end
+
+    test "an Entity fact plans one resync keyed on the fact, and a stale tag one publish" do
+      entity = {"class", "op0", "k1"}
+
+      delta = %Diff{
+        resync_entities: [{entity, "e1", :seq_gap}],
+        stale_tags: [{{:ns, "r"}, "e_old", "e1"}]
+      }
+
+      assert [
+               %{primitive: :resync_runner, target: ^entity, args: args} = resync,
+               %{primitive: :publish_binding, namespace: :ns, target: "r"} = publish
+             ] = Planner.plan(delta, Backoff.new())
+
+      assert args.runner_id == "e1"
+      assert Planner.key(resync) == {:seq_gap, entity}
+      assert Planner.ladder?(resync)
+      assert Planner.key(publish) == {:publish_binding, "r"}
+      refute Planner.ladder?(publish)
     end
   end
 
