@@ -161,15 +161,21 @@ defmodule Flezha.Application do
   end
 
   defp plugin_children do
+    worker_families =
+      Enum.map(
+        Flezha.Plugin.Providers.worker_families(),
+        &{Flezha.Plugin.Provider.WorkerSup, name: &1}
+      )
+
     [
       Flezha.Service.PluginManager,
-      Flezha.Plugin.Provider.Kafka.WorkerRegistry,
-      Flezha.Plugin.Provider.Kafka.ProducerSup,
-      Flezha.Plugin.Provider.Postgres.SinkSup,
-      Flezha.Plugin.Provider.OperativeForward.ForwardSup,
-      Flezha.Service.PortPilot,
-      {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
-    ]
+      Flezha.Plugin.Provider.Kafka.WorkerRegistry
+    ] ++
+      worker_families ++
+      [
+        Flezha.Service.PortPilot,
+        {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
+      ]
   end
 
   defp state_children do

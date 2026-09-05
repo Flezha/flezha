@@ -27,6 +27,7 @@ defmodule Flezha.Dlq.Store do
   require Logger
 
   alias Flezha.Config.Durations
+  alias Flezha.Dlq.Entry
   alias Flezha.State.DurabilityTier
 
   @entries_file "entries.jsonl"
@@ -41,13 +42,11 @@ defmodule Flezha.Dlq.Store do
   end
 
   @doc """
-  Durably append a parked payload. `entry` carries `:operative_class`,
-  `:procedure_id`, `:entity_key`, `:channel`, `:origin_offset` (nil
-  outside the tier), `:error`, `:attempts`, `:payload` (binary or nil).
+  Durably append a parked payload, built through `Flezha.Dlq.Entry.new/1`.
   Returns `{:ok, entry_ref}` after the index line (and blob) are fsynced;
   idempotent on origin identity.
   """
-  @spec append(pid() | atom(), map()) :: {:ok, String.t()} | {:error, term()}
+  @spec append(pid() | atom(), Entry.t()) :: {:ok, String.t()} | {:error, term()}
   def append(server \\ __MODULE__, entry), do: GenServer.call(server, {:append, entry}, 30_000)
 
   @doc """
@@ -55,9 +54,37 @@ defmodule Flezha.Dlq.Store do
   runs in the store process once the entry is fsynced (the ParkPayloadAck
   send site).
   """
-  @spec append_async(pid() | atom(), map(), (String.t() -> any())) :: :ok
+  @spec append_async(pid() | atom(), Entry.t(), (String.t() -> any())) :: :ok
   def append_async(server \\ __MODULE__, entry, on_durable),
     do: GenServer.cast(server, {:append, entry, on_durable})
+
+  @doc """
+  Park what a runner's `park_payload` frame decoded to, for `entity_id`. The
+  frame's fields ARE the entry's, so the record is built here rather than at the
+  data channel: the wire form and the durable record are one shape, and the
+  channel that carries it does not need to know the second.
+  """
+  @spec park_async(
+          pid() | atom(),
+          {binary(), binary(), binary()},
+          map(),
+          (String.t() -> any())
+        ) :: :ok
+  def park_async(server \\ __MODULE__, entity_id, park, on_durable)
+
+  def park_async(server, {operative_class, procedure_id, entity_key}, park, on_durable) do
+    entry =
+      park
+      |> Map.take([:channel, :origin_offset, :error, :attempts, :payload, :park_id])
+      |> Map.merge(%{
+        operative_class: operative_class,
+        procedure_id: procedure_id,
+        entity_key: entity_key
+      })
+      |> Entry.new!()
+
+    append_async(server, entry, on_durable)
+  end
 
   @doc """
   List parked entries, nearest-to-expiry (oldest) first. `operative_class`

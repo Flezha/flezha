@@ -1,17 +1,19 @@
 defmodule Flezha.Plugin.Provider.WorkerSup do
   @moduledoc """
-  Shared supervision core for providers that run one long-lived worker per
-  key: a Registry + DynamicSupervisor pair per provider family, with
-  ensure / reap / stop semantics.
+  The one supervision shape for every provider worker: a Registry +
+  DynamicSupervisor pair per provider family, with ensure / reap / stop
+  semantics.
 
-  Providers wrap it with their key shape and reuse policy —
-  `Kafka.ProducerSup` keys by `{plugin_id, topic, partition}` and reaps
-  permanently-parked producers, `Postgres.SinkSup` keys by `plugin_id`.
-  Each family is its own instance (own Registry, own DynamicSupervisor) so
-  a crash-looping worker exhausts only its family's restart budget.
+  A family is named after the provider module (`family/1`), so each provider's
+  workers get their own Registry and DynamicSupervisor and a crash-looping
+  worker exhausts only its own family's restart budget. What a provider supplies
+  is its keys and the opts each worker takes — `worker_specs/1` — and the
+  restart value its declaration names; `Flezha.Plugin.Extension.Table` does the
+  starting and the stopping, so no provider wraps this with a supervisor of its
+  own.
 
-  `ensure_worker/4` names the child: it puts `via/2` into the worker's opts,
-  so a worker never has to name the supervisor that started it.
+  `ensure_worker/5` names the child: it puts `via/2` into the worker's opts, so
+  a worker never has to name the supervisor that started it.
   """
 
   use Supervisor
@@ -33,12 +35,44 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
     Supervisor.init(children, strategy: :rest_for_one)
   end
 
+  @doc """
+  The family a provider's workers live in. Derived from the provider module, so
+  a provider declares a worker and nothing else names where it is supervised.
+  """
+  @spec family(module()) :: module()
+  def family(provider), do: Module.concat(provider, WorkerSup)
+
   def registry_name(family), do: Module.concat(family, Registry)
   def dyn_sup_name(family), do: Module.concat(family, DynSup)
+
+  @doc """
+  Every key this family holds a LIVE worker under.
+
+  A registry entry outlives its process by the moment it takes the registry's
+  own monitor to fire, so an entry whose pid is dead is not a worker: nothing
+  can be handed it, and `ensure_worker/5` registers over it.
+  """
+  @spec keys(module()) :: [term()]
+  def keys(family) do
+    registry_name(family)
+    |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn {_key, pid} -> Process.alive?(pid) end)
+    |> Enum.map(&elem(&1, 0))
+  end
 
   @doc "The registered name a worker of `family` takes under `key`."
   @spec via(module(), term()) :: {:via, module(), {atom(), term()}}
   def via(family, key), do: {:via, Registry, {registry_name(family), key}}
+
+  @doc """
+  The worker `provider` registered under `key`, addressed by name.
+
+  A provider's dispatch path reaches its worker through this rather than through
+  a pid an option carried: the table started it, a supervisor restart replaces
+  it, and a name survives both.
+  """
+  @spec worker(module(), term()) :: {:via, module(), {atom(), term()}}
+  def worker(provider, key), do: via(family(provider), key)
 
   @doc """
   Start (or look up) the worker registered under `key`, naming the child
@@ -50,10 +84,22 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   reap could not remove answers `{:error, {:not_reusable, pid}}` rather than
   the pid itself.
   """
-  @spec ensure_worker(module(), term(), {module(), keyword()}, (pid() -> boolean())) ::
-          {:ok, pid()} | {:error, term()}
-  def ensure_worker(family, key, {worker, opts}, reusable? \\ &Process.alive?/1) do
-    child = {worker, Keyword.put(opts, :name, via(family, key))}
+  @spec ensure_worker(
+          module(),
+          term(),
+          {module(), keyword() | map()},
+          (pid() -> boolean()),
+          :permanent | :transient | :temporary
+        ) :: {:ok, pid()} | {:error, term()}
+  def ensure_worker(
+        family,
+        key,
+        {worker, opts},
+        reusable? \\ &Process.alive?/1,
+        restart \\ :temporary
+      ) do
+    child =
+      Supervisor.child_spec({worker, named(opts, via(family, key))}, id: key, restart: restart)
 
     case Registry.lookup(registry_name(family), key) do
       [{pid, _}] ->
@@ -87,6 +133,10 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
       {:error, _} = err -> err
     end
   end
+
+  # Both opt shapes a worker takes carry its registered name the same way.
+  defp named(opts, via) when is_list(opts), do: Keyword.put(opts, :name, via)
+  defp named(opts, via) when is_map(opts), do: Map.put(opts, :name, via)
 
   # The one place an existing worker is asked whether it may be answered.
   defp gate(pid, reusable?) do

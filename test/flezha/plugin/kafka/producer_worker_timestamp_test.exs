@@ -24,28 +24,24 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
       Agent.start_link(fn -> [{:return, Fakes.ok_response(@topic, @partition, 0)}] end)
 
     {:ok, pid} =
-      GenServer.start_link(ProducerWorker,
-        worker_pid: spawn(&NodeTestHelper.park/0),
-        topic: @topic,
-        partition: @partition,
-        plugin_id: "ts-test-#{System.unique_integer([:positive])}",
-        linger_ms: 5,
-        max_batch_bytes: 1_048_576,
-        queue_max: 100,
-        queue_overflow: :drop_oldest,
-        queue_block_timeout_ms: 1_000,
-        retries: 0,
-        retry_backoff_ms: 5,
-        retry_max_backoff_ms: 50,
-        delivery_timeout_ms: 1_000,
-        idempotent: true,
-        auto_create_topic: false,
-        metadata_refresh_timeout_ms: 100,
-        send_fn: Fakes.script_send_fn(test_pid, script_pid),
-        init_producer_id_fn: Fakes.init_producer_id_ok(1, 0),
-        metadata_refresh_fn: Fakes.metadata_refresh_ok(),
-        create_topic_fn: Fakes.create_topic_ok(),
-        name: nil
+      GenServer.start_link(
+        ProducerWorker,
+        Map.merge(Fakes.worker_spec("ts-test-#{System.unique_integer([:positive])}"), %{
+          worker_pid: spawn(&NodeTestHelper.park/0),
+          topic: @topic,
+          partition: @partition,
+          linger_ms: 5,
+          queue_max: 100,
+          queue_overflow: :drop_oldest,
+          retries: 0,
+          idempotent: true,
+          auto_create_topic: false,
+          send_fn: Fakes.script_send_fn(test_pid, script_pid),
+          init_producer_id_fn: Fakes.init_producer_id_ok(1, 0),
+          metadata_refresh_fn: Fakes.metadata_refresh_ok(),
+          create_topic_fn: Fakes.create_topic_ok(),
+          name: nil
+        })
       )
 
     pid

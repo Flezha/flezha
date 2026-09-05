@@ -1,34 +1,58 @@
 defmodule Flezha.Plugin.Extension.TableHealthTest do
   @moduledoc """
-  Plugin health contract (self-healing-control-plane, Phase 7.2).
-  `Table.health/1` queries each *running* plugin's provider `health/1`,
-  defaulting to "owned pid alive (or absent) ⇒ healthy"; a `:prepared` plugin or
-  a missing/raising probe never reports unhealthy (no escalation on uncertainty).
+  The plugin health contract, and the three fail-open rules it keeps.
+
+  `Table.health/1` calls every running plugin's declared `health/1` with the
+  processes the table started injected. A provider that overrides nothing takes
+  the default, "the worker alive, or absent, is healthy". A `:prepared` plugin
+  and a probe that could not be completed never report unhealthy: the loop must
+  not escalate on uncertainty.
   """
   use ExUnit.Case, async: true
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Extension.Table.Entry
+  alias Flezha.Plugin.ProviderBehaviour
   alias FlezhaTest.Helper.NodeTestHelper
 
   defmodule HealthyProvider do
+    @moduledoc false
+    use ProviderBehaviour
+
+    @impl true
     def health(_opts), do: :healthy
   end
 
   defmodule UnhealthyProvider do
+    @moduledoc false
+    use ProviderBehaviour
+
+    @impl true
     def health(_opts), do: {:unhealthy, :parked}
   end
 
   defmodule RaisingProvider do
+    @moduledoc false
+    use ProviderBehaviour
+
+    @impl true
     def health(_opts), do: raise("boom")
   end
 
-  defmodule NoHealthProvider do
-    # intentionally exports no health/1 — the default alive-check applies
+  defmodule DefaultHealthProvider do
+    @moduledoc false
+    # Overrides nothing: the declaration's default verdict applies.
+    use ProviderBehaviour
   end
 
-  defp table(plugins, phases, owned_pids \\ %{}) do
-    %Table{plugins: plugins, phases: phases, owned_pids: owned_pids}
+  defp table(plugins, phases, workers \\ %{}) do
+    entries =
+      Map.new(phases, fn {id, phase} ->
+        {id, %Entry{phase: phase, workers: Map.get(workers, id, %{})}}
+      end)
+
+    %Table{plugins: plugins, entries: entries}
   end
 
   defp plugin(provider), do: %Plugin{id: "p", provider: provider, opts: %{}}
@@ -40,7 +64,7 @@ defmodule Flezha.Plugin.Extension.TableHealthTest do
     pid
   end
 
-  test "running plugins with health/1 report their verdicts" do
+  test "running plugins report their declared verdicts" do
     t =
       table(
         %{"a" => plugin(HealthyProvider), "b" => plugin(UnhealthyProvider)},
@@ -55,32 +79,38 @@ defmodule Flezha.Plugin.Extension.TableHealthTest do
     assert Table.health(t) == %{"b" => :healthy}
   end
 
-  test "a raising health/1 answers fail-open, unjudged — the fold is the loop's" do
+  test "a raising health/1 answers fail-open, unjudged: the fold is the loop's" do
     t = table(%{"r" => plugin(RaisingProvider)}, %{"r" => :running})
     assert %{"r" => {:fail_open, {:raised, %RuntimeError{}}}} = Table.health(t)
   end
 
-  test "provider without health/1: an alive owned pid is healthy" do
+  test "the default verdict: an alive worker is healthy" do
     pid = spawn(&NodeTestHelper.park/0)
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
 
-    t = table(%{"n" => plugin(NoHealthProvider)}, %{"n" => :running}, %{"n" => {pid, make_ref()}})
+    t =
+      table(
+        %{"n" => plugin(DefaultHealthProvider)},
+        %{"n" => :running},
+        %{"n" => %{"n" => {pid, make_ref()}}}
+      )
+
     assert Table.health(t) == %{"n" => :healthy}
   end
 
-  test "provider without health/1: a dead owned pid is unhealthy" do
+  test "the default verdict: a dead worker is unhealthy" do
     t =
       table(
-        %{"n" => plugin(NoHealthProvider)},
+        %{"n" => plugin(DefaultHealthProvider)},
         %{"n" => :running},
-        %{"n" => {dead_pid(), make_ref()}}
+        %{"n" => %{"n" => {dead_pid(), make_ref()}}}
       )
 
-    assert Table.health(t) == %{"n" => {:unhealthy, :owned_pid_dead}}
+    assert Table.health(t) == %{"n" => {:unhealthy, :worker_dead}}
   end
 
-  test "provider without health/1 and no owned pid is healthy" do
-    t = table(%{"n" => plugin(NoHealthProvider)}, %{"n" => :running})
+  test "the default verdict: no worker at all is healthy" do
+    t = table(%{"n" => plugin(DefaultHealthProvider)}, %{"n" => :running})
     assert Table.health(t) == %{"n" => :healthy}
   end
 end

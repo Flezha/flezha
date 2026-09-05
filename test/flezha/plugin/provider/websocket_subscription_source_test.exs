@@ -13,6 +13,8 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2]
+
   import FlezhaTest.Helper.WebsocketSourceFixtures
 
   alias Flezha.Plugin.Extension.Table
@@ -33,7 +35,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
   describe "validation" do
     test "a valid subscription source is accepted and normalised" do
-      assert {:ok, opts} = Websocket.init_provider(@valid_opts)
+      assert {:ok, opts} = prepare(Websocket, @valid_opts)
 
       assert %{
                url: "https://cfg.internal/subs",
@@ -47,21 +49,21 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
     end
 
     test "no subscription_url leaves the static provider exactly as it was" do
-      assert {:ok, opts} = Websocket.init_provider(%{uri: "wss://test.local"})
+      assert {:ok, opts} = prepare(Websocket, %{uri: "wss://test.local"})
       assert opts.subscription == nil
       assert opts.applied_subscriptions == []
     end
 
     test "an empty subscription_url is read as unconfigured, not as a malformed one" do
       assert {:ok, opts} =
-               Websocket.init_provider(%{uri: "wss://test.local", subscription_url: ""})
+               prepare(Websocket, %{uri: "wss://test.local", subscription_url: ""})
 
       assert opts.subscription == nil
     end
 
     test "a subscribe_template with no {{items}} placeholder is refused" do
       assert {:error, message} =
-               Websocket.init_provider(%{@valid_opts | subscribe_template: ~s({"req_id":1})})
+               prepare(Websocket, %{@valid_opts | subscribe_template: ~s({"req_id":1})})
 
       assert message =~ "subscribe_template"
       assert message =~ "{{items}}"
@@ -69,7 +71,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
     test "an unsubscribe_template with no {{items}} placeholder is refused" do
       assert {:error, message} =
-               Websocket.init_provider(%{@valid_opts | unsubscribe_template: ~s({"req_id":1})})
+               prepare(Websocket, %{@valid_opts | unsubscribe_template: ~s({"req_id":1})})
 
       assert message =~ "unsubscribe_template"
       assert message =~ "{{items}}"
@@ -77,34 +79,34 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
     test "a subscription_url missing either template is refused" do
       assert {:error, message} =
-               Websocket.init_provider(Map.delete(@valid_opts, :subscribe_template))
+               prepare(Websocket, Map.delete(@valid_opts, :subscribe_template))
 
       assert message =~ "subscribe_template"
 
       assert {:error, message} =
-               Websocket.init_provider(Map.delete(@valid_opts, :unsubscribe_template))
+               prepare(Websocket, Map.delete(@valid_opts, :unsubscribe_template))
 
       assert message =~ "unsubscribe_template"
     end
 
     test "an interval below the 1000 ms floor is refused" do
       assert {:error, message} =
-               Websocket.init_provider(Map.put(@valid_opts, :subscription_interval_ms, 100))
+               prepare(Websocket, Map.put(@valid_opts, :subscription_interval_ms, 100))
 
-      assert message =~ "1000 ms minimum"
+      assert message =~ "is below the minimum 1000"
     end
 
     test "a non-http scheme, a hostless url and embedded credentials are each refused" do
       assert {:error, m1} =
-               Websocket.init_provider(%{@valid_opts | subscription_url: "ftp://cfg/subs"})
+               prepare(Websocket, %{@valid_opts | subscription_url: "ftp://cfg/subs"})
 
       assert m1 =~ "http or https"
 
-      assert {:error, m2} = Websocket.init_provider(%{@valid_opts | subscription_url: "https://"})
+      assert {:error, m2} = prepare(Websocket, %{@valid_opts | subscription_url: "https://"})
       assert m2 =~ "no host"
 
       assert {:error, m3} =
-               Websocket.init_provider(%{@valid_opts | subscription_url: "https://u:p@cfg/subs"})
+               prepare(Websocket, %{@valid_opts | subscription_url: "https://u:p@cfg/subs"})
 
       assert m3 =~ "must not embed credentials"
       refute m3 =~ "p@"
@@ -112,12 +114,13 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
     test "malformed subscription headers are refused" do
       assert {:error, message} =
-               Websocket.init_provider(Map.put(@valid_opts, :subscription_headers, "not-json"))
+               prepare(Websocket, Map.put(@valid_opts, :subscription_headers, "not-json"))
 
-      assert message =~ "JSON object"
+      assert message =~ "Invalid value for subscription_headers"
 
       assert {:error, message} =
-               Websocket.init_provider(
+               prepare(
+                 Websocket,
                  Map.put(@valid_opts, :subscription_headers, %{"a" => %{"nested" => 1}})
                )
 
@@ -126,14 +129,14 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
     test "an unrecognised ack mode is refused" do
       assert {:error, message} =
-               Websocket.init_provider(Map.put(@valid_opts, :subscription_ack_mode, "maybe"))
+               prepare(Websocket, Map.put(@valid_opts, :subscription_ack_mode, "maybe"))
 
       assert message =~ "subscription_ack_mode"
     end
 
     test "an unknown option is refused rather than silently ignored" do
       assert {:error, message} =
-               Websocket.init_provider(Map.put(@valid_opts, :reconnect_policy, "aggressive"))
+               prepare(Websocket, Map.put(@valid_opts, :reconnect_policy, "aggressive"))
 
       assert message =~ "unknown option(s) for websocket: reconnect_policy"
     end
@@ -142,7 +145,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       opts =
         Enum.reduce(ProviderBehaviour.host_opts(), @valid_opts, &Map.put(&2, &1, nil))
 
-      assert {:ok, _} = Websocket.init_provider(opts)
+      assert {:ok, _} = prepare(Websocket, opts)
     end
   end
 
@@ -368,7 +371,8 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
     test "init_provider restores a persisted applied set" do
       assert {:ok, opts} =
-               Websocket.init_provider(
+               prepare(
+                 Websocket,
                  Map.put(@valid_opts, :applied_subscriptions, ["b", "a", "a"])
                )
 
@@ -400,7 +404,7 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       assert updated.plugins["ws_plugin"].opts[:applied_subscriptions] == ["a", "b"]
 
       # `attempt_restart/3` re-runs `init_provider/1` from exactly this map.
-      assert {:ok, opts} = Websocket.init_provider(updated.plugins["ws_plugin"].opts)
+      assert {:ok, opts} = prepare(Websocket, updated.plugins["ws_plugin"].opts)
       assert opts.applied_subscriptions == ["a", "b"]
     end
 

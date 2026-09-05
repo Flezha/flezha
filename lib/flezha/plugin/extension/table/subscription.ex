@@ -232,6 +232,9 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
     end
   end
 
+  # The declaration says which extension callbacks a provider implements. It is
+  # derived at compile time from the same source a run-time export probe reads,
+  # so the refusal is unchanged and nothing asks the code loader.
   defp validate_callback(provider, name, kind) do
     callback = callback_name(name, kind)
 
@@ -239,7 +242,7 @@ defmodule Flezha.Plugin.Extension.Table.Subscription do
       not Code.ensure_loaded?(provider) ->
         {:error, {:module_not_loaded, provider}}
 
-      not function_exported?(provider, callback, 2) ->
+      callback not in provider.__provider__().extensions ->
         {:error, {:missing_callback, callback}}
 
       true ->

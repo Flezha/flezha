@@ -19,6 +19,8 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpPoll
+  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 
   @catalog Host.build_catalog(
@@ -66,9 +68,13 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       send(poller, :poll)
       assert_receive {:poll_event, :unchanged, _, _}, 2_000
 
-      # Handover / plugin restart: `init_provider` + `activate` run again and
-      # the fresh poller carries no hash, so it re-seeds the rejoining
-      # operative with content that never changed.
+      # Handover / plugin restart: the table stops the worker it started and the
+      # next activation starts a fresh one, which carries no hash, so it
+      # re-seeds the rejoining operative with content that never changed.
+      ref = Process.monitor(poller)
+      :ok = stop_worker(poller)
+      assert_receive {:DOWN, ^ref, :process, ^poller, _}, 2_000
+
       _second = start_poller(origin)
 
       assert {"cfg-v1", %{"channel" => @channel}} = take_ingest()
@@ -137,7 +143,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       end
 
       assert {:unhealthy, {:poll_failing, {:http_status, 503}}} =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+               HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
 
       refute_ingest()
 
@@ -145,7 +151,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       send(poller, :poll)
 
       assert {"cfg-v2", %{"channel" => @channel}} = take_ingest()
-      assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+      assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
       refute_ingest()
     end
 
@@ -167,7 +173,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       end
 
       assert {:unhealthy, {:poll_failing, {:oversized_body, _, 64}}} =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+               HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
 
       refute_ingest()
     end
@@ -185,7 +191,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       end
 
       assert {:unhealthy, {:poll_failing, {:invalid_utf8, 3}}} =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 2})
+               HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 2}))
 
       refute_ingest()
     end
@@ -211,7 +217,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert_receive {:poll_event, :failed, %{consecutive_failures: 1}, _}, 2_000
 
       assert {:unhealthy, {:poll_failing, _}} =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 1})
+               HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 1}))
 
       refute_ingest()
     end
@@ -225,14 +231,16 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       stop_origin(origin)
 
       {:ok, opts} =
-        HttpPoll.init_provider(%{
+        ProviderOptions.normalise_opts(HttpPoll, %{
           url: "https://127.0.0.1:#{port}/config",
           channel: @channel,
           interval_ms: 60_000,
-          timeout_ms: 2_000
+          timeout_ms: 2_000,
+          overwatcher_pid: self()
         })
+        |> then(fn {:ok, o} -> HttpPoll.init_provider(o) end)
 
-      {:ok, poller} = HttpPoll.activate(opts)
+      {:ok, poller} = start_worker(opts)
       kill_on_exit(poller)
 
       assert_receive {:poll_event, :failed, _, %{reason: reason}}, 5_000
@@ -241,13 +249,13 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "health reports a dead or absent poller" do
-      assert {:unhealthy, :no_poller} = HttpPoll.health(%{})
+      assert {:unhealthy, :no_poller} = HttpPoll.health(health_opts(%{}))
 
       dead = spawn(fn -> :ok end)
       ref = Process.monitor(dead)
       assert_receive {:DOWN, ^ref, :process, ^dead, _}
 
-      assert {:unhealthy, :poller_dead} = HttpPoll.health(%{owned_pid: dead})
+      assert {:unhealthy, :poller_dead} = HttpPoll.health(health_opts(%{owned_pid: dead}))
     end
   end
 
@@ -257,7 +265,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       # `init_provider/1` starts nothing — the poller is `activate/1`'s — so
       # there is no process that could reach the origin later.
-      assert {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
+      assert {:ok, opts} = prepare(origin)
 
       assert requests(origin) == 0
       assert opts.overwatcher_pid == self()
@@ -266,9 +274,9 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
     test "activate returns without waiting on the request" do
       origin = start_origin(body: "cfg-v1", hold: self())
-      {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
+      {:ok, opts} = prepare(origin)
 
-      {elapsed_us, {:ok, poller}} = :timer.tc(fn -> HttpPoll.activate(opts) end)
+      {elapsed_us, {:ok, poller}} = :timer.tc(fn -> start_worker(opts) end)
       kill_on_exit(poller)
 
       assert elapsed_us < 100_000
@@ -291,7 +299,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       # Mid-flight: the request is blocking its own child, not the worker, so
       # the verdict is available for exactly the slow endpoint it must report.
       assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
-      assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+      assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
 
       release_origin()
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
@@ -303,8 +311,8 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       host =
         spawn(fn ->
-          {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
-          {:ok, poller} = HttpPoll.activate(opts)
+          {:ok, opts} = prepare(origin)
+          {:ok, poller} = start_worker(opts)
           send(parent, {:poller, poller})
           receive do: (:stop -> :ok)
         end)
@@ -328,7 +336,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
         operative_id: "detector"
       }
 
-      assert {:ok, table} = Table.subscribe(Table.new(@catalog), "cfg", plugin)
+      assert {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{"cfg", plugin}])
       assert Table.phase(table, "cfg") == :prepared
 
       {table, _} = Table.bulk_activate(table)
@@ -336,7 +344,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       assert {"cfg-v1", %{"channel" => @channel}} = take_ingest()
 
-      poller = owned_pid(table, "cfg")
+      poller = Table.owned_pid(table, "cfg")
       assert is_pid(poller) and Process.alive?(poller)
       assert Table.health(table) == %{"cfg" => :healthy}
 
@@ -351,7 +359,9 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = stub_worker(failures: 0, last_error: nil, settled_ago_ms: 400)
 
       assert {:unhealthy, {:poll_idle, age}} =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+               HttpPoll.health(
+                 health_opts(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+               )
 
       assert age >= 400
     end
@@ -362,7 +372,9 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = stub_worker(failures: 0, last_error: nil, settled_ago_ms: 10)
 
       assert :healthy =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+               HttpPoll.health(
+                 health_opts(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+               )
     end
 
     test "a poll in flight inside the window stays healthy" do
@@ -371,7 +383,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       # The request is in flight for as long as the origin holds it.
       assert_receive {:origin_holding, conn}, 5_000
-      assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+      assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
       send(conn, :unpark)
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
@@ -380,23 +392,29 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = stub_worker(failures: 5, last_error: :econnrefused, settled_ago_ms: 10_000)
 
       assert {:unhealthy, {:poll_failing, :econnrefused}} =
-               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+               HttpPoll.health(
+                 health_opts(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+               )
     end
 
     test "the window defaults to three intervals when unset" do
       # 3 x 1_000 ms = 3_000 ms, so a 2 s-old settle is healthy and a 4 s-old
       # one is not, without the option ever being supplied.
       assert :healthy =
-               HttpPoll.health(%{
-                 owned_pid: stub_worker(settled_ago_ms: 2_000),
-                 interval_ms: 1_000
-               })
+               HttpPoll.health(
+                 health_opts(%{
+                   owned_pid: stub_worker(settled_ago_ms: 2_000),
+                   interval_ms: 1_000
+                 })
+               )
 
       assert {:unhealthy, {:poll_idle, _}} =
-               HttpPoll.health(%{
-                 owned_pid: stub_worker(settled_ago_ms: 4_000),
-                 interval_ms: 1_000
-               })
+               HttpPoll.health(
+                 health_opts(%{
+                   owned_pid: stub_worker(settled_ago_ms: 4_000),
+                   interval_ms: 1_000
+                 })
+               )
     end
 
     test "a wedged worker is reported as uncertain, not as a verdict" do
@@ -408,13 +426,18 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       # `Extension.Table` is what turns this into telemetry, because it is the
       # layer that knows which plugin the provider belongs to.
       assert {:fail_open, :probe_timeout} =
-               HttpPoll.health(%{owned_pid: wedged, failure_threshold: 3})
+               HttpPoll.health(health_opts(%{owned_pid: wedged, failure_threshold: 3}))
     end
   end
 
   # A worker that answers the health probe with a chosen verdict. The idle
   # window is a clock, and driving a real poller past it would mean sleeping
   # through real intervals.
+  # `health/1` reads declared fields, so a probe is driven with the declaration's
+  # own defaults and only the values a case is about.
+  defp health_opts(extra),
+    do: Map.merge(ProviderOptions.defaults(HttpPoll), extra)
+
   defp stub_worker(fields) do
     failures = Keyword.get(fields, :failures, 0)
     last_error = Keyword.get(fields, :last_error, nil)
@@ -436,12 +459,5 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
     pid
-  end
-
-  defp owned_pid(table, plugin_id) do
-    case Map.get(table.owned_pids, plugin_id) do
-      {pid, _ref} -> pid
-      _ -> nil
-    end
   end
 end

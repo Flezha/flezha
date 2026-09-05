@@ -18,10 +18,10 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   alias Flezha.Plugin.Provider.Kafka
   alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.Provider.Postgres
-  alias Flezha.Plugin.Provider.Postgres.SinkSup
   alias Flezha.Plugin.Provider.StdOut
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   @catalog Host.build_catalog(
              [{:on_input, :transform, Ctx.IO}],
@@ -105,70 +105,78 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
   end
 
-  describe "convert_value/2 runs on the CLI path only" do
-    # KI-62, resolved NOT A BUG: `build/1` takes a string map and is the only
-    # caller of `convert_value/2`. A `%Flezha.Plugin{}` carrying typed opts
-    # never crosses it, and the delegating shim must not widen that.
-    test "a typed opts map reaches the provider as written" do
+  describe "one conversion table, on both paths" do
+    # KI-62 was filed against the older shape, where `build/1` was the only
+    # caller of the conversion table and a `%Flezha.Plugin{}` carrying typed
+    # opts crossed it uncoerced, so an operator's `--plugins` spec was checked
+    # by nothing. The declaration is now read on both paths, and the same value
+    # earns the same sentence either way.
+    test "a value the declaration refuses is refused on the spec path too" do
       opts = %{regex_pattern: "x", inverted: "not-a-bool"}
 
       plugin = %Plugin{id: "ki62", provider: Filter, opts: opts, subscriptions: [{:on_input, []}]}
 
-      {:ok, table} = Table.subscribe(Table.new(@catalog), "ki62", plugin)
+      assert {:error, {"ki62", spec_refusal}} =
+               Table.bulk_subscribe(Table.new(@catalog), [{"ki62", plugin}])
 
-      # `init_provider/1` adds its own keys; what matters is that the value
-      # `convert_value/2` would have refused is present, uncoerced.
-      assert table.plugins["ki62"].opts.inverted == "not-a-bool"
-      assert table.plugins["ki62"].opts.regex_pattern == "x"
+      assert {:error, cli_refusal} =
+               Filter.build(%{"regex_pattern" => "x", "inverted" => "not-a-bool"})
+
+      assert spec_refusal == cli_refusal
+      assert spec_refusal == "Invalid value for inverted: not-a-bool"
     end
 
-    test "the same value IS refused when it arrives as a CLI string map" do
-      assert {:error, _} = Filter.build(%{"regex_pattern" => "x", "inverted" => "not-a-bool"})
+    test "a value it accepts reaches the provider converted, with every default present" do
+      plugin = %Plugin{
+        id: "ok",
+        provider: Filter,
+        opts: %{regex_pattern: "x", inverted: "true"},
+        subscriptions: [{:on_input, []}]
+      }
+
+      {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{"ok", plugin}])
+
+      assert table.plugins["ok"].opts.inverted == true
+      assert table.plugins["ok"].opts.regex_pattern == "x"
     end
   end
 
   defmodule DeclaredConverted do
     @moduledoc false
 
-    use Flezha.Plugin.ProviderBehaviour
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        name: [type: :string, required: true, doc: "The thing's name"],
+        mode: [type: :string, doc: "A mode this provider converts by hand"],
+        untyped: [type: :any, doc: "A value nothing interprets"]
+      ]
 
-    @converted_opts [:mode]
-
-    @enforce_keys [:name]
-    defstruct @enforce_keys ++ [:mode]
-
-    @impl true
-    def plugin_type(), do: :io_binding
-
-    # Names `:mode` and matches only its string form. Every other shape is what
-    # the injected default has to answer for.
+    # Names `:mode`'s string form. Every other shape falls through to the row,
+    # which declares the type that refuses it.
     defp convert_value(:mode, value) when is_binary(value), do: {:ok, {:mode, value}}
   end
 
-  describe "the injected default refuses a value for an option the provider converts" do
-    test "an unmatched value for a declared-converted option is refused" do
+  describe "the row refuses a value the provider's own clauses do not match" do
+    test "an unmatched value for a typed option is refused" do
       assert {:error, message} = DeclaredConverted.build(%{"name" => "n", "mode" => 42})
       assert message =~ "mode"
       assert message =~ "42"
     end
 
-    test "a matched value for the same option still converts" do
+    test "a matched value for the same option still converts by hand" do
       assert {:ok, %DeclaredConverted{mode: {:mode, "fast"}}} =
                DeclaredConverted.build(%{"name" => "n", "mode" => "fast"})
     end
 
-    test "an option the table does not name still passes through unchanged" do
-      assert {:ok, %DeclaredConverted{name: "n"}} = DeclaredConverted.build(%{"name" => "n"})
+    test "an option declared `:any` passes through unchanged" do
+      assert {:ok, %DeclaredConverted{untyped: %{"a" => 1}}} =
+               DeclaredConverted.build(%{"name" => "n", "untyped" => %{"a" => 1}})
     end
 
-    test "a provider that converts without declaring @converted_opts does not compile" do
+    test "a provider that declares an unknown option type does not compile" do
       source = """
-      defmodule Flezha.ProviderBehaviourTest.Undeclared#{System.unique_integer([:positive])} do
-        use Flezha.Plugin.ProviderBehaviour
-        defstruct [:mode]
-        @impl true
-        def plugin_type(), do: :io_binding
-        defp convert_value(:mode, value) when is_binary(value), do: {:ok, value}
+      defmodule Flezha.ProviderBehaviourTest.BadType#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour, options: [mode: [type: :colour]]
       end
       """
 
@@ -200,9 +208,9 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   end
 
   describe "the strict option set is enforced on the init_provider/1 path too" do
-    test "an option the provider does not offer is refused by init_provider/1" do
+    test "an option the provider does not offer is refused before init_provider/1" do
       assert {:error, message} =
-               OperativeForward.init_provider(%{
+               prepare(OperativeForward, %{
                  target_operative_id: "b",
                  source_operative_id: "a",
                  source_namespace: :default,
@@ -220,12 +228,11 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     # step later, which is only reached because the option check passed.
     test "a re-prepare's own resolved keys are accepted, or every plugin heal is refused" do
       assert {:error, message} =
-               OperativeForward.init_provider(%{
+               prepare(OperativeForward, %{
                  target_operative_id: "a",
                  source_operative_id: "a",
                  source_namespace: :default,
                  plugin_id: "a->a",
-                 worker_pid: self(),
                  routes: []
                })
 
@@ -249,9 +256,7 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     @partition_opts Flezha.Partition.provider_opts(%{index: 1, count: 3, range: {85, 169}})
 
     test "every strict provider accepts them, because every one of them receives them" do
-      for {id, module} <- Flezha.Config.get_enabled_plugins(),
-          Code.ensure_loaded?(module),
-          function_exported?(module, :validate_opts, 1) do
+      for {id, module} <- Flezha.Plugin.Providers.all(), Code.ensure_loaded?(module) do
         assert :ok == module.validate_opts(@partition_opts),
                "provider `#{id}` refuses a partition member's own injected opts, so every " <>
                  "plugin on a partitioned operative fails to enable"
@@ -266,45 +271,48 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
           source_namespace: :default
         })
 
-      assert {:error, message} = OperativeForward.init_provider(opts)
+      assert {:error, message} = prepare(OperativeForward, opts)
 
-      # The target check, one step AFTER the option check — reached only
-      # because the injected keys were accepted.
+      # The target check, one step AFTER the option check, reached only because
+      # the injected keys were accepted.
       assert message =~ "is the operative itself"
       refute message =~ "unknown option"
     end
   end
 
-  describe "the postgres sink refuses at preparation, before it starts anything" do
-    # Every case here returns before `SinkSup.ensure_worker/1`, so none of them
-    # needs a database. The sweep is what keeps the unfixed code honest: on the
-    # defective tree these calls DO start a worker.
+  describe "the postgres sink refuses at preparation, before it holds anything" do
+    # Preparation starts nothing for any provider now, so none of these needs a
+    # database. The refusals are the declaration's, made before `init_provider/1`
+    # is reached at all.
     defp pg_opts(extra) do
       plugin_id = "pg-refusal-#{System.unique_integer([:positive])}"
-      on_exit(fn -> SinkSup.stop_worker(plugin_id) end)
-
       Map.merge(%{database: "d", username: "u", plugin_id: plugin_id}, extra)
     end
 
+    defp prepare(provider, opts) do
+      with {:ok, opts} <- ProviderOptions.normalise_opts(provider, opts),
+           do: provider.init_provider(opts)
+    end
+
     test "a health threshold it cannot interpret is refused" do
-      assert {:error, message} = Postgres.init_provider(pg_opts(%{unhealthy_after_ms: "soon"}))
+      assert {:error, message} = prepare(Postgres, pg_opts(%{unhealthy_after_ms: "soon"}))
       assert is_binary(message)
       assert message =~ "unhealthy_after_ms"
     end
 
     test "a boolean it cannot interpret is refused rather than raising" do
-      assert {:error, message} = Postgres.init_provider(pg_opts(%{ssl: "yes"}))
+      assert {:error, message} = prepare(Postgres, pg_opts(%{ssl: "yes"}))
       assert is_binary(message)
       assert message =~ "ssl"
     end
 
     test "an option the sink does not offer is refused" do
-      assert {:error, message} = Postgres.init_provider(pg_opts(%{nope: 1}))
+      assert {:error, message} = prepare(Postgres, pg_opts(%{nope: 1}))
       assert is_binary(message)
       assert message =~ "nope"
     end
 
-    test "the keys the host injects are still accepted" do
+    test "the keys the host injects are still accepted, and nothing is started" do
       opts =
         pg_opts(%{
           source_namespace: "ns",
@@ -313,8 +321,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
           effectively_once: false
         })
 
-      assert {:ok, _opts, pid} = Postgres.init_provider(opts)
-      assert is_pid(pid)
+      assert {:ok, prepared} = prepare(Postgres, opts)
+      assert prepared.plugin_id == opts.plugin_id
     end
   end
 
@@ -345,8 +353,8 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
   end
 
   describe "the refusals build/1 already made are untouched" do
-    test "a missing required field still names the field" do
-      assert {:error, "Missing required fields: [:hosts, :topic]"} =
+    test "a missing required field still names the field, through the one builder" do
+      assert {:error, "kafka requires :hosts, :topic"} =
                Kafka.Producer.build(%{"linger_ms" => "10"})
     end
 

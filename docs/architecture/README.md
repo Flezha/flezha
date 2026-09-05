@@ -2,8 +2,10 @@
 
 Flezha runs user-authored stateful compute across a fleet of runners, and mirrors every
 state change and every emitted output into a durable store on the controller. A runner is
-disposable: it holds state in memory, and the controller holds the truth. Kill a runner and
-its work resumes elsewhere from the last durable point.
+disposable: it holds state in memory, and the controller holds the truth. Flezha is
+polyglot: seven host SDKs (Rust, Java, Elixir, Node, Python, Ruby and PHP) implement the
+same operative contract against one shared kernel, so a fleet can mix languages and each
+team writes its operatives in the language it already uses.
 
 This directory is the **architectural map** — the model, the invariants, and the diagrams. It
 tells you how the pieces compose. For the mechanism-level detail behind any box, follow the
@@ -26,7 +28,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
   owns the durable store, routes input, decides where each operative runs, and heals the fleet.
   It scales horizontally — several controller nodes cluster over Erlang distribution, and a
   ProcessHub hub per namespace distributes operatives across them.
-- **Runner** — the SDK process (Rust or Java) where user code runs. Runners **dial the
+- **Runner** — the SDK process (any of the seven host languages) where user code runs. Runners **dial the
   controller**, never the reverse. They are disposable: state lives in memory, and the
   controller replicates it durably. Inside a runner there is one more split: transport,
   ordering, durability, retries, timers and the workflow driver live in a shared Rust kernel

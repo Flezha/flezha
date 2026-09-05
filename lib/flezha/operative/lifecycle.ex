@@ -188,7 +188,10 @@ defmodule Flezha.Operative.Lifecycle do
   # facts the State subsystem reads, the retention floors the declaration
   # raised, and the replay of whatever the durable inbox still owes.
   defp record_and_replay(state, operative, declarations, correction_window_ms) do
-    state = Plugins.activate(state)
+    # A plugin that fails to come up stays `:prepared`, which the convergence
+    # loop diffs as missing and heals under backoff, so the bind does not fail
+    # on it.
+    {state, _not_running} = Plugins.bring_up(state)
 
     # Record this class's kind so the State subsystem can gate stream-only
     # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable

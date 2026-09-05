@@ -40,40 +40,13 @@ defmodule Flezha.Plugin.Provider.Kafka do
     """
 
     alias Flezha.Plugin.Extension.Ctx
-    alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
+    alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+    alias Flezha.Plugin.Provider.WorkerSup
     alias Flezha.Plugin.ProviderBehaviour
     alias Flezha.State.Outbox
     alias KafkaEx.Auth.Config, as: KafkaAuthConfig
 
-    use ProviderBehaviour
-
-    import ProviderBehaviour,
-      only: [convert_opts: 4, parse_bool: 2, parse_enum: 3, parse_int: 2, refuse_value: 2]
-
-    # The one default table. `defstruct` and the conversion table both derive
-    # from it, so a new tunable is added in exactly one place.
-    @int_opts [
-      partition: 0,
-      required_acks: -1,
-      retries: 5,
-      retry_backoff_ms: 100,
-      retry_max_backoff_ms: 5_000,
-      delivery_timeout_ms: 30_000,
-      linger_ms: 10,
-      max_batch_bytes: 1_048_576,
-      queue_max: 10_000,
-      queue_block_timeout_ms: 5_000,
-      # Unset: the window's width follows `:idempotent`.
-      max_in_flight: nil,
-      auto_create_partitions: 1,
-      auto_create_replication_factor: 2,
-      metadata_refresh_timeout_ms: 5_000
-    ]
-
-    @bool_opts [idempotent: false, auto_create_topic: true]
-
-    @int_fields Keyword.keys(@int_opts)
-    @bool_fields Keyword.keys(@bool_opts)
+    import ProviderBehaviour, only: [parse_enum: 3, refuse_value: 2]
 
     @queue_overflow_policies [:drop_nothing, :drop_oldest, :drop_newest]
 
@@ -81,44 +54,167 @@ defmodule Flezha.Plugin.Provider.Kafka do
     @auth_keys [:mechanism, :username, :password, :mechanism_opts]
     @auth_mechanisms [:plain, :scram, :oauthbearer, :msk_iam]
 
-    # Every option `init_provider/1` interprets, converted once, before any
-    # worker or broker client exists.
-    @converted_fields @int_fields ++ @bool_fields ++ [:queue_overflow, :auth]
-
-    # Field-guarded, and the value-guarded options (`:queue_overflow`, `:auth`)
-    # carry their own terminal clause, so the table is already total.
-    @converted_opts []
-
-    @enforce_keys [:hosts, :topic]
-    defstruct @enforce_keys ++
-                [:conn, :registry_ref, :producer_pid, :plugin_id, :channel] ++
-                @int_opts ++
-                @bool_opts ++ [queue_overflow: :drop_nothing, topic_configs: []]
+    use ProviderBehaviour,
+      name: "kafka",
+      options: [
+        hosts: [
+          type: :any,
+          required: true,
+          doc: "`{host, port}` list, or a comma-separated string"
+        ],
+        topic: [type: :string, required: true, doc: "Destination topic"],
+        plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
+        channel: [type: :string, doc: "Produce only records whose metadata channel matches"],
+        partition: [type: :int, default: 0, min: 0, doc: "Destination partition"],
+        required_acks: [type: :int, default: -1, doc: "Broker acks; -1 is acks=all"],
+        retries: [type: :int, default: 5, min: 0, doc: "Attempts per batch before parking it"],
+        retry_backoff_ms: [type: :int, default: 100, min: 1, doc: "First delay between retries"],
+        retry_max_backoff_ms: [type: :int, default: 5_000, min: 1, doc: "Ceiling for that delay"],
+        delivery_timeout_ms: [
+          type: :int,
+          default: 30_000,
+          min: 1,
+          doc: "Total budget for one batch before it is parked"
+        ],
+        linger_ms: [type: :int, default: 10, min: 0, doc: "How long a batch waits to fill"],
+        max_batch_bytes: [type: :int, default: 1_048_576, min: 1, doc: "Largest batch produced"],
+        queue_max: [
+          type: :int,
+          default: 10_000,
+          min: 1,
+          doc: "Records held before the policy applies"
+        ],
+        queue_overflow: [
+          type: :enum,
+          values: @queue_overflow_policies,
+          default: :drop_nothing,
+          doc: "What a full queue does: block, drop the oldest, or drop the newest"
+        ],
+        queue_block_timeout_ms: [
+          type: :int,
+          default: 5_000,
+          min: 1,
+          doc: "How long an enqueue parks on a full queue before it is refused"
+        ],
+        idempotent: [type: :bool, default: false, doc: "Opt in to the broker's producer session"],
+        max_in_flight: [
+          type: :int,
+          min: 1,
+          doc: "Batches in flight; derived as 5 with `idempotent`, else 1"
+        ],
+        auto_create_topic: [type: :bool, default: true, doc: "Create the topic when missing"],
+        auto_create_partitions: [type: :int, default: 1, min: 1, doc: "Partitions for that topic"],
+        auto_create_replication_factor: [
+          type: :int,
+          default: 2,
+          min: 1,
+          doc: "Replication factor for that topic"
+        ],
+        topic_configs: [type: :list, default: [], doc: "`{name, value}` pairs for that topic"],
+        metadata_refresh_timeout_ms: [
+          type: :int,
+          default: 5_000,
+          min: 1,
+          doc: "Budget for one broker metadata refresh"
+        ],
+        request_timeout_ms: [
+          type: :int,
+          default: 10_000,
+          min: 1,
+          doc: "Budget the broker is asked to honour for one produce request"
+        ],
+        dispatch_timeout_ms: [
+          type: :int,
+          default: 10_000,
+          min: 1,
+          doc: "Budget for one in-flight batch before it is treated as lost"
+        ],
+        auth: [type: :any, doc: "SASL configuration, as a `KafkaEx.Auth.Config` or a map"],
+        # The resolved credential, held in memory so the client start and every
+        # reconnect on this node authenticate with the real secret while the
+        # stored opts carry only the placeholder. Never persisted, so a handover
+        # to another node resolves from `sasl_password_env` or from nothing,
+        # which is what the page already says.
+        auth_secret: [type: :any, internal: true, transient: true],
+        sasl_password_env: [
+          type: :string,
+          doc: "Environment variable holding the SASL password, preferred over an inline one"
+        ],
+        use_ssl: [type: :bool, doc: "TLS to the brokers"],
+        ssl_options: [type: :any, doc: "Erlang `:ssl` options for that connection"],
+        metadata_update_interval: [
+          type: :int,
+          min: 1,
+          doc: "How often the shared broker client refreshes metadata"
+        ]
+      ],
+      worker: [
+        module: ProducerWorker,
+        restart: :permanent,
+        reusable: {ProducerWorker, :reusable?}
+      ]
 
     @impl true
-    def plugin_type(), do: :io_binding
-
     def init_provider(opts) do
-      with {:ok, tuned} <- convert_opts(__MODULE__, opts, @converted_fields, &convert_value/2),
-           opts = Map.replace(opts, :auth, tuned.auth),
-           hosts = parse_hosts(Map.fetch!(opts, :hosts)),
-           topic = Map.fetch!(opts, :topic),
-           plugin_id = Map.get(opts, :plugin_id, "default-#{System.unique_integer([:positive])}"),
-           worker_opts =
-             producer_opts(opts, tuned, identity(opts, hosts, tuned), topic, plugin_id),
-           :ok <- validate_window(worker_opts),
-           {:ok, producer_pid} <- ProducerSup.ensure_worker(worker_opts) do
-        opts =
-          opts
-          |> Map.put(:hosts, hosts)
-          |> Map.put(:topic, topic)
-          |> Map.put(:partition, tuned.partition)
-          |> Map.put(:producer_pid, producer_pid)
-          |> Map.put(:plugin_id, plugin_id)
-          |> redact_sasl()
+      hosts = parse_hosts(opts.hosts)
+      plugin_id = opts.plugin_id || "default-#{System.unique_integer([:positive])}"
 
-        {:ok, opts, producer_pid}
+      with :ok <- validate_window(opts) do
+        {:ok,
+         opts
+         |> Map.merge(%{
+           hosts: hosts,
+           plugin_id: plugin_id,
+           auth_secret: opts.auth_secret || opts.auth
+         })
+         |> redact_sasl()}
       end
+    end
+
+    @doc """
+    One producer worker per `{plugin_id, topic, partition}`, which is what lets
+    two plugins on one cluster share a broker client without sharing a queue.
+
+    Every tunable is already converted and already carries its declared default,
+    so this names only what the worker needs and the declaration cannot supply:
+    the connection identity, and the window whose default follows `:idempotent`.
+    `:auth` never appears: the credentials travel in the identity closure.
+    """
+    @impl true
+    def worker_specs(opts) do
+      [
+        {key(opts),
+         opts
+         |> Map.take([
+           :topic,
+           :plugin_id,
+           :partition,
+           :required_acks,
+           :retries,
+           :retry_backoff_ms,
+           :retry_max_backoff_ms,
+           :delivery_timeout_ms,
+           :dispatch_timeout_ms,
+           :request_timeout_ms,
+           :linger_ms,
+           :max_batch_bytes,
+           :queue_max,
+           :queue_overflow,
+           :queue_block_timeout_ms,
+           :idempotent,
+           :auto_create_topic,
+           :auto_create_partitions,
+           :auto_create_replication_factor,
+           :topic_configs,
+           :metadata_refresh_timeout_ms
+         ])
+         |> Map.merge(%{
+           connection_identity: identity(opts),
+           # 5 is Kafka's own ceiling for ordered idempotent retries; without a
+           # producer session there is nothing to keep a retry in order.
+           max_in_flight: opts.max_in_flight || if(opts.idempotent, do: 5, else: 1)
+         })}
+      ]
     end
 
     # A `KafkaEx.Client` answers one request at a time, encoding each batch in
@@ -133,32 +229,35 @@ defmodule Flezha.Plugin.Provider.Kafka do
     # credentials share one broker client without the registry ever seeing the
     # secret. Prefer `:sasl_password_env` — an inline password cannot survive a
     # restart from the redacted persisted opts.
-    defp identity(opts, hosts, tuned) do
+    defp identity(opts) do
+      # The credential the closure resolves is the transient one, which the
+      # stored opts do not carry: `resolve_auth/1` reads it and the redacted
+      # `:auth` never reaches the client.
+      opts = Map.put(opts, :auth, opts.auth_secret || opts.auth)
       resolved_auth = resolve_auth(opts)
 
       %{
-        hosts: hosts,
-        ssl_options: Map.get(opts, :ssl_options),
-        use_ssl: Map.get(opts, :use_ssl),
+        hosts: opts.hosts,
+        ssl_options: opts.ssl_options,
+        use_ssl: opts.use_ssl,
         auth_fun: fn -> resolve_auth(opts) end,
         auth_key: resolved_auth && :erlang.phash2(resolved_auth),
-        metadata_update_interval: Map.get(opts, :metadata_update_interval),
-        lane: rem(tuned.partition, System.schedulers_online())
+        metadata_update_interval: opts.metadata_update_interval,
+        lane: rem(opts.partition, System.schedulers_online())
       }
     end
 
     # Only the broker's per-partition sequence check keeps a retry inside the
     # window ordered, so a window wider than one without idempotence would
     # trade the plugin's unconditional FIFO guarantee for throughput.
-    defp validate_window(worker_opts) do
-      max_in_flight = Keyword.fetch!(worker_opts, :max_in_flight)
-
-      if max_in_flight > 1 and not Keyword.fetch!(worker_opts, :idempotent) do
-        {:error, {:max_in_flight_requires_idempotent, max_in_flight}}
-      else
-        :ok
-      end
+    defp validate_window(%{max_in_flight: window, idempotent: idempotent})
+         when is_integer(window) and window > 1 and not idempotent do
+      {:error,
+       "kafka max_in_flight #{window} requires idempotent: only the broker's per-partition " <>
+         "sequence check keeps a retry inside the window ordered"}
     end
+
+    defp validate_window(_opts), do: :ok
 
     @redacted "**redacted**"
 
@@ -212,11 +311,13 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defp redact_map_password(map), do: map
 
+    @impl true
     def on_input(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)
+    @impl true
     def on_output(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)
 
     defp produce(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
-      case Map.get(opts, :channel) do
+      case opts.channel do
         nil ->
           do_produce(ctx, opts, msg, md)
 
@@ -228,32 +329,21 @@ defmodule Flezha.Plugin.Provider.Kafka do
     end
 
     defp do_produce(%Ctx.IO{} = ctx, opts, msg, md) do
-      producer_pid = Map.fetch!(opts, :producer_pid)
       # Take ownership of a delivery-guaranteed output before handing it over:
       # the worker answers the hold when the broker acks its batch, or parks it
       # when the retry ladder is permanently exhausted. A plain output holds
       # nothing and this is a no-op.
       Outbox.hold(md)
-      :ok = ProducerWorker.cast_enqueue(producer_pid, msg, md)
+      :ok = ProducerWorker.cast_enqueue(worker(opts), msg, md)
       {:ok, ctx}
     end
 
-    # Every tunable is already converted and already carries its `defstruct`
-    # default, so this names only what the worker needs and the table cannot
-    # supply: the identity, the two required opts, the one list option, and the
-    # window whose default follows `:idempotent`. `:auth` is dropped — the
-    # credentials travel in the identity closure and never in worker opts.
-    defp producer_opts(opts, tuned, identity, topic, plugin_id) do
-      [
-        connection_identity: identity,
-        topic: topic,
-        plugin_id: plugin_id,
-        topic_configs: Map.get(opts, :topic_configs, []),
-        # 5 is Kafka's own ceiling for ordered idempotent retries; without a
-        # producer session there is nothing to keep a retry in order.
-        max_in_flight: tuned.max_in_flight || if(tuned.idempotent, do: 5, else: 1)
-      ] ++ Map.to_list(Map.drop(tuned, [:auth, :max_in_flight]))
-    end
+    # The key one producer is registered under: a plugin instance owns exactly
+    # one `(topic, partition)`, and this names it once for both the declaration
+    # and the dispatch path.
+    defp key(opts), do: {opts.plugin_id, opts.topic, opts.partition}
+
+    defp worker(opts), do: WorkerSup.worker(__MODULE__, key(opts))
 
     @doc """
     Synchronous read of producer counters for `plugin_id`. Each plugin
@@ -267,11 +357,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def stats(plugin_id) when is_binary(plugin_id) do
       pattern = {{plugin_id, :"$1", :"$2"}, :"$3", :_}
 
-      case Registry.select(ProducerSup.registry_name(), [{pattern, [], [:"$$"]}]) do
+      case Registry.select(registry(), [{pattern, [], [:"$$"]}]) do
         [[topic, partition, pid] | _] ->
-          # The Registry entry is unregistered asynchronously when the
-          # worker exits, so we may see a stale pid here for a brief
-          # window after `ProducerSup.stop_worker/3`.
+          # The Registry entry is unregistered asynchronously when the worker
+          # exits, so we may see a stale pid here for a brief window after the
+          # table stopped it.
           try do
             stats =
               pid
@@ -297,7 +387,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     @spec stats(binary(), binary(), non_neg_integer()) ::
             {:ok, map()} | {:error, :no_producer}
     def stats(plugin_id, topic, partition) do
-      case Registry.lookup(ProducerSup.registry_name(), {plugin_id, topic, partition}) do
+      case Registry.lookup(registry(), {plugin_id, topic, partition}) do
         [{pid, _}] ->
           try do
             {:ok,
@@ -336,10 +426,12 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def health(opts) do
       ProviderBehaviour.worker_health(
         opts,
-        [pid: [:producer_pid, :owned_pid], absent: :no_producer, dead: :worker_dead],
+        [absent: :no_producer, dead: :worker_dead],
         &health_from_stats/1
       )
     end
+
+    defp registry(), do: WorkerSup.registry_name(WorkerSup.family(__MODULE__))
 
     defp health_from_stats(pid) do
       case ProducerWorker.stats(pid) do
@@ -354,21 +446,12 @@ defmodule Flezha.Plugin.Provider.Kafka do
       end
     end
 
-    defp convert_value(field, value) when field in @int_fields, do: parse_int(value, field)
-    defp convert_value(field, value) when field in @bool_fields, do: parse_bool(value, field)
-
     defp convert_value(:auth, %KafkaEx.Auth.Config{} = config), do: {:ok, config}
 
     defp convert_value(:auth, %{} = map),
       do: Enum.reduce_while(map, {:ok, %{}}, &put_auth_opt/2)
 
     defp convert_value(:auth, value), do: refuse_value(:auth, value)
-
-    # Total, because `init_provider/1` reads the stored option through this
-    # table: a value that is not a policy is refused at enable time rather than
-    # reaching `overflow/4` and killing the worker when the queue first fills.
-    defp convert_value(:queue_overflow, value),
-      do: parse_enum(value, "queue_overflow", @queue_overflow_policies)
 
     # `KafkaEx.Auth.Config.new/1` takes only these four and `Map.take/2`s the
     # rest away, so a misspelled key is a missing credential rather than an

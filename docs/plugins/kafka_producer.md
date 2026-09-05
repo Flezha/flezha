@@ -64,33 +64,39 @@ identical key, header and partition:
 
 ## Parameters
 
-| Parameter | Default | Type | Notes |
-| --- | --- | --- | --- |
-| `:hosts` | required | `[{host, port}]` or `"host:port,host:port"` | bootstrap brokers |
-| `:topic` | required | `binary` | destination topic |
-| `:partition` | `0` | `int` | one plugin instance serves one `(topic, partition)` |
-| `:channel` | `nil` | `binary` | only produce records whose metadata `"channel"` matches |
-| `:required_acks` | `-1` | `int` | `-1` / `0` / `1` / `>1` |
-| `:retries` | `5` | `int` | per-batch attempt cap |
-| `:retry_backoff_ms` | `100` | `int` | initial backoff; doubles per attempt |
-| `:retry_max_backoff_ms` | `5_000` | `int` | backoff ceiling |
-| `:delivery_timeout_ms` | `30_000` | `int` | total per-batch budget including retries |
-| `:linger_ms` | `10` | `int` | batch window; `0` disables batching |
-| `:max_batch_bytes` | `1_048_576` | `int` | flush early at this size |
-| `:queue_max` | `10_000` | `int` | queue depth per `(plugin, topic, partition)` |
-| `:queue_overflow` | `:drop_nothing` | atom | `:drop_nothing` / `:drop_oldest` / `:drop_newest`; any other value is refused at preparation |
-| `:queue_block_timeout_ms` | `5_000` | `int` | how long a sync `enqueue/4` caller waits under `:drop_nothing` |
-| `:idempotent` | `false` | `bool` | Kafka 0.11+; falls back to non-idempotent (window 1) if `InitProducerId` fails |
-| `:max_in_flight` | `5` with `:idempotent`, else `1` | `int` | `> 1` without `:idempotent` is refused at preparation (`{:max_in_flight_requires_idempotent, n}`) |
-| `:auto_create_topic` | `true` | `bool` | `CreateTopics` on the first `:unknown_topic_or_partition` |
-| `:auto_create_partitions` | `1` | `int` | partition count at auto-create |
-| `:auto_create_replication_factor` | `2` | `int` | replication factor at auto-create |
-| `:topic_configs` | `[]` | `[{name, value}]` | extra topic configs at auto-create |
-| `:metadata_refresh_timeout_ms` | `5_000` | `int` | bound on an active metadata refresh |
-| `:auth` | `nil` | map or `%KafkaEx.Auth.Config{}` | SASL. Exactly four keys — `mechanism`, `username`, `password`, `mechanism_opts` — and any other key is refused at preparation rather than dropped. `mechanism` is `:plain` (default), `:scram`, `:oauthbearer` or `:msk_iam`, in either its atom or its string spelling; anything else is refused. Keys and mechanism are validated once, at preparation, so the client-restart closure cannot raise inside the shared worker registry |
-| `:sasl_password_env` | `nil` | `binary` | env var holding the SASL password; overrides an inline one and survives a restart, which the redacted persisted opts cannot |
-| `:use_ssl`, `:ssl_options` | `nil` | — | passed to the broker client |
-| `:metadata_update_interval` | `nil` | `int` | passed to the broker client |
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `hosts` | any | &mdash; | yes | `{host, port}` list, or a comma-separated string |
+| `topic` | string | &mdash; | yes | Destination topic |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to a generated one |
+| `channel` | string | &mdash; | no | Produce only records whose metadata channel matches |
+| `partition` | int | `0` | no | Destination partition |
+| `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
+| `retries` | int | `5` | no | Attempts per batch before parking it |
+| `retry_backoff_ms` | int | `100` | no | First delay between retries |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
+| `delivery_timeout_ms` | int | `30000` | no | Total budget for one batch before it is parked |
+| `linger_ms` | int | `10` | no | How long a batch waits to fill |
+| `max_batch_bytes` | int | `1048576` | no | Largest batch produced |
+| `queue_max` | int | `10000` | no | Records held before the policy applies |
+| `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
+| `queue_block_timeout_ms` | int | `5000` | no | How long an enqueue parks on a full queue before it is refused |
+| `idempotent` | bool | `false` | no | Opt in to the broker's producer session |
+| `max_in_flight` | int | &mdash; | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
+| `auto_create_topic` | bool | `true` | no | Create the topic when missing |
+| `auto_create_partitions` | int | `1` | no | Partitions for that topic |
+| `auto_create_replication_factor` | int | `2` | no | Replication factor for that topic |
+| `topic_configs` | list | `[]` | no | `{name, value}` pairs for that topic |
+| `metadata_refresh_timeout_ms` | int | `5000` | no | Budget for one broker metadata refresh |
+| `request_timeout_ms` | int | `10000` | no | Budget the broker is asked to honour for one produce request |
+| `dispatch_timeout_ms` | int | `10000` | no | Budget for one in-flight batch before it is treated as lost |
+| `auth` | any | &mdash; | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
+| `sasl_password_env` | string | &mdash; | no | Environment variable holding the SASL password, preferred over an inline one |
+| `use_ssl` | bool | &mdash; | no | TLS to the brokers |
+| `ssl_options` | any | &mdash; | no | Erlang `:ssl` options for that connection |
+| `metadata_update_interval` | int | &mdash; | no | How often the shared broker client refreshes metadata |
+<!-- provider-options:end -->
 
 Passwords are redacted in the persisted and returned opts.
 

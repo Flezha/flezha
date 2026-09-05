@@ -1,7 +1,8 @@
 defmodule Flezha.Plugin.Provider.Websocket do
   @moduledoc """
-  First-party Websocket provider (`:io_binding`). `activate/1` starts a Fresh
-  connection; inbound frames are cast to the overwatcher as `{:io_in, ...}`.
+  First-party Websocket provider (`:io_binding`). Its declared worker is a Fresh
+  connection the table starts at activation; inbound frames reach the operative
+  through the host's one inject.
 
   A two-tier watchdog separates CONNECTION liveness from DATA liveness: every
   inbound frame refreshes `last_frame_at`, but only non-`ignore_pattern` data
@@ -21,98 +22,97 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   require Logger
 
-  use ProviderBehaviour
+  @frame_types [:text, :binary]
 
-  # Every "milliseconds, non-negative, 0 disables" option and its fallback, in
-  # one table: `convert_value/2` and `ms_opt/2` both read it, so a new timing
-  # knob is added here rather than as a fifth pair of near-identical clauses.
+  # The three timing defaults the declaration reads. Each is resolved once, at
+  # compile time, from the table that owns the duration.
+  @default_idle_timeout_ms Client.default_idle_timeout_ms()
+  @default_resubscribe_after_ms Client.default_resubscribe_after_ms()
+  @default_subscription_interval_ms Subscription.default_interval_ms()
+
+  # The two "milliseconds, non-negative, 0 disables" knobs and their fallbacks,
+  # in one table. Both are clamped rather than refused and both fall back on a
+  # value that names no number: a socket knob an operator mistyped must not take
+  # the connection down with it.
   @ms_defaults [
-    idle_timeout_ms: Client.default_idle_timeout_ms(),
-    resubscribe_after_ms: Client.default_resubscribe_after_ms()
+    idle_timeout_ms: @default_idle_timeout_ms,
+    resubscribe_after_ms: @default_resubscribe_after_ms
   ]
   @ms_fields Keyword.keys(@ms_defaults)
 
-  @frame_types [:text, :binary]
+  use ProviderBehaviour,
+    options: [
+      uri: [type: :string, required: true, doc: "The websocket endpoint to connect to"],
+      plugin_id: [type: :string, doc: "Plugin id; defaults to the URI"],
+      ignore_pattern: [
+        type: :string,
+        doc: "Substring marking a frame as a heartbeat rather than data"
+      ],
+      post_connect: [type: :json, default: %{}, doc: "Frame sent once the socket opens"],
+      ws_opts: [type: :json, default: [], doc: "Options passed to the socket library"],
+      payload_metadata: [type: :json, default: %{}, doc: "Metadata merged into every injection"],
+      idle_timeout_ms: [
+        type: :int,
+        default: @default_idle_timeout_ms,
+        doc: "Silence on the connection before it is reopened; 0 disables"
+      ],
+      resubscribe_after_ms: [
+        type: :int,
+        default: @default_resubscribe_after_ms,
+        doc: "Silence of DATA frames before the subscription is reasserted; 0 disables"
+      ],
+      subscription_url: [type: :string, doc: "Endpoint the desired item set is polled from"],
+      subscription_items: [type: :list, doc: "Literal desired item set, instead of polling one"],
+      subscription_interval_ms: [
+        type: :int,
+        default: @default_subscription_interval_ms,
+        doc: "How often the item source is polled"
+      ],
+      subscription_headers: [type: :json, default: %{}, doc: "Headers for the item source poll"],
+      subscribe_template: [type: :string, doc: "Frame template carrying the items to subscribe"],
+      unsubscribe_template: [type: :string, doc: "Frame template carrying the items to drop"],
+      subscription_ack_mode: [
+        type: :enum,
+        values: ["required", "none"],
+        default: "required",
+        doc: "`\"none\"` commits a delta on successful send instead of on the server's ack"
+      ],
+      # The set this plugin last committed, read back from the cspec on a
+      # restart rather than an option an operator writes.
+      applied_subscriptions: [type: :any, internal: true],
+      # The reconcile plan `init_provider/1` derives from the rows above.
+      subscription: [type: :any, internal: true]
+    ],
+    worker: [module: Client, restart: :temporary]
 
-  # The JSON-object options: a CLI flag delivers each as a string. They are also
-  # the whole of `@converted_opts` — the `@ms_fields` and `:post_connect`
-  # clauses are total on their own, so listing them would generate a clause
-  # that never matches.
-  @json_opts [:ws_opts, :payload_metadata, :subscription_headers]
-  @converted_opts @json_opts
+  defp convert_value(field, value) when field in @ms_fields and is_integer(value),
+    do: {:ok, max(value, 0)}
 
-  @enforce_keys [:uri]
-  defstruct @enforce_keys ++
-              [
-                :conn,
-                :plugin_id,
-                :ignore_pattern,
-                :subscription_url,
-                :subscribe_template,
-                :unsubscribe_template,
-                post_connect: %{},
-                ws_opts: [],
-                payload_metadata: %{},
-                idle_timeout_ms: Client.default_idle_timeout_ms(),
-                resubscribe_after_ms: Client.default_resubscribe_after_ms(),
-                # Left unset: `Subscription.from_opts/1` owns every
-                # subscription-source default, so there is one place to read
-                # them off rather than two that can drift.
-                subscription_interval_ms: nil,
-                subscription_headers: %{},
-                subscription_ack_mode: nil,
-                subscription_items: nil,
-                partition_index: nil,
-                partition_count: nil,
-                key_group_from: nil,
-                key_group_to: nil
-              ]
+  defp convert_value(field, value) when field in @ms_fields and is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} ->
+        {:ok, max(n, 0)}
 
-  @known_opts [
-    :uri,
-    :conn,
-    :plugin_id,
-    :ignore_pattern,
-    :post_connect,
-    :ws_opts,
-    :payload_metadata,
-    :idle_timeout_ms,
-    :resubscribe_after_ms,
-    :subscription_url,
-    :subscription_interval_ms,
-    :subscription_headers,
-    :subscribe_template,
-    :unsubscribe_template,
-    :subscription_ack_mode,
-    :subscription_items,
-    # Injected by a partition group's plugin fan-out, not written by hand.
-    :partition_index,
-    :partition_count,
-    :key_group_from,
-    :key_group_to
-  ]
+      _ ->
+        default = Keyword.fetch!(@ms_defaults, field)
 
-  # This provider's own committed state, read back out of the cspec on a
-  # restart rather than an option an operator writes. Accepted by
-  # `init_provider/1` for exactly that reason; `build/1` never sees it, so no
-  # CLI flag offers it.
-  @internal_opts [:applied_subscriptions]
+        Logger.warning(
+          "[Plugin.Provider.Websocket] invalid #{field}=#{inspect(value)}, " <>
+            "falling back to default #{default} ms"
+        )
 
-  @impl true
-  def plugin_type(), do: :io_binding
-
-  # A decode failure is refused in the shape every other option's is: a
-  # `Jason.DecodeError` is not the `String.t()` the callback promises, and the
-  # `:post_connect` clause below already answers this failure that way.
-  defp convert_value(field, value) when field in @json_opts and is_binary(value) do
-    with {:error, _decode_error} <- Jason.decode(value),
-         do: ProviderBehaviour.refuse_value(field, value)
+        {:ok, default}
+    end
   end
 
+  # A value that is neither takes the default, for the same reason.
+  defp convert_value(field, _value) when field in @ms_fields,
+    do: {:ok, Keyword.fetch!(@ms_defaults, field)}
+
   # `handle_connect/3` indexes `state.post_connect["payload"]`, so the value must
-  # be a map; CLI flags arrive as strings. The frame type is a two-value enum
-  # that `Subscription.subscription_frames/1` reads with no check of its own, so
-  # it is closed here rather than silently read as `:text`.
+  # be a map; a CLI flag delivers it as a string. The frame type is a two-value
+  # enum that `Subscription.subscription_frames/1` reads with no check of its
+  # own, so it is closed here rather than silently read as `:text`.
   defp convert_value(:post_connect, value) when is_binary(value) and value != "" do
     case Jason.decode(value) do
       {:ok, %{} = decoded} -> convert_value(:post_connect, decoded)
@@ -126,128 +126,61 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   defp convert_value(:post_connect, %{} = value), do: {:ok, value}
-  defp convert_value(:post_connect, nil), do: {:ok, %{}}
   defp convert_value(:post_connect, ""), do: {:ok, %{}}
 
-  defp convert_value(:post_connect, value),
-    do: ProviderBehaviour.refuse_value(:post_connect, value)
-
-  defp convert_value(:subscription_interval_ms, value) do
-    ProviderBehaviour.parse_int(value, :subscription_interval_ms)
-  end
-
-  defp convert_value(field, value) when field in @ms_fields and is_integer(value) do
-    {:ok, max(value, 0)}
-  end
-
-  defp convert_value(field, value) when field in @ms_fields and is_binary(value) do
-    case Integer.parse(value) do
-      {n, ""} ->
-        {:ok, max(n, 0)}
-
-      _ ->
-        default = Keyword.fetch!(@ms_defaults, field)
-
-        Logger.warning(
-          "[Plugin.Provider.Websocket] invalid #{field}=#{inspect(value)} — " <>
-            "falling back to default #{default} ms"
-        )
-
-        {:ok, default}
-    end
-  end
-
-  # `ms_opt/2`'s own last clause: a value that is neither takes the default.
-  defp convert_value(field, _value) when field in @ms_fields,
-    do: {:ok, Keyword.fetch!(@ms_defaults, field)}
-
-  defp convert_value(:ignore_pattern, value) when is_binary(value) and value != "" do
-    {:ok, value}
-  end
+  # An empty pattern is no pattern: every data frame counts as data.
+  defp convert_value(:ignore_pattern, value) when is_binary(value) and value != "",
+    do: {:ok, value}
 
   defp convert_value(:ignore_pattern, _), do: {:ok, nil}
 
   # `init_provider/1` validates and normalises config; it does NOT open the
-  # upstream WebSocket. The TLS handshake + subscribe round-trip moves to
-  # `activate/1`, called by `Flezha.Plugin.Extension.Table.bulk_activate/1`
-  # after the operative's SDK side has confirmed bound. See `operative-extensions`
+  # upstream WebSocket. The TLS handshake and the subscribe round trip are the
+  # worker's, started by `Flezha.Plugin.Extension.Table` at activation once the
+  # operative's SDK side has confirmed bound. See `operative-extensions`
   # "Two-phase plugin lifecycle gated on SDK readiness".
+  @impl true
   def init_provider(opts) do
-    with :ok <- validate_opts(opts),
-         {:ok, post_connect} <- convert_value(:post_connect, Map.get(opts, :post_connect)),
-         {:ok, tuned} <-
-           ProviderBehaviour.convert_opts(__MODULE__, opts, @ms_fields, &convert_value/2),
-         {:ok, subscription} <- Subscription.from_opts(opts) do
-      uri = Map.fetch!(opts, :uri)
-      ignore_pattern = normalize_ignore_pattern(Map.get(opts, :ignore_pattern))
-      plugin_id = Map.get(opts, :plugin_id) || uri
+    with {:ok, subscription} <- Subscription.from_opts(opts) do
+      plugin_id = opts.plugin_id || opts.uri
 
       Logger.info(
-        "[Plugin.Provider.Websocket] init_provider prepared uri=#{inspect(uri)} " <>
+        "[Plugin.Provider.Websocket] init_provider prepared uri=#{inspect(opts.uri)} " <>
           "plugin_id=#{inspect(plugin_id)} subscription_source=#{subscription != nil}"
       )
 
-      opts =
-        opts
-        |> Map.merge(tuned)
-        |> Map.put(:overwatcher_pid, self())
-        |> Map.put(:post_connect, post_connect)
-        |> Map.put(:payload_metadata, Map.get(opts, :payload_metadata, %{}))
-        |> Map.put(:ws_opts, Map.get(opts, :ws_opts, []))
-        |> Map.put(:ignore_pattern, ignore_pattern)
-        |> Map.put(:plugin_id, plugin_id)
-        |> Map.put(:subscription, subscription)
-        # The set this plugin last committed, read back from the cspec. A
-        # restart resumes with it; a plugin that never committed starts empty.
-        |> Map.put(
-          :applied_subscriptions,
-          Subscription.applied_set(Map.get(opts, :applied_subscriptions))
-        )
-
-      {:ok, opts}
+      {:ok,
+       Map.merge(opts, %{
+         plugin_id: plugin_id,
+         subscription: subscription,
+         applied_subscriptions: Subscription.applied_set(opts.applied_subscriptions)
+       })}
     end
   end
 
-  def activate(opts) when is_map(opts) do
-    uri = Map.fetch!(opts, :uri)
-    plugin_id = Map.fetch!(opts, :plugin_id)
-    overwatcher_pid = Map.fetch!(opts, :overwatcher_pid)
-
-    Logger.info(
-      "[Plugin.Provider.Websocket] activate begin uri=#{inspect(uri)} plugin_id=#{inspect(plugin_id)}"
-    )
-
-    case Client.start_link(uri,
-           ws_opts: Map.get(opts, :ws_opts, []),
-           post_connect: Map.get(opts, :post_connect, %{}),
-           overwatcher_pid: overwatcher_pid,
-           payload_metadata: Map.get(opts, :payload_metadata, %{}),
-           idle_timeout_ms: Map.get(opts, :idle_timeout_ms, Client.default_idle_timeout_ms()),
-           resubscribe_after_ms:
-             Map.get(opts, :resubscribe_after_ms, Client.default_resubscribe_after_ms()),
-           ignore_pattern: Map.get(opts, :ignore_pattern),
-           plugin_id: plugin_id,
-           sync_ingest?: Map.get(opts, :effectively_once, false),
-           subscription: Map.get(opts, :subscription),
-           applied_subscriptions: Map.get(opts, :applied_subscriptions, []),
-           source_plugin_id: Map.get(opts, :source_plugin_id),
-           source_namespace: Map.get(opts, :source_namespace),
-           source_operative_id: Map.get(opts, :source_operative_id)
-         ) do
-      {:ok, pid} ->
-        Logger.info(
-          "[Plugin.Provider.Websocket] activate success plugin_id=#{inspect(plugin_id)} pid=#{inspect(pid)}"
-        )
-
-        {:ok, pid}
-
-      {:error, reason} = err ->
-        Logger.error(
-          "[Plugin.Provider.Websocket] activate failed plugin_id=#{inspect(plugin_id)} reason=#{inspect(reason)}"
-        )
-
-        err
-    end
+  @impl true
+  def worker_specs(opts) do
+    [
+      {Map.fetch!(opts, :plugin_id),
+       opts
+       |> Map.take([
+         :uri,
+         :plugin_id,
+         :ws_opts,
+         :post_connect,
+         :overwatcher_pid,
+         :payload_metadata,
+         :idle_timeout_ms,
+         :resubscribe_after_ms,
+         :ignore_pattern,
+         :subscription,
+         :applied_subscriptions,
+         :source_plugin_id,
+         :source_namespace,
+         :source_operative_id
+       ])
+       |> Map.put(:sync_ingest?, opts[:effectively_once] || false)}
+    ]
   end
 
   @doc """
@@ -265,13 +198,10 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl ProviderBehaviour
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    idle = Map.get(opts, :idle_timeout_ms, Client.default_idle_timeout_ms())
-    resub = Map.get(opts, :resubscribe_after_ms, Client.default_resubscribe_after_ms())
-
     ProviderBehaviour.worker_health(
       opts,
       [absent: :no_connection, dead: :not_alive],
-      &health_from_liveness(&1, idle, resub)
+      &health_from_liveness(&1, opts.idle_timeout_ms, opts.resubscribe_after_ms)
     )
   end
 
@@ -302,7 +232,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl ProviderBehaviour
   @spec inspect_state(map()) :: map() | nil
   def inspect_state(opts) do
-    pid = ProviderBehaviour.worker_pid(opts, [:owned_pid, :conn])
+    pid = ProviderBehaviour.worker_pid(opts)
 
     cond do
       is_nil(Map.get(opts, :subscription)) ->
@@ -326,7 +256,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # operator reads a missing field as a missing capability.
   defp last_known(opts, reason) do
     %{
-      applied: Map.get(opts, :applied_subscriptions, []),
+      applied: opts[:applied_subscriptions] || [],
       desired: nil,
       inflight: 0,
       last_reconcile: nil,
@@ -338,16 +268,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @spec idle_tick_interval(map()) :: pos_integer() | nil
   defdelegate idle_tick_interval(state), to: Client
 
-  defp normalize_ignore_pattern(value) when is_binary(value) and value != "", do: value
-  defp normalize_ignore_pattern(_), do: nil
-
   # :on_interval tick triggers nothing; connection is driven by the Fresh pid.
+  @impl true
   def on_interval(%Ctx.Tick{}, _opts), do: :ok
 
-  def on_terminate(%Ctx.Terminate{}, %{conn: pid}) when is_pid(pid) do
-    if Process.alive?(pid), do: Process.exit(pid, :shutdown)
-    :ok
-  end
-
+  # The socket is the declared worker, so the table stops it once. This callback
+  # exists so a `:on_terminate` subscription is accepted at all.
+  @impl true
   def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
 end

@@ -53,11 +53,19 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   # A provider whose `init_provider/1` owns a pid: what a crashed subscriber is.
   defmodule OwnedPidProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        include_metadata: [type: :any, internal: true],
+        recv_pid: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts) do
       pid = spawn(fn -> receive(do: (_ -> :ok)) end)
       {:ok, Map.put(opts || %{}, :conn, pid), pid}
     end
 
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 

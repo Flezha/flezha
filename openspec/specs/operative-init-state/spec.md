@@ -3,9 +3,7 @@
 ## Purpose
 
 The operative-init-state capability lets runners hydrate an operative's initial state at startup via a configured chain of provider plugins, rather than requiring every caller to know the full `init_values` map at Builder time. Providers run synchronously inside `Flezha.Operative.Overwatch.init/1`, before the SDK sees the operative, and feed into the existing `AddOperative.init_values` field — no transport, protobuf, or SDK change. Plugins are chained with shallow-merge semantics, each is bounded by a per-plugin timeout enforced by a supervised task, and failures dispatch via a per-plugin `on_error` policy that either aborts operative startup or gracefully degrades to the upstream accumulator. The capability runs only on cold start; migration (`runner_migrate`) preserves its existing snapshot-or-inline-`init_values` logic and never invokes providers.
-
 ## Requirements
-
 ### Requirement: Per-operative init-state plugin configuration
 
 The system SHALL allow configuring init-state plugins per operative via `Flezha.Operative.Builder.opts[:plugins]`. Each entry MUST be a `%Flezha.Plugin{}` struct whose `subscriptions` list contains one `{:on_operative_init, sub_opts}` entry. `sub_opts` is a keyword list supporting `position` (non-negative integer, default assigned by insertion order), `on_error` (`:fail` or `:empty`, default `:fail`), and `timeout_ms` (positive integer, default `5000`). The plugin's `provider` module MUST implement an `on_operative_init/2` callback receiving `(Flezha.Plugin.Extension.Ctx.Init.t(), opts :: map())`.
@@ -122,15 +120,15 @@ The system SHALL, on any `:on_operative_init` subscriber error (explicit `{:erro
 
 ### Requirement: Plugin configuration validation
 
-The system SHALL validate each `%Flezha.Plugin{}` subscribed to `:on_operative_init` at subscribe time via `Flezha.Plugin.Extension.Table.subscribe/3`. An entry whose `provider` module is not loaded, does not export `on_operative_init/2`, or whose subscription opts contain invalid values (e.g. non-integer `timeout_ms`, unknown `on_error`) MUST cause `subscribe/3` to return `{:error, reason}` without mutating table state. When validation fails for a plugin provided via `Builder.opts[:plugins]`, the failure MUST be handled by the plugin's `on_error` policy (or `:fail` if `on_error` cannot be read).
+The system SHALL validate each `%Flezha.Plugin{}` subscribed to `:on_operative_init` at subscribe time via `Flezha.Plugin.Extension.Table.bulk_subscribe/2`. An entry whose `provider` module is not loaded, whose declaration does not name `on_operative_init/2`, or whose subscription opts contain invalid values (e.g. non-integer `timeout_ms`, unknown `on_error`) MUST cause `bulk_subscribe/2` to return `{:error, {plugin_id, reason}}` without mutating table state. When validation fails for a plugin provided via `Builder.opts[:plugins]`, the failure MUST be handled by the plugin's `on_error` policy (or `:fail` if `on_error` cannot be read).
 
 #### Scenario: Provider module does not implement on_operative_init/2
-- **WHEN** a `%Flezha.Plugin{}` subscribes to `:on_operative_init` but its `provider` module does not export `on_operative_init/2`
-- **THEN** `subscribe/3` MUST return `{:error, {:missing_callback, :on_operative_init}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
+- **WHEN** a `%Flezha.Plugin{}` subscribes to `:on_operative_init` but its provider's declaration does not name `on_operative_init/2`
+- **THEN** `bulk_subscribe/2` MUST return `{:error, {plugin_id, {:missing_callback, :on_operative_init}}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
 
 #### Scenario: Subscription opts are invalid
 - **WHEN** a plugin subscribes to `:on_operative_init` with a non-positive `timeout_ms` or an `on_error` value other than `:fail` or `:empty`
-- **THEN** `subscribe/3` MUST return `{:error, {:invalid_subscription_opts, reason}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
+- **THEN** `bulk_subscribe/2` MUST return `{:error, {plugin_id, {:invalid_subscription_opts, reason}}}` and the plugin's `on_error` policy MUST be applied when encountered via Builder opts
 
 ### Requirement: No SDK or protocol change
 
@@ -139,3 +137,4 @@ The system SHALL feed the resolved map into the existing `init_values` field of 
 #### Scenario: SDK receives resolved values identically to inline values
 - **WHEN** init-state plugins resolve to a map `M` and `AddOperative` is sent to the SDK
 - **THEN** the SDK MUST observe the same `init_values == M` as if the caller had baked `M` into the Builder directly
+

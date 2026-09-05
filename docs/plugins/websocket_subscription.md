@@ -143,15 +143,25 @@ array is a real instruction and unsubscribes everything.
 
 ## Parameters
 
-| Option | Default | Meaning |
-|---|---|---|
-| `subscription_url` | — | the desired-set endpoint; unset (and no `subscription_items`) means the static `post_connect` provider |
-| `subscription_items` | — | a literal item list feeding the same desired/reconcile machinery; mutually exclusive with `subscription_url` |
-| `subscription_interval_ms` | `30000` | poll cadence; minimum `1000` |
-| `subscription_headers` | `{}` | static request headers (JSON object via CLI) — the place for a bearer token |
-| `subscribe_template` | — | required with either source; must contain `{{items}}` |
-| `unsubscribe_template` | — | required with either source; must contain `{{items}}` |
-| `subscription_ack_mode` | `"required"` | `"none"` commits on send |
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `uri` | string | &mdash; | yes | The websocket endpoint to connect to |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the URI |
+| `ignore_pattern` | string | &mdash; | no | Substring marking a frame as a heartbeat rather than data |
+| `post_connect` | json | `%{}` | no | Frame sent once the socket opens |
+| `ws_opts` | json | `[]` | no | Options passed to the socket library |
+| `payload_metadata` | json | `%{}` | no | Metadata merged into every injection |
+| `idle_timeout_ms` | int | `30000` | no | Silence on the connection before it is reopened; 0 disables |
+| `resubscribe_after_ms` | int | `0` | no | Silence of DATA frames before the subscription is reasserted; 0 disables |
+| `subscription_url` | string | &mdash; | no | Endpoint the desired item set is polled from |
+| `subscription_items` | list | &mdash; | no | Literal desired item set, instead of polling one |
+| `subscription_interval_ms` | int | `30000` | no | How often the item source is polled |
+| `subscription_headers` | json | `%{}` | no | Headers for the item source poll |
+| `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
+| `unsubscribe_template` | string | &mdash; | no | Frame template carrying the items to drop |
+| `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
+<!-- provider-options:end -->
 
 ### Refusals at enable time
 

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Changed — a plugin provider is one declaration
+
+A provider now declares its whole lifecycle: every option it takes as a row with
+a type, a default and its documentation, and the worker it runs. The extension
+table drives every phase from that declaration rather than probing which
+callbacks a provider exports, starts the declared worker when the plugin is
+activated rather than when it is prepared, and stops it the same way on disable
+and on teardown. A prepared plugin now holds no process at all, so a plugin on an
+operative whose SDK side never binds costs nothing.
+
+Adding a provider is one module and one row of `Flezha.Plugin.Providers`; adding
+an option is one row of the provider. The `enabled_plugins` map in
+configuration, the three per-provider supervisor modules, and every hand-written
+option allow-list are gone. An option's default now has one home, and each
+provider's documented option table is rendered from its declaration and gated
+against it, so a documented key that is not a row and a default that differs both
+fail the suite.
+
+Every option refusal reads the same way on the CLI path and on the `--plugins`
+spec path, which also means a value that reaches `--plugins` is now checked where
+it used to pass through unconverted. Kafka's one tuple refusal became a sentence.
+Every phase change emits `[:flezha, :plugin, :phase]`.
+
 ### Changed — one topology check, in every SDK
 
 A builder no longer decides what a topology may be. Every SDK records the links

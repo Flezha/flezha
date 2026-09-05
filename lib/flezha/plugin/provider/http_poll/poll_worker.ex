@@ -15,6 +15,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   interval.
   """
 
+  alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.ProviderBehaviour
 
@@ -24,9 +25,13 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
   @telemetry [:flezha, :plugin, :http_poll]
 
-  @doc "Start a poller from the provider's normalised opts. Performs no I/O."
-  @spec start(map()) :: {:ok, pid()} | {:error, term()}
-  def start(opts) when is_map(opts), do: GenServer.start(__MODULE__, opts)
+  @doc """
+  Start a poller from the provider's declared worker spec. Performs no I/O.
+  Started by the extension table at activation.
+  """
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(opts) when is_map(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
 
   @doc """
   Current `{failure run, last error}`, for the provider's `health/1`. Returns
@@ -180,13 +185,14 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   # again. `:absorbed` (duplicate) and `:suspended` (journaled for wake) both
   # mean the operative owns the payload.
   defp confirm(state, body) do
-    case GenServer.call(
+    case Host.inject(
            state.overwatcher_pid,
-           {:ingest, body, %{"channel" => state.channel}},
+           body,
+           %{"channel" => state.channel},
+           :verdict,
            state.timeout_ms
          ) do
       :ok -> :ok
-      {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
   catch

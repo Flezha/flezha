@@ -88,6 +88,9 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :http_poll, :injected] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
     [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
+    # The plugin lifecycle's one event: every phase a plugin enters or leaves,
+    # from the table's one transition function.
+    [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
     [:flezha, :operative, :parked] => {:flezha_operative, :operative_parked_total, :metric},
     # The backoff table's two events: every wait a ladder takes and every reset
     # a success records, whichever site walks the row.

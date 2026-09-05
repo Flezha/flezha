@@ -14,7 +14,7 @@ The system SHALL declare every extension point exposed by a host module (e.g. `F
 
 #### Scenario: Subscribing to an undeclared extension fails
 - **WHEN** a subscription attempts to attach to an extension name not present in the host's catalog
-- **THEN** `Flezha.Plugin.Extension.Table.subscribe/3` MUST return `{:error, {:unknown_extension, name}}` and state MUST NOT be mutated
+- **THEN** `Flezha.Plugin.Extension.Table.bulk_subscribe/2` MUST return `{:error, {plugin_id, {:unknown_extension, name}}}` and state MUST NOT be mutated
 
 ### Requirement: Unified plugin struct with subscriptions
 
@@ -228,7 +228,7 @@ A Produce attempt that ultimately fails after exhausting `:delivery_timeout_ms` 
 
 The system SHALL support a two-phase plugin lifecycle for operative-host plugins: `prepared` (the GenServer/struct is registered, config is validated, no upstream resources are acquired) and `running` (upstream connections opened, subscribe handshakes issued, input emission permitted). The transition from `prepared` to `running` SHALL be driven by `Flezha.Plugin.Extension.Table.bulk_activate/1`, invoked by the operative host ONLY after `start_operative_sdk/2` returns `{:ok, _}` (i.e. the SDK-side operative is bound and ready to accept input).
 
-The `Flezha.Plugin.Host` behaviour SHALL declare `activate/1` as an `@optional_callback`. A plugin provider that implements `activate/1` SHALL use it for upstream I/O acquisition (TLS connect, subscribe send, downstream consumer attach). A provider without `activate/1` SHALL be transitioned to `running` with a no-op (its meaningful work happens on `:on_input` / `:on_output` and is naturally quiescent until input arrives).
+`Flezha.Plugin.ProviderBehaviour` SHALL declare `activate/1` as an optional callback with a default body that completes activation without upstream work, so that the table invokes it for every provider and never discovers it by probing. A plugin provider that overrides `activate/1` SHALL use it for upstream I/O acquisition (TLS connect, subscribe send, downstream consumer attach). A provider that does not override it SHALL be transitioned to `running` by the default (its meaningful work happens on `:on_input` / `:on_output` and is naturally quiescent until input arrives); a provider that declares a worker SHALL have that worker started by the table at this transition, for every provider alike.
 
 Plugins in the `prepared` state SHALL NOT emit `:io_in` to the operative host. The `Extension.Table` SHALL record each plugin's lifecycle phase per binding, and `Table.teardown_all/1` SHALL handle both `prepared` and `running` plugins uniformly (no preconditions on phase for cleanup).
 
@@ -426,10 +426,10 @@ phase (see "A declared plugin that is not running is a divergence" in
 
 ### Requirement: Recovered operatives SHALL NOT reuse dead or parked plugin workers
 
-When an operative is recovered/respawned, plugin re-application SHALL NOT reuse a stale
-provider process. `Flezha.Plugin.Provider.Kafka.ProducerSup.ensure_worker/1` (and the
-equivalent provider lookups) SHALL verify the looked-up pid is alive and not parked
-before reuse, and reap a dead/parked worker so a fresh one is started.
+When an operative is recovered or respawned, plugin re-application SHALL NOT reuse a
+stale provider process. `Flezha.Plugin.Provider.WorkerSup.ensure_worker/5` SHALL verify
+the looked-up pid passes the provider's declared reusability check before reuse, and
+reap a dead or parked worker so a fresh one is started.
 
 Reaping SHALL NOT wait on the process registry. A registry entry that still names
 the reaped worker SHALL NOT delay, and SHALL NOT fail, the start of the fresh one:
@@ -440,13 +440,13 @@ invisible to the sleep gate because that gate counts test files only.
 
 #### Scenario: Stale producer pid is reaped on recovery
 - **GIVEN** a recovered operative whose previous Kafka producer worker is dead or parked but still in the registry
-- **WHEN** `ensure_worker/1` runs during plugin re-application
+- **WHEN** `ensure_worker/5` runs during plugin re-application
 - **THEN** it SHALL reap the stale entry and start a fresh, healthy producer worker
 - **AND** the recovered operative SHALL produce rather than re-attach to the dead worker
 
 #### Scenario: A stale registry entry does not delay the fresh worker
 - **GIVEN** a reaped worker whose registry entry has not yet been cleared and still names it
-- **WHEN** `ensure_worker` starts the replacement
+- **WHEN** `ensure_worker/5` starts the replacement
 - **THEN** a fresh, live worker SHALL be started and named by the registry
 - **AND** the swap SHALL complete without sleeping
 
@@ -641,35 +641,34 @@ values.
 
 ### Requirement: A provider's conversion table SHALL refuse a value it cannot interpret
 
-A plugin provider's `convert_value/2` table SHALL be total for every option the provider declares it converts: a value none of that option's clauses match SHALL be answered `{:error, binary()}` naming the option and the offered value, never passed through unchanged.
+A plugin provider's option conversion SHALL be total for every option it declares: a value the option's declared type or bounds do not accept SHALL be answered `{:error, binary()}` naming the option and the offered value, never passed through unchanged.
 
-The set of converted options SHALL be declared by the provider, as `@converted_opts`, and `Flezha.Plugin.ProviderBehaviour.__before_compile__/1` SHALL generate the refusal from it. An option the provider names no clause for keeps the permissive default: a provider deliberately does not convert its string and host-injected options, and refusing those would refuse every working configuration.
+The type is declared by the option's row, and the generated fall-through clause SHALL apply it to every value the provider's own `convert_value/2` clauses did not match. An option declared with no interpretable type keeps the permissive default: a provider deliberately does not convert its string and host-injected options, and refusing those would refuse every working configuration.
 
-A provider that defines `convert_value/2` and declares no `@converted_opts` SHALL NOT compile, and the compile error SHALL name the module and the attribute. Discipline is not a mechanism: an option table whose totality depends on each author remembering to write a terminal clause regenerates this defect on the next option added.
+A provider that declares an option type the contract does not offer SHALL NOT compile, and the compile error SHALL name the module and the option. Discipline is not a mechanism: a table whose totality depends on each author remembering to write a terminal clause regenerates this defect on the next option added.
 
 The shared conversion helpers `ProviderBehaviour.parse_int/2` and `ProviderBehaviour.parse_bool/2` SHALL be total, accepting both the CLI string form and the native form of their type and refusing everything else. The system SHALL NOT offer a partial or raising counterpart for the `init_provider/1` path: an option that reaches `init_provider/1` is operator-supplied and unvalidated, so a helper that raises on a shape it does not expect turns a bad value into a crash rather than a refusal.
 
-An option a provider interprets SHALL be converted before the provider takes any side effect — before a worker is started, a connection pool is opened, or a process is linked — so that an invalid configuration is refused rather than half-applied.
+An option a provider interprets SHALL be converted before the provider takes any side effect, and preparation SHALL take none: no worker is started, no connection pool is opened and no process is linked until the plugin is activated.
 
-#### Scenario: An unmatched value for a declared-converted option is refused
+#### Scenario: An unmatched value for a declared option is refused
 
-- **GIVEN** a provider that declares an option in `@converted_opts` and whose clauses for it do not match the value supplied
+- **GIVEN** a provider option whose declared type does not accept the value supplied, and whose own clauses do not match it
 - **WHEN** the value is converted
 - **THEN** the result SHALL be `{:error, message}` naming the option and the value
 - **AND** the value SHALL NOT reach the provider's struct, its worker options, or its stored opts
 
-#### Scenario: An option the table does not name is unaffected
+#### Scenario: An option the declaration does not interpret is unaffected
 
-- **GIVEN** a provider option no `convert_value/2` clause names — a URL, a topic, a database name, or a host-injected key
+- **GIVEN** a provider option declared with no interpretable type, or a host-injected key the declaration does not name
 - **WHEN** the value is converted
-- **THEN** it SHALL be accepted unchanged, exactly as before
+- **THEN** it SHALL be accepted unchanged
 
-#### Scenario: A provider that converts without declaring its options is a compile error
+#### Scenario: A provider that declares an unknown option type is a compile error
 
-- **GIVEN** a provider module that `use`s `Flezha.Plugin.ProviderBehaviour` and defines a `convert_value/2` clause
-- **AND** the module declares no `@converted_opts`
+- **GIVEN** a provider module that `use`s `Flezha.Plugin.ProviderBehaviour` and declares an option whose type the contract does not offer
 - **WHEN** the module is compiled
-- **THEN** compilation SHALL fail with an error naming the module and `@converted_opts`
+- **THEN** compilation SHALL fail with an error naming the module and the option
 
 #### Scenario: The shared integer helper refuses a shape it cannot parse
 
@@ -682,7 +681,7 @@ An option a provider interprets SHALL be converted before the provider takes any
 
 - **GIVEN** a plugin whose configuration carries a value its provider cannot interpret
 - **WHEN** the plugin is enabled
-- **THEN** `init_provider/1` SHALL return `{:error, message}`
+- **THEN** preparation SHALL answer `{:error, message}`
 - **AND** no worker, pool or linked process SHALL have been started for that plugin
 
 ### Requirement: A crashing `init_provider/1` SHALL be a refusal, not an escape
@@ -733,4 +732,135 @@ them and not only on the arm that happens to consult it.
 
 - **WHEN** any arm of `ensure_worker/4` answers with an existing worker
 - **THEN** that answer SHALL have passed the same reusability check as every other arm
+
+### Requirement: A provider SHALL declare its whole lifecycle, and the extension table SHALL drive from the declaration
+
+`Flezha.Plugin.ProviderBehaviour` SHALL declare every callback the host can
+invoke on a provider — `init_provider/1`, `activate/1`, `health/1`,
+`inspect_state/1`, `terminate_provider/1` and the extension callbacks
+`on_operative_init/2`, `on_input/2`, `on_output/2`, `on_interval/2`,
+`on_message/2`, `on_snapshot/2`, `on_terminate/2` — as optional callbacks whose
+lifecycle members carry a default body a provider may override, and SHALL
+derive at compile time one declaration record per provider naming its option
+rows, the extension callbacks it implements, the lifecycle callbacks it
+overrides and its worker, if it has one. `Flezha.Plugin.Extension.Table` SHALL
+invoke every callback through the declaration and SHALL NOT discover a
+provider's shape by probing exports at run time.
+
+The table SHALL keep one lifecycle record per plugin — its phase, its worker
+and monitor, when the worker started, its retry count and its timers — and the
+provider-owned process SHALL be a field of that record, injected into
+`health/1`, `inspect_state/1` and `terminate_provider/1` from one site. The
+phase SHALL be one declared type, `:prepared | :running`, read outside the table
+only through the table's predicates, and every phase transition SHALL emit one
+event naming the plugin, the provider, the phases and the reason.
+
+A provider that declares a worker SHALL have it started by the table at
+activation through the one worker supervisor shape, under a family named after
+the provider, keyed and restarted as the declaration says, tracked, probed and
+stopped by the table one way; no provider SHALL start, register or stop a
+lifecycle process of its own. A plugin in the `:prepared` phase SHALL hold no
+process.
+
+Every provider SHALL be a row of one provider table, from which the enabled
+providers are read and to which an installed package adds rows; the
+configuration file SHALL NOT restate the list. One conformance test SHALL run
+the same drill over every row — prepare, activate with one failure, activate,
+probe, report, disable, tear down — and SHALL fail when a provider implements
+an extension callback its declaration does not name, when a probe is written
+in the plugin directory, when a phase literal is read outside the table, when
+a provider starts a process outside the table, or when a documented option is
+not a declared row.
+
+#### Scenario: A callback the provider does not override takes the default
+
+- **WHEN** a provider that overrides neither `activate/1` nor `health/1` is
+  activated and probed
+- **THEN** the table SHALL call the default bodies — activation completes
+  without upstream work and the verdict is the declared worker alive or
+  absent — and no export SHALL be probed to decide so
+
+#### Scenario: A declared worker is started at activation and holds nothing before it
+
+- **GIVEN** a provider declaring a worker module, key and restart value
+- **WHEN** its plugin is prepared on an operative whose SDK side never binds
+- **THEN** no process SHALL exist for the plugin, the phase SHALL be
+  `:prepared`, and a later activation SHALL start the worker under the
+  provider's family with the declared key and restart value, tracked by the
+  table as the plugin's owned process
+
+#### Scenario: A disabled plugin leaves no worker behind
+
+- **WHEN** a plugin whose provider declares a `:permanent` worker is disabled
+- **THEN** the table SHALL stop the worker through the supervisor, the family
+  registry SHALL hold no worker for the plugin id afterwards, and
+  `terminate_provider/1` SHALL have been called once with the owned process
+
+#### Scenario: Every transition is one event
+
+- **WHEN** a plugin moves between `:prepared` and `:running`, or enters or
+  leaves the table, for any reason
+- **THEN** exactly one `[:flezha, :plugin, :phase]` event SHALL be executed
+  from the table's one transition function, carrying the plugin id, the
+  provider, the phase before and after, and the reason
+
+#### Scenario: A probe or a literal beside the seam fails the suite
+
+- **WHEN** a `function_exported?` call on a provider is written under the
+  plugin directory, a phase atom is compared outside the extension table, a
+  process is started inside a provider's `init_provider/1` or `activate/1`, or a
+  provider defines an `on_*/2` function its declaration does not name
+- **THEN** the conformance test SHALL fail naming the file and line, or the
+  module and function
+
+#### Scenario: A provider is one row
+
+- **WHEN** a provider module is added under the plugin directory with its
+  declaration and one row in the provider table
+- **THEN** it SHALL be enabled by id, listed by `flz plugin list`, described by
+  `flz plugin help`, driven by the conformance test and rendered into the docs
+  gate with no other file edited
+
+### Requirement: A provider's options SHALL be declared once, and every default SHALL come from the declaration
+
+A provider SHALL declare its options as rows — name, type, default, whether
+required, bounds, whether internal, documentation — from which its struct, its
+strict allow-list, its conversion table, its help screen, its `provider_info/0`
+and its documented option table derive. A worker SHALL receive the converted
+struct and read its fields; no worker SHALL re-read an option from a keyword
+list with a default of its own, and no default SHALL exist outside the rows.
+The "missing required", "below the minimum", "above the maximum" and "invalid
+value" refusals SHALL be rendered by one builder from the rows, and a
+provider's cross-field rule SHALL answer the same `{:error, binary()}` shape.
+A test SHALL render every provider's option table from its declaration and
+assert the provider's page under `docs/plugins/` carries it, so a documented
+key that is not a row, a row that is not documented, and a default that differs
+between the two each fail the suite.
+
+#### Scenario: A default has one home
+
+- **WHEN** an option's default is changed in its row
+- **THEN** the struct default, the help screen, the worker's effective value
+  and the documented default SHALL all reflect it, with no other edit
+
+#### Scenario: A worker that re-reads an option fails the suite
+
+- **WHEN** a worker module under a provider's directory reads an option from
+  its opts with a literal default
+- **THEN** the conformance test SHALL fail naming the file and the key
+
+#### Scenario: The documented table equals the declared one
+
+- **WHEN** the docs gate renders a provider's rows and compares them with its
+  page
+- **THEN** a key present on one side only, or a default that differs, SHALL
+  fail the suite naming the provider and the key
+
+#### Scenario: A required option missing is refused by the one builder
+
+- **WHEN** a plugin is enabled without an option its provider declares
+  `required: true`
+- **THEN** the refusal SHALL be `{:error, sentence}` naming the option, in the
+  same sentence shape every provider answers, on both the CLI and the
+  `init_provider/1` path
 

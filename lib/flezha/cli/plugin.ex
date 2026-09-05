@@ -4,9 +4,9 @@ defmodule Flezha.Service.Cli.Plugin do
   (install, upgrade, uninstall, list, info).
   """
 
-  alias Flezha.Config
   alias Flezha.Plugin
   alias Flezha.Plugin.Installer
+  alias Flezha.Plugin.Providers
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.PluginManager
@@ -116,11 +116,8 @@ defmodule Flezha.Service.Cli.Plugin do
   def trigger_to_subscription(_), do: [{:on_input, []}]
 
   defp get_plugin_provider_mod(provider_id) do
-    enabled_plugins = Config.get_enabled_plugins()
-
-    case Map.get(enabled_plugins, provider_id, nil) do
-      nil -> {:error, "plugin provider not found, make sure the plugin is enabled."}
-      module -> {:ok, module}
+    with :error <- Providers.fetch(provider_id) do
+      {:error, "plugin provider not found, make sure the plugin is enabled."}
     end
   end
 
@@ -284,26 +281,13 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   defp print_supported_extensions(provider_mod) do
-    extensions =
-      for ext <- [
-            :on_operative_init,
-            :on_input,
-            :on_output,
-            :on_interval,
-            :on_message,
-            :on_snapshot,
-            :on_terminate
-          ],
-          function_exported?(provider_mod, ext, 2),
-          do: ext
-
     IO.puts("SUPPORTED EXTENSIONS:")
-    Enum.each(extensions, &IO.puts("    --extension=#{&1}"))
+    Enum.each(provider_mod.__provider__().extensions, &IO.puts("    --extension=#{&1}"))
   end
 
   @doc "List all available plugin providers."
   def list_plugins(_call) do
-    enabled_plugins = Config.get_enabled_plugins()
+    enabled_plugins = Providers.all()
 
     IO.puts("Available Plugin Providers:")
     IO.puts("==========================")

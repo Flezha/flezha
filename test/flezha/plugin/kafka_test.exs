@@ -13,7 +13,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Kafka
-  alias Flezha.Plugin.Provider.Kafka.{ProducerSup, WorkerRegistry}
+  alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias Flezha.Plugin.Provider.WorkerSup
+  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: Mimic global mode; Mimic stubs; the primary Logger.
@@ -54,6 +58,34 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     :ok
   end
 
+  # Preparation as the extension table performs it: the declaration normalises
+  # the options, then the provider interprets them. Nothing is started.
+  defp prepare(opts) do
+    with {:ok, normalised} <- ProviderOptions.normalise_opts(Kafka.Producer, opts),
+         do: Kafka.Producer.init_provider(normalised)
+  end
+
+  # Activation as the table performs it: the declared worker, under the
+  # provider's own family, keyed as `worker_specs/1` says.
+  defp activate(opts) do
+    family = WorkerSup.family(Kafka.Producer)
+    [{key, spec}] = Kafka.Producer.worker_specs(opts)
+
+    WorkerSup.ensure_worker(
+      family,
+      key,
+      {ProducerWorker, spec},
+      &ProducerWorker.reusable?/1,
+      :permanent
+    )
+  end
+
+  defp prepare_and_activate(opts) do
+    with {:ok, prepared} <- prepare(opts),
+         {:ok, pid} <- activate(prepared),
+         do: {:ok, prepared, pid}
+  end
+
   defp build_opts(plugin_id, partition, extras \\ %{}) do
     Map.merge(
       %{
@@ -71,32 +103,44 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     plugin_id = "init-test-#{System.unique_integer([:positive])}"
 
     {:ok, opts, producer_pid} =
-      Kafka.Producer.init_provider(build_opts(plugin_id, 0))
+      prepare_and_activate(build_opts(plugin_id, 0))
 
     assert is_pid(producer_pid)
     assert Process.alive?(producer_pid)
-    assert opts[:producer_pid] == producer_pid
+    # The pid is the table's, not an option: the worker is addressed by the
+    # name it is registered under.
+    refute Map.has_key?(opts, :producer_pid)
+
+    assert [{^producer_pid, _}] =
+             Registry.lookup(
+               WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+               {plugin_id, @topic, 0}
+             )
+
     assert opts[:plugin_id] == plugin_id
 
     [{registered_pid, _}] =
-      Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0})
+      Registry.lookup(
+        WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+        {plugin_id, @topic, 0}
+      )
 
     assert registered_pid == producer_pid
 
-    ProducerSup.stop_worker(plugin_id, @topic, 0)
+    WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
   end
 
   test "stats/1 returns producer counters keyed on plugin_id" do
     plugin_id = "stats-test-#{System.unique_integer([:positive])}"
 
-    {:ok, _opts, _pid} = Kafka.Producer.init_provider(build_opts(plugin_id, 3))
+    {:ok, _opts, _pid} = prepare_and_activate(build_opts(plugin_id, 3))
 
     assert {:ok, stats} = Kafka.Producer.stats(plugin_id)
     assert stats.queue_depth == 0
     assert stats.topic == @topic
     assert stats.partition == 3
 
-    ProducerSup.stop_worker(plugin_id, @topic, 3)
+    WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 3})
 
     assert {:error, :no_producer} = Kafka.Producer.stats(plugin_id)
   end
@@ -105,7 +149,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     plugin_id = "group-test-#{System.unique_integer([:positive])}"
 
     {:ok, opts, _pid} =
-      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{channel: "2"}))
+      prepare_and_activate(build_opts(plugin_id, 0, %{channel: "2"}))
 
     ctx = %Ctx.IO{
       operative_id: "p",
@@ -116,14 +160,14 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
     assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
 
-    ProducerSup.stop_worker(plugin_id, @topic, 0)
+    WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
   end
 
   test "channel filter passes through when metadata is missing" do
     plugin_id = "group-test-#{System.unique_integer([:positive])}"
 
     {:ok, opts, _pid} =
-      Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{channel: "2"}))
+      prepare_and_activate(build_opts(plugin_id, 0, %{channel: "2"}))
 
     ctx = %Ctx.IO{
       operative_id: "p",
@@ -134,18 +178,19 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
     assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
 
-    ProducerSup.stop_worker(plugin_id, @topic, 0)
+    WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
   end
 
   test "a window wider than one without idempotence is refused at preparation" do
     plugin_id = "no-idem-#{System.unique_integer([:positive])}"
 
-    assert {:error, {:max_in_flight_requires_idempotent, 3}} =
-             Kafka.Producer.init_provider(
-               build_opts(plugin_id, 0, %{idempotent: false, max_in_flight: 3})
-             )
+    assert {:error, "kafka max_in_flight 3 requires idempotent" <> _} =
+             prepare(build_opts(plugin_id, 0, %{idempotent: false, max_in_flight: 3}))
 
-    assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+    assert Registry.lookup(
+             WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+             {plugin_id, @topic, 0}
+           ) == []
   end
 
   describe ":queue_overflow validation" do
@@ -154,10 +199,13 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         plugin_id = "overflow-bad-#{System.unique_integer([:positive])}"
 
         assert {:error, "Invalid value for queue_overflow: " <> _} =
-                 Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{queue_overflow: value})),
+                 prepare(build_opts(plugin_id, 0, %{queue_overflow: value})),
                "expected #{inspect(value)} to be refused"
 
-        assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+        assert Registry.lookup(
+                 WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+                 {plugin_id, @topic, 0}
+               ) == []
       end
     end
 
@@ -165,7 +213,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       plugin_id = "overflow-retired-#{System.unique_integer([:positive])}"
 
       assert {:error, "Invalid value for queue_overflow: block"} =
-               Kafka.Producer.init_provider(
+               prepare(
                  build_opts(plugin_id, 0, %{
                    # overflow-naming-record:begin
                    queue_overflow: "block"
@@ -173,7 +221,10 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                  })
                )
 
-      assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+      assert Registry.lookup(
+               WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+               {plugin_id, @topic, 0}
+             ) == []
     end
 
     test "every policy is accepted, as an atom and as its CLI string" do
@@ -191,11 +242,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         plugin_id = "overflow-ok-#{System.unique_integer([:positive])}"
 
         assert {:ok, _opts, pid} =
-                 Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{queue_overflow: value})),
+                 prepare_and_activate(build_opts(plugin_id, 0, %{queue_overflow: value})),
                "expected #{inspect(value)} to be accepted"
 
         assert :sys.get_state(pid).queue_overflow == expected
-        ProducerSup.stop_worker(plugin_id, @topic, 0)
+        WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
       end
     end
   end
@@ -206,7 +257,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         plugin_id = "auth-mech-#{System.unique_integer([:positive])}"
 
         assert {:error, message} =
-                 Kafka.Producer.init_provider(
+                 prepare(
                    build_opts(plugin_id, 0, %{
                      auth: %{"mechanism" => value, "username" => "u", "password" => "p"}
                    })
@@ -215,7 +266,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
         assert is_binary(message)
         assert message =~ "mechanism"
-        assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+
+        assert Registry.lookup(
+                 WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+                 {plugin_id, @topic, 0}
+               ) == []
       end
     end
 
@@ -224,7 +279,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         plugin_id = "auth-key-#{System.unique_integer([:positive])}"
 
         assert {:error, message} =
-                 Kafka.Producer.init_provider(
+                 prepare(
                    build_opts(plugin_id, 0, %{
                      auth: %{"username" => "u", "password" => "p", key => "x"}
                    })
@@ -233,7 +288,11 @@ defmodule FlezhaTest.Plugin.KafkaTest do
 
         assert is_binary(message)
         assert message =~ key
-        assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+
+        assert Registry.lookup(
+                 WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+                 {plugin_id, @topic, 0}
+               ) == []
       end
     end
 
@@ -247,7 +306,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         plugin_id = "auth-ok-#{System.unique_integer([:positive])}"
 
         assert {:ok, opts, _pid} =
-                 Kafka.Producer.init_provider(
+                 prepare_and_activate(
                    build_opts(plugin_id, 0, %{
                      auth: %{"mechanism" => value, "username" => "u", "password" => "hunter2"}
                    })
@@ -257,7 +316,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         assert opts.auth[:mechanism] == expected
         assert opts.auth[:username] == "u"
         assert opts.auth[:password] == "**redacted**"
-        ProducerSup.stop_worker(plugin_id, @topic, 0)
+        WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
       end
     end
 
@@ -267,18 +326,18 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       config = %KafkaEx.Auth.Config{mechanism: :plain, username: "u", password: "hunter2"}
 
       assert {:ok, _opts, _pid} =
-               Kafka.Producer.init_provider(build_opts(plugin_id, 0, %{auth: config}))
+               prepare_and_activate(build_opts(plugin_id, 0, %{auth: config}))
 
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
 
     test "no auth at all is still the default" do
       plugin_id = "auth-none-#{System.unique_integer([:positive])}"
 
-      assert {:ok, opts, _pid} = Kafka.Producer.init_provider(build_opts(plugin_id, 0))
-      refute Map.has_key?(opts, :auth)
+      assert {:ok, opts, _pid} = prepare_and_activate(build_opts(plugin_id, 0))
+      assert opts.auth == nil
 
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
   end
 
@@ -354,7 +413,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       plugin_id = "host-test-#{System.unique_integer([:positive])}"
 
       {:ok, opts, _pid} =
-        Kafka.Producer.init_provider(%{
+        prepare_and_activate(%{
           hosts: "kafka1:9092,kafka2:9093",
           topic: @topic,
           partition: 0,
@@ -363,14 +422,14 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         })
 
       assert opts[:hosts] == [{"kafka1", 9092}, {"kafka2", 9093}]
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
 
     test "passes through list-form hosts" do
       plugin_id = "host-test-#{System.unique_integer([:positive])}"
 
       {:ok, opts, _pid} =
-        Kafka.Producer.init_provider(%{
+        prepare_and_activate(%{
           hosts: [{"k1", 9092}, {"k2", 9093}],
           topic: @topic,
           partition: 0,
@@ -379,7 +438,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
         })
 
       assert opts[:hosts] == [{"k1", 9092}, {"k2", 9093}]
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
   end
 
@@ -394,7 +453,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       plugin_id = "io-test-#{System.unique_integer([:positive])}"
 
       {:ok, opts, producer_pid} =
-        Kafka.Producer.init_provider(%{
+        prepare_and_activate(%{
           hosts: [@broker],
           topic: @topic,
           partition: 0,
@@ -432,14 +491,14 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       assert {:ok, ^ctx} = Kafka.Producer.on_input(ctx, opts)
       assert {:ok, ^ctx} = Kafka.Producer.on_output(ctx, opts)
 
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
 
     test "on_output returns {:ok, ctx} immediately even when broker would block 30 s" do
       plugin_id = "nonblock-test-#{System.unique_integer([:positive])}"
 
       {:ok, opts, producer_pid} =
-        Kafka.Producer.init_provider(%{
+        prepare_and_activate(%{
           hosts: [@broker],
           topic: @topic,
           partition: 0,
@@ -479,14 +538,14 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       assert elapsed_us < 1_000_000,
              "the enqueue waited #{div(elapsed_us, 1_000)}ms on a broker that never answers"
 
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
 
     test "on_output surfaces permanent delivery failure via :failed telemetry, not return value" do
       plugin_id = "telemetry-test-#{System.unique_integer([:positive])}"
 
       {:ok, opts, producer_pid} =
-        Kafka.Producer.init_provider(%{
+        prepare_and_activate(%{
           hosts: [@broker],
           topic: @topic,
           partition: 0,
@@ -528,7 +587,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                       %{last_reason: :network_exception, caller: :async}},
                      2_000
 
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
     end
   end
 
@@ -555,7 +614,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       plugin_id = "release-test-#{System.unique_integer([:positive])}"
 
       {:ok, _opts, _pid} =
-        Kafka.Producer.init_provider(%{
+        prepare_and_activate(%{
           hosts: [@broker],
           topic: @topic,
           partition: 0,
@@ -563,7 +622,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
           idempotent: false
         })
 
-      ProducerSup.stop_worker(plugin_id, @topic, 0)
+      WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 0})
 
       assert_receive {:released, {:fake_ref, _}}, 1_000
     end
@@ -582,13 +641,32 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Plugin
   alias Flezha.Plugin.Provider.Kafka.Producer
-  alias Flezha.Plugin.Provider.Kafka.ProducerSup
+  alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias Flezha.Plugin.Provider.WorkerSup
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup :set_mimic_global_until_exit
 
   @secret "sup3r-s3cret-sasl-pw"
+
+  # Preparation and activation as the extension table performs them.
+  defp prepare_and_activate(opts) do
+    with {:ok, normalised} <- ProviderOptions.normalise_opts(Producer, opts),
+         {:ok, prepared} <- Producer.init_provider(normalised),
+         [{key, spec}] = Producer.worker_specs(prepared),
+         {:ok, pid} <-
+           WorkerSup.ensure_worker(
+             WorkerSup.family(Producer),
+             key,
+             {ProducerWorker, spec},
+             &ProducerWorker.reusable?/1,
+             :permanent
+           ),
+         do: {:ok, prepared, pid}
+  end
 
   defp fake_client_stubs(test_pid) do
     stub(KafkaEx, :start_link_worker, fn :no_name, worker_opts ->
@@ -614,10 +692,15 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
       auth: %{"mechanism" => "plain", "username" => "svc", "password" => @secret}
     }
 
-    {:ok, returned, producer_pid} = Producer.init_provider(opts)
+    {:ok, returned, producer_pid} = prepare_and_activate(opts)
 
     on_exit(fn ->
-      _ = ProducerSup.stop_worker("sasl-test-#{suffix}", "sasl_topic_#{suffix}", 0)
+      _ =
+        WorkerSup.stop_worker(
+          WorkerSup.family(Producer),
+          {"sasl-test-#{suffix}", "sasl_topic_#{suffix}", 0}
+        )
+
       _ = producer_pid
     end)
 
@@ -630,7 +713,10 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
     # the operator wrote: validation normalises them at preparation.
     assert returned.auth[:password] == "**redacted**"
     assert returned.auth[:mechanism] == :plain
-    refute inspect(returned, limit: :infinity) =~ @secret
+    # ...and nothing persisted carries it: the resolved credential is a
+    # transient row, held in memory and dropped at the persistence boundary.
+    persisted = Plugin.strip_transient(%Plugin{id: "p", provider: Producer, opts: returned})
+    refute inspect(persisted, limit: :infinity) =~ @secret
   end
 
   test "sasl_password_env resolves the secret from the environment at client start" do
@@ -648,15 +734,20 @@ defmodule Flezha.Plugin.Provider.KafkaSaslRedactionTest do
       sasl_password_env: env_var
     }
 
-    {:ok, returned, _pid} = Producer.init_provider(opts)
+    {:ok, returned, _pid} = prepare_and_activate(opts)
 
     on_exit(fn ->
-      _ = ProducerSup.stop_worker("sasl-env-#{suffix}", "sasl_topic_#{suffix}", 0)
+      _ =
+        WorkerSup.stop_worker(
+          WorkerSup.family(Producer),
+          {"sasl-env-#{suffix}", "sasl_topic_#{suffix}", 0}
+        )
     end)
 
     assert_receive {:client_started, _client, worker_opts}, 2_000
     assert %KafkaEx.Auth.Config{password: @secret} = worker_opts[:auth]
 
-    refute inspect(returned, limit: :infinity) =~ @secret
+    persisted = Plugin.strip_transient(%Plugin{id: "p", provider: Producer, opts: returned})
+    refute inspect(persisted, limit: :infinity) =~ @secret
   end
 end

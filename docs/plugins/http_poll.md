@@ -57,16 +57,19 @@ As a plugin spec at operative start (`flz operative start --plugins`):
 
 ## Parameters
 
-| Option | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `url` | yes | — | `http://` or `https://` resource to GET; credentials in the URL are refused |
-| `channel` | yes | — | entry channel the body is injected on |
-| `interval_ms` | no | `60_000` | poll period; below `1_000` is refused |
-| `timeout_ms` | no | `10_000` | connect and response timeout per poll; must be below `interval_ms` |
-| `max_body_bytes` | no | `1_048_576` | the transfer is aborted past this; ceiling `67_108_864` |
-| `failure_threshold` | no | `3` | consecutive failures before `health/1` reports unhealthy |
-| `headers` | no | `%{}` | static request headers; a JSON object over the CLI |
-| `plugin_id` | no | the redacted URL | label on telemetry and logs |
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `url` | string | &mdash; | yes | The resource to GET each interval |
+| `channel` | string | &mdash; | yes | Entry channel the body is injected on |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to the redacted URL |
+| `headers` | json | `%{}` | no | Request headers, as a JSON object |
+| `interval_ms` | int | `60000` | no | Milliseconds between polls |
+| `timeout_ms` | int | `10000` | no | Budget for one request |
+| `max_body_bytes` | int | `1048576` | no | Largest body accepted before the poll is refused |
+| `failure_threshold` | int | `3` | no | Consecutive failed polls before the plugin reports unhealthy |
+| `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the source is idle; 0 derives it from `interval_ms` |
+<!-- provider-options:end -->
 
 Any other key is refused at attach rather than ignored — a POST body, an auth flow, a
 backoff ladder — so a config asking for something the provider does not offer fails

@@ -26,6 +26,27 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
   def partition, do: @partition
 
   @doc """
+  The worker spec the Kafka provider itself declares for `plugin_id`, on this
+  helper's topic and partition. Every tunable comes from the declaration, so a
+  test that starts a worker starts exactly what the extension table would.
+  """
+  def worker_spec(plugin_id) do
+    {:ok, normalised} =
+      Flezha.Plugin.ProviderBehaviour.Options.normalise_opts(
+        Flezha.Plugin.Provider.Kafka.Producer,
+        %{
+          hosts: [{"localhost", 9092}],
+          topic: @topic,
+          partition: @partition,
+          plugin_id: plugin_id
+        }
+      )
+
+    [{_key, spec}] = Flezha.Plugin.Provider.Kafka.Producer.worker_specs(normalised)
+    spec
+  end
+
+  @doc """
   A `ProducerWorker` linked to the caller, plus the Agent holding its send
   script. Every knob the worker takes has a default here; `opts` overrides one
   by name, and `:extra` appends raw init options.
@@ -37,9 +58,6 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
 
     base = [
       worker_pid: spawn(&NodeTestHelper.park/0),
-      topic: @topic,
-      partition: @partition,
-      plugin_id: "test-#{System.unique_integer([:positive])}",
       linger_ms: Keyword.get(opts, :linger_ms, 5),
       max_batch_bytes: Keyword.get(opts, :max_batch_bytes, 1_048_576),
       queue_max: Keyword.get(opts, :queue_max, 1_000),
@@ -61,7 +79,13 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
       name: nil
     ]
 
-    {:ok, pid} = GenServer.start_link(ProducerWorker, base ++ Keyword.get(opts, :extra, []))
+    spec = worker_spec("test-#{System.unique_integer([:positive])}")
+
+    {:ok, pid} =
+      GenServer.start_link(
+        ProducerWorker,
+        Map.merge(spec, Map.new(base ++ Keyword.get(opts, :extra, [])))
+      )
 
     {pid, script_pid}
   end

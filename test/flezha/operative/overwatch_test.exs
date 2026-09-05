@@ -12,6 +12,14 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   @factory "store_input"
 
   defmodule ProbeProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        report_to: [type: :any, internal: true],
+        return: [type: :any, internal: true],
+        tag: [type: :any, internal: true]
+      ]
+
+    @impl true
     def on_operative_init(%Ctx.Init{} = ctx, opts) do
       pid = Map.fetch!(opts, :report_to)
       send(pid, {:probe, :called})
@@ -21,6 +29,14 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   end
 
   defmodule FailProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        report_to: [type: :any, internal: true],
+        return: [type: :any, internal: true],
+        tag: [type: :any, internal: true]
+      ]
+
+    @impl true
     def on_operative_init(_ctx, _opts), do: {:error, :intentional_failure}
   end
 
@@ -169,6 +185,13 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
 end
 
 defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
+  use Flezha.Plugin.ProviderBehaviour,
+    options: [
+      report_to: [type: :any, internal: true],
+      return: [type: :any, internal: true],
+      tag: [type: :any, internal: true]
+    ]
+
   @moduledoc """
   §5b.2: `:get_entity_state` is gated on `persistent_state?` (kind+class).
   `:stream` and a durable-by-default `:workflow` class proceed to query the
@@ -234,6 +257,13 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
 end
 
 defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
+  use Flezha.Plugin.ProviderBehaviour,
+    options: [
+      report_to: [type: :any, internal: true],
+      return: [type: :any, internal: true],
+      tag: [type: :any, internal: true]
+    ]
+
   @moduledoc """
   Output-identity pass-through: the SDK stamps `flz.entity` / `flz.seq` /
   `flz.key` on keyed-channel frames, and the controller must deliver them
@@ -248,9 +278,19 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
   alias Flezha.Runner.StreamChannel
 
   defmodule ProbeProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        report_to: [type: :any, internal: true],
+        return: [type: :any, internal: true],
+        tag: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_opts), do: :ok
 
+    @impl true
     def on_output(ctx, opts) do
       send(Map.fetch!(opts, :report_to), {:on_output_observed, ctx.message, ctx.metadata})
       {:ok, ctx}
@@ -325,6 +365,13 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
 end
 
 defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
+  use Flezha.Plugin.ProviderBehaviour,
+    options: [
+      report_to: [type: :any, internal: true],
+      return: [type: :any, internal: true],
+      tag: [type: :any, internal: true]
+    ]
+
   @moduledoc """
   §5b.2 crash-resume gate (controller half): `Flezha.Operative.Replay.resume_entity_count/2`
   is the number of persisted Entities the bind-time restore path will ship a
@@ -390,6 +437,13 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
 end
 
 defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
+  use Flezha.Plugin.ProviderBehaviour,
+    options: [
+      report_to: [type: :any, internal: true],
+      return: [type: :any, internal: true],
+      tag: [type: :any, internal: true]
+    ]
+
   @moduledoc """
   Regression: runtime `flz plugin enable` must transition the new plugin to
   `:running`, not leave it stuck in `:prepared`. The provider's `activate/1`
@@ -415,26 +469,47 @@ defmodule FlezhaTest.Operative.OverwatchPluginSubscribeTest do
   # Its `activate/1` fails while `:down` is set, so one provider drives both the
   # "upstream still down" and the "upstream recovered" halves of the ladder.
   defmodule FlappyProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        report_to: [type: :any, internal: true],
+        return: [type: :any, internal: true],
+        tag: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
 
+    @impl true
     def activate(_opts) do
       if :persistent_term.get({__MODULE__, :down}, true),
         do: {:error, :upstream_down},
         else: :ok
     end
 
+    @impl true
     def health(_opts), do: {:unhealthy, :upstream_down}
+    @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule ProbeProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        report_to: [type: :any, internal: true],
+        return: [type: :any, internal: true],
+        tag: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
 
+    @impl true
     def activate(opts) do
       send(Map.fetch!(opts, :report_to), {:activate_called, Map.get(opts, :tag)})
       :ok
     end
 
+    @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
   end
 

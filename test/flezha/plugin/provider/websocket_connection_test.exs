@@ -15,6 +15,8 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2, activate: 2]
+
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -302,6 +304,8 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
 
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2, activate: 2]
+
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -318,7 +322,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
     origin = start_origin(["BTC/USD"])
 
     {:ok, opts} =
-      Websocket.init_provider(%{
+      prepare(Websocket, %{
         uri: "ws://127.0.0.1:#{ws.port}/",
         plugin_id: "live_ws",
         subscription_url: "http://127.0.0.1:#{origin.port}/subs",
@@ -327,7 +331,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
         unsubscribe_template: @unsub
       })
 
-    {:ok, conn} = Websocket.activate(opts)
+    {:ok, conn} = activate(Websocket, opts)
     on_exit(fn -> if Process.alive?(conn), do: Process.exit(conn, :kill) end)
 
     # ---- the seed: nothing applied yet, so the first poll subscribes the set
@@ -583,6 +587,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
   # async: false: global telemetry handlers.
 
   use ExUnit.Case, async: false
+
+  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2, activate: 2]
 
   alias Flezha.Plugin.Provider.Websocket
 

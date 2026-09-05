@@ -44,8 +44,10 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
     attempts: 0
   ]
 
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
+  @doc "Started by the extension table at activation, one per target member."
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(opts) when is_map(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
 
   @doc """
   Enqueue one payload for delivery. Replies `:ok` immediately while the buffer
@@ -88,23 +90,22 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   @spec stats(GenServer.server()) :: map()
   def stats(server), do: GenServer.call(server, :stats, 5_000)
 
-  # Every tunable is `fetch!`ed: `OperativeForward.init_provider/1` is the only
-  # constructor and it applies the defaults, so the provider struct stays the
-  # single default table instead of a second copy drifting here.
+  # Every tunable is read as a declared field: the provider's option rows are
+  # the one default table, and a fallback here would be a second copy of it.
   @impl true
   def init(opts) do
     state = %__MODULE__{
-      source_namespace: Keyword.fetch!(opts, :source_namespace),
-      target_operative_id: Keyword.fetch!(opts, :target_operative_id),
-      queue_max: Keyword.fetch!(opts, :queue_max),
-      retry_backoff_ms: Keyword.fetch!(opts, :retry_backoff_ms),
-      retry_max_backoff_ms: Keyword.fetch!(opts, :retry_max_backoff_ms),
-      call_timeout_ms: Keyword.fetch!(opts, :call_timeout_ms),
+      source_namespace: opts.source_namespace,
+      target_operative_id: opts.target_operative_id,
+      queue_max: opts.queue_max,
+      retry_backoff_ms: opts.retry_backoff_ms,
+      retry_max_backoff_ms: opts.retry_max_backoff_ms,
+      call_timeout_ms: opts.call_timeout_ms,
       labels: %{
-        plugin_id: Keyword.fetch!(opts, :plugin_id),
-        namespace: Keyword.fetch!(opts, :source_namespace),
-        source_operative_id: Keyword.fetch!(opts, :source_operative_id),
-        target_operative_id: Keyword.fetch!(opts, :target_operative_id)
+        plugin_id: opts.plugin_id,
+        namespace: opts.source_namespace,
+        source_operative_id: opts.source_operative_id,
+        target_operative_id: opts.target_operative_id
       }
     }
 

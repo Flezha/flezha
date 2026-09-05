@@ -545,7 +545,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
     assert stats.consecutive_failures >= 3
 
     assert {:unhealthy, :produce_stalled} =
-             Producer.health(%{producer_pid: pid})
+             Producer.health(%{owned_pid: pid})
   end
 
   test "max_batch_bytes triggers immediate flush even within linger window" do

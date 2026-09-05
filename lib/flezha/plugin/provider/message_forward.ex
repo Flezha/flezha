@@ -6,8 +6,13 @@ defmodule Flezha.Plugin.Provider.MessageForward do
   """
 
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Runner.ControlUnit
 
+  use ProviderBehaviour,
+    options: [key: [type: :string, doc: "The handler key this forwarder answers"]]
+
+  @impl true
   def on_message(
         %Ctx.Msg{
           operative_id: operative_id,

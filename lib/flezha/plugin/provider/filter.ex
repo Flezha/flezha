@@ -11,28 +11,15 @@ defmodule Flezha.Plugin.Provider.Filter do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
-  use ProviderBehaviour
-
-  # `:inverted` is total through `parse_bool/2`; no option needs the injected
-  # refusal.
-  @converted_opts []
-
-  @enforce_keys [:regex_pattern]
-  defstruct @enforce_keys ++ [inverted: false]
+  use ProviderBehaviour,
+    options: [
+      regex_pattern: [type: :string, required: true, doc: "Regex the payload is matched against"],
+      inverted: [type: :bool, default: false, doc: "Skip what matches instead of passing it"],
+      # The compiled pattern this provider commits back onto its own opts.
+      regex: [type: :any, internal: true]
+    ]
 
   @impl true
-  def plugin_type(), do: :io_binding
-
-  defp convert_value(:inverted, value) when is_binary(value) do
-    case String.downcase(value) do
-      "true" -> {:ok, true}
-      "false" -> {:ok, false}
-      _ -> ProviderBehaviour.refuse_value(:inverted, value)
-    end
-  end
-
-  defp convert_value(:inverted, value), do: ProviderBehaviour.parse_bool(value, :inverted)
-
   def init_provider(opts) do
     pattern = Map.fetch!(opts, :regex_pattern)
 
@@ -42,12 +29,14 @@ defmodule Flezha.Plugin.Provider.Filter do
     end
   end
 
+  @impl true
   def on_input(%Ctx.IO{} = ctx, opts), do: filter(ctx, opts)
+  @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: filter(ctx, opts)
 
   defp filter(%Ctx.IO{message: msg} = ctx, opts) do
     regex = Map.fetch!(opts, :regex)
-    inverted = Map.get(opts, :inverted, false)
+    inverted = Map.fetch!(opts, :inverted)
 
     matches? = Regex.match?(regex, msg)
 

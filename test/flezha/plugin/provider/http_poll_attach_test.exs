@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
   @moduledoc """
-  Attach-time contract for `Plugin.Provider.HttpPoll`: what
-  `init_provider/1` and `build/1` refuse before a poller exists, and the
-  partition placeholders a URL and header set may carry.
+  Attach-time contract for `Plugin.Provider.HttpPoll`: what the declaration and
+  `init_provider/1` refuse before a poller exists, what `build/1` refuses on the
+  CLI path, and the partition placeholders a URL and header set may carry.
   """
 
   # async: false: global telemetry handlers.
@@ -10,38 +10,48 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
   use FlezhaTest.HttpPollCase, async: false
 
   alias Flezha.Plugin.Provider.HttpPoll
+  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
+
+  # Preparation as the extension table performs it: the declaration normalises
+  # the options, then the provider interprets them. Named apart from the case's
+  # own `prepare/2`, which starts from a live origin.
+  defp attach(opts) do
+    with {:ok, opts} <- ProviderOptions.normalise_opts(HttpPoll, opts),
+         do: HttpPoll.init_provider(opts)
+  end
 
   describe "attach-time validation" do
     test "rejects a non-http scheme, a hostless url, and embedded credentials" do
-      assert {:error, message} = HttpPoll.init_provider(%{url: "ftp://x/y", channel: @channel})
+      assert {:error, message} = attach(%{url: "ftp://x/y", channel: @channel})
       assert message =~ "http or https"
 
-      assert {:error, message} = HttpPoll.init_provider(%{url: "/relative", channel: @channel})
+      assert {:error, message} = attach(%{url: "/relative", channel: @channel})
       assert message =~ "http or https"
 
-      assert {:error, message} = HttpPoll.init_provider(%{url: "http://", channel: @channel})
+      assert {:error, message} = attach(%{url: "http://", channel: @channel})
       assert message =~ "no host"
 
       assert {:error, message} =
-               HttpPoll.init_provider(%{url: "https://u:hunter2@api/c", channel: @channel})
+               attach(%{url: "https://u:hunter2@api/c", channel: @channel})
 
       assert message =~ "must not embed credentials"
       refute message =~ "hunter2"
     end
 
     test "rejects a missing url or channel" do
-      assert {:error, message} = HttpPoll.init_provider(%{channel: @channel})
+      assert {:error, message} = attach(%{channel: @channel})
       assert message =~ ":url"
 
-      assert {:error, message} = HttpPoll.init_provider(%{url: "http://x/y"})
+      assert {:error, message} = attach(%{url: "http://x/y"})
       assert message =~ ":channel"
 
-      assert {:error, _} = HttpPoll.init_provider(%{url: "http://x/y", channel: ""})
+      assert {:error, _} = attach(%{url: "http://x/y", channel: ""})
     end
 
     test "accepts an explicit idle window and rejects a malformed one" do
       assert {:ok, opts} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  idle_after_ms: 5_000
@@ -50,7 +60,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       assert opts.idle_after_ms == 5_000
 
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  idle_after_ms: -1
@@ -59,7 +69,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       assert message =~ "idle_after_ms"
 
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  idle_after_ms: "soon"
@@ -70,19 +80,19 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
     test "rejects an interval below the minimum and a non-positive tunable" do
       assert {:error, message} =
-               HttpPoll.init_provider(%{url: "http://x/y", channel: @channel, interval_ms: 500})
+               attach(%{url: "http://x/y", channel: @channel, interval_ms: 500})
 
-      assert message =~ "1000 ms minimum"
+      assert message =~ "is below the minimum 1000"
 
       assert {:error, message} =
-               HttpPoll.init_provider(%{url: "http://x/y", channel: @channel, timeout_ms: 0})
+               attach(%{url: "http://x/y", channel: @channel, timeout_ms: 0})
 
-      assert message =~ "must be positive"
+      assert message =~ "is below the minimum 1"
     end
 
     test "rejects a timeout that can outlast its own interval" do
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  interval_ms: 1_000,
@@ -94,16 +104,16 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
     test "rejects a body cap above the ceiling and non-numeric tunables" do
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  max_body_bytes: 1_073_741_824
                })
 
-      assert message =~ "ceiling"
+      assert message =~ "is above the maximum 67108864"
 
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  interval_ms: "soon"
@@ -114,12 +124,12 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
     test "rejects malformed headers and accepts a JSON object" do
       assert {:error, message} =
-               HttpPoll.init_provider(%{url: "http://x/y", channel: @channel, headers: "nope"})
+               attach(%{url: "http://x/y", channel: @channel, headers: "nope"})
 
-      assert message =~ "JSON object"
+      assert message =~ "Invalid value for headers"
 
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  headers: %{"a" => %{"nested" => true}}
@@ -128,7 +138,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       assert message =~ "scalar"
 
       assert {:ok, opts} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  headers: ~s({"authorization":"Bearer t"})
@@ -142,7 +152,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       # without ever building the provider struct, so a check that lived only
       # in `build/1` would never run in production.
       assert {:error, message} =
-               HttpPoll.init_provider(%{url: "http://x/y", channel: @channel, method: "POST"})
+               attach(%{url: "http://x/y", channel: @channel, method: "POST"})
 
       assert message =~ "unknown option(s) for http_poll: method"
 
@@ -154,7 +164,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
     test "accepts the identity the host merges in" do
       assert {:ok, _} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "http://x/y",
                  channel: @channel,
                  source_namespace: "default",
@@ -200,7 +210,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
   describe "partition placeholders" do
     test "are rendered once at init, so the poll worker needs no partition knowledge" do
       assert {:ok, opts} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url:
                    "https://api.example/trades?shard={{partition_index}}&of={{partition_count}}",
                  channel: @channel,
@@ -215,7 +225,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
     test "a placeholder with no partition identity is refused, naming it" do
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "https://api.example/trades?shard={{partition_index}}",
                  channel: @channel
                })
@@ -228,7 +238,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
       # The substitution lands in the scheme, so only a check that runs AFTER
       # rendering can catch it — at init, not at request time.
       assert {:error, message} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "{{partition_index}}://api.example/x",
                  channel: @channel,
                  partition_index: 1,
@@ -240,7 +250,7 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
 
     test "a url without placeholders is untouched by a partitioned plugin" do
       assert {:ok, opts} =
-               HttpPoll.init_provider(%{
+               attach(%{
                  url: "https://api.example/trades",
                  channel: @channel,
                  partition_index: 2,

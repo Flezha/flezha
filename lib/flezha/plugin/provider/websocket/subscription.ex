@@ -15,7 +15,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
 
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.HttpFetch
-  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   require Logger
 
@@ -32,8 +32,6 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
 
   @items_placeholder "{{items}}"
   @req_id_placeholder "{{req_id}}"
-  @ack_modes ["required", "none"]
-
   @enforce_keys [:subscribe_template, :unsubscribe_template]
   defstruct @enforce_keys ++
               [
@@ -45,7 +43,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
                 # belongs to a group member. `nil` = the whole space.
                 range: nil,
                 headers: %{},
-                interval_ms: Durations.get(:ws_subscription_interval_ms),
+                interval_ms: nil,
                 ack_mode: "required"
               ]
 
@@ -63,6 +61,10 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   @doc "The placeholder every template must carry, for error messages."
   @spec items_placeholder() :: binary()
   def items_placeholder(), do: @items_placeholder
+
+  @doc "The polling cadence a subscription source takes when none is written."
+  @spec default_interval_ms() :: pos_integer()
+  def default_interval_ms(), do: Durations.get(:ws_subscription_interval_ms)
 
   @doc """
   Build a source from a plugin's opts, or `{:ok, nil}` when none is configured.
@@ -100,20 +102,19 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
              "websocket",
              :subscription_headers
            ),
-         {:ok, interval_ms} <- interval(Map.get(opts, :subscription_interval_ms)),
+         :ok <- interval(opts.subscription_interval_ms),
          {:ok, subscribe} <- template(opts, :subscribe_template),
-         {:ok, unsubscribe} <- template(opts, :unsubscribe_template),
-         {:ok, ack_mode} <- ack_mode(Map.get(opts, :subscription_ack_mode)) do
+         {:ok, unsubscribe} <- template(opts, :unsubscribe_template) do
       {:ok,
        %__MODULE__{
          url: url,
          items: items,
          range: range(opts),
          headers: headers,
-         interval_ms: interval_ms,
+         interval_ms: opts.subscription_interval_ms,
          subscribe_template: subscribe,
          unsubscribe_template: unsubscribe,
-         ack_mode: ack_mode
+         ack_mode: opts.subscription_ack_mode
        }}
     end
   end
@@ -149,21 +150,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
     end
   end
 
-  defp interval(nil), do: {:ok, Durations.get(:ws_subscription_interval_ms)}
-
+  # The one bound that is not a declared row: its floor is an operator-settable
+  # duration, read here rather than frozen into the declaration at compile time.
   defp interval(value) do
     minimum = Durations.get(:ws_subscription_min_interval_ms)
 
-    case ProviderBehaviour.parse_int(value, :subscription_interval_ms) do
-      {:ok, ms} when ms >= minimum ->
-        {:ok, ms}
-
-      {:ok, ms} ->
-        {:error, "websocket subscription_interval_ms #{ms} is below the #{minimum} ms minimum"}
-
-      {:error, reason} ->
-        {:error, "websocket #{reason}"}
-    end
+    if value < minimum,
+      do: ProviderOptions.refuse_below(:subscription_interval_ms, value, minimum),
+      else: :ok
   end
 
   # Both templates are required alongside a source: a set that can only grow is
@@ -182,15 +176,6 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
         {:error, "websocket subscription_url requires #{field}"}
     end
   end
-
-  defp ack_mode(nil), do: {:ok, "required"}
-  defp ack_mode(mode) when mode in @ack_modes, do: {:ok, mode}
-
-  defp ack_mode(mode),
-    do:
-      {:error,
-       "websocket subscription_ack_mode #{inspect(mode)} must be one of " <>
-         Enum.map_join(@ack_modes, ", ", &inspect/1)}
 
   @doc "The `HttpFetch` request for one poll, conditional on the last ETag."
   @spec fetch_request(t(), binary() | nil) :: HttpFetch.request()

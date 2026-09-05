@@ -11,6 +11,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
+  alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.Websocket.Subscription
 
@@ -26,29 +27,27 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   @spec default_resubscribe_after_ms() :: non_neg_integer()
   def default_resubscribe_after_ms, do: Durations.get(:ws_resubscribe_after_ms)
 
-  def start_link(uri, opts) do
-    idle_timeout_ms = Keyword.get(opts, :idle_timeout_ms, default_idle_timeout_ms())
-
-    resubscribe_after_ms =
-      Keyword.get(opts, :resubscribe_after_ms, default_resubscribe_after_ms())
-
-    ignore_pattern = Keyword.get(opts, :ignore_pattern)
-    plugin_id = Keyword.get(opts, :plugin_id) || uri
-
+  @doc """
+  The socket process, started by the extension table at activation from the
+  provider's declared worker spec. Every value it reads is a declared option
+  already converted and defaulted, so this holds no default of its own.
+  """
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(opts) when is_map(opts) do
     now = :erlang.monotonic_time(:millisecond)
 
     state = %{
-      uri: uri,
-      plugin_id: plugin_id,
-      post_connect: opts[:post_connect],
-      overwatcher_pid: opts[:overwatcher_pid],
-      payload_metadata: Keyword.get(opts, :payload_metadata, %{}),
-      idle_timeout_ms: idle_timeout_ms,
-      resubscribe_after_ms: resubscribe_after_ms,
-      ignore_pattern: compile_ignore_pattern(ignore_pattern),
+      uri: opts.uri,
+      plugin_id: opts.plugin_id,
+      post_connect: opts.post_connect,
+      overwatcher_pid: opts.overwatcher_pid,
+      payload_metadata: opts.payload_metadata,
+      idle_timeout_ms: opts.idle_timeout_ms,
+      resubscribe_after_ms: opts.resubscribe_after_ms,
+      ignore_pattern: compile_ignore_pattern(opts.ignore_pattern),
       # Effectively-once tier (from the activation env): ingest via a
       # blocking call so a zero-credit park stops the socket read.
-      sync_ingest?: Keyword.get(opts, :sync_ingest?, false),
+      sync_ingest?: opts.sync_ingest?,
       websocket_established?: false,
       frames_seen: 0,
       last_frame_at: now,
@@ -58,10 +57,10 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     }
 
     Fresh.start_link(
-      uri,
+      opts.uri,
       __MODULE__,
       with_subscription_state(state, opts),
-      reconnect_opts(opts[:ws_opts])
+      Keyword.put(reconnect_opts(opts.ws_opts), :name, opts.name)
     )
   end
 
@@ -82,14 +81,14 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   # `handle_in/2`'s ack clause matches on `:inflight`, so its head simply does
   # not match here, and no timer is ever scheduled.
   defp with_subscription_state(state, opts) do
-    case Keyword.get(opts, :subscription) do
+    case opts.subscription do
       nil ->
         state
 
       subscription ->
         Map.merge(state, %{
           subscription: subscription,
-          applied: MapSet.new(Keyword.get(opts, :applied_subscriptions, [])),
+          applied: MapSet.new(opts.applied_subscriptions),
           # A literal item list is the desired set from the start; a polled
           # one has none until a poll lands.
           desired: Subscription.static_desired(subscription),
@@ -101,9 +100,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
           source_etag: nil,
           last_reconcile: nil,
           last_error: nil,
-          source_plugin_id: Keyword.get(opts, :source_plugin_id),
-          source_namespace: Keyword.get(opts, :source_namespace),
-          source_operative_id: Keyword.get(opts, :source_operative_id)
+          source_plugin_id: opts.source_plugin_id,
+          source_namespace: opts.source_namespace,
+          source_operative_id: opts.source_operative_id
         })
     end
   end
@@ -222,15 +221,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
          {type, message},
          %{overwatcher_pid: overwatcher, payload_metadata: metadata} = state
        ) do
-    if Map.get(state, :sync_ingest?, false) do
-      # Effectively-once tier ingest: await the journal ack so a
-      # zero-credit park blocks this connection process — the socket stops
-      # being read (TCP back-pressure) instead of the input-log growing
-      # without bound.
-      _ = GenServer.call(overwatcher, {:io_in, message, metadata}, :infinity)
-    else
-      GenServer.cast(overwatcher, {:io_in, message, metadata})
-    end
+    # Effectively-once tier ingest is confirming: awaiting the journal ack means
+    # a zero-credit park blocks this connection process, so the socket stops
+    # being read (TCP back-pressure) instead of the input log growing unbounded.
+    mode = if Map.get(state, :sync_ingest?, false), do: :confirming, else: :fire_and_forget
+    _ = Host.inject(overwatcher, message, metadata, mode)
 
     # One clock read and one classification per frame; `last_frame_at`
     # is set unconditionally (connection liveness) and `last_data_frame_at`

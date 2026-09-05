@@ -1,16 +1,37 @@
 defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   @moduledoc """
-  `ProducerSup.ensure_worker/1` dead/parked-pid reaping. A recovered operative
-  must start a fresh, healthy producer rather than re-attach to a worker that
-  cannot drain.
+  `WorkerSup.ensure_worker/5` dead and parked-pid reaping, in the Kafka
+  producer's own family. A recovered operative must start a fresh, healthy
+  producer rather than re-attach to a worker that cannot drain.
+
+  The rule the `reusable?` argument carries is the spec's "a provider worker
+  handed to a caller SHALL have passed the reusability check", and it is pinned
+  here because this family is the one that uses it.
   """
   # async: false: registered singletons.
   use ExUnit.Case, async: false
 
-  alias Flezha.Plugin.Provider.Kafka.ProducerSup
+  alias Flezha.Plugin.Provider.Kafka.Producer
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.WorkerSup
+  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
+
+  @family WorkerSup.family(Producer)
+
+  defp ensure(opts) do
+    WorkerSup.ensure_worker(
+      @family,
+      key(opts),
+      {ProducerWorker, opts},
+      &ProducerWorker.reusable?/1,
+      :permanent
+    )
+  end
+
+  defp key(opts), do: {opts.plugin_id, opts.topic, opts.partition}
+  defp stop(plugin_id), do: WorkerSup.stop_worker(@family, {plugin_id, "t", 0})
 
   # A stub supervised by the producer dyn-sup and registered under the worker's
   # via-name; it answers :stats with a permanently-parked verdict so
@@ -19,8 +40,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
     use GenServer
 
     def start_link(opts) do
-      key = {opts[:plugin_id], opts[:topic], opts[:partition]}
-      GenServer.start_link(__MODULE__, opts, name: WorkerSup.via(ProducerSup, key))
+      key = {opts.plugin_id, opts.topic, opts.partition}
+
+      GenServer.start_link(__MODULE__, opts, name: WorkerSup.via(WorkerSup.family(Producer), key))
     end
 
     def child_spec(opts) do
@@ -57,16 +79,29 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
 
   # idempotent: false so the fresh ProducerWorker skips InitProducerId against
   # the fake (non-Kafka) worker pid and starts cleanly with no broker.
+  # The worker spec the provider itself declares, so this test starts exactly
+  # what the table would. `idempotent: false` keeps the fresh worker from
+  # sending InitProducerId to the fake (non-Kafka) pid it is given.
   defp opts(plugin_id) do
-    [plugin_id: plugin_id, topic: "t", partition: 0, worker_pid: fake_worker(), idempotent: false]
+    {:ok, normalised} =
+      ProviderOptions.normalise_opts(Producer, %{
+        hosts: [{"localhost", 9092}],
+        topic: "t",
+        partition: 0,
+        plugin_id: plugin_id,
+        idempotent: false
+      })
+
+    [{_key, spec}] = Producer.worker_specs(normalised)
+    Map.put(spec, :worker_pid, fake_worker())
   end
 
   test "reuses a healthy worker" do
     o = opts("ps_reuse")
-    {:ok, p1} = ProducerSup.ensure_worker(o)
-    on_exit(fn -> ProducerSup.stop_worker("ps_reuse", "t", 0) end)
+    {:ok, p1} = ensure(o)
+    on_exit(fn -> stop("ps_reuse") end)
 
-    {:ok, p2} = ProducerSup.ensure_worker(o)
+    {:ok, p2} = ensure(o)
     assert p1 == p2
     assert Process.alive?(p1)
   end
@@ -75,11 +110,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
     o = opts("ps_parked")
 
     {:ok, parked} =
-      DynamicSupervisor.start_child(ProducerSup.dyn_sup_name(), {ParkedStub, o})
+      DynamicSupervisor.start_child(WorkerSup.dyn_sup_name(@family), {ParkedStub, o})
 
-    on_exit(fn -> ProducerSup.stop_worker("ps_parked", "t", 0) end)
+    on_exit(fn -> stop("ps_parked") end)
 
-    {:ok, fresh} = ProducerSup.ensure_worker(o)
+    {:ok, fresh} = ensure(o)
 
     assert fresh != parked
     refute Process.alive?(parked)
@@ -89,23 +124,23 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   test "a registry entry still naming the dead worker does not delay the swap" do
     o = opts("ps_stale")
     key = {"ps_stale", "t", 0}
-    on_exit(fn -> ProducerSup.stop_worker("ps_stale", "t", 0) end)
+    on_exit(fn -> stop("ps_stale") end)
 
-    {:ok, dead} = DynamicSupervisor.start_child(ProducerSup.dyn_sup_name(), {ParkedStub, o})
+    {:ok, dead} = DynamicSupervisor.start_child(WorkerSup.dyn_sup_name(@family), {ParkedStub, o})
 
     # The family's Registry partition clears an entry from the `:EXIT` it is
     # linked by; a suspended process processes none, so the entry provably
     # still names the worker after it dies. Without this the partition has
     # usually cleared it before the swap looks, and a busy-wait that never
     # spins is a busy-wait no test can see.
-    partition = Process.whereis(Module.concat(ProducerSup.registry_name(), "PIDPartition0"))
+    partition = Process.whereis(Module.concat(WorkerSup.registry_name(@family), "PIDPartition0"))
     :sys.suspend(partition)
     on_exit(fn -> :sys.resume(partition) end)
 
     ref = Process.monitor(dead)
     Process.exit(dead, :kill)
     assert_receive {:DOWN, ^ref, :process, ^dead, _}, 1_000
-    assert [{^dead, _}] = Registry.lookup(ProducerSup.registry_name(), key)
+    assert [{^dead, _}] = Registry.lookup(WorkerSup.registry_name(@family), key)
 
     # A process cannot be its own call tracer, so the sleeps are collected by a
     # forwarder that dies with the test.
@@ -115,7 +150,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
     :erlang.trace(self(), true, [:call, {:tracer, tracer}])
     on_exit(fn -> :erlang.trace_pattern({Process, :sleep, 1}, false, [:local]) end)
 
-    {elapsed_us, {:ok, fresh}} = :timer.tc(fn -> ProducerSup.ensure_worker(o) end)
+    {elapsed_us, {:ok, fresh}} = :timer.tc(fn -> ensure(o) end)
     :erlang.trace(self(), false, [:call])
 
     refute_receive {:slept, _}, 100
@@ -123,7 +158,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
 
     assert fresh != dead
     assert Process.alive?(fresh)
-    assert [{^fresh, _}] = Registry.lookup(ProducerSup.registry_name(), key)
+    assert [{^fresh, _}] = Registry.lookup(WorkerSup.registry_name(@family), key)
   end
 
   test "a worker the reuse policy rejected is never handed back" do
@@ -137,33 +172,33 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
     on_exit(fn -> if Process.alive?(parked), do: Process.exit(parked, :kill) end)
 
     assert {:error, :not_found} =
-             DynamicSupervisor.terminate_child(ProducerSup.dyn_sup_name(), parked)
+             DynamicSupervisor.terminate_child(WorkerSup.dyn_sup_name(@family), parked)
 
     refute ProducerWorker.reusable?(parked)
-    assert [{^parked, _}] = Registry.lookup(ProducerSup.registry_name(), key)
+    assert [{^parked, _}] = Registry.lookup(WorkerSup.registry_name(@family), key)
 
-    refute match?({:ok, ^parked}, ProducerSup.ensure_worker(o))
+    refute match?({:ok, ^parked}, ensure(o))
   end
 
   test "a forced worker death is answered with a fresh, registered worker" do
     o = opts("ps_killed")
     key = {"ps_killed", "t", 0}
-    on_exit(fn -> ProducerSup.stop_worker("ps_killed", "t", 0) end)
+    on_exit(fn -> stop("ps_killed") end)
 
     fresh_pids =
       for _ <- 1..10 do
         {:ok, victim} =
-          DynamicSupervisor.start_child(ProducerSup.dyn_sup_name(), {ParkedStub, o})
+          DynamicSupervisor.start_child(WorkerSup.dyn_sup_name(@family), {ParkedStub, o})
 
         ref = Process.monitor(victim)
         Process.exit(victim, :kill)
         assert_receive {:DOWN, ^ref, :process, ^victim, _}, 1_000
 
-        {:ok, fresh} = ProducerSup.ensure_worker(o)
+        {:ok, fresh} = ensure(o)
         assert fresh != victim
         assert Process.alive?(fresh)
-        assert [{^fresh, _}] = Registry.lookup(ProducerSup.registry_name(), key)
-        :ok = ProducerSup.stop_worker("ps_killed", "t", 0)
+        assert [{^fresh, _}] = Registry.lookup(WorkerSup.registry_name(@family), key)
+        _ = stop("ps_killed")
         fresh
       end
 

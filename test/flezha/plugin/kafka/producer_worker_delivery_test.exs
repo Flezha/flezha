@@ -84,7 +84,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
       entity_id: entity_id
     } do
       {pid, script_pid} =
-        start_worker(queue_max: 1, queue_overflow: nil, linger_ms: 1)
+        start_worker(queue_max: 1, queue_overflow: :drop_nothing, linger_ms: 1)
 
       Fakes.script_slow_first(script_pid)
 

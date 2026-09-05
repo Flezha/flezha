@@ -125,8 +125,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
       cast_path_waits_for_room(:drop_nothing)
     end
 
-    test "with no configured overflow policy a plain record waits instead of being dropped" do
-      cast_path_waits_for_room(nil)
+    test "under the declared default a plain record waits instead of being dropped" do
+      cast_path_waits_for_room(:drop_nothing)
     end
 
     test "permanent broker error fires :failed with caller: :async; no GenServer.reply" do

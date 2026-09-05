@@ -1,0 +1,341 @@
+defmodule Flezha.Plugin.ProviderBehaviour.Options do
+  @moduledoc """
+  A provider's option rows, read.
+
+  Everything that happens to a plugin's options between the spec an operator
+  wrote and the callback that reads them: the declared names and defaults, the
+  one conversion table, the one refusal grammar, and the two renderings (the
+  help screen and the documented table) that are derived from the same rows
+  rather than written twice.
+
+  `Flezha.Plugin.ProviderBehaviour` delegates its public surface here, so a
+  provider and its callers still name one module.
+  """
+
+  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Decl
+
+  import ProviderBehaviour,
+    only: [
+      parse_bool: 2,
+      parse_enum: 3,
+      parse_int: 2,
+      parse_pid: 2,
+      reject_unknown: 3,
+      refuse_value: 2
+    ]
+
+  @doc """
+  `module`'s option names as `{required, all}`, both in declaration order;
+  `required` is the rows marked `required: true`.
+
+  The order is the declaration's, because this list is rendered into an
+  operator-facing help screen and into the order `build_struct/3` reports the
+  first unconvertible value in.
+  """
+  @spec fields(module()) :: {[atom()], [atom()]}
+  def fields(module) do
+    rows = rows(module)
+
+    {for({name, row} <- rows, Keyword.get(row, :required, false), do: name),
+     Enum.map(rows, &elem(&1, 0))}
+  end
+
+  @doc "The option rows `module` declared, in declaration order."
+  @spec rows(module()) :: [{atom(), keyword()}]
+  def rows(module), do: module.__provider__().options
+
+  @doc "Every declared option's default, by name."
+  @spec defaults(module()) :: %{atom() => term()}
+  def defaults(module), do: Map.new(rows(module), fn {name, row} -> {name, row[:default]} end)
+
+  @doc """
+  Build `module`'s struct from a CLI string map, coercing each field through
+  the provider's own `convert`. Answers the first value `convert` refuses.
+  """
+  @spec build_struct(module(), map(), (atom(), term() -> {:ok, term()} | {:error, binary()})) ::
+          {:ok, struct()} | {:error, binary()}
+  def build_struct(module, string_map, convert) do
+    {required, all} = fields(module)
+
+    # A halted reduce answers the refusal, never the accumulated params, so the
+    # required-field check runs only on the map the success arm built. `convert`
+    # has already formatted the reason; wrapping it again names the field twice.
+    case Enum.reduce_while(all, %{}, &coerce_field(&1, &2, string_map, convert)) do
+      {:error, reason} ->
+        {:error, reason}
+
+      params ->
+        case Enum.reject(required, &Map.has_key?(params, &1)) do
+          [] -> new_struct(module, params)
+          missing -> refuse_required(module.__provider__().name, missing)
+        end
+    end
+  end
+
+  defp coerce_field(field, params, string_map, convert) do
+    case Map.get(string_map, Atom.to_string(field)) do
+      nil -> {:cont, params}
+      value -> put_converted(params, field, convert.(field, value))
+    end
+  end
+
+  @doc """
+  Every declared option present, converted and defaulted, with the required ones
+  checked — the ONE thing that happens to a provider's options between the spec
+  an operator wrote and the callback that reads them.
+
+  `Flezha.Plugin.Extension.Table` calls it before `init_provider/1`, so a
+  provider and its worker read declared fields and never re-derive a default of
+  their own. An option the declaration does not name is refused here rather than
+  ignored; an option it names and the operator did not write takes its row's
+  default; a value the row's type or bounds refuse answers the sentence the one
+  builder renders.
+  """
+  @spec normalise_opts(module(), map()) :: {:ok, map()} | {:error, binary()}
+  def normalise_opts(provider, opts) when is_map(opts) do
+    %Decl{name: name, options: rows} = provider.__provider__()
+
+    with :ok <-
+           reject_unknown(
+             Map.keys(opts),
+             Enum.map(rows, &elem(&1, 0)) ++ ProviderBehaviour.host_opts(),
+             name
+           ),
+         {:ok, converted} <- convert_declared(provider, rows, opts),
+         :ok <- require_declared(name, rows, converted) do
+      {:ok, Map.merge(opts, converted)}
+    end
+  end
+
+  defp convert_declared(provider, rows, opts) do
+    case Enum.reduce_while(rows, %{}, &convert_declared_row(&1, &2, provider, opts)) do
+      {:error, reason} -> {:error, reason}
+      params -> {:ok, params}
+    end
+  end
+
+  # An option that is absent, or written `nil`, takes its row's default and is
+  # not converted: only a value an operator supplied can be wrong.
+  defp convert_declared_row({field, row}, params, provider, opts) do
+    case Map.get(opts, field) do
+      nil -> {:cont, Map.put(params, field, row[:default])}
+      value -> put_converted(params, field, provider.__convert__(field, value))
+    end
+  end
+
+  defp require_declared(name, rows, params) do
+    case for(
+           {field, row} <- rows,
+           Keyword.get(row, :required, false),
+           is_nil(params[field]),
+           do: field
+         ) do
+      [] -> :ok
+      missing -> refuse_required(name, missing)
+    end
+  end
+
+  defp put_converted(params, field, {:ok, converted}),
+    do: {:cont, Map.put(params, field, converted)}
+
+  defp put_converted(_params, _field, {:error, reason}), do: {:halt, {:error, reason}}
+
+  defp new_struct(module, params) do
+    {:ok, struct!(module, params)}
+  rescue
+    e -> {:error, "Failed to create struct: #{Exception.message(e)}"}
+  end
+
+  @doc "The screen `flz plugin help <provider>` renders for `module`."
+  @spec render_help(module()) :: binary()
+  def render_help(module) do
+    {required, all} = fields(module)
+    name = module |> Module.split() |> List.last()
+
+    """
+    #{name} Plugin Help
+
+    USAGE:
+        flz plugin enable <plugin_id> #{String.downcase(name)} [OPTIONS]
+    """ <>
+      param_block("REQUIRED", required) <>
+      param_block("OPTIONAL", all -- required) <>
+      """
+
+      COMMON OPTIONS:
+          --namespace <namespace>    Namespace (default: default)
+          --operative_id <id>       Target operative ID
+          --trigger <trigger>       Trigger mode (on_input|on_output|proactive|interval)
+          --position <num>          Plugin position
+
+      Override this help/0 function in your provider module for custom help text.
+      """
+  end
+
+  # The REQUIRED and OPTIONAL sections are one rendering over two lists.
+  defp param_block(heading, fields) do
+    "\n#{heading} PARAMETERS (X-prefixed):\n" <> param_lines(fields)
+  end
+
+  defp param_lines([]), do: "    None\n"
+
+  defp param_lines(fields) do
+    Enum.map_join(fields, "", fn field ->
+      name = Atom.to_string(field)
+      "    --X#{name} <value>    #{String.capitalize(name)}\n"
+    end)
+  end
+
+  @doc """
+  `module`'s public option rows as the Markdown table its page under
+  `docs/plugins/` carries. Rendered from the declaration, and gated against the
+  page by the conformance test, so a documented key that is not a row, a row
+  that is not documented and a default that differs each fail the suite.
+  """
+  @spec render_options_table(module()) :: binary()
+  def render_options_table(module) do
+    rows = Decl.public_options(module.__provider__())
+
+    [
+      "| Option | Type | Default | Required | Description |\n",
+      "| --- | --- | --- | --- | --- |\n"
+      | Enum.map(rows, &option_row/1)
+    ]
+    |> IO.iodata_to_binary()
+  end
+
+  defp option_row({name, row}) do
+    [
+      "| `",
+      Atom.to_string(name),
+      "` | ",
+      row |> Keyword.get(:type, :any) |> Atom.to_string(),
+      " | ",
+      render_default(row[:default]),
+      " | ",
+      if(Keyword.get(row, :required, false), do: "yes", else: "no"),
+      " | ",
+      Keyword.get(row, :doc, ""),
+      " |\n"
+    ]
+  end
+
+  defp render_default(nil), do: "&mdash;"
+  defp render_default(value), do: "`#{inspect(value)}`"
+
+  @doc """
+  Declare a provider: its option rows, its worker, and the defaults for every
+  callback it does not override. See
+  `Flezha.Plugin.ProviderBehaviour.Declaration`, which generates all of it.
+  """
+  defmacro __using__(opts) do
+    quote do
+      use Flezha.Plugin.ProviderBehaviour.Declaration, unquote(opts)
+    end
+  end
+
+  @doc "`module`'s shape, as `flz plugin list` reports it."
+  @spec describe(module()) :: map()
+  def describe(module) do
+    {required, all} = fields(module)
+
+    %{
+      module: inspect(module),
+      type: module.plugin_type(),
+      required_fields: Enum.map(required, &Atom.to_string/1),
+      optional_fields: Enum.map(all -- required, &Atom.to_string/1)
+    }
+  end
+
+  @doc """
+  Coerce `value` for `field` from the option row that declares it, then check
+  the row's bounds. This is the whole conversion table: a provider names its
+  option's TYPE and this answers every shape that type accepts and refuses every
+  shape it does not.
+
+  An option with no row — a host-injected key, a value the provider deliberately
+  does not interpret — passes through: only a value an operator supplied for a
+  declared option can be wrong.
+  """
+  @spec convert_row(atom(), term(), [{atom(), keyword()}]) :: {:ok, term()} | {:error, binary()}
+  def convert_row(field, value, rows) do
+    case Keyword.fetch(rows, field) do
+      :error ->
+        {:ok, value}
+
+      {:ok, row} ->
+        with {:ok, coerced} <- coerce(row[:type], field, value, row),
+             do: bound(coerced, field, row)
+    end
+  end
+
+  defp coerce(:int, field, value, _row), do: parse_int(value, field)
+  defp coerce(:bool, field, value, _row), do: parse_bool(value, field)
+  defp coerce(:pid, field, value, _row), do: parse_pid(value, field)
+
+  defp coerce(:enum, field, value, row),
+    do: parse_enum(value, field, Keyword.fetch!(row, :values))
+
+  defp coerce(:string, _field, value, _row) when is_binary(value), do: {:ok, value}
+  defp coerce(:string, field, value, _row), do: refuse_value(field, value)
+  defp coerce(:list, _field, value, _row) when is_list(value), do: {:ok, value}
+  defp coerce(:list, field, value, _row), do: refuse_value(field, value)
+  defp coerce(:map, _field, value, _row) when is_map(value), do: {:ok, value}
+  defp coerce(:map, field, value, _row), do: refuse_value(field, value)
+
+  # A JSON option is a map an operator may also write as the string a CLI flag
+  # delivers. A string that does not decode is refused as a string, never as the
+  # decoder's own error struct: the callback promises `String.t()`.
+  defp coerce(:json, field, value, row) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, decoded} -> coerce(:json, field, decoded, row)
+      {:error, _} -> refuse_value(field, value)
+    end
+  end
+
+  defp coerce(:json, _field, value, _row) when is_map(value) or is_list(value), do: {:ok, value}
+  defp coerce(:json, field, value, _row), do: refuse_value(field, value)
+
+  # `:any` is a deliberate verdict, not an omission: the value is whatever the
+  # provider's own clause made of it, or a shape no type describes.
+  defp coerce(_type, _field, value, _row), do: {:ok, value}
+
+  defp bound(value, field, row) when is_integer(value) do
+    cond do
+      is_integer(row[:min]) and value < row[:min] -> refuse_below(field, value, row[:min])
+      is_integer(row[:max]) and value > row[:max] -> refuse_above(field, value, row[:max])
+      true -> {:ok, value}
+    end
+  end
+
+  defp bound(value, _field, _row), do: {:ok, value}
+
+  @doc "The refusal for a value under its row's minimum."
+  @spec refuse_below(atom() | binary(), term(), term()) :: {:error, binary()}
+  def refuse_below(field, value, minimum),
+    do: {:error, "#{field} #{inspect(value)} is below the minimum #{inspect(minimum)}"}
+
+  @doc "The refusal for a value over its row's maximum."
+  @spec refuse_above(atom() | binary(), term(), term()) :: {:error, binary()}
+  def refuse_above(field, value, maximum),
+    do: {:error, "#{field} #{inspect(value)} is above the maximum #{inspect(maximum)}"}
+
+  @doc """
+  The refusal for a required option that was not supplied. Named separately from
+  `refuse_value/2` because nothing was given to echo back.
+  """
+  @spec refuse_required(binary(), [atom()]) :: {:error, binary()}
+  def refuse_required(provider, [field]),
+    do: {:error, "#{provider} requires #{inspect(field)}"}
+
+  def refuse_required(provider, fields),
+    do: {:error, "#{provider} requires #{Enum.map_join(fields, ", ", &inspect/1)}"}
+
+  @doc """
+  The name a provider answers refusals under: the last segment of its module,
+  underscored — `Flezha.Plugin.Provider.HttpPoll` is `http_poll`.
+  """
+  @spec provider_name(module()) :: binary()
+  def provider_name(module), do: module |> Module.split() |> List.last() |> Macro.underscore()
+end

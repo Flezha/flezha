@@ -1,11 +1,11 @@
 defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   @moduledoc """
-  Covers the two-phase plugin lifecycle introduced by
-  `fix-overwatch-restart-storm` (capability `operative-extensions` —
-  "Two-phase plugin lifecycle gated on SDK readiness"). Plugins enter the
-  `:prepared` phase on `Table.subscribe/3`; `bulk_activate/1` transitions
-  every prepared plugin to `:running`, invoking the optional `activate/1`
-  callback. Plugins without an `activate/1` callback transition silently.
+  The two-phase plugin lifecycle (capability `operative-extensions`,
+  "Two-phase plugin lifecycle gated on SDK readiness"). A plugin enters the
+  `:prepared` phase on `Table.bulk_subscribe/2`; `bulk_activate/2` starts its
+  declared worker and calls `activate/1`, moving it to `:running`. A provider
+  that overrides neither takes the declaration's defaults and transitions
+  silently.
   """
 
   alias Flezha.Operative.Overwatch
@@ -26,6 +26,13 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
 
   defmodule QuiescentProvider do
     @moduledoc "Provider with no activate/1 — transitions silently."
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
@@ -35,75 +42,159 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     sends a marker to the registered reporter pid — the mirror of the
     `Plugin.Provider.Websocket` shape after the lifecycle split.
     """
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
 
+    @impl true
     def activate(%{report_to: pid, marker: m}) do
       send(pid, {:activated, m})
       :ok
     end
 
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule RaisingProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: raise("upstream went away")
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule FailingActivateProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: {:error, :upstream_down}
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule InvalidActivateProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: :nonsense
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule RaisingHealthProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: :ok
+    @impl true
     def health(_opts), do: raise("probe blew up")
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule GarbageHealthProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: :ok
+    @impl true
     def health(_opts), do: :probably_fine
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule UncertainHealthProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: :ok
+    @impl true
     def health(_opts), do: {:fail_open, :probe_timeout}
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule DefiniteHealthProvider do
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
+    @impl true
     def activate(_), do: :ok
+    @impl true
     def health(_opts), do: {:unhealthy, :upstream_down}
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defmodule ReportingInitProvider do
     @moduledoc "Reports from `init_provider/1` — evidence that phase 1 reached it."
+    use ProviderBehaviour,
+      options: [
+        marker: [type: :any, internal: true],
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(%{report_to: pid, marker: m} = opts) do
       send(pid, {:init_provider, m})
       {:ok, opts}
     end
 
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 
   defp subscribed(provider, id \\ "p1") do
     plugin = %Plugin{id: id, provider: provider, subscriptions: [{:on_input, [position: 0]}]}
-    {:ok, table} = Table.subscribe(Table.new(@catalog), id, plugin)
+    {:ok, table} = Table.bulk_subscribe(Table.new(@catalog), [{id, plugin}])
     table
   end
 
@@ -122,7 +213,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     }
 
     table = Table.new(@catalog)
-    {:ok, table} = Table.subscribe(table, "p1", plugin)
+    {:ok, table} = Table.bulk_subscribe(table, [{"p1", plugin}])
 
     assert Table.phase(table, "p1") == :prepared
   end
@@ -136,7 +227,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     }
 
     table = Table.new(@catalog)
-    {:ok, table} = Table.subscribe(table, "p1", plugin)
+    {:ok, table} = Table.bulk_subscribe(table, [{"p1", plugin}])
 
     refute_received {:activated, _}
 
@@ -157,7 +248,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     }
 
     table = Table.new(@catalog)
-    {:ok, table} = Table.subscribe(table, "p1", plugin)
+    {:ok, table} = Table.bulk_subscribe(table, [{"p1", plugin}])
     {table, _} = Table.bulk_activate(table)
     assert Table.phase(table, "p1") == :running
   end
@@ -177,8 +268,8 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     }
 
     table = Table.new(@catalog)
-    {:ok, table} = Table.subscribe(table, "qpro", quiescent)
-    {:ok, table} = Table.subscribe(table, "tpro", tracking)
+    {:ok, table} = Table.bulk_subscribe(table, [{"qpro", quiescent}])
+    {:ok, table} = Table.bulk_subscribe(table, [{"tpro", tracking}])
     {table, _} = Table.bulk_activate(table)
 
     assert Table.phase(table, "qpro") == :running
@@ -188,7 +279,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     # raise regardless of phase mix.
     {teardown_table, _dropped} = Table.teardown_all(table)
     assert teardown_table.plugins == %{}
-    assert teardown_table.phases == %{}
+    assert teardown_table.entries == %{}
   end
 
   test "activate that raises leaves plugin in :prepared and logs" do
@@ -199,7 +290,7 @@ defmodule FlezhaTest.Plugin.Extension.PhaseTest do
     }
 
     table = Table.new(@catalog)
-    {:ok, table} = Table.subscribe(table, "p1", plugin)
+    {:ok, table} = Table.bulk_subscribe(table, [{"p1", plugin}])
 
     table =
       ExUnit.CaptureLog.with_log(fn -> elem(Table.bulk_activate(table), 0) end)

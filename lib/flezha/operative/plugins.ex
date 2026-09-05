@@ -4,10 +4,12 @@ defmodule Flezha.Operative.Plugins do
   runtime add / restart / persist operations after it.
 
   The two phases exist because activation does real upstream I/O. `prepare/2`
-  registers each plugin's GenServer and runs `init_provider/1`, leaving it
-  `:prepared`; `activate/1` is what opens TLS connections and sends subscribe
-  handshakes. A bind that fails between them leaves nothing talking to an
-  upstream, which is what makes a parked operative silent rather than half-live.
+  validates each plugin's options and runs `init_provider/1`, leaving it
+  `:prepared` and holding no process at all; `bring_up/1` starts each provider's
+  declared worker and calls `activate/1`, which is where TLS connects and
+  subscribe handshakes go out. A bind that fails between them leaves nothing
+  talking to an upstream, which is what makes a parked operative silent rather
+  than half-live.
 
   Operations that are a bare `Flezha.Plugin.Extension.Table` call are made
   against `Table` directly by the callback that receives them — this module
@@ -114,51 +116,49 @@ defmodule Flezha.Operative.Plugins do
   end
 
   @doc """
-  Phase 2: transition every prepared plugin to `:running` via its provider's
-  optional `activate/1` callback — where upstream TLS connects, subscribe
-  handshakes, and other resource-acquisition I/O happen.
+  Phase 2: bring every subscribed plugin up. The ONE bring-up: it starts each
+  provider's declared worker and calls `activate/1`, where upstream TLS
+  connects, subscribe handshakes and other resource acquisition happen, and
+  answers the plugins that did not reach `:running` with the reason each gave.
 
-  Called exactly once per successful startup, immediately after the SDK
-  operative starts.
+  Bind, a runtime enable, a plugin heal and a handover all reach it. What a
+  caller does with the list is its own: bind lets the convergence loop heal
+  them, a runtime enable refuses the one plugin it was asked about.
   """
-  @spec activate(Overwatch.t()) :: Overwatch.t()
-  def activate(%Overwatch{} = state) do
-    # A plugin that fails to activate at bind stays `:prepared`, which the
-    # convergence loop now diffs as missing and heals under backoff — so the
-    # bind itself does not fail on it.
-    {table, _failed} = Table.bulk_activate(state.extensions, env(state))
-    %Overwatch{state | extensions: table}
+  @spec bring_up(Overwatch.t()) :: {Overwatch.t(), [{binary(), term()}]}
+  def bring_up(%Overwatch{} = state) do
+    {table, failed} = Table.bulk_activate(state.extensions, env(state))
+    {%Overwatch{state | extensions: table}, failed}
   end
 
   @doc """
-  Runtime add: the SDK is already up, so activate immediately. The boot path goes
-  through `prepare/2` + `activate/1` instead.
+  Runtime add: the SDK is already up, so bring the plugin up immediately. The
+  boot path goes through `prepare/2` + `activate/1` instead.
   """
   @spec subscribe(Overwatch.t(), term(), Plugin.t()) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
   def subscribe(%Overwatch{} = state, plugin_id, %Plugin{} = plugin) do
     # Idempotent on a plugin already on the table, because that is exactly the
-    # state a `start_plugin` heal finds: the subscription succeeded and only
-    # the upstream acquisition failed, leaving it `:prepared`.
-    # `Table.subscribe/3` refuses a duplicate id, so re-subscribing would fail
-    # forever and the plugin could never be healed — re-ACTIVATING is the
-    # retry. An already-`:running` plugin is skipped by `bulk_activate/2`, so
-    # the same call is a no-op for one that needs nothing.
+    # state a `start_plugin` heal finds: the subscription succeeded and only the
+    # upstream acquisition failed, leaving it `:prepared`. Re-subscribing would
+    # be refused as a duplicate id and the plugin could never be healed, so
+    # re-ACTIVATING is the retry. An already-`:running` plugin is skipped by
+    # `bulk_activate/2`, so the same call is a no-op for one that needs nothing.
     if Table.phase(state.extensions, plugin_id) == :unknown do
-      case Table.subscribe(state.extensions, plugin_id, plugin) do
-        {:ok, table} -> activated(state, table, plugin_id)
-        {:error, reason} -> {:error, reason, state}
+      case Table.bulk_subscribe(state.extensions, [{plugin_id, plugin}]) do
+        {:ok, table} -> activated(%Overwatch{state | extensions: table}, plugin_id)
+        {:error, {_id, reason}} -> {:error, reason, state}
       end
     else
-      activated(state, state.extensions, plugin_id)
+      activated(state, plugin_id)
     end
   end
 
   @doc """
-  The convergence loop's `restart_plugin`, for a declared plugin whose
-  provider self-reports unhealthy or whose subscriber crashed: re-run its
-  provider from the declared manifest (`Table.attempt_restart/3`) and activate
-  it, so `activate/1` reopens upstream resources.
+  The convergence loop's `restart_plugin`, for a declared plugin whose provider
+  self-reports unhealthy or whose worker crashed: re-run its provider from the
+  declared manifest (`Table.attempt_restart/3`) and bring it up, so the worker
+  is started afresh and `activate/1` reopens upstream resources.
 
   On a failed restart the plugin is recorded down, so the next tick diffs it as
   unhealthy and retries it on the loop's table.
@@ -167,21 +167,20 @@ defmodule Flezha.Operative.Plugins do
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
   def restart(%Overwatch{} = state, plugin_id, %Plugin{} = plugin) do
     case Table.attempt_restart(state.extensions, plugin_id, plugin) do
-      {:ok, table} -> activated(state, table, plugin_id)
+      {:ok, table} -> activated(%Overwatch{state | extensions: table}, plugin_id)
       {:error, reason, table} -> {:error, reason, %{state | extensions: table}}
     end
   end
 
-  # Activate, then answer for the ONE plugin the caller asked about. A
-  # subscribe that succeeded while `activate/1` failed leaves a plugin holding
-  # no upstream resources; reporting `{:ok, _}` for it makes the convergence
-  # loop's `start_plugin` / `restart_plugin` heal advance the per-target
-  # backoff as though the divergence were repaired — and, for a restart, turns
-  # a plugin the loop detected as unhealthy into a `:prepared` one it cannot
-  # see. The remedy must never be able to hide the fault.
-  defp activated(%Overwatch{} = state, table, plugin_id) do
-    {table, failed} = Table.bulk_activate(table, env(state))
-    state = %{state | extensions: table}
+  # Bring up, then answer for the ONE plugin the caller asked about. A subscribe
+  # that succeeded while `activate/1` failed leaves a plugin holding no upstream
+  # resources; reporting `{:ok, _}` for it makes the convergence loop's
+  # `start_plugin` / `restart_plugin` heal advance the per-target backoff as
+  # though the divergence were repaired, and, for a restart, turns a plugin the
+  # loop detected as unhealthy into a `:prepared` one it cannot see. The remedy
+  # must never be able to hide the fault.
+  defp activated(%Overwatch{} = state, plugin_id) do
+    {state, failed} = bring_up(state)
 
     case List.keyfind(failed, plugin_id, 0) do
       nil -> {:ok, state}

@@ -594,35 +594,23 @@ Overridden on the `WorkflowOperative` trait (Rust) or interface (Java).
 
 ## Layer 4: plugin options
 
-Passed in the plugin's `opts` map at install time. The Kafka producer
-(`operative_kafka_producer`) carries the most:
+Passed in the plugin's `opts` map at enable time. Every option a provider takes
+is a row of that provider's own declaration, so the option table on its page is
+rendered from the declaration and gated against it by the conformance test:
+there is no second list to keep in step, and this page does not carry one.
 
-| Option | Default | What it does |
-|---|---|---|
-| `:hosts` / `:topic` | required | Broker list and destination topic. `:partition` defaults to `0`. |
-| `:queue_overflow` | `:drop_nothing` | What a full producer queue does: `:drop_nothing`, `:drop_oldest`, `:drop_newest`. A configured drop of a delivery-guaranteed record is alarm-grade and does not advance the outbox cursor. |
-| `:queue_max` | `10_000` | Bounded producer queue depth. |
-| `:queue_block_timeout_ms` | `5_000` | How long a synchronous caller parks on a full queue. |
-| `:linger_ms` | `10` | Batch linger before a produce request. |
-| `:max_batch_bytes` | `1_048_576` | Produce-request size ceiling. |
-| `:required_acks` | `-1` | Broker acknowledgement level (`acks=all`). |
-| `:idempotent` | `false` | Producer idempotence (broker sequence numbers). |
-| `:max_in_flight` | `5` with `:idempotent`, else `1` | Outstanding produce requests per partition; a width above `1` without `:idempotent` is refused at preparation. |
-| `:retries` / `:retry_backoff_ms` / `:retry_max_backoff_ms` | `5` / `100` / `5_000` | Retry ladder before a batch parks to the DLQ. |
-| `:delivery_timeout_ms` | `30_000` | Total budget for one record's delivery. |
-| `:dispatch_timeout_ms` / `:request_timeout_ms` | `10_000` / `10_000` | Per-attempt send budget and broker-side request timeout. |
-| `:metadata_refresh_timeout_ms` | `5_000` | Bound on a metadata refresh. |
-| `:auto_create_topic` / `:auto_create_partitions` / `:auto_create_replication_factor` / `:topic_configs` | `true` / `1` / `2` / `[]` | Topic auto-creation. |
-| `:auth` / `:sasl_password_env` / `:use_ssl` / `:ssl_options` | unset | Broker authentication; the password is named by variable, never carried in `opts`. |
-
-The other first-party providers and their option sets:
-
-| Provider name | Page |
+| Provider name | Options |
 |---|---|
-| `operative_postgres` | `:database` / `:username` required; `:hostname` `localhost`, `:port` `5432`, `:auto_create` `false`, `:linger_ms` `25`, `:max_batch` `500`, `:queue_max` `10_000`, `:retry_backoff_ms` `250`, `:retry_max_backoff_ms` `5_000`, `:ssl` `false`, `:unhealthy_after_ms` `30_000` |
+| `operative_kafka_producer` | [`plugins/kafka_producer.md`](plugins/kafka_producer.md) |
+| `operative_postgres` | [`plugins/postgres_sink.md`](plugins/postgres_sink.md) |
 | `operative_http_poll` | [`plugins/http_poll.md`](plugins/http_poll.md) |
 | `operative_websocket` | [`plugins/websocket_subscription.md`](plugins/websocket_subscription.md) |
 | `operative_forward` | [`plugins/operative_forward.md`](plugins/operative_forward.md) |
+| `operative_stdout`, `operative_io_filter`, `operative_beam_msg`, `monitored_io_forward`, `operative_message_forward` | [`plugins/lifecycle.md`](plugins/lifecycle.md), which lists every provider and what it declares |
+
+An option a provider does not declare is refused at enable rather than ignored,
+on the CLI path and on the `--plugins` spec path alike, so a config asking for a
+capability the provider does not offer fails loudly.
 | `operative_message_forward` | [`plugins/message_handlers.md`](plugins/message_handlers.md) |
 | `operative_beam_msg` (`:include_metadata` `false`), `operative_stdout`, `operative_io_filter` (`:regex_pattern` required, `:inverted` `false`), `monitored_io_forward` (`:recv_pid` required, `:heartbeat_interval` `5000`) | [`plugins/lifecycle.md`](plugins/lifecycle.md) |
 

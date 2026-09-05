@@ -44,13 +44,21 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   end
 
   defmodule QuietProvider do
+    use Flezha.Plugin.ProviderBehaviour,
+      options: [
+        report_to: [type: :any, internal: true]
+      ]
+
+    @impl true
     def init_provider(opts), do: {:ok, opts}
 
+    @impl true
     def activate(%{report_to: pid}) do
       send(pid, :activated)
       :ok
     end
 
+    @impl true
     def on_input(%Ctx.IO{} = ctx, _opts), do: {:ok, ctx}
   end
 

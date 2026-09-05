@@ -242,18 +242,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
          {:ok, park} <- StateWire.decode_park_body(body) do
       runner_id = state.runner_id
 
-      DlqStore.append_async(
-        %{
-          operative_class: rc,
-          procedure_id: sh,
-          entity_key: pk,
-          channel: park.channel,
-          origin_offset: park.origin_offset,
-          error: park.error,
-          attempts: park.attempts,
-          payload: park.payload,
-          park_id: park.park_id
-        },
+      DlqStore.park_async(
+        {rc, sh, pk},
+        park,
         fn _entry_ref ->
           ControlChannel.send_control_async(
             runner_id,

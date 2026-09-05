@@ -3,9 +3,7 @@
 ## Purpose
 
 The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in a Stream operative is never silently dropped and never freezes the operative's progress. A failing procedure invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operative_class>/<procedure_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the entity advances: tier-off sessions hold the entity until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Operators inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. Workflow operatives are out of scope — their escape is AbortAll + saga compensation.
-
 ## Requirements
-
 ### Requirement: Failing procedure invocations are retried with backoff before parking
 
 A Stream procedure invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
@@ -85,3 +83,33 @@ The dead-letter queue SHALL apply to Stream operatives only. For Workflow operat
 
 - **WHEN** a Workflow operative's entity fails permanently
 - **THEN** the procedure aborts and compensation runs exactly as before this change, and nothing is written to the DLQ store
+
+### Requirement: A parked entry SHALL be built by one constructor
+
+Every writer that parks a payload SHALL build the entry through one constructor
+in the DLQ directory — the runner-side settlement, the outbox, the records path
+and the operative-forward provider alike — that validates the required fields
+and answers the record the store appends; no writer SHALL hand the store a map it
+built by hand. The entry's on-disk keys and directory layout SHALL be unchanged
+by the constructor, and the runner's wire frame SHALL remain the wire form of
+that entry rather than a further copy.
+
+#### Scenario: Every append site passes the constructed entry
+
+- **WHEN** the tree is searched for appends to the DLQ store
+- **THEN** every site SHALL pass the constructed entry, and a site that passes a
+  bare map SHALL fail the DLQ's own test naming the file
+
+#### Scenario: A missing required field is refused before the write
+
+- **WHEN** a writer constructs an entry without the entity key, the channel or
+  the error
+- **THEN** the constructor SHALL answer `{:error, reason}` naming the field and
+  no partial row SHALL be written
+
+#### Scenario: Existing parked entries are still listed
+
+- **WHEN** entries parked before this constructor existed are listed and shown
+- **THEN** they SHALL be read back unchanged, under the same directories, by the
+  same verbs
+

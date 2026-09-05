@@ -5,9 +5,12 @@ defmodule Flezha.Config do
   services that ask.
   """
 
-  def get_enabled_plugins() do
-    Application.get_env(:flezha, :enabled_plugins)
-  end
+  @doc """
+  Every provider id to its module. The list is `Flezha.Plugin.Providers`, not
+  configuration: an installed package adds a row at run time, which a compiled
+  config map cannot receive.
+  """
+  defdelegate get_enabled_plugins(), to: Flezha.Plugin.Providers, as: :all
 
   def concurrent_channel_count() do
     default = System.schedulers_online()

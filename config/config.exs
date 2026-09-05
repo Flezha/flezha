@@ -9,27 +9,6 @@ config :flezha,
   pre_hooks: [],
   post_hooks: [],
 
-  # TODO: we need to dynamically load the plugins from .env.
-  # ------------------------------------------------------------------------------------------------
-  # Enabled plugins.
-  enabled_plugins: %{
-    "operative_kafka_producer" => Flezha.Plugin.Provider.Kafka.Producer,
-    "operative_postgres" => Flezha.Plugin.Provider.Postgres,
-    "operative_websocket" => Flezha.Plugin.Provider.Websocket,
-    "operative_http_poll" => Flezha.Plugin.Provider.HttpPoll,
-    "operative_beam_msg" => Flezha.Plugin.Provider.BeamMsgForward,
-    "operative_stdout" => Flezha.Plugin.Provider.StdOut,
-    "operative_io_filter" => Flezha.Plugin.Provider.Filter,
-    "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward,
-    "operative_forward" => Flezha.Plugin.Provider.OperativeForward,
-    # `:on_message` provider that forwards a `{:flezha_request, key, payload,
-    # reply_to, ref}` envelope to the SDK-side operative via the
-    # `OperativeMessage` control command. Attach at operative start with a
-    # subscription keyed on the handler key, e.g. `["on_message",
-    # {"key": "fetch_init_state"}]`.
-    "operative_message_forward" => Flezha.Plugin.Provider.MessageForward
-  },
-
   # ------------------------------------------------------------------------------------------------
   # Installable plugin subsystem (Jenkins-style runtime plugin lifecycle).
   # See `lib/flezha/plugin/installer/` and `docs/plugins/installation.md`.

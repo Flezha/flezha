@@ -16,6 +16,8 @@ defmodule FlezhaTest.HttpPollCase do
 
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
+  alias Flezha.Plugin.Provider.WorkerSup
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 
   @channel "config_in"
@@ -64,11 +66,51 @@ defmodule FlezhaTest.HttpPollCase do
     )
   end
 
+  @doc """
+  Prepare and start one poller the way the extension table does: the declaration
+  normalises the options, the provider interprets them, and the declared worker
+  is started under the provider's own family.
+  """
   def start_poller(origin, extra \\ %{}) do
-    {:ok, opts} = HttpPoll.init_provider(base_opts(origin, extra))
-    {:ok, poller} = HttpPoll.activate(opts)
+    {:ok, opts} = prepare(origin, extra)
+    {:ok, poller} = start_worker(opts)
     kill_on_exit(poller)
     poller
+  end
+
+  @doc """
+  The prepared options, refusals and all, without starting anything. The caller
+  stands in for the host operative, exactly as the extension table does.
+  """
+  def prepare(origin, extra \\ %{}) do
+    opts = Map.put(base_opts(origin, extra), :overwatcher_pid, self())
+
+    with {:ok, opts} <- ProviderOptions.normalise_opts(HttpPoll, opts),
+         do: HttpPoll.init_provider(opts)
+  end
+
+  @doc "Stop a poller the way the table does on disable, through its supervisor."
+  def stop_worker(poller) do
+    family = WorkerSup.family(HttpPoll)
+
+    [{key, _}] =
+      Enum.filter(Enum.map(WorkerSup.keys(family), &{&1, &1}), fn {key, _} ->
+        match?([{^poller, _}], Registry.lookup(WorkerSup.registry_name(family), key))
+      end)
+
+    WorkerSup.stop_worker(family, key)
+  end
+
+  @doc "Start the declared worker for `opts`, the way the table does at activation."
+  def start_worker(opts) do
+    [{key, worker_opts}] = HttpPoll.worker_specs(opts)
+
+    WorkerSup.ensure_worker(
+      WorkerSup.family(HttpPoll),
+      key,
+      {PollWorker, worker_opts},
+      &Process.alive?/1
+    )
   end
 
   def probe(poller), do: PollWorker.probe(poller)

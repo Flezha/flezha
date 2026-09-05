@@ -22,10 +22,17 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   alias Flezha.Service.Cli.Plugin, as: CliPlugin
 
   defmodule EveryKind do
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_operative_init(ctx, _opts), do: {:ok, ctx}
+    @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
+    @impl true
     def on_interval(_ctx, _opts), do: :ok
+    @impl true
     def on_terminate(_ctx, _opts), do: :ok
+    @impl true
     def on_message(%Ctx.Msg{payload: p}, _opts), do: {:ok, "seen:" <> p}
   end
 
@@ -36,11 +43,14 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   defp extension(name, opts), do: %{"name" => name, "opts" => opts}
 
   defp subscribe(subs) do
-    Table.subscribe(Table.new(Overwatch.__extensions_catalog__()), "cli", %Plugin{
-      id: "cli",
-      provider: EveryKind,
-      subscriptions: subs
-    })
+    Table.bulk_subscribe(Table.new(Overwatch.__extensions_catalog__()), [
+      {"cli",
+       %Plugin{
+         id: "cli",
+         provider: EveryKind,
+         subscriptions: subs
+       }}
+    ])
   end
 
   test "proactive and interval both map onto :on_interval" do
@@ -106,7 +116,8 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
     test "an ill-typed sub-option is refused naming the option, never raised" do
       subs = cli_subscriptions([extension("on_interval", %{"interval_ms" => "soon"})])
 
-      assert {:error, {:invalid_subscription_opts, {:interval_ms, "soon"}}} = subscribe(subs)
+      assert {:error, {_id, {:invalid_subscription_opts, {:interval_ms, "soon"}}}} =
+               subscribe(subs)
     end
 
     # Fails when: a `:request` key declared on the CLI registers a subscriber

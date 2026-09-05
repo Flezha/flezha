@@ -13,6 +13,7 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   require Logger
 
+  alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, Wire}
@@ -196,16 +197,18 @@ defmodule Flezha.State.WalWriter.Settlement do
 
       dlq ->
         {:ok, _ref} =
-          DlqStore.append(%{
-            operative_class: rc,
-            procedure_id: sh,
-            entity_key: pk,
-            channel: dlq.channel,
-            origin_offset: entry.consumed_offset,
-            error: dlq.error,
-            attempts: dlq.attempts,
-            payload: dlq.payload
-          })
+          DlqStore.append(
+            DlqEntry.new!(%{
+              operative_class: rc,
+              procedure_id: sh,
+              entity_key: pk,
+              channel: dlq.channel,
+              origin_offset: entry.consumed_offset,
+              error: dlq.error,
+              attempts: dlq.attempts,
+              payload: dlq.payload
+            })
+          )
     end
 
     # An integer offset on a checkpoint-ack class means an interval just closed:

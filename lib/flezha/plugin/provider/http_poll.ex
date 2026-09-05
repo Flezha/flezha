@@ -21,110 +21,91 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
   alias Flezha.Plugin.ProviderBehaviour
-
-  use ProviderBehaviour
-
-  import ProviderBehaviour, only: [convert_opts: 4, parse_int: 2]
-
-  require Logger
-
-  # The one default table. `defstruct`, the option allow-list, and the worker
-  # opts all derive from it, so a new tunable is added in one place.
-  @int_opts [
-    interval_ms: 60_000,
-    timeout_ms: 10_000,
-    max_body_bytes: 1_048_576,
-    failure_threshold: 3,
-    # 0 = derive from `:interval_ms` (see `@idle_intervals`). There is
-    # deliberately no "disable" value: a source that has stopped settling polls
-    # is the wedge this window exists to catch.
-    idle_after_ms: 0
-  ]
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   # The derived idle window, in polling intervals. Three, because a poll that
   # outlives its own interval stretches the cadence rather than stacking, so a
-  # single slow cycle plus the poll after it must both land inside the window —
+  # single slow cycle plus the poll after it must both land inside the window,
   # otherwise a merely slow endpoint would read as a dead one.
   @idle_intervals 3
 
   @max_body_ceiling_bytes 64 * 1_048_576
 
-  # Field-guarded and therefore already total; see `Postgres`.
-  @converted_opts []
+  use ProviderBehaviour,
+    options: [
+      url: [type: :string, required: true, doc: "The resource to GET each interval"],
+      channel: [type: :string, required: true, doc: "Entry channel the body is injected on"],
+      plugin_id: [type: :string, doc: "Plugin id; defaults to the redacted URL"],
+      headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object"],
+      interval_ms: [type: :int, default: 60_000, doc: "Milliseconds between polls"],
+      timeout_ms: [type: :int, default: 10_000, min: 1, doc: "Budget for one request"],
+      max_body_bytes: [
+        type: :int,
+        default: 1_048_576,
+        min: 1,
+        max: @max_body_ceiling_bytes,
+        doc: "Largest body accepted before the poll is refused"
+      ],
+      failure_threshold: [
+        type: :int,
+        default: 3,
+        min: 1,
+        doc: "Consecutive failed polls before the plugin reports unhealthy"
+      ],
+      idle_after_ms: [
+        type: :int,
+        default: 0,
+        min: 0,
+        doc:
+          "Age of the last settled poll past which the source is idle; 0 derives it from `interval_ms`"
+      ]
+    ],
+    worker: [module: PollWorker, restart: :temporary]
 
-  @int_fields Keyword.keys(@int_opts)
+  # An empty channel names nothing to inject on. The row says `:string`, which
+  # `""` satisfies; this is the shape the type cannot express.
+  defp convert_value(:channel, value) when value == "" or is_nil(value),
+    do: ProviderBehaviour.refuse_value(:channel, value)
 
-  @enforce_keys [:url, :channel]
-  defstruct @enforce_keys ++ [:plugin_id, :overwatcher_pid, headers: %{}] ++ @int_opts
-
-  # Declaring `@known_opts` is what makes this provider strict: `use
-  # ProviderBehaviour` generates both the `build/1` refusal and `validate_opts/1`.
-  @known_opts [
-                :url,
-                :channel,
-                :plugin_id,
-                :headers,
-                # Injected by a partition group's plugin fan-out, not written
-                # by hand. Only the two rendered into the URL are read here.
-                :partition_index,
-                :partition_count,
-                :key_group_from,
-                :key_group_to
-              ] ++ Keyword.keys(@int_opts)
-
-  @impl true
-  def plugin_type(), do: :io_binding
+  defp convert_value(:channel, value) when is_atom(value), do: {:ok, Atom.to_string(value)}
 
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first
-  poll is the worker's, scheduled in `activate/1`, so a slow or unreachable
-  endpoint cannot stall the operative's plugin preparation.
-
-  This is where the option allow-list is enforced, not only in `build/1`:
-  `Plugin.SpecDecoder` hands a `--plugins` spec straight here without ever
-  constructing the provider struct, so a check that lived only in `build/1`
-  would never run on the path an operator actually uses.
+  poll is the worker's, and the worker is started by the extension table at
+  activation, so a slow or unreachable endpoint cannot stall the operative's
+  plugin preparation.
   """
+  @impl true
   def init_provider(opts) do
-    with :ok <- validate_opts(opts),
-         {:ok, raw_url} <- render_partition_placeholders(Map.get(opts, :url), opts),
+    with {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
          {:ok, url} <- HttpFetch.validate_url(raw_url, "http_poll"),
-         {:ok, channel} <- validate_channel(Map.get(opts, :channel)),
-         {:ok, headers} <- HttpFetch.validate_headers(Map.get(opts, :headers), "http_poll"),
-         {:ok, tunables} <- validate_tunables(opts),
-         :ok <- validate_budget(tunables) do
-      opts =
-        opts
-        |> Map.merge(tunables)
-        |> Map.merge(%{
-          url: url,
-          channel: channel,
-          headers: headers,
-          plugin_id: Map.get(opts, :plugin_id) || redact(url),
-          overwatcher_pid: self()
-        })
-
-      {:ok, opts}
+         {:ok, headers} <- HttpFetch.validate_headers(opts.headers, "http_poll"),
+         :ok <- validate_interval(opts.interval_ms),
+         :ok <- validate_budget(opts) do
+      {:ok,
+       Map.merge(opts, %{
+         url: url,
+         headers: headers,
+         plugin_id: opts.plugin_id || redact(url)
+       })}
     end
   end
 
-  @doc """
-  Start the poller. Called after the operative's SDK side confirms bound, so
-  the seed frame lands on a channel that can carry it.
-  """
-  def activate(opts) when is_map(opts) do
-    case PollWorker.start(opts) do
-      {:ok, pid} ->
-        {:ok, pid}
-
-      {:error, reason} = err ->
-        Logger.error(
-          "[Plugin.Provider.HttpPoll] activate failed plugin_id=" <>
-            "#{inspect(Map.get(opts, :plugin_id))} reason=#{inspect(reason)}"
-        )
-
-        err
-    end
+  @impl true
+  def worker_specs(opts) do
+    [
+      {Map.fetch!(opts, :plugin_id),
+       Map.take(opts, [
+         :url,
+         :channel,
+         :headers,
+         :plugin_id,
+         :interval_ms,
+         :timeout_ms,
+         :max_body_bytes,
+         :overwatcher_pid
+       ])}
+    ]
   end
 
   @doc """
@@ -134,6 +115,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   spec with no subscriptions is refused — and so a `:on_terminate` spec reads
   as the intent it is.
   """
+  @impl true
   def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
 
   @doc """
@@ -151,8 +133,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    threshold = Map.get(opts, :failure_threshold) || @int_opts[:failure_threshold]
-
     ProviderBehaviour.worker_health(
       opts,
       # The outer budget must exceed the inner `PollWorker.probe/1` timeout, or
@@ -163,17 +143,13 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
         dead: :poller_dead,
         budget_ms: 2 * ProviderBehaviour.probe_budget_ms()
       ],
-      &poller_health(&1, threshold, idle_window(opts))
+      &poller_health(&1, opts.failure_threshold, idle_window(opts))
     )
   end
 
   # The window an operator did not set is derived from the cadence they did.
-  defp idle_window(opts) do
-    case Map.get(opts, :idle_after_ms, @int_opts[:idle_after_ms]) do
-      ms when ms > 0 -> ms
-      _ -> @idle_intervals * Map.get(opts, :interval_ms, @int_opts[:interval_ms])
-    end
-  end
+  defp idle_window(%{idle_after_ms: ms}) when ms > 0, do: ms
+  defp idle_window(opts), do: @idle_intervals * opts.interval_ms
 
   # The failure run outranks the idle age when both apply: it names the actual
   # error, and the age only says nothing has happened.
@@ -239,51 +215,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   defp render_partition_placeholders(url, _opts), do: {:ok, url}
 
-  defp validate_channel(channel) when is_binary(channel) and channel != "", do: {:ok, channel}
-
-  defp validate_channel(channel) when is_atom(channel) and not is_nil(channel),
-    do: {:ok, Atom.to_string(channel)}
-
-  defp validate_channel(_),
-    do: {:error, "http_poll requires :channel — the entry channel to inject on"}
-
-  defp validate_tunables(opts) do
-    with {:ok, tuned} <- convert_opts(__MODULE__, opts, @int_fields, &convert_value/2),
-         :ok <- Enum.find_value(tuned, :ok, &bound_failure/1) do
-      {:ok, tuned}
-    end
-  end
-
-  defp bound_failure({field, value}) do
-    case bound(field, value) do
-      :ok -> nil
-      {:error, _} = err -> err
-    end
-  end
-
-  # A sub-second interval is a hammer, not a poll; an unbounded body cap
-  # defeats the cap. Both are refused rather than clamped so a typo is visible.
-  defp bound(:interval_ms, value) do
+  # A sub-second interval is a hammer, not a poll. It is the one bound that is
+  # not a row: its floor is an operator-settable duration, read here rather
+  # than frozen into the declaration at compile time.
+  defp validate_interval(value) do
     minimum = Durations.get(:http_poll_min_interval_ms)
 
     if value < minimum,
-      do: {:error, "http_poll interval_ms #{value} is below the #{minimum} ms minimum"},
+      do: ProviderOptions.refuse_below(:interval_ms, value, minimum),
       else: :ok
   end
-
-  defp bound(:max_body_bytes, value) when value > @max_body_ceiling_bytes,
-    do:
-      {:error,
-       "http_poll max_body_bytes #{value} exceeds the #{@max_body_ceiling_bytes} byte ceiling"}
-
-  # 0 is the documented "derive from :interval_ms" value for the idle window,
-  # so it is the one field where zero is not a typo.
-  defp bound(:idle_after_ms, 0), do: :ok
-
-  defp bound(field, value) when value < 1,
-    do: {:error, "http_poll #{field} must be positive, got #{value}"}
-
-  defp bound(_field, _value), do: :ok
 
   # A request allowed to outlast its own interval means polls overlap or the
   # cadence silently becomes the timeout — and a black-holing endpoint would
@@ -295,6 +236,4 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
          "cannot outlast its own interval"}
 
   defp validate_budget(_), do: :ok
-
-  defp convert_value(field, value) when field in @int_fields, do: parse_int(value, field)
 end

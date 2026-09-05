@@ -18,20 +18,32 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
   @factory "store_input"
 
   defmodule OkProvider do
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_message(%Ctx.Msg{payload: p}, _opts), do: {:ok, "ok:" <> p}
   end
 
   defmodule ErrorProvider do
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_message(_ctx, _opts), do: {:error, :deliberate}
   end
 
   defmodule RaisingProvider do
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_message(_ctx, _opts), do: raise("boom")
   end
 
   # Holds its answer until the test releases it, so the Overwatch is proved
   # responsive while a handler is genuinely still running.
   defmodule SlowProvider do
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_message(%Ctx.Msg{payload: p}, _opts) do
       Process.register(self(), :slow_handler_under_test)
       NodeTestHelper.park()

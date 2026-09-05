@@ -45,14 +45,16 @@ ingest confirms, which is what lets the source's outbox cursor wait on the hop.
 
 ## Parameters
 
-| Option | Required | Default | Meaning |
-|---|---|---|---|
-| `:target_operative_id` | yes | — | the operative (or partition group) to deliver into |
-| `:queue_max` | no | `10_000` | queue bound; past it the enqueueing caller parks |
-| `:retry_backoff_ms` | no | `250` | first retry delay |
-| `:retry_max_backoff_ms` | no | `5_000` | backoff cap |
-| `:call_timeout_ms` | no | `5_000` | per-attempt confirming-call timeout |
-| `:plugin_id` | no | `"<source>-><target>"` | worker key component |
+<!-- provider-options:begin -->
+| Option | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `target_operative_id` | string | &mdash; | yes | The operative in this namespace the payload is delivered to |
+| `plugin_id` | string | &mdash; | no | Plugin id; defaults to `<source>-><target>` |
+| `queue_max` | int | `10000` | no | Records held per target member |
+| `retry_backoff_ms` | int | `250` | no | First delay after a refusal |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
+| `call_timeout_ms` | int | `5000` | no | Budget for one confirming call |
+<!-- provider-options:end -->
 
 Unknown options are rejected by `build/1` rather than ignored, so a config
 asking for a delivery mode this provider deliberately does not offer fails

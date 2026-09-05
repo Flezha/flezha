@@ -1,80 +1,132 @@
 # Plugin provider lifecycle
 
-For authors of plugin providers — the modules an operative host
-(`Flezha.Operative.Overwatch`) attaches through `Flezha.Plugin.Extension.Table`. It covers
-the two phases and the split between `init_provider/1` and `activate/1`, the optional
-callbacks, the option contract, the identity the host injects, phase and health
-introspection, the restart policy, the shared helpers for queue-holding workers, and
-teardown. Packaging is in
+For authors of plugin providers: the modules an operative host
+(`Flezha.Operative.Overwatch`) attaches through `Flezha.Plugin.Extension.Table`.
+
+**A provider is one declaration plus one row.** `use ProviderBehaviour` names
+every option the provider takes and, for a provider that runs a long-lived
+process, the worker it runs; `Flezha.Plugin.Providers` holds the id it is
+enabled by. Nothing else is edited to add a provider or an option: no supervisor
+of its own, no configuration entry, no allow-list, no documented option table
+written by hand, no case in the table. Packaging is in
 [installation.md](installation.md).
+
+```elixir
+defmodule Flezha.Plugin.Provider.Postgres do
+  use Flezha.Plugin.ProviderBehaviour,
+    options: [
+      database: [type: :string, required: true, doc: "Database name"],
+      port: [type: :int, default: 5432, min: 1, max: 65_535, doc: "TCP port"],
+      ssl: [type: :bool, default: false, doc: "TLS to the server"]
+    ],
+    worker: [module: Postgres.SinkWorker, restart: :permanent]
+end
+```
+
+An option row takes `type` (`:int`, `:bool`, `:string`, `:enum`, `:pid`, `:json`,
+`:map`, `:list`, `:any`), `default`, `required`, `min` / `max`, `values` for an
+enum, `internal: true` for a key an operator may not write, `transient: true`
+for one that is never persisted, and `doc`. From the rows the contract derives
+the struct, the strict allow-list, the conversion table, the refusals, the help
+screen and the option table on this provider's page.
 
 ## Two phases
 
 | Phase | Meaning |
 | --- | --- |
-| `:prepared` | `init_provider/1` has run: config validated, local processes started. The provider is callable but has not been told to acquire upstream resources. |
-| `:running` | `activate/1` has run (or the provider exports none): upstream connections open, handshakes issued, input may flow. |
+| `:prepared` | `init_provider/1` has run: options validated and normalised. The plugin holds NO process at all. |
+| `:running` | The declared worker is started and `activate/1` has run: upstream connections open, handshakes issued, input may flow. |
 
 The host moves every `:prepared` plugin to `:running` with
-`Flezha.Plugin.Extension.Table.bulk_activate/2`, and only after `start_operative_sdk/2`
-has returned `{:ok, _}` — the SDK-side operative is bound and can take input. A provider
-that opens its upstream in `init_provider/1` instead runs that connection through every
-failed or stalled bind, queueing frames into an operative that cannot drain them.
+`Flezha.Plugin.Extension.Table.bulk_activate/2`, and only after
+`start_operative_sdk/2` has returned `{:ok, _}`, when the SDK-side operative is
+bound and can take input. A plugin on an operative whose SDK side never binds
+therefore costs nothing: no socket, no pool, no process.
+
+## Every callback is declared
+
+`Flezha.Plugin.ProviderBehaviour` declares the whole lifecycle, and each
+lifecycle callback carries a default body, so the table calls all of them and a
+provider writes only what it actually does. Nothing is discovered by probing
+exports.
+
+| Callback | Default | Write one when |
+| --- | --- | --- |
+| `init_provider/1` | the options as given | the provider validates or derives something beyond its rows |
+| `worker_specs/1` | one worker keyed by `:plugin_id`, taking the provider's opts | the worker takes a narrower shape, a different key, or there is more than one |
+| `activate/1` | nothing to acquire | something must be acquired that is not the declared worker |
+| `health/1` | the declared worker alive, or absent, is healthy | the provider can say more than "the process is up" |
+| `inspect_state/1` | `nil` | an operator needs to see state the configuration does not show |
+| `terminate_provider/1` | `:ok` | the provider holds something that is neither a worker nor an option |
+
+The seven `on_*/2` extension callbacks are what a subscription attaches to; a
+provider implements the ones it subscribes to, and its declaration names exactly
+those.
 
 ## `init_provider/1`
 
-Optional. Receives the opts map with the host identity merged in and returns `{:ok, opts}`,
-`{:ok, opts, pid | nil}` or `{:error, reason}`; any other shape is
-`{:error, {:invalid_init_provider_return, other}}`. A returned pid becomes the tracked
-`:owned_pid`. Without the export, the stored opts are used as-is.
+Receives the options already normalised through the declaration: every declared
+row present, converted to its type, defaulted, with the required ones checked
+and unknown keys already refused. It answers `{:ok, opts}` or
+`{:error, reason}`; any other shape is
+`{:error, {:invalid_init_provider_return, other}}`.
 
-Put here: config validation and coercion, `start_link` of a local process (a worker, a
-supervisor, a collector), struct construction — anything fast, deterministic and local;
-the host's supervisor is waiting on the call. Not here: TLS handshakes, subscribe-style
-handshakes that solicit upstream traffic, long blocking calls, anything that assumes the
-SDK side is bound — it is not yet.
+Put here: what the rows cannot say. A cross-field rule (a timeout that must fit
+inside its own interval), a value derived from another (a plugin id defaulted
+from a URL), a bound whose floor is an operator-settable duration. Not here: a
+process, a connection, a pool, a handshake. **Preparation starts nothing**, for
+every provider alike, which is what makes a `:prepared` plugin free.
 
-**Validate before you start anything.** Convert every option the provider interprets at
-the top of the call, ahead of `start_link`, `ensure_worker` or a connection pool: an
-invalid configuration must be a refusal, not a half-applied one. A value that reaches a
-linked child is past the point a refusal can be made — a linked child's crash reaches the
-caller as a signal, and only a caller that traps exits survives it at all.
+**A raise, a throw or an exit is a refusal, not an escape.** `Extension.Table`
+converts whatever `init_provider/1` fails with into
+`{:error, {:init_provider_crashed, provider, kind, payload}}` at the point it
+invokes the callback, on the enable path and on the plugin-heal restart path
+alike, and logs the formatted exception with its stacktrace at `:error`. Nothing
+is hidden, but a provider bug can no longer take the operative host, or the other
+plugins on it, down with it.
 
-**A raise, a throw or an exit is a refusal, not an escape.** `Extension.Table` converts
-whatever `init_provider/1` fails with into
-`{:error, {:init_provider_crashed, provider, kind, payload}}` at the point it invokes the
-callback, on the enable path and on the plugin-heal restart path alike, and logs the
-formatted exception with its stacktrace at `:error`. Nothing is hidden — the stacktrace is
-in the log and the reason names the provider — but a provider bug can no longer take the
-operative host, or the other plugins on it, down with it.
+## The declared worker
+
+A provider that runs a long-lived process declares it:
+
+```elixir
+worker: [module: Kafka.ProducerWorker, restart: :permanent, reusable: {Kafka.ProducerWorker, :reusable?}]
+```
+
+The table starts it at activation through `Flezha.Plugin.Provider.WorkerSup`, in
+a family named after the provider, under the key `worker_specs/1` gives, with
+the declared restart value and reuse check. The table tracks the pid, monitors
+it, injects it into `health/1`, `inspect_state/1` and `terminate_provider/1`, and
+stops it through the same supervisor on disable and on teardown. **No provider
+starts, registers or stops a lifecycle process of its own.**
+
+The restart value is the provider's, not the shape's. A sink is `:permanent`,
+because a supervisor restart keeps its queued records ("delay, never loss"); a
+forward is `:transient`; a source is `:temporary`, because it has nothing to keep
+and the convergence loop's ladder is what brings its plugin back.
+
+A provider's dispatch path addresses its worker by the name it is registered
+under (`WorkerSup.worker/2`), never by a pid an option carried: a supervisor
+restart replaces the pid and a name survives it.
 
 ## `activate/1`
 
-Optional, `activate(opts :: map()) :: :ok | {:ok, pid()} | {:error, term()}`. Implement it
-when the provider opens a TCP/TLS connection, issues a protocol handshake (websocket
-subscribe, Kafka version negotiation, NATS subscription) or acquires anything whose health
-depends on the operative being bound. `opts` is the stored map with `activation_env`
-merged last.
+Optional, `activate(opts :: map()) :: :ok | {:ok, term()} | {:error, term()}`.
+The declared worker is already up when it runs, so a provider whose activation IS
+its worker writes none. Implement it when something else must be acquired once
+the operative is bound. `opts` is the stored map with `activation_env` merged
+last.
 
-- `{:ok, pid}` — tracked as `:owned_pid` and monitored; `:ok` or any other `{:ok, ...}` —
-  the plugin is `:running`.
-- `{:error, _}`, an invalid return or a raise — logged at `:error`; the plugin stays
-  `:prepared`.
+A failed activation leaves the plugin `:prepared` AND is returned to the caller:
+`bulk_activate/2`'s second element is `[{plugin_id, reason}]` for every plugin
+that did not reach `:running`, so a bind can park honestly and a runtime enable
+can refuse the one plugin.
 
-A provider without `activate/1` goes straight to `:running`.
+## One event per transition
 
-### Restarts
-
-An owned pid exiting `:normal` unsubscribes the plugin. On any other exit the extension table
-records the subscriber's phase as `{:down, reason}` and arms nothing — it holds no retry counter,
-timer or restart policy. The crash is declared to the convergence loop, which plans
-`restart_plugin` on its own 5 s → 30 s → 60 s → 300 s table, keyed per plugin so one crashing
-plugin never throttles its siblings' starts. The restart re-runs `init_provider/1` from the entry
-the table holds (a provider that committed durable state of its own restores it) and the key
-resets only once the fresh pid has stayed `:running` for 60 s, so a provider that fails fast keeps
-backing off. A provider with `activate/1` drops back to `:prepared` and is re-activated if it was
-`:running`; one without returns to `:running` directly. `activate/1` therefore runs on every
-restart and every bind.
+Every phase change emits `[:flezha, :plugin, :phase]` from the table's one
+transition function, carrying `%{plugin_id, provider, from, to, reason}`, on the
+way in, between phases, and on the way out.
 
 ## Subscription sub-options
 
@@ -105,58 +157,42 @@ that cannot be coerced is `{:error, {:invalid_subscription_opts, {name,
 value}}}`. All three are refused at declaration time, before any durable record
 of the plugin exists.
 
-## Callbacks
+## The refusal grammar
 
-A subscription `{extension, opts}` requires the export `<extension>/2`
-(`{:error, {:missing_callback, name}}` otherwise). The rest:
+A value the declaration cannot accept is refused in one sentence shape, on the
+CLI path (`flz plugin enable ... --Xkey=value`) and on the `--plugins` spec path
+alike, and the two answer identically:
 
-| Callback | Purpose |
+| The row says | The refusal |
 | --- | --- |
-| `plugin_type/0` | `:io_binding`; required with `use Flezha.Plugin.ProviderBehaviour` |
-| `build/1`, `help/0`, `provider_info/0` | generated by `use ProviderBehaviour` for the `flz plugin enable ... --Xkey=value` path; the last two are overridable |
-| `health/1` | verdict for a `:running` instance: `:healthy` or `{:unhealthy, reason}`; `opts` carries `:owned_pid` |
-| `inspect_state/1` | operator-facing map rendered by `flz operative info`, or `nil` |
-| `terminate_provider/1` | release processes beyond the one `:owned_pid`; idempotent; runs on disable and teardown |
+| `required: true` and nothing was written | `<provider> requires :<option>` |
+| a type the value does not satisfy | `Invalid value for <option>: <value>` |
+| `min:` | `<option> <value> is below the minimum <min>` |
+| `max:` | `<option> <value> is above the maximum <max>` |
+| no row at all | `unknown option(s) for <provider>: <key>` |
 
-Declaring `@known_opts [...]` (optionally `@internal_opts`) makes the option set strict:
-`build/1` refuses unknown `--X` keys and the generated `validate_opts/1` — call it first in
-`init_provider/1` — refuses unknown keys on the `--plugins` spec path, which never builds
-the struct. The host-injected keys (`ProviderBehaviour.host_opts/0`) are always allowed.
-`@internal_opts` is for the provider's OWN resolved state, read back on a re-prepare
-(`OperativeForward`'s `:worker_pid` and `:routes`): those are not host keys, and a strict
-check that does not allow them refuses every plugin heal rather than only a bad config.
+A cross-field rule a row cannot express stays in the provider and answers the
+same `{:error, binary()}` shape.
 
-## Option values
+A provider may still convert a shape by hand: a private `convert_value/2` clause
+runs first, and anything none of its clauses match falls through to the row's
+declared type. That is what keeps a JSON option's decode failure a string rather
+than a decoder struct, and what closes a two-value frame type the row cannot
+name.
 
-Declaring `@converted_opts [...]` makes the option VALUES strict. A provider's private
-`convert_value/2` table is its one conversion surface: `build/1` runs it over a CLI string
-map, and `init_provider/1` reads its own tunables through
-`ProviderBehaviour.convert_opts/4`, which takes each field's default from the provider's
-`defstruct` and answers the first refusal. `use ProviderBehaviour` injects a permissive
-last clause, so an option no clause names passes through unchanged — right for a URL or a
-topic, wrong for a value the provider interprets. Every field listed in `@converted_opts`
-is REFUSED when none of its own clauses match, and a provider that defines
-`convert_value/2` while declaring no `@converted_opts` does not compile.
-
-**`@converted_opts []` is a verdict, not an unfinished declaration.** It means every clause
-in that table guards on the FIELD and is already total through the shared helpers below, so
-an injected refusal would generate a clause that never matches. Seven of the eight
-providers that declare it are there; the injected clause is what protects the one whose
-clauses guard on the VALUE.
-
-| Helper | Accepts |
+| Shared helper | Accepts |
 | --- | --- |
 | `parse_int/2` | an integer, or a string naming one |
 | `parse_bool/2` | a boolean, or `"true"` / `"false"` |
-| `parse_enum/3` | a member of a closed atom set, or its string spelling |
+| `parse_enum/3` | a member of a closed set, or its string spelling |
 | `parse_pid/2` | a pid, or a registered name |
 
-All four are total: anything else is `{:error, message}` naming the option and the value.
-There is deliberately no raising counterpart. An option reaching `init_provider/1` is
-operator-supplied and unvalidated, so a helper that raises on a shape it did not expect
-turns a bad value into a crash instead of a refusal — and a closed set resolved with
-`String.to_existing_atom/1` is the same defect twice over, raising for one typo and
-answering a wrong-but-existing atom for the next.
+All four are total: anything else is `{:error, message}` naming the option and
+the value. There is deliberately no raising counterpart. An option reaching a
+provider is operator-supplied and unvalidated, so a helper that raises on a shape
+it did not expect turns a bad value into a crash instead of a refusal, and a
+closed set resolved with `String.to_existing_atom/1` is the same defect twice
+over, raising for one typo and answering a wrong-but-existing atom for the next.
 
 ## Host identity
 
@@ -170,28 +206,36 @@ cross-namespace target at enable time.
 ## Introspection
 
 ```elixir
-Flezha.Plugin.Extension.Table.phase(table, plugin_id)   #=> :prepared | :running | :unknown
-Flezha.Plugin.Extension.Table.health(table)             #=> %{plugin_id => :healthy | {:unhealthy, reason}}
+Flezha.Plugin.Extension.Table.phase(table, plugin_id)      #=> :prepared | :running | {:down, reason} | :unknown
+Flezha.Plugin.Extension.Table.running?(table, plugin_id)   #=> the plugin holds its upstream
+Flezha.Plugin.Extension.Table.subscribed?(table, plugin_id) #=> the plugin is declared here at all
+Flezha.Plugin.Extension.Table.health(table)                #=> %{plugin_id => :healthy | {:unhealthy, reason}}
 ```
 
-Only `:running` plugins are probed; a `:prepared` one reports `:healthy`. Without
-`health/1` a plugin is healthy while its owned pid is alive (or absent). A `health/1` that
-raises or exceeds `ProviderBehaviour.probe_budget_ms/0` (500 ms) reads as `:healthy` —
-convergence never escalates on an uncertain probe. An unhealthy verdict is what convergence
+Read a predicate, never the atom: the phase vocabulary is the table's, and the
+conformance test fails a comparison against it written anywhere else.
+
+Only `:running` plugins are probed; a `:prepared` one reports `:healthy`. A
+provider that overrides nothing is healthy while its declared worker is alive, or
+absent. A `health/1` that raises or exceeds
+`ProviderBehaviour.probe_budget_ms/0` (500 ms) reads as `:healthy`: convergence
+never escalates on an uncertain probe. An unhealthy verdict is what convergence
 restarts the plugin on (`FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD`, default 2).
 
 ## In-tree providers
 
-| Provider | `init_provider/1` | `activate/1` |
-| --- | --- | --- |
-| `Websocket` | normalises opts, validates the URI and any [subscription source](websocket_subscription.md) | opens the connection and runs the subscribe handshake |
-| `HttpPoll` | validates URL, channel, headers and tunables; no request | starts the poller; the first request is scheduled, not executed |
-| `Kafka.Producer` | starts the per-`(plugin, topic, partition)` `ProducerWorker` | none — the broker connection is lazy |
-| `Postgres` | starts the `SinkWorker` | none |
-| `OperativeForward` | refuses a self / cross-namespace target, resolves the target's members, starts one `ForwardWorker` per member (re-resolving on every re-prepare); exports `terminate_provider/1` | none — driven by `:on_output` |
-| `Filter` | compiles the regex | none |
-| `MonitoredIOForward` | starts a local GenServer | none |
-| `BeamMsgForward`, `MessageForward`, `StdOut`, `Metrics` | none — stored opts used as-is | none |
+Every row of `Flezha.Plugin.Providers`, and what each one declares:
+
+| Provider id | Worker | Restart | Overrides |
+| --- | --- | --- | --- |
+| `operative_websocket` | `Websocket.Client` | `:temporary` | `init_provider/1`, `worker_specs/1`, `health/1`, `inspect_state/1` |
+| `operative_http_poll` | `HttpPoll.PollWorker` | `:temporary` | `init_provider/1`, `worker_specs/1`, `health/1` |
+| `operative_kafka_producer` | `Kafka.ProducerWorker` | `:permanent` | `init_provider/1`, `worker_specs/1`, `health/1` |
+| `operative_postgres` | `Postgres.SinkWorker` | `:permanent` | `init_provider/1`, `worker_specs/1`, `health/1` |
+| `operative_forward` | `OperativeForward.ForwardWorker`, one per target member | `:transient` | `init_provider/1`, `worker_specs/1`, `health/1` |
+| `monitored_io_forward` | itself, a heartbeat GenServer | `:temporary` | none |
+| `operative_io_filter` | none | | `init_provider/1` |
+| `operative_stdout`, `operative_beam_msg`, `operative_message_forward` | none | | none |
 
 ## Shared helpers for queue-holding workers
 
@@ -238,15 +282,25 @@ lines unconditionally.
 
 ## Teardown
 
-`Flezha.Plugin.Extension.Table.teardown_all/1` and a disable handle both phases uniformly:
-`terminate_provider/1` runs if exported, the owned pid is stopped with `:shutdown`, timers
-cancelled, monitors released, the `PluginManager` registration dropped. The table tracks
-exactly one `:owned_pid`; a provider owning more must implement `terminate_provider/1`
-(idempotent — disable followed by stop calls it twice).
+`Flezha.Plugin.Extension.Table.teardown_all/1` and a disable handle both phases
+uniformly, and phase is no precondition: `terminate_provider/1` runs, every worker
+the table started is stopped through the supervisor that started it, timers are
+cancelled, monitors released, the `PluginManager` registration dropped. A
+`:prepared` plugin holds no worker, so its teardown is the same call that empties
+a `:running` one.
+
+The stop reaches the DECLARED keys as well as the tracked ones. A `:transient` or
+`:permanent` worker that crashed was restarted by its own supervisor under the
+same key while the table dropped it from the record, and stopping only what is
+tracked would leave that replacement running for ever.
+
+`terminate_provider/1` is for what is neither a worker nor an option, and must be
+idempotent: a disable followed by a stop calls it twice.
 
 ## See also
 
 - [installation.md](installation.md) — packaging, manifests and the `flz plugin` verbs
 - [operative_forward.md](operative_forward.md) — the fan-out provider with one worker per member
 - [http_poll.md](http_poll.md) — the smallest two-phase source provider
+- [postgres_sink.md](postgres_sink.md) — the smallest declared-worker sink
 - [../internals/convergence_loop.md](../internals/convergence_loop.md) — how unhealthy plugins are healed

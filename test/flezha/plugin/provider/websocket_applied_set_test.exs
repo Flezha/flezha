@@ -10,6 +10,8 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
 
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2]
+
   import FlezhaTest.Helper.WebsocketSourceFixtures
 
   alias Flezha.Plugin.Provider.Websocket
@@ -225,7 +227,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
   describe "a static subscription_items source" do
     test "drives the same reconcile and ack gating as a polled list" do
       assert {:ok, opts} =
-               Websocket.init_provider(%{
+               prepare(Websocket, %{
                  uri: "wss://test.local",
                  subscription_items: ["BTC-USD", "ETH-USD"],
                  subscribe_template: @sub_template,
@@ -253,7 +255,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
 
     test "a static list is partition-filtered like a polled one" do
       assert {:ok, opts} =
-               Websocket.init_provider(%{
+               prepare(Websocket, %{
                  uri: "wss://test.local",
                  subscription_items: ["SOL-USD", "BTC-USD", "ETH-USD"],
                  subscribe_template: @sub_template,
@@ -269,7 +271,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
 
     test "declaring both sources is refused at init" do
       assert {:error, message} =
-               Websocket.init_provider(%{
+               prepare(Websocket, %{
                  uri: "wss://test.local",
                  subscription_url: "https://cfg.internal/subs",
                  subscription_items: ["BTC-USD"],
@@ -282,7 +284,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
 
     test "a non-string item list is refused" do
       assert {:error, message} =
-               Websocket.init_provider(%{
+               prepare(Websocket, %{
                  uri: "wss://test.local",
                  subscription_items: [1, 2],
                  subscribe_template: @sub_template,

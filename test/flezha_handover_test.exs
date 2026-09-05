@@ -2,13 +2,18 @@ defmodule FlezhaTest.SickProvider do
   @moduledoc false
   # Convergence plugin-health test double: the health verdict and the
   # activation count are controlled through :persistent_term.
+  use Flezha.Plugin.ProviderBehaviour
+
+  @impl true
   def on_output(_ctx, _opts), do: :ok
 
+  @impl true
   def activate(_opts) do
     :persistent_term.put({__MODULE__, :activations}, activations() + 1)
     :ok
   end
 
+  @impl true
   def health(_opts), do: :persistent_term.get({__MODULE__, :health}, :healthy)
 
   def set_health(verdict), do: :persistent_term.put({__MODULE__, :health}, verdict)

@@ -85,24 +85,58 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
+  This plugin with only the options an operator may write.
+
+  A running plugin's opts carry what `init_provider/1` derived at start (the
+  websocket source's live `subscription`, for one), and re-enabling a partition
+  member with those is refused as unknown options. The provider's declaration
+  names what is writable, so the member starts from that; the derived values are
+  re-derived by the new member's own `init_provider/1`, which is the only thing
+  that can produce them for it.
+  """
+  @spec declared_opts_only(t()) :: t()
+  def declared_opts_only(%__MODULE__{provider: provider, opts: opts} = plugin)
+      when is_map(opts) and is_atom(provider) and not is_nil(provider) do
+    writable =
+      provider.__provider__()
+      |> Flezha.Plugin.ProviderBehaviour.Decl.public_options()
+      |> MapSet.new(&elem(&1, 0))
+
+    %__MODULE__{plugin | opts: Map.filter(opts, &MapSet.member?(writable, elem(&1, 0)))}
+  rescue
+    # A module that answers no declaration is not a provider this can read.
+    UndefinedFunctionError -> plugin
+  end
+
+  def declared_opts_only(%__MODULE__{} = plugin), do: plugin
+
+  @doc """
   Strip transient fields that cannot be persisted across a BEAM
   restart, returning a value safe to embed in any persistence layer
   (HotSwap handover state, ProcessHub child-spec, DETS, ...).
 
-  Today every field on `%Flezha.Plugin{}` (`:id`, `:provider`, `:opts`,
-  `:subscriptions`, `:namespace`, `:operative_id`) is inert data —
-  there are no live pids, monitor refs, timer refs, or closures held in
-  the struct itself — so this function is the identity. It exists as a
-  contract surface: any future field that holds runtime-only state
-  (e.g. a worker pid or timer ref tracked alongside the plugin) MUST
-  be dropped here, otherwise it will be persisted into the cspec by
-  `Flezha.Service.PluginManager` (through `ProcessRegistry.update/3`) and
-  resurface on the next Overwatch (re)start as a stale reference.
+  Every field on `%Flezha.Plugin{}` itself is inert data, so what this drops is
+  the provider's own: an option row declared `transient: true` is held in memory
+  and never written down. A resolved credential is the case that exists today.
 
-  Verified by `test/flezha/plugin_test.exs` — round-tripping the
-  output through `:erlang.term_to_binary/1` plus
-  `:erlang.binary_to_term/1` SHALL be a no-op.
+  Any future field that holds runtime-only state (a worker pid, a timer ref)
+  MUST be dropped here too, or it is persisted into the cspec by
+  `Flezha.Service.PluginManager` (through `ProcessRegistry.update/3`) and
+  resurfaces on the next Overwatch (re)start as a stale reference.
+
+  Verified by `test/flezha/plugin_test.exs`: round-tripping the output through
+  `:erlang.term_to_binary/1` plus `:erlang.binary_to_term/1` SHALL be a no-op.
   """
   @spec strip_transient(t()) :: t()
+  def strip_transient(%__MODULE__{provider: provider, opts: opts} = plugin)
+      when is_map(opts) and is_atom(provider) and not is_nil(provider) do
+    transient = Flezha.Plugin.ProviderBehaviour.Decl.transient_options(provider.__provider__())
+    %__MODULE__{plugin | opts: Map.drop(opts, transient)}
+  rescue
+    # A module that answers no declaration is not a provider this can read, and
+    # a persistence boundary is the wrong place to fail over it.
+    UndefinedFunctionError -> plugin
+  end
+
   def strip_transient(%__MODULE__{} = plugin), do: plugin
 end

@@ -29,6 +29,7 @@ defmodule Flezha.Service.Dlq do
   alias Flezha.AuthZ.Namespace
   alias Flezha.Dlq.Store
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Plugin.Host
   alias Flezha.Service.CallerContext
   alias Flezha.Service.OperativeManager
 
@@ -117,7 +118,7 @@ defmodule Flezha.Service.Dlq do
          {:ok, overwatch} <- resolve_overwatch(entry["operative_class"]) do
       generation_before = entry["generation"] || 1
       :ok = Store.mark_replaying(entry_ref)
-      GenServer.cast(overwatch, {:io_in, payload, %{"channel" => entry["channel"]}})
+      Host.inject(overwatch, payload, %{"channel" => entry["channel"]}, :fire_and_forget)
       {:ok, await_replay_outcome(entry_ref, generation_before, replay_grace_ms())}
     end
   end

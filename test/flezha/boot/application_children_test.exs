@@ -39,9 +39,14 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     {Flezha.Transport.Server, :uds},
     Flezha.Service.PluginManager,
     Flezha.Plugin.Provider.Kafka.WorkerRegistry,
-    Flezha.Plugin.Provider.Kafka.ProducerSup,
-    Flezha.Plugin.Provider.Postgres.SinkSup,
-    Flezha.Plugin.Provider.OperativeForward.ForwardSup,
+    # One worker family per provider that declares a worker, from the provider
+    # table, in its order.
+    Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,
+    Flezha.Plugin.Provider.OperativeForward.WorkerSup,
+    Flezha.Plugin.Provider.HttpPoll.WorkerSup,
+    Flezha.Plugin.Provider.Kafka.Producer.WorkerSup,
+    Flezha.Plugin.Provider.Postgres.WorkerSup,
+    Flezha.Plugin.Provider.Websocket.WorkerSup,
     Flezha.Service.PortPilot,
     Flezha.Operative.MessageHandlerTaskSup,
     Flezha.State.WriterRegistry,

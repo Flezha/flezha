@@ -15,6 +15,7 @@ defmodule Flezha.Plugin.Installer.Loader do
   require Logger
 
   alias Flezha.Plugin.Installer.Store
+  alias Flezha.Plugin.Providers
 
   @type plugin_id :: binary()
   @type state :: %{registry: %{plugin_id() => {binary(), [module()]}}}
@@ -152,6 +153,8 @@ defmodule Flezha.Plugin.Installer.Loader do
 
     case load_from_ebin(ebin_dir, row[:modules] || []) do
       {:ok, loaded_mods} ->
+        register_provisions(row)
+
         registry =
           Map.put(state.registry, plugin_id, {row[:version], loaded_mods})
 
@@ -171,6 +174,20 @@ defmodule Flezha.Plugin.Installer.Loader do
         _ = Store.update_status(plugin_id, :load_failed)
         state
     end
+  end
+
+  # An installed package's provisions become rows of the one provider table, so
+  # `flz plugin enable`, a `--plugins` spec and `flz plugin list` resolve them
+  # exactly as they resolve a first-party provider. Registration follows the
+  # modules being loaded, because a row naming a module the VM does not hold
+  # would resolve to nothing.
+  defp register_provisions(row) do
+    for %{id: provision_id, provider: provider} <- Map.get(row, :provides, []),
+        is_binary(provision_id) and is_atom(provider) and not is_nil(provider) do
+      Providers.add(provision_id, provider)
+    end
+
+    :ok
   end
 
   defp load_from_ebin(ebin_dir, expected_modules) do

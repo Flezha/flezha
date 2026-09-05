@@ -48,16 +48,19 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     :correlation_mismatch
   ]
 
-  def start_link(opts) when is_list(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
+  @doc """
+  Started by the extension table at activation, from the provider's declared
+  worker spec. Every tunable it reads is a declared option already converted and
+  defaulted; what it reads with a fallback are the injected seams below, which
+  are functions a test replaces and never settings.
+  """
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(opts) when is_map(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
 
   def child_spec(opts) do
-    plugin_id = Keyword.fetch!(opts, :plugin_id)
-    topic = Keyword.fetch!(opts, :topic)
-    partition = Keyword.fetch!(opts, :partition)
-
     %{
-      id: {__MODULE__, plugin_id, topic, partition},
+      id: {__MODULE__, opts.plugin_id, opts.topic, opts.partition},
       start: {__MODULE__, :start_link, [opts]},
       type: :worker,
       restart: :transient,
@@ -78,9 +81,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   """
   @spec enqueue(GenServer.server(), binary(), map(), keyword()) ::
           :ok | {:error, term()}
-  def enqueue(server, msg, metadata, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, 35_000)
-    GenServer.call(server, {:enqueue, msg, metadata}, timeout)
+  def enqueue(server, msg, metadata, call_opts \\ []) do
+    GenServer.call(server, {:enqueue, msg, metadata}, Keyword.get(call_opts, :timeout, 35_000))
   catch
     :exit, {:timeout, _} -> {:error, {:delivery_failed, :enqueue_timeout}}
     :exit, {:noproc, _} -> {:error, {:delivery_failed, :no_producer_worker}}
@@ -156,44 +158,53 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     |> Map.merge(fresh_slots())
   end
 
-  # Every tunable and every injected function, read once: a knob has exactly
-  # one default and it is here.
+  # The declared tunables, taken as given, plus the injected seams. A tunable
+  # has exactly one default and it is its row in `Flezha.Plugin.Provider.Kafka`;
+  # a seam is a function a test replaces, never a setting, and its fallback is
+  # the production implementation.
+  @tunables [
+    :connection_identity,
+    :topic,
+    :partition,
+    :plugin_id,
+    :linger_ms,
+    :max_batch_bytes,
+    :queue_max,
+    :queue_overflow,
+    :queue_block_timeout_ms,
+    :retries,
+    :retry_backoff_ms,
+    :retry_max_backoff_ms,
+    :delivery_timeout_ms,
+    :dispatch_timeout_ms,
+    :required_acks,
+    :request_timeout_ms,
+    :idempotent,
+    :max_in_flight,
+    :auto_create_topic,
+    :auto_create_partitions,
+    :auto_create_replication_factor,
+    :topic_configs,
+    :metadata_refresh_timeout_ms
+  ]
+
   defp configured(opts) do
-    %{
-      connection_identity: Keyword.get(opts, :connection_identity),
-      topic: Keyword.fetch!(opts, :topic),
-      partition: Keyword.fetch!(opts, :partition),
-      plugin_id: Keyword.fetch!(opts, :plugin_id),
-      linger_ms: Keyword.get(opts, :linger_ms, 10),
-      max_batch_bytes: Keyword.get(opts, :max_batch_bytes, 1_048_576),
-      queue_max: Keyword.get(opts, :queue_max, 10_000),
-      queue_overflow: Keyword.get(opts, :queue_overflow) || :drop_nothing,
-      queue_block_timeout_ms: Keyword.get(opts, :queue_block_timeout_ms, 5_000),
-      retries: Keyword.get(opts, :retries, 5),
-      retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 100),
-      retry_max_backoff_ms: Keyword.get(opts, :retry_max_backoff_ms, 5_000),
-      delivery_timeout_ms: Keyword.get(opts, :delivery_timeout_ms, 30_000),
-      dispatch_timeout_ms: Keyword.get(opts, :dispatch_timeout_ms, 10_000),
-      required_acks: Keyword.get(opts, :required_acks, -1),
-      request_timeout_ms: Keyword.get(opts, :request_timeout_ms, 10_000),
-      idempotent: Keyword.get(opts, :idempotent, false),
-      max_in_flight: Keyword.get(opts, :max_in_flight, 1),
-      auto_create_topic: Keyword.get(opts, :auto_create_topic, true),
-      auto_create_partitions: Keyword.get(opts, :auto_create_partitions, 1),
-      auto_create_replication_factor: Keyword.get(opts, :auto_create_replication_factor, 2),
-      topic_configs: Keyword.get(opts, :topic_configs, []),
-      metadata_refresh_timeout_ms: Keyword.get(opts, :metadata_refresh_timeout_ms, 5_000),
-      send_fn: Keyword.get(opts, :send_fn, &Wire.default_send/3),
-      init_producer_id_fn:
-        Keyword.get(opts, :init_producer_id_fn, &Wire.default_init_producer_id/2),
-      create_topic_fn: Keyword.get(opts, :create_topic_fn, &Wire.default_create_topic/4),
-      metadata_refresh_fn:
-        Keyword.get(opts, :metadata_refresh_fn, &Wire.default_metadata_refresh/2),
-      now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
-      wall_now_fn: Keyword.get(opts, :wall_now_fn, fn -> System.system_time(:millisecond) end),
-      stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold)
-    }
+    opts
+    |> Map.take(@tunables)
+    |> Map.merge(%{
+      send_fn: seam(opts, :send_fn, &Wire.default_send/3),
+      init_producer_id_fn: seam(opts, :init_producer_id_fn, &Wire.default_init_producer_id/2),
+      create_topic_fn: seam(opts, :create_topic_fn, &Wire.default_create_topic/4),
+      metadata_refresh_fn: seam(opts, :metadata_refresh_fn, &Wire.default_metadata_refresh/2),
+      now_fn: seam(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
+      wall_now_fn: seam(opts, :wall_now_fn, fn -> System.system_time(:millisecond) end),
+      stall_threshold: seam(opts, :stall_threshold, @default_stall_threshold)
+    })
   end
+
+  # The one read a seam takes. It is not a setting: a plugin cannot write one,
+  # and the fallback is what production runs.
+  defp seam(opts, key, default), do: Map.get(opts, key) || default
 
   # What a fresh worker starts with. None of it is configurable.
   defp fresh_slots do
@@ -1125,10 +1136,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp acquire_worker(opts) do
     cond do
-      pid = Keyword.get(opts, :worker_pid) ->
+      pid = opts[:worker_pid] ->
         {pid, nil, false}
 
-      identity = Keyword.get(opts, :connection_identity) ->
+      identity = opts[:connection_identity] ->
         case WorkerRegistry.acquire(identity) do
           {:ok, pid, ref} -> {pid, ref, true}
           {:error, reason} -> exit({:registry_acquire_failed, reason})

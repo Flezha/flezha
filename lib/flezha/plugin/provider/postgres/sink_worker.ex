@@ -92,8 +92,10 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     consecutive_failures: 0
   ]
 
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
+  @doc "Started by the extension table at activation, from the declared spec."
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(opts) when is_map(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
 
   @doc """
   Enqueue one output record. Replies `:ok` immediately while the buffer is
@@ -113,21 +115,18 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
-    conn_opts = Keyword.fetch!(opts, :conn_opts)
-    conn_label = Keyword.fetch!(opts, :conn_label)
-
-    case Postgrex.start_link(conn_opts) do
+    case Postgrex.start_link(opts.conn_opts) do
       {:ok, pool} ->
         state = %__MODULE__{
-          plugin_id: Keyword.fetch!(opts, :plugin_id),
+          plugin_id: opts.plugin_id,
           pool: pool,
-          conn_label: conn_label,
-          auto_create: Keyword.get(opts, :auto_create, false),
-          linger_ms: Keyword.get(opts, :linger_ms, 25),
-          max_batch: Keyword.get(opts, :max_batch, 500),
-          queue_max: Keyword.get(opts, :queue_max, 10_000),
-          retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 250),
-          retry_max_backoff_ms: Keyword.get(opts, :retry_max_backoff_ms, 5_000)
+          conn_label: opts.conn_label,
+          auto_create: opts.auto_create,
+          linger_ms: opts.linger_ms,
+          max_batch: opts.max_batch,
+          queue_max: opts.queue_max,
+          retry_backoff_ms: opts.retry_backoff_ms,
+          retry_max_backoff_ms: opts.retry_max_backoff_ms
         }
 
         {:ok, state, {:continue, :ensure_schema}}

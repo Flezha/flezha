@@ -496,3 +496,25 @@ ones it could not disable.
 - **THEN** the two SHALL be reconciled rather than left in disagreement, so a
   restart does not read a plugin as both disabled and installed
 
+### Requirement: An installed package's provisions SHALL be rows of the provider table
+
+An installed package's `provides` entries SHALL be registered as rows of the
+one provider table the enabled providers are read from, through the table's
+own registration function, and SHALL be resolved by `flz plugin enable`,
+`--plugins` decoding and `flz plugin list` exactly as a first-party provider is.
+The installer SHALL NOT write the provider list into application configuration
+or hold a second list of its own.
+
+#### Scenario: An installed provider resolves like a first-party one
+
+- **WHEN** a package whose manifest provides `acme_source` is installed and
+  enabled, and `flz plugin enable my_acme acme_source …` is issued
+- **THEN** the provider SHALL be resolved from the provider table, and the same
+  row SHALL answer `flz plugin list` and a `--plugins` spec naming it
+
+#### Scenario: Disable does not remove the row
+
+- **WHEN** an installed package is disabled
+- **THEN** its provider rows SHALL remain in the table and its modules loaded,
+  and only its subscriptions SHALL be dropped
+

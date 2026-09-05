@@ -8,6 +8,7 @@ defmodule Flezha.Service.Cli.Info do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Partition
+  alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
@@ -262,19 +263,14 @@ defmodule Flezha.Service.Cli.Info do
 
   defp format_plugins_json(_), do: []
 
-  # A provider's own operator-facing detail, when it exports one. Same shape as
-  # the health contract: the stored opts with the tracked pid injected, and a
+  # A provider's own operator-facing detail. Same shape as the health contract:
+  # the stored opts with the processes the table started injected, and a
   # provider that raises or has nothing to say reports nothing rather than
   # failing the whole listing.
   defp plugin_state(extensions, plugin_id, %{provider: provider, opts: opts}) do
-    if Code.ensure_loaded?(provider) and function_exported?(provider, :inspect_state, 1) do
-      owned_pid =
-        case Map.get(Map.get(extensions, :owned_pids, %{}), plugin_id) do
-          {pid, _ref} -> pid
-          _ -> nil
-        end
-
-      provider.inspect_state(Map.put(opts || %{}, :owned_pid, owned_pid))
+    if Code.ensure_loaded?(provider) do
+      entry = Map.get(Map.get(extensions, :entries, %{}), plugin_id, %{})
+      provider.inspect_state(TableHealth.with_worker_pids(entry, opts))
     end
   catch
     _, _ -> nil

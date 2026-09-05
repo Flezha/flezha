@@ -16,26 +16,25 @@ defmodule Flezha.Plugin.Provider.BeamMsgForward do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.ProviderBehaviour
 
-  use ProviderBehaviour
-
-  # `:recv_pid` is total through `parse_pid/2`; no option needs the injected
-  # refusal.
-  @converted_opts []
-
-  @enforce_keys [:recv_pid]
-  defstruct @enforce_keys
+  use ProviderBehaviour,
+    options: [
+      recv_pid: [type: :pid, required: true, doc: "The BEAM process the payload is sent to"],
+      include_metadata: [
+        type: :bool,
+        default: false,
+        doc:
+          "Send `{:message_forward, message, metadata}` instead of `{:message_forward, message}`"
+      ]
+    ]
 
   @impl true
-  def plugin_type(), do: :io_binding
-
-  defp convert_value(:recv_pid, value), do: ProviderBehaviour.parse_pid(value, :recv_pid)
-
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+  @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
 
   defp forward(%Ctx.IO{message: msg, metadata: metadata} = ctx, %{recv_pid: recv_pid} = opts) do
     payload =
-      if Map.get(opts, :include_metadata, false) do
+      if Map.fetch!(opts, :include_metadata) do
         {:message_forward, msg, metadata}
       else
         {:message_forward, msg}

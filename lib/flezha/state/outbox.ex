@@ -19,6 +19,7 @@ defmodule Flezha.State.Outbox do
 
   require Logger
 
+  alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.State.{Paths, Wire, WriterRegistry}
   alias Flezha.State.ProcJournal
@@ -247,16 +248,16 @@ defmodule Flezha.State.Outbox do
   def park(metadata, payload, error, attempts) when is_map(metadata) do
     with token when is_binary(token) <- ack(metadata),
          {:ok, %{target: {rc, sh, pk}}} <- decode(token) do
-      entry = %{
-        operative_class: rc,
-        procedure_id: sh,
-        entity_key: pk,
-        channel: Map.get(metadata, "channel", ""),
-        origin_offset: nil,
-        error: inspect(error),
-        attempts: attempts,
-        payload: payload
-      }
+      entry =
+        DlqEntry.new!(%{
+          operative_class: rc,
+          procedure_id: sh,
+          entity_key: pk,
+          channel: Map.get(metadata, "channel", ""),
+          error: error,
+          attempts: attempts,
+          payload: payload
+        })
 
       case DlqStore.append(entry) do
         {:ok, ref} ->

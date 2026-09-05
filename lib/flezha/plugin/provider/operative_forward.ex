@@ -16,78 +16,77 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   Required opt `:target_operative_id`; rest: `docs/plugins/operative_forward.md`.
   """
 
+  alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
-  alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
+  alias Flezha.Plugin.Provider.OperativeForward.ForwardWorker
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
 
-  use ProviderBehaviour
-
-  import ProviderBehaviour, only: [convert_opts: 4, parse_int: 2]
-
   require Logger
 
-  # The one default table. `defstruct`, the `build/1` allow-list, and the worker
-  # opts all derive from it, so a new tunable is added in exactly one place.
-  @int_opts [
-    queue_max: 10_000,
-    retry_backoff_ms: 250,
-    retry_max_backoff_ms: 5_000,
-    call_timeout_ms: 5_000
-  ]
-
-  # Resolved by the host at prepare time, never settable by config.
-  @injected_opts [:worker_pid, :routes, :source_namespace, :source_operative_id]
-
-  # The two of those the HOST does not inject: this provider resolves them and a
-  # re-prepare carries them back, so `validate_opts/1` has to allow them.
-  @internal_opts @injected_opts -- ProviderBehaviour.host_opts()
-
-  # Field-guarded and therefore already total; see `Postgres`.
-  @converted_opts []
-
-  @enforce_keys [:target_operative_id]
-  defstruct @enforce_keys ++ [:plugin_id] ++ @injected_opts ++ @int_opts
-
-  # Declaring `@known_opts` is what makes this provider strict: `use
-  # ProviderBehaviour` generates the `build/1` refusal from it, so a config
-  # asking for a delivery guarantee this provider deliberately does not offer
-  # fails loudly instead of reading as accepted.
-  @int_fields Keyword.keys(@int_opts)
-
-  @known_opts [:target_operative_id, :plugin_id | @int_fields]
+  use ProviderBehaviour,
+    options: [
+      target_operative_id: [
+        type: :string,
+        required: true,
+        doc: "The operative in this namespace the payload is delivered to"
+      ],
+      plugin_id: [type: :string, doc: "Plugin id; defaults to `<source>-><target>`"],
+      queue_max: [type: :int, default: 10_000, min: 1, doc: "Records held per target member"],
+      retry_backoff_ms: [type: :int, default: 250, min: 1, doc: "First delay after a refusal"],
+      retry_max_backoff_ms: [type: :int, default: 5_000, min: 1, doc: "Ceiling for that delay"],
+      call_timeout_ms: [type: :int, default: 5_000, min: 1, doc: "Budget for one confirming call"],
+      # The target's member set, resolved at every prepare. It carries no pid:
+      # a route names the member, and the worker for it is addressed by name.
+      routes: [type: :any, internal: true]
+    ],
+    worker: [module: ForwardWorker, restart: :transient]
 
   @impl true
-  def plugin_type(), do: :io_binding
-
   def init_provider(opts) do
-    source_namespace = Map.get(opts, :source_namespace)
-    source_operative_id = Map.get(opts, :source_operative_id)
-    target = Map.get(opts, :target_operative_id)
+    target = opts.target_operative_id
     # A re-prepare carries the member set this plugin last resolved; a first
     # prepare carries none.
-    previous_routes = Map.get(opts, :routes, [])
+    previous_routes = opts.routes || []
 
-    with :ok <- validate_opts(opts),
-         {:ok, tuned} <- convert_opts(__MODULE__, opts, @int_fields, &convert_value/2),
-         :ok <- validate_target(target, source_namespace, source_operative_id),
-         plugin_id = Map.get(opts, :plugin_id) || default_plugin_id(source_operative_id, target),
-         {:ok, routes} <-
-           ensure_workers(plugin_id, source_namespace, source_operative_id, target, tuned) do
-      opts =
-        opts
-        |> Map.put(:plugin_id, plugin_id)
-        |> Map.put(:routes, routes)
-        |> Map.put(:worker_pid, hd(routes).pid)
+    with :ok <-
+           validate_target(target, opts.source_namespace, opts.source_operative_id) do
+      plugin_id = opts.plugin_id || default_plugin_id(opts.source_operative_id, target)
+      routes = target_routes(target, opts.source_namespace)
+      opts = Map.merge(opts, %{plugin_id: plugin_id, routes: routes})
 
       rehome_vanished_members(opts, previous_routes, routes)
 
-      {:ok, opts, hd(routes).pid}
+      {:ok, opts}
+    end
+  end
+
+  @doc """
+  One worker per target member, keyed `{plugin_id, member_id}`. Per-member
+  workers rather than one router because a worker is one queue with one
+  in-flight slot: a shared one would head-of-line-block every partition behind
+  the slowest, and per-key ordering only needs per-member FIFO.
+  """
+  @impl true
+  def worker_specs(opts) do
+    for %{id: member_id} <- opts.routes do
+      {key(opts.plugin_id, member_id),
+       %{
+         plugin_id: opts.plugin_id,
+         source_namespace: opts.source_namespace,
+         source_operative_id: opts.source_operative_id,
+         target_operative_id: member_id,
+         queue_max: opts.queue_max,
+         retry_backoff_ms: opts.retry_backoff_ms,
+         retry_max_backoff_ms: opts.retry_max_backoff_ms,
+         call_timeout_ms: opts.call_timeout_ms
+       }}
     end
   end
 
@@ -106,13 +105,13 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     plugin_id = Map.fetch!(opts, :plugin_id)
     surviving = MapSet.new(current, & &1.id)
 
-    for %{id: member_id, pid: pid} <- previous, not MapSet.member?(surviving, member_id) do
-      payloads = take_over(plugin_id, member_id, pid)
+    for %{id: member_id} <- previous, not MapSet.member?(surviving, member_id) do
+      payloads = take_over(plugin_id, member_id)
 
       if payloads != [] do
         Logger.info(
           "[Plugin.Provider.OperativeForward] #{member_id} is no longer a member of " <>
-            "#{Map.get(opts, :target_operative_id)}; re-routing #{length(payloads)} " <>
+            "#{opts.target_operative_id}; re-routing #{length(payloads)} " <>
             "queued payload(s) to their new owner"
         )
       end
@@ -125,52 +124,37 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
 
   defp rehome_payload({message, metadata}, current, opts) do
     case route(current, metadata) do
-      {:ok, %{pid: new_pid}} -> ForwardWorker.absorb(new_pid, {message, metadata})
-      {:error, reason} -> park_unroutable(opts, message, metadata, reason)
+      {:ok, %{id: member_id}} ->
+        ForwardWorker.absorb(worker(opts.plugin_id, member_id), {message, metadata})
+
+      {:error, reason} ->
+        park_unroutable(opts, message, metadata, reason)
     end
   end
 
-  # Take what a worker still owes and leave it stopped. A successful drain stops
-  # it as it replies, which is what guarantees nothing is delivered from a queue
-  # already handed over; only a worker that could not be reached needs the
-  # supervisor to take it down, and a worker already dead owes nothing at all.
-  defp take_over(plugin_id, member_id, pid) do
-    if Process.alive?(pid), do: ForwardWorker.drain(pid), else: []
+  # Take what a worker still owes. The table stops the worker itself, because a
+  # key the declaration does not name is one it drops at the next activation;
+  # a worker that could not be reached, or is already dead, owes nothing.
+  defp take_over(plugin_id, member_id) do
+    ForwardWorker.drain(worker(plugin_id, member_id))
   catch
-    :exit, _ ->
-      ForwardSup.stop_worker({plugin_id, member_id})
-      []
+    :exit, _ -> []
   end
 
-  @doc """
-  Stop every worker this plugin owns. The host tracks one `:owned_pid`; a
-  partitioned target has one worker per member, and this is what keeps the
-  other N−1 from outliving the plugin.
-  """
   @impl true
-  @spec terminate_provider(map()) :: :ok
-  def terminate_provider(opts) do
-    plugin_id = Map.get(opts, :plugin_id)
-
-    for %{id: member_id} <- Map.get(opts, :routes, []), is_binary(plugin_id) do
-      ForwardSup.stop_worker({plugin_id, member_id})
-    end
-
-    :ok
-  end
-
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
+  @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
 
   defp forward(%Ctx.IO{message: message, metadata: metadata} = ctx, opts) do
-    case route(Map.fetch!(opts, :routes), metadata) do
-      {:ok, %{pid: pid}} ->
+    case route(opts.routes, metadata) do
+      {:ok, %{id: member_id}} ->
         # Take ownership of a delivery-guaranteed output before handing it over:
         # the worker answers the hold when the target confirms the ingest. An
-        # unroutable payload takes no hold — it parks below, which is a durable
+        # unroutable payload takes no hold, it parks below, which is a durable
         # outcome the outbox cursor may advance past.
         Outbox.hold(metadata)
-        :ok = ForwardWorker.enqueue(pid, message, metadata)
+        :ok = ForwardWorker.enqueue(worker(opts.plugin_id, member_id), message, metadata)
 
       {:error, reason} ->
         park_unroutable(opts, message, metadata, reason)
@@ -215,18 +199,19 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     )
 
     _ =
-      DlqStore.append(%{
-        operative_class: source,
-        procedure_id: "operative_forward",
-        entity_key: target,
-        channel: Map.get(metadata || %{}, "channel", "operative_forward"),
-        origin_offset: nil,
-        error:
-          "#{reason} — forwarding from #{source} to partitioned target #{target}; " <>
-            "emit with a key (`ctx.emit_keyed`) so the owning partition can be resolved",
-        attempts: 1,
-        payload: message
-      })
+      DlqStore.append(
+        DlqEntry.new!(%{
+          operative_class: source,
+          procedure_id: "operative_forward",
+          entity_key: target,
+          channel: Map.get(metadata || %{}, "channel", "operative_forward"),
+          error:
+            "#{reason}: forwarding from #{source} to partitioned target #{target}; " <>
+              "emit with a key (`ctx.emit_keyed`) so the owning partition can be resolved",
+          attempts: 1,
+          payload: message
+        })
+      )
 
     :ok
   end
@@ -245,24 +230,28 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    case Map.get(opts, :routes) do
-      routes when is_list(routes) and length(routes) > 1 ->
+    case opts[:routes] do
+      routes when is_list(routes) and routes != [] ->
         routes
-        |> Enum.map(&worker_verdict(Map.put(opts, :worker_pid, &1.pid)))
+        |> Enum.map(&member_verdict(opts, &1.id))
         |> Enum.find(:healthy, &(&1 != :healthy))
         |> stale_members(opts, routes)
-
-      routes when is_list(routes) ->
-        opts |> worker_verdict() |> stale_members(opts, routes)
 
       _ ->
         worker_verdict(opts)
     end
   end
 
+  defp member_verdict(opts, member_id) do
+    opts[:workers][key(opts.plugin_id, member_id)]
+    |> ProviderBehaviour.pid_health([absent: :no_worker, dead: :worker_dead], fn _pid ->
+      :healthy
+    end)
+  end
+
   defp stale_members(:healthy, opts, routes) do
     resolved = Enum.map(routes, & &1.id)
-    live = target_members(Map.get(opts, :target_operative_id), Map.get(opts, :source_namespace))
+    live = target_members(opts.target_operative_id, opts.source_namespace)
 
     if Enum.sort(resolved) == Enum.sort(Enum.map(live, &elem(&1, 0))),
       do: :healthy,
@@ -274,37 +263,24 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   defp worker_verdict(opts) do
     ProviderBehaviour.worker_health(
       opts,
-      [pid: [:worker_pid, :owned_pid], absent: :no_worker, dead: :worker_dead],
+      [absent: :no_worker, dead: :worker_dead],
       fn _pid -> :healthy end
     )
   end
 
-  # One worker per target member — the existing `{plugin_id, target}` keying
-  # already distinguishes them. Per-member workers rather than one router
-  # because a worker is one queue with one in-flight slot: a shared one would
-  # head-of-line-block every partition behind the slowest, and per-key ordering
-  # only needs per-member FIFO.
-  defp ensure_workers(plugin_id, source_namespace, source_operative_id, target, tuned) do
-    target
-    |> target_members(source_namespace)
-    |> Enum.reduce_while({:ok, []}, fn {member_id, range}, {:ok, acc} ->
-      case ForwardSup.ensure_worker(
-             [
-               plugin_id: plugin_id,
-               source_namespace: source_namespace,
-               source_operative_id: source_operative_id,
-               target_operative_id: member_id
-             ] ++ Map.to_list(tuned)
-           ) do
-        {:ok, pid} -> {:cont, {:ok, [%{id: member_id, range: range, pid: pid} | acc]}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-    |> case do
-      {:ok, routes} -> {:ok, Enum.reverse(routes)}
-      err -> err
-    end
+  # The routes a target resolves to: one row per member, each carrying the key
+  # range it owns. No process is touched here, so a re-prepare can re-resolve a
+  # rescaled target without starting or stopping anything.
+  defp target_routes(target, namespace) do
+    for {member_id, range} <- target_members(target, namespace),
+        do: %{id: member_id, range: range}
   end
+
+  # The key one member's worker is registered under, named once and read by both
+  # the declaration and the dispatch path.
+  defp key(plugin_id, member_id), do: {plugin_id, member_id}
+
+  defp worker(plugin_id, member_id), do: WorkerSup.worker(__MODULE__, key(plugin_id, member_id))
 
   # `{member_id, range}` per target member. An ordinary operative — including a
   # target that is not started yet — is one member owning the whole space, which
@@ -322,9 +298,6 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   defp group_members(_namespace, _target), do: []
 
   # ---------- enable-time refusals ----------
-
-  defp validate_target(nil, _ns, _source),
-    do: {:error, "operative_forward requires :target_operative_id"}
 
   defp validate_target(target, _ns, source) when target == source,
     do: {:error, "operative_forward target_operative_id #{target} is the operative itself"}
@@ -363,6 +336,4 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   end
 
   defp default_plugin_id(source, target), do: "#{source}->#{target}"
-
-  defp convert_value(field, value) when field in @int_fields, do: parse_int(value, field)
 end

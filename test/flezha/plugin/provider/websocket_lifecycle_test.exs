@@ -13,16 +13,28 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketLifecycleTest do
   """
 
   alias Flezha.Plugin.Provider.Websocket
+  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   use ExUnit.Case, async: true
+
+  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2]
+
+  # Preparation as the table performs it: the declaration normalises the
+  # options, then the provider interprets them.
+  defp prepare(opts) do
+    with {:ok, opts} <- ProviderOptions.normalise_opts(Websocket, opts),
+         do: prepare(Websocket, opts)
+  end
 
   test "init_provider returns prepared opts without opening TLS connection" do
     opts = %{
       uri: "wss://flezha-test.invalid:9/never-connect",
-      plugin_id: "ws_lifecycle_test"
+      plugin_id: "ws_lifecycle_test",
+      overwatcher_pid: self()
     }
 
-    {time_us, result} = :timer.tc(fn -> Websocket.init_provider(opts) end)
+    {time_us, result} = :timer.tc(fn -> prepare(opts) end)
 
     assert {:ok, prepared_opts} = result
 
@@ -32,13 +44,13 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketLifecycleTest do
 
     assert prepared_opts.uri == opts.uri
     assert prepared_opts.plugin_id == opts.plugin_id
-    # Sentinel state the new activate/1 reads on the way out.
+    # The host identity the table merges, which the declared worker reads.
     assert is_pid(prepared_opts.overwatcher_pid)
   end
 
   describe "post_connect is validated at preparation" do
     defp prepared(post_connect) do
-      Websocket.init_provider(%{
+      prepare(%{
         uri: "wss://flezha-test.invalid:9/never-connect",
         plugin_id: "ws_post_connect_test",
         post_connect: post_connect

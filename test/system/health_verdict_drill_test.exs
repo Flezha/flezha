@@ -480,6 +480,9 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # `:running` and the probe answers `:healthy`.
   defmodule OkProvider do
     @moduledoc false
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
   end
 
@@ -487,7 +490,11 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # declared plugin that is not running looks like.
   defmodule ActivateFailsProvider do
     @moduledoc false
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
+    @impl true
     def activate(_opts), do: {:error, :drill}
   end
 
@@ -495,7 +502,11 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # which is the only definite fault a plugin can report.
   defmodule UnhealthyProvider do
     @moduledoc false
+    use Flezha.Plugin.ProviderBehaviour
+
+    @impl true
     def on_input(ctx, _opts), do: {:ok, ctx}
+    @impl true
     def health(_opts), do: {:unhealthy, :drill}
   end
 end

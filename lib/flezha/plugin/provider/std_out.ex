@@ -9,12 +9,9 @@ defmodule Flezha.Plugin.Provider.StdOut do
 
   use ProviderBehaviour
 
-  defstruct []
-
   @impl true
-  def plugin_type(), do: :io_binding
-
   def on_input(%Ctx.IO{} = ctx, _opts), do: print(ctx)
+  @impl true
   def on_output(%Ctx.IO{} = ctx, _opts), do: print(ctx)
 
   defp print(%Ctx.IO{message: msg, metadata: md} = ctx) do

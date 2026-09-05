@@ -77,7 +77,7 @@ defmodule FlezhaTest.Operative.IngestTest do
         subscriptions: [{:on_input, []}]
       )
 
-    {:ok, table} = Table.subscribe(state.extensions, "filter", plugin)
+    {:ok, table} = Table.bulk_subscribe(state.extensions, [{"filter", plugin}])
     %{state | extensions: table}
   end
 

@@ -107,7 +107,10 @@ defmodule Mix.Tasks.Bench.Extension do
 
     fake_kayrock = spawn(fn -> Process.sleep(:infinity) end)
     {:ok, worker} = start_fake_producer(fake_kayrock)
-    {:ok, table} = Table.subscribe(Table.new(catalog), "kafka-bench", kafka_plugin(worker))
+
+    {:ok, table} =
+      Table.bulk_subscribe(Table.new(catalog), [{"kafka-bench", kafka_plugin(worker)}])
+
     {:ok, _} = Application.ensure_all_started(:telemetry)
 
     host = spawn(fn -> chain_host_loop(table, ctx) end)
@@ -146,7 +149,7 @@ defmodule Mix.Tasks.Bench.Extension do
        }}
     end
 
-    ProducerWorker.start_link(
+    ProducerWorker.start_link(%{
       plugin_id: "bench",
       topic: "bench",
       partition: 0,
@@ -160,7 +163,7 @@ defmodule Mix.Tasks.Bench.Extension do
       metadata_refresh_fn: fn _w, _t -> :ok end,
       create_topic_fn: fn _w, _t, _o, _to -> :ok end,
       name: nil
-    )
+    })
   end
 
   defp kafka_plugin(worker) do
@@ -270,7 +273,7 @@ defmodule Mix.Tasks.Bench.Extension do
         subscriptions: [{:on_input, [position: i]}]
       }
 
-      {:ok, t} = Table.subscribe(acc, "p#{i}", plugin)
+      {:ok, t} = Table.bulk_subscribe(acc, [{"p#{i}", plugin}])
       t
     end)
   end

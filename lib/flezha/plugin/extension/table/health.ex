@@ -9,15 +9,17 @@ defmodule Flezha.Plugin.Extension.Table.Health do
   """
 
   alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Table.Entry
   alias Flezha.Plugin.ProviderBehaviour
 
   @doc """
   Health verdict for every plugin on the table. Only `:running` plugins are
-  evaluated — a `:prepared` plugin has not acquired upstream resources yet, so
-  it is reported `:healthy`, and that verdict is NOT evidence the plugin is
-  running (read the phase for that). Providers that export `health/1` are
-  queried with `:owned_pid` injected; providers without it default to
-  "owned pid alive (or absent) ⇒ healthy".
+  evaluated: a `:prepared` plugin has not acquired upstream resources yet, so it
+  is reported `:healthy`, and that verdict is NOT evidence the plugin is running
+  (read the phase for that). Every provider is queried through its declared
+  `health/1`, with the processes the table started injected; a provider that
+  overrides nothing takes the default, "the worker alive, or absent, is
+  healthy".
 
   A probe that could not be completed — the provider reported
   `{:fail_open, reason}`, raised, or answered with nonsense — is returned as
@@ -32,58 +34,44 @@ defmodule Flezha.Plugin.Extension.Table.Health do
     end)
   end
 
+  # The lifecycle record is read as a plain map, never through its owner: the
+  # dependency between this module and the table runs one way, and naming the
+  # table here would close the loop.
   defp plugin_health(table, plugin_id, plugin) do
-    case Map.get(table.phases, plugin_id, :prepared) do
-      :running -> running_plugin_health(table, plugin_id, plugin)
+    case Map.get(table.entries, plugin_id) do
+      %{phase: :running} = entry -> running_plugin_health(entry, plugin_id, plugin)
       _ -> :healthy
-    end
-  end
-
-  defp running_plugin_health(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
-    owned_pid =
-      case Map.get(table.owned_pids, plugin_id) do
-        {pid, _ref} -> pid
-        _ -> nil
-      end
-
-    cond do
-      not Code.ensure_loaded?(provider) ->
-        {:unhealthy, :provider_not_loaded}
-
-      function_exported?(provider, :health, 1) ->
-        probe_provider(plugin_id, provider, opts, owned_pid)
-
-      is_nil(owned_pid) ->
-        :healthy
-
-      Process.alive?(owned_pid) ->
-        :healthy
-
-      true ->
-        {:unhealthy, :owned_pid_dead}
     end
   end
 
   # An uncertain probe is emitted here and nowhere else: a wedged provider is
   # otherwise indistinguishable from a working one at every layer above this
-  # call, and this is the only layer that knows which plugin to name. The
-  # SHAPE of the answer is normalised by the fact seam, so this function holds
-  # no second vocabulary of its own.
-  defp probe_provider(plugin_id, provider, opts, owned_pid) do
-    fun = fn -> provider.health(Map.put(opts || %{}, :owned_pid, owned_pid)) end
+  # call, and this is the only layer that knows which plugin to name. The SHAPE
+  # of the answer is normalised by the fact seam, so this function holds no
+  # second vocabulary of its own.
+  defp running_plugin_health(entry, plugin_id, %Plugin{provider: provider, opts: opts}) do
+    if Code.ensure_loaded?(provider) do
+      opts = with_worker_pids(entry, opts)
 
-    case ProviderBehaviour.normalise(fun) do
-      {:fail_open, reason} -> ProviderBehaviour.fail_open(plugin_id, provider, reason)
-      verdict -> verdict
+      case ProviderBehaviour.normalise(fn -> provider.health(opts) end) do
+        {:fail_open, reason} -> ProviderBehaviour.fail_open(plugin_id, provider, reason)
+        verdict -> verdict
+      end
+    else
+      {:unhealthy, :provider_not_loaded}
     end
   end
 
-  @doc "The phase a restarted plugin re-enters: `:prepared` when it can activate."
-  @spec restarted_phase(Plugin.t()) :: :prepared | :running
-  def restarted_phase(%Plugin{provider: provider}) do
-    if Code.ensure_loaded?(provider) and function_exported?(provider, :activate, 1),
-      do: :prepared,
-      else: :running
+  @doc """
+  A provider's stored opts with the processes the table started injected: the
+  shape `health/1`, `inspect_state/1` and `terminate_provider/1` all read. The
+  ONE injection site, because the table started the worker and so knows its pid.
+  """
+  @spec with_worker_pids(Entry.t() | map(), map() | nil) :: map()
+  def with_worker_pids(entry, opts) do
+    entry = if is_struct(entry, Entry), do: entry, else: struct(Entry, entry)
+
+    Map.merge(opts || %{}, %{owned_pid: Entry.owned_pid(entry), workers: Entry.pids(entry)})
   end
 
   @doc "Demonitor `ref` if there is one."
@@ -97,19 +85,6 @@ defmodule Flezha.Plugin.Extension.Table.Health do
 
   def safe_cancel_timer(ref) do
     _ = Process.cancel_timer(ref)
-    :ok
-  end
-
-  @doc "Stop a tracked owned pid without taking the host down with it."
-  @spec safe_kill(pid() | nil) :: :ok
-  def safe_kill(nil), do: :ok
-
-  def safe_kill(pid) when is_pid(pid) do
-    if Process.alive?(pid) do
-      Process.unlink(pid)
-      Process.exit(pid, :shutdown)
-    end
-
     :ok
   end
 end
