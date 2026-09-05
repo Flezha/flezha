@@ -129,7 +129,7 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp scan_seq_at_or_before_path(path, ts) do
-    RecordFrame.fold_path(path, nil, fn {seq, header, body}, found ->
+    RecordFrame.fold_path!(path, nil, fn {seq, header, body}, found ->
       case Wire.decode_effect_record(header, body) do
         %{event_time: event_time} when event_time <= ts -> {:cont, seq}
         _ -> {:cont, found}
@@ -153,7 +153,7 @@ defmodule Flezha.State.TimeTravel do
 
   defp read_wal_in_range(entity_id, snapshot_seq, target_seq) do
     {acc, terminal} =
-      RecordFrame.fold_path(
+      RecordFrame.fold_path!(
         Paths.wal_path(entity_id),
         {[], snapshot_seq},
         &gather(&1, &2, snapshot_seq, target_seq)

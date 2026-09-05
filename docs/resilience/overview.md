@@ -115,6 +115,13 @@ decision is owed; 503 is reserved for a wedged convergence loop or a wedged cont
 driver thread (`FLEZHA_FABRIC_503_POLLS`, default 3, `0` disables).
 Owner: [`../architecture/kernel.md` "The `/healthz` contract"](../architecture/kernel.md#the-healthz-contract).
 
+**Readiness endpoint** — the same listener also serves `/readyz`, a separate verdict folded
+from `Flezha.Boot.Readiness`'s precondition table. It answers whether traffic should be
+routed here, not whether the node should be restarted, so it returns 503 for exactly the
+window `/healthz` keeps returning 200: the boot sequence, a hub still in recovery, and an
+unreloaded durable registry.
+Owner: [`../architecture/kernel.md` "The `/readyz` contract"](../architecture/kernel.md#the-readyz-contract).
+
 ## Durability
 
 **Per-Entity state: WAL + snapshots** — `lib/flezha/state/`. Every change is appended to a

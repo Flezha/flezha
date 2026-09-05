@@ -148,8 +148,8 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
 
   @doc """
   What a frame *is*, with no regard to where it sits: `{:change, seq, change}`,
-  `{:timer_ops, seq, ops}`, `{:effect, seq, body}` or `{:output, payload_id,
-  value, metadata}`. A change record and a timer-ops record share the
+  `{:timer_ops, seq, ops}`, `{:effect, seq, body}`, `{:delete, entity}` or
+  `{:output, payload_id, value, metadata}`. A change record and a timer-ops record share the
   `entity_state_change` payload id and are told apart by the header's format
   byte, so this is the only way to classify one frame on its own.
 
@@ -176,10 +176,14 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
     {:effect, seq, body}
   end
 
+  def kind({"delete_entity_state", identity, _meta}) do
+    {:ok, entity} = Wire.decode_entity_id(identity)
+    {:delete, entity}
+  end
+
   # Everything else on this stream is a plugin output, whose payload id is the
   # operative's. The other record payload ids are named so one arriving where a
   # test does not expect it raises here instead of passing as an output.
-  def kind({payload_id, value, meta})
-      when payload_id not in ~w(entity_state_snapshot delete_entity_state),
-      do: {:output, payload_id, value, meta}
+  def kind({payload_id, value, meta}) when payload_id != "entity_state_snapshot",
+    do: {:output, payload_id, value, meta}
 end

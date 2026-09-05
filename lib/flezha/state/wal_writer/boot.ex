@@ -54,7 +54,8 @@ defmodule Flezha.State.WalWriter.Boot do
       outbox_last_seq: -1,
       seq_index: SeqIndex.new(),
       sync_waiters: [],
-      header_index: nil
+      header_index: nil,
+      refusal: nil
     }
 
     state
@@ -71,7 +72,22 @@ defmodule Flezha.State.WalWriter.Boot do
     File.mkdir_p!(Path.dirname(state.wal_path))
     {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
-    last_seq = RecordFrame.scan_for_last_valid_seq(file)
+    case RecordFrame.scan_for_last_valid_seq(file, state.wal_path) do
+      {:ok, last_seq} -> opened(%{state | file_handle: file}, file, last_seq)
+      {:error, refusal} -> refused(%{state | file_handle: file}, refusal)
+    end
+  end
+
+  # The scan refused: the file holds a record that failed its crc with complete
+  # records behind it. Nothing here reports a number derived from a walk that
+  # stopped early — not the seq metric, and not the consumed offset the outbox
+  # re-drive would report, which only ever moves forward.
+  defp refused(state, refusal) do
+    Metrics.put(state.metrics, :wal_size_bytes, RecordFrame.file_size(state.wal_path))
+    %{state | refusal: refusal}
+  end
+
+  defp opened(state, file, last_seq) do
     size = RecordFrame.file_size(state.wal_path)
 
     Metrics.put(state.metrics, :wal_seq, last_seq)
@@ -88,7 +104,9 @@ defmodule Flezha.State.WalWriter.Boot do
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
     dedup = Outbox.read(state.entity_id)
-    {redrive, max_consumed} = Epoch.scan_effect_records_above(file, dedup.outbox_flushed_seq)
+
+    {redrive, max_consumed} =
+      Epoch.scan_effect_records_above(file, state.wal_path, dedup.outbox_flushed_seq)
 
     if is_integer(max_consumed) do
       {rc, _sh, _pk} = state.entity_id

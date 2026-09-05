@@ -99,8 +99,10 @@ defmodule Flezha.State.InputLog.Sweep do
                operative_class,
                System.system_time(:millisecond) - hold_window
              ) do
-          nil -> nil
-          aged_out -> min(watermark, aged_out)
+          aged_out when is_integer(aged_out) -> min(watermark, aged_out)
+          # No record is that old, or the log refused one: either way there is
+          # no floor to truncate to, which is the "hold everything" answer.
+          _none_or_refused -> nil
         end
     end
   end

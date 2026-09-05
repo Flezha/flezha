@@ -45,6 +45,7 @@ defmodule Flezha.State.Commands do
   def dispatch_restore_init_state(runner_id, entity_id) do
     case restore_command(entity_id) do
       {:ok, command} -> ControlChannel.send_control(runner_id, command)
+      {:error, _refused} = refused -> refused
     end
   end
 
@@ -124,6 +125,13 @@ defmodule Flezha.State.Commands do
             # the SDK's seq from; the hint covers the snapshot.
             terminal_seq: max(payload.terminal_seq_hint, 0)
           }}}
+
+      # The Entity's own WAL refused a record. Shipping the records before it
+      # would restore the Entity from a change log that was cut short and call
+      # it whole; the reason is text, so the awaited path parks the operative
+      # the way an SDK-reported refusal does.
+      {:error, _reason} = refused ->
+        refused
     end
   end
 

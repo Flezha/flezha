@@ -17,7 +17,7 @@ defmodule Flezha.State.InputLogTest do
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.State.{FsyncBatcher, InputLog, Paths, Supervisor, TestHelpers}
+  alias Flezha.State.{FsyncBatcher, InputLog, Paths, RecordFrame, Supervisor, TestHelpers}
   alias Flezha.State.InputLog.Sweep
 
   setup %{base: base} do
@@ -505,6 +505,77 @@ defmodule Flezha.State.InputLogTest do
 
       assert InputLog.read_range(class, 0, 300) |> Enum.map(&elem(&1, 0)) ==
                Enum.to_list(290..300)
+    end
+  end
+
+  describe "a corrupt record mid-log" do
+    test "refuses the class's log instead of truncating it", %{class: class} do
+      for i <- 0..2, do: {:ok, _} = InputLog.append(class, "m#{i}", %{"i" => i})
+      TestHelpers.close_input_log(class)
+
+      path = Paths.input_log_path(class)
+      [_first, second, third] = TestHelpers.record_offsets(path)
+      size = File.stat!(path).size
+      TestHelpers.corrupt_record_body(path, second)
+
+      handler =
+        :telemetry_test.attach_event_handlers(self(), [
+          [:flezha, :state, :record_frame, :refused]
+        ])
+
+      log =
+        capture_log(fn ->
+          # The log opens through the same reader the per-Entity WAL opens
+          # through, so it must give the same answer to the same record.
+          assert {:error, {:crc_mismatch, 0, ^second}} = InputLog.last_offset(class)
+        end)
+
+      assert_receive {[:flezha, :state, :record_frame, :refused], ^handler, %{count: 1},
+                      %{path: ^path, reason: :crc_mismatch, last_seq: 0, offset: ^second}}
+
+      :telemetry.detach(handler)
+      assert log =~ "durable record refused (crc_mismatch)"
+      assert log =~ path
+
+      # Nothing was cut, and the record after the corrupt one still decodes.
+      assert File.stat!(path).size == size
+      {:ok, device} = :file.open(path, [:raw, :read, :binary])
+      assert {:ok, 2, _header, _body, _} = RecordFrame.decode_record(device, third)
+      :file.close(device)
+    end
+
+    test "serves neither appends nor reads, and never starts an fsync companion",
+         %{class: class} do
+      for i <- 0..2, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      TestHelpers.close_input_log(class)
+
+      path = Paths.input_log_path(class)
+      [_first, second, _third] = TestHelpers.record_offsets(path)
+      TestHelpers.corrupt_record_body(path, second)
+
+      capture_log(fn ->
+        assert {:error, {:crc_mismatch, 0, ^second}} = InputLog.append(class, "m3", %{})
+        assert {:error, {:crc_mismatch, 0, ^second}} = InputLog.read_range(class, 0, 2)
+
+        {:ok, pid} = Flezha.State.Supervisor.lookup({class, :input_log})
+
+        # No companion was spawned, so nothing is linked to a log that will
+        # never sync — and the `:fsync` call answers instead of parking in
+        # `sync_now/1`, which is the wedge a companion-less log could reach.
+        assert :sys.get_state(pid).syncer == nil
+        assert {:error, {:crc_mismatch, 0, ^second}} = GenServer.call(pid, :fsync, 500)
+
+        # Producing-liveness degrades to WAL-seq-only rather than reporting a
+        # tail that is really the prefix before the failure.
+        assert InputLog.cursors(class) == nil
+
+        # A watermark advance and a retention sweep are casts: both are dropped
+        # rather than reaching a companion that was never started.
+        InputLog.record_consumed(class, {class, "proc", "a"}, 1)
+        :ok = Sweep.run(class)
+        assert Process.alive?(pid)
+        assert {:error, {:crc_mismatch, 0, ^second}} = GenServer.call(pid, :last_offset)
+      end)
     end
   end
 

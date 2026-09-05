@@ -856,3 +856,35 @@ could issue travels through that thread, so the orchestrator's restart is the on
 A wedged *runner* is not in this set: the pipeline evicts and rebinds it, and it stays
 `200 degraded`. `FLEZHA_FABRIC_503_POLLS=0` disables the fabric 503 outright. The listener is
 opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569).
+
+### The `/readyz` contract
+
+The same listener serves a second, separate verdict, because liveness and readiness are
+different questions with opposite correct answers in the same window. `/healthz` answers
+*should the kubelet restart me?* and stays `200` throughout a planned recovery. `/readyz`
+answers *should traffic be routed to me?* and must refuse for exactly that window. Neither
+is derived from the other, and `/readyz` reads no arm of the table above.
+
+`Flezha.Boot.Readiness` holds a declared table of readiness preconditions and folds them
+into one verdict. Each row carries a key, the verdict it holds the node at while unmet, and
+the predicate that decides it; adding a precondition is adding a row.
+
+| Row | Met when |
+| --- | --- |
+| `boot_sequence_complete` | the supervision tree has started and the boot sequence has finished |
+| `hubs_recovered` | no namespace hub is in ProcessHub's recovery state machine |
+| `durable_registry_loaded` | the durable registry holds no operative this controller has not reloaded |
+
+`200` only on `:ready`; otherwise `503` with a JSON body naming the verdict
+(`booting` / `recovering`), the unmet row keys and the state of every row.
+
+Two properties the rows depend on. **The verdict needs no owning process**: the
+boot-sequence fact is a `:persistent_term` cell, so a probe issued while the boot sequence
+is still running is answered rather than queued behind the boot's mailbox, and it fails
+closed by absence. **Only that one row is recorded** — the other two are evaluated on every
+read, so a controller whose bounded boot replay wait elapsed becomes ready when the hub
+finally reaches `:normal`, with no restart. A precondition that cannot be read counts as
+unmet: no absence of information produces a ready answer.
+
+The readiness endpoint shares the health endpoint's listener, port and
+`FLEZHA_HEALTHZ_ENABLED` switch, and introduces no configuration key of its own.

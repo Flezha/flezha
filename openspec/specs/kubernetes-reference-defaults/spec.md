@@ -15,13 +15,37 @@ Every container in the reference manifests (`kubernetes/flezha-daemonset.yaml` c
 - **THEN** its runner container also declares CPU and memory requests and limits
 
 ### Requirement: Controller container declares liveness, readiness, and startup probes
-The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and a `readinessProbe` so Kubernetes restarts a wedged controller and gates rollouts/traffic on actual health. The probes SHALL use a controller-provided health signal (a `flz` health command exec, or a TCP check on a controller port) and SHALL NOT assume any external dependency.
+
+The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and a `readinessProbe` so Kubernetes restarts a wedged controller and gates rollouts and traffic on the right fact. The probes SHALL use a controller-provided signal (an HTTP endpoint the controller itself serves, a `flz` command exec, or a TCP check on a controller port) and SHALL NOT assume any external dependency.
+
+Liveness and readiness are different questions and SHALL NOT share one endpoint. The `livenessProbe` and the `startupProbe` SHALL read the health endpoint, which answers success throughout a planned recovery so the kubelet does not restart a controller mid-replay. The `readinessProbe` SHALL read the readiness endpoint, which answers failure for exactly that same window, so a pod that has not finished coming up is not routed to.
+
+A readiness probe SHALL NOT report a controller ready on the grounds that nothing is yet running on it. A controller in its first tick — no namespace hub created, no operative bound, nothing restored — SHALL read as not ready.
 
 #### Scenario: Probes present and self-contained
+
 - **WHEN** `kubernetes/flezha-daemonset.yaml` is applied
-- **THEN** the `flezha` container declares `startupProbe`, `livenessProbe`, and `readinessProbe`, each using a self-contained check (exec of a `flz` health command or a TCP socket check), with no probe depending on a service outside the pod
+- **THEN** the `flezha` container declares `startupProbe`, `livenessProbe`, and `readinessProbe`, each using a self-contained check served by the controller itself, with no probe depending on a service outside the pod
+
+#### Scenario: Liveness and readiness read different endpoints
+
+- **WHEN** `kubernetes/flezha-daemonset.yaml` is inspected
+- **THEN** the `livenessProbe` and `startupProbe` target the health endpoint and the `readinessProbe` targets the readiness endpoint
+
+#### Scenario: A recovering controller is live but not ready
+
+- **GIVEN** a controller whose namespace hubs are replaying their durable registry
+- **WHEN** the kubelet runs both probes
+- **THEN** the liveness probe SHALL succeed, so the pod is not restarted, and the readiness probe SHALL fail, so the pod is removed from readiness-gated endpoints until the replay completes
+
+#### Scenario: A freshly started controller is not ready
+
+- **GIVEN** a controller pod in its first seconds, before any namespace hub exists
+- **WHEN** the kubelet runs the readiness probe
+- **THEN** it SHALL fail, and the pod SHALL NOT be added to readiness-gated endpoints
 
 #### Scenario: Failing health restarts the pod
+
 - **WHEN** the controller becomes unhealthy past the liveness threshold
 - **THEN** the kubelet restarts the container, and while unready the pod is removed from readiness-gated endpoints
 

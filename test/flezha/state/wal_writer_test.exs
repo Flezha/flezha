@@ -6,6 +6,10 @@ defmodule Flezha.State.WalWriterTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  import ExUnit.CaptureLog
+
   alias Flezha.State.{Metrics, Paths, RecordFrame, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter.State, as: WriterState
@@ -47,8 +51,48 @@ defmodule Flezha.State.WalWriterTest do
       File.write!(path, prefix <> <<0>>)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
-      assert {:error, :crc_mismatch} = RecordFrame.decode_record(dev, 0)
+      # The framed extent rides the error: it is what decides whether the
+      # failure is a torn tail or a record with history behind it.
+      assert {:error, :crc_mismatch, extent} = RecordFrame.decode_record(dev, 0)
+      assert extent == byte_size(record)
       :file.close(dev)
+    end
+
+    test "the truncation proof answers only what it can prove", %{} do
+      # Design §3, as a table. `remaining` is the byte count from the failure
+      # point to the end of the file.
+      assert RecordFrame.repairable?(:short_read, nil, 900)
+      assert RecordFrame.repairable?(:crc_mismatch, 36, 36)
+      refute RecordFrame.repairable?(:crc_mismatch, 36, 72)
+      assert RecordFrame.repairable?(:bad_len, nil, 31)
+      refute RecordFrame.repairable?(:bad_len, nil, 32)
+
+      # An I/O error is not a proof of anything, so it is never a repair.
+      refute RecordFrame.repairable?(:ebadf, nil, 0)
+    end
+
+    test "a reader with no channel for a refusal raises instead of reading short",
+         %{base: base} do
+      path = Path.join(base, "no_channel.bin")
+      header = TestHelpers.stub_header()
+
+      File.write!(
+        path,
+        RecordFrame.encode_record(0, header, "a") <>
+          RecordFrame.encode_record(1, header, "b") <>
+          RecordFrame.encode_record(2, header, "c")
+      )
+
+      # The middle record: a corrupt LAST record is the torn tail the fold is
+      # allowed to stop at, and would not raise.
+      [_first, second, _third] = TestHelpers.record_offsets(path)
+      TestHelpers.corrupt_record_body(path, second)
+
+      capture_log(fn ->
+        assert_raise RuntimeError, ~r/durable record refused \(crc_mismatch\)/, fn ->
+          RecordFrame.fold_path!(path, [], fn {seq, _h, _b}, acc -> {:cont, [seq | acc]} end)
+        end
+      end)
     end
 
     test "decode_record/2 detects short read", %{base: base} do
@@ -56,7 +100,7 @@ defmodule Flezha.State.WalWriterTest do
       File.write!(path, <<1::64-big, 100::32-big>>)
       {:ok, dev} = :file.open(path, [:raw, :read, :binary])
 
-      assert {:error, :short_read} = RecordFrame.decode_record(dev, 0)
+      assert {:error, :short_read, nil} = RecordFrame.decode_record(dev, 0)
       :file.close(dev)
     end
   end
@@ -165,6 +209,159 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
       assert WalWriter.last_persisted_seq(srv2) == 2
+    end
+
+    test "a corrupt record mid-WAL is refused, and the records after it stay on disk",
+         %{entity_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+      for n <- 0..3, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      TestHelpers.close_and_await(srv, pid)
+
+      path = Paths.wal_path(pid)
+      # The third record: the last seq that verifies before it is 1, which is
+      # what a scan that stopped there would have reported as the WAL's seq.
+      [_zero, _one, corrupt, after_corrupt] = TestHelpers.record_offsets(path)
+      size = RecordFrame.file_size(path)
+      TestHelpers.corrupt_record_body(path, corrupt)
+
+      # A value no scan produces: it survives only if the refused open reported
+      # no seq at all. The size assertion below is on the same counters ref, so
+      # it is the proof this one is reading the ref the writer writes.
+      metrics = Metrics.for_entity(pid)
+      Metrics.put(metrics, :wal_seq, -1)
+
+      handler =
+        :telemetry_test.attach_event_handlers(self(), [
+          [:flezha, :state, :record_frame, :refused]
+        ])
+
+      log =
+        capture_log(fn ->
+          {:ok, _} = Supervisor.find_or_start(pid)
+          {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
+
+          # The writer is alive and refusing, not restarting into the same file.
+          assert Process.alive?(srv2)
+
+          assert {:error, {:crc_mismatch, 1, ^corrupt}} =
+                   WalWriter.append(srv2, 4, header, "x4")
+        end)
+
+      assert_receive {[:flezha, :state, :record_frame, :refused], ^handler, %{count: 1},
+                      %{path: ^path, reason: :crc_mismatch, last_seq: 1, offset: ^corrupt}}
+
+      :telemetry.detach(handler)
+
+      assert log =~ "durable record refused (crc_mismatch)"
+      assert log =~ path
+
+      # Not one byte gone, and the record after the corrupt one still decodes.
+      assert RecordFrame.file_size(path) == size
+      {:ok, dev} = :file.open(path, [:raw, :read, :binary])
+      assert {:ok, 3, ^header, "x3", _} = RecordFrame.decode_record(dev, after_corrupt)
+      :file.close(dev)
+
+      assert Metrics.get(metrics, :wal_size_bytes) == size
+      assert Metrics.get(metrics, :wal_seq) == -1
+    end
+
+    test "a rewind refuses rather than cutting at a corrupt record below its boundary",
+         %{entity_id: pid} do
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      header = TestHelpers.stub_header()
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+
+      path = Paths.wal_path(pid)
+      [_first, second | _] = TestHelpers.record_offsets(path)
+      size = RecordFrame.file_size(path)
+
+      # The bit flips under a live writer, below the seq the rewind cuts at:
+      # `cut_above/4` keeps `[0, bound)`, so a boundary taken at the corrupt
+      # record would delete the valid records between it and seq 3.
+      TestHelpers.corrupt_record_body(path, second)
+
+      assert capture_log(fn ->
+               assert {:error, {:crc_mismatch, 0, ^second}} = WalWriter.rewind_to(srv, 3, 1)
+             end) =~ "durable record refused"
+
+      assert RecordFrame.file_size(path) == size
+    end
+
+    test "a prefix cut refuses rather than cutting past a corrupt record",
+         %{entity_id: pid} do
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      header = TestHelpers.stub_header()
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+
+      path = Paths.wal_path(pid)
+      [_first, second | _] = TestHelpers.record_offsets(path)
+      size = RecordFrame.file_size(path)
+      TestHelpers.corrupt_record_body(path, second)
+
+      # `cut_below/5`'s `@spec` has always promised an error its caller never
+      # matched; a refused boundary is the second way it answers one.
+      assert capture_log(fn ->
+               assert {:error, {:crc_mismatch, 0, ^second}} = WalWriter.truncate_up_to(srv, 3)
+             end) =~ "durable record refused"
+
+      assert RecordFrame.file_size(path) == size
+
+      # The refusal stopped the writer serving, so the next append is refused
+      # without walking the file again.
+      assert {:error, {:crc_mismatch, 0, ^second}} = WalWriter.append(srv, 6, header, "x6")
+    end
+
+    test "a cut whose file went away answers the error its @spec always promised",
+         %{entity_id: pid} do
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      header = TestHelpers.stub_header()
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+
+      # A cut queued behind its directory's removal: `cut_below/5` has always
+      # documented this answer and its caller matched only `{:ok, …}`/`:none`.
+      File.rm!(Paths.wal_path(pid))
+
+      assert {:error, :enoent} = WalWriter.truncate_up_to(srv, 3)
+
+      # A missing file is not a refused record: the writer keeps serving.
+      assert :ok = WalWriter.append(srv, 6, header, "x6")
+    end
+
+    test "a repaired torn tail is reported with the byte count it discarded",
+         %{entity_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+      :ok = WalWriter.append(srv, 0, header, "a")
+      TestHelpers.close_and_await(srv, pid)
+
+      path = Paths.wal_path(pid)
+      kept = RecordFrame.file_size(path)
+      File.write!(path, <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>, [:append])
+
+      handler =
+        :telemetry_test.attach_event_handlers(self(), [
+          [:flezha, :state, :record_frame, :repaired]
+        ])
+
+      # A repair is a warning, and the suite's primary logger level is `:error`.
+      restore_level = NodeTestHelper.override_log_level(:warning)
+      on_exit(restore_level)
+
+      log =
+        capture_log(fn ->
+          {:ok, srv2} = Supervisor.find_or_start(pid)
+          assert WalWriter.last_persisted_seq(srv2) == 0
+        end)
+
+      assert_receive {[:flezha, :state, :record_frame, :repaired], ^handler, %{bytes: 5},
+                      %{path: ^path, reason: :short_read, last_seq: 0, offset: ^kept}}
+
+      :telemetry.detach(handler)
+      assert log =~ "durable record log repaired"
+      assert RecordFrame.file_size(path) == kept
     end
 
     test "truncates partial-write tail past last valid record", %{entity_id: pid} do

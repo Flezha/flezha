@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+### Fixed — three frames the Elixir SDK wrote to nothing are now held and replayed
+
+An Entity evicted while no secondary stream was bound lost its
+`delete_entity_state`, so the controller kept state for an Entity the runner had
+already destroyed. The same eviction lost every change record that Entity was
+still holding, while the output of the very dispatch that produced them was
+replayed by the Operative — the controller saw a result whose cause it never
+heard about. And the workflow driver's two writes relayed through the runner, a
+staged output and a saga marker, were dropped whenever no stream was bound or
+the write was refused: one behind a log line, one behind a discarded verdict.
+
+All three are now held and replayed on the next bound stream, on the terms every
+hold on this wire already used — bounded by `FLEZHA_RECONNECT_RING_CAPACITY`,
+oldest dropped past that and counted as a drop-oldest shed. Because a hold that
+dies with the process that owned it is not a hold, an Entity that stops in an
+orderly way hands what it could not ship to its Operative, which outlives it and
+replays those frames first: ahead of the outputs of the same dispatch, and ahead
+of anything a replacement Entity for the same key writes.
+
+This is the Elixir SDK only. It is its own core and inherits nothing from the
+shared `flz_core`, where the workflow writes were already held; the one matching
+hole there, an evicted Entity's delete, is recorded for a follow-up.
+
+### Fixed — the Kubernetes readiness probe stops reporting a booting controller ready
+
+The `readinessProbe` in `kubernetes/flezha-daemonset.yaml` did `GET /healthz`,
+and the health endpoint returns `503` for one verdict only. In a controller's
+first tick every count it reads is zero and no hub is recovering, so the ladder
+falls through and the probe read `200 {"status":"healthy"}` — before any
+namespace hub existed and before anything had been restored. Kubernetes marked
+the pod Ready and routed traffic to it. The window is the whole boot, not a
+race: the boot sequence runs in a continuation while the supervisor keeps
+starting children, and the health listener is up throughout.
+
+One endpoint was being asked two questions with opposite correct answers.
+`/healthz` answers whether the kubelet should restart the node and must stay
+`200` through a planned recovery, so it is unchanged — every verdict, status
+code and body field it had, it still has. The controller now also serves
+`GET /readyz`, which answers whether traffic should be routed to it: `200` only
+once the boot sequence has completed, every namespace hub has left the recovery
+state machine and the durable registry has been reloaded, and otherwise `503`
+with a body naming the preconditions still unmet. It shares the health
+endpoint's listener, port and `FLEZHA_HEALTHZ_ENABLED` switch and adds no
+configuration key. The DaemonSet's readiness probe now reads it; the startup and
+liveness probes still read `/healthz`.
+
+Every precondition is decided on each read rather than latched at boot, so a
+controller whose bounded boot replay wait elapsed becomes ready when the hub
+finally reaches `:normal`, with no restart.
+
+### Fixed — a corrupt durable record is refused instead of silently deleted
+
+A record whose crc32 failed anywhere in a WAL or an input log was treated as a
+torn tail: the reader truncated the file back to the last record that verified,
+deleting every acknowledged record after it, at every boot, with nothing logged
+and no telemetry. A retention or realign cut took the same wrong boundary, and a
+restore payload assembled from such a log shipped the records before the failure
+as though they were the whole history.
+
+A record log is now truncated only where the reader can prove no complete record
+can begin after the failure point. That proof holds for the torn tail a crash
+mid-append leaves — still repaired, and now reported with the byte count it
+discarded. It does not hold for a record whose crc fails with complete records
+behind it: the bytes are left untouched, the process that owns the file stays
+alive and refuses to serve rather than being restarted into the same file, and
+one error line plus one `[:flezha, :state, :record_frame, :refused]` telemetry
+event name the file, the last seq that verified and the byte offset. The
+Entity's restore is refused the same way, so the operative is left unbound
+rather than binding on a partial history — the behaviour a refused restore
+already had. Recovery stays an operator decision with the bytes still in hand.
+
 ### Fixed — `flz operative rescale` prints its summary again
 
 The rescale summary line still asked the result for the count of forwarding

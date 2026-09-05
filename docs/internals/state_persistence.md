@@ -110,10 +110,17 @@ its Operatives' state with it unless the remote durability tier is enabled.
 [crc32:  u32 BE]      :erlang.crc32(header <> change_bytes)
 ```
 
-`RecordFrame.scan_for_last_valid_seq/1` forward-scans the file at open (there is no length at the
-record tail, so a backward scan is impossible) and truncates any bytes past the last record whose
-CRC verifies; `RecordFrame.fold_records/3` is the one walk every reader uses. A snapshot file is
-`<<header::16-bytes, snapshot_bytes, crc32::32-big>>`.
+`RecordFrame.scan_for_last_valid_seq/2` forward-scans the file at open (there is no length at the
+record tail, so a backward scan is impossible). It truncates only where it can prove that no
+complete record can begin after the failure point — a read that ran off the end of the file, a
+crc failure whose framed extent is the rest of the file, or a length field with less than one
+whole record left after it. That is the torn tail a crash mid-append leaves, and the repair is
+reported (`[:flezha, :state, :record_frame, :repaired]`). Anything else — most importantly a
+record whose crc fails with complete records behind it — is **refused**: the bytes stay on disk,
+the writer stays alive and refuses to serve, and one error line and one telemetry event
+(`[:flezha, :state, :record_frame, :refused]`) name the file, the last seq that verified and the
+byte offset. `RecordFrame.fold_records/4` is the one walk every reader uses and gives the same
+answer. A snapshot file is `<<header::16-bytes, snapshot_bytes, crc32::32-big>>`.
 
 ## Reserved-log record formats
 

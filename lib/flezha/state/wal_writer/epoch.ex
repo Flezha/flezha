@@ -173,10 +173,11 @@ defmodule Flezha.State.WalWriter.Epoch do
   # is the baseline. A record with no event time (a plain change record from
   # pre-tier history) belongs to the baseline — it cannot be placed on the event
   # -time axis, so it cannot be said to come after the target.
-  def scan_correction_baseline(device, target) do
+  def scan_correction_baseline(device, path, target) do
     # `{-1, -1}` = no baseline seen yet; a first record already at or after the
     # target means the rewind would have to go below the retained history.
-    RecordFrame.fold_records(device, {-1, -1}, fn {seq, header, body}, {seq_acc, offset_acc} ->
+    RecordFrame.fold_records(device, path, {-1, -1}, fn {seq, header, body},
+                                                        {seq_acc, offset_acc} ->
       case Wire.decode_effect_record(header, body) do
         %{event_time: event_time} when event_time >= target ->
           {:halt, baseline_result(seq_acc, offset_acc)}
@@ -186,23 +187,28 @@ defmodule Flezha.State.WalWriter.Epoch do
       end
     end)
     |> case do
-      {:ok, _} = ok -> ok
-      {:error, _} = err -> err
+      {:ok, {:ok, _} = ok} -> ok
+      {:ok, {:error, _} = err} -> err
       # The fold ran off the end: nothing is at or after the target, so the input
       # is not actually late for this Entity.
-      {_seq, _offset} -> {:error, :nothing_to_correct}
+      {:ok, {_seq, _offset}} -> {:error, :nothing_to_correct}
+      # A record on the way to the baseline was refused; there is no baseline.
+      {:error, _refusal} = refused -> refused
     end
   end
 
   defp baseline_result(seq, _offset) when seq < 0, do: {:error, :nothing_to_correct}
   defp baseline_result(seq, offset), do: {:ok, %{seq: seq, consumed_offset: offset}}
 
-  def scan_consumed_at(device, upto) do
-    RecordFrame.fold_records(device, -1, fn {seq, header, body}, acc ->
-      if seq > upto,
-        do: {:halt, acc},
-        else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
-    end)
+  def scan_consumed_at(device, path, upto) do
+    case RecordFrame.fold_records(device, path, -1, fn {seq, header, body}, acc ->
+           if seq > upto,
+             do: {:halt, acc},
+             else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
+         end) do
+      {:ok, offset} -> offset
+      {:error, _refusal} = refused -> refused
+    end
   end
 
   # `-1` for a plain change record, or an effect record that consumed nothing.
@@ -236,10 +242,12 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   # ---------- Effect-record scan ----------
 
-  def scan_effect_records_above(device, cursor) do
-    {acc, max_consumed} =
-      RecordFrame.fold_records(device, {[], nil}, fn {seq, header, body},
-                                                     {acc, max_consumed} = unchanged ->
+  def scan_effect_records_above(device, path, cursor) do
+    # Both callers walked this file to its end immediately before, so a record
+    # that does not decode here is impossible, not a case to answer.
+    {:ok, {acc, max_consumed}} =
+      RecordFrame.fold_records(device, path, {[], nil}, fn {seq, header, body},
+                                                           {acc, max_consumed} = unchanged ->
         case Wire.decode_effect_record(header, body) do
           nil ->
             {:cont, unchanged}
@@ -264,12 +272,24 @@ defmodule Flezha.State.WalWriter.Epoch do
   defp max_offset(nil, offset), do: offset
   defp max_offset(current, offset), do: max(current, offset)
 
-  # Cut the WAL and the snapshots above `seq`, re-derive what the boundary left
-  # un-flushed from the rewritten file, and open the next epoch on it.
-  def rewind(state, seq, epoch) do
-    {:ok, file, seq_index} =
-      RecordFrame.cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1)
+  @doc """
+  Cut the WAL and the snapshots above `seq`, re-derive what the boundary left
+  un-flushed from the rewritten file, and open the next epoch on it.
 
+  Answers `{:ok, state}`, or `{:error, refusal, state}` when locating the
+  boundary refused a record: the cut keeps `[0, bound)` and renames it into
+  place, so a boundary taken at a record that did not decode would delete the
+  valid records between it and the seq the caller asked to rewind to. The
+  writer that owns the file then refuses to serve rather than cutting.
+  """
+  def rewind(state, seq, epoch) do
+    case RecordFrame.cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1) do
+      {:ok, file, seq_index} -> {:ok, do_rewind(state, seq, epoch, file, seq_index)}
+      {:error, refusal} -> {:error, refusal, %{state | refusal: refusal}}
+    end
+  end
+
+  defp do_rewind(state, seq, epoch, file, seq_index) do
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
     # realign does, would be a wipe, not a rewind.
@@ -287,7 +307,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     # and the same scan yields the consumed-offset the input-log watermark must
     # fall back to.
     flushed = min(state.outbox_flushed_seq, seq)
-    {surviving, max_consumed} = scan_effect_records_above(file, flushed)
+    {surviving, max_consumed} = scan_effect_records_above(file, state.wal_path, flushed)
     rewind_input_watermark(state, max_consumed)
 
     size = RecordFrame.file_size(state.wal_path)

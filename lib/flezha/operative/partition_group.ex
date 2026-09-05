@@ -495,9 +495,13 @@ defmodule Flezha.Operative.PartitionGroup do
     end
   end
 
+  # A log that refused a record answers no offset, so its class has not
+  # consumed its inputs and the quiesce times out saying so.
   defp consumed?(member_id) do
-    last = InputLog.last_offset(member_id)
-    last < 0 or InputLog.watermark(member_id) == last
+    case InputLog.last_offset(member_id) do
+      last when is_integer(last) -> last < 0 or InputLog.watermark(member_id) == last
+      {:error, _refusal} -> false
+    end
   end
 
   defp quiesce_timeout_message(member_id) do
@@ -505,7 +509,7 @@ defmodule Flezha.Operative.PartitionGroup do
     last = InputLog.last_offset(member_id)
 
     "rescale aborted: #{member_id} has not consumed its input log " <>
-      "(watermark #{inspect(watermark)}, last offset #{last}); nothing was stopped or moved. " <>
+      "(watermark #{inspect(watermark)}, last offset #{inspect(last)}); nothing was stopped or moved. " <>
       "A checkpoint-ack class only advances its watermark at a checkpoint close, so the wait " <>
       "rides its checkpoint cadence — retry with a longer --timeout, or drive a checkpoint."
   end

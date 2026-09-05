@@ -282,12 +282,13 @@ defmodule Flezha.State.DurabilityTier.Artifact do
     end
   end
 
-  # `fold_path/3` owns the open-fold-close and the torn-tail contract; a
-  # whole-file reference has no records at all.
+  # `fold_path!/3` owns the open-fold-close and the torn-tail contract; a
+  # whole-file reference has no records at all. A refused record raises rather
+  # than shipping the prefix before it as the whole WAL.
   defp fold_wal(ref, acc, fun) do
     case wal_path(ref) do
       nil -> acc
-      path -> RecordFrame.fold_path(path, acc, fun)
+      path -> RecordFrame.fold_path!(path, acc, fun)
     end
   end
 

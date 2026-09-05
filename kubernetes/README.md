@@ -83,20 +83,29 @@ per-Entity WAL write rate. Symptoms of limits set too low:
 
 ## Health probes
 
-The controller serves `GET /healthz` on port `9569` (`Flezha.Healthz.Server`, enabled
-via `FLEZHA_HEALTHZ_ENABLED` in the ConfigMap and bound to `0.0.0.0` so the kubelet can
-reach it on the pod IP). The DaemonSet uses it for all three probes:
+The controller serves `GET /healthz` and `GET /readyz` on port `9569`
+(`Flezha.Healthz.Server`, enabled via `FLEZHA_HEALTHZ_ENABLED` in the ConfigMap and
+bound to `0.0.0.0` so the kubelet can reach them on the pod IP). Liveness and readiness
+are different questions, so the DaemonSet's probes read different endpoints:
 
-- `startupProbe` — 30 × 10s = **5 minutes** for boot plus the auto-restore replay.
-  Slow-booting clusters should raise `failureThreshold`, not the liveness thresholds.
-- `livenessProbe` — restarts a genuinely wedged controller.
-- `readinessProbe` — gates readiness-dependent endpoints.
+- `startupProbe` — `/healthz`, 30 × 10s = **5 minutes** for boot plus the auto-restore
+  replay. Slow-booting clusters should raise `failureThreshold`, not the liveness
+  thresholds.
+- `livenessProbe` — `/healthz`, restarts a genuinely wedged controller.
+- `readinessProbe` — `/readyz`, gates readiness-dependent endpoints.
 
-The endpoint returns `503` **only** on a real wedge. A planned recovery reports
-`recovering` with a `200` precisely so the kubelet does not restart the pod mid-replay,
-and an operative that cannot bind because its runner is gone reports `degraded` with a
-`200` — restarting the controller would not re-bind it. Do not "fix" a `degraded`
-controller by tightening the liveness probe.
+`/healthz` answers "should the kubelet restart me?" and returns `503` **only** on a real
+wedge. A planned recovery reports `recovering` with a `200` precisely so the kubelet does
+not restart the pod mid-replay, and an operative that cannot bind because its runner is
+gone reports `degraded` with a `200` — restarting the controller would not re-bind it. Do
+not "fix" a `degraded` controller by tightening the liveness probe.
+
+`/readyz` answers the opposite question — "should traffic be routed to me?" — and so must
+answer `503` for exactly the window `/healthz` keeps answering `200`. It returns `200`
+only once the boot sequence has completed, every namespace hub has left the recovery
+state machine, and the durable registry has been reloaded; otherwise `503` with a body
+naming the preconditions still unmet. Pointing the readiness probe back at `/healthz`
+would mark a controller Ready before it has created a hub or restored anything.
 
 ## Security profile
 

@@ -39,6 +39,24 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
       assert contents =~ env_pair_pattern,
              "expected env var FLEZHA_SOCKET_FILES_PATH set to \"/flezha/sockets\" in the controller container"
     end
+
+    # Liveness and readiness are opposite questions in the same window: a
+    # controller mid-replay must not be restarted (200 on /healthz) and must
+    # not be routed to (503 on /readyz). One endpoint cannot answer both, so
+    # the manifest is pinned against drifting the readiness probe back.
+    test "readiness reads /readyz while liveness and startup read /healthz",
+         %{contents: contents} do
+      probe = fn name ->
+        case Regex.run(~r/#{name}:\s*\n\s+httpGet:\s*\n\s+path:\s+(\S+)/, contents) do
+          [_, path] -> path
+          nil -> nil
+        end
+      end
+
+      assert probe.("readinessProbe") == "/readyz"
+      assert probe.("livenessProbe") == "/healthz"
+      assert probe.("startupProbe") == "/healthz"
+    end
   end
 
   describe "flezha-configmap.yaml" do

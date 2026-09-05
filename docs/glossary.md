@@ -277,6 +277,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **`/healthz`** — opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569): `healthy`, `recovering` and
   `degraded` are `200`; `unhealthy` `503` is reserved for a stopped convergence loop or a sustained
   fabric wedge, the two things only a process restart fixes.
+- **`/readyz`** — the same listener, the other question. `/healthz` answers whether the kubelet
+  should restart this node; `/readyz` answers whether traffic should be routed to it, and so must
+  refuse for exactly the window `/healthz` keeps answering `200`. It is `Flezha.Boot.Readiness`'s
+  verdict folded from three preconditions — the boot sequence completed, every hub out of the
+  recovery state machine, the durable registry reloaded — `200` only on `:ready`, `503` otherwise
+  with the unmet rows named. Neither endpoint is derived from the other.
 
 ## Authentication and authorization
 

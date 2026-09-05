@@ -197,7 +197,9 @@ asks each Entity whether it has been idle past the TTL holding no work (a bounde
 busy one is skipped until the next sweep), then evicts an idle one synchronously: the Entity
 ships `delete_entity_state` on its own record stream when the class persists (behind its
 records by construction), clears its slot so a successor is a cold start from `init_state/1`,
-and stops. At most 256 evictions happen per sweep; the rest wait for the next tick. Evicted
+and stops. When no stream will take that delete, it and any records the Entity was still
+holding pass to the Operative before the process ends, which replays them on the next bound
+stream — ahead of anything a replacement Entity for the same key writes there. At most 256 evictions happen per sweep; the rest wait for the next tick. Evicted
 keys are remembered (1 024 at most), so a live read of one answers `entity_evicted` rather
 than `entity_not_found`. Without a TTL nothing is swept and the Entities live for the
 operative's lifetime.
@@ -291,10 +293,13 @@ A record no stream will take — the write refused, or no stream bound at all �
 Entity and replayed onto the stream the next rebind wires, in the order the records were
 written, so a `change_seq` is never inverted. The hold is bounded by
 `FLEZHA_RECONNECT_RING_CAPACITY` (default 1024), drops the oldest past that and counts the
-shed as `drops_oldest`, the same terms the Operative holds a refused plugin-bound output on.
-The two holds are ordered against each other: the Operative rebinds every Entity and waits
-before replaying its own outputs, so a dispatch's records reach the wire ahead of its output
-frame on a replay exactly as they do live.
+shed as `drops_oldest`. Every frame this SDK writes to a secondary stream is held on those
+same terms: the Operative's plugin-bound outputs, the frames an Entity hands on when it
+stops, and the workflow driver's outputs and records, which have no stream of their own and
+are relayed through the runner. The holds are ordered against each other: on a rebind the
+Operative replays what stopped Entities handed it, then rebinds every live Entity and waits,
+then replays its own outputs — so a dispatch's records reach the wire ahead of its output
+frame on a replay exactly as they do live, and a dead Entity's delete ahead of both.
 
 The controller's commands are answered by `Flezha.SDK.Commands`, off the runner's loop:
 `RestoreInitState` folds the snapshot then the change log in the controller's on-disk framing

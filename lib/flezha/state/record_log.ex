@@ -67,13 +67,14 @@ defmodule Flezha.State.RecordLog do
 
   @doc """
   Decode every complete record through `decode`, in append order. `[]` when the
-  log does not exist. Reads the file directly (no writer needed) and stops at
-  the first invalid record — the WAL torn-tail contract.
+  log does not exist. Reads the file directly (no writer needed) and stops at a
+  torn tail — the WAL contract. A record that fails its crc with complete
+  records behind it raises rather than reading as the end of the log.
   """
   @spec read(binary(), decoder()) :: [term()]
   def read(path, decode) when is_binary(path) and is_function(decode, 3) do
     path
-    |> RecordFrame.fold_path([], fn {seq, header, body}, acc ->
+    |> RecordFrame.fold_path!([], fn {seq, header, body}, acc ->
       case decode.(seq, header, body) do
         {:ok, entry} -> {:cont, [entry | acc]}
         {:error, _} -> {:cont, acc}

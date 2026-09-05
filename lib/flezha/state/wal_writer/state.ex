@@ -12,7 +12,7 @@ defmodule Flezha.State.WalWriter.State do
   and credit; the effectively-once outbox; and the two per-file indexes.
   """
 
-  alias Flezha.State.{Paths, SeqIndex}
+  alias Flezha.State.{Paths, RecordFrame, SeqIndex}
 
   defstruct [
     :entity_id,
@@ -70,7 +70,13 @@ defmodule Flezha.State.WalWriter.State do
     # `header => seq` of every record still in the file, for a log whose
     # appends dedup on their header (a record log's barrier or inbox entry).
     # Built from the file on the first keyed append, never for a stream WAL.
-    :header_index
+    :header_index,
+    # The record this writer's file refused (`Flezha.State.RecordFrame`), or
+    # `nil`. Set, the writer stays alive and answers every request that would
+    # write or cut with the refusal: the file holds records the controller
+    # acknowledged and cannot parse past, and a `:transient` child that raised
+    # here would be restarted straight back into it.
+    :refusal
   ]
 
   @type t :: %__MODULE__{
@@ -104,7 +110,8 @@ defmodule Flezha.State.WalWriter.State do
           outbox_last_seq: integer(),
           seq_index: SeqIndex.t(),
           sync_waiters: [{GenServer.from(), term()}],
-          header_index: %{optional(binary()) => non_neg_integer()} | nil
+          header_index: %{optional(binary()) => non_neg_integer()} | nil,
+          refusal: RecordFrame.refusal() | nil
         }
 
   @type limits :: %{

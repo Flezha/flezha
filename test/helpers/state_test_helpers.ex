@@ -305,6 +305,40 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  The byte offset every record in the record log at `path` starts at, read out
+  of the file's own framing rather than rebuilt from what a test appended.
+  """
+  @spec record_offsets(Path.t()) :: [non_neg_integer()]
+  def record_offsets(path) do
+    data = File.read!(path)
+
+    Stream.unfold(0, fn
+      offset when offset + 12 > byte_size(data) ->
+        nil
+
+      offset ->
+        <<_seq::64-big, len::32-big>> = binary_part(data, offset, 12)
+        {offset, offset + 12 + len + 4}
+    end)
+    |> Enum.to_list()
+  end
+
+  @doc """
+  Flip one bit in the body of the record starting at `offset` in the record log
+  at `path`.
+
+  The canonical corruption: the framing is left intact, so the record's crc32
+  fails while its length still locates the record after it — which is what
+  separates a corrupt record from the torn tail a crash mid-append leaves.
+  """
+  @spec corrupt_record_body(Path.t(), non_neg_integer()) :: :ok
+  def corrupt_record_body(path, offset) do
+    at = offset + 12 + RecordFrame.header_size()
+    <<prefix::binary-size(^at), byte, rest::binary>> = File.read!(path)
+    File.write!(path, <<prefix::binary, Bitwise.bxor(byte, 1), rest::binary>>)
+  end
+
+  @doc """
   Write one Entity's WAL holding a single record stamped by `sdk_lang`.
 
   The fixture behind every "what language wrote this state" assertion: the

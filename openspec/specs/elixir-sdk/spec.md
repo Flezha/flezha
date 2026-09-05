@@ -714,6 +714,13 @@ plugin-bound output. Losing it SHALL NOT be the whole handling, because an outpu
 the SDK does replay can otherwise reach the controller with no record of the
 change that produced it.
 
+The same SHALL hold for every frame the SDK writes to that stream: the delete an
+evicted Entity ships, the records an Entity still holds when it stops, and the
+workflow driver's outputs and records written through the runner. A hold that
+dies with the process that owned it is not a hold, so frames an Entity holds
+when it stops in an orderly way SHALL pass to a holder that outlives it and be
+replayed ahead of anything its replacement writes.
+
 #### Scenario: A record's write fails while the data stream is down
 
 - **WHEN** an Entity's `entity_state_change` frame cannot be written
@@ -730,4 +737,24 @@ change that produced it.
 - **WHEN** more records are held than the bound allows
 - **THEN** the SDK SHALL count what it sheds where every drop-oldest on this wire
   is counted
+
+#### Scenario: An eviction with no stream still reaches the controller
+
+- **WHEN** an Entity is evicted while no secondary stream is bound
+- **THEN** its `delete_entity_state` frame SHALL be replayed on the next bound
+  stream rather than lost with the process
+
+#### Scenario: An Entity that stops while holding hands its frames on
+
+- **WHEN** an Entity with held records is evicted before a stream is bound
+- **THEN** after the rebind those records SHALL reach the stream, ahead of the
+  output of the dispatch that produced them and ahead of anything a replacement
+  Entity writes
+
+#### Scenario: A workflow write the runner cannot ship is held
+
+- **WHEN** the workflow driver's output or record is cast to the runner with no
+  secondary stream bound, or the write is refused
+- **THEN** the frame SHALL be held and replayed on the next bound stream, and
+  SHALL NOT be dropped behind a log line
 

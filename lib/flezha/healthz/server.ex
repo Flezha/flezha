@@ -42,6 +42,15 @@ defmodule Flezha.Healthz.Server do
         controller and a `200` there is evidence about the loop, the
         operatives and the plugins — not about the data plane.
 
+    * `GET /readyz` — the readiness verdict of `Flezha.Boot.Readiness`, a
+      different question with a different answer: health says whether the
+      kubelet should restart this node, readiness says whether traffic should
+      be routed to it. `200 OK` only on `:ready`; `503` while the boot
+      sequence is running, while a hub is in the recovery state machine, and
+      while the durable registry is unreloaded — exactly the window `/healthz`
+      must keep answering `200`. Shares this listener, port and enable switch,
+      and reads nothing from the health ladder.
+
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.
 
@@ -56,6 +65,7 @@ defmodule Flezha.Healthz.Server do
 
   use GenServer
 
+  alias Flezha.Boot.Readiness
   alias Flezha.Convergence.{Snapshot, StallClassifier}
   alias Flezha.Http.Listener
   alias Flezha.State.DurabilityTier
@@ -115,6 +125,7 @@ defmodule Flezha.Healthz.Server do
   # ---------- routing ----------
 
   defp route(socket, {:get, "/healthz"}), do: respond_healthz(socket)
+  defp route(socket, {:get, "/readyz"}), do: respond_readyz(socket)
   defp route(socket, {:get, "/"}), do: Listener.send_response(socket, 200, "text/plain", "pong\n")
 
   defp route(socket, {:get, _}),
@@ -138,6 +149,24 @@ defmodule Flezha.Healthz.Server do
       body
       |> Map.put(:durability, to_string(DurabilityTier.posture()))
       |> Jason.encode!()
+
+    Listener.send_response(socket, code, "application/json", body)
+  end
+
+  # The readiness answer, folded from `Boot.Readiness`'s precondition table.
+  # It reads no fact `compute_health/0` reads and shares no arm with it: the
+  # two endpoints answer different questions, and the body names every row so
+  # an operator can see which precondition is holding the node back.
+  defp respond_readyz(socket) do
+    {verdict, rows} = Readiness.verdict()
+    code = if verdict == :ready, do: 200, else: 503
+
+    body =
+      Jason.encode!(%{
+        status: to_string(verdict),
+        unmet: for(%{key: key, met: false} <- rows, do: to_string(key)),
+        preconditions: Map.new(rows, fn %{key: key, met: met} -> {key, met} end)
+      })
 
     Listener.send_response(socket, code, "application/json", body)
   end

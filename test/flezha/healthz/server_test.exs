@@ -20,8 +20,10 @@ defmodule Flezha.Healthz.ServerTest do
 
   use ExUnit.Case, async: false
 
+  alias Flezha.Boot.Readiness
   alias Flezha.Convergence.Snapshot
   alias Flezha.Healthz.Server
+  alias Flezha.Service.HubManager
 
   setup do
     previous_port = Application.get_env(:flezha, :healthz_port)
@@ -533,6 +535,184 @@ defmodule Flezha.Healthz.ServerTest do
       assert status == 200
       assert Jason.decode!(body)["status"] == "healthy"
     end
+  end
+
+  # `/healthz` answers "should the kubelet restart me?"; `/readyz` answers
+  # "should traffic be routed to me?". Every case below reads BOTH on the same
+  # tick, because the change is that they answer differently.
+  describe "GET /readyz — readiness is not health" do
+    setup do
+      # The application's own boot published the flag; each case decides for
+      # itself, and the node is left as it was found.
+      Readiness.reset()
+      on_exit(&Readiness.publish_sequence_complete/0)
+      :ok
+    end
+
+    test "boot sequence not complete → 503 naming it, while /healthz is 200 healthy",
+         %{port: port} do
+      publish_verdict(nil, 0)
+
+      {ready_status, _headers, ready_body} = get(port, "/readyz")
+      {health_status, _headers, health_body} = get(port, "/healthz")
+
+      assert ready_status == 503
+      decoded = Jason.decode!(ready_body)
+      assert decoded["status"] == "booting"
+      assert decoded["unmet"] == ["boot_sequence_complete"]
+
+      # The defect in one pair: the endpoint the readiness probe used to read
+      # says healthy for exactly this window.
+      assert health_status == 200
+      assert Jason.decode!(health_body)["status"] == "healthy"
+    end
+
+    test "a hub in the recovery state machine → 503 naming hubs_recovered, /healthz 200 recovering",
+         %{port: port} do
+      Readiness.publish_sequence_complete()
+      hub_id = :"readyz_recovering_hub_#{System.unique_integer([:positive])}"
+      Snapshot.observe_recovery(hub_id, :recovery_pending)
+      publish_tick([])
+
+      {ready_status, _headers, ready_body} = get(port, "/readyz")
+      {health_status, _headers, health_body} = get(port, "/healthz")
+
+      assert ready_status == 503
+      decoded = Jason.decode!(ready_body)
+      assert decoded["status"] == "recovering"
+      assert "hubs_recovered" in decoded["unmet"]
+      assert decoded["preconditions"]["boot_sequence_complete"] == true
+
+      assert health_status == 200
+      assert Jason.decode!(health_body)["status"] == "recovering"
+    end
+
+    test "boot complete and nothing recovering → 200 with every row met", %{port: port} do
+      Readiness.publish_sequence_complete()
+      publish_verdict(nil, 0)
+
+      {status, _headers, body} = get(port, "/readyz")
+
+      assert status == 200
+      decoded = Jason.decode!(body)
+      assert decoded["status"] == "ready"
+      assert decoded["unmet"] == []
+
+      assert decoded["preconditions"] == %{
+               "boot_sequence_complete" => true,
+               "hubs_recovered" => true,
+               "durable_registry_loaded" => true
+             }
+    end
+
+    test "a hub left in :timeout stays unready, then flips with no restart", %{port: port} do
+      # F-R1: the boot sequence completes even when the bounded replay wait
+      # elapsed, so a latched readiness row would leave the pod NotReady for
+      # ever. The row is live, so it recovers on its own.
+      Readiness.publish_sequence_complete()
+      hub_id = :"readyz_timeout_hub_#{System.unique_integer([:positive])}"
+      Snapshot.observe_recovery(hub_id, :timeout)
+
+      {status, _headers, body} = get(port, "/readyz")
+      assert status == 503
+      assert "hubs_recovered" in Jason.decode!(body)["unmet"]
+
+      Snapshot.observe_recovery(hub_id, :normal)
+
+      {status, _headers, body} = get(port, "/readyz")
+      assert status == 200
+      assert Jason.decode!(body)["status"] == "ready"
+    end
+
+    test "an unreloaded durable registry → 503 naming it, /healthz 200 restoring",
+         %{port: port} do
+      # The post-restart case. Two rows would answer `200 ready` here — while
+      # `/healthz`, on the same tick, answers `restoring`.
+      Readiness.publish_sequence_complete()
+
+      root = Path.join(System.tmp_dir!(), "readyz_registry_#{System.unique_integer([:positive])}")
+      hub_dir = Path.join(root, "readyz_unstarted_hub")
+      File.mkdir_p!(hub_dir)
+      File.write!(Path.join(hub_dir, "registry.dets"), "")
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      put_env_for_test(:process_hub_registry_root, root)
+      put_env_for_test(:auto_restore_enabled, true)
+
+      # The Loop derives the Snapshot field from this very predicate
+      # (`Convergence.Loop.Summary`), so publishing it is what the Loop's next
+      # tick would publish — `/readyz` reads the predicate directly.
+      pending = HubManager.durable_registry_pending?()
+      assert pending
+
+      Snapshot.publish(%{
+        last_tick_at: System.monotonic_time(:millisecond),
+        stalled_operatives: [],
+        intended_operatives: 0,
+        bound_operatives: 0,
+        producing_operatives: 0,
+        pending_restore: pending
+      })
+
+      {ready_status, _headers, ready_body} = get(port, "/readyz")
+      {health_status, _headers, health_body} = get(port, "/healthz")
+
+      assert ready_status == 503
+      decoded = Jason.decode!(ready_body)
+      assert decoded["status"] == "recovering"
+      assert decoded["unmet"] == ["durable_registry_loaded"]
+      assert decoded["preconditions"]["boot_sequence_complete"] == true
+      assert decoded["preconditions"]["hubs_recovered"] == true
+
+      assert health_status == 200
+      health = Jason.decode!(health_body)
+      assert health["status"] == "recovering"
+      assert health["reason"] == "restoring_registry"
+    end
+
+    test "a precondition that cannot be read is unmet, never ready", %{port: port} do
+      # The boot window this change exists to describe reaches back further
+      # than the listener: `/readyz` is answerable before HubManager exists.
+      # Taking the name away is that state, and the answer must be a refusal
+      # rather than a crash or a vacuous 200.
+      Readiness.publish_sequence_complete()
+      # Auto-restore is on in production, which is what makes the durable
+      # registry row consult HubManager at all.
+      put_env_for_test(:auto_restore_enabled, true)
+
+      pid = Process.whereis(HubManager)
+      Process.unregister(HubManager)
+
+      on_exit(fn ->
+        if Process.whereis(HubManager) == nil, do: Process.register(pid, HubManager)
+      end)
+
+      {status, _headers, body} = get(port, "/readyz")
+
+      Process.register(pid, HubManager)
+
+      assert status == 503
+      decoded = Jason.decode!(body)
+      assert decoded["status"] == "recovering"
+      assert "durable_registry_loaded" in decoded["unmet"]
+    end
+  end
+
+  # Set one application env for the duration of a test, restoring exactly what
+  # was there — including its absence. Reading the current value and writing it
+  # back turns "not set" into "set to nil", which is a different fact for every
+  # reader that passes a default.
+  defp put_env_for_test(key, value) do
+    previous = Application.fetch_env(:flezha, key)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, was} -> Application.put_env(:flezha, key, was)
+        :error -> Application.delete_env(:flezha, key)
+      end
+    end)
+
+    Application.put_env(:flezha, key, value)
   end
 
   defp get(port, path), do: request(port, "GET", path)

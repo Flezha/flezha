@@ -321,10 +321,17 @@ defmodule Flezha.Operative.Replay do
 
     if File.exists?(Paths.input_log_path(operative_class)) do
       floor = InputLog.watermark(operative_class) || -1
-      last = InputLog.last_offset(operative_class)
 
-      if last > floor do
-        replay_slice(state, operative_class, floor + 1, last)
+      # A refused log answers no tail. Re-forwarding from the prefix that
+      # verified would hand the Entity part of its journal as all of it, so
+      # nothing is re-forwarded; the refusal was already reported where it was
+      # read, and the operative is left to the bind's own restore verdict.
+      case InputLog.last_offset(operative_class) do
+        last when is_integer(last) and last > floor ->
+          replay_slice(state, operative_class, floor + 1, last)
+
+        _no_slice_or_refused ->
+          :ok
       end
     end
 
@@ -427,6 +434,11 @@ defmodule Flezha.Operative.Replay do
       [] ->
         :ok
 
+      # The log refused a record on the way: it serves no range, and the slice
+      # is not re-forwarded from the prefix that happened to verify.
+      {:error, _refusal} ->
+        :ok
+
       payloads ->
         marks = if state.correction_window_ms, do: %{"flz.replay" => "1"}, else: %{}
 
@@ -507,8 +519,9 @@ defmodule Flezha.Operative.Replay do
   @spec run_replay(Overwatch.t(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
   def run_replay(%Overwatch{} = state, entity_id, baseline_seq) do
     result =
-      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id) do
-        consumed = WalWriter.consumed_offset_at(writer, baseline_seq)
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id),
+           consumed when is_integer(consumed) <-
+             WalWriter.consumed_offset_at(writer, baseline_seq) do
         rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
       end
 
@@ -525,24 +538,28 @@ defmodule Flezha.Operative.Replay do
     # second time — a second bump would leave the first attempt's rows behind at
     # an epoch nothing overwrites.
     epoch = WalWriter.outbox_epoch(writer) + 1
-    :ok = WalWriter.rewind_to(writer, baseline_seq, epoch)
 
     # Blocking: the restore rides the control channel while the replay rides the
     # data channel, and without this fence they race — the runner could fold
-    # slice inputs into the very state the rewind was about to replace.
-    with :ok <- await_restore(state.runner_id, entity_id) do
+    # slice inputs into the very state the rewind was about to replace. A
+    # rewind the writer refused cut nothing, so there is no baseline to replay
+    # onto and the correction is reported rather than attempted.
+    with :ok <- WalWriter.rewind_to(writer, baseline_seq, epoch),
+         :ok <- await_restore(state.runner_id, entity_id) do
       # The rewind already truncated the Entity back to its baseline, so a
       # refused restore leaves nothing to replay the slice ONTO. Report the
       # refusal instead: `log_correction/4` surfaces it and the correction is
       # retried, rather than the slice folding onto empty state.
       last = InputLog.last_offset(operative_class)
-      if last > consumed, do: replay_slice(state, operative_class, consumed + 1, last)
+
+      if is_integer(last) and last > consumed,
+        do: replay_slice(state, operative_class, consumed + 1, last)
 
       {:ok,
        %{
          baseline_seq: baseline_seq,
          epoch: epoch,
-         replayed: max(last - consumed, 0),
+         replayed: if(is_integer(last), do: max(last - consumed, 0), else: 0),
          duration_ms: System.monotonic_time(:millisecond) - started
        }}
     end

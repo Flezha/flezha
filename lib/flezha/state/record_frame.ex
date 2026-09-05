@@ -5,10 +5,16 @@ defmodule Flezha.State.RecordFrame do
 
   A record is `[seq: u64 BE][len: u32 BE][header: 16 B][body][crc32: u32 BE]`,
   self-delimiting and CRC-framed. There is no length at the tail, so a reader
-  walks forward from the start and stops at the first record whose CRC does not
-  verify — the torn-tail contract the Entity WAL, the input log, the
-  proc-journal, the inbox and the retention rewriter all share, and the reason a
-  record-aligned byte range is the same log the records would re-encode to.
+  walks forward from the start and stops at the first record that does not
+  decode. What it does then is decided by one rule, `repairable?/3`: a record
+  log is truncated only where no complete record can begin after the failure
+  point. A torn tail — the append protocol's own crash — satisfies that proof
+  and is still repaired; a crc failure with complete records behind it does
+  not, and is refused by name with the bytes left on disk. Records the
+  controller acknowledged as durable are never deleted to make a log parse.
+
+  Every walk therefore answers `{:ok, result}` or `{:error, refusal}`, and
+  `refuse/4` is the one place a refusal is logged and counted.
 
   This is the lowest layer of the State subsystem: it names `SeqIndex`, whose
   samples decide where a cut starts, and nothing else. Every function takes the
@@ -17,7 +23,15 @@ defmodule Flezha.State.RecordFrame do
 
   alias Flezha.State.SeqIndex
 
+  require Logger
+
   @header_size 16
+
+  @typedoc """
+  A refused record: the decoder's own reason tag, the last seq that verified
+  before it, and the byte offset the failure was read at.
+  """
+  @type refusal :: {reason :: atom(), last_seq :: integer(), offset :: non_neg_integer()}
 
   @doc "Bytes of the record header — the one definition."
   @spec header_size() :: pos_integer()
@@ -40,15 +54,15 @@ defmodule Flezha.State.RecordFrame do
 
   @doc """
   Read one record at `position` from `device`. Returns the decoded
-  `{seq, header, change_bytes}` triple plus the byte length consumed,
-  or an error tag.
+  `{seq, header, change_bytes}` triple plus the byte length consumed, or the
+  reason it did not decode and the record's framed extent where that is known.
   """
   @spec decode_record(:file.io_device(), non_neg_integer()) ::
           {:ok, non_neg_integer(), binary(), binary(), non_neg_integer()}
-          | {:error, :crc_mismatch | :short_read | :bad_len}
+          | {:error, :crc_mismatch | :short_read | :bad_len | term(), non_neg_integer() | nil}
   def decode_record(device, position) do
     with {:ok, <<seq::64-big, len::32-big>>} <- pread(device, position, 12),
-         true <- len >= @header_size or {:error, :bad_len},
+         true <- len >= @header_size or {:error, :bad_len, nil},
          {:ok, payload_and_crc} <- pread(device, position + 12, len + 4) do
       change_len = len - @header_size
 
@@ -60,13 +74,17 @@ defmodule Flezha.State.RecordFrame do
       if computed == crc do
         {:ok, seq, header, change_bytes, 12 + len + 4}
       else
-        {:error, :crc_mismatch}
+        # The extent is exact even though the content is not: the `pread` above
+        # succeeded, so `12 + len + 4` bytes are known to be on disk. Carrying
+        # it here is what lets `repairable?/3` decide without a second read.
+        {:error, :crc_mismatch, 12 + len + 4}
       end
     else
-      # `len >= @header_size or {:error, :bad_len}` yields `true` or the
-      # error tuple, so the tuple clause carries :bad_len too.
-      :eof -> {:error, :short_read}
-      {:error, _} = err -> err
+      # `len >= @header_size or {:error, :bad_len, nil}` yields `true` or the
+      # error tuple, so the three-element clause carries :bad_len too.
+      :eof -> {:error, :short_read, nil}
+      {:error, _, _} = err -> err
+      {:error, reason} -> {:error, reason, nil}
     end
   end
 
@@ -80,20 +98,92 @@ defmodule Flezha.State.RecordFrame do
   end
 
   @doc """
+  Whether a walk stopped by `reason`, with `remaining` bytes left from the
+  failure point to the end of the file, may be repaired by truncating there.
+
+  The one proof in the subsystem, stated once and applied at every entry point:
+  a record log is truncated only where **no complete record can begin after the
+  failure point**.
+
+    * a read that ran off the end of the file has nothing behind it by
+      construction;
+    * a crc failure has an exact framed extent, so it is a torn tail exactly
+      when that extent is the rest of the file — anything more and the records
+      behind it are complete records the controller acknowledged;
+    * a length field below the header size leaves the next record unlocatable,
+      so it can only be judged by what remains: less than one whole record, and
+      nothing can follow it.
+  """
+  @spec repairable?(atom(), non_neg_integer() | nil, non_neg_integer()) :: boolean()
+  def repairable?(:short_read, _extent, _remaining), do: true
+  def repairable?(:crc_mismatch, extent, remaining), do: extent == remaining
+  def repairable?(:bad_len, _extent, remaining), do: remaining < 12 + @header_size + 4
+  def repairable?(_reason, _extent, _remaining), do: false
+
+  @doc """
+  Report a refused record and shape the refusal every reader of this framing
+  answers with.
+
+  The one place this subsystem writes a refusal's telemetry event and its error
+  line, so a further reader of the framing reports by calling this rather than
+  by writing a second log line of its own.
+  """
+  @spec refuse(Path.t(), atom(), integer(), non_neg_integer()) :: {:error, refusal()}
+  def refuse(path, reason, last_seq, offset) do
+    refusal = {reason, last_seq, offset}
+
+    :telemetry.execute(
+      [:flezha, :state, :record_frame, :refused],
+      %{count: 1},
+      %{path: path, reason: reason, last_seq: last_seq, offset: offset}
+    )
+
+    Logger.error(refusal_message(path, refusal))
+    {:error, refusal}
+  end
+
+  @doc "The one sentence a refusal is logged with, and reported to callers as."
+  @spec refusal_message(Path.t(), refusal()) :: binary()
+  def refusal_message(path, {reason, last_seq, offset}) do
+    "[State] durable record refused (#{reason}) in #{path} at byte offset #{offset}, " <>
+      "after seq #{last_seq}: complete records follow it, so the log is left on disk " <>
+      "untouched and refuses to serve"
+  end
+
+  # A torn tail IS repaired — the append protocol's own crash leaves no complete
+  # record behind the failure point — but no longer in silence.
+  defp report_repair(path, reason, last_seq, offset, discarded) do
+    :telemetry.execute(
+      [:flezha, :state, :record_frame, :repaired],
+      %{bytes: discarded},
+      %{path: path, reason: reason, last_seq: last_seq, offset: offset}
+    )
+
+    Logger.warning(
+      "[State] durable record log repaired (#{reason}) in #{path}: torn tail of " <>
+        "#{discarded} byte(s) at offset #{offset} discarded, last seq #{last_seq}"
+    )
+  end
+
+  @doc """
   Reduce over a record file's framed records, oldest first.
 
   `fun.({seq, header, body}, acc)` returns `{:cont, acc}` or `{:halt, acc}`; the
-  walk also stops at the first undecodable record.
+  walk also stops at a torn tail. A record that fails its crc with complete
+  records behind it refuses instead — the accumulator so far is a partial
+  history, and answering with it would ship it as a whole one.
 
   The one place the `decode_record/2` recursion lives.
   """
-  @spec fold_records(:file.io_device(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
-                                                {:cont, acc} | {:halt, acc})) :: acc
+  @spec fold_records(:file.io_device(), Path.t(), acc, ({non_neg_integer(), binary(), binary()},
+                                                        acc ->
+                                                          {:cont, acc} | {:halt, acc})) ::
+          {:ok, acc} | {:error, refusal()}
         when acc: term()
-  def fold_records(device, acc, fun), do: fold(device, 0, acc, fun)
+  def fold_records(device, path, acc, fun), do: fold(device, path, 0, -1, acc, fun)
 
   @doc """
-  `fold_records/3` over a path: open read-only, fold, close. A file that is
+  `fold_records/4` over a path: open read-only, fold, close. A file that is
   missing or unreadable folds to `acc` unchanged — absent history is no records,
   which is what every reader of this framing already means by it.
 
@@ -101,79 +191,132 @@ defmodule Flezha.State.RecordFrame do
   reader, time travel, and the remote durability tier's ship.
   """
   @spec fold_path(binary(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
-                                    {:cont, acc} | {:halt, acc})) :: acc
+                                    {:cont, acc} | {:halt, acc})) ::
+          {:ok, acc} | {:error, refusal()}
         when acc: term()
   def fold_path(path, acc, fun) do
     case :file.open(path, [:raw, :read, :binary]) do
       {:ok, device} ->
         try do
-          fold_records(device, acc, fun)
+          fold_records(device, path, acc, fun)
         after
           :file.close(device)
         end
 
       {:error, _} ->
-        acc
+        {:ok, acc}
     end
   end
 
-  defp fold(device, position, acc, fun) do
+  @doc """
+  `fold_path/3` for a reader that has no channel to answer a refusal on: a
+  refused record raises rather than being handed back as a shorter history.
+
+  The readers that use it — the record log's decode, time travel and the
+  durability tier's ship — all answer a list or a tuple of bytes, so a refusal
+  returned to them would be indistinguishable from a log that ended there.
+  """
+  @spec fold_path!(binary(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
+                                     {:cont, acc} | {:halt, acc})) :: acc
+        when acc: term()
+  def fold_path!(path, acc, fun) do
+    case fold_path(path, acc, fun) do
+      {:ok, acc} -> acc
+      {:error, refusal} -> raise refusal_message(path, refusal)
+    end
+  end
+
+  defp fold(device, path, position, last_seq, acc, fun) do
     case decode_record(device, position) do
       {:ok, seq, header, body, consumed} ->
         case fun.({seq, header, body}, acc) do
-          {:cont, acc} -> fold(device, position + consumed, acc, fun)
-          {:halt, acc} -> acc
+          {:cont, acc} -> fold(device, path, position + consumed, seq, acc, fun)
+          {:halt, acc} -> {:ok, acc}
         end
 
-      {:error, _} ->
-        acc
+      {:error, reason, extent} ->
+        # A fold reads; it never repairs. A tail it may not read is where the
+        # records end, and anything else is a refusal.
+        case stop_or_refuse(device, path, position, last_seq, reason, extent) do
+          {:stop, _size} -> {:ok, acc}
+          refused -> refused
+        end
     end
+  end
+
+  # What every walk does with a record that did not decode: `{:stop, size}` when
+  # the proof holds and the walk may end — or truncate — where it stands, the
+  # refusal otherwise. One expression, so the three walkers cannot drift apart
+  # again.
+  defp stop_or_refuse(device, path, position, last_seq, reason, extent) do
+    size = device_size(device)
+
+    if repairable?(reason, extent, size - position),
+      do: {:stop, size},
+      else: refuse(path, reason, last_seq, position)
+  end
+
+  defp device_size(device) do
+    {:ok, size} = :file.position(device, :eof)
+    size
   end
 
   @doc """
   `header => seq` for every record in the file — the set a keyed log dedups
   against.
   """
-  @spec header_index(:file.io_device()) :: %{binary() => non_neg_integer()}
-  def header_index(device) do
-    fold_records(device, %{}, fn {seq, header, _body}, acc ->
+  @spec header_index(:file.io_device(), Path.t()) ::
+          {:ok, %{binary() => non_neg_integer()}} | {:error, refusal()}
+  def header_index(device, path) do
+    fold_records(device, path, %{}, fn {seq, header, _body}, acc ->
       {:cont, Map.put(acc, header, seq)}
     end)
   end
 
   @doc """
   Walk from offset 0, returning the seq of the last record whose crc validates.
-  Truncates any partial-write tail past that point.
+  Repairs a partial-write tail past that point, and reports the repair; refuses
+  anything `repairable?/3` cannot prove safe, leaving the file as it found it.
 
   Backward scan would require a second copy of the length field at the record
   tail; we use forward scan and rely on monotonic seqs for the "last valid
   record" answer. The cost is O(records-since-snapshot) at boot; acceptable
   because compaction keeps the files short.
   """
-  @spec scan_for_last_valid_seq(:file.io_device()) :: integer()
-  def scan_for_last_valid_seq(device) do
+  @spec scan_for_last_valid_seq(:file.io_device(), Path.t()) ::
+          {:ok, integer()} | {:error, refusal()}
+  def scan_for_last_valid_seq(device, path) do
     # `-1`, not `0`, for an empty file: the SDK's per-Entity seq is 0-based
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
     # operative. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
-    do_scan(device, 0, -1, 0)
+    do_scan(device, path, 0, -1)
   end
 
-  defp do_scan(device, position, last_seq, last_end) do
+  # `position` is both the next record's start and the end of the last one that
+  # verified, which is why a repair truncates to it.
+  defp do_scan(device, path, position, last_seq) do
     case decode_record(device, position) do
       {:ok, seq, _header, _bytes, consumed} ->
-        do_scan(device, position + consumed, seq, position + consumed)
+        do_scan(device, path, position + consumed, seq)
 
-      {:error, _} ->
-        # Truncate any partial-write tail past the last valid record.
-        case :file.position(device, last_end) do
-          {:ok, _} ->
-            _ = :file.truncate(device)
-            last_seq
-
-          _ ->
-            last_seq
+      {:error, reason, extent} ->
+        case stop_or_refuse(device, path, position, last_seq, reason, extent) do
+          {:stop, size} -> {:ok, repair(device, path, reason, last_seq, position, size)}
+          refused -> refused
         end
+    end
+  end
+
+  defp repair(device, path, reason, last_seq, position, size) do
+    case :file.position(device, position) do
+      {:ok, _} ->
+        _ = :file.truncate(device)
+        if size > position, do: report_repair(path, reason, last_seq, position, size - position)
+        last_seq
+
+      _ ->
+        last_seq
     end
   end
 
@@ -182,19 +325,32 @@ defmodule Flezha.State.RecordFrame do
   scanning from `index`'s newest sample at or below it; the end of the valid
   records when no such record exists. Leaves `device` positioned at its end,
   where appends go.
+
+  Refuses rather than answering the offset of a record that failed its crc: a
+  cut taken there would delete the valid records between it and the boundary
+  the caller asked for.
   """
-  @spec position_of(SeqIndex.t(), :file.io_device(), non_neg_integer()) :: non_neg_integer()
-  def position_of(index, device, floor) do
-    position = seek(device, SeqIndex.sample_at(index, floor), floor)
+  @spec position_of(SeqIndex.t(), :file.io_device(), Path.t(), non_neg_integer()) ::
+          {:ok, non_neg_integer()} | {:error, refusal()}
+  def position_of(index, device, path, floor) do
+    result = seek(device, path, SeqIndex.sample_at(index, floor), -1, floor)
     {:ok, _} = :file.position(device, :eof)
-    position
+    result
   end
 
-  defp seek(device, position, floor) do
+  defp seek(device, path, position, last_seq, floor) do
     case decode_record(device, position) do
-      {:ok, seq, _header, _body, _consumed} when seq >= floor -> position
-      {:ok, _seq, _header, _body, consumed} -> seek(device, position + consumed, floor)
-      {:error, _} -> position
+      {:ok, seq, _header, _body, _consumed} when seq >= floor ->
+        {:ok, position}
+
+      {:ok, seq, _header, _body, consumed} ->
+        seek(device, path, position + consumed, seq, floor)
+
+      {:error, reason, extent} ->
+        case stop_or_refuse(device, path, position, last_seq, reason, extent) do
+          {:stop, _size} -> {:ok, position}
+          refused -> refused
+        end
     end
   end
 
@@ -206,21 +362,21 @@ defmodule Flezha.State.RecordFrame do
   at its end. Answers `{:ok, cut_bytes, device, index}` with the index
   rebased; `:none` when nothing is below the floor, or fewer than `min_bytes`
   are (the rewrite is not worth its fsync yet); `{:error, reason}` when the
-  file is gone (a cut queued behind its directory's removal), with the
-  caller's handle untouched. Both record logs cut through this, so a cut costs
-  the tail, never the file.
+  file is gone (a cut queued behind its directory's removal) or a record on the
+  way to the boundary is refused, with the caller's handle untouched. Both
+  record logs cut through this, so a cut costs the tail, never the file.
   """
   @spec cut_below(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer(), non_neg_integer()) ::
           {:ok, non_neg_integer(), :file.io_device(), SeqIndex.t()} | :none | {:error, term()}
   def cut_below(path, device, index, floor, min_bytes \\ 0) do
-    case position_of(index, device, floor) do
-      cut when cut == 0 or cut < min_bytes ->
+    with {:ok, cut} <- position_of(index, device, path, floor) do
+      if cut == 0 or cut < min_bytes do
         :none
-
-      cut ->
+      else
         with {:ok, file} <- replace_with_range(path, device, cut, :eof) do
           {:ok, cut, file, SeqIndex.after_cut(index, floor, cut)}
         end
+      end
     end
   end
 
@@ -228,14 +384,16 @@ defmodule Flezha.State.RecordFrame do
   Drop the records at or above `floor` — the mirror of `cut_below/5`: a
   correction's rewind drops the suffix it invalidated, keeping the prefix as
   bytes. The samples below the boundary stay valid. Answers `{:ok, device,
-  index}`.
+  index}`, or the refusal when a record below the boundary does not decode —
+  the one cut that deletes what it did not read.
   """
   @spec cut_above(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
-          {:ok, :file.io_device(), SeqIndex.t()}
+          {:ok, :file.io_device(), SeqIndex.t()} | {:error, term()}
   def cut_above(path, device, index, floor) do
-    bound = position_of(index, device, floor)
-    {:ok, file} = replace_with_range(path, device, 0, bound)
-    {:ok, file, SeqIndex.cut_above(index, floor, bound)}
+    with {:ok, bound} <- position_of(index, device, path, floor),
+         {:ok, file} <- replace_with_range(path, device, 0, bound) do
+      {:ok, file, SeqIndex.cut_above(index, floor, bound)}
+    end
   end
 
   # Copy the bytes `[from, to)` of `path` into `<path>.rewriting`, fsync it,

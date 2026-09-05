@@ -2,7 +2,10 @@ defmodule Flezha.State.RestoreTest do
   # async: false: writes Application env; a shared on-disk root; node-global tables.
   use FlezhaTest.StateCase, async: false
 
-  alias Flezha.State.{RecordFrame, Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
+  import ExUnit.CaptureLog
+
+  alias Flezha.Operative.Replay
+  alias Flezha.State.{Paths, RecordFrame, Restore, Snapshot, Supervisor, TestHelpers, WalWriter}
 
   setup do
     %{entity_id: TestHelpers.sample_entity_id("rest_" <> uniq())}
@@ -56,6 +59,69 @@ defmodule Flezha.State.RestoreTest do
 
     assert payload.change_log_bytes == expected
   end
+
+  test "a corrupt record below the terminal seq refuses the payload and parks the operative",
+       %{entity_id: pid} do
+    header = TestHelpers.stub_header()
+    {:ok, srv} = Supervisor.find_or_start(pid)
+    for n <- 0..2, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+    TestHelpers.close_and_await(srv, pid)
+
+    path = Paths.wal_path(pid)
+    [_first, second, _third] = TestHelpers.record_offsets(path)
+    size = RecordFrame.file_size(path)
+    TestHelpers.corrupt_record_body(path, second)
+
+    log =
+      capture_log(fn ->
+        # Shipping seq 0 as the whole change log would restore the Entity from a
+        # history that was cut short and report it as complete.
+        assert {:error, reason} = Restore.assemble_payload(pid)
+        assert is_binary(reason)
+        assert reason =~ "crc_mismatch"
+      end)
+
+    assert log =~ "durable record refused (crc_mismatch)"
+    assert RecordFrame.file_size(path) == size
+
+    # The one place the awaited restore's answer is read parks the operative on
+    # a reported refusal — the controller's own reader now produces one.
+    handler =
+      :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :restore_refused]])
+
+    refused_log =
+      capture_log(fn ->
+        assert {:error, reason} = Replay.await_restore("exec-absent", pid)
+        assert reason =~ "crc_mismatch"
+      end)
+
+    assert_receive {[:flezha, :state, :restore_refused], ^handler, %{count: 1},
+                    %{entity: ^pid, runner: "exec-absent"}}
+
+    :telemetry.detach(handler)
+    assert refused_log =~ "leaving the operative unbound"
+  end
+
+  test "a corrupt LAST record is the torn tail the writer repairs, and still ships",
+       %{entity_id: pid} do
+    header = TestHelpers.stub_header()
+    {:ok, srv} = Supervisor.find_or_start(pid)
+    for n <- 0..2, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+    TestHelpers.close_and_await(srv, pid)
+
+    path = Paths.wal_path(pid)
+    [_first, _second, last] = TestHelpers.record_offsets(path)
+    TestHelpers.corrupt_record_body(path, last)
+
+    # Nothing complete can begin after it, so the proof holds and the payload
+    # is the records before it — not a refusal.
+    assert {:ok, payload} = Restore.assemble_payload(pid)
+    assert payload.terminal_seq_hint == 1
+
+    assert payload.change_log_bytes ==
+             RecordFrame.encode_record(0, header, "x0") <>
+               RecordFrame.encode_record(1, header, "x1")
+  end
 end
 
 defmodule Flezha.State.SnapshotTest do
@@ -88,7 +154,7 @@ defmodule Flezha.State.SnapshotTest do
     {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
     assert {:ok, 4, _, "x4", c1} = RecordFrame.decode_record(dev, 0)
     assert {:ok, 5, _, "x5", c2} = RecordFrame.decode_record(dev, c1)
-    assert {:error, _} = RecordFrame.decode_record(dev, c1 + c2)
+    assert {:error, _, _} = RecordFrame.decode_record(dev, c1 + c2)
     :file.close(dev)
   end
 
@@ -474,7 +540,7 @@ defmodule Flezha.State.RetentionTest do
       header = TestHelpers.stub_header()
 
       seqs = fn ->
-        RecordFrame.fold_path(Paths.wal_path(pid), [], fn {s, _, _}, acc ->
+        RecordFrame.fold_path!(Paths.wal_path(pid), [], fn {s, _, _}, acc ->
           {:cont, [s | acc]}
         end)
         |> Enum.reverse()

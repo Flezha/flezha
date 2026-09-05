@@ -78,7 +78,12 @@ defmodule Flezha.State.InputLog do
     :waiters,
     :consumed,
     :syncer,
-    :positions
+    :positions,
+    # The record this class's log refused (`Flezha.State.RecordFrame`), or
+    # `nil`. Set, the log stays alive and refuses to serve: appending would
+    # hand out offsets the file already holds past the failure, and reading
+    # would serve the prefix before it as the whole log.
+    :refusal
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -112,7 +117,7 @@ defmodule Flezha.State.InputLog do
   The waiting form of `append_async/5`, for a caller with nothing else to do
   meanwhile; the Overwatch's ingest issues the request and carries on.
   """
-  @spec append(binary(), term(), map()) :: {:ok, non_neg_integer()}
+  @spec append(binary(), term(), map()) :: {:ok, non_neg_integer()} | {:error, term()}
   def append(operative_class, message, metadata),
     do: do_append(operative_class, message, metadata, 2)
 
@@ -154,7 +159,7 @@ defmodule Flezha.State.InputLog do
   defp encode_body(message, metadata), do: :erlang.term_to_binary({message, metadata})
 
   @doc "Highest journaled offset, `-1` when the log is empty or absent."
-  @spec last_offset(binary()) :: integer()
+  @spec last_offset(binary()) :: integer() | {:error, term()}
   def last_offset(operative_class) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
     GenServer.call(pid, :last_offset)
@@ -166,7 +171,7 @@ defmodule Flezha.State.InputLog do
   yet journaled are absent from the result.
   """
   @spec read_range(binary(), non_neg_integer(), non_neg_integer()) ::
-          [{non_neg_integer(), term(), map()}]
+          [{non_neg_integer(), term(), map()}] | {:error, term()}
   def read_range(operative_class, from, to) when from <= to do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
     GenServer.call(pid, {:read_range, from, to})
@@ -269,7 +274,7 @@ defmodule Flezha.State.InputLog do
   record is that old. Pre-timestamp records are never eligible — an unknown age
   cannot be judged against a window.
   """
-  @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil
+  @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil | {:error, term()}
   def offset_before_time(operative_class, ts_ms) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
     GenServer.call(pid, {:offset_before_time, ts_ms})
@@ -311,10 +316,16 @@ defmodule Flezha.State.InputLog do
   def cursors(operative_class) do
     case Supervisor.lookup({operative_class, :input_log}) do
       {:ok, pid} ->
-        %{
-          tail: GenServer.call(pid, :last_offset),
-          consumed: Map.new(entity_offsets(operative_class))
-        }
+        # A refused log has no tail to report — the prefix that verified is not
+        # the log's end — so it degrades to the same WAL-seq-only classification
+        # a tier-off operative gets, rather than reporting a cursor that lies.
+        case GenServer.call(pid, :last_offset) do
+          tail when is_integer(tail) ->
+            %{tail: tail, consumed: Map.new(entity_offsets(operative_class))}
+
+          {:error, _refusal} ->
+            nil
+        end
 
       :error ->
         nil
@@ -351,8 +362,14 @@ defmodule Flezha.State.InputLog do
     File.mkdir_p!(Path.dirname(state.path))
     {:ok, file} = :file.open(state.path, [:raw, :read, :write, :binary])
 
-    # Torn-tail discard + last-offset recovery, shared with the WAL.
-    last = RecordFrame.scan_for_last_valid_seq(file)
+    # Torn-tail repair + last-offset recovery, shared with the WAL.
+    case RecordFrame.scan_for_last_valid_seq(file, state.path) do
+      {:ok, last} -> {:noreply, opened(state, file, last)}
+      {:error, refusal} -> {:noreply, %{state | file_handle: file, refusal: refusal}}
+    end
+  end
+
+  defp opened(state, file, last) do
     {:ok, size} = :file.position(file, :eof)
 
     # Offsets reported before this log (re)started are in the published table.
@@ -361,18 +378,29 @@ defmodule Flezha.State.InputLog do
     # Records written before this (re)start are not indexed: the first
     # truncation after a restart locates its floor from the start of the file,
     # once.
-    {:noreply,
-     %{
-       state
-       | file_handle: file,
-         next_offset: last + 1,
-         consumed: consumed,
-         syncer: start_syncer(state.path),
-         positions: SeqIndex.new(size)
-     }}
+    #
+    # The fsync companion is started here and nowhere else, so a refused open
+    # returns before it exists rather than leaving one linked to a log that
+    # will never sync.
+    %{
+      state
+      | file_handle: file,
+        next_offset: last + 1,
+        consumed: consumed,
+        syncer: start_syncer(state.path),
+        positions: SeqIndex.new(size)
+    }
   end
 
+  # A log whose file refused a record refuses to serve the class, and stays
+  # alive doing so: it has no companion to sync, no offset it can hand out
+  # without colliding with the records past the failure, and no range it can
+  # answer that would not be the prefix before it.
   @impl true
+  def handle_call(_request, _from, %{refusal: {_, _, _} = refusal} = state) do
+    {:reply, {:error, refusal}, state}
+  end
+
   def handle_call({:append, body}, from, state) do
     # Fold in the appends already queued behind this one so a burst costs one
     # write syscall instead of N. Under light load the batch is a single
@@ -391,14 +419,18 @@ defmodule Flezha.State.InputLog do
   end
 
   def handle_call({:read_range, from, to}, _from, state) do
-    {:reply, collect_range(state.file_handle, from, to), state}
+    {:reply, collect_range(state.file_handle, state.path, from, to), state}
   end
 
   def handle_call({:offset_before_time, ts_ms}, _from, state) do
-    {:reply, scan_offset_before(state.file_handle, ts_ms), state}
+    {:reply, scan_offset_before(state.file_handle, state.path, ts_ms), state}
   end
 
+  # A refused log has no companion to sync, no cut to make and no watermark to
+  # advance: every cast is dropped rather than reaching a `nil` companion.
   @impl true
+  def handle_cast(_request, %{refusal: {_, _, _}} = state), do: {:noreply, state}
+
   # The retention sweep's truncation. It runs in this loop — ingest waits
   # behind it — so it costs the retained tail, never the log.
   def handle_cast({:truncate_below, floor}, state) do
@@ -693,9 +725,9 @@ defmodule Flezha.State.InputLog do
   # Offsets are strictly monotonic, so the walk is done the moment it passes
   # `to` — without that halt this ran to EOF on every call, inside the log's own
   # GenServer, blocking every append behind it.
-  defp collect_range(device, from, to) do
+  defp collect_range(device, path, from, to) do
     device
-    |> RecordFrame.fold_records([], fn {seq, _header, body}, acc ->
+    |> RecordFrame.fold_records(path, [], fn {seq, _header, body}, acc ->
       cond do
         seq > to ->
           {:halt, acc}
@@ -708,20 +740,26 @@ defmodule Flezha.State.InputLog do
           {:cont, acc}
       end
     end)
-    |> Enum.reverse()
+    |> case do
+      {:ok, records} -> Enum.reverse(records)
+      {:error, _refusal} = refused -> refused
+    end
   end
 
   # Highest offset whose append-time is strictly before `ts_ms`, or `nil` when
   # every retained record is at or after it (nothing has aged out). Records with
   # no timestamp are never eligible — an unknown age cannot be judged against a
   # window.
-  defp scan_offset_before(device, ts_ms) do
-    RecordFrame.fold_records(device, nil, fn {seq, header, _body}, found ->
-      case header_time(header) do
-        ts when is_integer(ts) and ts < ts_ms -> {:cont, seq}
-        _ -> {:cont, found}
-      end
-    end)
+  defp scan_offset_before(device, path, ts_ms) do
+    case RecordFrame.fold_records(device, path, nil, fn {seq, header, _body}, found ->
+           case header_time(header) do
+             ts when is_integer(ts) and ts < ts_ms -> {:cont, seq}
+             _ -> {:cont, found}
+           end
+         end) do
+      {:ok, offset} -> offset
+      {:error, _refusal} = refused -> refused
+    end
   end
 
   @doc """

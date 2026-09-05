@@ -43,7 +43,9 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
    `RestoreInitState` for each — unless the Operative arrived via HotSwap with in-band state.
 6. `Flezha.Boot.Loader` waits on `HubManager.await_recovery_complete/1` (every hub `:normal`,
    bounded by `boot_replay_timeout_ms`) before flipping `boot_ready?`. `/healthz` reports
-   `recovering` / `restoring_registry` until the registry is loaded and its Operatives bound.
+   `recovering` / `restoring_registry` until the registry is loaded and its Operatives bound,
+   and `/readyz` answers 503 for that whole window — including the case where the bounded
+   wait elapses, which lets boot continue but is not readiness.
 
 ## Safety by scenario
 

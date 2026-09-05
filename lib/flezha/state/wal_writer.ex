@@ -151,7 +151,7 @@ defmodule Flezha.State.WalWriter do
   fsync'd rewrite once per `n` bytes rather than once per turn. A keyed log's
   dedup window releases the records either way.
   """
-  @spec truncate_up_to(GenServer.server(), non_neg_integer(), keyword()) :: :ok
+  @spec truncate_up_to(GenServer.server(), non_neg_integer(), keyword()) :: :ok | {:error, term()}
   def truncate_up_to(server, seq, opts \\ []),
     do: GenServer.call(server, {:truncate_up_to, seq, opts})
 
@@ -175,7 +175,8 @@ defmodule Flezha.State.WalWriter do
   and crucially not a second bump, which would make the replay's outputs miss
   the rows the first attempt already wrote.
   """
-  @spec rewind_to(GenServer.server(), non_neg_integer(), non_neg_integer()) :: :ok
+  @spec rewind_to(GenServer.server(), non_neg_integer(), non_neg_integer()) ::
+          :ok | {:error, term()}
   def rewind_to(server, seq, epoch), do: GenServer.call(server, {:rewind_to, seq, epoch})
 
   @doc "Current outbox epoch — the base a deliberate correction bumps from."
@@ -199,7 +200,7 @@ defmodule Flezha.State.WalWriter do
   the input is not actually late for this Entity.
   """
   @spec correction_baseline(GenServer.server(), non_neg_integer()) ::
-          {:ok, %{seq: integer(), consumed_offset: integer()}} | {:error, :nothing_to_correct}
+          {:ok, %{seq: integer(), consumed_offset: integer()}} | {:error, term()}
   def correction_baseline(server, target_event_time),
     do: GenServer.call(server, {:correction_baseline, target_event_time})
 
@@ -208,7 +209,7 @@ defmodule Flezha.State.WalWriter do
   point an operator replay from that baseline must re-forward the input log
   from.
   """
-  @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer()
+  @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer() | {:error, term()}
   def consumed_offset_at(server, seq), do: GenServer.call(server, {:consumed_offset_at, seq})
 
   @spec last_persisted_seq(GenServer.server()) :: integer()
@@ -255,7 +256,23 @@ defmodule Flezha.State.WalWriter do
   @impl true
   def handle_continue(:open, state), do: {:noreply, Boot.open(state)}
 
+  # Everything that writes to the WAL file or cuts it. A refused writer answers
+  # each of them with its refusal; the read-only status calls still answer.
+  @writing_requests [:append, :append_next, :rewind_to, :truncate_up_to]
+
+  # A writer whose file refused a record answers every request that would write
+  # to it, or cut it, with that refusal — and stays alive doing so. Raising here
+  # would be restarted straight back into the same file (`restart: :transient`),
+  # and the read-only status calls below still answer, so the watchdog and the
+  # convergence loop keep seeing the Entity. The refusal is what leaves the
+  # operative unbound: the restore assembled from this file refuses too.
   @impl true
+  def handle_call(request, _from, %{refusal: {_, _, _} = refusal} = state)
+      when request == :fsync
+      when is_tuple(request) and elem(request, 0) in @writing_requests do
+    {:reply, {:error, refusal}, state}
+  end
+
   def handle_call({:append, seq, header, change_bytes, runner_id}, _from, state) do
     # Every received Change frame — accepted, deduped, realigned, or rejected
     # as a gap — proves the SDK is still emitting, which distinguishes a
@@ -322,8 +339,12 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call(:fsync, _from, state), do: {:reply, :ok, do_fsync(state)}
 
-  def handle_call({:rewind_to, seq, epoch}, _from, state),
-    do: {:reply, :ok, Epoch.rewind(state, seq, epoch)}
+  def handle_call({:rewind_to, seq, epoch}, _from, state) do
+    case Epoch.rewind(state, seq, epoch) do
+      {:ok, state} -> {:reply, :ok, state}
+      {:error, refusal, state} -> {:reply, {:error, refusal}, state}
+    end
+  end
 
   # Drop the records at or below `seq` (compaction's prefix, a retention
   # cut). The cut runs in this loop — under the effectively-once tier every
@@ -351,6 +372,12 @@ defmodule Flezha.State.WalWriter do
 
       :none ->
         {:reply, :ok, state}
+
+      # The file is gone from under a queued cut (its directory removed), or a
+      # record on the way to the floor was refused. Either way nothing was cut
+      # and the handle is untouched; a refusal also stops this writer serving.
+      {:error, reason} ->
+        {:reply, {:error, reason}, note_refusal(state, reason)}
     end
   end
 
@@ -363,11 +390,11 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_call({:correction_baseline, target}, _from, state) do
-    {:reply, Epoch.scan_correction_baseline(state.file_handle, target), state}
+    {:reply, Epoch.scan_correction_baseline(state.file_handle, state.wal_path, target), state}
   end
 
   def handle_call({:consumed_offset_at, seq}, _from, state) do
-    {:reply, Epoch.scan_consumed_at(state.file_handle, seq), state}
+    {:reply, Epoch.scan_consumed_at(state.file_handle, state.wal_path, seq), state}
   end
 
   def handle_call(:outbox_status, _from, state) do
@@ -397,6 +424,13 @@ defmodule Flezha.State.WalWriter do
 
     {:reply, status, state}
   end
+
+  # A refusal seen by a live writer stops it serving, the way a refused open
+  # does. Any other error — a missing file under a queued cut — leaves it alone.
+  defp note_refusal(state, {_reason, _last_seq, _offset} = refusal),
+    do: %{state | refusal: refusal}
+
+  defp note_refusal(state, _other), do: state
 
   # The append's reply under its sync mode. Synchronous: fsync now. Batched: owed
   # until the next sync — unless nothing is un-synced (a duplicate against a
@@ -431,7 +465,7 @@ defmodule Flezha.State.WalWriter do
   def handle_cast(:fsync, state), do: {:noreply, do_fsync(state)}
 
   def handle_cast({:truncate_up_to, seq, opts}, state) do
-    {:reply, :ok, state} = handle_call({:truncate_up_to, seq, opts}, nil, state)
+    {:reply, _reply, state} = handle_call({:truncate_up_to, seq, opts}, nil, state)
     {:noreply, state}
   end
 
@@ -581,8 +615,12 @@ defmodule Flezha.State.WalWriter do
   # lifetime by the first keyed append. The file is the set a keyed log dedups
   # against: a prefix cut trims it, a rewrite of the lineage drops it for a
   # rebuild.
-  defp ensure_header_index(%{header_index: nil} = state),
-    do: %{state | header_index: RecordFrame.header_index(state.file_handle)}
+  defp ensure_header_index(%{header_index: nil} = state) do
+    # The boot scan walked this file to its end before any append reached it,
+    # so a record that does not decode here is impossible, not a case.
+    {:ok, index} = RecordFrame.header_index(state.file_handle, state.wal_path)
+    %{state | header_index: index}
+  end
 
   defp ensure_header_index(state), do: state
 

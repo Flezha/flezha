@@ -43,6 +43,14 @@ per-Entity WAL, fsync-batched). On restart the controller SHALL be able to read
 back any retained offset range in order; a torn tail record SHALL be discarded
 without affecting earlier records.
 
+A record that fails its crc32 with complete records behind it SHALL NOT be
+discarded as a torn tail. The log SHALL refuse to serve the class, naming the
+path, the last offset that verified and the byte offset of the failure, and
+SHALL leave the file on disk. The input log opens through the same reader the
+per-Entity WAL opens through, so the two SHALL give the same answer to the same
+corrupt record; an input the Controller acknowledged is as durable as a change
+it persisted, and neither is deleted to make a log parse.
+
 #### Scenario: Replay after crash
 
 - **WHEN** the controller restarts after a crash and an Entity's durable
@@ -55,6 +63,15 @@ without affecting earlier records.
 - **WHEN** the last append was interrupted mid-write
 - **THEN** reopening the log yields all complete records and drops only the torn
   tail
+
+#### Scenario: A corrupt record mid-log stops the log instead of truncating it
+
+- **GIVEN** an input log whose second of three records has a flipped bit in its
+  body
+- **WHEN** the class's log is opened
+- **THEN** the third record SHALL still be on disk, the log SHALL refuse to
+  serve rather than resume from the first record, and the refusal SHALL be
+  reported at error severity naming the class and the offset
 
 ### Requirement: Min-watermark retention
 

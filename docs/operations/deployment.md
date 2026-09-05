@@ -447,10 +447,15 @@ capabilities dropped, seccomp `RuntimeDefault`.
 ### Ports and probes
 
 The container exposes `epmd` 4369/TCP, `quic` 4433/UDP and `healthz`
-9569/TCP. Startup (period 10 s, 30 failures), liveness and readiness (period
-10 s, timeout 5 s, 3 failures) probes all `GET /healthz`; the endpoint answers
-503 only on a genuine wedge, and a planned recovery reports `recovering` with
-200 so the kubelet does not restart mid-replay. `preStop` runs
+9569/TCP. Startup (period 10 s, 30 failures) and liveness (period 10 s, timeout
+5 s, 3 failures) probes `GET /healthz`; the endpoint answers 503 only on a
+genuine wedge, and a planned recovery reports `recovering` with 200 so the
+kubelet does not restart mid-replay. The readiness probe (same period, timeout
+and threshold) reads `GET /readyz` instead, because readiness is the opposite
+question: it answers 200 only once the boot sequence has completed, every
+namespace hub has left the recovery state machine and the durable registry has
+been reloaded, and 503 — naming the unmet preconditions — for exactly the window
+`/healthz` must keep answering 200. `preStop` runs
 `/flezha/bin/flz controller stop --timeout-ms $(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS)`
 before SIGTERM. Exposing QUIC outside the node needs a Service with
 `protocol: UDP` (a UDP-capable load balancer or a NodePort).

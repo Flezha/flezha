@@ -65,6 +65,21 @@ writer runs its own `:file.datasync/1`. Records written inside the last tick can
 hard kill; lowering the interval narrows the window at the cost of I/O pressure. Per-record WAL
 fsync is not supported (the audit log's `:per_record` mode is a separate writer).
 
+**A corrupt record is refused, not repaired.** A record log is truncated only where the reader can
+prove that no complete record can begin after the failure point. That proof holds for the torn
+tail a crash mid-append leaves, and the repair is now reported instead of performed in silence. It
+does not hold for a record whose crc32 fails with complete records behind it: a flipped bit under
+a record the controller already acknowledged is not a torn tail, and deleting the acknowledged
+records after it to make the log parse would trade data for a file that opens. Such a record is
+refused. The bytes are left exactly as they are, the process that owns the file stays alive and
+refuses to serve rather than being restarted into the same file, and the refusal is reported once
+at `error` severity plus one `[:flezha, :state, :record_frame, :refused]` telemetry event naming
+the file, the last seq that verified and the byte offset. The Entity's restore payload is refused
+the same way, so the operative is left unbound rather than binding on the records that happened to
+precede the failure — the fate "a refused restore" already has. Recovery is an operator decision
+with the bytes still in hand: hydrate from the remote durability tier, take a peer's copy, or
+inspect the file.
+
 ## Delivery semantics: at-least-once default, effectively-once tier
 
 ### Default: at-least-once with identity

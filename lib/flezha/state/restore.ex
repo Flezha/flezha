@@ -26,7 +26,7 @@ defmodule Flezha.State.Restore do
           terminal_seq_hint: non_neg_integer()
         }
 
-  @spec assemble_payload(Paths.entity_id()) :: {:ok, payload()}
+  @spec assemble_payload(Paths.entity_id()) :: {:ok, payload()} | {:error, binary()}
   def assemble_payload(entity_id) do
     # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
     # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
@@ -46,18 +46,15 @@ defmodule Flezha.State.Restore do
           end
       end
 
-    {change_log_bytes, terminal_seq} =
-      read_tail_wal(entity_id, snapshot_seq)
-
-    terminal_seq_hint = max(snapshot_seq, terminal_seq)
-
-    {:ok,
-     %{
-       snapshot_bytes: snapshot_bytes,
-       snapshot_header: snapshot_header,
-       change_log_bytes: change_log_bytes,
-       terminal_seq_hint: terminal_seq_hint
-     }}
+    with {:ok, {change_log_bytes, terminal_seq}} <- read_tail_wal(entity_id, snapshot_seq) do
+      {:ok,
+       %{
+         snapshot_bytes: snapshot_bytes,
+         snapshot_header: snapshot_header,
+         change_log_bytes: change_log_bytes,
+         terminal_seq_hint: max(snapshot_seq, terminal_seq)
+       }}
+    end
   end
 
   @doc """
@@ -125,18 +122,18 @@ defmodule Flezha.State.Restore do
   # Read the WAL once and parse records in memory; a per-record `:file.pread`
   # churns small transient refc binaries that fragment the binary allocator.
   defp read_tail_wal(entity_id, snapshot_seq) do
-    case :file.read_file(Paths.wal_path(entity_id)) do
-      {:ok, data} ->
-        {iodata, terminal_seq} = gather_records(data, snapshot_seq, [], snapshot_seq)
-        {IO.iodata_to_binary(iodata), terminal_seq}
+    path = Paths.wal_path(entity_id)
 
-      {:error, _} ->
-        {<<>>, snapshot_seq}
+    case :file.read_file(path) do
+      {:ok, data} -> gather_records(data, path, 0, snapshot_seq, [], snapshot_seq)
+      {:error, _} -> {:ok, {<<>>, snapshot_seq}}
     end
   end
 
   defp gather_records(
          <<seq::64-big, len::32-big, tail::binary>> = data,
+         path,
+         position,
          snapshot_seq,
          acc,
          term_seq
@@ -147,21 +144,38 @@ defmodule Flezha.State.Restore do
     <<header::binary-size(@header_size), change::binary-size(^change_len), crc::32-big,
       _::binary>> = tail
 
+    record_len = 12 + len + 4
+
     if :erlang.crc32(<<header::binary, change::binary>>) == crc do
       # Keep the on-disk bytes verbatim rather than re-framing them.
-      record_len = 12 + len + 4
       <<record::binary-size(^record_len), rest::binary>> = data
       acc = if seq > snapshot_seq, do: [record | acc], else: acc
-      gather_records(rest, snapshot_seq, acc, max(term_seq, seq))
+      gather_records(rest, path, position + record_len, snapshot_seq, acc, max(term_seq, seq))
     else
-      # Stop at the first corrupt record, mirroring the device-scan contract.
-      {Enum.reverse(acc), term_seq}
+      refuse_or_end(data, path, position, record_len, acc, term_seq)
     end
   end
 
-  defp gather_records(_remaining, _snapshot_seq, acc, term_seq) do
-    {Enum.reverse(acc), term_seq}
+  # Less than one framed record remains: the torn tail the writer's own open
+  # repairs, and everything before it is the whole change log.
+  defp gather_records(_remaining, _path, _position, _snapshot_seq, acc, term_seq) do
+    {:ok, {change_log(acc), term_seq}}
   end
+
+  # The same proof the device reader applies (`RecordFrame.repairable?/3`): a crc
+  # failure whose framed extent is the rest of the file is a torn tail, and
+  # anything else has complete records behind it — so the payload is refused
+  # rather than shipped as a change log that was cut short.
+  defp refuse_or_end(data, path, position, record_len, acc, term_seq) do
+    if RecordFrame.repairable?(:crc_mismatch, record_len, byte_size(data)) do
+      {:ok, {change_log(acc), term_seq}}
+    else
+      {:error, refusal} = RecordFrame.refuse(path, :crc_mismatch, term_seq, position)
+      {:error, RecordFrame.refusal_message(path, refusal)}
+    end
+  end
+
+  defp change_log(acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
 
   @doc """
   Establish the language of `factory_id` in `namespace` from the bytes

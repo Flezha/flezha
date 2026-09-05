@@ -1,6 +1,7 @@
 defmodule Flezha.Application do
   @moduledoc false
 
+  alias Flezha.Boot.Readiness
   alias Flezha.Boot.StatePathMigrator
   alias Flezha.Boot.StateRootLock
   alias Flezha.Diagnostics.MemoryReporter
@@ -54,6 +55,12 @@ defmodule Flezha.Application do
     # supervisor that never started replaces that reason with `:noproc`.
     with {:ok, _pid} = result <- Supervisor.start_link(children, opts) do
       validate_boot_ready()
+      # Here and nowhere earlier: `start_link/2` has returned, so every child
+      # started, and `validate_boot_ready/0` blocked on the Loader until its
+      # boot continuation finished. Publishing this from the continuation
+      # itself would claim a complete boot over a hub set that is empty only
+      # because HubManager has not started yet.
+      Readiness.publish_sequence_complete()
       result
     end
   end

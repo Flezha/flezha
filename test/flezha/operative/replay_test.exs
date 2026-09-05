@@ -131,8 +131,10 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
   alias Flezha.State.Paths
+  alias Flezha.State.RecordFrame
   alias Flezha.State.Restore
   alias Flezha.State.TestHelpers
+  alias Flezha.State.WalWriter
 
   @java 2
 
@@ -255,6 +257,48 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
       File.write!(path, <<0::64, 4::32>>)
 
       assert Restore.sdk_lang(id) == nil
+    end
+  end
+
+  describe "a durable log the controller's own reader refused" do
+    test "journaled inputs are not re-forwarded from the prefix that verified" do
+      id = entity("il_refused")
+      {class, _, _} = id
+
+      path = Paths.input_log_path(class)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "there is a journal here")
+
+      stub(Flezha.State.InputLog, :last_offset, fn ^class -> {:error, {:crc_mismatch, 0, 36}} end)
+
+      stub(Flezha.State.InputLog, :read_range, fn _class, _from, _to ->
+        flunk("a refused input log was re-forwarded from its prefix")
+      end)
+
+      assert Replay.replay_journaled_inputs(tier_state(id)) == :ok
+    end
+
+    test "a correction refuses rather than replaying over a WAL that did not decode" do
+      id = entity("corr_refused")
+      header = TestHelpers.stub_header()
+      {:ok, writer} = Flezha.State.Supervisor.find_or_start(id)
+
+      for n <- 0..5, do: :ok = WalWriter.append(writer, n, header, "x" <> Integer.to_string(n))
+
+      path = Paths.wal_path(id)
+      [_zero, _one, corrupt | _] = TestHelpers.record_offsets(path)
+      size = RecordFrame.file_size(path)
+      TestHelpers.corrupt_record_body(path, corrupt)
+
+      # The correction's own report is a warning, under the suite's `:error` gate.
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+
+      {result, log} = with_log(fn -> Replay.run_replay(tier_state(id), id, 4) end)
+
+      assert {:error, {:crc_mismatch, 1, ^corrupt}} = result
+      assert log =~ "durable record refused (crc_mismatch)"
+      assert log =~ "correction refused"
+      assert RecordFrame.file_size(path) == size
     end
   end
 

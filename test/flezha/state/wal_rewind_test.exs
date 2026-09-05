@@ -95,7 +95,7 @@ defmodule Flezha.State.WalRewindTest do
   defp collect(device, position, acc) do
     case RecordFrame.decode_record(device, position) do
       {:ok, seq, _h, _b, consumed} -> collect(device, position + consumed, [seq | acc])
-      {:error, _} -> Enum.reverse(acc)
+      {:error, _reason, _extent} -> Enum.reverse(acc)
     end
   end
 

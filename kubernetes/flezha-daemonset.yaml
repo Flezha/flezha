@@ -123,10 +123,15 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
-          # Self-contained checks: /healthz is served by the controller itself
-          # (Flezha.Healthz.Server) and reaches no service outside the pod.
-          # It returns 503 ONLY on a genuine wedge — a planned recovery reports
-          # `recovering` with a 200 so the kubelet does not restart mid-replay.
+          # Self-contained checks: both endpoints are served by the controller
+          # itself (Flezha.Healthz.Server) and reach no service outside the pod.
+          # Liveness and readiness are different questions, so they read
+          # different endpoints. /healthz answers "should the kubelet restart
+          # me?" — 503 ONLY on a genuine wedge, and a planned recovery reports
+          # `recovering` with a 200 so the pod is not restarted mid-replay.
+          # /readyz answers "should traffic be routed to me?" — 503 for exactly
+          # that same window, so a controller still booting or still replaying
+          # is not routed to.
           startupProbe:
             httpGet:
               path: /healthz
@@ -142,7 +147,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: healthz
             periodSeconds: 10
             timeoutSeconds: 5

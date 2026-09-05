@@ -304,3 +304,51 @@ Once this node's fleet no longer advertises the namespace AND this node hosts no
 - **THEN** each child SHALL be planned as `replace_operative` and moved through the consent gate with handover, no `Migration.drain/2` SHALL run, and the `FleetManager` call handling the disconnect SHALL NOT block
 - **AND** once A hosts none of the namespace's operatives, the loop SHALL stop A's hub, so B is the only node left in the namespace's cluster
 
+### Requirement: The controller SHALL publish one readiness verdict, folded from a declared precondition table
+
+The controller SHALL answer "is this node ready to serve?" from exactly one place, `Flezha.Boot.Readiness`, which SHALL hold a declared table of readiness preconditions and SHALL fold them into a single verdict of `:booting`, `:recovering` or `:ready` together with the per-precondition rows that produced it.
+
+Each precondition SHALL be one row of that table carrying a key, the verdict it holds the node at while unmet, and the predicate that decides it. Adding a readiness precondition SHALL be the addition of one row; no reader SHALL re-derive a precondition of its own. The table SHALL carry at least the boot sequence having completed, every namespace hub having left ProcessHub's recovery state machine, and the durable registry having finished loading.
+
+The readiness verdict SHALL be readable without passing through the boot process's mailbox, so a probe issued while the boot sequence is still running is answered rather than queued.
+
+The verdict SHALL fail closed. A precondition whose fact has not been established, or cannot be read, SHALL count as unmet, and `:ready` SHALL require every precondition to be affirmatively met. No absence of information SHALL produce a ready answer.
+
+A precondition that is met SHALL be decided live rather than latched at boot, so a node whose bounded boot recovery wait elapsed becomes ready when the condition it was waiting on is finally satisfied, without a restart. In particular a bounded recovery wait that elapses without every hub reaching `:normal` SHALL leave the verdict at `:recovering`, SHALL NOT be reported as ready merely because the boot sequence continued past it, and SHALL NOT hold the node at `:recovering` once those hubs reach `:normal`.
+
+The controller SHALL serve the verdict over an HTTP readiness endpoint distinct from its health endpoint, returning success only when the verdict is `:ready` and failure otherwise, with a body naming the verdict and the unmet precondition keys. The readiness endpoint SHALL share the health endpoint's listener, port and enable switch, and SHALL introduce no configuration key of its own. The health endpoint's own verdicts, status codes and bodies SHALL be unchanged by it: the health endpoint answers whether the node should be restarted and the readiness endpoint answers whether the node should be routed to, and neither SHALL be derived from the other.
+
+#### Scenario: The verdict is answerable during the boot sequence
+
+- **GIVEN** a controller whose boot sequence is still running
+- **WHEN** the readiness verdict is read
+- **THEN** it SHALL be answered as `:booting` rather than blocking until the boot sequence completes
+
+#### Scenario: A bounded recovery wait that times out does not report ready
+
+- **GIVEN** a controller whose bounded boot recovery wait elapses with a hub still recovering
+- **WHEN** the boot sequence continues past the wait, as it is required to
+- **THEN** the application SHALL still start, and the readiness verdict SHALL remain `:recovering` until that hub reaches `:normal`
+
+#### Scenario: A restarted controller with an unreloaded durable registry is not ready
+
+- **GIVEN** a controller that has completed its boot sequence, has no hub running, and holds a durable registry on disk for a hub that has not started
+- **WHEN** the health endpoint and the readiness endpoint are queried on the same tick
+- **THEN** the health endpoint SHALL report that a restore is pending and the readiness endpoint SHALL answer failure naming the unmet durable-registry precondition, so the readiness answer is never less informed than the health answer
+
+#### Scenario: A readiness precondition is added as one row
+
+- **WHEN** a new readiness precondition is introduced
+- **THEN** it SHALL appear as one row of the precondition table with its own predicate, and no reader of the verdict SHALL be edited
+
+#### Scenario: The readiness endpoint refuses while the health endpoint succeeds
+
+- **GIVEN** a controller whose boot sequence has not completed
+- **WHEN** the health endpoint and the readiness endpoint are queried on the same tick
+- **THEN** the health endpoint SHALL answer success, so the kubelet does not restart the pod, and the readiness endpoint SHALL answer failure naming the unmet boot-sequence precondition
+
+#### Scenario: The readiness endpoint changes nothing about the health endpoint
+
+- **WHEN** the readiness endpoint is added to the controller's listener
+- **THEN** the health endpoint SHALL keep every verdict, status code and body field it had, and SHALL NOT gain a readiness verdict or read the readiness table
+

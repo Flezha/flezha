@@ -1,21 +1,25 @@
 defmodule Flezha.SDK.RecordHoldTest do
   @moduledoc """
-  The Entity's record path when no stream will take a record: it is held and
-  replayed on the next bound one, in `change_seq` order, still ahead of the
-  outputs of its own dispatch — and the credit window is debited by the write
-  rather than by the hold.
+  Every frame the SDK writes to a secondary stream that no stream will take: an
+  Entity's records, the delete an evicted one ships, and the workflow driver's
+  writes the runner relays. Each is held and replayed on the next bound stream,
+  in the order it was written, still ahead of the outputs of its own dispatch —
+  and the credit window is debited by the write rather than by the hold.
   """
-  # async: false: the cap test writes `FLEZHA_RECONNECT_RING_CAPACITY`, which is
+  # async: false: the cap tests write `FLEZHA_RECONNECT_RING_CAPACITY`, which is
   # VM-global — an async writer of it races every other holder's reading of it.
   use ExUnit.Case, async: false
+  use Mimic
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Counters, Credit, Entity, Record}
+  alias Flezha.SDK.{Codec, Counters, Credit, Entity, Hold, Record, RunnerServer}
   alias Flezha.SDK.Operative.Inbox
+  alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.State.Wire
+  alias Flezha.Transport.Local
   alias FlezhaTest.Helper.SdkOperativeHarness
-  alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, TimerOp}
+  alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, OptedOutCounterOp, TimerOp}
 
   # One input into `CounterOp` is one dispatch that writes a change record and
   # then a sink output — the two frames whose order the spec governs.
@@ -167,26 +171,144 @@ defmodule Flezha.SDK.RecordHoldTest do
     assert {2, [%{kind: :processing_time, register: true}], _} = timer_ops(restated)
   end
 
-  test "an Entity evicted while holding leaves no queue behind and no wedged router" do
+  test "an eviction whose delete the wire refuses is replayed on the next bound stream" do
+    %{op: op, sdk_secondary: sdk} = start_operative(CounterOp)
+    feed(op, 1)
+    settled(op, "counter", 1)
+    assert [{:change, 0, {:delta, 1}}, {:output, "op-1", "1", _}] = kinds(2)
+
+    # Nothing is held here: the dispatch went out on a live stream. What the
+    # eviction cannot ship is the delete itself.
+    :ok = close_secondary(sdk)
+    assert Entity.evict(entity!(op, "counter")) == :evicted
+
+    rebind_secondary(op)
+    assert [{:delete, {"op-1", "counter", ""}}] = kinds(1)
+  end
+
+  test "an Entity evicted while holding hands its records and its delete on" do
     %{op: op} = start_operative(CounterOp)
     send(op, {:secondaries, []})
     feed(op, 2)
+    settled(op, "counter", 1)
 
     entity = entity!(op, "counter")
     ref = Process.monitor(entity)
     assert Entity.evict(entity) == :evicted
     assert_receive {:DOWN, ^ref, :process, ^entity, :normal}, 1_000
 
-    # The hold goes with the process — the Operative's own output for that
-    # dispatch outlives it. What must survive is the router: the replacement
-    # Entity binds to the fresh stream and ships its own records.
     rebind_secondary(op)
     feed(op, 7)
 
+    # The dead Entity's frames go first, so its record still precedes the
+    # output of the dispatch that produced it and its delete still precedes
+    # anything the replacement Entity writes.
     assert [
+             {:change, 0, {:delta, 2}},
+             {:delete, {"op-1", "counter", ""}},
              {:output, "op-1", "2", _},
              {:change, 0, {:delta, 7}},
              {:output, "op-1", "7", _}
-           ] = kinds(3)
+           ] = kinds(5)
+  end
+
+  test "a class that persists nothing owes no delete and hands on nothing" do
+    %{op: op} = start_operative(OptedOutCounterOp)
+    send(op, {:secondaries, []})
+    feed(op, 2)
+    settled(op, "counter", 1)
+    assert Entity.evict(entity!(op, "counter")) == :evicted
+
+    rebind_secondary(op)
+
+    # Nothing was written and no delete is owed, so the only frame the rebind
+    # brings back is the output the Operative held for itself. A handed-on
+    # delete would be replayed BEFORE that output, so this position is the
+    # assertion that no delete exists — there is nothing to refute.
+    assert [{:output, "op-1", "2", _}] = kinds(1)
+  end
+
+  describe "the workflow driver's writes, which the runner ships" do
+    test "a record and an output cast with no stream bound are held and replayed" do
+      s = runner_state([])
+
+      s = cast(s, {:record, "compensation_marker", <<1, 2, 3>>})
+      s = cast(s, {:emit_output, "op-1", %{"channel" => "c"}, "body"})
+
+      bind(s)
+
+      assert [
+               {"compensation_marker", <<1, 2, 3>>, %{}},
+               {"op-1", "body", %{"channel" => "c"}}
+             ] = frames(2)
+    end
+
+    test "a write the wire refuses is held rather than discarded" do
+      s = runner_state([dead_secondary()])
+
+      s = cast(s, {:record, "compensation_marker", <<4>>})
+      s = cast(s, {:emit_output, "op-1", %{}, "body"})
+
+      bind(s)
+
+      assert [{"compensation_marker", <<4>>, %{}}, {"op-1", "body", %{}}] = frames(2)
+    end
+
+    test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
+      System.put_env("FLEZHA_RECONNECT_RING_CAPACITY", "2")
+      on_exit(fn -> System.delete_env("FLEZHA_RECONNECT_RING_CAPACITY") end)
+
+      counters = Counters.new()
+      s = runner_state([], counters)
+      s = Enum.reduce(1..5, s, &cast(&2, {:record, "compensation_marker", <<&1>>}))
+
+      bind(s)
+
+      assert [{"compensation_marker", <<4>>, %{}}, {"compensation_marker", <<5>>, %{}}] =
+               frames(2)
+
+      assert Counters.drops_oldest(counters) == 3
+    end
+  end
+
+  # The runner's own state, built by hand as `commands_test.exs` builds it: no
+  # controller, and a control handle whose peer nothing owns, so only the data
+  # frames the replay writes reach this process.
+  defp runner_state(secondaries, counters \\ Counters.new()) do
+    {control_handle, _peer} = Local.Stream.open()
+
+    %ServerState{
+      transport: :native,
+      session_token: "runner-hold",
+      counters: counters,
+      registry: :ets.new(:runner_hold_registry, [:public, :set]),
+      control_handle: control_handle,
+      secondaries: secondaries,
+      held: Hold.new()
+    }
+  end
+
+  defp cast(s, message) do
+    {:noreply, s} = RunnerServer.handle_cast(message, s)
+    s
+  end
+
+  # The controller's `ConnectSocket`, which is what binds fresh secondaries on
+  # a reconnect. The bind is stubbed to hand this process the controller side
+  # of each pair, so the replay's frames arrive here.
+  defp bind(s) do
+    me = self()
+
+    stub(Flezha.Transport.Server, :bind_data_stream, fn _runner_id, type, handle ->
+      :ok = Flezha.Transport.Stream.controlling_process(handle, me)
+      :ok = Flezha.Transport.Stream.set_active(handle)
+      {:ok, if(type == 1, do: :primary, else: :secondary), "s"}
+    end)
+
+    connect = %RunnerCommands.ConnectSocket{sockets_count: 1}
+    command = Codec.encode_request("ref-1", {:connect_socket, connect})
+
+    {:noreply, s} = RunnerServer.handle_info({:flz_data, 0, "control_command", command, %{}}, s)
+    s
   end
 end

@@ -52,7 +52,13 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 #### Scenario: Crash-safe append via crc
 
 - **WHEN** the agent process crashes mid-record-write, leaving a partial record at the file tail
-- **THEN** on next agent boot, `WalWriter::scan_for_last_valid_seq/1` SHALL detect the partial record (crc32 mismatch on the trailing bytes), truncate the file to the last valid record, and resume normal procedure; `last_persisted_seq` SHALL equal the seq of the last valid record
+- **THEN** on next agent boot, `RecordFrame.scan_for_last_valid_seq/1` SHALL detect the partial record — a read that runs off the end of the file, or a framed record whose crc32 fails and after which no complete record can begin — truncate the file to the last valid record, report the repair, and resume normal procedure; `last_persisted_seq` SHALL equal the seq of the last valid record
+
+#### Scenario: A corrupt record with records behind it is not a torn tail
+
+- **GIVEN** a WAL of three records whose second record's body has one flipped bit, so its framing is intact and the third record still decodes after it
+- **WHEN** the agent opens that WAL
+- **THEN** the open SHALL NOT truncate, the third record SHALL still be on disk afterwards, and the failure SHALL be reported naming the Entity, the seq and the byte offset
 
 #### Scenario: One-time migration from runner_id-keyed layout
 
@@ -1169,6 +1175,8 @@ A round trip that never completed — a timeout, a control channel that is gone,
 
 The controller SHALL NOT discard the result of an awaited restore at any call site.
 
+A torn tail the reader repairs under the proof in "A durable record that fails its crc32 SHALL be refused, and a truncation SHALL be proved safe before it happens" is a repair, not a restore refusal: the append protocol's own crash leaves no complete record behind the failure point, so the Entity binds on the records that were fully written. A crc failure with complete records behind it is the refusal this requirement governs, and the controller's own reader SHALL produce that condition rather than deleting the record before the SDK can report it.
+
 #### Scenario: A refused restore does not cold-start
 
 - **GIVEN** an Entity with a populated WAL whose records the bound SDK refuses
@@ -1188,7 +1196,55 @@ The controller SHALL NOT discard the result of an awaited restore at any call si
 
 #### Scenario: A corrupt WAL is loud, not silent
 
-- **GIVEN** an Entity whose WAL tail fails its record framing CRC
+- **GIVEN** an Entity whose WAL holds a record that fails its record framing CRC with complete records behind it
 - **WHEN** a restore is attempted
-- **THEN** the operative SHALL remain unbound with a reason naming the CRC failure, rather than binding on partial state
+- **THEN** the operative SHALL remain unbound with a reason naming the CRC failure, rather than binding on partial state, and the corrupt record and every record behind it SHALL still be on disk
+
+### Requirement: A durable record that fails its crc32 SHALL be refused, and a truncation SHALL be proved safe before it happens
+
+A durable record whose framing crc32 does not verify SHALL be refused by name, and the refusal SHALL carry the file it was read from, the last seq that verified before it and the byte offset of the failure.
+
+The reader already distinguishes a crc failure from a read that runs off the end of the file and from a length field below the header size. That distinction SHALL be carried to the caller. A reader SHALL NOT collapse the three into one error, and SHALL NOT answer a caller with the records it managed to read before a failure as though the log had ended there.
+
+A reader SHALL truncate a record log only where it can prove that no complete record can begin after the failure point. A crc failure whose framed extent ends before the end of the file has acknowledged records behind it and SHALL NOT be truncated: records the Controller acknowledged as durable SHALL NOT be deleted to make a log parse. Where the proof holds, the truncation is the torn tail the append protocol produces and SHALL still happen — and SHALL be reported rather than performed silently.
+
+Every read of a record log SHALL apply this rule, whichever entry point reaches it: opening a log for appends, folding one for its records, locating a retention or rewind boundary in one, and assembling a restore payload from one.
+
+A refusal SHALL be observable without attaching a tracer: it SHALL emit one telemetry event and one log line at error severity. A durable-record loss reported to nobody is the defect this requirement exists to prevent.
+
+A refusal SHALL leave the bytes on disk untouched and SHALL leave the operative unbound rather than serving from the records that happened to precede the failure, which is the fate "A refused restore fails the bind instead of cold-starting the Entity" already assigns to a CRC failure the SDK reports.
+
+#### Scenario: A corrupt record mid-log does not delete the records after it
+
+- **GIVEN** a WAL holding three records where the second record's body has one flipped bit
+- **WHEN** the writer opens the log
+- **THEN** the open SHALL refuse and name the seq and offset, the third record SHALL still be present on disk, and the file's byte length SHALL be unchanged
+
+#### Scenario: A torn tail is still repaired, and now says so
+
+- **GIVEN** a WAL whose last record is a short write from a crash mid-append
+- **WHEN** the writer opens the log
+- **THEN** the partial tail SHALL be truncated, the preceding records SHALL be intact, and the repair SHALL be reported with the byte count discarded
+
+#### Scenario: A restore payload is refused rather than shipped short
+
+- **GIVEN** an Entity whose WAL holds a corrupt record below its terminal seq
+- **WHEN** the controller assembles `RestoreInitState` for that Entity
+- **THEN** it SHALL refuse rather than ship the records before the corrupt one as the whole change log, and the operative SHALL NOT bind on that truncated history
+
+#### Scenario: A rewind boundary is not located past a corrupt record
+
+- **GIVEN** an Entity whose WAL holds a corrupt record below the seq an epoch realign rewinds to
+- **WHEN** the rewind locates its boundary
+- **THEN** it SHALL refuse rather than cut at the corrupt record's offset and delete the valid records between it and the intended boundary
+
+#### Scenario: A refusal reaches an operator surface
+
+- **WHEN** any durable read refuses a record for a crc failure
+- **THEN** one telemetry event and one error log line SHALL name the file, the seq and the offset, and the refusal SHALL be countable without a tracer
+
+#### Scenario: Every runtime answers a corrupt record the same way
+
+- **WHEN** the Controller's reader, the Elixir SDK's restore fold and the kernel's change-log fold are each given the same corrupt record
+- **THEN** all three SHALL refuse by name, and none SHALL return a partial result as success
 
