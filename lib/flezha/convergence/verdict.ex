@@ -291,8 +291,15 @@ defmodule Flezha.Convergence.Verdict do
   # recovery, not a fault, and a restart cannot re-bind a runner-orphaned
   # operative. `:unbound` and `:failed` share the window — past it both fall
   # through to `degraded` with their own reason among the joined ones.
+  #
+  # OPERATIVE records only. The grace is measured from unmet intent, and no
+  # other kind can make intent unmet, so a failed runner or channel record
+  # would hold the endpoint at `recovering` with no way out of it.
   defp rebinding?(records, facts) do
-    Enum.any?(Map.values(records), &(&1.state in [:unbound, :failed])) and not past_grace?(facts)
+    Enum.any?(records, fn
+      {{:operative, _}, %__MODULE__{state: state}} -> state in [:unbound, :failed]
+      _ -> false
+    end) and not past_grace?(facts)
   end
 
   defp degraded_body(records, c, facts, reasons) do

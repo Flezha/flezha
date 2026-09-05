@@ -13,9 +13,11 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   Per driven row the drill reads `GET /healthz` on the test's bound port,
   `flz operative info --json` and `flz operative list --json` in process, and
   the observability bus for the subject's last `[:flezha, :health, :verdict]`,
-  and asserts they agree. Every row shares one booted fixture: the module boots
-  a namespace, a runner, the convergence Loop and the healthz listener once,
-  and produces each condition on its own operative.
+  and asserts they agree. `/healthz` is a fleet verdict, so a row asserts there
+  only what is its own: a degrading row that its reason reached the endpoint, a
+  benign one that the endpoint names it as no fault. Every row shares one booted
+  fixture: the module boots a namespace, a runner, the convergence Loop and the
+  healthz listener once, and produces each condition on its own operative.
 
   Tagged `:system`; run with
   `mix test --include system test/system/health_verdict_drill_test.exs`.
@@ -110,9 +112,9 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     collect_verdicts(self())
     on_exit(fn -> :telemetry.detach({__MODULE__, :verdicts}) end)
 
-    # Ordered, and the order is the point: `/healthz` is a FLEET verdict, so
-    # every benign row runs while nothing has degraded the fleet yet, and the
-    # rows that kill the runner run last.
+    # Ordered, and the order is the point: the rows that kill the runner run
+    # last, because every row after them would be reading a fixture with no
+    # runner left.
     driven = [
       {{:operative, :healthy}, &row_healthy/1},
       {{:runner, :healthy}, &row_runner_healthy/1},
@@ -280,15 +282,20 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     assert_verdict_signal(ctx, id, state)
   end
 
-  # `/healthz` is a verdict about the FLEET, so a benign row asserts the whole
-  # endpoint stays healthy and a degrading one asserts it can never read healthy
-  # while the row stands — the 08-18 shape, whichever other rows have run.
+  # `/healthz` is a verdict about the FLEET, and this module shares its node
+  # with subjects it did not create — the suite's own boot-time runners among
+  # them, whose channels read `dead_runner` whenever their namespace hub is not
+  # running. So the endpoint's WORD is not a benign row's to assert; the word
+  # is proved against published records in `Flezha.Healthz.ServerTest`. What IS
+  # this row's is that the endpoint names a benign subject as no fault — the
+  # mirror of the degrading clause below, which proves the subject reached the
+  # answer by its own reason.
   defp assert_healthz(ctx, id, state, "healthy", refresh, _reason) do
-    assert wait_until(
-             ticked(fn -> refresh.() && healthz_body(ctx)["status"] == "healthy" end),
-             60_000
-           ),
-           "#{id}: a #{state} operative must leave /healthz healthy, got #{inspect(healthz_body(ctx))}"
+    refresh.()
+    body = healthz_body(ctx)
+
+    refute faulted?(body, id),
+           "#{id}: a #{state} operative is named as a fault by /healthz: #{inspect(body)}"
   end
 
   # The endpoint word AND the row's own reason: a fleet degraded by an earlier
@@ -308,6 +315,15 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
            ),
            "#{id}: a #{state} operative did not reach /healthz as #{inspect(reason)} — " <>
              "got #{inspect(healthz_body(ctx))}"
+  end
+
+  # Every list the endpoint's body names a subject in. A benign operative in
+  # one of them is the endpoint calling it a fault.
+  defp faulted?(body, id) do
+    id in Map.get(body, "stalled_operatives", []) or
+      id in Map.get(body, "plugin_degraded_operatives", []) or
+      id in Map.keys(Map.get(body, "stuck_operatives", %{})) or
+      id in Map.get(body, "intent_mismatch", [])
   end
 
   defp assert_verdict_signal(ctx, id, state) do

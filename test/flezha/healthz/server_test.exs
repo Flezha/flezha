@@ -219,6 +219,32 @@ defmodule Flezha.Healthz.ServerTest do
     assert decoded["intended_operatives"] == 3
   end
 
+  test "a dead runner's channel while every operative is bound → 200 degraded, not recovering",
+       %{port: port} do
+    # The rebind window is an OPERATIVE window: the grace it sits inside is
+    # measured from unmet intent, and a channel record never makes intent
+    # unmet. Weighing one here would hold the endpoint at `recovering` for as
+    # long as the node runs, outranking every reason the fold could report.
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      operative_health:
+        verdicts([
+          {op("bound"), :healthy, reason: :producing, phase: :running},
+          {{:channel, {"departed_runner", :control}}, :failed, reason: :dead_runner}
+        ]),
+      tick_latency_p99_ms: 0,
+      tick_breach_streak: 0
+    })
+
+    {status, _headers, body} = get(port, "/healthz")
+    assert status == 200
+    decoded = Jason.decode!(body)
+    assert decoded["status"] == "degraded"
+    assert decoded["reason"] == "dead_runner"
+    assert decoded["bound_operatives"] == 1
+    assert decoded["intended_operatives"] == 1
+  end
+
   test "operatives declared but unbound PAST the grace → 200 degraded (not silent recovering)",
        %{port: port} do
     # The silent-30h-outage gap: a operative declared but never bound must not sit
