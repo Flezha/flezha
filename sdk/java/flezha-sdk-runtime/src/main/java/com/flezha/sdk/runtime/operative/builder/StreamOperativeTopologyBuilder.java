@@ -14,14 +14,13 @@ import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
-import com.flezha.sdk.runtime.operative.CheckpointPolicy;
-import com.flezha.sdk.runtime.operative.ConsumerEdge;
+import com.flezha.sdk.runtime.core.HostClassDeclaration;
+import com.flezha.sdk.runtime.core.HostLink;
 import com.flezha.sdk.runtime.operative.EdgeYield;
 import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.Clock;
 import com.flezha.sdk.state.EventTimeFrom;
-import com.flezha.sdk.state.LogicalClock;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -35,7 +34,6 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.function.UnaryOperator;
 import javax.annotation.Nonnull;
 
 /**
@@ -64,28 +62,46 @@ import javax.annotation.Nonnull;
  *       ladder.</li>
  * </ul>
  *
- * <p>All failures accumulate and throw {@link StreamOperativeConfigurationException}
- * at build time. After {@link #build(String)} the topology is frozen: a
- * retained handle used afterwards throws {@link IllegalStateException}
- * naming the operative.
+ * <p>The builder JUDGES nothing about the graph: it records the links each
+ * handle was given and submits that record to {@code flz_core}'s one check,
+ * which answers the derived declaration or the verdict. What it still refuses
+ * itself is only what erasure makes and no record could carry — a payload type
+ * that does not reach its consumer's input, a type argument left generic at the
+ * procedure class, a missing {@code eventTime} extractor, a procedure class
+ * with no public no-arg constructor. After {@link #build(String)} the topology
+ * is frozen: a retained handle used afterwards throws
+ * {@link IllegalStateException} naming the operative.
  */
 public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
     private final List<ChannelEntry> channels = new ArrayList<>();
     private final List<ProcedureEntry> procedures = new ArrayList<>();
     /**
-     * Transform/key chains under construction, indexed by the id the stream
-     * handles carry. A chain neither superseded nor consumed is dangling.
+     * Every chain declared on a handle, indexed by the id the stream handles
+     * carry. Each link pushes a NEW entry superseding the previous one, so a
+     * chain's tip is the only entry that names the whole sequence.
      */
     private final List<PendingEdge> pending = new ArrayList<>();
 
     private final Map<String, Integer> procedureNameToId = new LinkedHashMap<>();
     private final List<String> errors = new ArrayList<>();
-    private boolean effectivelyOnce;
-    /** {@code null} until {@code checkpointAck()} (or an option implying it). */
-    private CheckpointPolicy checkpoint;
+    /** Ties the sources of one merge together across the channels they sit on. */
+    private int mergeGroups;
 
-    private long correctionWindowMs;
+    private boolean effectivelyOnce;
+    /**
+     * The three checkpoint knobs, each written raw. The core derives the
+     * acknowledgement granularity from them — any one of them implies it —
+     * which is the rule six per-SDK helpers each carried before (KI-122).
+     */
+    private boolean checkpointAck;
+
+    private Integer checkpointEvery;
+    private Long checkpointMaxDelayMs;
+
+    /** {@code null} until {@code correctionWindow(...)}; 0 is a declared window. */
+    private Long correctionWindowMs;
+
     private BeyondWindowPolicy beyondWindowPolicy = BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
 
     /** Set at {@link #build(String)}: every mutating path refuses afterwards. */
@@ -219,26 +235,20 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
     @Override
     public void checkpointAck() {
-        amendCheckpoint(policy -> policy);
+        checkMutable();
+        this.checkpointAck = true;
     }
 
     @Override
     public void checkpointEvery(int inputs) {
-        amendCheckpoint(policy -> policy.withEvery(inputs));
+        checkMutable();
+        this.checkpointEvery = inputs;
     }
 
     @Override
     public void outputsAtCheckpoint(long maxDelayMs) {
-        amendCheckpoint(policy -> policy.withOutputsAtCheckpoint(maxDelayMs));
-    }
-
-    /**
-     * Turn the checkpoint granularity on (idempotent) and amend its policy, so
-     * each option is one call that preserves the others.
-     */
-    private void amendCheckpoint(UnaryOperator<CheckpointPolicy> amend) {
         checkMutable();
-        this.checkpoint = amend.apply(this.checkpoint == null ? CheckpointPolicy.defaults() : this.checkpoint);
+        this.checkpointMaxDelayMs = maxDelayMs;
     }
 
     @Override
@@ -259,23 +269,94 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         // the operative, whatever build's own outcome.
         frozenFactoryId = factoryId;
         frozen = true;
-        TopologyRules.Checked checked = new TopologyRules(
-                        channels, procedures, pending, effectivelyOnce, checkpoint, correctionWindowMs, errors)
-                .check();
-        if (!checked.errors().isEmpty()) {
-            throw new StreamOperativeConfigurationException(List.copyOf(checked.errors()));
+        if (!errors.isEmpty()) {
+            // The record's edges are meaningless once a payload type does not
+            // reach its consumer, so the core is never asked about them.
+            throw refused(errors);
         }
-        return TopologyMaterializer.materialize(
+        // A superseded entry is an intermediate link the chain it grew into
+        // already carries; only a tip names a whole declared sequence.
+        for (PendingEdge chain : pending) {
+            if (!chain.superseded) {
+                channels.get(chain.channel).chains.add(chain);
+            }
+        }
+        int[] capacities = new int[procedures.size()];
+        for (int i = 0; i < procedures.size(); i++) {
+            ProcedureEntry procedure = procedures.get(i);
+            capacities[i] = MailboxCapacityResolver.resolve(
+                    procedure.mailboxCapacityDeclared, procedure.mailboxCapacityOverridden);
+        }
+        markKeyedTargetsDynamic();
+
+        Map<String, Object> record = HostClassDeclaration.forStream(
                 factoryId,
+                new ClassFacts(
+                        effectivelyOnce,
+                        checkpointAck,
+                        checkpointEvery,
+                        checkpointMaxDelayMs,
+                        correctionWindowMs,
+                        beyondWindowPolicy),
                 channels,
                 procedures,
-                checked,
-                procedureNameToId,
-                effectivelyOnce,
-                checkpoint,
-                correctionWindowMs,
-                beyondWindowPolicy);
+                capacities);
+        // An empty declaration is the workflow run-sugar shape: no topology to
+        // derive, and the class facts are the core's own at declare time.
+        if (channels.isEmpty() && procedures.isEmpty()) {
+            return TopologyMaterializer.empty(factoryId, record);
+        }
+        return TopologyMaterializer.materialize(
+                factoryId, channels, procedures, capacities, record, HostClassDeclaration.check(record));
     }
+
+    /**
+     * Entity mode is read off the WIRING, and the record states it: a
+     * procedure that names its own keys is static, one a keyed chain closes
+     * onto is dynamic. A procedure declaring both is NOT re-stated as dynamic
+     * — its keys are its declaration, and the contradiction with the keyed
+     * edge is the core's to name. Reading the builder's own record back is not
+     * a judgement — what an unkeyed sibling edge into one MEANS is the core's
+     * answer.
+     */
+    private void markKeyedTargetsDynamic() {
+        for (PendingEdge chain : pending) {
+            if (chain.superseded || chain.key == null) {
+                continue;
+            }
+            for (HostLink link : chain.links) {
+                Integer target = link.target();
+                if (target != null && procedures.get(target).entityKeys.isEmpty()) {
+                    procedures.get(target).dynamic = true;
+                }
+            }
+        }
+    }
+
+    /**
+     * The refusals erasure makes and no record could carry. Rendered and named
+     * the way the core renders and names its own — {@code Declaration} is the
+     * vocabulary's one unnamed shape — so a reader branches on the same names
+     * whichever side refused.
+     */
+    private static StreamOperativeConfigurationException refused(List<String> sentences) {
+        List<String> names = java.util.Collections.nCopies(sentences.size(), "Declaration");
+        StringBuilder out = new StringBuilder("topology rejected [");
+        out.append(String.join(", ", names)).append("]:");
+        for (String sentence : sentences) {
+            out.append("\n  - ").append(sentence);
+        }
+        return new StreamOperativeConfigurationException(out.toString(), names);
+    }
+
+    /** The class-level facts the record states, exactly as declared. */
+    public record ClassFacts(
+            boolean effectivelyOnce,
+            boolean checkpointAck,
+            Integer checkpointEvery,
+            Long checkpointMaxDelayMs,
+            Long correctionWindowMs,
+            BeyondWindowPolicy beyondWindowPolicy) {}
 
     // ---- Internals ----------------------------------------------------------
 
@@ -294,11 +375,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     /** The staging entry for a registered node, by id. */
     ProcedureEntry procedure(int procedureId) {
         return procedures.get(procedureId);
-    }
-
-    /** Record one refusal; {@link #build(String)} throws the whole accumulated list. */
-    void error(String message) {
-        errors.add(message);
     }
 
     private int declareChannel(Class<?> payloadType, String name, ChannelKind kind) {
@@ -349,21 +425,21 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             return null;
         }
         ProcedureEntry existingEntry = procedures.get(existing);
-        if (!existingEntry.procedureClass.equals(procedureClass) || existingEntry.named != named) {
-            errors.add(StreamOperativeConfigurationException.nodeIdentityCollision(identity)
-                    .getMessage());
-        }
-        return existing;
+        // A claim by a different class, or by the other of the named/unnamed
+        // spellings, is a SECOND node under one identity: it is recorded as
+        // one, and the core answers NodeIdentityCollision off the record.
+        boolean sameNode = existingEntry.procedureClass.equals(procedureClass) && existingEntry.named == named;
+        return sameNode ? existing : null;
     }
 
     /**
      * Everything a fresh node records off one probe instance: the type tokens,
      * the Entity-mode and durability declarations, and the two clock refusals.
      *
-     * <p>Every clock in the sealed hierarchy is wired. What Rust rejects at
-     * compile time (a {@code TimeExtractor<Input>} bound, an unservable clock)
-     * is rejected here instead — erasure precludes the compile-time form, so
-     * the same defect is caught at registration.
+     * <p>Every clock in the sealed hierarchy is wired. The missing
+     * {@code eventTime(Input)} extractor is refused here because the record
+     * carries no such fact: Rust states it as a {@code TimeExtractor<Input>}
+     * bound at compile time, and erasure precludes that form.
      */
     private ProcedureEntry probeDeclarations(Procedure<?, ?, ?, ?, ?, ?> probe, String identity) {
         ProcedureEntry entry = new ProcedureEntry();
@@ -385,10 +461,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         entry.maxEntities = probe.maxEntitiesOverridden() ? OptionalLong.of(probe.maxEntities()) : OptionalLong.empty();
         if (entry.clockType == EventTimeFrom.class && !probe.eventTimeOverridden()) {
             errors.add(StreamOperativeConfigurationException.eventTimeExtractorMissing(identity)
-                    .getMessage());
-        }
-        if (entry.clockType == LogicalClock.class && entry.changeType == NoChange.class) {
-            errors.add(StreamOperativeConfigurationException.unservableClock(identity)
                     .getMessage());
         }
         return entry;
@@ -450,16 +522,16 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             };
 
     /**
-     * Wire {@code channelId} into a consumer node (created/resolved by
-     * identity), closing {@code pendingChain} onto the resulting edge. Returns
-     * the consumer's node id so its handle can continue the chain.
+     * Record {@code channelId}'s chain as closing onto a consumer node
+     * (created/resolved by identity). Returns the consumer's node id so its
+     * handle can continue the chain.
      */
     int wireConsumer(
             int channelId,
             Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             String nodeName,
             Integer pendingChain) {
-        return wireConsumer(channelId, procedureClass, nodeName, null, pendingChain);
+        return wireConsumer(channelId, procedureClass, nodeName, null, pendingChain, null);
     }
 
     /**
@@ -468,7 +540,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * one, which is what makes reusing a handle mid-chain branch cleanly
      * instead of aliasing. Mirror of the Rust SDK's {@code PendingEdge}.
      */
-    static final class PendingEdge {
+    public static final class PendingEdge {
         int channel;
         /** The payload type after this chain's transforms. */
         Class<?> payloadType;
@@ -480,10 +552,20 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         Function<Object, EdgeYield> transform;
 
         Function<Object, String> key;
-        /** Set when a later link built on this one, so only a tip can dangle. */
+        /** This chain's links, in the order the author declared them. */
+        public List<HostLink> links = new ArrayList<>();
+        /** Set when a later link built on this one, so only a tip is recorded. */
         boolean superseded;
-        /** Set when {@code into(...)} closed the chain onto an edge. */
-        boolean consumed;
+
+        /** The transform this chain's edge applies, or {@code null}. */
+        Function<Object, EdgeYield> transform() {
+            return transform;
+        }
+
+        /** The key this chain's edge applies, or {@code null}. */
+        Function<Object, String> key() {
+            return key;
+        }
     }
 
     /**
@@ -496,47 +578,46 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             Class<?> payloadType,
             Function<Object, EdgeYield> link,
             Function<Object, String> key) {
-        ChannelEntry entry = channels.get(channel);
-        if (entry.pluginSinkName != null) {
-            errors.add(StreamOperativeConfigurationException.transformAfterTerminal(entry.name)
-                    .getMessage());
-        }
         Function<Object, EdgeYield> priorTransform = null;
         Function<Object, String> priorKey = null;
+        List<HostLink> priorLinks = List.of();
         if (base != null) {
             PendingEdge prior = pending.get(base);
             prior.superseded = true;
             priorTransform = prior.transform;
             priorKey = prior.key;
-        }
-        // The key is evaluated on the final post-transform value, so a
-        // transform declared after it would hand it a value of a type it was
-        // never written against.
-        if (priorKey != null && link != null) {
-            errors.add(StreamOperativeConfigurationException.transformAfterKeyBy(entry.name)
-                    .getMessage());
-        }
-        if (priorKey != null && key != null) {
-            errors.add(StreamOperativeConfigurationException.duplicateKeyBy(entry.name)
-                    .getMessage());
+            priorLinks = prior.links;
         }
         PendingEdge chain = new PendingEdge();
         chain.channel = channel;
         chain.payloadType = payloadType;
         chain.transform = compose(priorTransform, link);
         chain.key = key != null ? key : priorKey;
+        chain.links = new ArrayList<>(priorLinks);
+        chain.links.add(link != null ? HostLink.transform() : HostLink.key());
         pending.add(chain);
         return pending.size() - 1;
     }
 
-    /** Take a chain's closures and mark it closed; {@code null} for a bare handle. */
-    private PendingEdge closePending(Integer pendingChain) {
-        if (pendingChain == null) {
-            return null;
+    /**
+     * Close {@code base} on a terminator link, or open the one-link chain a
+     * bare handle declares. The chain is recorded either way; what closing it
+     * MEANS is the core's answer.
+     */
+    void closeChain(int channel, Integer base, HostLink terminator) {
+        if (base != null) {
+            pending.get(base).links.add(terminator);
+            return;
         }
-        PendingEdge chain = pending.get(pendingChain);
-        chain.consumed = true;
-        return chain;
+        PendingEdge chain = new PendingEdge();
+        chain.channel = channel;
+        chain.links.add(terminator);
+        pending.add(chain);
+    }
+
+    /** One merge's group id, which ties its sources across their channels. */
+    int nextMergeGroup() {
+        return mergeGroups++;
     }
 
     /**
@@ -569,34 +650,29 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     /**
-     * Wire {@code channelId} into a consumer node. A merge subscription passes
-     * the declared merged input type and the mapping that lifts this channel's
-     * payload into it; what Rust checks at the {@code .into::<Proc>()} call site
-     * with an {@code Input = I} bound is checked here instead — erasure
-     * precludes the compile-time form, so the same defect is caught at
-     * registration.
+     * Record {@code channelId}'s chain as closing onto a consumer node. A merge
+     * subscription passes the declared merged input type, the mapping that
+     * lifts this channel's payload into it, and the group tying its sources
+     * together; what Rust checks at the {@code .into::<Proc>()} call site with
+     * an {@code Input = I} bound is checked here instead — erasure precludes
+     * the compile-time form, so the same defect is caught at registration.
      */
     int wireConsumer(
             int channelId,
             Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             String nodeName,
             Class<?> deliveredTypeOverride,
-            Integer pendingChain) {
+            Integer pendingChain,
+            Integer mergeGroup) {
         int procedureId = registerNode(procedureClass, nodeName);
         ProcedureEntry procedure = procedures.get(procedureId);
         ChannelEntry channel = channels.get(channelId);
         Class<?> chainType = pendingChain == null ? null : pending.get(pendingChain).payloadType;
         refuseTypeMismatch(channel, procedure, deliveredTypeOverride, chainType);
-        if (!attachEdge(channel, procedureId, procedure.name, closePending(pendingChain))) {
-            return procedureId;
-        }
-        // Cache input channel id on the procedure. A fan-in procedure keeps its
-        // first input channel here; every incoming channel stays reachable via
-        // the channel descriptors, and the dispatcher routes via the
-        // channel-side mapping.
-        if (procedure.inputChannelId == null) {
-            procedure.inputChannelId = channelId;
-        }
+        closeChain(
+                channelId,
+                pendingChain,
+                mergeGroup == null ? HostLink.into(procedureId) : HostLink.merge(procedureId, mergeGroup));
         return procedureId;
     }
 
@@ -626,35 +702,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     /**
-     * Add the consumer edge, or refuse it. Re-declaring an existing bare edge is
-     * the fan-in / repeated {@code .into} case and stays a no-op. Re-declaring
-     * one where either side carries a transform or a key is refused rather than
-     * silently dropped — the edge would otherwise keep whichever closure was
-     * declared first and deliver the wrong value, to the wrong Entity, forever.
-     *
-     * @return {@code false} when the edge was refused as already wired.
-     */
-    private boolean attachEdge(ChannelEntry channel, int procedureId, String procedureName, PendingEdge chain) {
-        boolean declares = chain != null && (chain.transform != null || chain.key != null);
-        Optional<ConsumerEdge> existing = channel.consumers.stream()
-                .filter(e -> e.procedure() == procedureId)
-                .findFirst();
-        if (existing.isEmpty()) {
-            channel.consumers.add(new ConsumerEdge(
-                    procedureId,
-                    Optional.ofNullable(chain == null ? null : chain.transform),
-                    Optional.ofNullable(chain == null ? null : chain.key)));
-            return true;
-        }
-        if (existing.get().transform().isPresent() || existing.get().key().isPresent() || declares) {
-            errors.add(StreamOperativeConfigurationException.edgeAlreadyWired(channel.name, procedureName)
-                    .getMessage());
-            return false;
-        }
-        return true;
-    }
-
-    /**
      * The node's output channel, created lazily on first use so a leaf node
      * never carries a phantom channel. Named by the node's identity until a
      * {@code .named(...)} override; payload type = the node's declared
@@ -678,18 +725,20 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     // ---- Phantom builder records -------------------------------------------
 
     /** Mutable internal record for a channel declaration. */
-    static final class ChannelEntry {
-        String name;
-        ChannelKind kind;
+    public static final class ChannelEntry {
+        public String name;
+        public ChannelKind kind;
         Class<?> payloadType;
-        Integer producer;
-        final List<ConsumerEdge> consumers = new ArrayList<>();
-        String pluginSinkName;
+        public Integer producer;
+        /** Every chain declared on this channel's handles, in author order. */
+        public final List<PendingEdge> chains = new ArrayList<>();
+
+        public String pluginSinkName;
         Function<Object, byte[]> pluginSinkSerializer;
-        OverflowPolicy overflowPolicy;
-        int retryMaxAttempts = RetryPolicy.DEFAULT.maxAttempts();
-        long retryBackoffBaseMs = RetryPolicy.DEFAULT.backoffBaseMs();
-        boolean keyed;
+        public OverflowPolicy overflowPolicy;
+        public int retryMaxAttempts = RetryPolicy.DEFAULT.maxAttempts();
+        public long retryBackoffBaseMs = RetryPolicy.DEFAULT.backoffBaseMs();
+        public boolean keyed;
         Function<Object, byte[]> interProcEncoder;
         Function<byte[], Object> interProcDecoder;
         /** Entry channels only: wire bytes → typed payload. */
@@ -703,59 +752,48 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         boolean entryParsed;
     }
 
-    /**
-     * Apply a {@code .retryMax(...)} declaration, rejecting a zero budget at
-     * registration time like every other declaration error.
-     */
+    /** Record a {@code .retryMax(...)} declaration; the core refuses a zero budget. */
     void setRetryMax(int channelId, int maxAttempts) {
-        ChannelEntry entry = channels.get(channelId);
-        if (maxAttempts <= 0) {
-            errors.add("channel `" + entry.name + "` declared retryMax = " + maxAttempts
-                    + "; at least one attempt is required (throw ProcedureException.NonRetryable"
-                    + " to park without retries)");
-            return;
-        }
-        entry.retryMaxAttempts = maxAttempts;
+        channels.get(channelId).retryMaxAttempts = maxAttempts;
     }
 
     /** Mutable internal record for a node registration. */
-    static final class ProcedureEntry {
+    public static final class ProcedureEntry {
         /**
          * Node identity: the procedure's {@code name()}, or the explicit node
          * name given at wiring time. Feeds everything {@code name()} feeds —
          * state directories, journal entries, the derived channel name,
          * diagnostics.
          */
-        String name;
+        public String name;
 
         /** Whether this node was created with an explicit node name. */
         boolean named;
 
         Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass;
-        List<String> entityKeys;
-        boolean entitiesForOverridden;
+        public List<String> entityKeys;
+        public boolean entitiesForOverridden;
         /**
-         * Set during validation when some consumer edge into this node carries
-         * a key function — Entity mode is read off the WIRING now, not off the
-         * procedure.
+         * Set when some chain closing onto this node carries a key function —
+         * Entity mode is read off the WIRING, not off the procedure, and the
+         * record states it so the core can judge the sibling edges.
          */
-        boolean dynamic;
+        public boolean dynamic;
 
         Class<?> inputType;
         Class<?> outputType;
-        Class<? extends Change> changeType;
-        Class<? extends Clock> clockType;
+        public Class<? extends Change> changeType;
+        public Class<? extends Clock> clockType;
         Class<?> configType;
         List<Class<?>> kryoTypes;
-        int schemaVersion;
-        int minReadableSchemaVersion;
-        long compactAfterBytes;
-        Integer inputChannelId;
+        public int schemaVersion;
+        public int minReadableSchemaVersion;
+        public long compactAfterBytes;
         Integer outputChannelId;
         int mailboxCapacityDeclared;
         boolean mailboxCapacityOverridden;
-        boolean compensateOverridden;
-        Optional<Duration> entityIdleTtl = Optional.empty();
-        OptionalLong maxEntities = OptionalLong.empty();
+        public boolean compensateOverridden;
+        public Optional<Duration> entityIdleTtl = Optional.empty();
+        public OptionalLong maxEntities = OptionalLong.empty();
     }
 }

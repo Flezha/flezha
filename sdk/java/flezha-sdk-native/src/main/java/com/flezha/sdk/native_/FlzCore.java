@@ -42,6 +42,20 @@ public final class FlzCore {
     /** Declare one host class from its JSON declaration. Throws the refusal. */
     public static native void declareClass(long ctx, byte[] json);
 
+    /**
+     * Judge one host class declaration without registering it: the one seam
+     * every SDK's builder submits its record to. Returns the DERIVED
+     * declaration's JSON bytes — the consumers, channel kinds, sink names and
+     * acknowledgement granularity the core read off the record. Throws
+     * carrying the core's rendered verdict
+     * ({@code topology rejected [Name, Name]:} and one sentence per refusal)
+     * as the message, and the same verdict's JSON
+     * ({@code {"issues":[{"name","text"}]}}) as
+     * {@link FlezhaNativeException#body()} — so a caller reads the refusal
+     * names as data rather than back out of the sentence.
+     */
+    public static native byte[] checkClass(long ctx, byte[] json);
+
     /** Connect to the controller and start the runner loop. Throws on failure. */
     public static native void start(long ctx, String namespace);
 

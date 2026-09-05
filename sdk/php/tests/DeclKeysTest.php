@@ -10,9 +10,11 @@ use Flezha\Attribute\Workflow;
 use Flezha\BeyondWindow;
 use Flezha\Clock;
 use Flezha\Ctx;
+use Flezha\Ffi\Core;
 use Flezha\Graph\Builder;
 use Flezha\Graph\ClassSpec;
 use Flezha\Graph\HostClassDecl;
+use Flezha\Graph\Validate;
 use Flezha\LoopMode;
 use Flezha\Procedure;
 use Flezha\RollbackMode;
@@ -66,7 +68,7 @@ final class DeclKeysTest extends RepositoryTestCase
      */
     private const REFUSED_ON_WORKFLOW = [
         'effectively_once',
-        'ack_granularity',
+        'checkpoint_ack',
         'checkpoint_every',
         'checkpoint_outputs',
         'checkpoint_max_delay_ms',
@@ -106,7 +108,7 @@ final class DeclKeysTest extends RepositoryTestCase
             kind: $kind,
             persistent: $stream->persistent,
             effectivelyOnce: $stream->effectivelyOnce,
-            ackGranularity: $stream->ackGranularity,
+            checkpointAck: $stream->checkpointAck,
             checkpointEvery: $stream->checkpointEvery,
             checkpointOutputs: $stream->checkpointOutputs,
             checkpointMaxDelayMs: $stream->checkpointMaxDelayMs,
@@ -167,10 +169,11 @@ final class DeclKeysTest extends RepositoryTestCase
      * The cross-language topology golden.
      *
      * `test/fixtures/reference_topologies.txt` is the Rust reference's channel
-     * topology for two fixtures, transcribed by hand. Four SDKs implement one
-     * design with no compiler between them, so the file is what keeps them
+     * topology for two fixtures, transcribed by hand. Several SDKs implement
+     * one design with no compiler between them, so the file is what keeps them
      * from drifting: this builder declares both shapes in PHP's spelling and
-     * the lines must be the golden's, in order.
+     * the lines the CORE DERIVES from its record must be the golden's, in
+     * order.
      */
     public function testTheHybridStreamTopologyIsTheReference(): void
     {
@@ -200,24 +203,37 @@ final class DeclKeysTest extends RepositoryTestCase
     }
 
     /**
-     * The declaration rendered in the golden's columns, one line per channel.
+     * The DERIVED declaration rendered in the golden's columns, one line per
+     * channel. Every column but the index is the core's answer now — the
+     * record carries chains, and the consumers, the plugin kind and the sink
+     * name are read off them.
      *
      * @return list<string>
      */
     private function rendered(string $topology, ClassSpec $spec): array
     {
-        $decl = HostClassDecl::of($spec);
+        $core = Core::create();
+
+        try {
+            $derived = Validate::spec($spec, $core);
+        } finally {
+            $core->free();
+        }
+
         $lines = [];
-        foreach ($decl['channels'] as $index => $channel) {
-            $consumers = $channel['consumers'] ?? [];
+        foreach ($derived['channels'] as $index => $channel) {
+            $consumers = array_map(
+                static fn (array $edge): int => $edge['procedure'],
+                $channel['consumers'],
+            );
             $lines[] = implode(' | ', [
                 $topology,
                 (string) $index,
                 $channel['name'],
                 $channel['kind'],
-                isset($channel['producer']) ? (string) $channel['producer'] : '-',
+                $channel['producer'] === null ? '-' : (string) $channel['producer'],
                 $consumers === [] ? '-' : implode(',', $consumers),
-                $spec->channels[$index]->sink ?? '-',
+                $channel['sink'] ?? '-',
             ]);
         }
 

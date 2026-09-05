@@ -1,8 +1,5 @@
 package com.flezha.sdk.runtime.operative.builder;
 
-import com.flezha.sdk.operative.StreamOperativeConfigurationException;
-import javax.annotation.Nonnull;
-
 /**
  * Resolves a Procedure's per-Entity mailbox capacity per the Rust SDK's
  * three-tier precedence rule:
@@ -13,12 +10,13 @@ import javax.annotation.Nonnull;
  *   <li>Built-in default ({@link #DEFAULT_MAILBOX_CAPACITY}).</li>
  * </ol>
  *
- * <p>Out-of-range values fail registration with
- * {@link StreamOperativeConfigurationException#mailboxCapacityZero(String)} or
- * {@link StreamOperativeConfigurationException#mailboxCapacityTooLarge(String, long)}.
- * Unparseable env values fall through to the default — runners tolerate
- * typos in env values during development. Split into a pure-function core
- * so operative tests don't have to mutate the process-global env var.
+ * <p>The resolved value is written into the record as declared — an
+ * out-of-range one included. {@code flz_core} names it
+ * ({@code MailboxCapacityZero}, {@code MailboxCapacityTooLarge}), so
+ * resolving and judging stay apart. Unparseable env values fall through to
+ * the default — runners tolerate typos in env values during development.
+ * Split into a pure-function core so operative tests don't have to mutate
+ * the process-global env var.
  */
 public final class MailboxCapacityResolver {
 
@@ -29,33 +27,21 @@ public final class MailboxCapacityResolver {
     private MailboxCapacityResolver() {}
 
     /** Resolve using the live process environment for the env-var tier. */
-    public static int resolve(@Nonnull String procedureName, int declared, boolean overridden) {
-        return resolveInner(procedureName, declared, overridden, System.getenv(ENV_MAILBOX_CAPACITY));
+    public static int resolve(int declared, boolean overridden) {
+        return resolveInner(declared, overridden, System.getenv(ENV_MAILBOX_CAPACITY));
     }
 
     /**
      * Pure-function core. {@code envValue} may be {@code null} (unset) or
      * a string that fails to parse as a positive {@code int}, in which case
      * the default is used.
-     *
-     * @throws StreamOperativeConfigurationException if the resolved value is out of
-     *     range {@code [1, 1_048_576]}.
      */
-    static int resolveInner(@Nonnull String procedureName, int declared, boolean overridden, String envValue) {
-        int resolved;
+    static int resolveInner(int declared, boolean overridden, String envValue) {
         if (overridden) {
-            resolved = declared;
-        } else {
-            Integer parsed = parsePositive(envValue);
-            resolved = parsed != null ? parsed : DEFAULT_MAILBOX_CAPACITY;
+            return declared;
         }
-        if (resolved <= 0) {
-            throw StreamOperativeConfigurationException.mailboxCapacityZero(procedureName);
-        }
-        if (resolved > MAX_MAILBOX_CAPACITY) {
-            throw StreamOperativeConfigurationException.mailboxCapacityTooLarge(procedureName, resolved);
-        }
-        return resolved;
+        Integer parsed = parsePositive(envValue);
+        return parsed != null ? parsed : DEFAULT_MAILBOX_CAPACITY;
     }
 
     private static Integer parsePositive(String raw) {

@@ -6,20 +6,15 @@ require_relative "builder"
 require_relative "errors"
 
 module Flezha
-  # Registration-time refusals, and the `HostClassDecl` the core is handed.
+  # The `HostClassDecl` the core is handed, and the verdict it answers.
   #
-  # Ruby has no compile step, so everything the Rust builder refuses at compile
-  # time is refused here instead, naming the class, the handler and the
-  # specific defect — the same set, for the same reasons, as the Rust builder's
-  # `TopologyIssue`, so an author moving between SDKs meets one vocabulary.
-  #
-  # The core validates again on its side. That is not redundancy: a
-  # hand-written declaration reaching the ABI directly must not slip past, and
-  # an author who declared through this surface deserves the error before any
-  # data moves.
+  # The topology is judged in ONE place, `flz_core::host::register::check`:
+  # this module records what the author declared, submits it, and renders the
+  # core's verdict as this SDK's own refusal. What is refused here instead is
+  # what a record cannot carry — whether a Ruby class defines the method a
+  # declaration promises, and whether it supplies the migration a schema floor
+  # needs. Those the core cannot see.
   module Graph
-    MAX_MAILBOX_CAPACITY = 1_048_576
-
     # The Ruby SDK's byte in the core's `sdk_lang` allocation table.
     SDK_LANG_RUBY = 5
 
@@ -38,142 +33,54 @@ module Flezha
       raise DeclarationError.new(spec.factory_id, handler, defect)
     end
 
-    # Refuse every defect a type system would have caught, naming the handler
-    # and the defect.
-    def validate(spec)
-      check_workflow(spec)
-      check_tier(spec)
-      check_window(spec)
-      check_chain_issues(spec)
-      check_channels(spec)
-      check_procedures(spec)
-      check_keying(spec)
-      check_topology(spec)
-    end
-
-    # What each transform-chain refusal says, under the reference's own name. A
-    # chain is stored on the consumer edge it terminates in, which is why every
-    # one of these is a link the runtime would otherwise drop or overwrite in
-    # silence.
-    CHAIN_DEFECTS = {
-      DuplicateKeyBy: "declares key_by(...) twice before one into(...)",
-      TransformAfterTerminal:
-        "declares a transform or key_by(...) after a plugin sink; the sink serializes the " \
-        "channel's own value, so nothing downstream of it can be reshaped",
-      TransformAfterKeyBy:
-        "declares a transform after key_by(...); the key is evaluated on the final " \
-        "post-transform value, so it must be the last link before into(...)",
-      DanglingTransformChain:
-        "declares a transform or key_by(...) that is never closed by into(...); a transform " \
-        "chain is stored on the consumer edge it terminates in, so a dangling one would " \
-        "silently do nothing",
-    }.freeze
-
-    # Refuse every defect a transform/key chain declared, in the order the
-    # references collect them: what a link refused as it was declared, then the
-    # tips no `into(...)` closed. Only a tip is reported as dangling — every
-    # earlier link was superseded by the next.
-    def check_chain_issues(spec)
-      spec.chain_issues.each do |issue|
-        refuse(spec, issue.channel, "#{issue.issue}: #{CHAIN_DEFECTS.fetch(issue.issue)}")
-      end
-    end
-
-    def check_channels(spec)
-      names = {}
-
-      spec.channels.each do |channel|
-        refuse(spec, channel.name, "this channel name is declared more than once") if names[channel.name]
-        names[channel.name] = true
-        check_channel_wiring(spec, channel)
-        check_overflow(spec, channel)
-
-        if channel.kind == :entry && channel.consumers.empty?
-          refuse(spec, channel.name, "is an entry channel that names no consumer")
-        end
-        if declared_kind(channel) == :inter_proc && channel.consumers.empty?
-          refuse(spec, channel.name, "is an inter-procedure channel that names no consumer")
-        end
-      end
-    end
-
-    # The kind the wire carries.
+    # Judge one declaration and answer what the core derived from it: the
+    # channel names, kinds, consumers, sink names and acknowledgement
+    # granularity it read off the record.
     #
-    # Terminality is derived from the wiring, not from which method the author
-    # called: a sink with nothing consuming behind it IS the plugin-bound
-    # terminal, and a sink declared alongside consumers is the hybrid — one
-    # channel the core journals as inter-procedure and whose values also reach
-    # the plugin.
-    def declared_kind(channel)
-      channel.sink && channel.consumers.empty? ? :plugin : channel.kind
+    # The defects this SDK can see that the record cannot carry are refused
+    # first, so an author reads "no event_time method" rather than a topology
+    # verdict about a clock the class does declare.
+    def validate(spec, core)
+      check_procedures(spec)
+      derived = submit(spec, core)
+      bind_edges(spec, derived)
+      derived
     end
 
-    def check_channel_wiring(spec, channel)
-      if channel.sink.nil? && channel.keyed
-        refuse(spec, channel.name,
-               "is declared keyed but has no plugin wire; output identity stamps only " \
-               "exist on plugin-bound frames, so add a sink(...) or drop the keyed")
-      end
-
-      return unless spec.effectively_once && channel.sink && !channel.keyed
-
-      refuse(spec, channel.name,
-             "has a plugin wire but is not declared keyed; the effectively-once tier " \
-             "deduplicates by output identity, so every plugin-bound channel of a class " \
-             "that declares effectively_once must opt in with keyed")
+    # The record, over the ABI, and the verdict back.
+    #
+    # `Flezha::Native::Error` is what the veneer raises; it exists because
+    # `core` came from the extension that defines it.
+    def submit(spec, core)
+      JSON.parse(core.check_class(JSON.generate(to_host_class_decl(spec))))
+    rescue Native::Error => e
+      raise DeclarationError.new(spec.factory_id, nil, e.message, refusals_of(e))
     end
 
-    def check_overflow(spec, channel)
-      if channel.overflow != :drop_nothing
-        if spec.effectively_once
-          refuse(spec, channel.name,
-                 "declares on_full(#{channel.overflow}) on a class that declares " \
-                 "effectively_once; a shed input's offset is still advanced past by the " \
-                 "tier's watermark, so the loss is permanent and reported nowhere — " \
-                 "declare one or the other, not both")
-        end
-        if spec.correction_window_ms
-          refuse(spec, channel.name,
-                 "declares on_full(#{channel.overflow}) on a class that declares a " \
-                 "correction window; a correction re-folds a replayed slice and its answer " \
-                 "may not depend on which items a full mailbox happened to keep")
-        end
-      end
+    # The core's own names for what it refused, read off the verdict it hands
+    # back as data beside the rendered message. Empty when the failure carried
+    # no verdict — a context refusal rather than a judgement on the record.
+    def refusals_of(error)
+      verdict = error.verdict
+      return [] unless verdict
 
-      return unless channel.retry_max == 0
-
-      refuse(spec, channel.name,
-             "declares retry_max(0); at least one attempt is required — raise a " \
-             "non-retryable error to park without retries")
+      JSON.parse(verdict).fetch("issues", []).map { |issue| issue["name"] }
     end
 
-    def check_keying(spec)
-      dynamic = spec.procedures.select { |node| node.definition.entity_mode == :dynamic }
-                    .map(&:index).to_h { |index| [index, true] }
-
-      spec.channels.each do |channel|
-        channel.consumers.each do |edge|
-          node = spec.procedures[edge.procedure]
-          if edge.key_by && node.definition.entity_mode == :static
-            refuse(spec, channel.name,
-                   "declares key_by into procedure `#{node.name}`, which declares a static " \
-                   "key set; static keying routes by entities_for and may name several " \
-                   "entities, edge keying names exactly one — declare one or the other, " \
-                   "not both")
-          end
-          if !edge.key_by && dynamic[edge.procedure]
-            refuse(spec, channel.name,
-                   "feeds dynamic procedure `#{node.name}` without a key_by; every edge into " \
-                   "a dynamic procedure must name the entity its inputs reach")
-          end
-        end
+    # The consumers the CORE derived, each carrying the closures of the chain
+    # that produced it: the builder held them aside per chain, and the derived
+    # edge names the chain. Which edge survives a re-declaration is therefore
+    # the core's answer, not a rule this SDK repeats.
+    def bind_edges(spec, derived)
+      derived["channels"].each do |channel|
+        target = spec.channels[channel["index"]]
+        target.consumers = channel["consumers"].map { |edge| target.chain_edges[edge["chain"]] }
       end
     end
 
     def check_procedures(spec)
       spec.procedures.each do |node|
         check_clocks(spec, node)
-        check_entities(spec, node)
         check_schema(spec, node)
       end
     end
@@ -187,37 +94,11 @@ module Flezha
                "declares an event_time clock but no event_time method; the core evaluates " \
                "the declared clock per input and has nothing to evaluate")
       end
-      if clock != :event_time && definition.event_time?
-        refuse(spec, node.name,
-               "declares an event_time method with clock `#{clock}`; the extractor is only " \
-               "consulted by an event_time clock, so one of the two is not what was meant")
-      end
-      return unless clock == :logical && !definition.initial_state?
+      return unless clock != :event_time && definition.event_time?
 
       refuse(spec, node.name,
-             "declares a logical clock but no state; logical time IS the durable change " \
-             "sequence, which never advances for a procedure that records no changes")
-    end
-
-    def check_entities(spec, node)
-      definition = node.definition
-
-      if definition.entity_mode == :static && !definition.entities_for?
-        refuse(spec, node.name,
-               "declares a static key set without an entities_for; static keying needs the " \
-               "method that says which declared entities an input belongs to")
-      end
-      capacity = definition.mailbox_capacity
-      if capacity && (capacity < 1 || capacity > MAX_MAILBOX_CAPACITY)
-        refuse(spec, node.name,
-               "declares mailbox_capacity #{capacity}; capacity must be in " \
-               "1..#{MAX_MAILBOX_CAPACITY}")
-      end
-      return unless definition.max_entities == 0
-
-      refuse(spec, node.name,
-             "declares max_entities 0; a dynamic procedure that may hold no entity can " \
-             "process nothing")
+             "declares an event_time method with clock `#{clock}`; the extractor is only " \
+             "consulted by an event_time clock, so one of the two is not what was meant")
     end
 
     def check_schema(spec, node)
@@ -239,130 +120,18 @@ module Flezha
              "at startup")
     end
 
-    def check_tier(spec)
-      if spec.effectively_once && !spec.persistent
-        refuse(spec, nil, "declares effectively_once without persistence: the tier IS durable state")
-      end
-      if spec.ack_granularity == :checkpoint && !spec.effectively_once
-        refuse(spec, nil,
-               "declares checkpoint acknowledgement without effectively_once; the checkpoint " \
-               "is where the tier's consumed offset advances, and a class without the tier " \
-               "has no durable offset to hold back")
-      end
-      if spec.checkpoint_every == 0
-        refuse(spec, nil,
-               "declares checkpoint_every(0); an interval that closes every zero inputs is " \
-               "not an interval — omit it to close only on an explicit ctx.checkpoint")
-      end
-      if spec.checkpoint_outputs == :at_checkpoint && spec.checkpoint_max_delay_ms.nil?
-        refuse(spec, nil,
-               "declares outputs_at_checkpoint with no maximum delay; an interval that never " \
-               "closes would hold its outputs forever on a quiet entity")
-      end
-    end
-
-    def check_window(spec)
-      return if spec.correction_window_ms.nil?
-
-      if spec.correction_window_ms == 0
-        refuse(spec, nil, "declares a correction window of zero; a zero window can correct nothing")
-      end
-      unless spec.effectively_once
-        refuse(spec, nil,
-               "declares a correction window without effectively_once; correction replays the " \
-               "input log against a rewound baseline, and only the tier journals inputs " \
-               "before forwarding them")
-      end
-      unless spec.procedures.any? { |node| node.definition.clock == :event_time }
-        refuse(spec, nil,
-               "declares a correction window but no procedure declares an event_time clock; " \
-               "correction orders a replayed slice by event time")
-      end
-    end
-
-    # Every procedure reachable from an entry channel, and no cycle among them.
-    def check_topology(spec)
-      entries = spec.channels.select { |channel| channel.kind == :entry }
-      if spec.kind == :stream && entries.empty?
-        refuse(spec, nil, "declares no entry channel; a stream class is fed by the controller")
-      end
-      if spec.procedures.empty?
-        refuse(spec, nil, "declares no procedure") if spec.kind == :stream
-        return
-      end
-
-      successors = Hash.new { |hash, key| hash[key] = [] }
-      spec.channels.each do |channel|
-        next unless channel.kind == :inter_proc && channel.producer
-
-        successors[channel.producer].concat(channel.consumers.map(&:procedure))
-      end
-
-      reachable = {}
-      frontier = entries.flat_map { |channel| channel.consumers.map(&:procedure) }
-      until frontier.empty?
-        node = frontier.pop
-        next if reachable[node]
-
-        reachable[node] = true
-        frontier.concat(successors[node])
-      end
-
-      # A cycle is found before unreachability is reported: a node on a cycle
-      # with no path from an entry is both, and the cycle is the more useful
-      # answer.
-      colour = {}
-      visit = lambda do |index|
-        case colour[index]
-        when :black then return
-        when :grey
-          refuse(spec, spec.procedures[index].name,
-                 "is on a cycle; an operative topology is a DAG — a node's output may never " \
-                 "reach its own input")
-        end
-        colour[index] = :grey
-        successors[index].each { |next_index| visit.call(next_index) }
-        colour[index] = :black
-      end
-      spec.procedures.each { |node| visit.call(node.index) }
-
-      spec.procedures.each do |node|
-        refuse(spec, node.name, "is not reachable from any entry channel") unless reachable[node.index]
-      end
-    end
-
-    def check_workflow(spec)
-      unless spec.kind == :workflow
-        if spec.sync_durability
-          refuse(spec, nil,
-                 "declares sync_durability on a stream class; a stream class acknowledges at " \
-                 "input rates, and a remote round trip per acknowledgement is not a guarantee " \
-                 "it can keep")
-        end
-        return
-      end
-
-      if spec.correction_window_ms
-        refuse(spec, nil, "is a workflow class and cannot declare a correction window")
-      end
-      if spec.run && !spec.channels.empty?
-        refuse(spec, nil, "declares a run body and channels; a run-sugar workflow is one " \
-                          "imperative body")
-      end
-      if spec.sync_durability && !spec.persistent
-        refuse(spec, nil, "declares sync_durability without persistence")
-      end
-    end
-
     # Drop the keys whose value is nil, so the JSON omits them.
     def compact(hash) = hash.reject { |_key, value| value.nil? }
 
+    # The channel as the record carries it: the kind the author declared and
+    # the sequences declared off its handle. The consumers, the plugin kind and
+    # the sink name are the core's to DERIVE from those chains.
     def channel_json(channel)
       compact(
         "name" => channel.name,
-        "kind" => declared_kind(channel).to_s,
+        "kind" => channel.kind.to_s,
         "producer" => channel.producer,
-        "consumers" => channel.consumers.map(&:procedure),
+        "chains" => channel.chains,
         "retry_max" => channel.retry_max,
         "retry_backoff_ms" => channel.retry_backoff_ms,
         "overflow" => channel.overflow.to_s,
@@ -382,6 +151,10 @@ module Flezha
         "compensate_overridden" => definition.compensate?,
         "clock" => definition.clock.to_s,
         "mailbox_capacity" => definition.mailbox_capacity || 1024,
+        # A procedure with no state journals nothing, so a logical clock over
+        # it never advances. Ruby has no per-procedure Change type; the
+        # presence of an initial state IS the same statement.
+        "change_is_nochange" => !definition.initial_state?,
         "schema_version" => definition.schema_version || 1,
         "min_readable_schema_version" => definition.min_readable_schema_version
       )
@@ -401,7 +174,7 @@ module Flezha
 
       {
         "effectively_once" => spec.effectively_once,
-        "ack_granularity" => spec.ack_granularity.to_s,
+        "checkpoint_ack" => spec.checkpoint_ack,
         "checkpoint_every" => spec.checkpoint_every,
         "checkpoint_outputs" => spec.checkpoint_outputs.to_s,
         "checkpoint_max_delay_ms" => spec.checkpoint_max_delay_ms,

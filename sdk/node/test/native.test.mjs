@@ -111,10 +111,9 @@ test('a core refusal carries the engine detail', () => {
 });
 
 // The checkpoint options the core will accept together. Asserted here rather
-// than on the builder's fields because the core is what refuses: a declaration
-// holding outputs at a checkpoint it never acknowledges at is rejected at
-// registration, so a builder that can express it hands its author a class that
-// cannot start.
+// than on the builder's fields because the core is what refuses AND what
+// implies: the builder writes each raw flag, and the acknowledgement
+// granularity a declaration registers under is derived from any of them.
 const checkpointClass = (factoryId, declare) =>
   defineOperative({
     factoryId,
@@ -136,7 +135,12 @@ test('holding outputs at the checkpoint acknowledges at the checkpoint', () => {
   native.contextNew(ACTIVATION_SCHEMA_VERSION);
   try {
     const spec = checkpointClass('outputs_only', (c) => c.outputsAtCheckpoint(1500));
-    assert.equal(toHostClassDecl(spec).ack_granularity, 'checkpoint');
+    const decl = toHostClassDecl(spec);
+    assert.equal(decl.checkpoint_ack, false, 'the flag is raw: nothing amends it');
+    assert.equal(decl.checkpoint_outputs, 'at_checkpoint');
+    assert.equal(decl.checkpoint_max_delay_ms, 1500);
+    // Registering is the assertion: the core implies the checkpoint
+    // acknowledgement from the outputs flag, and refuses the pair otherwise.
     declaresTo(native, spec);
   } finally {
     native.contextFree();
@@ -148,7 +152,7 @@ test('the bare checkpoint opt-in registers with no cadence', () => {
   try {
     const spec = checkpointClass('ack_only', (c) => c.checkpointAck());
     const decl = toHostClassDecl(spec);
-    assert.equal(decl.ack_granularity, 'checkpoint');
+    assert.equal(decl.checkpoint_ack, true);
     assert.equal(decl.checkpoint_every, undefined, 'the bare opt-in declares no cadence');
     declaresTo(native, spec);
   } finally {

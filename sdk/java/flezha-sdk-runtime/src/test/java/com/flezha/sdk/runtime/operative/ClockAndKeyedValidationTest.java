@@ -58,7 +58,8 @@ class ClockAndKeyedValidationTest {
     void logicalClockWithNoChangeIsRefused() {
         assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(UnservableClockOperative.class))
                 .isInstanceOf(StreamOperativeConfigurationException.class)
-                .hasMessageContaining("UnservableClock");
+                .hasMessageContaining("UnservableClock")
+                .hasMessageContaining("with `type Change = NoChange`");
     }
 
     @Test
@@ -66,8 +67,8 @@ class ClockAndKeyedValidationTest {
     void keyedChannelWithoutPluginWireIsRefused() {
         assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(KeyedNoPluginOperative.class))
                 .isInstanceOf(StreamOperativeConfigurationException.class)
-                .hasMessageContaining("keyed")
-                .hasMessageContaining("flz.key");
+                .hasMessageContaining("KeyedChannelWithoutPluginWire")
+                .hasMessageContaining("is declared .keyed() but has no plugin wire");
     }
 
     @Test

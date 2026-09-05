@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  * Topology-level tests for the bounded-mailbox surface added by the
  * Rust→Java parity port: {@code OverflowPolicy} + {@code .onFull(...)} +
  * {@code Procedure.mailboxCapacity()} + {@code FLEZHA_MAILBOX_CAPACITY} env
- * resolution + the two range-validation exception factories.
+ * resolution + the two range refusals the core names off the resolved value.
  */
 class BoundedMailboxTopologyTest {
 
@@ -75,19 +75,20 @@ class BoundedMailboxTopologyTest {
     }
 
     @Test
-    @DisplayName("mailboxCapacity = 0 fails registration with named factory")
+    @DisplayName("mailboxCapacity = 0 fails registration, named by the core")
     void zeroCapacityRejected() {
         assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new ZeroCapacityStreamOperative()))
                 .isInstanceOf(StreamOperativeConfigurationException.class)
-                .hasMessageContaining("zero_capacity_procedure")
-                .hasMessageContaining("mailboxCapacity = 0");
+                .hasMessageContaining("MailboxCapacityZero")
+                .hasMessageContaining("procedure `zero_capacity_procedure` declared mailbox_capacity = 0");
     }
 
     @Test
-    @DisplayName("mailboxCapacity above MAX is rejected with named factory + value")
+    @DisplayName("mailboxCapacity above MAX is rejected, named by the core with the value")
     void tooLargeRejected() {
         assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new HugeCapacityStreamOperative()))
                 .isInstanceOf(StreamOperativeConfigurationException.class)
+                .hasMessageContaining("MailboxCapacityTooLarge")
                 .hasMessageContaining("huge_capacity_procedure")
                 .hasMessageContaining("9999999");
     }
@@ -161,9 +162,9 @@ class BoundedMailboxTopologyTest {
     void droppingPolicyUnderTheTierIsRefused() {
         assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new TierShedsStreamOperative()))
                 .isInstanceOf(StreamOperativeConfigurationException.class)
-                .hasMessageContaining("input")
-                .hasMessageContaining("DROP_NEWEST")
-                .hasMessageContaining("effectivelyOnce()");
+                .hasMessageContaining("DroppingPolicyUnderEffectivelyOnce")
+                .hasMessageContaining("channel `input` declares .on_full(drop_newest)")
+                .hasMessageContaining("effectively_once()");
     }
 
     @Test

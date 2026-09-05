@@ -12,10 +12,19 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
 
-import { decodeValue, defineOperative, defineProcedure, loadNative } from '../dist/esm/index.js';
+import {
+  ACTIVATION_SCHEMA_VERSION,
+  decodeValue,
+  defineOperative,
+  defineProcedure,
+  loadNative,
+} from '../dist/esm/index.js';
 import { answer } from '../dist/esm/dispatch.js';
 
 import { activationFor, depsFor, inputItem } from './dispatch-fixtures.mjs';
+
+// `depsFor` submits each spec, so this file needs the process context too.
+loadNative().contextNew(ACTIVATION_SCHEMA_VERSION);
 
 const Accumulate = defineProcedure({
   name: 'accumulate',

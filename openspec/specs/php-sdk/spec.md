@@ -233,3 +233,23 @@ Coverage SHALL include timers, dynamic entities, compaction, DLQ park, effective
 - **WHEN** the suites are run against the PHP runtime under each executor
 - **THEN** one test app and one manifest SHALL serve both, differing only by the environment variable of the run
 
+### Requirement: The PHP builder submits its topology to the reference check
+
+The PHP SDK's builder SHALL record the authoring calls it receives — channels, the
+ordered links of each chain, merges, branches, class flags and procedure facts — into the
+declaration record and SHALL take its verdict from the reference check, so that every name
+of the `TopologyIssue` vocabulary is refused with the reference sentence and no rule is
+carried in the builder. The attribute-carried surface SHALL stay as it is; only the judgement moves.
+The SDK SHALL prove the set by one conformance run over every row of
+`test/fixtures/reference_topologies.txt` through the row interpreter in its test app.
+
+#### Scenario: A malformed row refuses with the reference name
+
+- **WHEN** the PHP interpreter authors a refusal row through the SDK's own builder
+- **THEN** registration refuses with the row's name and the reference sentence
+
+#### Scenario: A well-formed row derives to the fixture's bytes
+
+- **WHEN** the PHP interpreter authors an `ok` row
+- **THEN** the derived declaration equals the row's lines
+

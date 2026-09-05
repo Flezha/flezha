@@ -43,13 +43,13 @@ module Flezha
         # consumer behind it the sink IS the terminal.
         @channel = ChannelSpec.new(
           index: 0, name: "out", kind: :inter_proc, producer: 0, consumers: [],
-          overflow: :drop_nothing, keyed: false, sink: "out"
+          chains: [], overflow: :drop_nothing, keyed: false, sink: "out"
         )
         @spec = ClassSpec.new(
           factory_id: "<harness>", kind: :stream, persistent: true, effectively_once: false,
-          ack_granularity: :per_input, checkpoint_outputs: :as_produced,
+          checkpoint_ack: false, checkpoint_outputs: :as_produced,
           beyond_window_policy: :process_as_arrival, sync_durability: false,
-          procedures: [@node], channels: [@channel], chain_issues: []
+          procedures: [@node], channels: [@channel]
         )
         # The dispatcher's own entity store, so the state this harness reports
         # is the state a runner would hold.

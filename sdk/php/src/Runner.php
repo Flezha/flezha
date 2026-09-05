@@ -414,7 +414,10 @@ final class Runner
     {
         foreach ($this->classes as $class) {
             $spec = $class::spec();
-            Validate::spec($spec);
+            // The verdict before the registration: the core judges the record
+            // and this package renders it, so an author meets a declaration
+            // refusal rather than a native failure at the first connection.
+            Validate::spec($spec, $this->core());
             $this->registry->add($spec);
         }
     }

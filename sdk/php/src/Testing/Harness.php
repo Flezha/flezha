@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Flezha\Testing;
 
-use Flezha\AckGranularity;
 use Flezha\BeyondWindow;
 use Flezha\CheckpointOutputs;
 use Flezha\Codec\Json;
@@ -58,7 +57,7 @@ final class Harness implements SpawnBridge
             kind: 'stream',
             persistent: true,
             effectivelyOnce: false,
-            ackGranularity: AckGranularity::PerInput,
+            checkpointAck: false,
             checkpointEvery: null,
             checkpointOutputs: CheckpointOutputs::AsProduced,
             checkpointMaxDelayMs: null,

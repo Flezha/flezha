@@ -14,15 +14,18 @@ pub enum HostClock {
     EventTime,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostChannelDecl {
     pub name: String,
     pub kind: HostChannelKind,
     #[serde(default)]
     pub producer: Option<u32>,
+    /// The authoring record: per handle, the ordered links the builder was
+    /// given. Consumers, the channel kind and the plugin-sink name are
+    /// DERIVED from these by [`super::register::check`], never declared.
     #[serde(default)]
-    pub consumers: Vec<u32>,
+    pub chains: Vec<Vec<HostLink>>,
     #[serde(default = "default_retry_max")]
     pub retry_max: u32,
     #[serde(default = "channel_backoff_ms")]
@@ -33,7 +36,40 @@ pub struct HostChannelDecl {
     pub keyed: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+/// One link of a fluent chain declared off a channel handle, in the order the
+/// builder was called. A chain closed by `Into` or `Merge` wires an edge;
+/// `Sink` terminates the channel on a plugin; `Branch` records the sugar's
+/// arity and closes the chain it stands in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "link", rename_all = "snake_case")]
+pub enum HostLink {
+    Transform,
+    Key,
+    /// Overrides the derived channel name for every terminator that follows.
+    Named {
+        name: String,
+    },
+    /// The plugin descriptor this channel serializes onto.
+    Sink {
+        name: String,
+    },
+    /// Closes the chain onto a consumer edge into a procedure index.
+    Into {
+        procedure: u32,
+    },
+    /// Closes the chain as one source of a merge; `group` ties the sources of
+    /// one merge together across the channels they are declared on.
+    Merge {
+        procedure: u32,
+        group: u32,
+    },
+    /// The `branch(...)` sugar's declared arity.
+    Branch {
+        arms: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostChannelKind {
     Entry,
@@ -60,7 +96,7 @@ fn default_mailbox_capacity() -> usize {
     1024
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostProcedureDecl {
     pub name: String,
@@ -83,6 +119,11 @@ pub struct HostProcedureDecl {
     pub clock: HostClock,
     #[serde(default = "default_mailbox_capacity")]
     pub mailbox_capacity: usize,
+    /// This procedure's Change type is the empty one: it journals nothing, so
+    /// a logical clock over it never advances. An erased host with no
+    /// per-procedure change type writes the class's own `!persistent`.
+    #[serde(default)]
+    pub change_is_nochange: bool,
     /// Stamped into every durable record this procedure writes; per
     /// procedure, never class-wide.
     #[serde(default = "default_decl_schema_version")]
@@ -108,7 +149,7 @@ fn default_clock() -> HostClock {
 
 /// A host class declaration; what the core cannot honour is refused naming
 /// the field, never degraded.
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostClassDecl {
     pub factory_id: String,
@@ -128,8 +169,10 @@ pub struct HostClassDecl {
     pub change_format_id: u8,
     #[serde(default)]
     pub effectively_once: bool,
+    /// The author's explicit `checkpoint_ack()`. The granularity itself is
+    /// DERIVED: any checkpoint key implies it.
     #[serde(default)]
-    pub ack_granularity: HostAckGranularity,
+    pub checkpoint_ack: bool,
     #[serde(default)]
     pub checkpoint_every: Option<u32>,
     #[serde(default)]
@@ -154,7 +197,7 @@ pub struct HostClassDecl {
     pub workflow: Option<HostWorkflowDecl>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostWorkflowDecl {
     #[serde(default)]
@@ -201,7 +244,7 @@ fn default_barrier_retry_attempts() -> u32 {
     3
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostAckGranularity {
     #[default]

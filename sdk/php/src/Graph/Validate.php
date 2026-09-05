@@ -4,42 +4,107 @@ declare(strict_types=1);
 
 namespace Flezha\Graph;
 
-use Flezha\AckGranularity;
-use Flezha\CheckpointOutputs;
 use Flezha\Clock;
+use Flezha\Codec\Json;
 use Flezha\Exception\DeclarationException;
-use Flezha\Overflow;
+use Flezha\Exception\FlezhaException;
+use Flezha\Ffi\Core;
 
 /**
- * Registration-time refusals.
+ * The verdict on one declaration, and the two defects a record cannot carry.
  *
- * PHP has no compile step, so everything the Rust builder refuses at compile
- * time is refused here instead, naming the class, the handler and the specific
- * defect — the same set, for the same reasons, as the Rust builder's
- * `TopologyIssue`, so an author moving between SDKs meets one vocabulary.
- *
- * The core validates again on its side. That is not redundancy: a hand-written
- * declaration reaching the ABI directly must not slip past, and an author who
- * declared through this surface deserves the error before any data moves.
+ * The topology is judged in ONE place, `flz_core::host::register::check`: this
+ * class builds the record, submits it through `flz_core_check_class`, and
+ * renders the core's verdict as this package's own refusal. What is refused
+ * here instead is what the record cannot state — whether a PHP class defines
+ * the method its declaration promises, and whether it supplies the migration a
+ * schema floor needs. The core cannot see either.
  */
 final class Validate
 {
-    public const MAX_MAILBOX_CAPACITY = 1_048_576;
-
     private function __construct()
     {
     }
 
-    public static function spec(ClassSpec $spec): void
+    /**
+     * Judge one declaration and answer what the core derived from it: the
+     * channel names, kinds, consumers, sink names and acknowledgement
+     * granularity it read off the record.
+     *
+     * The defects this package can see are refused first, so an author reads
+     * "no eventTime method" rather than a topology verdict about a clock the
+     * class does declare.
+     *
+     * @return array<string, mixed>
+     */
+    public static function spec(ClassSpec $spec, Core $core): array
     {
-        self::workflow($spec);
-        self::tier($spec);
-        self::window($spec);
-        self::chainIssues($spec);
-        self::channels($spec);
         self::procedures($spec);
-        self::keying($spec);
-        self::topology($spec);
+
+        return self::submit($spec, $core);
+    }
+
+    /**
+     * The record, over the ABI, and the verdict back.
+     *
+     * @return array<string, mixed>
+     */
+    private static function submit(ClassSpec $spec, Core $core): array
+    {
+        $verdict = null;
+        try {
+            $derived = $core->checkClass(Json::encode(HostClassDecl::of($spec)), $verdict);
+        } catch (FlezhaException $e) {
+            throw new DeclarationException($spec->factoryId, null, $e->getMessage(), self::refusals($verdict));
+        }
+
+        /** @var array<string, mixed> $decoded */
+        $decoded = Json::decode($derived);
+        self::bindEdges($spec, $decoded);
+
+        return $decoded;
+    }
+
+    /**
+     * The core's own names for what it refused, read off the verdict it hands
+     * back as data beside the rendered message. Empty when the failing call
+     * carried no verdict — a refusal about the context rather than a judgement
+     * on the record.
+     *
+     * @return list<string>
+     */
+    private static function refusals(?string $verdict): array
+    {
+        if ($verdict === null) {
+            return [];
+        }
+
+        /** @var array{issues?: list<array{name: string, text: string}>} $decoded */
+        $decoded = Json::decode($verdict);
+
+        return array_map(static fn (array $issue): string => $issue['name'], $decoded['issues'] ?? []);
+    }
+
+    /**
+     * The consumers the CORE derived, each carrying the closures of the chain
+     * that produced it: the builder held them aside per chain, and the derived
+     * edge names the chain. Which edge survives a re-declaration is therefore
+     * the core's answer, not a rule this package repeats.
+     *
+     * @param array<string, mixed> $derived
+     */
+    private static function bindEdges(ClassSpec $spec, array $derived): void
+    {
+        /** @var list<array{index: int, consumers: list<array{procedure: int, chain: int}>}> $channels */
+        $channels = $derived['channels'];
+        foreach ($channels as $channel) {
+            $target = $spec->channels[$channel['index']];
+            $consumers = [];
+            foreach ($channel['consumers'] as $edge) {
+                $consumers[] = $target->chainEdges[$edge['chain']];
+            }
+            $target->consumers = $consumers;
+        }
     }
 
     private static function refuse(ClassSpec $spec, ?string $handler, string $defect): never
@@ -47,171 +112,18 @@ final class Validate
         throw new DeclarationException($spec->factoryId, $handler, $defect);
     }
 
-    /**
-     * What each transform-chain refusal says, under the reference's own name. A
-     * chain is stored on the consumer edge it terminates in, which is why every
-     * one of these is a link the runtime would otherwise drop or overwrite in
-     * silence.
-     *
-     * @var array<string, string>
-     */
-    private const CHAIN_DEFECTS = [
-        'DuplicateKeyBy' => 'declares keyBy(...) twice before one into(...)',
-        'TransformAfterTerminal' => 'declares a transform or keyBy(...) after a plugin sink; '
-            . "the sink serializes the channel's own value, so nothing downstream of it can be "
-            . 'reshaped',
-        'TransformAfterKeyBy' => 'declares a transform after keyBy(...); the key is evaluated '
-            . 'on the final post-transform value, so it must be the last link before into(...)',
-        'DanglingTransformChain' => 'declares a transform or keyBy(...) that is never closed by '
-            . 'into(...); a transform chain is stored on the consumer edge it terminates in, so '
-            . 'a dangling one would silently do nothing',
-    ];
-
-    /**
-     * Refuse every defect a transform/key chain declared, in the order the
-     * references collect them: what a link refused as it was declared, then the
-     * tips no `into(...)` closed. Only a tip is reported as dangling — every
-     * earlier link was superseded by the next.
-     */
-    private static function chainIssues(ClassSpec $spec): void
-    {
-        foreach ($spec->chainIssues as $issue) {
-            self::refuse(
-                $spec,
-                $issue['channel'],
-                $issue['issue'] . ': ' . self::CHAIN_DEFECTS[$issue['issue']]
-            );
-        }
-    }
-
-    private static function channels(ClassSpec $spec): void
-    {
-        $names = [];
-
-        foreach ($spec->channels as $channel) {
-            if (isset($names[$channel->name])) {
-                self::refuse($spec, $channel->name, 'this channel name is declared more than once');
-            }
-            $names[$channel->name] = true;
-            self::channelWiring($spec, $channel);
-            self::overflow($spec, $channel);
-
-            if ($channel->kind === 'entry' && $channel->consumers === []) {
-                self::refuse($spec, $channel->name, 'is an entry channel that names no consumer');
-            }
-            if (self::declaredKind($channel) === 'inter_proc' && $channel->consumers === []) {
-                self::refuse(
-                    $spec,
-                    $channel->name,
-                    'is an inter-procedure channel that names no consumer'
-                );
-            }
-        }
-    }
-
-    /**
-     * The kind the wire carries.
-     *
-     * Terminality is derived from the wiring, not from which method the author
-     * called: a sink with nothing consuming behind it IS the plugin-bound
-     * terminal, and a sink declared alongside consumers is the hybrid — one
-     * channel the core journals as inter-procedure and whose values also reach
-     * the plugin.
-     */
-    public static function declaredKind(ChannelSpec $channel): string
-    {
-        return $channel->sink !== null && $channel->consumers === [] ? 'plugin' : $channel->kind;
-    }
-
-    private static function channelWiring(ClassSpec $spec, ChannelSpec $channel): void
-    {
-        if ($channel->sink === null && $channel->keyed) {
-            self::refuse(
-                $spec,
-                $channel->name,
-                'is declared keyed but has no plugin wire; output identity stamps only exist '
-                . 'on plugin-bound frames, so add a sink(...) or drop the keyed'
-            );
-        }
-
-        if ($spec->effectivelyOnce && $channel->sink !== null && !$channel->keyed) {
-            self::refuse(
-                $spec,
-                $channel->name,
-                'has a plugin wire but is not declared keyed; the effectively-once tier '
-                . 'deduplicates by output identity, so every plugin-bound channel of a class '
-                . 'that declares effectivelyOnce must opt in with keyed'
-            );
-        }
-    }
-
-    private static function overflow(ClassSpec $spec, ChannelSpec $channel): void
-    {
-        if ($channel->overflow !== Overflow::DropNothing) {
-            if ($spec->effectivelyOnce) {
-                self::refuse($spec, $channel->name, sprintf(
-                    'declares onFull(%s) on a class that declares effectivelyOnce; a shed '
-                    . "input's offset is still advanced past by the tier's watermark, so the "
-                    . 'loss is permanent and reported nowhere — declare one or the other, not both',
-                    $channel->overflow->value,
-                ));
-            }
-            if ($spec->correctionWindowMs !== null) {
-                self::refuse($spec, $channel->name, sprintf(
-                    'declares onFull(%s) on a class that declares a correction window; a '
-                    . 'correction re-folds a replayed slice and its answer may not depend on '
-                    . 'which items a full mailbox happened to keep',
-                    $channel->overflow->value,
-                ));
-            }
-        }
-
-        if ($channel->retryMax !== 0) {
-            return;
-        }
-        self::refuse(
-            $spec,
-            $channel->name,
-            'declares retryMax(0); at least one attempt is required — raise a '
-            . 'non-retryable error to park without retries'
-        );
-    }
-
-    private static function keying(ClassSpec $spec): void
-    {
-        foreach ($spec->channels as $channel) {
-            foreach ($channel->consumers as $edge) {
-                $node = $spec->procedures[$edge->procedure];
-                $mode = $node->definition->entityMode();
-
-                if ($edge->keyBy !== null && $mode === 'static') {
-                    self::refuse($spec, $channel->name, sprintf(
-                        'declares keyBy into procedure `%s`, which declares a static key set; '
-                        . 'static keying routes by entitiesFor and may name several entities, '
-                        . 'edge keying names exactly one — declare one or the other, not both',
-                        $node->name,
-                    ));
-                }
-                if ($edge->keyBy === null && $mode === 'dynamic') {
-                    self::refuse($spec, $channel->name, sprintf(
-                        'feeds dynamic procedure `%s` without a keyBy; every edge into a dynamic '
-                        . 'procedure must name the entity its inputs reach',
-                        $node->name,
-                    ));
-                }
-            }
-        }
-    }
-
     private static function procedures(ClassSpec $spec): void
     {
         foreach ($spec->procedures as $node) {
             self::clocks($spec, $node);
-            self::entities($spec, $node);
             self::schema($spec, $node);
         }
     }
 
+    /**
+     * A clock is a promise about a method, and a record carries the clock but
+     * not the class: only this package can see that the method is missing.
+     */
     private static function clocks(ClassSpec $spec, ProcNode $node): void
     {
         $definition = $node->definition;
@@ -232,47 +144,12 @@ final class Validate
                 $clock->value,
             ));
         }
-        if ($clock === Clock::Logical && !$definition->declares('state')) {
-            self::refuse(
-                $spec,
-                $node->name,
-                'declares a logical clock but no state; logical time IS the durable change '
-                . 'sequence, which never advances for a procedure that records no changes'
-            );
-        }
     }
 
-    private static function entities(ClassSpec $spec, ProcNode $node): void
-    {
-        $definition = $node->definition;
-
-        if ($definition->entityMode() === 'static' && !$definition->declares('entitiesFor')) {
-            self::refuse(
-                $spec,
-                $node->name,
-                'declares a static key set without an entitiesFor; static keying needs the '
-                . 'method that says which declared entities an input belongs to'
-            );
-        }
-
-        $capacity = $definition->decl->mailboxCapacity;
-        if ($capacity !== null && ($capacity < 1 || $capacity > self::MAX_MAILBOX_CAPACITY)) {
-            self::refuse($spec, $node->name, sprintf(
-                'declares mailboxCapacity %d; capacity must be in 1..%d',
-                $capacity,
-                self::MAX_MAILBOX_CAPACITY,
-            ));
-        }
-        if ($definition->decl->maxEntities === 0) {
-            self::refuse(
-                $spec,
-                $node->name,
-                'declares maxEntities 0; a dynamic procedure that may hold no entity can '
-                . 'process nothing'
-            );
-        }
-    }
-
+    /**
+     * A schema floor promises a migration, and the migration is a method: the
+     * record carries the versions and this package carries the class.
+     */
     private static function schema(ClassSpec $spec, ProcNode $node): void
     {
         $definition = $node->definition;
@@ -297,217 +174,6 @@ final class Validate
                 . 'floor without one fails at the first old record instead of at startup',
                 $floor,
             ));
-        }
-    }
-
-    private static function tier(ClassSpec $spec): void
-    {
-        if ($spec->effectivelyOnce && !$spec->persistent) {
-            self::refuse(
-                $spec,
-                null,
-                'declares effectivelyOnce without persistence: the tier IS durable state'
-            );
-        }
-        if ($spec->ackGranularity === AckGranularity::Checkpoint && !$spec->effectivelyOnce) {
-            self::refuse(
-                $spec,
-                null,
-                'declares checkpoint acknowledgement without effectivelyOnce; the checkpoint is '
-                . "where the tier's consumed offset advances, and a class without the tier has "
-                . 'no durable offset to hold back'
-            );
-        }
-        if ($spec->checkpointEvery === 0) {
-            self::refuse(
-                $spec,
-                null,
-                'declares checkpointEvery(0); an interval that closes every zero inputs is not '
-                . 'an interval — omit it to close only on an explicit checkpoint'
-            );
-        }
-        if ($spec->checkpointOutputs === CheckpointOutputs::AtCheckpoint
-            && $spec->checkpointMaxDelayMs === null) {
-            self::refuse(
-                $spec,
-                null,
-                'declares outputsAtCheckpoint with no maximum delay; an interval that never '
-                . 'closes would hold its outputs forever on a quiet entity'
-            );
-        }
-    }
-
-    private static function window(ClassSpec $spec): void
-    {
-        if ($spec->correctionWindowMs === null) {
-            return;
-        }
-        if ($spec->correctionWindowMs === 0) {
-            self::refuse(
-                $spec,
-                null,
-                'declares a correction window of zero; a zero window can correct nothing'
-            );
-        }
-        if (!$spec->effectivelyOnce) {
-            self::refuse(
-                $spec,
-                null,
-                'declares a correction window without effectivelyOnce; correction replays the '
-                . 'input log against a rewound baseline, and only the tier journals inputs '
-                . 'before forwarding them'
-            );
-        }
-        foreach ($spec->procedures as $node) {
-            if ($node->definition->decl->clock === Clock::EventTime) {
-                return;
-            }
-        }
-        self::refuse(
-            $spec,
-            null,
-            'declares a correction window but no procedure declares an event_time clock; '
-            . 'correction orders a replayed slice by event time'
-        );
-    }
-
-    private static function topology(ClassSpec $spec): void
-    {
-        $entries = array_values(array_filter(
-            $spec->channels,
-            static fn (ChannelSpec $c): bool => $c->kind === 'entry',
-        ));
-
-        if ($spec->kind === 'stream' && $entries === []) {
-            self::refuse(
-                $spec,
-                null,
-                'declares no entry channel; a stream class is fed by the controller'
-            );
-        }
-        if ($spec->procedures === []) {
-            if ($spec->kind === 'stream') {
-                self::refuse($spec, null, 'declares no procedure');
-            }
-
-            return;
-        }
-
-        self::dag($spec, $entries, self::successorsOf($spec));
-    }
-
-    /**
-     * Which procedures each procedure feeds, by index.
-     *
-     * @return list<list<int>>
-     */
-    private static function successorsOf(ClassSpec $spec): array
-    {
-        $successors = array_fill(0, count($spec->procedures), []);
-        foreach ($spec->channels as $channel) {
-            if ($channel->kind !== 'inter_proc' || $channel->producer === null) {
-                continue;
-            }
-            array_push($successors[$channel->producer], ...self::consumerIndices($channel));
-        }
-
-        return $successors;
-    }
-
-    /**
-     * The procedure indices a channel feeds, in declaration order.
-     *
-     * @return list<int>
-     */
-    private static function consumerIndices(ChannelSpec $channel): array
-    {
-        return array_map(static fn (ConsumerEdge $e): int => $e->procedure, $channel->consumers);
-    }
-
-    /**
-     * Every procedure reachable from an entry channel, and no cycle among them.
-     *
-     * @param list<ChannelSpec> $entries
-     * @param list<list<int>>   $successors
-     */
-    private static function dag(ClassSpec $spec, array $entries, array $successors): void
-    {
-        $reachable = [];
-        $frontier = [];
-        foreach ($entries as $entry) {
-            array_push($frontier, ...self::consumerIndices($entry));
-        }
-        while ($frontier !== []) {
-            $node = array_pop($frontier);
-            if (isset($reachable[$node])) {
-                continue;
-            }
-            $reachable[$node] = true;
-            array_push($frontier, ...$successors[$node]);
-        }
-
-        // A cycle is found before unreachability is reported: a node on a
-        // cycle with no path from an entry is both, and the cycle is the more
-        // useful answer.
-        $colour = [];
-        $visit = static function (int $index) use (&$visit, &$colour, $successors, $spec): void {
-            $seen = $colour[$index] ?? null;
-            if ($seen === 'black') {
-                return;
-            }
-            if ($seen === 'grey') {
-                self::refuse(
-                    $spec,
-                    $spec->procedures[$index]->name,
-                    'is on a cycle; an operative topology is a DAG — a node\'s output may never '
-                    . 'reach its own input'
-                );
-            }
-            $colour[$index] = 'grey';
-            foreach ($successors[$index] as $next) {
-                $visit($next);
-            }
-            $colour[$index] = 'black';
-        };
-        foreach ($spec->procedures as $node) {
-            $visit($node->index);
-        }
-
-        foreach ($spec->procedures as $node) {
-            if (!isset($reachable[$node->index])) {
-                self::refuse($spec, $node->name, 'is not reachable from any entry channel');
-            }
-        }
-    }
-
-    private static function workflow(ClassSpec $spec): void
-    {
-        if ($spec->kind !== 'workflow') {
-            if ($spec->syncDurability) {
-                self::refuse(
-                    $spec,
-                    null,
-                    'declares syncDurability on a stream class; a stream class acknowledges at '
-                    . 'input rates, and a remote round trip per acknowledgement is not a '
-                    . 'guarantee it can keep'
-                );
-            }
-
-            return;
-        }
-
-        if ($spec->correctionWindowMs !== null) {
-            self::refuse($spec, null, 'is a workflow class and cannot declare a correction window');
-        }
-        if ($spec->run !== null && $spec->channels !== []) {
-            self::refuse(
-                $spec,
-                null,
-                'declares a run body and channels; a run-sugar workflow is one imperative body'
-            );
-        }
-        if ($spec->syncDurability && !$spec->persistent) {
-            self::refuse($spec, null, 'declares syncDurability without persistence');
         }
     }
 }

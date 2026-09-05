@@ -51,4 +51,14 @@ fn the_native_surface_is_the_declared_one() {
             "{name} names {abi}, which is not a C ABI entry point"
         );
     }
+    // The read-only verdict rides beside the registration: the gem's
+    // `Graph.validate` submits through it, so a table naming one and not the
+    // other leaves the SDK's own front door unreachable.
+    let names: Vec<&str> = NATIVE_SURFACE.iter().map(|(name, _)| *name).collect();
+    for required in ["declare_class", "check_class"] {
+        assert!(
+            names.contains(&required),
+            "the surface table names no {required}"
+        );
+    }
 }

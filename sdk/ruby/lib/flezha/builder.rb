@@ -19,35 +19,36 @@ module Flezha
   # One consumer of a channel, with the transforms and key of its own edge.
   ConsumerEdge = Struct.new(:procedure, :transforms, :key_by, keyword_init: true)
 
-  # A transform/key chain declared on an edge but not yet closed by `into`.
-  # Every `map` / `filter` / `key_by` opens a new one over the previous, which
-  # is what lets a shared prefix branch without the arms colliding.
-  # `superseded` is set when a later link built on this one, so only a chain's
-  # tip can dangle; `consumed` when an `into(...)` closed it onto an edge;
-  # `keyed` once a `key_by` link joined, so a later link knows it follows one.
-  Chain = Struct.new(:source, :superseded, :consumed, :keyed, keyword_init: true)
-
-  # One transform-chain defect, on the channel whose chain declared it, under
-  # the reference's own error name.
-  ChainIssue = Struct.new(:channel, :issue, keyword_init: true)
+  # One fluent sequence declared off a channel handle, as the record carries
+  # it: `links` in the order the author called them, for the core to judge.
+  # Every `map` / `filter` / `key_by` answers a new sequence over the previous,
+  # which is what lets a shared prefix branch without the arms colliding;
+  # `superseded` marks the prefix a later link built on, so only a tip reaches
+  # the record. `edge` is the consumer an `into` sequence closes on, held aside
+  # for the core to name back.
+  Chain = Struct.new(:source, :links, :superseded, :edge, keyword_init: true)
 
   # A channel as the graph holds it. Its position in the list IS its id.
   # `sink` is the plugin sink attached to it; nil means none. `sink_encode` is
   # that sink's payload encoder and belongs to the sink frame alone: an
   # inter-procedure frame is decoded with the class codec, so encoding one with
   # it hands the consuming procedure bytes it cannot read.
+  #
+  # `chain_edges` runs parallel to `chains`: the closures each sequence closed
+  # on, at the position the core reads that sequence at. `consumers` is filled
+  # from the derived declaration — the core says which chains became edges.
   ChannelSpec = Struct.new(
-    :index, :name, :kind, :producer, :consumers, :overflow, :retry_max,
-    :retry_backoff_ms, :keyed, :sink, :decode, :sink_encode,
+    :index, :name, :kind, :producer, :consumers, :chains, :chain_edges, :overflow,
+    :retry_max, :retry_backoff_ms, :keyed, :sink, :decode, :sink_encode,
     keyword_init: true
   )
 
   # Everything the graph knows about one declared class.
   ClassSpec = Struct.new(
-    :factory_id, :kind, :persistent, :effectively_once, :ack_granularity,
+    :factory_id, :kind, :persistent, :effectively_once, :checkpoint_ack,
     :checkpoint_every, :checkpoint_outputs, :checkpoint_max_delay_ms,
     :correction_window_ms, :beyond_window_policy, :compact_after_bytes,
-    :sync_durability, :procedures, :channels, :chain_issues, :workflow, :run,
+    :sync_durability, :procedures, :channels, :workflow, :run,
     keyword_init: true
   ) do
     # Whether this class's producers release their values untransformed.
@@ -76,8 +77,8 @@ module Flezha
 
   # The fluent channel builder an operative's `channels` block receives.
   class Builder
-    attr_reader :factory_id, :procedures, :channels, :chains, :effectively_once_flag,
-                :ack_granularity, :checkpoint_every_value, :checkpoint_outputs_value,
+    attr_reader :factory_id, :procedures, :channels, :effectively_once_flag,
+                :checkpoint_ack_flag, :checkpoint_every_value, :checkpoint_outputs_value,
                 :checkpoint_max_delay_ms_value, :correction_window_ms_value,
                 :beyond_window_policy_value, :compact_after_bytes_value,
                 :sync_durability_flag
@@ -86,11 +87,11 @@ module Flezha
       @factory_id = factory_id
       @procedures = []
       @channels = []
+      # The links each fluent sequence was declared with, in declaration
+      # order. Recorded, never judged: the core reads them and answers.
       @chains = []
-      # What each link refused as it was declared, in declaration order.
-      @link_issues = []
       @effectively_once_flag = false
-      @ack_granularity = :per_input
+      @checkpoint_ack_flag = false
       @checkpoint_outputs_value = :as_produced
       @beyond_window_policy_value = :process_as_arrival
       @sync_durability_flag = false
@@ -101,19 +102,23 @@ module Flezha
       self
     end
 
+    # Each of the three writes its own raw flag and nothing else: the
+    # acknowledgement granularity is DERIVED by the core, which is the one
+    # place any checkpoint key implies it.
     def checkpoint_ack
-      amend_checkpoint {}
+      @checkpoint_ack_flag = true
+      self
     end
 
     def checkpoint_every(count)
-      amend_checkpoint { @checkpoint_every_value = count }
+      @checkpoint_every_value = count
+      self
     end
 
     def outputs_at_checkpoint(max_delay_ms = nil)
-      amend_checkpoint do
-        @checkpoint_outputs_value = :at_checkpoint
-        @checkpoint_max_delay_ms_value = max_delay_ms unless max_delay_ms.nil?
-      end
+      @checkpoint_outputs_value = :at_checkpoint
+      @checkpoint_max_delay_ms_value = max_delay_ms unless max_delay_ms.nil?
+      self
     end
 
     def correction_window(milliseconds)
@@ -141,7 +146,7 @@ module Flezha
     def input(name, decode: nil)
       channel = ChannelSpec.new(
         index: @channels.size, name: name.to_s, kind: :entry, consumers: [],
-        overflow: :drop_nothing, keyed: false, decode: decode
+        chains: [], chain_edges: [], overflow: :drop_nothing, keyed: false, decode: decode
       )
       @channels << channel
       Edge.new(self, [:entry, channel], {})
@@ -157,10 +162,14 @@ module Flezha
       return existing if existing
 
       if @procedures.any? { |node| node.name == identity }
+        # The node table is keyed by identity and physically cannot hold two,
+        # so the record the core would judge is unwritable. The refusal answers
+        # under the core's own name all the same.
         raise DeclarationError.new(
           @factory_id, identity,
           "two different procedures claim this node identity; name one of them on the " \
-          "`into(...)` so each node has its own"
+          "`into(...)` so each node has its own",
+          ["NodeIdentityCollision"]
         )
       end
 
@@ -181,80 +190,62 @@ module Flezha
 
       channel = ChannelSpec.new(
         index: @channels.size, name: node.name, kind: :inter_proc,
-        producer: node.index, consumers: [], overflow: :drop_nothing, keyed: false
+        producer: node.index, consumers: [], chains: [], chain_edges: [],
+        overflow: :drop_nothing, keyed: false
       )
       @channels << channel
       node.output = channel
       channel
     end
 
-    # Extend the chain at `base` (or open one on `source`) with one more link,
-    # answering the new chain's id.
+    # Record one more link on the sequence at `base`, or open one on `source`,
+    # and answer the new sequence's id.
     #
-    # The three refusals the references raise from their own `extend_pending`
-    # are raised here: a link declared behind a plugin sink, a transform
-    # declared after the key it would feed, and a second key — which without
-    # this would overwrite the author's first without a word.
-    def extend_chain(source, base, key:)
-      channel = channel_name(source)
-      @link_issues << ChainIssue.new(channel: channel, issue: :TransformAfterTerminal) if sink_attached?(source)
-      prior_key = !base.nil? && @chains[base].keyed
+    # The links are copied rather than appended in place: a handle held over a
+    # branch point extends the prefix twice, and two sequences sharing one
+    # array would each see the other's links.
+    def link_chain(source, base, link, edge: nil)
+      links = base.nil? ? [] : @chains[base].links
       @chains[base].superseded = true unless base.nil?
-      # The key is evaluated on the final post-transform value, so a transform
-      # declared after it would hand it a value of a type it was never written
-      # against.
-      @link_issues << ChainIssue.new(channel: channel, issue: :TransformAfterKeyBy) if prior_key && !key
-      @link_issues << ChainIssue.new(channel: channel, issue: :DuplicateKeyBy) if prior_key && key
-      @chains << Chain.new(source: source, superseded: false, consumed: false, keyed: key || prior_key)
+      @chains << Chain.new(source: source, links: links + [link], superseded: false, edge: edge)
       @chains.size - 1
     end
 
-    # Mark a chain closed by an `into(...)`. A bare edge closes nothing.
-    def close_chain(chain)
-      @chains[chain].consumed = true unless chain.nil?
-    end
+    # File every sequence on the channel it was declared off, in declaration
+    # order — the `chains` the record carries.
+    #
+    # A channel named only by a sequence no terminator closed is created here,
+    # so a dangling chain is submitted rather than dropped on the way to the
+    # core. Idempotent: a spec is assembled once, but a builder is reachable.
+    def seal
+      return self if @sealed
 
-    # Every transform-chain defect this declaration carries: what each link
-    # refused as it was declared, then the tips no `into(...)` closed — the
-    # order the references report them in, so the sharper defect wins over the
-    # dangling one it also produces.
-    def chain_issues
-      dangling = @chains.reject { |chain| chain.superseded || chain.consumed }
-                        .map { |chain| ChainIssue.new(channel: channel_name(chain.source), issue: :DanglingTransformChain) }
-      @link_issues + dangling
-    end
+      @sealed = true
+      @chains.each do |chain|
+        next if chain.superseded
 
-    # The name of the channel an edge's values leave on: the entry's own, or the
-    # producing node's — its materialised channel when one exists, since a
-    # `named(...)` override lives there, and the name it would derive otherwise.
-    def channel_name(source)
-      return source[1].name if source[0] == :entry
-
-      node = source[1]
-      node.output ? node.output.name : node.name
-    end
-
-    # Whether the channel an edge's values leave on already has a plugin sink.
-    # Only a procedure's can: `sink(...)` refuses an entry edge, and a node's
-    # channel is created on first use, so one without a channel has no sink.
-    def sink_attached?(source)
-      source[0] != :entry && !source[1].output.nil? && !source[1].output.sink.nil?
-    end
-
-    private
-
-    # Turn the checkpoint granularity on (idempotent) and amend its policy, so
-    # each option is one call that preserves the others.
-    def amend_checkpoint
-      @ack_granularity = :checkpoint
-      yield
+        channel = channel_of(chain.source)
+        channel.chains << chain.links
+        channel.chain_edges << chain.edge
+      end
       self
+    end
+
+    # The channel an edge's values leave on: the entry's own, or the producing
+    # node's, created on first use.
+    def channel_of(source)
+      source[0] == :entry ? source[1] : output_channel_for(source[1])
     end
   end
 
   # One edge under construction. Immutable: every fluent call answers a new
   # edge, so a shared prefix can be branched without the arms colliding.
   class Edge
+    # The two links a fluent call adds. Frozen literals rather than a hash per
+    # call: every `map` on every channel records the same one.
+    TRANSFORM = { "link" => "transform" }.freeze
+    KEY = { "link" => "key" }.freeze
+
     def initialize(builder, from, pending)
       @builder = builder
       @from = from
@@ -266,16 +257,16 @@ module Flezha
     def named(name) = with(channel_name: name.to_s)
 
     # Transform every value on this edge. Evaluated producer-side.
-    def map(&transform) = relink(transforms: transforms + [transform])
+    def map(&transform) = relink(TRANSFORM, transforms: transforms + [transform])
 
     # Drop the values a predicate rejects, before this edge's key is computed.
     # A dropped value is consumed and reaches no handler.
     def filter(&predicate)
-      relink(transforms: transforms + [->(value) { predicate.call(value) ? value : DROPPED }])
+      relink(TRANSFORM, transforms: transforms + [->(value) { predicate.call(value) ? value : DROPPED }])
     end
 
     # Route by a computed key: the consumer becomes a dynamic keyed procedure.
-    def key_by(&key) = relink(key_by: key)
+    def key_by(&key) = relink(KEY, key_by: key)
 
     def on_full(policy) = with(overflow: policy.to_sym)
     def retry_max(attempts) = with(retry_max: attempts)
@@ -285,16 +276,12 @@ module Flezha
     def keyed = with(keyed: true)
 
     # Fan out: each arm receives this same edge, so `branch` builds exactly the
-    # topology the separate `into` statements would. At least two arms.
+    # topology the separate `into` statements would.
+    #
+    # The arity is recorded as a sequence of its own, so the arms extend the
+    # prefix this edge already carries rather than the branch's own record.
     def branch(*arms)
-      if arms.size < 2
-        raise DeclarationError.new(
-          @builder.factory_id, @pending[:channel_name] || source_name,
-          "branch(...) requires at least two arms; #{arms.size} given — a single arm is " \
-          "`into(...)` written the long way"
-        )
-      end
-
+      @builder.link_chain(@from, nil, { "link" => "branch", "arms" => arms.size })
       arms.each { |arm| arm.call(self) }
       self
     end
@@ -302,30 +289,21 @@ module Flezha
     # Wire this edge into a procedure.
     def into(klass, node_name = nil)
       node = @builder.node_for(klass, node_name)
-      @builder.close_chain(@pending[:chain])
+      # Creates this edge's channel and applies its pending options, before the
+      # link that closes on it is recorded.
+      channel
       # The transforms and the key belong to this edge, not to the channel: one
       # channel may feed several procedures, and a chain declared before one
-      # `into` must not reach another.
-      target = channel
-      existing = target.consumers.find { |e| e.procedure == node.index }
-      declares = !transforms.empty? || !@pending[:key_by].nil?
-      if existing.nil?
-        target.consumers << ConsumerEdge.new(
+      # `into` must not reach another. They ride the chain that closes on them,
+      # and the core names that chain back on the edge it derived — so whether
+      # a re-declaration is the legal fan-in no-op or `EdgeAlreadyWired` is
+      # answered there and nowhere here.
+      @builder.link_chain(
+        @from, @pending[:chain], { "link" => "into", "procedure" => node.index },
+        edge: ConsumerEdge.new(
           procedure: node.index, transforms: transforms, key_by: @pending[:key_by]
         )
-      elsif !existing.transforms.empty? || !existing.key_by.nil? || declares
-        # Re-declaring one where either side carries a transform or a key is
-        # refused rather than silently dropped — the edge would otherwise keep
-        # whichever closure was declared first and deliver the wrong value, to
-        # the wrong Entity, forever. Re-declaring a bare edge is the fan-in /
-        # repeated `into` case and stays a no-op.
-        raise DeclarationError.new(
-          @builder.factory_id, target.name,
-          "EdgeAlreadyWired: already feeds procedure `#{node.name}`; an edge carries exactly " \
-          "one transform and one key or neither, so a re-declaration where either side carries " \
-          "one is refused rather than silently keeping the first"
-        )
-      end
+      )
       Edge.new(@builder, [:procedure, node], {})
     end
 
@@ -335,6 +313,9 @@ module Flezha
     # reaches both. A channel with no consumer behind it is the plugin-bound
     # terminal — terminality is the absence of further wiring, not a different
     # method.
+    # The one refusal left here: a channel with no producer has no value to
+    # serialize, and the core reads a sink as the terminal of the channel it
+    # sits on — it cannot see that this one is fed by the controller.
     def sink(name, encode: nil)
       unless @from[0] == :procedure
         raise DeclarationError.new(
@@ -344,14 +325,13 @@ module Flezha
       end
 
       target = channel
-      if target.sink
-        raise DeclarationError.new(
-          @builder.factory_id, target.name, "declares a plugin sink more than once"
-        )
+      @builder.link_chain(@from, @pending[:chain], { "link" => "sink", "name" => name.to_s })
+      # First call wins on the builder's own side, as the reference does; a
+      # second `sink` link is what the core refuses the class for.
+      if target.sink.nil?
+        target.sink = name.to_s
+        target.sink_encode = encode
       end
-
-      target.sink = name.to_s
-      target.sink_encode = encode
       self
     end
 
@@ -367,7 +347,14 @@ module Flezha
         target = @from[1]
       else
         target = @builder.output_channel_for(@from[1])
-        target.name = @pending[:channel_name] if @pending[:channel_name]
+        rename = @pending[:channel_name]
+        # Recorded where it is APPLIED, so the core reads the overrides in the
+        # order this builder took them and the two cannot disagree about which
+        # name a channel ends up with.
+        if rename && target.name != rename
+          target.name = rename
+          @builder.link_chain(@from, nil, { "link" => "named", "name" => rename })
+        end
       end
       apply_pending(target)
       target
@@ -378,14 +365,11 @@ module Flezha
     end
 
     # This edge with one more chain link — the one place a transform's or a
-    # key's result edge is built, so every link is registered and a chain no
-    # `into(...)` closes is reported rather than silently discarded.
-    def relink(**next_pending)
-      with(**next_pending,
-           chain: @builder.extend_chain(@from, @pending[:chain], key: next_pending.key?(:key_by)))
+    # key's result edge is built, so every link reaches the record and a chain
+    # no `into(...)` closes is submitted rather than silently discarded.
+    def relink(link, **next_pending)
+      with(**next_pending, chain: @builder.link_chain(@from, @pending[:chain], link))
     end
-
-    def source_name = @builder.channel_name(@from)
 
     def apply_pending(channel)
       channel.overflow = @pending[:overflow] if @pending[:overflow]

@@ -27,9 +27,18 @@ __all__ = [
     "Edge",
     "ChannelSpec",
     "ClassSpec",
+    "Link",
     "ProcNode",
     "apply_transforms",
 ]
+
+#: One link of a chain, exactly as the core deserializes it. A chain is one
+#: fluent sequence declared off a channel edge, in the order the author called
+#: it; the core reads the consumers, the channel kind, the sink and the name off
+#: them. Closures never enter the record — they stay on the edge held under the
+#: chain that declared them, and ``validate`` attaches them to the consumers the
+#: core derived from that same chain.
+Link = dict[str, Any]
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -94,23 +103,6 @@ class ConsumerEdge:
 
 
 @dataclass(slots=True)
-class _Chain:
-    """A transform/key chain declared on an edge but not yet closed by ``into``.
-
-    Every ``map`` / ``filter`` / ``key_by`` opens a new one over the previous,
-    which is what lets a shared prefix branch without the arms colliding.
-    """
-
-    source: tuple[str, Any]
-    superseded: bool = False
-    """Set when a later link built on this one, so only a tip can dangle."""
-    consumed: bool = False
-    """Set when ``into(...)`` closed the chain onto an edge."""
-    keyed: bool = False
-    """Set once a ``key_by`` link joined, so a later link knows it follows one."""
-
-
-@dataclass(slots=True)
 class ChannelSpec:
     """A channel as the graph holds it. Its position in the list IS its id."""
 
@@ -118,7 +110,17 @@ class ChannelSpec:
     name: str
     kind: str
     producer: int | None = None
+    chains: list[list[Link]] = field(default_factory=list)
+    """The authoring record: one entry per fluent sequence, in call order."""
+    chain_edges: dict[int, ConsumerEdge] = field(default_factory=dict)
+    """The edge each chain declared, by chain index.
+
+    Held aside rather than wired: the core answers which chains produced a
+    consumer and in what order, so no builder decides which of two
+    re-declarations survives.
+    """
     consumers: list[ConsumerEdge] = field(default_factory=list)
+    """The consumer edges the core derived. Empty until ``validate`` runs."""
     overflow: str = "drop_nothing"
     retry_max: int | None = None
     retry_backoff_ms: int | None = None
@@ -145,7 +147,8 @@ class ClassSpec:
     procedures: list[ProcNode]
     channels: list[ChannelSpec]
     effectively_once: bool = False
-    ack_granularity: str = "per_input"
+    checkpoint_ack: bool = False
+    """The author's explicit ``checkpoint_ack()``; the core derives the granularity."""
     checkpoint_every: int | None = None
     checkpoint_outputs: str = "as_produced"
     checkpoint_max_delay_ms: int | None = None
@@ -153,8 +156,6 @@ class ClassSpec:
     beyond_window_policy: str = "process_as_arrival"
     compact_after_bytes: int | None = None
     sync_durability: bool = False
-    chain_issues: list[tuple[str, str]] = field(default_factory=list)
-    """Every transform-chain defect, as ``(channel, reference error name)``."""
     workflow: dict[str, Any] | None = None
     run: Callable[..., Any] | None = None
 
@@ -178,11 +179,8 @@ class Channels:
         self.factory_id = factory_id
         self.procedures: list[ProcNode] = []
         self.channels: list[ChannelSpec] = []
-        self.chains: list[_Chain] = []
-        # What each link refused as it was declared, in declaration order.
-        self.link_issues: list[tuple[str, str]] = []
         self.effectively_once_flag = False
-        self.ack_granularity = "per_input"
+        self.checkpoint_ack_flag = False
         self.checkpoint_every_value: int | None = None
         self.checkpoint_outputs_value = "as_produced"
         self.checkpoint_max_delay_ms_value: int | None = None
@@ -197,6 +195,10 @@ class Channels:
         self.effectively_once_flag = True
         return self
 
+    # Each of the three writes its own raw flag and nothing else: any checkpoint
+    # key implies the acknowledgement granularity, and the core is where that
+    # is stated.
+
     def checkpoint_ack(self) -> Channels:
         """Acknowledge at the checkpoint rather than per input.
 
@@ -205,27 +207,17 @@ class Channels:
         cadence. All three require :meth:`effectively_once`, which is where the
         durable offset the checkpoint holds back actually lives.
         """
-        return self._amend_checkpoint(lambda: None)
+        self.checkpoint_ack_flag = True
+        return self
 
     def checkpoint_every(self, count: int) -> Channels:
-        def amend() -> None:
-            self.checkpoint_every_value = count
-
-        return self._amend_checkpoint(amend)
+        self.checkpoint_every_value = count
+        return self
 
     def outputs_at_checkpoint(self, max_delay_ms: int | None = None) -> Channels:
-        def amend() -> None:
-            self.checkpoint_outputs_value = "at_checkpoint"
-            if max_delay_ms is not None:
-                self.checkpoint_max_delay_ms_value = max_delay_ms
-
-        return self._amend_checkpoint(amend)
-
-    def _amend_checkpoint(self, amend: Callable[[], None]) -> Channels:
-        """Turn the granularity on (idempotent) and amend its policy, so each
-        option is one call that preserves the others."""
-        self.ack_granularity = "checkpoint"
-        amend()
+        self.checkpoint_outputs_value = "at_checkpoint"
+        if max_delay_ms is not None:
+            self.checkpoint_max_delay_ms_value = max_delay_ms
         return self
 
     def correction_window(self, milliseconds: int) -> Channels:
@@ -268,11 +260,15 @@ class Channels:
             if node.name == identity and node.proc is proc:
                 return node
         if any(node.name == identity for node in self.procedures):
+            # The node table is keyed by identity and physically cannot hold
+            # two, so the record the core would judge is unwritable. The
+            # refusal answers under the core's own name all the same.
             raise DeclarationError(
                 self.factory_id,
                 identity,
                 "two different procedures claim this node identity; name one of them on the "
                 "`into(...)` so each node has its own",
+                ["NodeIdentityCollision"],
             )
         node = ProcNode(index=len(self.procedures), name=identity, proc=proc)
         self.procedures.append(node)
@@ -298,77 +294,6 @@ class Channels:
         self.channels.append(channel)
         node.output = channel
         return channel
-
-    def extend_chain(self, source: tuple[str, Any], base: int | None, *, key: bool) -> int:
-        """Extend the chain at ``base`` (or open one on ``source``) with one
-        more link, answering the new chain's id.
-
-        The three refusals the references raise from their own ``extend_pending``
-        are raised here: a link declared behind a plugin sink, a transform
-        declared after the key it would feed, and a second key — which without
-        this would overwrite the author's first without a word.
-        """
-        channel = _channel_name(source)
-        if _sink_attached(source):
-            self.link_issues.append((channel, "TransformAfterTerminal"))
-        prior_key = base is not None and self.chains[base].keyed
-        if base is not None:
-            self.chains[base].superseded = True
-        # The key is evaluated on the final post-transform value, so a transform
-        # declared after it would hand it a value of a type it was never written
-        # against.
-        if prior_key and not key:
-            self.link_issues.append((channel, "TransformAfterKeyBy"))
-        if prior_key and key:
-            self.link_issues.append((channel, "DuplicateKeyBy"))
-        self.chains.append(_Chain(source=source, keyed=key or prior_key))
-        return len(self.chains) - 1
-
-    def close_chain(self, chain: int | None) -> None:
-        """Mark a chain closed by an ``into(...)``. A bare edge closes nothing."""
-        if chain is not None:
-            self.chains[chain].consumed = True
-
-    def chain_issues(self) -> list[tuple[str, str]]:
-        """Every transform-chain defect this declaration carries.
-
-        What each link refused as it was declared, then the tips no
-        ``into(...)`` closed — the order the references report them in, so the
-        sharper defect wins over the dangling one it also produces.
-        """
-        return [
-            *self.link_issues,
-            *(
-                (_channel_name(chain.source), "DanglingTransformChain")
-                for chain in self.chains
-                if not chain.superseded and not chain.consumed
-            ),
-        ]
-
-
-def _channel_name(source: tuple[str, Any]) -> str:
-    """The name of the channel an edge's values leave on.
-
-    The entry's own, or the producing node's — its materialised channel when one
-    exists, since a ``named(...)`` override lives there, and the name it would
-    derive otherwise.
-    """
-    if source[0] == "entry":
-        return str(source[1].name)
-    node: ProcNode = source[1]
-    return str(node.output.name if node.output is not None else node.name)
-
-
-def _sink_attached(source: tuple[str, Any]) -> bool:
-    """Whether the channel this edge's values leave on already has a plugin sink.
-
-    Only a procedure's can: ``sink(...)`` refuses an entry edge, and a node's
-    channel is created on first use, so one without a channel has no sink.
-    """
-    if source[0] == "entry":
-        return False
-    node: ProcNode = source[1]
-    return node.output is not None and node.output.sink is not None
 
 
 class Edge(Generic[T]):
@@ -401,7 +326,7 @@ class Edge(Generic[T]):
 
     def map(self, transform: Callable[[T], U]) -> Edge[U]:
         """Transform every value on this edge. Evaluated producer-side."""
-        return self._relink(transforms=[*self._transforms, transform])
+        return self._relink({"link": "transform"}, transforms=[*self._transforms, transform])
 
     def filter(self, predicate: Callable[[T], bool]) -> Edge[T]:
         """Drop the values a predicate rejects, before this edge's key is computed.
@@ -412,11 +337,11 @@ class Edge(Generic[T]):
         def keep(value: Any) -> Any:
             return value if predicate(value) else DROPPED
 
-        return self._relink(transforms=[*self._transforms, keep])
+        return self._relink({"link": "transform"}, transforms=[*self._transforms, keep])
 
     def key_by(self, key: Callable[[T], Any]) -> Edge[T]:
         """Route by a computed key: the consumer becomes a dynamic keyed procedure."""
-        return self._relink(key_by=key)
+        return self._relink({"link": "key"}, key_by=key)
 
     def on_full(self, policy: str) -> Edge[T]:
         return self._with(overflow=policy)
@@ -437,15 +362,10 @@ class Edge(Generic[T]):
         """Fan out: each arm receives this same edge.
 
         ``branch`` builds exactly the topology the separate ``into`` statements
-        would. At least two arms.
+        would. The sugar's arity is recorded, never judged: each arm wires
+        itself with ``into(...)`` off this same edge.
         """
-        if len(arms) < 2:
-            raise DeclarationError(
-                self._builder.factory_id,
-                self._pending.get("channel_name") or self._source_name,
-                f"branch(...) requires at least two arms; {len(arms)} given — a single arm is "
-                f"`into(...)` written the long way",
-            )
+        self._channel().chains.append([{"link": "branch", "arms": len(arms)}])
         for arm in arms:
             arm(self)
         return self
@@ -453,34 +373,18 @@ class Edge(Generic[T]):
     def into(self, proc: Procedure[T, O], name: str | None = None) -> Edge[O]:
         """Wire this edge into a procedure."""
         node = self._builder.node_for(proc, name)
-        self._builder.close_chain(self._pending.get("chain"))
+        channel = self._channel()
+        recorded = self._record(channel, {"link": "into", "procedure": node.index})
         # The transforms and the key belong to this edge, not to the channel:
         # one channel may feed several procedures, and a chain declared before
-        # one `into` must not reach another.
-        channel = self._channel()
-        existing = next((e for e in channel.consumers if e.procedure == node.index), None)
-        declares = bool(self._transforms) or self._pending.get("key_by") is not None
-        if existing is None:
-            channel.consumers.append(
-                ConsumerEdge(
-                    procedure=node.index,
-                    transforms=list(self._transforms),
-                    key_by=self._pending.get("key_by"),
-                )
-            )
-        elif existing.transforms or existing.key_by is not None or declares:
-            # Re-declaring one where either side carries a transform or a key is
-            # refused rather than silently dropped — the edge would otherwise
-            # keep whichever closure was declared first and deliver the wrong
-            # value, to the wrong Entity, forever. Re-declaring a bare edge is
-            # the fan-in / repeated ``into`` case and stays a no-op.
-            raise DeclarationError(
-                self._builder.factory_id,
-                channel.name,
-                f"EdgeAlreadyWired: already feeds procedure `{node.name}`; an edge carries "
-                "exactly one transform and one key or neither, so a re-declaration where "
-                "either side carries one is refused rather than silently keeping the first",
-            )
+        # one `into` must not reach another. The edge is held under the chain
+        # that declared it and wired by ``validate`` from the core's own
+        # answer, so a re-declaration is judged there rather than here.
+        channel.chain_edges[recorded["chain"]] = ConsumerEdge(
+            procedure=node.index,
+            transforms=list(self._transforms),
+            key_by=self._pending.get("key_by"),
+        )
         return Edge(self._builder, ("procedure", node), {})
 
     def sink(self, name: str, *, encode: Callable[[Any], bytes] | None = None) -> Edge[T]:
@@ -492,20 +396,21 @@ class Edge(Generic[T]):
         different method.
         """
         if self._from[0] != "procedure":
+            # Not a topology rule the core states: a record whose entry channel
+            # carries a sink derives a plugin channel with no producer, and
+            # there is nothing in it that says which end fed the plugin.
             raise DeclarationError(
                 self._builder.factory_id,
                 name,
                 "a plugin sink is fed by a procedure; wire the entry channel into one first",
             )
         channel = self._channel()
-        if channel.sink is not None:
-            raise DeclarationError(
-                self._builder.factory_id,
-                channel.name,
-                "declares a plugin sink more than once",
-            )
-        channel.sink = name
-        channel.sink_encode = encode
+        # A chain of its own: the sink terminates the channel rather than this
+        # edge, so ``into(...)`` still chains after it.
+        channel.chains.append([{"link": "sink", "name": name}])
+        if channel.sink is None:
+            channel.sink = name
+            channel.sink_encode = encode
         return self
 
     # -- internals ---------------------------------------------------------
@@ -514,23 +419,31 @@ class Edge(Generic[T]):
     def _transforms(self) -> list[Callable[[Any], Any]]:
         return self._pending.get("transforms", [])
 
-    @property
-    def _source_name(self) -> str:
-        return _channel_name(self._from)
-
     def _with(self, **pending: Any) -> Edge[Any]:
         return Edge(self._builder, self._from, {**self._pending, **pending})
 
-    def _relink(self, **pending: Any) -> Edge[Any]:
+    def _record(self, channel: ChannelSpec, link: Link) -> dict[str, Any]:
+        """Record one link on this edge's chain, forking when another edge has
+        already extended it — which is what lets a shared prefix branch without
+        the arms colliding. Answers the chain fields the next edge carries."""
+        chain = self._pending.get("chain")
+        length = self._pending.get("chain_length", 0)
+        if chain is None:
+            channel.chains.append([link])
+            return {"chain": len(channel.chains) - 1, "chain_length": 1}
+        links = channel.chains[chain]
+        if len(links) == length:
+            links.append(link)
+            return {"chain": chain, "chain_length": len(links)}
+        channel.chains.append([*links[:length], link])
+        return {"chain": len(channel.chains) - 1, "chain_length": length + 1}
+
+    def _relink(self, link: Link, **pending: Any) -> Edge[Any]:
         """This edge with one more chain link — the one place a transform's or a
-        key's result edge is built, so every link is registered and a chain no
-        ``into(...)`` closes is reported rather than silently discarded."""
-        return self._with(
-            **pending,
-            chain=self._builder.extend_chain(
-                self._from, self._pending.get("chain"), key="key_by" in pending
-            ),
-        )
+        key's result edge is built, so every link the author declared reaches
+        the record whether or not an ``into(...)`` ever closes it."""
+        channel = self._channel()
+        return self._with(**pending, **self._record(channel, link))
 
     def _channel(self) -> ChannelSpec:
         """The channel this edge's values leave on, with the pending options applied.
@@ -542,8 +455,13 @@ class Edge(Generic[T]):
             channel: ChannelSpec = self._from[1]
         else:
             channel = self._builder.output_channel_for(self._from[1])
-            if self._pending.get("channel_name"):
-                channel.name = self._pending["channel_name"]
+        rename = self._pending.get("channel_name")
+        if rename is not None and channel.name != rename:
+            # The override is recorded once and applied here too, so the name
+            # this host addresses the channel by is the one the core derives
+            # from the record — for every terminator, not for all but the last.
+            channel.chains.append([{"link": "named", "name": rename}])
+            channel.name = rename
         self._apply_pending(channel)
         return channel
 

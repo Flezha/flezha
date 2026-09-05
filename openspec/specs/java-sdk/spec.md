@@ -1013,3 +1013,23 @@ to a refusal.
 - **WHEN** an Entity whose snapshot was written at version 1 restores
 - **THEN** the migration SHALL be invoked with `from_version = 1` and the snapshot bytes, and the Entity SHALL resume with the value it returned
 
+### Requirement: The Java builder submits its topology to the reference check
+
+The Java SDK's builder SHALL record the authoring calls it receives — channels, the
+ordered links of each chain, merges, branches, class flags and procedure facts — into the
+declaration record and SHALL take its verdict from the reference check, so that every name
+of the `TopologyIssue` vocabulary is refused with the reference sentence and no rule is
+carried in the builder. The fluent, generically typed surface SHALL stay as it is; only the judgement moves.
+The SDK SHALL prove the set by one conformance run over every row of
+`test/fixtures/reference_topologies.txt` through the row interpreter in its test app.
+
+#### Scenario: A malformed row refuses with the reference name
+
+- **WHEN** the Java interpreter authors a refusal row through the SDK's own builder
+- **THEN** registration refuses with the row's name and the reference sentence
+
+#### Scenario: A well-formed row derives to the fixture's bytes
+
+- **WHEN** the Java interpreter authors an `ok` row
+- **THEN** the derived declaration equals the row's lines
+

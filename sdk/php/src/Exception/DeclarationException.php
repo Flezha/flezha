@@ -14,10 +14,16 @@ namespace Flezha\Exception;
  */
 final class DeclarationException extends FlezhaException
 {
+    /**
+     * @param list<string> $refusals the core's own names for what it refused,
+     *                               when the verdict came from it; empty for a
+     *                               refusal this package made on its own surface
+     */
     public function __construct(
         public readonly string $factoryId,
         public readonly ?string $handler,
         public readonly string $defect,
+        public readonly array $refusals = [],
     ) {
         parent::__construct(
             $handler === null

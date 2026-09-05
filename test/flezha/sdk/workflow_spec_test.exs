@@ -206,22 +206,6 @@ defmodule Flezha.SDK.Workflow.SpecTest do
     assert :MergeFromEntryChannel in issues(EntryMerge)
   end
 
-  test "a cycle is refused by the shared topology, before the workflow shape is read" do
-    defmodule Cyclic do
-      def factory_id, do: "cyclic"
-
-      def procedures(c) do
-        c
-        |> Channels.input("in")
-        |> Channels.into(PassProc)
-        |> Channels.into(TailProc)
-        |> Channels.into(PassProc)
-      end
-    end
-
-    assert {:error, {:invalid_workflow, [{:Topology, {:Cycle, _}}]}} = Spec.build(Cyclic)
-  end
-
   test "a second entry channel is refused as two roots, which is the only shape that could orphan one" do
     defmodule Orphan do
       def factory_id, do: "orphan"

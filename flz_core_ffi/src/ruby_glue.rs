@@ -343,6 +343,34 @@ fn declare_class(json: RString) -> Result<(), Error> {
     veneer::declare_class(ctx, &json).map_err(|r| raise(&ruby, r))
 }
 
+/// Judge one host class declaration without registering it: the derived
+/// declaration as JSON, or the core's rendered verdict raised. The gem's
+/// `Graph.validate` is this call and nothing else.
+fn check_class(json: RString) -> Result<String, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let json = unsafe { json.as_slice() }.to_vec();
+    match veneer::check_class(ctx, &json) {
+        Ok(derived) => Ok(String::from_utf8_lossy(&derived).into_owned()),
+        Err((refusal, verdict)) => Err(refused(&ruby, refusal, &verdict)),
+    }
+}
+
+/// A refused declaration as the gem's exception: the core's rendered verdict
+/// is the message, as it is for every other failing call, and the verdict
+/// JSON rides on `#verdict` — so a reader takes the refusal NAMES as data
+/// rather than out of the prose.
+fn refused(ruby: &Ruby, refusal: veneer::Refusal, verdict: &[u8]) -> Error {
+    error_class(ruby)
+        .new_instance((refusal.to_string(),))
+        .and_then(|exception| {
+            let body = String::from_utf8_lossy(verdict).into_owned();
+            exception.funcall::<_, _, Value>("instance_variable_set", ("@verdict", body))?;
+            Ok(Error::from(exception))
+        })
+        .unwrap_or_else(|error| error)
+}
+
 /// Connect to the controller and start the runner loop. Blocking: the ABI call
 /// waits up to ten seconds for the connect confirmation.
 fn start(namespace: String) -> Result<(), Error> {
@@ -523,6 +551,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("context_new", "flz_core_context_new"),
     ("context_free", "flz_core_context_free"),
     ("declare_class", "flz_core_declare_class"),
+    ("check_class", "flz_core_check_class"),
     ("start", "flz_core_start"),
     ("poll", "flz_core_poll"),
     ("wait_starvation", "flz_core_wait_starvation"),
@@ -553,6 +582,11 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     let native = flezha.define_module("Native")?;
 
     let error = native.define_error("Error", ruby.exception_standard_error())?;
+    // The verdict a refused declaration carries, as data beside the rendered
+    // message; `nil` on every other native failure. An `attr_reader` because
+    // the ivar is what [`refused`] writes and a reader is what a Ruby caller
+    // expects on an exception.
+    error.funcall::<_, _, Value>("attr_reader", (ruby.sym_new("verdict"),))?;
     let _ = ERROR_CLASS.set(Opaque::from(error));
     let schema_mismatch = native.define_error("SchemaMismatch", error)?;
     let _ = SCHEMA_ERROR_CLASS.set(Opaque::from(schema_mismatch));
@@ -561,6 +595,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("context_new", function!(context_new, 1))?;
     native.define_module_function("context_free", function!(context_free, 0))?;
     native.define_module_function("declare_class", function!(declare_class, 1))?;
+    native.define_module_function("check_class", function!(check_class, 1))?;
     native.define_module_function("start", function!(start, 1))?;
     native.define_module_function("poll", function!(poll, 1))?;
     native.define_module_function("wait_starvation", function!(wait_starvation, 1))?;

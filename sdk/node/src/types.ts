@@ -273,6 +273,11 @@ export class DeclarationError extends Error {
     readonly factoryId: string,
     readonly handler: string | null,
     readonly defect: string,
+    /**
+     * The core's own names for what it refused, when the verdict came from it.
+     * Empty for a refusal this SDK made on its own surface.
+     */
+    readonly refusals: readonly string[] = [],
   ) {
     super(handler ? `${factoryId}: ${handler}: ${defect}` : `${factoryId}: ${defect}`);
     this.name = 'DeclarationError';

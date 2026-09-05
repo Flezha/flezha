@@ -36,9 +36,11 @@ fn one_run() -> MutexGuard<'static, ()> {
 /// one Entity per key the upstream procedure resolves.
 const TWO_STEP: &str = r#"{
     "factory_id": "local_two_step", "sdk_lang": 1, "sdk_version": "0.1.0", "persistent": true,
-    "channels": [{"name": "lines",  "kind": "entry",      "consumers": [0]},
-                 {"name": "mid",    "kind": "inter_proc", "producer": 0, "consumers": [1]},
-                 {"name": "totals", "kind": "plugin",     "producer": 1, "keyed": true}],
+    "channels": [{"name": "lines",  "kind": "entry",      "chains": [[{"link": "into", "procedure": 0}]]},
+                 {"name": "mid",    "kind": "inter_proc", "producer": 0,
+                                    "chains": [[{"link": "into", "procedure": 1}]]},
+                 {"name": "totals", "kind": "plugin",     "producer": 1, "keyed": true,
+                                    "chains": [[{"link": "sink", "name": "totals"}]]}],
     "procedures": [{"name": "normalize"}, {"name": "total", "entity_mode": "dynamic"}]
 }"#;
 
@@ -346,7 +348,7 @@ fn a_controller_only_declaration_is_refused_at_startup() {
         r#"{
         "factory_id": "local_tier", "sdk_lang": 1, "sdk_version": "0.1.0",
         "persistent": true, "effectively_once": true,
-        "channels": [{"name": "lines", "kind": "entry", "consumers": [0]}],
+        "channels": [{"name": "lines", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
         "procedures": [{"name": "only"}]
     }"#,
     );

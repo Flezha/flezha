@@ -66,6 +66,7 @@ final class Binding
         const char *flz_core_init_error(void);
         const char *flz_core_last_error(uintptr_t ctx);
         int32_t flz_core_declare_class(uintptr_t ctx, const char *json, size_t json_len);
+        int32_t flz_core_check_class(uintptr_t ctx, const char *json, size_t json_len, char **buf_out, size_t *len_out);
         int32_t flz_core_start(uintptr_t ctx, const char *ns);
         int32_t flz_core_poll(uintptr_t ctx, uint64_t timeout_ms, char **buf_out, size_t *len_out);
         int32_t flz_core_wait_starvation(uintptr_t ctx, uint64_t timeout_ms);

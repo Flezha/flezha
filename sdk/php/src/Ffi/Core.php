@@ -122,6 +122,41 @@ final class Core implements SpawnBridge, EntryIdleBridge
         $this->check($this->ffi->flz_core_declare_class($this->live(), $json, strlen($json)));
     }
 
+    /**
+     * Judge one class declaration without registering it, and answer the
+     * DERIVED declaration as JSON: the consumers, channel kinds, sink names
+     * and acknowledgement granularity the core read off the record's chains.
+     *
+     * Read-only, so a caller asks for the verdict its author would get with
+     * nothing registered and no runner. A refused record throws the core's
+     * rendered verdict, which {@see \Flezha\Graph\Validate} re-raises as
+     * the package's own declaration refusal — and leaves the verdict the core
+     * hands out on the same failing call in `$verdict`, as
+     * `{"issues":[{"name","text"}]}`, so nothing has to parse that prose.
+     *
+     * @param string|null $verdict the refusal as data, on the throwing arm
+     */
+    public function checkClass(string $json, ?string &$verdict = null): string
+    {
+        $answer = null;
+        $status = $this->outBuffer(
+            fn (CData $out, CData $len): int => $this->ffi->flz_core_check_class(
+                $this->live(),
+                $json,
+                strlen($json),
+                FFI::addr($out),
+                FFI::addr($len),
+            ),
+            $answer,
+        );
+        // `flz_core_check_class` answers FLZ_OK, not the poll status, and fills
+        // the buffer on both arms: the derived declaration, or the verdict.
+        $verdict = $status === Binding::OK ? null : $answer;
+        $this->check($status);
+
+        return (string) $answer;
+    }
+
     /** Connect to the controller and start the runner loop. */
     public function start(string $namespace): void
     {
@@ -235,8 +270,6 @@ final class Core implements SpawnBridge, EntryIdleBridge
                 FFI::addr($len),
             ),
             $outcome,
-            // `flz_core_spawn_workflow` answers FLZ_OK, not the poll status.
-            success: Binding::OK,
         ));
 
         return (string) $outcome;
@@ -301,23 +334,26 @@ final class Core implements SpawnBridge, EntryIdleBridge
     /**
      * Call an entry point that hands back a core-allocated buffer, and take it.
      *
-     * One place, because all three have the same obligation and the same
+     * One place, because all four have the same obligation and the same
      * shape: the core allocated the buffer and the core frees it, so forgetting
      * the free leaks per activation rather than visibly, and every one of them
      * writes through a `char **` / `size_t *` pair the caller must own.
      *
-     * @param callable(CData, CData): int $call    fills the pair; answers the status
-     * @param string|null                 $bytes   the buffer, when there was one
-     * @param int                         $success the status that means "a buffer"
+     * Taken whenever the core wrote one, never only on the status that usually
+     * carries it: `flz_core_check_class` hands out its verdict on the FAILING
+     * status, and a buffer a caller does not take is a buffer nobody frees.
+     *
+     * @param callable(CData, CData): int $call  fills the pair; answers the status
+     * @param string|null                 $bytes the buffer, when there was one
      */
-    private function outBuffer(callable $call, ?string &$bytes, int $success = Binding::POLL_ACTIVATION): int
+    private function outBuffer(callable $call, ?string &$bytes): int
     {
         $out = $this->ffi->new('char*');
         $len = $this->ffi->new('size_t');
         $bytes = null;
 
         $status = $call($out, $len);
-        if ($status !== $success || FFI::isNull($out)) {
+        if (FFI::isNull($out)) {
             return $status;
         }
 

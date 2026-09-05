@@ -154,9 +154,11 @@ class RouteLatestExpansionTest {
             EntryChannel<Trade> trades = c.input(Trade.class, "trades");
             Stream<RoutedDocument<Thresholds>> primary =
                     c.routeLatest(Thresholds.class, thresholds, trades, Trade::symbol, "primary");
-            primary.named("primary_out").sealed();
+            // Sealed leaves, unnamed: `.named(...)` would conjure the output
+            // channel these routers never produce onto, which is an
+            // inter-procedure channel with no consumer.
+            primary.sealed();
             c.routeLatest(Thresholds.class, alt, trades, Trade::symbol, "secondary")
-                    .named("secondary_out")
                     .sealed();
         }
     }

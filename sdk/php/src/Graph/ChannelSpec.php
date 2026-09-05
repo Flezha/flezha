@@ -20,7 +20,29 @@ final class ChannelSpec
         /** `entry` | `inter_proc` | `plugin` */
         public readonly string $kind,
         public ?int $producer = null,
+        /**
+         * The edges the core derived from this channel's chains. Filled from
+         * the derived declaration, never here: which chain became an edge, and
+         * which re-declaration survives, is the core's answer.
+         *
+         * @var list<ConsumerEdge>
+         */
         public array $consumers = [],
+        /**
+         * The links of every fluent sequence declared off this channel's
+         * handle, in declaration order — the record's own `chains`.
+         *
+         * @var list<list<array<string, mixed>>>
+         */
+        public array $chains = [],
+        /**
+         * Parallel to `$chains`: the consumer each sequence closed on, at the
+         * position the core reads that sequence at, so a derived edge naming a
+         * chain finds the closures the author declared with it.
+         *
+         * @var list<?ConsumerEdge>
+         */
+        public array $chainEdges = [],
         public Overflow $overflow = Overflow::DropNothing,
         public ?int $retryMax = null,
         public ?int $retryBackoffMs = null,

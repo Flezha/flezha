@@ -1,27 +1,37 @@
 package com.flezha.sdk.runtime.core;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.runtime.operative.ChannelDescriptor;
-import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
+import com.flezha.sdk.native_.FlezhaNativeException;
+import com.flezha.sdk.native_.FlzCore;
+import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder.ChannelEntry;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder.ClassFacts;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder.PendingEdge;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder.ProcedureEntry;
 import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
 import com.flezha.sdk.runtime.workflow.WorkflowSpec;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.LogicalClock;
 import com.flezha.sdk.state.NoChange;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
- * Builds the poll core's {@code HostClassDecl} JSON from a registered class —
- * the body of {@code FlzCore.declareClass}. The core's serde denies unknown
- * fields and defaults absent ones, so optionals that are absent are omitted
- * entirely.
+ * Writes the poll core's {@code HostClassDecl} record — what the builder was
+ * TOLD, never what it concluded — and submits it to the core's one check. The
+ * key set is a cross-SDK contract pinned by
+ * {@code test/fixtures/host_class_decl_keys.txt}; the core's serde denies
+ * unknown fields and defaults absent ones, so optionals that are absent are
+ * omitted entirely.
  *
  * <p><b>Id order is the contract:</b> {@code channels} is emitted in Java's
  * channel-id order and {@code procedures} in procedure-id order, so the core's
@@ -53,7 +63,7 @@ public final class HostClassDeclaration {
 
     private HostClassDeclaration() {}
 
-    /** Resolve {@code factoryId} in the class registries and build its declaration. */
+    /** Resolve {@code factoryId} in the class registries and encode its record. */
     @Nonnull
     public static byte[] forFactory(@Nonnull String factoryId) {
         StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology(factoryId);
@@ -67,60 +77,117 @@ public final class HostClassDeclaration {
         throw new IllegalStateException("factory `" + factoryId + "` is not registered");
     }
 
+    /**
+     * The record the class was built from, encoded. Written once at build
+     * time, so the bytes the core judged are the bytes it registers.
+     */
     @Nonnull
     public static byte[] forStream(@Nonnull StreamOperativeTopology topology) {
-        Map<String, Object> decl = base(topology.factoryId(), topology);
+        return encode(topology.declaration());
+    }
+
+    /**
+     * The record a stream builder submits: the class facts as declared, one
+     * entry per channel and procedure in id order, and per channel the chains
+     * its handles were given. Consumers, channel kinds, sink names and the
+     * acknowledgement granularity are NOT here — they are the core's answer.
+     */
+    @Nonnull
+    public static Map<String, Object> forStream(
+            @Nonnull String factoryId,
+            @Nonnull ClassFacts facts,
+            @Nonnull List<ChannelEntry> channels,
+            @Nonnull List<ProcedureEntry> procedures,
+            @Nonnull int[] capacities) {
+        Map<String, Object> decl = base(factoryId);
         // Persistence is what the class's Changes imply: a class whose every
         // Procedure declares NoChange has nothing to flush.
-        if (topology.procedures().stream().anyMatch(p -> p.changeType() != NoChange.class)) {
+        if (procedures.stream().anyMatch(p -> p.changeType != NoChange.class)) {
             decl.put("persistent", true);
         }
-        if (topology.effectivelyOnce()) {
+        if (facts.effectivelyOnce()) {
             decl.put("effectively_once", true);
         }
-        if (topology.checkpointAck()) {
-            decl.put("ack_granularity", "checkpoint");
-            // Every key is omitted at its default: the core deserializes the
-            // declaration with `deny_unknown_fields`, so a class that declares
-            // nothing new stays byte-identical against an older core.
-            var checkpoint = topology.checkpoint();
-            if (checkpoint != null && checkpoint.every() > 0) {
-                decl.put("checkpoint_every", checkpoint.every());
-            }
-            if (checkpoint != null && checkpoint.outputsAtCheckpoint()) {
-                decl.put("checkpoint_outputs", "at_checkpoint");
-                decl.put("checkpoint_max_delay_ms", checkpoint.maxDelayMs());
-            }
+        // Every checkpoint knob rides raw; the core derives the granularity
+        // from them, which is the rule six per-SDK helpers each carried.
+        if (facts.checkpointAck()) {
+            decl.put("checkpoint_ack", true);
         }
-        if (topology.correctionWindowMs() > 0) {
-            decl.put("correction_window_ms", topology.correctionWindowMs());
-            decl.put("beyond_window_policy", topology.beyondWindowPolicy().wireName());
+        if (facts.checkpointEvery() != null) {
+            decl.put("checkpoint_every", facts.checkpointEvery());
         }
-        long compactAfterBytes = topology.procedures().stream()
-                .mapToLong(ProcedureDescriptor::compactAfterBytes)
-                .min()
-                .orElse(DEFAULT_COMPACT_AFTER_BYTES);
+        if (facts.checkpointMaxDelayMs() != null) {
+            decl.put("checkpoint_outputs", "at_checkpoint");
+            decl.put("checkpoint_max_delay_ms", facts.checkpointMaxDelayMs());
+        }
+        if (facts.correctionWindowMs() != null) {
+            decl.put("correction_window_ms", facts.correctionWindowMs());
+            decl.put("beyond_window_policy", facts.beyondWindowPolicy().wireName());
+        }
+        long compactAfterBytes =
+                procedures.stream().mapToLong(p -> p.compactAfterBytes).min().orElse(DEFAULT_COMPACT_AFTER_BYTES);
         if (compactAfterBytes != DEFAULT_COMPACT_AFTER_BYTES) {
             decl.put("compact_after_bytes", compactAfterBytes);
         }
-        decl.put("channels", channels(topology));
-        decl.put("procedures", procedures(topology));
-        return encode(decl);
+        decl.put("channels", channels(channels));
+        decl.put("procedures", procedures(procedures, capacities));
+        return decl;
+    }
+
+    /**
+     * Submit a record to {@code flz_core}'s one check. Answers the derived
+     * declaration, or throws the verdict the core rendered — the names and
+     * sentences every SDK reports a refusal under.
+     */
+    @Nonnull
+    public static DerivedDeclaration check(@Nonnull Map<String, Object> record) {
+        long ctx = FlzCore.newContext();
+        try {
+            return DerivedDeclaration.of(JSON.readTree(FlzCore.checkClass(ctx, encode(record))));
+        } catch (FlezhaNativeException refusal) {
+            throw new StreamOperativeConfigurationException(refusal.getMessage(), refusals(refusal.body()));
+        } catch (Exception e) {
+            throw new IllegalStateException("the core's derived declaration did not decode: " + e.getMessage(), e);
+        } finally {
+            FlzCore.contextFree(ctx);
+        }
+    }
+
+    /**
+     * The names the core listed in the verdict it handed out beside the
+     * refusal. Empty for a refusal that carried no verdict — a call the JNI
+     * layer could not even submit, which the core never named.
+     */
+    @Nonnull
+    private static List<String> refusals(@Nullable byte[] verdict) {
+        if (verdict == null || verdict.length == 0) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        try {
+            for (JsonNode issue : JSON.readTree(verdict).path("issues")) {
+                names.add(issue.path("name").asText());
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("the core's verdict did not decode: " + e.getMessage(), e);
+        }
+        return names;
     }
 
     @Nonnull
     public static byte[] forWorkflow(@Nonnull WorkflowSpec spec) {
         StreamOperativeTopology topology = spec.topology().orElse(null);
         Map<String, Object> decl =
-                base(spec.factoryId(), topology != null ? topology : emptyTopology(spec.factoryId()));
+                topology != null ? new LinkedHashMap<>(topology.declaration()) : emptyRecord(spec.factoryId());
+        // Durability is the workflow's own declaration, not what its
+        // procedures' Change types imply.
+        decl.remove("persistent");
         if (spec.persistenceEnabled()) {
             decl.put("persistent", true);
         }
         if (spec.syncDurability()) {
             decl.put("sync_durability", true);
         }
-        decl.put("channels", topology == null ? List.of() : channels(topology));
-        decl.put("procedures", topology == null ? List.of() : procedures(topology));
 
         Map<String, Object> workflow = new LinkedHashMap<>();
         workflow.put(
@@ -145,7 +212,7 @@ public final class HostClassDeclaration {
         return encode(decl);
     }
 
-    private static Map<String, Object> base(String factoryId, StreamOperativeTopology topology) {
+    private static Map<String, Object> base(String factoryId) {
         Map<String, Object> decl = new LinkedHashMap<>();
         decl.put("factory_id", factoryId);
         decl.put("sdk_lang", SDK_LANG_JAVA);
@@ -154,37 +221,34 @@ public final class HostClassDeclaration {
         return decl;
     }
 
-    private static StreamOperativeTopology emptyTopology(String factoryId) {
-        return new StreamOperativeTopology(
-                factoryId,
-                List.of(),
-                Map.of(),
-                List.of(),
-                Map.of(),
-                false,
-                null,
-                0,
-                com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
+    /** A class that declared no channels and no procedures: the run-sugar shape. */
+    private static Map<String, Object> emptyRecord(String factoryId) {
+        Map<String, Object> decl = base(factoryId);
+        decl.put("channels", List.of());
+        decl.put("procedures", List.of());
+        return decl;
     }
 
-    private static List<Map<String, Object>> channels(StreamOperativeTopology topology) {
-        List<Map<String, Object>> out = new ArrayList<>(topology.channels().size());
-        for (ChannelDescriptor channel : topology.channels()) {
+    private static List<Map<String, Object>> channels(List<ChannelEntry> channels) {
+        List<Map<String, Object>> out = new ArrayList<>(channels.size());
+        for (ChannelEntry channel : channels) {
             Map<String, Object> c = new LinkedHashMap<>();
-            c.put("name", channel.name());
-            c.put("kind", kindOf(channel.kind()));
-            channel.producer().ifPresent(p -> c.put("producer", p));
-            c.put("consumers", channel.consumerIds());
-            c.put("retry_max", channel.retry().maxAttempts());
-            c.put("retry_backoff_ms", channel.retry().backoffBaseMs());
+            c.put("name", channel.name);
+            c.put("kind", kindOf(channel.kind));
+            if (channel.producer != null) {
+                c.put("producer", channel.producer);
+            }
+            c.put("chains", chains(channel));
+            c.put("retry_max", channel.retryMaxAttempts);
+            c.put("retry_backoff_ms", channel.retryBackoffBaseMs);
             c.put(
                     "overflow",
-                    switch (channel.overflowPolicy()) {
+                    switch (channel.overflowPolicy) {
                         case DROP_NOTHING -> "drop_nothing";
                         case DROP_NEWEST -> "drop_newest";
                         case DROP_OLDEST -> "drop_oldest";
                     });
-            if (channel.keyed()) {
+            if (channel.keyed) {
                 c.put("keyed", true);
             }
             out.add(c);
@@ -192,32 +256,50 @@ public final class HostClassDeclaration {
         return out;
     }
 
-    private static List<Map<String, Object>> procedures(StreamOperativeTopology topology) {
-        List<Map<String, Object>> out = new ArrayList<>(topology.procedures().size());
-        for (ProcedureDescriptor desc : topology.procedures()) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("name", desc.name());
-            if (desc.dynamic()) {
-                p.put("entity_mode", "dynamic");
-                desc.entityIdleTtl().ifPresent(ttl -> p.put("idle_ttl_ms", ttl.toMillis()));
-                desc.maxEntities().ifPresent(cap -> p.put("max_entities", cap));
-            } else if (!desc.entityKeys().isEmpty()) {
-                p.put("entity_mode", "static");
-                p.put("entity_keys", desc.entityKeys());
+    private static List<List<Map<String, Object>>> chains(ChannelEntry channel) {
+        List<List<Map<String, Object>>> out = new ArrayList<>(channel.chains.size());
+        for (PendingEdge chain : channel.chains) {
+            List<Map<String, Object>> links = new ArrayList<>(chain.links.size());
+            for (HostLink link : chain.links) {
+                links.add(link.json());
             }
-            if (desc.entitiesForOverridden()) {
+            out.add(links);
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> procedures(List<ProcedureEntry> procedures, int[] capacities) {
+        List<Map<String, Object>> out = new ArrayList<>(procedures.size());
+        for (int i = 0; i < procedures.size(); i++) {
+            ProcedureEntry desc = procedures.get(i);
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("name", desc.name);
+            if (desc.dynamic) {
+                p.put("entity_mode", "dynamic");
+                desc.entityIdleTtl.ifPresent(ttl -> p.put("idle_ttl_ms", ttl.toMillis()));
+                desc.maxEntities.ifPresent(cap -> p.put("max_entities", cap));
+            } else if (!desc.entityKeys.isEmpty()) {
+                p.put("entity_mode", "static");
+                p.put("entity_keys", desc.entityKeys);
+            }
+            if (desc.entitiesForOverridden) {
                 p.put("entities_for_overridden", true);
             }
-            if (desc.compensateOverridden()) {
+            if (desc.compensateOverridden) {
                 p.put("compensate_overridden", true);
             }
-            p.put("clock", clockOf(desc.clockType()));
-            p.put("mailbox_capacity", desc.mailboxCapacity());
+            p.put("clock", clockOf(desc.clockType));
+            p.put("mailbox_capacity", capacities[i]);
+            // A procedure whose Change is the empty one journals nothing, so a
+            // logical clock over it never advances; the core names that.
+            if (desc.changeType == NoChange.class) {
+                p.put("change_is_nochange", true);
+            }
             // Per Procedure, never a class-wide maximum: one Procedure's bump
             // would otherwise re-stamp its siblings' records with a version
             // they never declared.
-            p.put("schema_version", desc.schemaVersion());
-            p.put("min_readable_schema_version", desc.minReadableSchemaVersion());
+            p.put("schema_version", desc.schemaVersion);
+            p.put("min_readable_schema_version", desc.minReadableSchemaVersion);
             out.add(p);
         }
         return out;

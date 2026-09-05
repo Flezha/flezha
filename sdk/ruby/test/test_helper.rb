@@ -24,6 +24,19 @@ module Flezha
       @native
     end
 
+    # One declaration's verdict, in a context of its own.
+    #
+    # `validate` submits through the ABI now, so a suite that judges a
+    # topology needs a live core. `flz_core_check_class` registers nothing and
+    # a context is a plain allocation, so a test pays one per call rather than
+    # sharing a process-wide handle with the suites that make and free theirs.
+    def self.validate(spec)
+      core = Flezha::Core.create
+      Flezha::Graph.validate(spec, core)
+    ensure
+      core&.free
+    end
+
     # The dispatch dependencies over one declared class and one peer. Every
     # suite that drives the dispatcher needs exactly this, so it is built here
     # rather than once per fixture.
@@ -90,6 +103,11 @@ module Flezha
         @lock.synchronize { @declarations << json }
         record(:declare)
       end
+
+      # A fake derives nothing: the verdict is the core's, and a test that
+      # wants one drives a real context. This answers the empty derivation so
+      # a host's declare-then-serve order stays observable here.
+      def check_class(_json) = '{"channels":[],"ack_granularity":"per_input"}'
 
       def start(_namespace) = record(:start)
       def free = record(:free)

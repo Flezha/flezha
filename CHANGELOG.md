@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Changed — one topology check, in every SDK
+
+A builder no longer decides what a topology may be. Every SDK records the links
+its author declared — a transform, a key, a name, a sink, a consumer, a merge, a
+branch — and submits that record to one check in the core, which answers with the
+derived declaration or with named refusals. The refusal vocabulary is
+`flz_core::host::issue`; the C ABI gained the read-only `flz_core_check_class`
+beside `flz_core_declare_class`. The Elixir SDK is its own core and re-expresses
+the same check against the same fixture.
+
+`test/fixtures/reference_topologies.txt` now carries one row per refusal, and it
+is what every SDK's conformance run is measured against, so a new refusal is one
+variant and one row rather than an edit to seven builders.
+
+The record changed shape: `channel.consumers` became `channel.chains`,
+`class.ack_granularity` became the raw `class.checkpoint_ack`, and procedures
+carry `change_is_nochange`. Any checkpoint knob now implies the checkpoint
+granularity, stated once in the core instead of once per SDK.
+
+Erased hosts are refused three declarations they used to be given: a
+`mailbox_capacity` of 0 or above 1 048 576, a correction window with no
+effectively-once tier, and a logical clock over a class that journals nothing.
+Each is a shape the reference SDK has always refused.
+
 - Every wait before a retry in the controller and the Elixir SDK is one declared
   row of `Flezha.Config.Backoff`, and every timeout, interval, grace and budget
   one row of `Flezha.Config.Durations`. Waits and resets are emitted on

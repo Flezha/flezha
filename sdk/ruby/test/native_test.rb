@@ -171,8 +171,12 @@ class NativeTest < Minitest::Test
 
     decl = checkpoint_class("outputs_only") { |c| c.outputs_at_checkpoint(1500) }
 
-    assert_equal "checkpoint", decl["ack_granularity"]
+    # The raw flag, and only it: the builder never asks for the granularity,
+    # and the class registers because the core implies it from this key.
+    assert_equal false, decl["checkpoint_ack"]
+    assert_equal "at_checkpoint", decl["checkpoint_outputs"]
     Flezha::Native.declare_class(JSON.generate(decl))
+    assert_equal "checkpoint", JSON.parse(Flezha::Native.check_class(JSON.generate(decl)))["ack_granularity"]
   ensure
     Flezha::Native.context_free
   end
@@ -182,9 +186,37 @@ class NativeTest < Minitest::Test
 
     decl = checkpoint_class("ack_only", &:checkpoint_ack)
 
-    assert_equal "checkpoint", decl["ack_granularity"]
+    assert_equal true, decl["checkpoint_ack"]
     assert_nil decl["checkpoint_every"], "the bare opt-in declares no cadence"
     Flezha::Native.declare_class(JSON.generate(decl))
+    assert_equal "checkpoint", JSON.parse(Flezha::Native.check_class(JSON.generate(decl)))["ack_granularity"]
+  ensure
+    Flezha::Native.context_free
+  end
+
+  # The read-only half of the declaration: a record the core cannot honour is
+  # refused with the vocabulary every SDK renders, and nothing is registered.
+  def test_a_refused_record_answers_the_verdict_and_registers_nothing
+    Flezha::Native.context_new(Flezha::ACTIVATION_SCHEMA_VERSION)
+
+    keyed = Class.new(Flezha::Procedure) do
+      procedure_name "check_keyed"
+      dynamic_entities
+      def process(input, _ctx) = input
+    end
+    operative = Class.new(Flezha::StreamOperative)
+    operative.factory_id "check_dup_key"
+    operative.channels { |c| c.input("input").key_by { "a" }.key_by { "b" }.into(keyed) }
+
+    json = JSON.generate(Flezha::Graph.to_host_class_decl(operative.spec))
+    error = assert_raises(Flezha::Native::Error) { Flezha::Native.check_class(json) }
+
+    assert_includes error.message, "topology rejected [DuplicateKeyBy]"
+    # The verdict rides the exception as data too: the ABI fills the out-buffer
+    # on the refusal status, and the veneer surfaces it rather than dropping it.
+    assert_equal ["DuplicateKeyBy"],
+                 JSON.parse(error.verdict)["issues"].map { |issue| issue["name"] }
+    assert_raises(Flezha::Native::Error) { Flezha::Native.declare_class(json) }
   ensure
     Flezha::Native.context_free
   end

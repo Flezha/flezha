@@ -27,6 +27,13 @@ class CoreError(FlezhaError):
     nothing about the engine's answer is lost.
     """
 
+    def __init__(self, message: str, verdict: bytes | None = None) -> None:
+        super().__init__(message)
+        #: The refusal as the core's own JSON, when the entry point answered one
+        #: beside the rendered message — the topology check does. ``None``
+        #: everywhere else.
+        self.verdict = verdict
+
 
 class SchemaMismatchError(CoreError):
     """The native library and this package speak different activation schemas.
@@ -45,10 +52,19 @@ class DeclarationError(FlezhaError):
     compiler would have pointed at.
     """
 
-    def __init__(self, factory_id: str, handler: str | None, defect: str) -> None:
+    def __init__(
+        self,
+        factory_id: str,
+        handler: str | None,
+        defect: str,
+        refusals: list[str] | None = None,
+    ) -> None:
         self.factory_id = factory_id
         self.handler = handler
         self.defect = defect
+        #: The core's own names for what it refused, when the verdict came from
+        #: it. Empty for a refusal this SDK made on its own surface.
+        self.refusals = refusals or []
         super().__init__(
             f"{factory_id}: {handler}: {defect}" if handler else f"{factory_id}: {defect}"
         )

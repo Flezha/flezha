@@ -2,9 +2,15 @@
 
 require_relative "test_helper"
 
-# Registration-time refusal replaces the Rust SDK's compile-time one, so the
-# message has to carry what a compiler would have pointed at: the class, the
-# handler, and the specific defect.
+# What this SDK's authoring surface answers, and what it hands the core.
+#
+# The topology itself is judged once, in `flz_core::host::register::check`, and
+# the reference refusals are pinned by `test/fixtures/reference_topologies.txt`
+# — not here. What is left here is the ergonomics: which shapes the fluent
+# builder BUILDS, the two defects a record cannot carry (a Ruby class that does
+# not define the method its declaration promises, a plugin sink on a channel no
+# procedure produces on), and that the core's verdict reaches an author as this
+# SDK's own refusal.
 class AuthoringTest < Minitest::Test
   def refusal(&block)
     assert_raises(Flezha::DeclarationError, &block)
@@ -22,6 +28,14 @@ class AuthoringTest < Minitest::Test
     klass.factory_id factory
     klass.channels(&channels)
     klass
+  end
+
+  # The submission needs a live core; without the compiled veneer the case says
+  # so rather than passing vacuously.
+  def validate(spec)
+    skip "needs the compiled veneer (scripts/build-ruby-sdk.sh)" unless Flezha::TestSupport.native?
+
+    Flezha::TestSupport.validate(spec)
   end
 
   def test_a_procedure_without_a_process_method_is_refused_by_name
@@ -62,91 +76,54 @@ class AuthoringTest < Minitest::Test
     assert_raises(Flezha::UnrepresentableValueError) { klass.definition }
   end
 
-  def test_an_entry_channel_with_no_consumer_is_refused
-    klass = operative("no_consumer") { |c| c.input("input") }
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "names no consumer"
-  end
-
-  def test_a_cycle_is_refused_naming_the_procedure
-    first = pass_through("cycle_a")
-    second = pass_through("cycle_b")
-    klass = operative("cycles") do |c|
-      edge = c.input("input").into(first)
-      back = edge.named("forward").into(second)
-      back.named("backward").into(first)
+  # A clock is a promise about a method, and a record carries the clock but not
+  # the class: only this SDK can see that the method is missing.
+  def test_an_event_time_clock_without_its_extractor_is_refused_here
+    klass = Class.new(Flezha::Procedure) do
+      procedure_name "no_extractor"
+      clock :event_time
+      def process(input, _ctx) = input
     end
+    graph = operative("no_extractor_op") { |c| c.input("in").into(klass).sink("out") }
 
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "is on a cycle"
+    # No core at all, which is the proof it was refused before the record
+    # could reach one.
+    assert_includes refusal { Flezha::Graph.validate(graph.spec, nil) }.message,
+                    "declares an event_time clock but no event_time method"
   end
 
-  # Every node the fluent DSL creates is created BY an `into`, so it is fed by
-  # construction and this refusal cannot fire through that surface. It is the
-  # invariant the Rust builder also checks, and the node is built through the
-  # builder directly here because that is the only way to express the shape it
-  # rejects — a check with no way to reach it is a check nobody has run.
-  def test_an_unreachable_procedure_is_refused
-    reached = pass_through("reached")
-    orphan = pass_through("orphan")
-    klass = operative("unreachable") do |c|
-      c.input("input").into(reached).named("out").sink("s")
-      Flezha::Edge.new(c, [:procedure, c.node_for(orphan)], {}).sink("dead_sink")
-    end
+  # The other refusal the builder keeps: a channel with no producer has no
+  # value to serialize, and the core reads a sink as the terminal of the
+  # channel it sits on — it cannot see that this one is fed by the controller.
+  def test_a_plugin_sink_on_an_entry_channel_is_refused_here
+    klass = operative("entry_sink") { |c| c.input("in").sink("out") }
 
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "not reachable"
+    assert_includes refusal { klass.spec }.message, "a plugin sink is fed by a procedure"
   end
 
-  def test_an_edge_into_a_dynamic_procedure_must_name_its_key
-    dynamic = Class.new(Flezha::Procedure) do
-      procedure_name "needs_key"
+  # `validate` IS the submission: the record crosses the ABI and the core's
+  # verdict comes back as this SDK's own refusal, in the core's vocabulary.
+  def test_the_cores_verdict_reaches_the_author_as_a_declaration_refusal
+    target = Class.new(Flezha::Procedure) do
+      procedure_name "keyed"
       dynamic_entities
       def process(input, _ctx) = input
     end
-    klass = operative("unkeyed") { |c| c.input("input").into(dynamic).named("o").sink("s") }
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "without a key_by"
-  end
-
-  def test_edge_keying_and_a_static_key_set_are_exclusive
-    static = Class.new(Flezha::Procedure) do
-      procedure_name "static_keys"
-      entity_keys "a", "b"
-      def entities_for(_input) = ["a"]
-      def process(input, _ctx) = input
-    end
-    klass = operative("both_keyings") do |c|
-      c.input("input").key_by { |v| v.to_s }.into(static).named("o").sink("s")
+    klass = operative("dup_key_by") do |c|
+      c.input("in").key_by { "a" }.key_by { "b" }.into(target)
     end
 
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "not both"
+    error = refusal { validate(klass.spec) }
+
+    assert_includes error.message, "topology rejected [DuplicateKeyBy]"
+    assert_includes error.message, "declares .key_by(...) twice before one `.into(...)`"
+    # And the names as DATA: the core hands the verdict out beside the rendered
+    # message, so nothing here reads them out of the prose.
+    assert_equal ["DuplicateKeyBy"], error.refusals
   end
 
-  def test_the_effectively_once_tier_needs_persistence
-    klass = Class.new(Flezha::StreamOperative)
-    klass.factory_id "tier_without_state"
-    klass.persistent false
-    klass.channels { |c| c.effectively_once.input("input").into(pass_through("p")).named("o").sink("s") }
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message, "durable state"
-  end
-
-  def test_a_checkpoint_option_without_the_tier_is_refused
-    {
-      "checkpoint_ack" => ->(c) { c.checkpoint_ack },
-      "checkpoint_every" => ->(c) { c.checkpoint_every(4) },
-      "outputs_at_checkpoint" => ->(c) { c.outputs_at_checkpoint(250) }
-    }.each do |option, declare|
-      klass = operative("ckpt_#{option}") do |c|
-        declare.call(c)
-        c.input("in").into(pass_through("p_#{option}")).keyed.sink("out")
-      end
-
-      assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
-                      "checkpoint acknowledgement without effectively_once",
-                      "#{option} must require the tier"
-    end
-  end
-
+  # The three checkpoint options each write their own raw flag now — the
+  # granularity is the core's to imply — so none of them may clear another.
   def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another
     klass = operative("compose") do |c|
       c.effectively_once
@@ -155,13 +132,13 @@ class AuthoringTest < Minitest::Test
       c.checkpoint_every(4)
       c.input("in").into(pass_through("p")).keyed.sink("out")
     end
-    Flezha::Graph.validate(klass.spec)
     decl = Flezha::Graph.to_host_class_decl(klass.spec)
 
-    assert_equal "checkpoint", decl["ack_granularity"]
+    assert_equal true, decl["checkpoint_ack"]
     assert_equal 4, decl["checkpoint_every"]
     assert_equal "at_checkpoint", decl["checkpoint_outputs"]
     assert_equal 250, decl["checkpoint_max_delay_ms"]
+    refute_includes decl.keys, "ack_granularity", "the granularity is derived, never declared"
   end
 
   def test_a_workflow_cannot_declare_both_a_run_body_and_channels
@@ -181,7 +158,7 @@ class AuthoringTest < Minitest::Test
       edge.named("left").into(shared)
       edge.named("right").into(shared)
     end
-    Flezha::Graph.validate(klass.spec)
+    validate(klass.spec)
 
     assert_equal 2, klass.spec.procedures.size
     # And one edge: `named` renames the one channel `upstream` produces on, so
@@ -239,10 +216,15 @@ class AuthoringTest < Minitest::Test
   # second consumer to it — it does not declare a second channel claiming the
   # same producer, which the core resolves by first match
   # (`host/register.rs` `procedure_wiring`) and so silently truncates.
+  #
+  # Read off the DERIVED declaration: the consumers and the plugin kind are
+  # what the core made of the chains this builder recorded.
 
   def channels_of(klass)
-    Flezha::Graph.to_host_class_decl(klass.spec)["channels"]
-                 .map { |c| [c["name"], c["kind"], c["producer"], c["consumers"]] }
+    validate(klass.spec)["channels"].map do |channel|
+      [channel["name"], channel["kind"], channel["producer"],
+       channel["consumers"].map { |edge| edge["procedure"] }, channel["sink"]]
+    end
   end
 
   def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers
@@ -253,9 +235,8 @@ class AuthoringTest < Minitest::Test
       edge.into(b)
       edge.into(c_proc)
     end
-    Flezha::Graph.validate(klass.spec)
 
-    assert_equal [["in", "entry", nil, [0]], ["producer", "inter_proc", 0, [1, 2]]],
+    assert_equal [["in", "entry", nil, [0], nil], ["producer", "inter_proc", 0, [1, 2], nil]],
                  channels_of(klass)
   end
 
@@ -280,35 +261,10 @@ class AuthoringTest < Minitest::Test
       c.input("in").into(pass_through("producer")).named("hybrid_indicator")
        .sink("hybrid_indicators").into(pass_through("consumer"))
     end
-    Flezha::Graph.validate(klass.spec)
 
-    assert_equal [["in", "entry", nil, [0]], ["hybrid_indicator", "inter_proc", 0, [1]]],
+    assert_equal [["in", "entry", nil, [0], nil],
+                  ["hybrid_indicator", "inter_proc", 0, [1], "hybrid_indicators"]],
                  channels_of(klass)
-  end
-
-  def test_a_second_sink_on_one_channel_is_refused
-    message = refusal do
-      operative("twice") { |c| c.input("in").into(pass_through("a")).sink("out").sink("again") }.spec
-    end.message
-
-    assert_includes message, "declares a plugin sink more than once"
-  end
-
-  def test_keyed_is_refused_without_a_plugin_sink_and_accepted_with_one
-    no_sink = operative("keyed_no_sink") do |c|
-      c.input("in").into(pass_through("producer")).named("mid").keyed.into(pass_through("consumer"))
-    end
-    message = refusal { Flezha::Graph.validate(no_sink.spec) }.message
-
-    assert_includes message, "is declared keyed but has no plugin wire"
-
-    hybrid = operative("keyed_hybrid") do |c|
-      c.input("in").into(pass_through("producer")).named("mid").keyed
-       .sink("mid_sink").into(pass_through("consumer"))
-    end
-    Flezha::Graph.validate(hybrid.spec)
-
-    assert_equal true, hybrid.spec.channels[1].keyed
   end
 
   def test_a_transform_before_one_into_reaches_that_consumer_only
@@ -319,98 +275,10 @@ class AuthoringTest < Minitest::Test
       edge.map { |value| "#{value}!" }.into(b)
       edge.into(c_proc)
     end
-    Flezha::Graph.validate(klass.spec)
+    validate(klass.spec)
 
     assert_equal [[1, 1], [2, 0]],
                  klass.spec.channels[1].consumers.map { |e| [e.procedure, e.transforms.size] }
-  end
-
-  # The refusal both references carry by name — Rust's
-  # `TopologyIssue::DanglingTransformChain` and Java's `danglingTransformChain`.
-  # A transform lives on the consumer edge it terminates in, so one no
-  # `into(...)` closed has nowhere to run and would be discarded without a word.
-  def test_a_transform_chain_no_into_closes_is_refused
-    klass = operative("dangling") do |c|
-      c.input("in").into(pass_through("validate")).map { |value| "#{value}!" }.sink("s")
-    end
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
-                    "validate: DanglingTransformChain: declares a transform or key_by(...)"
-
-    # A key dangles the same way. Declared on a channel another edge consumes,
-    # so no other refusal reaches the declaration first.
-    keyed = operative("dangling_key") do |c|
-      edge = c.input("in")
-      edge.into(pass_through("kept"))
-      edge.key_by(&:to_s)
-    end
-
-    assert_includes refusal { Flezha::Graph.validate(keyed.spec) }.message,
-                    "in: DanglingTransformChain"
-  end
-
-  # The three refusals both references raise from their own `extend_pending` —
-  # Rust's `TopologyIssue::{DuplicateKeyBy, TransformAfterKeyBy,
-  # TransformAfterTerminal}` and Java's factory methods of the same names. Each
-  # shape was ACCEPTED here before this: a second `key_by` overwrote the
-  # author's first without a word, and neither a prior key nor an attached sink
-  # was inspected at all.
-  def keyed_procedure
-    Class.new(Flezha::Procedure) do
-      procedure_name "keyed"
-      dynamic_entities
-      def process(input, _ctx) = input
-    end
-  end
-
-  def test_a_second_key_by_is_refused_rather_than_overwriting_the_first
-    target = keyed_procedure
-    klass = operative("dup_key_by") do |c|
-      c.input("in").key_by { "a" }.key_by { "b" }.into(target)
-    end
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
-                    "in: DuplicateKeyBy: declares key_by(...) twice before one into(...)"
-  end
-
-  # The key is evaluated on the final post-transform value, so it must be the
-  # last link before the `into(...)` that closes the chain.
-  def test_a_transform_after_key_by_is_refused
-    target = keyed_procedure
-    klass = operative("transform_after_key_by") do |c|
-      c.input("in").key_by { "a" }.map { |value| "#{value}!" }.into(target)
-    end
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
-                    "in: TransformAfterKeyBy: declares a transform after key_by(...)"
-  end
-
-  # The sink serializes the channel's own value, so nothing declared behind it
-  # can reshape what it already wrote.
-  def test_a_transform_after_a_plugin_sink_is_refused
-    klass = operative("transform_after_terminal") do |c|
-      c.input("in").into(pass_through("emit")).sink("s").map { |value| "#{value}!" }
-       .into(pass_through("tail"))
-    end
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
-                    "emit: TransformAfterTerminal: declares a transform or key_by(...) after a plugin sink"
-  end
-
-  # The refusal both references raise from consumer wiring rather than chain
-  # extension — Rust's `attach_consumer` and Java's `attachEdge`. Both shapes
-  # were ACCEPTED here before this, leaving two consumer edges naming one
-  # procedure, so the value reached it twice.
-  def test_a_re_declared_edge_carrying_a_transform_is_refused
-    target = pass_through("target")
-    klass = operative("edge_already_wired") do |c|
-      edge = c.input("in")
-      edge.into(target)
-      edge.map { |value| "#{value}!" }.into(target)
-    end
-
-    assert_includes refusal { Flezha::Graph.validate(klass.spec) }.message,
-                    "in: EdgeAlreadyWired: already feeds procedure `target`; an edge carries exactly one"
   end
 
   # A re-declaration carrying neither transform nor key is the fan-in /
@@ -423,10 +291,11 @@ class AuthoringTest < Minitest::Test
       edge.into(target)
       edge.into(target)
     end
-    Flezha::Graph.validate(klass.spec)
+    derived = validate(klass.spec)
 
     assert_equal [[0, 0]],
                  klass.spec.channels[0].consumers.map { |e| [e.procedure, e.transforms.size] }
+    assert_equal [0], derived["channels"][0]["consumers"].map { |e| e["procedure"] }
   end
 
   # The reference declares exactly this — `tier_commit_block_workflow` opens
@@ -441,7 +310,7 @@ class AuthoringTest < Minitest::Test
       c.effectively_once
       c.input("in").into(pass_through("producer")).named("out").keyed.sink("out")
     end
-    Flezha::Graph.validate(klass.spec)
+    validate(klass.spec)
 
     assert_equal true, klass.spec.effectively_once
     refute_includes Flezha::Graph.to_host_class_decl(klass.spec).keys, "effectively_once"

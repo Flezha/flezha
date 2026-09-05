@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Flezha\Tests;
 
-use Flezha\AckGranularity;
 use Flezha\Attribute\Operative;
 use Flezha\Attribute\Proc;
 use Flezha\CheckpointOutputs;
@@ -12,12 +11,12 @@ use Flezha\Clock;
 use Flezha\Ctx;
 use Flezha\Definition;
 use Flezha\Exception\DeclarationException;
+use Flezha\Ffi\Core;
 use Flezha\Graph\Builder;
 use Flezha\Graph\ClassSpec;
 use Flezha\Graph\Edge;
 use Flezha\Graph\HostClassDecl;
 use Flezha\Graph\Validate;
-use Flezha\Overflow;
 use Flezha\Procedure;
 use Flezha\StreamOperative;
 use Flezha\WorkflowOperative;
@@ -25,15 +24,6 @@ use PHPUnit\Framework\TestCase;
 
 #[Proc(clock: Clock::EventTime)]
 final class NoExtractor extends Procedure
-{
-    public function run(mixed $input, Ctx $ctx): mixed
-    {
-        return null;
-    }
-}
-
-#[Proc(entityKeys: ['a'])]
-final class NoEntitiesFor extends Procedure
 {
     public function run(mixed $input, Ctx $ctx): mixed
     {
@@ -64,28 +54,28 @@ final class FoldWithoutState extends Procedure
 }
 
 /**
- * Everything a type system would have caught, refused at registration and
- * naming the class, the handler and the defect.
+ * What this package's authoring surface answers, and what it hands the core.
  *
- * The same set as the Rust builder's `TopologyIssue`, so an author moving
- * between SDKs meets one vocabulary rather than two.
+ * The topology itself is judged once, in `flz_core::host::register::check`, and
+ * the reference refusals are pinned by `test/fixtures/reference_topologies.txt`
+ * — not here. What is left here is the ergonomics: which shapes the fluent
+ * builder BUILDS, the defects a record cannot carry (a PHP class that does not
+ * define the method its declaration promises, a plugin sink on a channel no
+ * procedure produces on), and that the core's verdict reaches an author as this
+ * package's own refusal.
  */
 final class AuthoringTest extends TestCase
 {
     /** @return iterable<string, array{callable, string}> */
     public static function refusals(): iterable
     {
+        // A clock is a promise about a method, and a record carries the clock
+        // but not the class: only this package can see the method is missing.
         yield 'an event-time clock with no extractor' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
                 $c->input('in')->into(NoExtractor::class)->sink('out');
             }),
             'declares an event_time clock but no eventTime method',
-        ];
-        yield 'a static key set with no entitiesFor' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(NoEntitiesFor::class)->sink('out');
-            }),
-            'declares a static key set without an entitiesFor',
         ];
         yield 'both entity modes' => [
             static fn (): mixed => Definition::of(BothModes::class),
@@ -95,154 +85,26 @@ final class AuthoringTest extends TestCase
             static fn (): mixed => Definition::of(FoldWithoutState::class),
             'declares applyChange but no state',
         ];
-        yield 'an entry channel with no consumer' => [
+        // The other refusal the builder keeps: a channel with no producer has
+        // no value to serialize, and the core reads a sink as the terminal of
+        // the channel it sits on — it cannot see this one is controller-fed.
+        yield 'a sink fed by an entry channel' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in');
+                $c->input('in')->sink('out');
             }),
-            'is an entry channel that names no consumer',
+            'a plugin sink is fed by a procedure',
         ];
-        yield 'a keyed channel with no plugin wire' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(Echoer::class)->named('hop')->keyed()->into(Counter::class);
-            }),
-            'is declared keyed but has no plugin wire',
-        ];
-        yield 'a dynamic consumer with no key' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(Keyed::class)->sink('out');
-            }),
-            'without a keyBy',
-        ];
-        yield 'shedding on an effectively-once class' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->effectivelyOnce();
-                $c->input('in')->onFull(Overflow::DropOldest)->into(Echoer::class)->keyed()->sink('out');
-            }),
-            'declares onFull(drop_oldest) on a class that declares effectivelyOnce',
-        ];
-        yield 'an unkeyed plugin wire on an effectively-once class' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->effectivelyOnce();
-                $c->input('in')->into(Echoer::class)->sink('out');
-            }),
-            'must opt in with keyed',
-        ];
-        // The refusal both references carry by name — Rust's
-        // `TopologyIssue::DanglingTransformChain` and Java's
-        // `danglingTransformChain`. A transform lives on the consumer edge it
-        // terminates in, so one no `into(...)` closed has nowhere to run.
-        yield 'a transform chain no into(...) closes' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(Echoer::class)
-                    ->map(static fn (mixed $v): mixed => $v)
-                    ->sink('s');
-            }),
-            'echoer: DanglingTransformChain: declares a transform or keyBy(...)',
-        ];
-        // A key dangles the same way. Declared on a channel another edge
-        // consumes, so no other refusal reaches the declaration first.
-        yield 'a key no into(...) closes' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $edge = $c->input('in');
-                $edge->into(Echoer::class);
-                $edge->keyBy(static fn (mixed $v): string => 'k');
-            }),
-            'in: DanglingTransformChain',
-        ];
-        // The three refusals both references raise from their own
-        // `extend_pending` — Rust's `TopologyIssue::{DuplicateKeyBy,
-        // TransformAfterKeyBy, TransformAfterTerminal}` and Java's factory
-        // methods of the same names. Each shape was ACCEPTED here before this:
-        // a second `keyBy` overwrote the author's first without a word, and
-        // neither a prior key nor an attached sink was inspected at all.
-        yield 'a second keyBy over the first' => [
+        // `Validate::spec` IS the submission: the record crosses the ABI and
+        // the core's verdict comes back as this package's own refusal, in the
+        // core's vocabulary.
+        yield 'the core verdict, rendered here' => [
             static fn (): mixed => self::validate(static function (Builder $c): void {
                 $c->input('in')
                     ->keyBy(static fn (mixed $v): string => 'a')
                     ->keyBy(static fn (mixed $v): string => 'b')
                     ->into(Keyed::class);
             }),
-            'in: DuplicateKeyBy: declares keyBy(...) twice before one into(...)',
-        ];
-        // The key is evaluated on the final post-transform value, so it must be
-        // the last link before the `into(...)` that closes the chain.
-        yield 'a transform after the key it would feed' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')
-                    ->keyBy(static fn (mixed $v): string => 'a')
-                    ->map(static fn (mixed $v): mixed => $v)
-                    ->into(Keyed::class);
-            }),
-            'in: TransformAfterKeyBy: declares a transform after keyBy(...)',
-        ];
-        // The sink serializes the channel's own value, so nothing declared
-        // behind it can reshape what it already wrote. `flatMap` is one `map`,
-        // so it is refused by the same link.
-        yield 'a transform behind a plugin sink' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(Echoer::class)->sink('s')
-                    ->flatMap(static fn (mixed $v): array => [$v])
-                    ->into(Echoer::class, 'tail');
-            }),
-            'echoer: TransformAfterTerminal: declares a transform or keyBy(...) after a plugin sink',
-        ];
-        // The refusal both references raise from consumer wiring rather than
-        // chain extension — Rust's `attach_consumer` and Java's `attachEdge`.
-        // Both shapes were ACCEPTED here before this, leaving two consumer
-        // edges naming one procedure, so the value reached it twice.
-        yield 'an edge re-declared carrying a transform' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $edge = $c->input('in');
-                $edge->into(Echoer::class);
-                $edge->map(static fn (mixed $v): mixed => $v)->into(Echoer::class);
-            }),
-            'in: EdgeAlreadyWired: already feeds procedure `echoer`; an edge carries exactly one',
-        ];
-        yield 'a zero retry budget' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->retryMax(0)->into(Echoer::class)->sink('out');
-            }),
-            'declares retryMax(0)',
-        ];
-        yield 'a correction window without the tier' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->correctionWindow(5_000);
-                $c->input('in')->into(Echoer::class)->sink('out');
-            }),
-            'declares a correction window without effectivelyOnce',
-        ];
-        yield 'held outputs with no maximum delay' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->effectivelyOnce();
-                $c->outputsAtCheckpoint();
-                $c->input('in')->into(Echoer::class)->keyed()->sink('out');
-            }),
-            'declares outputsAtCheckpoint with no maximum delay',
-        ];
-        foreach ([
-            'checkpointAck' => static fn (Builder $c): mixed => $c->checkpointAck(),
-            'checkpointEvery' => static fn (Builder $c): mixed => $c->checkpointEvery(4),
-            'outputsAtCheckpoint' => static fn (Builder $c): mixed => $c->outputsAtCheckpoint(250),
-        ] as $option => $declare) {
-            yield "$option without the tier" => [
-                static fn (): mixed => self::validate(static function (Builder $c) use ($declare): void {
-                    $declare($c);
-                    $c->input('in')->into(Echoer::class)->keyed()->sink('out');
-                }),
-                'declares checkpoint acknowledgement without effectivelyOnce',
-            ];
-        }
-        yield 'a branch with one arm' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->into(Echoer::class)->branch(static fn ($e) => $e->sink('out'));
-            }),
-            'branch(...) requires at least two arms',
-        ];
-        yield 'a sink fed by an entry channel' => [
-            static fn (): mixed => self::validate(static function (Builder $c): void {
-                $c->input('in')->sink('out');
-            }),
-            'a plugin sink is fed by a procedure',
+            'topology rejected [DuplicateKeyBy]',
         ];
     }
 
@@ -253,6 +115,25 @@ final class AuthoringTest extends TestCase
         $this->expectExceptionMessage($defect);
 
         $declare();
+    }
+
+    /**
+     * And the same verdict as data: the core hands its refusal names out
+     * beside the rendered message, so nothing here reads them out of prose.
+     */
+    public function testARefusedDeclarationCarriesTheCoresOwnNames(): void
+    {
+        try {
+            self::validate(static function (Builder $c): void {
+                $c->input('in')
+                    ->keyBy(static fn (mixed $v): string => 'a')
+                    ->keyBy(static fn (mixed $v): string => 'b')
+                    ->into(Keyed::class);
+            });
+            self::fail('the core refuses two keys before one into');
+        } catch (DeclarationException $e) {
+            self::assertSame(['DuplicateKeyBy'], $e->refusals);
+        }
     }
 
     public function testAnOperativeWithoutTheAttributeIsRefused(): void
@@ -278,7 +159,7 @@ final class AuthoringTest extends TestCase
     public function testOneProcedureMentionedTwiceIsOneNode(): void
     {
         $spec = Diamond::spec();
-        Validate::spec($spec);
+        self::derived($spec);
 
         self::assertSame(['echoer', 'counter'], array_map(
             static fn ($node): string => $node->name,
@@ -295,7 +176,7 @@ final class AuthoringTest extends TestCase
     public function testANamedEdgeTerminatingOnASinkNamesTheChannelToo(): void
     {
         $spec = NamedSink::spec();
-        Validate::spec($spec);
+        self::derived($spec);
 
         self::assertSame(['in', 'input'], array_map(
             static fn ($channel): string => $channel->name,
@@ -311,7 +192,7 @@ final class AuthoringTest extends TestCase
     public function testAnUnnamedEdgeTerminatingOnASinkTakesTheProducingNodesName(): void
     {
         $spec = UnnamedSink::spec();
-        Validate::spec($spec);
+        self::derived($spec);
 
         self::assertSame(['in', 'counter'], array_map(
             static fn ($channel): string => $channel->name,
@@ -319,7 +200,6 @@ final class AuthoringTest extends TestCase
         ));
     }
 
-    /** Validate a graph declared inline. */
     /**
      * PHP does not inherit attributes, and taking that literally would make
      * `class Sub extends Base {}` silently single-entity with the default
@@ -361,6 +241,10 @@ final class AuthoringTest extends TestCase
         self::assertSame(3, $definition->decl->schemaVersion);
     }
 
+    /**
+     * The three checkpoint options each write their own raw flag now — the
+     * granularity is the core's to imply — so none may clear another.
+     */
     public function testTheCheckpointOptionsComposeInAnyOrderAndNoneClearsAnother(): void
     {
         $builder = new Builder('compose');
@@ -369,36 +253,66 @@ final class AuthoringTest extends TestCase
         $builder->checkpointAck();
         $builder->checkpointEvery(4);
 
-        self::assertSame(AckGranularity::Checkpoint, $builder->ackGranularity);
+        self::assertTrue($builder->checkpointAck);
         self::assertSame(4, $builder->checkpointEvery);
         self::assertSame(CheckpointOutputs::AtCheckpoint, $builder->checkpointOutputs);
         self::assertSame(250, $builder->checkpointMaxDelayMs);
     }
 
-    private static function validate(callable $channels): mixed
+    /**
+     * Submit a graph declared inline, and answer the core's derived
+     * declaration.
+     *
+     * A context of its own per call: `flz_core_check_class` registers nothing
+     * and a context is a plain allocation, so a case pays one rather than
+     * sharing a handle with the suites that make and free theirs.
+     *
+     * @return array<string, mixed>
+     */
+    private static function validate(callable $channels): array
     {
         $builder = new Builder('under_test');
         $channels($builder);
+        $builder->seal();
 
-        Validate::spec(new ClassSpec(
-            factoryId: 'under_test',
-            kind: 'stream',
-            persistent: true,
-            effectivelyOnce: $builder->effectivelyOnce,
-            ackGranularity: $builder->ackGranularity,
-            checkpointEvery: $builder->checkpointEvery,
-            checkpointOutputs: $builder->checkpointOutputs,
-            checkpointMaxDelayMs: $builder->checkpointMaxDelayMs,
-            correctionWindowMs: $builder->correctionWindowMs,
-            beyondWindowPolicy: $builder->beyondWindowPolicy,
-            compactAfterBytes: $builder->compactAfterBytes,
-            syncDurability: $builder->syncDurability,
-            procedures: $builder->procedures,
-            channels: $builder->channels,
-            chainIssues: $builder->chainIssues(),
-        ));
+        $core = Core::create();
 
-        return null;
+        try {
+            return Validate::spec(new ClassSpec(
+                factoryId: 'under_test',
+                kind: 'stream',
+                persistent: true,
+                effectivelyOnce: $builder->effectivelyOnce,
+                checkpointAck: $builder->checkpointAck,
+                checkpointEvery: $builder->checkpointEvery,
+                checkpointOutputs: $builder->checkpointOutputs,
+                checkpointMaxDelayMs: $builder->checkpointMaxDelayMs,
+                correctionWindowMs: $builder->correctionWindowMs,
+                beyondWindowPolicy: $builder->beyondWindowPolicy,
+                compactAfterBytes: $builder->compactAfterBytes,
+                syncDurability: $builder->syncDurability,
+                procedures: $builder->procedures,
+                channels: $builder->channels,
+            ), $core);
+        } finally {
+            $core->free();
+        }
+    }
+
+    /**
+     * One declared class's verdict, with a context of its own.
+     *
+     * @return array<string, mixed>
+     */
+    private static function derived(ClassSpec $spec): array
+    {
+        $core = Core::create();
+
+        try {
+            return Validate::spec($spec, $core);
+        } finally {
+            $core->free();
+        }
     }
 
     // -- one output channel per producing procedure --------------------------
@@ -409,28 +323,31 @@ final class AuthoringTest extends TestCase
     // the same producer, which the core resolves by first match
     // (`host/register.rs` `procedure_wiring`) and so silently truncates.
 
-    /** @return list<array{string, string, ?int, list<int>}> */
+    /**
+     * Read off the DERIVED declaration: the consumers, the plugin kind and the
+     * sink name are what the core made of the chains this builder recorded.
+     *
+     * @return list<array{string, string, ?int, list<int>, ?string}>
+     */
     private static function channelsOf(ClassSpec $spec): array
     {
         return array_map(
             static fn (array $c): array => [
                 $c['name'],
                 $c['kind'],
-                $c['producer'] ?? null,
-                $c['consumers'] ?? [],
+                $c['producer'],
+                array_map(static fn (array $e): int => $e['procedure'], $c['consumers']),
+                $c['sink'],
             ],
-            HostClassDecl::of($spec)['channels'],
+            self::derived($spec)['channels'],
         );
     }
 
     public function testAHeldEdgeWiredTwiceIsOneChannelWithTwoConsumers(): void
     {
-        $spec = FanOut::spec();
-        Validate::spec($spec);
-
         self::assertSame(
-            [['in', 'entry', null, [0]], ['counter', 'inter_proc', 0, [1, 2]]],
-            self::channelsOf($spec),
+            [['in', 'entry', null, [0], null], ['counter', 'inter_proc', 0, [1, 2], null]],
+            self::channelsOf(FanOut::spec()),
         );
     }
 
@@ -462,45 +379,28 @@ final class AuthoringTest extends TestCase
 
     public function testSinkReturnsTheEdgeSoAConsumerWiresBehindIt(): void
     {
-        $spec = Hybrid::spec();
-        Validate::spec($spec);
-
         self::assertSame(
-            [['in', 'entry', null, [0]], ['hybrid_indicator', 'inter_proc', 0, [1]]],
-            self::channelsOf($spec),
+            [
+                ['in', 'entry', null, [0], null],
+                ['hybrid_indicator', 'inter_proc', 0, [1], 'hybrid_indicators'],
+            ],
+            self::channelsOf(Hybrid::spec()),
         );
     }
 
-    public function testASecondSinkOnOneChannelIsRefused(): void
+    /** `keyed()` reaches the channel it was declared on, and the record. */
+    public function testKeyedReachesTheChannelOfAHybridSink(): void
     {
-        $this->expectExceptionMessage('declares a plugin sink more than once');
-        self::validate(static function (Builder $c): void {
-            $c->input('in')->into(Counter::class)->sink('out')->sink('again');
-        });
-    }
-
-    public function testKeyedIsRefusedWithoutAPluginSinkAndAcceptedWithOne(): void
-    {
-        $refused = null;
-        try {
-            self::validate(static function (Builder $c): void {
-                $c->input('in')->into(Counter::class)->named('mid')->keyed()->into(Echoer::class);
-            });
-        } catch (DeclarationException $e) {
-            $refused = $e->getMessage();
-        }
-        self::assertNotNull($refused);
-        self::assertStringContainsString('is declared keyed but has no plugin wire', $refused);
-
         $spec = KeyedHybrid::spec();
-        Validate::spec($spec);
+        self::derived($spec);
+
         self::assertTrue(HostClassDecl::of($spec)['channels'][1]['keyed']);
     }
 
     public function testATransformBeforeOneIntoReachesThatConsumerOnly(): void
     {
         $spec = PerEdgeTransform::spec();
-        Validate::spec($spec);
+        self::derived($spec);
 
         self::assertSame(
             [[1, 1], [2, 0]],
@@ -522,7 +422,7 @@ final class AuthoringTest extends TestCase
     public function testAWorkflowClassCarriesItsEffectivelyOnceDeclaration(): void
     {
         $spec = TierWorkflow::spec();
-        Validate::spec($spec);
+        self::derived($spec);
 
         self::assertTrue($spec->effectivelyOnce);
         self::assertArrayNotHasKey('effectively_once', HostClassDecl::of($spec));

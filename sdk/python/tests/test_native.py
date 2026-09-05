@@ -109,11 +109,12 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
     """A tier class under one checkpoint declaration, as the core reads it.
 
     Asserted against the core rather than against the builder's fields because
-    the core is what refuses: a declaration holding outputs at a checkpoint it
-    never acknowledges at is rejected at registration, so a builder that can
-    express it hands its author a class that cannot start.
+    the core is what refuses AND what implies: the builder writes each raw flag,
+    and the acknowledgement granularity a declaration registers under is derived
+    from any of them.
     """
     import flezha
+    from conftest import declare as submit
     from conftest import echo
     from flezha import graph
 
@@ -125,14 +126,18 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
             "tier_sink"
         )
 
-    graph.validate(operative.spec)
+    assert submit(operative)["ack_granularity"] == "checkpoint"
     return graph.to_host_class_decl(operative.spec)
 
 
 def test_holding_outputs_at_the_checkpoint_acknowledges_at_the_checkpoint() -> None:
     decl = _checkpoint_class("outputs_only", lambda c: c.outputs_at_checkpoint(1500))
-    assert decl["ack_granularity"] == "checkpoint"
+    assert decl["checkpoint_ack"] is False, "the flag is raw: nothing amends it"
+    assert decl["checkpoint_outputs"] == "at_checkpoint"
+    assert decl["checkpoint_max_delay_ms"] == 1500
 
+    # Registering is the assertion: the core implies the checkpoint
+    # acknowledgement from the outputs flag, and refuses the pair otherwise.
     core = native.Core.create()
     try:
         core.declare_class(json.dumps(decl).encode())

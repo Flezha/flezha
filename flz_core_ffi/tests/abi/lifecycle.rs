@@ -126,7 +126,7 @@ fn declares_and_starts(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_probe",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "in", "kind": "entry", "consumers": [0]}],
+        "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
         "procedures": [{"name": "abi_pass"}]
     }"#;
     assert_eq!(
@@ -401,8 +401,9 @@ fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Contro
         "sdk_lang": 2,"sdk_version":"0.1.0",
         "change_format_id": 4,
         "channels": [
-            {"name": "ein", "kind": "entry", "consumers": [0]},
-            {"name": "eout", "kind": "plugin", "producer": 0, "keyed": true}
+            {"name": "ein", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]},
+            {"name": "eout", "kind": "plugin", "producer": 0, "keyed": true,
+             "chains": [[{"link": "sink", "name": "eout"}]]}
         ],
         "procedures": [{
             "name": "eff_pass",
@@ -676,7 +677,7 @@ fn declares_the_dynamic_class(ctx: *mut FlzContext, controller: &Controller) {
     let decl = br#"{
         "factory_id": "abi_dyn",
         "sdk_lang": 1,"sdk_version":"0.1.0",
-        "channels": [{"name": "din", "kind": "entry", "consumers": [0]}],
+        "channels": [{"name": "din", "kind": "entry", "chains": [[{"link": "into", "procedure": 0}]]}],
         "procedures": [{"name": "dyn_pass", "entity_mode": "dynamic"}]
     }"#;
     assert_eq!(

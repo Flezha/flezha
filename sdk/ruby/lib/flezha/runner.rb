@@ -178,7 +178,10 @@ module Flezha
     def declare_all
       @classes.each do |klass|
         spec = klass.spec
-        Graph.validate(spec)
+        # The verdict before the registration: the core judges the record and
+        # this SDK renders it, so an author meets a declaration refusal rather
+        # than a native failure at the first connection.
+        Graph.validate(spec, @core)
         @registry.add(spec)
         @core.declare_class(JSON.generate(Graph.to_host_class_decl(spec)))
       end

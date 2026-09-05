@@ -51,10 +51,6 @@ O_co = TypeVar("O_co", covariant=True)
 Clock = str
 EntityMode = str
 
-#: The largest mailbox a procedure may declare. The core refuses more; this is
-#: where an author hears about it, with the range in the message.
-MAX_MAILBOX_CAPACITY = 1_048_576
-
 
 class _ClassHandler(Protocol[I_contra, O_co]):
     """The shape the class spelling of a procedure has."""
@@ -286,7 +282,6 @@ class Procedure(Generic[I, O]):
             )
         _refuse_unannotated(self)
         self._validate_clock()
-        self._validate_entities()
         self._validate_schema()
         # A state that cannot be encoded cannot be restored, and the first
         # anyone would learn of it is a restart. Walk the declared starting
@@ -295,10 +290,11 @@ class Procedure(Generic[I, O]):
             _codec.assert_representable(f"{self.name}.state", self.build_initial_state(None))
 
     def _validate_clock(self) -> None:
-        """The declared clock against what it needs to evaluate.
+        """The extractor a clock needs, which the record cannot carry.
 
-        The core evaluates the declared clock per input, so a clock with
-        nothing to evaluate is refused here rather than at the first item.
+        The declaration states the clock and never whether the host supplied an
+        `event_time` callable, so this pair is the SDK's to refuse; every other
+        clock rule is the core's.
         """
         if self.clock == "event_time" and self.event_time is None:
             self._refuse(
@@ -309,30 +305,6 @@ class Procedure(Generic[I, O]):
             self._refuse(
                 f"declares an event_time extractor with clock `{self.clock}`; the extractor is "
                 f"only consulted by an event_time clock, so one of the two is not what was meant"
-            )
-        if self.clock == "logical" and self.initial_state is None:
-            self._refuse(
-                "declares a logical clock but no state; logical time IS the durable change "
-                "sequence, which never advances for a procedure that records no changes"
-            )
-
-    def _validate_entities(self) -> None:
-        """The entity mode against the declarations it needs."""
-        if self.entity_mode == "static" and self.entities_for is None:
-            self._refuse(
-                "declares a static key set without an entities_for; static keying needs the "
-                "method that says which declared entities an input belongs to"
-            )
-        capacity = self.mailbox_capacity
-        if capacity is not None and not (1 <= capacity <= MAX_MAILBOX_CAPACITY):
-            self._refuse(
-                f"declares mailbox_capacity {capacity}; capacity must be in "
-                f"1..{MAX_MAILBOX_CAPACITY}"
-            )
-        if self.max_entities == 0:
-            self._refuse(
-                "declares max_entities 0; a dynamic procedure that may hold no entity can "
-                "process nothing"
             )
 
     def _validate_schema(self) -> None:

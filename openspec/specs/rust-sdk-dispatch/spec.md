@@ -684,3 +684,23 @@ reads counts, never dropped in silence.
 - **THEN** it SHALL carry the metadata it was framed with, so a keyed or
   identity-stamped output is not replayed with an empty metadata map
 
+### Requirement: The typed builder submits its topology to the reference check
+
+The Rust SDK's builder state SHALL write the same declaration record an erased host
+writes — closures held aside per chain, never in the record — SHALL take its verdict from
+`flz_core::host::register::check`, and SHALL materialise its typed `OperativeTopology`
+from the derived declaration, attaching closures by channel and chain. `TopologyIssue`
+SHALL be the core's type, re-exported; the builder SHALL raise no variant of its own. The
+compile-time edge refusals and their `tests/ui` fixtures SHALL stay as they are.
+
+#### Scenario: The typed and erased paths cannot drift
+
+- **WHEN** a refusal is added to the core's vocabulary with its fixture row
+- **THEN** the typed builder refuses it with no change to `sdk/rust`, and its refusal
+  message lists the same sentence an erased host receives
+
+#### Scenario: A well-formed typed topology derives to the reference bytes
+
+- **WHEN** the reference fixtures `hybrid_channel` and `commit_block_chain` are built through the typed builder
+- **THEN** the derived declaration equals the seven-column lines of `test/fixtures/reference_topologies.txt`
+

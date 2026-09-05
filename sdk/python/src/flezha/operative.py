@@ -97,7 +97,7 @@ class Operative:
             procedures=builder.procedures,
             channels=builder.channels,
             effectively_once=builder.effectively_once_flag,
-            ack_granularity=builder.ack_granularity,
+            checkpoint_ack=builder.checkpoint_ack_flag,
             checkpoint_every=builder.checkpoint_every_value,
             checkpoint_outputs=builder.checkpoint_outputs_value,
             checkpoint_max_delay_ms=builder.checkpoint_max_delay_ms_value,
@@ -105,7 +105,6 @@ class Operative:
             beyond_window_policy=builder.beyond_window_policy_value,
             compact_after_bytes=builder.compact_after_bytes_value,
             sync_durability=builder.sync_durability_flag,
-            chain_issues=builder.chain_issues(),
         )
 
     def _workflow_spec(self, persistent: bool, options: dict[str, Any]) -> ClassSpec:
@@ -120,7 +119,6 @@ class Operative:
             effectively_once=builder.effectively_once_flag,
             sync_durability=bool(options.pop("sync_durability", False))
             or builder.sync_durability_flag,
-            chain_issues=builder.chain_issues(),
             workflow={
                 "loop_mode": options.pop("loop_mode", "once"),
                 "rollback_mode": options.pop("rollback_mode", "all_or_nothing"),

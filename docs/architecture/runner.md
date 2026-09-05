@@ -399,6 +399,14 @@ The rule, normative for every binding:
   protocol and its metadata keys, every default (overflow policy, retry ladder, mailbox
   capacity, heartbeat keys), and the fixtures that prove them (the regression and round-trip
   bench factories, the e2e runtime matrix).
+  **What a topology may be is no longer one of those things.** A builder records the links its
+  author declared and submits the record to `flz_core::host::register::check`, which holds the
+  named refusals and the derivation rules once
+  ([`../sdk/conformance.md`](../sdk/conformance.md) § The refusal table). So a new refusal is
+  one variant and one fixture row, not an edit to seven builders — and the Elixir SDK, which
+  inherits nothing, re-expresses the same check against the same fixture and is measured by the
+  same conformance run. The rule still binds; what it now rides on is a fixture rather than
+  seven diffs.
 - **A host that brings its own workers brings their replacement.** Whatever a host's unit of
   work is — a poll thread, a fetcher, a per-Entity process — one that leaves for any reason
   other than shutdown is replaced without operator action, and its departure never consumes

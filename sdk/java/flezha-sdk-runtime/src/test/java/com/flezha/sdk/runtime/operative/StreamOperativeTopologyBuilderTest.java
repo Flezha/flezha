@@ -72,7 +72,8 @@ class StreamOperativeTopologyBuilderTest {
             assertThatThrownBy(() ->
                             StreamOperativeTopologyBuilder.build(new MissingEntitiesForOverriddenStreamOperative()))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
-                    .hasMessageContaining("entitiesFor");
+                    .hasMessageContaining("EntitiesForMissing")
+                    .hasMessageContaining("declares non-empty entity_keys() but does not override entities_for");
         }
 
         @Test
@@ -370,7 +371,8 @@ class StreamOperativeTopologyBuilderTest {
                             .into(SingleProcedure.class)
                             .branch(b -> b.into(GraphStage1.class))))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
-                    .hasMessageContaining("at least two arms");
+                    .hasMessageContaining("BranchTooFewArms")
+                    .hasMessageContaining("branch(...) requires at least two arms; 1 given");
         }
 
         @Test
@@ -400,6 +402,7 @@ class StreamOperativeTopologyBuilderTest {
                         validated.into(GraphStage1.class);
                     }))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("NodeIdentityCollision")
                     .hasMessageContaining("graph_stage1");
         }
 
@@ -418,6 +421,7 @@ class StreamOperativeTopologyBuilderTest {
                                     .into(SingleProcedure.class)
                                     .into(GraphStage1.class)))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("DuplicateChannel")
                     .hasMessageContaining("single_procedure");
         }
 
@@ -429,7 +433,8 @@ class StreamOperativeTopologyBuilderTest {
                             .into(GraphStage2.class)
                             .into(GraphStage1.class)))
                     .isInstanceOf(StreamOperativeConfigurationException.class)
-                    .hasMessageContaining("cycle");
+                    .hasMessageContaining("Cycle")
+                    .hasMessageContaining("is on a cycle");
         }
 
         @Test
@@ -541,6 +546,73 @@ class StreamOperativeTopologyBuilderTest {
             var all = new java.util.ArrayList<String>(channels);
             all.addAll(procs);
             return all;
+        }
+    }
+
+    /**
+     * The refusals Java reports by NAME only because the core holds them: the
+     * six shapes this SDK refused in its own words, or accepted, before the
+     * builder started submitting its record. A verdict lists every refusal it
+     * found, so a sibling name alongside the asserted one is expected.
+     */
+    @Nested
+    class CoreRefusals {
+
+        @Test
+        @DisplayName("a zero correction window, and the two things a window rests on")
+        void correctionWindowRefusals() {
+            StreamOperativeConfigurationException refused =
+                    catchConfigException(() -> StreamOperativeTopologyBuilder.build("r1", c -> {
+                        c.correctionWindow(0);
+                        c.input(String.class, "in").into(SingleProcedure.class);
+                    }));
+            assertThat(refused.refusals())
+                    .as("`correctionWindow(0)` is the one shape Java accepted before the core held the rules")
+                    .contains("CorrectionWindowZero", "CorrectionWithoutTier", "CorrectionWithoutEventTime");
+            assertThat(refused).hasMessageContaining("a zero window can correct nothing");
+        }
+
+        @Test
+        @DisplayName("a zero retry budget is refused by name")
+        void retryMaxZeroRefused() {
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(
+                            "r2", c -> c.input(String.class, "in").retryMax(0).into(SingleProcedure.class)))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("RetryMaxZero")
+                    .hasMessageContaining("channel `in` declared retry_max = 0");
+        }
+
+        @Test
+        @DisplayName("a second sink on one channel is refused by name; the first still registered")
+        void duplicatePluginSinkRefused() {
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build("r3", c -> c.input(String.class, "in")
+                            .into(SingleProcedure.class)
+                            .named("egress")
+                            .sink("plugin_a")
+                            .sink("plugin_b")))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("DuplicatePluginSink")
+                    .hasMessageContaining("channel `egress` was declared with `sink(...)` more than once");
+        }
+
+        @Test
+        @DisplayName("a plugin-bound channel that is not keyed is refused under the tier")
+        void unkeyedChannelUnderTheTierRefused() {
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build("r4", c -> {
+                        c.effectivelyOnce();
+                        c.input(String.class, "in")
+                                .into(SingleProcedure.class)
+                                .named("egress")
+                                .sink("plugin_a");
+                    }))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining("UnkeyedChannelUnderEffectivelyOnce")
+                    .hasMessageContaining("must opt in with .keyed()");
+        }
+
+        private StreamOperativeConfigurationException catchConfigException(Runnable build) {
+            return (StreamOperativeConfigurationException) org.assertj.core.api.Assertions.catchThrowableOfType(
+                    StreamOperativeConfigurationException.class, build::run);
         }
     }
 

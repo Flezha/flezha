@@ -6,7 +6,6 @@ keying (`key_by`) on the graph-authoring surface: their evaluation point, their
 composition into a single edge closure, their replay-determinism and purity
 contract, and the build-time refusals.
 ## Requirements
-
 ### Requirement: Stream handles SHALL offer value transforms that are not Procedures
 
 Every SDK SHALL offer `map`, `filter`, and `flat_map` / `flatMap` on the
@@ -193,3 +192,25 @@ four, because `Procedure<Input = T>` is checked at compile time.
 
 - **WHEN** a Rust operative declares `.map(Ticker::from).into::<P>()` where `P::Input` is not `Ticker`
 - **THEN** the program SHALL fail to compile
+
+### Requirement: The definition-time refusals are rows of the reference fixture
+
+The refusals this capability names SHALL be judged by the reference check over the
+ordered links of each chain, never by a builder of its own — `KeyByOnUnkeyableTarget`,
+`DuplicateKeyBy`, `TransformAfterTerminal`, `TransformAfterKeyBy`,
+`DanglingTransformChain`, `EdgeAlreadyWired` — and each SHALL be one row of
+`test/fixtures/reference_topologies.txt` together with the `ok` row that pins the legal
+transform-free fan-in as one consumer edge. An SDK SHALL prove the set by its conformance
+run over those rows, with no refusal test of its own per name.
+
+#### Scenario: The link order is what the check reads
+
+- **WHEN** a chain records a `key` link followed by a `transform` link before `into`
+- **THEN** the check refuses `TransformAfterKeyBy` naming the channel, in every SDK,
+  because the record carries the order the builder was called in
+
+#### Scenario: The fan-in no-op derives one edge in every SDK
+
+- **WHEN** the `ok` row wires the same procedure from one channel twice with no link on either declaration
+- **THEN** every SDK's derived declaration lists that consumer once
+

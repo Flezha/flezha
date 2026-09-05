@@ -382,3 +382,43 @@ statically typed SDK cannot demote it to a runtime check by omission.
 - **WHEN** a fixture asserts that a wiring does not compile
 - **THEN** the suite SHALL also establish that the line fails for the declared reason rather than for any error at all
 
+### Requirement: Every topology is judged once, by the reference check, from the reference fixture
+
+Every SDK's builder SHALL submit the topology it was given, as a record of the authoring
+calls (the channels, the ordered links of each chain — transform, key, sink, name,
+consumer — the merges and branches, the class flags and the procedure facts), to one
+reference check that holds every named refusal once: `flz_core::host::register::check`
+for the Rust, Java, Node, Python, Ruby and PHP SDKs, and the Elixir SDK's re-expression of
+the same check, written from the same fixture, since it inherits nothing from the core.
+The refusal vocabulary SHALL be the `TopologyIssue` set — every name and sentence the
+reference builder carries — and SHALL live in the core, with a builder carrying no rule of
+its own beside it. `test/fixtures/reference_topologies.txt` SHALL be the contract: one row
+per refusal naming the authoring steps that produce it and the surface it needs, and one
+row per well-formed shape whose derived declaration the row states; an SDK passes this
+requirement by one conformance run over every row, not by a set of tests of its own.
+
+#### Scenario: A refusal absent from one SDK is impossible
+
+- **WHEN** a topology that one SDK refuses by a reference name is authored in any other SDK
+- **THEN** registration SHALL refuse it with the same name and sentence, because the
+  verdict is the core's, or the Elixir SDK's re-expression proven by the same fixture row
+
+#### Scenario: A new refusal is one variant and one row
+
+- **WHEN** a refusal is added to the vocabulary
+- **THEN** the change adds one variant, one fixture row and no builder code, and every
+  SDK's conformance run covers the row with no test edit
+
+#### Scenario: A surface an SDK does not carry is skipped by name
+
+- **WHEN** a fixture row needs `merge` or `branch` and an SDK's documented subset carries neither
+- **THEN** that SDK's run SHALL report the row as skipped for that surface, and the seam
+  test SHALL count the skip against the documented subset rather than let the row drop
+
+#### Scenario: The checkpoint flags imply the granularity in one place
+
+- **WHEN** a class declares `checkpoint_ack`, `checkpoint_every`, `outputs_at_checkpoint`
+  or `checkpoint_max_delay_ms` in any SDK
+- **THEN** the record carries the flags as written and the reference check derives the
+  acknowledgement granularity and judges its preconditions, with no per-SDK helper doing so
+

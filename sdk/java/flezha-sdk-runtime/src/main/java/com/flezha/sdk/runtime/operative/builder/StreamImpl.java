@@ -4,8 +4,8 @@ import com.flezha.sdk.channel.Channel;
 import com.flezha.sdk.channel.EdgeStream;
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.channel.Stream;
-import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.runtime.core.HostLink;
 import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder.ChannelEntry;
 import java.util.List;
 import java.util.function.Consumer;
@@ -95,10 +95,7 @@ final class StreamImpl<T> extends Stream<T> implements EdgeSite {
     @Nonnull
     protected Stream<T> branchArms(@Nonnull List<Consumer<Stream<T>>> arms) {
         owner.checkMutable();
-        if (arms.size() < 2) {
-            owner.error(StreamOperativeConfigurationException.branchTooFewArms(arms.size())
-                    .getMessage());
-        }
+        owner.closeChain(channelId(), null, HostLink.branch(arms.size()));
         for (Consumer<Stream<T>> arm : arms) {
             arm.accept(this);
         }
@@ -109,6 +106,10 @@ final class StreamImpl<T> extends Stream<T> implements EdgeSite {
     @Nonnull
     public Stream<T> named(@Nonnull String name) {
         owner.checkMutable();
+        // Recorded as its own chain, and applied to the builder's derived
+        // default so this operative's own diagnostics name the channel the
+        // author does. The core reads the link, for EVERY terminator (KI-120).
+        owner.closeChain(channelId(), null, HostLink.named(name));
         owner.channel(channelId()).name = name;
         return this;
     }
@@ -166,13 +167,13 @@ final class StreamImpl<T> extends Stream<T> implements EdgeSite {
     public Stream<T> sink(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
         owner.checkMutable();
         ChannelEntry entry = owner.channel(channelId());
-        if (entry.pluginSinkName != null) {
-            owner.error(StreamOperativeConfigurationException.duplicatePluginSink(entry.name)
-                    .getMessage());
-            return this;
+        owner.closeChain(channelId(), null, HostLink.sink(pluginName));
+        // First call wins on the builder's own side; a second sink is recorded
+        // and the core refuses the class, so nothing is registered either way.
+        if (entry.pluginSinkName == null) {
+            entry.pluginSinkName = pluginName;
+            entry.pluginSinkSerializer = value -> serializer.apply(cast(value));
         }
-        entry.pluginSinkName = pluginName;
-        entry.pluginSinkSerializer = value -> serializer.apply(cast(value));
         return this;
     }
 

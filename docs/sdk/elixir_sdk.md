@@ -147,8 +147,18 @@ sink("relay_out")` reaches a forward target's `input` entry; the user's metadata
 frame. Entity mode is derived: non-empty `entity_keys/0` → static; a keyed edge into a
 keyless procedure → dynamic; else single. Refusals accumulate into one
 `{:error, {:invalid_topology, issues}}` — e.g. `TransformAfterKeyBy`, `RetryMaxZero`,
-`KeyedInterProcedureChannel` (`keyed/1` reaching a procedure before any sink),
+`KeyedChannelWithoutPluginWire` (`keyed/1` on a channel with no sink),
 `DeferredBuilderSurface` (names the operative module).
+
+The names are the reference vocabulary every SDK answers with
+(`flz_core/src/host/issue.rs`), and this SDK is the one that re-expresses rather
+than submits: it is its own core and inherits nothing from `flz_core`, so what
+it shares is the fixture — `test/fixtures/reference_topologies.txt`, one row per
+refusal, driven against every SDK by the same conformance run
+([`conformance.md`](conformance.md) § The refusal table). Three names are absent
+here and the fixture's `needs` column says why: `BranchTooFewArms`,
+`MergeTooFewSources` and `DuplicateMergeSource` need a `branch` or a `merge`,
+and the v1 subset carries neither.
 
 Six calls declare the class rather than an edge and answer the token so they pipe in any
 order: `effectively_once/1`, `checkpoint_ack/1` / `checkpoint_every/2` /
@@ -156,7 +166,7 @@ order: `effectively_once/1`, `checkpoint_ack/1` / `checkpoint_every/2` /
 `correction_window/2` / `beyond_window_policy/2`, which amend one correction policy so that
 declaring a policy alone leaves a zero window — refused, because a fate for a window nobody
 declared is an authoring error. Their refusals are `CheckpointAckWithoutTier`,
-`CheckpointEveryZero`, `CheckpointMaxDelayZero`, `UnkeyedChannelUnderEffectivelyOnce`
+`CheckpointEveryZero`, `AtCheckpointWithoutMaxDelay`, `UnkeyedChannelUnderEffectivelyOnce`
 (naming the sink's channel), `DroppingPolicyUnderEffectivelyOnce` (naming the node's inbound
 channel and the policy), `CorrectionWithoutTier`, `CorrectionWithoutEventTime` (naming a
 Procedure and the clock it declares) and `CorrectionWindowZero`.

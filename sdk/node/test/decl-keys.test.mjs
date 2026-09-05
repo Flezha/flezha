@@ -9,11 +9,18 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  ACTIVATION_SCHEMA_VERSION,
   defineOperative,
   defineProcedure,
   defineWorkflow,
+  loadNative,
   toHostClassDecl,
+  validate,
 } from '../dist/esm/index.js';
+
+// The derived table below is the core's answer, so this file needs the process
+// context `validate` submits through.
+loadNative().contextNew(ACTIVATION_SCHEMA_VERSION);
 
 const FIXTURE = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -175,7 +182,7 @@ test('the builder invents no key the core never learned', () => {
 
 const REFUSED_ON_WORKFLOW = [
   'effectively_once',
-  'ack_granularity',
+  'checkpoint_ack',
   'checkpoint_every',
   'checkpoint_outputs',
   'checkpoint_max_delay_ms',
@@ -226,21 +233,25 @@ function goldenLines(topology) {
     .filter((line) => line.startsWith(`${topology} |`));
 }
 
-/** The declaration rendered in the golden's columns, one line per channel. */
+/**
+ * The DERIVED declaration rendered in the golden's columns, one line per
+ * channel. The consumers, the kind after the wiring rule, the `named` override
+ * and the sink are all the core's answer to the record this builder submitted.
+ */
 function topologyLines(topology, spec) {
-  const decl = toHostClassDecl(spec);
-  return decl.channels.map((channel, index) => {
-    const consumers = channel.consumers ?? [];
-    return [
+  return validate(spec).channels.map((channel) =>
+    [
       topology,
-      index,
+      channel.index,
       channel.name,
       channel.kind,
       channel.producer ?? '-',
-      consumers.length > 0 ? consumers.join(',') : '-',
-      spec.channels[index].sink ?? '-',
-    ].join(' | ');
-  });
+      channel.consumers.length > 0
+        ? channel.consumers.map((edge) => edge.procedure).join(',')
+        : '-',
+      channel.sink ?? '-',
+    ].join(' | '),
+  );
 }
 
 const bytes = (value) => Buffer.from(String(value), 'utf8');

@@ -758,3 +758,25 @@ replayed ahead of anything its replacement writes.
 - **THEN** the frame SHALL be held and replayed on the next bound stream, and
   SHALL NOT be dropped behind a log line
 
+### Requirement: The Elixir SDK re-expresses the reference check from the reference fixture
+
+`Flezha.SDK.Topology.build/1` SHALL judge a topology by the same three stages the core's
+check runs — the ordered links of each chain, the derivation, the topology and class
+facts — over a record of the same shape, refusing with the reference names and sentences
+as `{:error, {:invalid_topology, issues}}`, since the Elixir SDK inherits nothing from
+`flz_core`. It SHALL carry every reference name except those whose surface the v1 subset
+does not author (`branch`, `merge`), which the fixture rows name under `needs` and the
+conformance run skips by name. The single checkpoint implication site SHALL remain
+`Flezha.SDK.Channels`, proven by the same fixture rows.
+
+#### Scenario: A keyed channel without a plugin wire is refused
+
+- **WHEN** a channel is declared `keyed` and no `sink` closes it
+- **THEN** `build/1` returns `{:error, {:invalid_topology, [KeyedChannelWithoutPluginWire ...]}}`
+
+#### Scenario: A merge row is skipped, not silently passed
+
+- **WHEN** the Elixir interpreter reaches a row whose `needs` is `merge`
+- **THEN** it reports the row as skipped for `merge`, and the seam test accepts the skip
+  only while the documented subset carries no `merge`
+

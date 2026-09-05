@@ -1,9 +1,12 @@
-"""The authoring surface, and the registration-time refusals behind it.
+"""The authoring surface, and what the builder still refuses itself.
 
-Every defect class the authoring contract names has a case here. Registration
-refusal is what Python has in place of the Rust SDK's compile-time refusal for
-the defects a type checker cannot see; the ones it *can* see are proved by
-``test_typing.py``.
+Every topology rule now lives in ``flz_core::host::register::check``, and
+``test/fixtures/reference_topologies.txt`` is where each one's case lives — one
+row per refusal, read by every SDK's conformance run. What is left here is the
+authoring surface: the shape a declaration builds, the names it derives, which
+closure reaches which edge, and the defects a procedure's own declaration is
+refused for when the decorator builds it. The ones a type checker can see are
+proved by ``test_typing.py``.
 """
 
 from __future__ import annotations
@@ -14,13 +17,22 @@ from dataclasses import dataclass, field
 import pytest
 
 import flezha
-from conftest import Bumped, Counter, count_up, demo, echo
+from conftest import Bumped, Counter, count_up, declare, demo, echo
 from flezha import graph
 from flezha.errors import DeclarationError, UnrepresentableValueError
 
 
-def declare(operative: flezha.Operative) -> None:
-    graph.validate(operative.spec)
+def _derived(operative: flezha.Operative) -> list[tuple[object, ...]]:
+    """The channels the core derived, as ``(name, kind, producer, consumers)``."""
+    return [
+        (
+            channel["name"],
+            channel["kind"],
+            channel["producer"],
+            [edge["procedure"] for edge in channel["consumers"]],
+        )
+        for channel in declare(operative)["channels"]
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +109,11 @@ def test_two_unnamed_mentions_of_one_procedure_are_one_node() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Refusals
+# ---------------------------------------------------------------------------
+
+
 def test_an_unannotated_parameter_is_refused_naming_it() -> None:
     with pytest.raises(DeclarationError) as caught:
 
@@ -106,58 +123,6 @@ def test_an_unannotated_parameter_is_refused_naming_it() -> None:
 
     assert "order" in str(caught.value)
     assert "annotation" in str(caught.value)
-
-
-def test_a_cycle_is_refused_naming_the_node() -> None:
-    @flezha.procedure
-    def a(value: str) -> str:
-        return value
-
-    @flezha.procedure
-    def b(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("cyclic")
-    def cyclic(c: flezha.Channels) -> None:
-        node_a = c.input("in").into(a)
-        node_b = node_a.named("a_b").into(b)
-        node_b.named("b_a").into(a)
-
-    with pytest.raises(DeclarationError, match="cycle"):
-        declare(cyclic)
-
-
-def test_a_stream_with_no_entry_channel_is_refused() -> None:
-    @flezha.stream_operative("no_entry")
-    def no_entry(c: flezha.Channels) -> None:
-        return None
-
-    with pytest.raises(DeclarationError, match="no entry channel"):
-        declare(no_entry)
-
-
-def test_an_entry_channel_with_no_consumer_is_refused() -> None:
-    @flezha.stream_operative("dangling")
-    def dangling(c: flezha.Channels) -> None:
-        c.input("in")
-
-    with pytest.raises(DeclarationError, match="names no consumer"):
-        declare(dangling)
-
-
-def test_a_duplicate_plugin_sink_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("twice")
-    def twice(c: flezha.Channels) -> None:
-        node = c.input("in").into(one)
-        node.sink("same")
-        node.sink("same")
-
-    with pytest.raises(DeclarationError, match="more than once"):
-        declare(twice)
 
 
 def test_a_node_identity_collision_is_refused() -> None:
@@ -179,60 +144,9 @@ def test_a_node_identity_collision_is_refused() -> None:
         declare(collision)
 
 
-def test_a_keyed_channel_without_a_plugin_wire_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.procedure
-    def two(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("keyed_edge")
-    def keyed_edge(c: flezha.Channels) -> None:
-        c.input("in").into(one).keyed().named("mid").into(two).sink("out")
-
-    with pytest.raises(DeclarationError, match="no plugin wire"):
-        declare(keyed_edge)
-
-
-def test_a_tier_channel_that_is_not_keyed_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("tiered")
-    def tiered(c: flezha.Channels) -> None:
-        c.effectively_once()
-        c.input("in").into(one).sink("out")
-
-    with pytest.raises(DeclarationError, match="must opt in with keyed"):
-        declare(tiered)
-
-
-@pytest.mark.parametrize(
-    "option",
-    [
-        lambda c: c.checkpoint_ack(),
-        lambda c: c.checkpoint_every(4),
-        lambda c: c.outputs_at_checkpoint(250),
-    ],
-    ids=["checkpoint_ack", "checkpoint_every", "outputs_at_checkpoint"],
-)
-def test_a_checkpoint_option_without_the_tier_is_refused(option) -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("ack")
-    def ack(c: flezha.Channels) -> None:
-        option(c)
-        c.input("in").into(one).keyed().sink("out")
-
-    with pytest.raises(DeclarationError, match="checkpoint acknowledgement"):
-        declare(ack)
-
-
+# KI-122: three options, one implication. Each writes its own raw flag and the
+# core derives the acknowledgement granularity from any of them, so no order of
+# calls can clear another's.
 def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -> None:
     @flezha.procedure
     def one(value: str) -> str:
@@ -246,55 +160,45 @@ def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -
         c.checkpoint_every(4)
         c.input("in").into(one).keyed().sink("out")
 
-    declare(compose)
+    assert declare(compose)["ack_granularity"] == "checkpoint"
     decl = graph.to_host_class_decl(compose.spec)
 
-    assert decl["ack_granularity"] == "checkpoint"
+    assert decl["checkpoint_ack"] is True
     assert decl["checkpoint_every"] == 4
     assert decl["checkpoint_outputs"] == "at_checkpoint"
     assert decl["checkpoint_max_delay_ms"] == 250
 
 
-def test_a_correction_window_without_its_preconditions_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
+# The verdict itself: one exception carrying every name the core answered with.
+def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
+    @flezha.stream_operative("edge_already_wired")
+    def already_wired(c: flezha.Channels) -> None:
+        edge = c.input("in")
+        edge.into(echo)
+        edge.map(lambda value: f"{value}!").into(echo)
 
-    @flezha.stream_operative("window")
-    def window(c: flezha.Channels) -> None:
-        c.correction_window(1000)
-        c.input("in").into(one).sink("out")
-
-    with pytest.raises(DeclarationError, match="without effectively_once"):
-        declare(window)
-
-
-def test_a_correction_window_without_an_event_time_clock_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("window_no_clock")
-    def window_no_clock(c: flezha.Channels) -> None:
-        c.effectively_once().correction_window(1000)
-        c.input("in").into(one).keyed().sink("out")
-
-    with pytest.raises(DeclarationError, match="no procedure declares an event_time clock"):
-        declare(window_no_clock)
+    with pytest.raises(DeclarationError) as caught:
+        declare(already_wired)
+    assert caught.value.refusals == ["EdgeAlreadyWired"]
+    assert "topology rejected [EdgeAlreadyWired]" in str(caught.value)
+    assert "already feeds procedure `echo`" in str(caught.value)
 
 
-def test_a_branch_with_one_arm_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
+# The record carries ``change_is_nochange`` per procedure: a handler that folds
+# no change has the empty Change type, and a logical clock over it never
+# advances. The refusal is the core's ``UnservableClock``; what is asserted here
+# is that this builder writes the fact it reads.
+def test_a_procedure_that_folds_no_change_declares_it() -> None:
+    @flezha.stream_operative("nochange")
+    def nochange(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("out")
 
-    @flezha.stream_operative("thin_branch")
-    def thin_branch(c: flezha.Channels) -> None:
-        c.input("in").branch(lambda edge: edge.into(one).sink("out"))
-
-    with pytest.raises(DeclarationError, match="at least two arms"):
-        # Reading `.spec` is what builds the graph, so the access is the trigger.
-        _ = thin_branch.spec
+    declare(nochange)
+    folds_nothing = graph.to_host_class_decl(nochange.spec)["procedures"][0]
+    assert folds_nothing["change_is_nochange"] is True
+    folds = graph.to_host_class_decl(demo.spec)["procedures"][1]
+    assert folds["name"] == "count_up"
+    assert folds["change_is_nochange"] is False
 
 
 def test_an_event_time_clock_without_an_extractor_is_refused() -> None:
@@ -322,46 +226,6 @@ def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
 
     with pytest.raises(DeclarationError, match="only consulted by an event_time clock"):
         flezha.procedure(Timed)
-
-
-def test_a_static_key_set_without_entities_for_is_refused() -> None:
-    class Static:
-        def process(self, value: dict[str, str]) -> dict[str, str]:
-            return value
-
-    with pytest.raises(DeclarationError, match="without an entities_for"):
-        flezha.procedure(entity_keys=["a", "b"])(Static)
-
-
-def test_a_dynamic_consumer_without_a_key_by_is_refused() -> None:
-    @flezha.procedure(dynamic_entities=True)
-    def keyed(value: dict[str, str]) -> dict[str, str]:
-        return value
-
-    @flezha.stream_operative("dyn")
-    def dyn(c: flezha.Channels) -> None:
-        c.input("in").into(keyed).sink("out")
-
-    with pytest.raises(DeclarationError, match="without a key_by"):
-        declare(dyn)
-
-
-def test_a_key_by_into_a_static_procedure_is_refused() -> None:
-    class Static:
-        def process(self, value: dict[str, str]) -> dict[str, str]:
-            return value
-
-        def entities_for(self, value: dict[str, str]) -> list[str]:
-            return ["a"]
-
-    static = flezha.procedure(entity_keys=["a", "b"])(Static)
-
-    @flezha.stream_operative("both_keyings")
-    def both_keyings(c: flezha.Channels) -> None:
-        c.input("in").key_by(lambda value: value["k"]).into(static).sink("out")
-
-    with pytest.raises(DeclarationError, match="declare one or the other"):
-        declare(both_keyings)
 
 
 def test_apply_change_without_initial_state_is_refused() -> None:
@@ -412,51 +276,6 @@ def test_a_run_body_workflow_declares_no_channels() -> None:
     declare(saga)
 
 
-def test_sync_durability_on_a_stream_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("sync_stream")
-    def sync_stream(c: flezha.Channels) -> None:
-        c.sync_durability()
-        c.input("in").into(one).sink("out")
-
-    with pytest.raises(DeclarationError, match="sync_durability on a stream class"):
-        declare(sync_stream)
-
-
-def test_retry_max_zero_is_refused() -> None:
-    @flezha.procedure
-    def one(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("no_attempts")
-    def no_attempts(c: flezha.Channels) -> None:
-        c.input("in").retry_max(0).into(one).sink("out")
-
-    with pytest.raises(DeclarationError, match="at least one attempt"):
-        declare(no_attempts)
-
-
-def test_an_unreachable_procedure_is_refused() -> None:
-    @flezha.procedure
-    def wired(value: str) -> str:
-        return value
-
-    @flezha.procedure
-    def orphan(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("orphaned")
-    def orphaned(c: flezha.Channels) -> None:
-        c.input("in").into(wired).sink("out")
-        c.node_for(orphan)
-
-    with pytest.raises(DeclarationError, match="not reachable"):
-        declare(orphaned)
-
-
 def test_a_valid_graph_passes() -> None:
     declare(demo)
     assert [node.name for node in demo.spec.procedures] == ["echo", "count_up"]
@@ -471,12 +290,13 @@ def test_a_valid_graph_passes() -> None:
 # `procedure_wiring`) and so silently truncates.
 
 
-def _channels(operative: flezha.Operative) -> list[tuple[object, ...]]:
-    decl = graph.to_host_class_decl(operative.spec)
-    return [
-        (c.get("name"), c.get("kind"), c.get("producer"), c.get("consumers"))
-        for c in decl["channels"]
-    ]
+# -- one output channel per producing procedure -------------------------------
+#
+# The model Rust and Java carry: a procedure node owns ONE output channel,
+# created on first wiring and reused after. A held edge wired twice appends a
+# second consumer to it — it does not declare a second channel claiming the same
+# producer, which the core resolves by first match (`host/register.rs`
+# `procedure_wiring`) and so silently truncates.
 
 
 def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
@@ -486,14 +306,15 @@ def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
         edge.into(count_up, "b")
         edge.into(count_up, "c")
 
-    declare(fan_out)
-    assert _channels(fan_out) == [
+    assert _derived(fan_out) == [
         ("in", "entry", None, [0]),
         ("echo", "inter_proc", 0, [1, 2]),
     ]
 
 
-def test_branch_and_two_into_statements_build_the_identical_declaration() -> None:
+def test_branch_and_two_into_statements_derive_the_identical_topology() -> None:
+    # The record differs by one link — the sugar's declared arity — and the
+    # topology the core derives from the two does not.
     @flezha.stream_operative("separate")
     def separate(c: flezha.Channels) -> None:
         edge = c.input("in").into(echo)
@@ -506,9 +327,7 @@ def test_branch_and_two_into_statements_build_the_identical_declaration() -> Non
             lambda arm: arm.into(count_up, "b"), lambda arm: arm.into(count_up, "c")
         )
 
-    declare(separate)
-    declare(branched)
-    assert _channels(separate) == _channels(branched)
+    assert _derived(separate) == _derived(branched)
 
 
 def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
@@ -516,30 +335,15 @@ def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
     def hybrid(c: flezha.Channels) -> None:
         c.input("in").into(echo).named("hybrid_indicator").sink("hybrid_indicators").into(count_up)
 
-    declare(hybrid)
-    assert _channels(hybrid) == [
+    # A sink alongside a consumer stays inter-procedure: the value reaches both,
+    # and the channel is journalled as the edge it still is.
+    assert _derived(hybrid) == [
         ("in", "entry", None, [0]),
         ("hybrid_indicator", "inter_proc", 0, [1]),
     ]
 
 
-def test_a_second_sink_on_one_channel_is_refused() -> None:
-    @flezha.stream_operative("twice")
-    def twice(c: flezha.Channels) -> None:
-        c.input("in").into(echo).sink("out").sink("out_again")
-
-    with pytest.raises(DeclarationError, match="declares a plugin sink more than once"):
-        declare(twice)
-
-
-def test_keyed_is_refused_without_a_plugin_sink_and_accepted_with_one() -> None:
-    @flezha.stream_operative("keyed_no_sink")
-    def keyed_no_sink(c: flezha.Channels) -> None:
-        c.input("in").into(echo).named("mid").keyed().into(count_up)
-
-    with pytest.raises(DeclarationError, match="is declared keyed but has no plugin wire"):
-        declare(keyed_no_sink)
-
+def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_a_sink() -> None:
     @flezha.stream_operative("keyed_hybrid")
     def keyed_hybrid(c: flezha.Channels) -> None:
         c.input("in").into(echo).named("mid").keyed().sink("mid_sink").into(count_up)
@@ -564,108 +368,8 @@ def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
 # `TopologyIssue::DanglingTransformChain` and Java's `danglingTransformChain`.
 # A transform lives on the consumer edge it terminates in, so one no `into(...)`
 # closed has nowhere to run and would be discarded without a word.
-def test_a_transform_chain_no_into_closes_is_refused() -> None:
-    @flezha.stream_operative("dangling")
-    def dangling(c: flezha.Channels) -> None:
-        c.input("in").into(echo).map(lambda value: f"{value}!").sink("s")
-
-    with pytest.raises(
-        DeclarationError,
-        match="echo: DanglingTransformChain: declares a transform or key_by",
-    ):
-        declare(dangling)
-
-    # A key dangles the same way. Declared on a channel another edge consumes,
-    # so no other refusal reaches the declaration first.
-    @flezha.stream_operative("dangling_key")
-    def dangling_key(c: flezha.Channels) -> None:
-        edge = c.input("in")
-        edge.into(echo)
-        edge.key_by(str)
-
-    with pytest.raises(DeclarationError, match="in: DanglingTransformChain"):
-        declare(dangling_key)
 
 
-# The three refusals both references raise from their own ``extend_pending`` —
-# Rust's ``TopologyIssue::{DuplicateKeyBy, TransformAfterKeyBy,
-# TransformAfterTerminal}`` and Java's factory methods of the same names. Each
-# shape was ACCEPTED here before this: a second ``key_by`` overwrote the
-# author's first without a word, and neither a prior key nor an attached sink
-# was inspected at all.
-def test_a_second_key_by_is_refused_rather_than_overwriting_the_first() -> None:
-    @flezha.procedure(dynamic_entities=True)
-    def keyed(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("dup_key_by")
-    def dup(c: flezha.Channels) -> None:
-        c.input("in").key_by(lambda _: "a").key_by(lambda _: "b").into(keyed)
-
-    with pytest.raises(
-        DeclarationError,
-        match=r"in: DuplicateKeyBy: declares key_by\(\.\.\.\) twice before one into",
-    ):
-        declare(dup)
-
-
-# The key is evaluated on the final post-transform value, so it must be the last
-# link before the ``into(...)`` that closes the chain.
-def test_a_transform_after_key_by_is_refused() -> None:
-    @flezha.procedure(dynamic_entities=True)
-    def keyed(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("transform_after_key_by")
-    def after_key(c: flezha.Channels) -> None:
-        c.input("in").key_by(lambda _: "a").map(lambda value: f"{value}!").into(keyed)
-
-    with pytest.raises(
-        DeclarationError,
-        match=r"in: TransformAfterKeyBy: declares a transform after key_by",
-    ):
-        declare(after_key)
-
-
-# The sink serializes the channel's own value, so nothing declared behind it can
-# reshape what it already wrote.
-def test_a_transform_after_a_plugin_sink_is_refused() -> None:
-    @flezha.procedure
-    def tail(value: str) -> str:
-        return value
-
-    @flezha.stream_operative("transform_after_terminal")
-    def after_sink(c: flezha.Channels) -> None:
-        c.input("in").into(echo).sink("s").map(lambda value: f"{value}!").into(tail)
-
-    with pytest.raises(
-        DeclarationError,
-        match=r"echo: TransformAfterTerminal: declares a transform or key_by\(\.\.\.\) after a plugin sink",
-    ):
-        declare(after_sink)
-
-
-# The refusal both references raise from consumer wiring rather than chain
-# extension — Rust's ``attach_consumer`` and Java's ``attachEdge``. Both shapes
-# were ACCEPTED here before this, leaving two consumer edges naming one
-# procedure, so the value reached it twice.
-def test_a_re_declared_edge_carrying_a_transform_is_refused() -> None:
-    @flezha.stream_operative("edge_already_wired")
-    def already_wired(c: flezha.Channels) -> None:
-        edge = c.input("in")
-        edge.into(echo)
-        edge.map(lambda value: f"{value}!").into(echo)
-
-    with pytest.raises(
-        DeclarationError,
-        match=r"in: EdgeAlreadyWired: already feeds procedure `echo`; an edge carries exactly one",
-    ):
-        declare(already_wired)
-
-
-# A re-declaration carrying neither transform nor key is the fan-in /
-# repeated-``into`` case both references make a true no-op: one consumer edge,
-# not two, and not a refusal.
 def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
     @flezha.stream_operative("edge_redeclared_bare")
     def bare(c: flezha.Channels) -> None:
@@ -683,6 +387,8 @@ def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
 # read where the workflow spec is assembled rather than defaulted to False. It
 # stays off the wire: the core refuses `effectively_once` on a workflow class,
 # and Java's `HostClassDeclaration.forWorkflow` never writes it either.
+
+
 def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
     @flezha.workflow_operative("tier_workflow")
     def tier_workflow(c: flezha.Channels) -> None:

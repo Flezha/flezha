@@ -63,7 +63,9 @@ abstract class Operative
         $builder = new Builder($declaration->factoryId);
         static::channels($builder);
 
-        return $builder;
+        // Sealed before the channels are read: filing every declared sequence
+        // on its channel is what can still create one.
+        return $builder->seal();
     }
 
     /**
@@ -86,7 +88,7 @@ abstract class Operative
             kind: $kind,
             persistent: $declaration->persistent,
             effectivelyOnce: $builder->effectivelyOnce,
-            ackGranularity: $builder->ackGranularity,
+            checkpointAck: $builder->checkpointAck,
             checkpointEvery: $builder->checkpointEvery,
             checkpointOutputs: $builder->checkpointOutputs,
             checkpointMaxDelayMs: $builder->checkpointMaxDelayMs,
@@ -98,7 +100,6 @@ abstract class Operative
             channels: $builder->channels,
             workflow: $workflow,
             run: $run,
-            chainIssues: $builder->chainIssues(),
         );
     }
 

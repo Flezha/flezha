@@ -3,7 +3,6 @@ package com.flezha.sdk.runtime.operative;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 
 /**
  * Frozen, immutable per-StreamOperative-class topology produced by
@@ -25,9 +24,7 @@ public final class StreamOperativeTopology {
     private final List<ProcedureDescriptor> procedures;
     private final Map<String, Integer> procedureNameToId;
     private final boolean effectivelyOnce;
-    private final CheckpointPolicy checkpoint;
-    private final long correctionWindowMs;
-    private final com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy;
+    private final Map<String, Object> declaration;
 
     public StreamOperativeTopology(
             @Nonnull String factoryId,
@@ -36,13 +33,9 @@ public final class StreamOperativeTopology {
             @Nonnull List<ProcedureDescriptor> procedures,
             @Nonnull Map<String, Integer> procedureNameToId,
             boolean effectivelyOnce,
-            @Nullable CheckpointPolicy checkpoint,
-            long correctionWindowMs,
-            @Nonnull com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy) {
+            @Nonnull Map<String, Object> declaration) {
         this.effectivelyOnce = effectivelyOnce;
-        this.checkpoint = checkpoint;
-        this.correctionWindowMs = correctionWindowMs;
-        this.beyondWindowPolicy = beyondWindowPolicy;
+        this.declaration = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(declaration));
         this.factoryId = factoryId;
         this.channels = List.copyOf(channels);
         this.nameToId = Map.copyOf(nameToId);
@@ -60,33 +53,14 @@ public final class StreamOperativeTopology {
     }
 
     /**
-     * Whether the consumed offset is acknowledged only when an interval closes.
-     * Rides the {@code ack_granularity} declaration — the controller needs it
-     * because a checkpoint Entity's silence between boundaries is its steady
-     * state, not a stall.
+     * The {@code HostClassDecl} record this class was built from — what the
+     * builder was told, submitted to the core's one check and re-sent
+     * verbatim at declare time. Written once, so the bytes the core judged
+     * and the bytes it registers cannot drift.
      */
-    public boolean checkpointAck() {
-        return checkpoint != null;
-    }
-
-    /**
-     * How the interval closes and what it does with its outputs, or
-     * {@code null} under the per-input default.
-     */
-    @Nullable
-    public CheckpointPolicy checkpoint() {
-        return checkpoint;
-    }
-
-    /** The declared late-input correction window in millis; {@code 0} = none. */
-    public long correctionWindowMs() {
-        return correctionWindowMs;
-    }
-
-    /** What to do with an input older than {@link #correctionWindowMs()}. */
     @Nonnull
-    public com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy() {
-        return beyondWindowPolicy;
+    public Map<String, Object> declaration() {
+        return declaration;
     }
 
     @Nonnull

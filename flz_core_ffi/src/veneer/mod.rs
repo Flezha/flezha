@@ -126,20 +126,21 @@ pub fn c_string(what: &str, value: &str) -> Result<CString, Refusal> {
 
 /// Run one entry point that hands out a buffer, and read what it handed out.
 ///
-/// `handed_out` is the status that means a buffer was produced —
+/// `hands_out` is every status that means a buffer was produced —
 /// [`FLZ_POLL_ACTIVATION`] for poll and the workflow receive, [`FLZ_OK`] for
-/// spawn; every other status leaves the out pointers untouched. `read` runs
-/// over the borrowed slice BEFORE `flz_core_buf_free`, so no caller copies
-/// first.
+/// spawn, both of [`FLZ_OK`] and [`FLZ_ERR`] for the topology check, whose
+/// answer is a verdict either way; every other status leaves the out pointers
+/// untouched. `read` runs over the borrowed slice BEFORE `flz_core_buf_free`,
+/// so no caller copies first.
 pub fn with_buffer<T>(
-    handed_out: i32,
+    hands_out: &[i32],
     call: impl FnOnce(*mut *mut u8, *mut usize) -> i32,
     read: impl FnOnce(&[u8]) -> T,
 ) -> (i32, Option<T>) {
     let mut buf: *mut u8 = std::ptr::null_mut();
     let mut len: usize = 0;
     let status = call(&mut buf, &mut len);
-    if status != handed_out {
+    if !hands_out.contains(&status) {
         return (status, None);
     }
     // SAFETY: the entry point handed out `len` bytes at `buf`, owned by the
@@ -164,7 +165,7 @@ fn core(ctx: CtxPtr) -> Refusal {
 /// Block up to `timeout_ms` for one activation, decoded in place.
 pub fn poll(ctx: CtxPtr, timeout_ms: u64) -> Result<Polled<schema::Activation>, Refusal> {
     let (status, decoded) = with_buffer(
-        FLZ_POLL_ACTIVATION,
+        &[FLZ_POLL_ACTIVATION],
         |buf, len| unsafe { crate::flz_core_poll(ctx.get(), timeout_ms, buf, len) },
         schema::decode_activation,
     );
@@ -210,6 +211,26 @@ pub fn declare_class(ctx: CtxPtr, json: &[u8]) -> Result<(), Refusal> {
     verdict(ctx, status)
 }
 
+/// Ask for a declaration's verdict without registering it. `Ok` carries the
+/// derived declaration as JSON, `Err` the refusal the core rendered — the
+/// veneer's `validate()` is this call and nothing else.
+pub fn check_class(ctx: CtxPtr, json: &[u8]) -> Result<Vec<u8>, (Refusal, Vec<u8>)> {
+    let (status, answer) = with_buffer(
+        &[crate::FLZ_OK, crate::FLZ_ERR],
+        |buf, len| unsafe {
+            crate::flz_core_check_class(ctx.get(), json.as_ptr(), json.len(), buf, len)
+        },
+        <[u8]>::to_vec,
+    );
+    let answer = answer.unwrap_or_default();
+    // The refusal carries BOTH halves: the rendered message a reader gets, and
+    // the verdict a caller reads names off. Handing back only one made every
+    // binding fetch the other itself.
+    verdict(ctx, status)
+        .map_err(|refusal| (refusal, answer.clone()))
+        .map(|()| answer)
+}
+
 pub fn start(ctx: CtxPtr, namespace: &CStr) -> Result<(), Refusal> {
     verdict(ctx, unsafe {
         crate::flz_core_start(ctx.get(), namespace.as_ptr())
@@ -242,7 +263,7 @@ pub fn local_feed(ctx: CtxPtr, channel: &CStr, payload: &[u8]) -> Result<(), Ref
 /// arrived within `timeout_ms`.
 pub fn local_next_output(ctx: CtxPtr, timeout_ms: u64) -> Result<Option<Vec<u8>>, Refusal> {
     let (status, copied) = with_buffer(
-        FLZ_POLL_ACTIVATION,
+        &[FLZ_POLL_ACTIVATION],
         |buf, len| unsafe { crate::flz_core_local_next_output(ctx.get(), timeout_ms, buf, len) },
         <[u8]>::to_vec,
     );
@@ -284,7 +305,7 @@ pub fn workflow_recv(
     timeout_ms: u64,
 ) -> Result<Option<Vec<u8>>, Refusal> {
     let (status, payload) = with_buffer(
-        FLZ_POLL_ACTIVATION,
+        &[FLZ_POLL_ACTIVATION],
         |buf, len| unsafe {
             crate::flz_core_workflow_recv(ctx.get(), instance.as_ptr(), timeout_ms, buf, len)
         },
@@ -310,7 +331,7 @@ pub fn spawn_workflow(
     if_running: &CStr,
 ) -> Result<String, Refusal> {
     let (status, outcome) = with_buffer(
-        FLZ_OK,
+        &[FLZ_OK],
         |out, out_len| unsafe {
             crate::flz_core_spawn_workflow(
                 ctx.get(),

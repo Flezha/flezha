@@ -22,6 +22,11 @@
     "uds",
     "quic"
   ],
+  "topology_surfaces": [
+    "branch",
+    "workflow",
+    "sync_durability"
+  ],
   "dispatch": {
     "model": "thread-pool",
     "detail": "A base pool of Python threads each looping poll/dispatch/complete on itself, plus a supervisor parked in the starvation wait; the GIL is released around every blocking core call, so it bounds only handler bodies.",

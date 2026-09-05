@@ -32,6 +32,11 @@
     }
   },
   "toolchain": "ruby --version",
+  "topology_surfaces": [
+    "branch",
+    "workflow",
+    "sync_durability"
+  ],
   "deferred": [],
   "fixtures": {
     "runner_lifecycle": [

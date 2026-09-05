@@ -8,12 +8,15 @@ module Flezha
   # defect. Registration-time refusal replaces the Rust SDK's compile-time one,
   # so the message carries what a compiler would have pointed at.
   class DeclarationError < Error
-    attr_reader :factory_id, :handler, :defect
+    attr_reader :factory_id, :handler, :defect, :refusals
 
-    def initialize(factory_id, handler, defect)
+    def initialize(factory_id, handler, defect, refusals = [])
       @factory_id = factory_id
       @handler = handler
       @defect = defect
+      # The core's own names for what it refused, when the verdict came from
+      # it. Empty for a refusal this SDK made on its own surface.
+      @refusals = refusals
       super(handler ? "#{factory_id}: #{handler}: #{defect}" : "#{factory_id}: #{defect}")
     end
   end

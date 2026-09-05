@@ -25,8 +25,9 @@ mod entry_observation_decl_tests {
         let id = factory("host_entry_observation");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":false,
-                 "channels":[{{"name":"host_trades_in","kind":"entry","consumers":[0]}},
-                             {{"name":"host_out","kind":"plugin","producer":0}}],
+                 "channels":[{{"name":"host_trades_in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
+                             {{"name":"host_out","kind":"plugin","producer":0,
+                              "chains":[[{{"link":"sink","name":"host_out"}}]]}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         ))
         .expect("the class registers");
@@ -71,8 +72,9 @@ mod checkpoint_interval_decl_tests {
     fn tier_class(id: &str, extra: &str) -> String {
         format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,{extra}
-                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
-                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true,
+                               "chains":[[{{"link":"sink","name":"out"}}]]}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         )
     }
@@ -82,7 +84,7 @@ mod checkpoint_interval_decl_tests {
         let id = factory("ckpt_full");
         decl(&tier_class(
             &id,
-            r#""ack_granularity":"checkpoint","checkpoint_every":500,
+            r#""checkpoint_ack":true,"checkpoint_every":500,
                "checkpoint_outputs":"at_checkpoint","checkpoint_max_delay_ms":50,"#,
         ))
         .expect("a fully declared checkpoint interval registers");
@@ -101,7 +103,7 @@ mod checkpoint_interval_decl_tests {
     #[test]
     fn undeclared_options_are_the_as_produced_default() {
         let id = factory("ckpt_bare");
-        decl(&tier_class(&id, r#""ack_granularity":"checkpoint","#))
+        decl(&tier_class(&id, r#""checkpoint_ack":true,"#))
             .expect("a bare checkpoint declaration registers");
 
         let policy = crate::operative::registry::get_class(&id)
@@ -120,7 +122,7 @@ mod checkpoint_interval_decl_tests {
         let id = factory("ckpt_no_delay");
         let err = decl(&tier_class(
             &id,
-            r#""ack_granularity":"checkpoint","checkpoint_outputs":"at_checkpoint","#,
+            r#""checkpoint_ack":true,"checkpoint_outputs":"at_checkpoint","#,
         ))
         .expect_err("an unbounded output hold must not be declarable");
 
@@ -131,12 +133,18 @@ mod checkpoint_interval_decl_tests {
     }
 
     #[test]
-    fn interval_options_without_the_checkpoint_granularity_are_refused() {
-        let id = factory("ckpt_orphan");
-        let err = decl(&tier_class(&id, r#""checkpoint_every":500,"#))
-            .expect_err("an interval option means nothing without an interval");
+    fn an_interval_option_implies_the_checkpoint_granularity() {
+        let id = factory("ckpt_implied");
+        decl(&tier_class(&id, r#""checkpoint_every":500,"#))
+            .expect("an interval option is the granularity, asked for by its knob");
 
-        assert!(err.contains("ack_granularity checkpoint"), "{err}");
+        let policy = crate::operative::registry::get_class(&id)
+            .expect("class registered")
+            .ack_granularity
+            .checkpoint()
+            .expect("the interval implied the granularity");
+
+        assert_eq!(policy.every, Some(500));
     }
 
     #[test]
@@ -144,11 +152,11 @@ mod checkpoint_interval_decl_tests {
         let id = factory("ckpt_zero");
         let err = decl(&tier_class(
             &id,
-            r#""ack_granularity":"checkpoint","checkpoint_every":0,"#,
+            r#""checkpoint_ack":true,"checkpoint_every":0,"#,
         ))
         .expect_err("an interval that closes every zero inputs is not an interval");
 
-        assert!(err.contains("greater than zero"), "{err}");
+        assert!(err.contains("CheckpointEveryZero"), "{err}");
     }
 }
 
@@ -163,7 +171,7 @@ mod sync_durability_decl_tests {
         let id = factory("sync_stream");
         let err = decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"sync_durability":true,
-                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         ))
         .expect_err("a stream class must not be able to declare sync durability");
@@ -227,9 +235,10 @@ mod dropping_policy_decl_tests {
     fn class(id: &str, overflow: &str, extra: &str) -> String {
         format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,{extra}
-                 "channels":[{{"name":"in","kind":"entry","consumers":[0],
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]],
                                "overflow":"{overflow}"}},
-                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true,
+                               "chains":[[{{"link":"sink","name":"out"}}]]}}],
                  "procedures":[{{"name":"p0","clock":"event_time"}}]}}"#
         )
     }
@@ -255,11 +264,11 @@ mod dropping_policy_decl_tests {
         let err = decl(&class(
             &id,
             "drop_oldest",
-            r#""correction_window_ms":600000,"#,
+            r#""effectively_once":true,"correction_window_ms":600000,"#,
         ))
         .expect_err("shedding under a correction window must not be declarable");
         assert!(err.contains("`in`"), "{err}");
-        assert!(err.contains("correction_window_ms"), "{err}");
+        assert!(err.contains("correction window implies the tier"), "{err}");
     }
 
     #[test]
@@ -324,7 +333,7 @@ mod sdk_lang_declaration_tests {
     fn class(id: &str, lang: &str) -> String {
         format!(
             r#"{{"factory_id":"{id}",{lang}"sdk_version":"0.1.0","persistent":true,
-                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
                              {{"name":"out","kind":"plugin","producer":0}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         )
@@ -466,15 +475,15 @@ mod declaration_key_tests {
                 ("procedure", "schema_version") | ("procedure", "min_readable_schema_version") => {
                     "1"
                 }
-                ("class", "ack_granularity") => r#""checkpoint""#,
+                ("class", "checkpoint_ack") => "true",
                 ("class", "checkpoint_outputs") => r#""at_checkpoint""#,
                 ("class", "beyond_window_policy") => r#""drop""#,
-                ("class", "channels") => r#"[{"name":"in","kind":"entry","consumers":[0]}]"#,
+                ("class", "channels") => r#"[{"name":"in","kind":"entry","chains":[]}]"#,
                 ("class", "procedures") => r#"[{"name":"p0"}]"#,
                 ("class", "workflow") => "null",
                 ("channel", "kind") => r#""entry""#,
                 ("channel", "producer") => "null",
-                ("channel", "consumers") => "[0]",
+                ("channel", "chains") => r#"[[{"link":"into","procedure":0}]]"#,
                 ("channel", "overflow") => r#""drop_nothing""#,
                 ("procedure", "entity_mode") => r#""single""#,
                 ("procedure", "entity_keys") => "[]",
@@ -514,7 +523,7 @@ mod declaration_key_tests {
         // so strip the placeholders before parsing.
         let json = json
             .replace(
-                r#""channels":[{"name":"in","kind":"entry","consumers":[0]}],"#,
+                r#""channels":[{"name":"in","kind":"entry","chains":[]}],"#,
                 "",
             )
             .replace(r#""procedures":[{"name":"p0"}],"#, "")
@@ -543,7 +552,7 @@ mod sdk_version_decl_tests {
         let id = factory("host_sdk_version");
         decl(&format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"1.2.3",
-                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         ))
         .expect("the class registers");
@@ -575,7 +584,7 @@ mod sdk_version_decl_tests {
             let id = factory(name);
             let err = decl(&format!(
                 r#"{{"factory_id":"{id}","sdk_lang":1,{version}
-                     "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                     "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}}],
                      "procedures":[{{"name":"p0"}}]}}"#
             ))
             .expect_err("a class that names no SDK version is refused");

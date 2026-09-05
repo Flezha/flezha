@@ -95,27 +95,36 @@ A closure that panics or throws does not take the routing thread with it.
 
 ## Refusals
 
-Build-time. **Where** column: *by name* means the SDK raises the reference's own
-name and sentence; *own words* means it refuses the same shape without the name.
+Registration-time, and the same in every SDK. A builder records the links it
+was given; `flz_core::host::register::check` judges the record and answers with
+the refusal's name and sentence. The Elixir SDK is its own core and
+re-expresses the same check against the same fixture, so it answers the same
+names — it inherits no code.
 
-| Name | Fires when | Where |
-| --- | --- | --- |
-| `DuplicateKeyBy` | two `key_by` on one edge (or on one merge) | every SDK, by name |
-| `TransformAfterTerminal` | a transform or key declared on a handle already closed by a plugin sink | every SDK, by name |
-| `TransformAfterKeyBy` | a transform declared after the key it would feed | every SDK, by name |
-| `DanglingTransformChain` | a transform chain no `.into(...)` ever closed | every SDK, by name |
-| `KeyByOnUnkeyableTarget` | a `key_by` edge wires a Procedure declaring a non-empty `entity_keys()` | Rust, Java, Elixir by name; Node/Python/Ruby/PHP in their own words |
-| `UnkeyedEdgeIntoDynamicProcedure` | a keyless edge feeds a Procedure another edge keyed into dynamic mode | Rust, Java, Elixir by name; Node/Python/Ruby/PHP in their own words |
-| `EdgeAlreadyWired` | a consumer edge re-declared where either side carries a transform or a key | Rust, Java, Node, Python, Ruby, PHP by name; **not the Elixir SDK** |
+| Name | Fires when |
+| --- | --- |
+| `DuplicateKeyBy` | two `key_by` on one edge (or on one merge) |
+| `TransformAfterTerminal` | a transform or key declared on a handle already closed by a plugin sink |
+| `TransformAfterKeyBy` | a transform declared after the key it would feed |
+| `DanglingTransformChain` | a transform chain no `.into(...)` ever closed |
+| `KeyByOnUnkeyableTarget` | a `key_by` edge wires a Procedure declaring a non-empty `entity_keys()` |
+| `UnkeyedEdgeIntoDynamicProcedure` | a keyless edge feeds a Procedure another edge keyed into dynamic mode |
+| `EdgeAlreadyWired` | a consumer edge re-declared where either side carries a transform or a key |
+
+The whole vocabulary is `flz_core/src/host/issue.rs`; the table above is the
+transform half of it. `test/fixtures/reference_topologies.txt` carries one row
+per name, and `test/sdk_conformance/topology_check_test.exs` fails if a name
+has no row or a row has no name. The three names the Elixir SDK does not carry
+— `BranchTooFewArms`, `MergeTooFewSources`, `DuplicateMergeSource` — are a
+surface difference, not a gap: its v1 subset has no `branch` and no `merge`,
+and the fixture's `needs` column says so.
 
 `TransformAfterTerminal` makes the declaration order load-bearing where a
 channel carries both a sink and a transformed consumer: close the transform on
 its `.into(...)` first, then attach the sink to the held handle.
 
 A re-declaration carrying neither transform nor key is the legal fan-in /
-repeated-`.into` no-op — one consumer edge, not two — in every SDK but Elixir,
-whose `do_into` (`lib/flezha/sdk/channels.ex`) still appends unconditionally, so
-both shapes leave the procedure wired twice there. A workflow operative also
+repeated-`.into` no-op — one consumer edge, not two — in every SDK. A workflow operative also
 refuses any closure on an **entry** channel
 (`BuildWorkflowError::MergeFromEntryChannel`): the workflow seed bypasses the
 routing seam, so the closure could never be selected.
@@ -139,7 +148,8 @@ alone — an entry channel has no producer.
 
 | Piece | Rust | Java |
 | --- | --- | --- |
-| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`), `TopologyIssue` | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java`, refusals in `flezha-sdk-api/.../operative/StreamOperativeConfigurationException.java` |
+| The check and its vocabulary | `flz_core/src/host/{register,issue}.rs` — one implementation, every SDK | shared core |
+| Builder surface, fusion (`attach_consumer`, `extend_pending`, `compose`) | `sdk/rust/src/channel/builder/` | `flezha-sdk-api/.../channel/{EdgeStream,EntryChannel,Stream}.java`, `flezha-sdk-runtime/.../operative/builder/StreamOperativeTopologyBuilder.java` |
 | `ConsumerEdge`, `EdgeTransformFn`, `EdgeYield`, `transform_value`, `key_of` | `flz_core/src/channel.rs` | `flezha-sdk-runtime/.../operative/{ConsumerEdge,EdgeYield}.java` |
 | Routing seam and ladder (`route_to_consumers`, `deliver_edge`, `run_retry_park_ladder`) | `flz_core/src/routing.rs` | `flezha-sdk-runtime/.../core/{EmitContext,EntityRouting,EdgeTransforms}.java` |
 | Workflow containment (`extend_mapped`) and refusals | `flz_core/src/workflow/{driver,spec}.rs` | shared core |

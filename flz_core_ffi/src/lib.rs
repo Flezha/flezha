@@ -309,6 +309,62 @@ pub unsafe extern "C" fn flz_core_declare_class(
     FLZ_OK
 }
 
+/// Judge a host class declaration without registering it: the read-only half
+/// of [`flz_core_declare_class`]. On [`FLZ_OK`], `*buf_out`/`*len_out` hold
+/// the DERIVED declaration as JSON — the consumers, channel kinds, sink names
+/// and acknowledgement granularity the core read off the record. On
+/// [`FLZ_ERR`] they hold the verdict as DATA — `{"issues":[{"name","text"}, …]}`
+/// — so no caller parses prose to learn which refusals fired.
+/// [`flz_core_last_error`] carries the same verdict rendered for a reader, and
+/// the status is still [`FLZ_ERR`] so a caller that ignores the buffer fails
+/// rather than registers. Free the buffer with [`flz_core_buf_free`].
+///
+/// This is what a conformance run submits: every SDK's builder can ask for
+/// the verdict its author would get, with nothing registered and no runner.
+///
+/// # Safety
+/// `ctx` must be live; `json`/`json_len` must describe a valid UTF-8 buffer;
+/// `buf_out`/`len_out` must be valid writable pointers.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_check_class(
+    ctx: *mut FlzContext,
+    json: *const u8,
+    json_len: usize,
+    buf_out: *mut *mut u8,
+    len_out: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let bytes = std::slice::from_raw_parts(json, json_len);
+    match flz_core::host::check_class_json(bytes) {
+        Ok(derived) => {
+            hand_out(
+                serde_json::to_vec(&derived).unwrap_or_default(),
+                buf_out,
+                len_out,
+            );
+            FLZ_OK
+        }
+        Err(issues) => {
+            let verdict = serde_json::json!({
+                "issues": issues
+                    .iter()
+                    .map(|issue| {
+                        serde_json::json!({"name": issue.name(), "text": issue.to_string()})
+                    })
+                    .collect::<Vec<_>>(),
+            });
+            hand_out(
+                serde_json::to_vec(&verdict).unwrap_or_default(),
+                buf_out,
+                len_out,
+            );
+            ctx.fail(flz_core::Error::Declaration(flz_core::host::render_issues(&issues)).into())
+        }
+    }
+}
+
 /// Connect to the controller and start the runner loop. Transport
 /// configuration (socket path, `FLEZHA_TRANSPORT`) rides the same
 /// environment the Rust SDK reads.

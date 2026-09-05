@@ -332,9 +332,9 @@ class Runner:
 
     def _declare(self, operative: Operative) -> None:
         spec = operative.spec
-        graph.validate(spec)
-        self._registry.add(spec)
         assert self._core is not None
+        graph.validate(spec, self._core)
+        self._registry.add(spec)
         self._core.declare_class(json.dumps(graph.to_host_class_decl(spec)).encode())
 
     def _observe_shutdown(self) -> None:

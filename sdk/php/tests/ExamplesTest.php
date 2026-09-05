@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Flezha\Tests;
 
+use Flezha\Ffi\Core;
 use Flezha\Graph\HostClassDecl;
 use Flezha\Graph\Validate;
 use Flezha\Operative;
@@ -20,6 +21,19 @@ use ReflectionClass;
  */
 final class ExamplesTest extends TestCase
 {
+    private static ?Core $core = null;
+
+    public static function setUpBeforeClass(): void
+    {
+        self::$core = Core::create();
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        self::$core?->free();
+        self::$core = null;
+    }
+
     /** @return iterable<string, array{string}> */
     public static function examples(): iterable
     {
@@ -45,7 +59,7 @@ final class ExamplesTest extends TestCase
 
         foreach ($operatives as $class) {
             $spec = $class::spec();
-            Validate::spec($spec);
+            Validate::spec($spec, self::$core ?? Core::create());
 
             $decl = HostClassDecl::of($spec);
             self::assertSame(HostClassDecl::SDK_LANG_PHP, $decl['sdk_lang']);

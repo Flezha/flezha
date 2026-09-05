@@ -477,3 +477,46 @@ fixtures cannot drive is a declaration the gate believes and no scenario checks.
   other SDK's port ran, which is what distinguishes a fan-out that works from one that is
   merely declared
 
+### Requirement: The reference refusals are driven through every runtime's real boot
+
+One `test/system/` module SHALL drive every refusal row of
+`test/fixtures/reference_topologies.txt` through every runtime that carries a manifest:
+per cell it SHALL boot the runtime's test app with `FLEZHA_REFUSAL_FIXTURE=<topology id>`,
+under which the app registers only that row's topology through its own builder, and SHALL
+assert the runner refuses at boot with the row's name. A row a runtime's `needs` excludes
+SHALL be asserted as a skip by name. Rows SHALL be read from the fixture and runtimes from
+the manifests, so a new refusal or a new SDK is covered with no test edit.
+
+#### Scenario: A veneer that accepts what the reference refuses fails the drill
+
+- **WHEN** a runtime's builder registers a topology whose fixture row names a refusal
+- **THEN** the drill fails naming the runtime and the row, and the boot's exit status and
+  stderr are in the failure
+
+#### Scenario: A named skip is not a silent gap
+
+- **WHEN** the Elixir runtime skips a `merge` row
+- **THEN** the drill records the skip with its surface, and a skip whose surface the
+  runtime's documented subset carries fails
+
+### Requirement: Every SDK's declaration output is compared against the shared expected set in one run
+
+The declaration goldens under `test/fixtures/declarations/` SHALL be compared for every
+runtime with a manifest in one module, not for the one runtime a run selects: per golden
+and per runtime the declaration SHALL be decoded at `ClassRegistry.decode_declarations/1`
+and SHALL equal the golden byte-for-byte, `sdk_lang` and `sdk_version` excluded. The
+derived record of every well-formed row of `reference_topologies.txt` SHALL equal the
+row's lines in every SDK's conformance run.
+
+#### Scenario: A declaration only one SDK emits is a diff on the others
+
+- **WHEN** one SDK's builder emits a key or value for a golden fixture that the reference does not
+- **THEN** the same run reports the differing key for that runtime, without waiting for a
+  nightly under that runtime
+
+#### Scenario: A derived declaration that drifts fails the run
+
+- **WHEN** an SDK's record for a well-formed row derives to a channel order, kind or
+  consumer set that differs from the row
+- **THEN** that SDK's conformance run fails naming the row and the line
+

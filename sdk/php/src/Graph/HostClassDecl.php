@@ -86,7 +86,7 @@ final class HostClassDecl
 
         return [
             'effectively_once' => $spec->effectivelyOnce,
-            'ack_granularity' => $spec->ackGranularity->value,
+            'checkpoint_ack' => $spec->checkpointAck,
             'checkpoint_every' => $spec->checkpointEvery,
             'checkpoint_outputs' => $spec->checkpointOutputs->value,
             'checkpoint_max_delay_ms' => $spec->checkpointMaxDelayMs,
@@ -95,17 +95,20 @@ final class HostClassDecl
         ];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The channel as the record carries it: the kind the author declared and
+     * the sequences declared off its handle. The consumers, the plugin kind and
+     * the sink name are the core's to DERIVE from those chains.
+     *
+     * @return array<string, mixed>
+     */
     private static function channel(ChannelSpec $channel): array
     {
         return self::compact([
             'name' => $channel->name,
-            'kind' => Validate::declaredKind($channel),
+            'kind' => $channel->kind,
             'producer' => $channel->producer,
-            'consumers' => array_map(
-                static fn (ConsumerEdge $edge): int => $edge->procedure,
-                $channel->consumers
-            ),
+            'chains' => $channel->chains,
             'retry_max' => $channel->retryMax,
             'retry_backoff_ms' => $channel->retryBackoffMs,
             'overflow' => $channel->overflow->value,
@@ -129,6 +132,10 @@ final class HostClassDecl
             'compensate_overridden' => $definition->declares('compensate'),
             'clock' => $decl->clock->value,
             'mailbox_capacity' => $decl->mailboxCapacity ?? 1024,
+            // A procedure with no state journals nothing, so a logical clock
+            // over it never advances. PHP has no per-procedure Change type;
+            // the presence of a state method IS the same statement.
+            'change_is_nochange' => !$definition->declares('state'),
             'schema_version' => $decl->schemaVersion,
             'min_readable_schema_version' => $decl->minReadableSchemaVersion,
         ]);

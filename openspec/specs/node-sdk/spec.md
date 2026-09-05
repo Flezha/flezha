@@ -61,13 +61,21 @@ The SDK SHALL refuse, at registration, every defect class the authoring contract
 typing cannot see: a missing or duplicated entry channel, a cycle, an unreachable procedure, an
 identity collision, a missing or unservable clock extractor, a keyed channel without a plugin wire,
 a tier channel that is not keyed, checkpoint acknowledgement without the tier, a correction window
-without its preconditions, branch arity violations, and a duplicate plugin sink.
+without its preconditions, branch arity violations, and a duplicate plugin sink. The verdict SHALL
+be the reference check's, reached through `flz_core_check_class` over the record the builder
+writes; the builder SHALL carry no rule of its own, and SHALL refuse every name of the reference
+vocabulary, not a subset.
 
 Every refusal SHALL name the offending handler and the specific defect.
 
 #### Scenario: A cyclic graph is refused by name
 - **WHEN** a declared topology contains a cycle
 - **THEN** registration SHALL fail naming the participating procedures
+
+#### Scenario: A reference refusal the builder never carried is refused
+- **WHEN** a procedure declares `mailboxCapacity(0)`
+- **THEN** registration SHALL fail with `MailboxCapacityZero` naming the procedure, where the
+  core accepted the declaration before the check read the record
 
 ### Requirement: A Procedure Context at Parity With the Other SDKs
 

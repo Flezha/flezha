@@ -3,7 +3,6 @@ package com.flezha.sdk.runtime.operative.builder;
 import com.flezha.sdk.channel.EdgeStream;
 import com.flezha.sdk.channel.Merge;
 import com.flezha.sdk.channel.Stream;
-import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.runtime.operative.EdgeYield;
 import java.util.ArrayList;
@@ -24,18 +23,14 @@ final class MergeImpl<I> implements Merge<I> {
     private final Class<I> mergedType;
     private final List<MergeSourceEntry> sources = new ArrayList<>();
     /**
-     * Every {@code from} the author wrote, including ones already refused.
-     * The arity check reads this so a duplicated source is reported once,
-     * as a duplicate — not also as a merge that declared too few.
-     */
-    private int declared;
-    /**
      * The one key function a merge declares, applied to the merged value on
-     * every source's edge.
+     * every source's edge. Declaring it twice records two `key` links on each
+     * source's chain, which the core answers as DuplicateKeyBy.
      */
     private Function<Object, String> key;
 
-    private boolean duplicateKey;
+    /** How many times {@code keyBy} was declared; a second is one link more. */
+    private int keyDeclarations;
 
     MergeImpl(StreamOperativeTopologyBuilder owner, Class<I> mergedType) {
         this.owner = owner;
@@ -51,12 +46,8 @@ final class MergeImpl<I> implements Merge<I> {
             throw new IllegalArgumentException("merge source was not declared on this operative's builder");
         }
         int channelId = site.siteChannelId();
-        declared++;
-        if (sources.stream().anyMatch(src -> src.channelId() == channelId)) {
-            owner.error(StreamOperativeConfigurationException.duplicateMergeSource(owner.channel(channelId).name)
-                    .getMessage());
-            return this;
-        }
+        // A repeat of one source is RECORDED, not refused here: the core reads
+        // the group's sources off the record and names the duplicate.
         // The mapping composes AFTER any transform declared on the source
         // handle, which is what makes a source transform see that source's
         // own payload type — and what makes a key declared there trip the
@@ -72,9 +63,7 @@ final class MergeImpl<I> implements Merge<I> {
     @Nonnull
     public Merge<I> keyBy(@Nonnull Function<I, String> key) {
         owner.checkMutable();
-        if (this.key != null) {
-            duplicateKey = true;
-        }
+        keyDeclarations++;
         this.key = value -> key.apply(mergedType.cast(value));
         return this;
     }
@@ -101,26 +90,19 @@ final class MergeImpl<I> implements Merge<I> {
     <O> Stream<O> wire(Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
         owner.checkMutable();
         // Register the consumer before its sources — as Rust's `Merge::wire`
-        // does — so the arity refusal can name it even with no source to
-        // wire it. `registerNode` resolves by identity, so wiring below
+        // does — so a merge that declared none still records a procedure the
+        // core can name. `registerNode` resolves by identity, so wiring below
         // returns this same node.
         int node = owner.registerNode(procedureClass, nodeName);
-        if (declared < 2) {
-            owner.error(StreamOperativeConfigurationException.mergeTooFewSources(owner.procedure(node).name, declared)
-                    .getMessage());
-        }
-        if (duplicateKey && !sources.isEmpty()) {
-            owner.error(StreamOperativeConfigurationException.duplicateKeyBy(
-                            owner.channel(sources.get(0).channelId()).name)
-                    .getMessage());
-        }
+        int group = owner.nextMergeGroup();
         for (MergeSourceEntry source : sources) {
             // The key rides each source's chain, so it is evaluated on the
-            // mapped value.
-            Integer chain = key == null
-                    ? source.chain()
-                    : owner.extendPending(source.channelId(), source.chain(), mergedType, null, key);
-            owner.wireConsumer(source.channelId(), procedureClass, nodeName, mergedType, chain);
+            // mapped value; a second keyBy records a second `key` link.
+            Integer chain = source.chain();
+            for (int i = 0; i < keyDeclarations; i++) {
+                chain = owner.extendPending(source.channelId(), chain, mergedType, null, key);
+            }
+            owner.wireConsumer(source.channelId(), procedureClass, nodeName, mergedType, chain, group);
         }
         return new StreamImpl<>(owner, node);
     }

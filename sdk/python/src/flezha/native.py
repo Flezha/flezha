@@ -68,6 +68,7 @@ class Core:
     #: method that quietly does not exist.
     ENTRY_POINTS = (
         "declare_class",
+        "check_class",
         "start",
         "poll",
         "wait_starvation",
@@ -116,8 +117,9 @@ class Core:
             return getattr(self._native, entry)(*args)
         except self._module.NativeError as error:
             # The engine's own detail, in this SDK's one exception root, with
-            # the extension's exception chained so nothing is lost.
-            raise CoreError(str(error)) from error
+            # the extension's exception chained so nothing is lost. A refusal
+            # the core also answered as data carries that verdict across.
+            raise CoreError(str(error), getattr(error, "verdict", None)) from error
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -128,6 +130,11 @@ class Core:
     def declare_class(self, decl_json: bytes) -> None:
         """Declare one host class from its JSON declaration."""
         self._call("declare_class", decl_json)
+
+    def check_class(self, decl_json: bytes) -> bytes:
+        """Judge one declaration without registering it; answers the derived one."""
+        answer: bytes = self._call("check_class", decl_json)
+        return answer
 
     def start(self, namespace: str) -> None:
         """Connect to the controller and start the runner loop."""

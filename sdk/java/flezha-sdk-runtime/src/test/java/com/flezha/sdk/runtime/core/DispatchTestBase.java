@@ -602,16 +602,37 @@ abstract class DispatchTestBase {
         }
     }
 
-    public static final class CkptProc extends Proc<String> {
-        public CkptProc() {
-            super("ckpt_proc", (input, ctx) -> {
-                ctx.emitKeyed("ck", input);
-                if (input.equals("commit")) {
-                    ctx.checkpoint();
-                }
-            });
+    /**
+     * The tier IS durable state, so a checkpointing class journals something:
+     * this Procedure declares a Change, which is what makes the class
+     * {@code persistent} in the record.
+     */
+    public static final class CkptProc implements Procedure<String, Object, String, CkptChange, WallClock, Void> {
+        @Override
+        public String name() {
+            return "ckpt_proc";
+        }
+
+        @Override
+        public Object initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
+            return new Object();
+        }
+
+        @Override
+        public void applyChange(Object state, CkptChange change) {}
+
+        @Override
+        public void run(String input, StateHandle<Object, CkptChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
+            ctx.emitKeyed("ck", input);
+            if (input.equals("commit")) {
+                ctx.checkpoint();
+            }
         }
     }
+
+    /** The one Change the checkpoint fixture journals. */
+    public record CkptChange(String value) implements Change {}
 
     public static final class ReplayProbeOperative extends Op {
         public ReplayProbeOperative() {

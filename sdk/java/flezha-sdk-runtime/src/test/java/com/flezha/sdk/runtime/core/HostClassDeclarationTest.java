@@ -59,25 +59,41 @@ class HostClassDeclarationTest {
         assertThat(decl.get("sdk_lang").asInt()).isEqualTo(2);
         assertThat(decl.get("change_format_id").asInt()).isEqualTo(4);
         assertThat(decl.get("effectively_once").asBoolean()).isTrue();
-        assertThat(decl.get("ack_granularity").asText()).isEqualTo("checkpoint");
+        assertThat(decl.get("checkpoint_ack").asBoolean())
+                .as("the RAW flag the author set; the core derives the granularity from it")
+                .isTrue();
+        assertThat(decl.has("ack_granularity"))
+                .as("the granularity is the core's answer, never the builder's claim")
+                .isFalse();
         assertThat(decl.has("checkpoint_every"))
                 .as("a bare checkpointAck() declares no interval options")
                 .isFalse();
         assertThat(decl.has("checkpoint_outputs")).isFalse();
         assertThat(decl.has("checkpoint_max_delay_ms")).isFalse();
         assertThat(decl.has("correction_window_ms")).isFalse();
-        assertThat(decl.has("persistent"))
-                .as("every procedure declares NoChange")
-                .isFalse();
+        assertThat(decl.get("persistent").asBoolean())
+                .as("the tier IS durable state, so the class journals a Change")
+                .isTrue();
         assertThat(decl.has("workflow")).isFalse();
 
         JsonNode channels = decl.get("channels");
         assertThat(channels).hasSize(2);
         assertThat(channels.get(0).get("name").asText()).isEqualTo("in");
         assertThat(channels.get(0).get("kind").asText()).isEqualTo("entry");
-        assertThat(channels.get(0).get("consumers").get(0).asInt()).isEqualTo(0);
+        assertThat(channels.get(0).has("consumers"))
+                .as("consumers are derived from the chains, never declared")
+                .isFalse();
+        // The chain the entry handle was given: one `into` closing onto
+        // procedure 0. What it MEANS is the core's answer.
+        JsonNode entryChain = channels.get(0).get("chains").get(0);
+        assertThat(entryChain.get(0).get("link").asText()).isEqualTo("into");
+        assertThat(entryChain.get(0).get("procedure").asInt()).isZero();
         assertThat(channels.get(0).has("producer")).isFalse();
-        assertThat(channels.get(1).get("kind").asText()).isEqualTo("plugin");
+        assertThat(channels.get(1).get("kind").asText())
+                .as("the plugin kind is derived; the record states what was declared")
+                .isEqualTo("inter_proc");
+        assertThat(channels.get(1).get("chains").get(0).get(0).get("link").asText())
+                .isEqualTo("sink");
         assertThat(channels.get(1).get("producer").asInt()).isEqualTo(0);
         assertThat(channels.get(1).get("keyed").asBoolean()).isTrue();
         assertThat(channels.get(0).get("overflow").asText())
@@ -91,6 +107,9 @@ class HostClassDeclarationTest {
                 .as("single mode is the default")
                 .isFalse();
         assertThat(procedures.get(0).get("clock").asText()).isEqualTo("wall");
+        assertThat(procedures.get(0).has("change_is_nochange"))
+                .as("this procedure journals a Change, so a logical clock over it would advance")
+                .isFalse();
         assertThat(procedures.get(0).get("mailbox_capacity").asInt()).isPositive();
     }
 
@@ -118,6 +137,9 @@ class HostClassDeclarationTest {
                 .isEqualTo(1);
         assertThat(byName.get("v1_proc").get("min_readable_schema_version").asInt())
                 .isEqualTo(1);
+        assertThat(byName.get("v1_proc").get("change_is_nochange").asBoolean())
+                .as("a NoChange procedure states it, so the core can refuse a logical clock over it")
+                .isTrue();
     }
 
     @Test
@@ -241,6 +263,7 @@ class HostClassDeclarationTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
+            c.checkpointAck();
             c.checkpointEvery(500);
             c.outputsAtCheckpoint(50);
             c.correctionWindow(600_000);
@@ -429,7 +452,9 @@ class HostClassDeclarationTest {
         StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology("decl_batched_op");
         JsonNode decl = JSON.readTree(HostClassDeclaration.forStream(topology));
 
-        assertThat(decl.get("ack_granularity").asText()).isEqualTo("checkpoint");
+        assertThat(decl.has("checkpoint_ack"))
+                .as("each option writes its OWN raw flag; the core implies the granularity")
+                .isFalse();
         assertThat(decl.get("checkpoint_every").asInt()).isEqualTo(500);
         assertThat(decl.get("checkpoint_outputs").asText()).isEqualTo("at_checkpoint");
         assertThat(decl.get("checkpoint_max_delay_ms").asLong()).isEqualTo(50L);
@@ -573,19 +598,29 @@ class HostClassDeclarationTest {
         }
     }
 
-    public static final class DeclProc extends StatelessTestProcedure<String, Object, String> {
+    /**
+     * The tier fixtures' procedure. It journals a Change because
+     * {@code effectivelyOnce()} requires it: the tier IS durable state.
+     */
+    public static final class DeclProc
+            implements com.flezha.sdk.procedure.Procedure<
+                    String, Object, String, DeclChange, com.flezha.sdk.state.WallClock, Void> {
         @Override
         public String name() {
             return "decl_proc";
         }
 
         @Override
-        protected Object initState(Optional<String> entityKey) {
+        public Object initState(
+                Optional<String> entityKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx)
+        public void applyChange(Object state, DeclChange change) {}
+
+        @Override
+        public void run(String input, StateHandle<Object, DeclChange> state, ProcedureCtx ctx)
                 throws com.flezha.sdk.procedure.ProcedureException {
             ctx.emitKeyed("k", input);
         }

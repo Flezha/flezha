@@ -49,9 +49,9 @@ pub(crate) mod host_class {
     /// consumer in `consumers`, each with a one-slot mailbox so it is full
     /// after a single push.
     pub(crate) fn instance(id: &str, keys: &[&str], consumers: &[u32]) -> Arc<StreamInstance> {
-        let consumer_list = consumers
+        let chain_list = consumers
             .iter()
-            .map(|c| c.to_string())
+            .map(|c| format!(r#"[{{"link":"into","procedure":{c}}}]"#))
             .collect::<Vec<_>>()
             .join(",");
         let p0 = if keys.is_empty() {
@@ -62,7 +62,9 @@ pub(crate) mod host_class {
                 .map(|k| format!("\"{k}\""))
                 .collect::<Vec<_>>()
                 .join(",");
-            format!(r#"{{"name":"p0","entity_mode":"static","entity_keys":[{key_list}]}}"#)
+            format!(
+                r#"{{"name":"p0","entity_mode":"static","entity_keys":[{key_list}],"entities_for_overridden":true}}"#
+            )
         };
         let procs = std::iter::once(p0)
             .chain(
@@ -74,10 +76,11 @@ pub(crate) mod host_class {
             .join(",");
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","persistent":true,"effectively_once":true,
-                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","procedure":0}}]]}},
                              {{"name":"mid","kind":"inter_proc","producer":0,
-                               "consumers":[{consumer_list}]}},
-                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                               "chains":[{chain_list}]}},
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true,
+                               "chains":[[{{"link":"sink","name":"out"}}]]}}],
                  "procedures":[{procs}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");

@@ -14,6 +14,7 @@ import pathlib
 import pytest
 
 import flezha
+from conftest import declare
 from flezha import graph
 from flezha.builder import ClassSpec
 
@@ -206,7 +207,7 @@ def test_each_declaration_carries_the_python_language_byte(
 
 _REFUSED_ON_WORKFLOW = (
     "effectively_once",
-    "ack_granularity",
+    "checkpoint_ack",
     "checkpoint_every",
     "checkpoint_outputs",
     "checkpoint_max_delay_ms",
@@ -256,23 +257,26 @@ def _golden(topology: str) -> list[str]:
     ]
 
 
-def _lines(topology: str, spec: flezha.ClassSpec) -> list[str]:
-    """The declaration rendered in the golden's columns, one line per channel."""
-    decl = graph.to_host_class_decl(spec)
+def _lines(topology: str, operative: flezha.Operative) -> list[str]:
+    """The DERIVED declaration in the golden's columns, one line per channel.
+
+    The consumers, the kind after the wiring rule, the ``named`` override and the
+    sink are all the core's answer to the record this builder submitted.
+    """
     rendered = []
-    for index, channel in enumerate(decl["channels"]):
-        consumers = channel.get("consumers") or []
+    for channel in declare(operative)["channels"]:
+        consumers = channel["consumers"]
         rendered.append(
             " | ".join(
                 str(field)
                 for field in (
                     topology,
-                    index,
+                    channel["index"],
                     channel["name"],
                     channel["kind"],
-                    channel.get("producer", "-"),
-                    ",".join(str(c) for c in consumers) if consumers else "-",
-                    spec.channels[index].sink or "-",
+                    "-" if channel["producer"] is None else channel["producer"],
+                    ",".join(str(c["procedure"]) for c in consumers) if consumers else "-",
+                    channel["sink"] or "-",
                 )
             )
         )
@@ -327,8 +331,8 @@ def commit_block_chain(c: flezha.Channels) -> None:
 
 
 def test_the_hybrid_stream_topology_is_the_reference() -> None:
-    assert _lines("hybrid_channel", hybrid_channel.spec) == _golden("hybrid_channel")
+    assert _lines("hybrid_channel", hybrid_channel) == _golden("hybrid_channel")
 
 
 def test_the_structured_workflow_topology_is_the_reference() -> None:
-    assert _lines("commit_block_chain", commit_block_chain.spec) == _golden("commit_block_chain")
+    assert _lines("commit_block_chain", commit_block_chain) == _golden("commit_block_chain")

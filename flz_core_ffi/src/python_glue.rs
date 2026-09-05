@@ -411,6 +411,27 @@ impl Core {
         Ok(veneer::declare_class(self.ptr()?, json)?)
     }
 
+    /// Judge one host class declaration without registering it. Answers the
+    /// derived declaration as JSON; raises the core's verdict on a refusal.
+    ///
+    /// The raised exception carries that verdict as the core's own JSON —
+    /// `{"issues":[{"name","text"}]}` — on its `verdict` attribute, so the SDK
+    /// reads which refusals fired off data rather than out of the rendered
+    /// message, which is unchanged.
+    fn check_class<'py>(&self, py: Python<'py>, json: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+        let ctx = self.ptr()?;
+        match veneer::check_class(ctx, json) {
+            Ok(derived) => Ok(PyBytes::new(py, &derived)),
+            Err((refusal, verdict)) => {
+                let refused = PyErr::from(refusal);
+                refused
+                    .value(py)
+                    .setattr("verdict", PyBytes::new(py, &verdict))?;
+                Err(refused)
+            }
+        }
+    }
+
     /// Connect to the controller and start the runner loop. Blocking: the ABI
     /// call waits up to ten seconds for the connect confirmation.
     fn start(&self, py: Python<'_>, namespace: &str) -> PyResult<()> {
@@ -603,6 +624,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core", "flz_core_context_new"),
     ("Core.free", "flz_core_context_free"),
     ("Core.declare_class", "flz_core_declare_class"),
+    ("Core.check_class", "flz_core_check_class"),
     ("Core.start", "flz_core_start"),
     ("Core.poll", "flz_core_poll"),
     ("Core.wait_starvation", "flz_core_wait_starvation"),

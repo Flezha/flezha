@@ -18,7 +18,7 @@ class.sdk_lang
 class.sdk_version
 class.change_format_id
 class.effectively_once
-class.ack_granularity
+class.checkpoint_ack
 class.checkpoint_every
 class.checkpoint_outputs
 class.checkpoint_max_delay_ms
@@ -32,7 +32,7 @@ class.workflow
 channel.name
 channel.kind
 channel.producer
-channel.consumers
+channel.chains
 channel.retry_max
 channel.retry_backoff_ms
 channel.overflow
@@ -46,6 +46,7 @@ procedure.entities_for_overridden
 procedure.compensate_overridden
 procedure.clock
 procedure.mailbox_capacity
+procedure.change_is_nochange
 procedure.schema_version
 procedure.min_readable_schema_version
 workflow.loop_mode

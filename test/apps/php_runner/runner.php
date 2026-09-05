@@ -29,27 +29,43 @@ require __DIR__ . '/fixtures_state.php';
 require __DIR__ . '/fixtures_probe.php';
 require __DIR__ . '/fixtures_workflow.php';
 require __DIR__ . '/fixtures_workflow_loop.php';
+require __DIR__ . '/conformance.php';
 
 use Flezha\Flezha;
 use Flezha\Logger;
+use Flezha\TestApp\Conformance;
 use Flezha\TestApp\EntryIdleProbeCounters;
 use Flezha\TestApp\Fixtures;
 use Flezha\TestApp\WorkflowFixtures;
+
+// The conformance run answers a file and exits: no namespace, no controller.
+$report = getenv('FLEZHA_CONFORMANCE_REPORT');
+if ($report !== false && $report !== '') {
+    Conformance::writeReport($report);
+    exit(0);
+}
 
 $namespace = $argv[1] ?? 'default';
 
 $runner = Flezha::createRunner($namespace)
     ->logger(new Logger((string) (getenv('FLEZHA_LOG_LEVEL') ?: 'info')));
 
-foreach (Fixtures::all() as $operative) {
-    $runner->defineStream($operative);
+$topology = getenv('FLEZHA_REFUSAL_FIXTURE');
+if ($topology !== false && $topology !== '') {
+    // One row of the refusal table instead of the fixture set: a refused
+    // topology dies at declaration, before the core is started.
+    Conformance::registerOnly($runner, $topology);
+} else {
+    foreach (Fixtures::all() as $operative) {
+        $runner->defineStream($operative);
+    }
+    // The same registration, under the name that says which kind it is.
+    foreach (WorkflowFixtures::all() as $operative) {
+        $runner->defineWorkflow($operative);
+    }
+    // A runner-level registration, not a declaration: armed beside the fixtures.
+    EntryIdleProbeCounters::arm($runner);
 }
-// The same registration, under the name that says which kind it is.
-foreach (WorkflowFixtures::all() as $operative) {
-    $runner->defineWorkflow($operative);
-}
-// A runner-level registration, not a declaration: armed beside the fixtures.
-EntryIdleProbeCounters::arm($runner);
 
 // The configuration this run is under, before it starts: readiness is the
 // SDK's own startup line, which reports the executor.

@@ -1,12 +1,21 @@
 // The builders the dispatch-shaped suites share: what one operative's dispatch
 // depends on, and the activation the core hands out.
-import { encodeValue } from '../dist/esm/index.js';
+import { encodeValue, validate } from '../dist/esm/index.js';
 import { Registry } from '../dist/esm/dispatch.js';
 
-/** The dispatch dependencies over `specs`, registered in the order given. */
+/**
+ * The dispatch dependencies over `specs`, registered in the order given.
+ *
+ * Submitted first, exactly as a runner registers: the consumer edges a
+ * dispatch routes on are what the core derived, so a spec the core has not
+ * judged has none.
+ */
 export function depsFor(...specs) {
   const registry = new Registry();
-  for (const spec of specs) registry.add(spec);
+  for (const spec of specs) {
+    validate(spec);
+    registry.add(spec);
+  }
   return { registry, bridge: { spawnWorkflow: async () => 'spawned' }, workflowCtx: () => ({}) };
 }
 

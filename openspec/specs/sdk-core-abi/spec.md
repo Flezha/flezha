@@ -250,3 +250,28 @@ The class declaration SHALL carry `schema_version` and
 - **WHEN** a restore payload carries a record stamped version 1
 - **THEN** the core SHALL fail the restore with a schema error and SHALL NOT cross the record to the host
 
+### Requirement: The C ABI exposes the topology check as a read-only call
+
+The C ABI SHALL expose `flz_core_check_class`, which takes the same declaration record
+`flz_core_declare_class` takes and registers nothing: on acceptance it SHALL hand out the
+derived declaration as JSON, and on refusal it SHALL hand out the verdict as JSON —
+`{"issues":[{"name","text"}, …]}` — so that no SDK parses prose to learn which refusals
+fired. The refusal status SHALL still be the failing one and `flz_core_last_error` SHALL
+carry the same verdict rendered for a reader, so a caller that ignores the buffer refuses
+rather than registers.
+`flz_core_declare_class` SHALL be that check followed by registration, and its refusal
+text SHALL be the same rendering so a suite asserting a substring of one refusal still
+holds. The record SHALL carry each channel's ordered chains and the raw checkpoint flags,
+and the key set SHALL be pinned by `test/fixtures/host_class_decl_keys.txt` as today.
+
+#### Scenario: A test asks for the verdict without registering
+
+- **WHEN** an SDK's conformance run submits a fixture row's record to `flz_core_check_class`
+- **THEN** it receives the derived declaration for a well-formed row, or a verdict naming
+  every refusal for a malformed one, and no class is registered
+
+#### Scenario: A stale builder is refused, not degraded
+
+- **WHEN** a builder still sends `channel.consumers` or `class.ack_granularity`
+- **THEN** the core refuses the declaration at `deny_unknown_fields` naming the key
+

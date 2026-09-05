@@ -45,7 +45,7 @@ final class DispatchTest extends TestCase
                 WfEmitStreamOperative::class] as $class
         ) {
             $spec = $class::spec();
-            Validate::spec($spec);
+            Validate::spec($spec, self::core());
             $this->registry->add($spec);
         }
         $this->dispatcher = new Dispatcher($this->registry, self::core());

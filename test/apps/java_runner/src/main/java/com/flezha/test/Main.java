@@ -17,10 +17,42 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
+        // The conformance run answers a file and exits; it never connects. The
+        // drill names the path in the environment, which reaches the app
+        // whatever shell the manifest's launch line goes through.
+        String report = System.getenv("FLEZHA_CONFORMANCE_REPORT");
+        if (report == null || report.isEmpty()) {
+            report = flagValue(args, "--conformance-report");
+        }
+        if (report != null) {
+            ConformanceRun.writeReport(report);
+            return;
+        }
         spawnStdinEofExit();
         FlezhaRunner runner = Flezha.createRunner(namespace);
         EntryIdleProbeStreamOperative.arm(runner);
+        // One row of the refusal table instead of the fixture set: a refused
+        // topology must not reach a connected runner.
+        String refusalFixture = System.getenv("FLEZHA_REFUSAL_FIXTURE");
+        if (refusalFixture != null && !refusalFixture.isEmpty()) {
+            ConformanceRun.registerOnly(runner, refusalFixture);
+            runner.run();
+            return;
+        }
         define(runner).run();
+    }
+
+    /**
+     * The value of {@code --flag <value>}, wherever it sits in the argument
+     * list — the namespace is positional and every mode is selected after it.
+     */
+    private static String flagValue(String[] args, String flag) {
+        for (int at = 0; at < args.length - 1; at++) {
+            if (args[at].equals(flag)) {
+                return args[at + 1];
+            }
+        }
+        return null;
     }
 
     /**

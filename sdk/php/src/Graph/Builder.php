@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Flezha\Graph;
 
-use Flezha\AckGranularity;
 use Flezha\BeyondWindow;
 use Flezha\CheckpointOutputs;
 use Flezha\Definition;
@@ -27,26 +26,22 @@ final class Builder
     /** @var list<ChannelSpec> */
     public array $channels = [];
     /**
-     * The transform/key chains declared on edges. Every `map` / `filter` /
-     * `flatMap` / `keyBy` opens a new one over the previous, which is what lets
-     * a shared prefix branch without the arms colliding.
+     * The links each fluent sequence off a channel handle was declared with,
+     * in declaration order — the record's `chains`, recorded and never judged.
      *
-     * `superseded` is set when a later link built on this one, so only a tip
-     * can dangle; `consumed` when an `into(...)` closed it onto an edge;
-     * `keyed` once a `keyBy` link joined, so a later link knows it follows one.
+     * Every `map` / `filter` / `flatMap` / `keyBy` / `named` answers a new
+     * sequence over the previous, which is what lets a shared prefix branch
+     * without the arms colliding; `superseded` marks the prefix a later link
+     * built on, so only a tip reaches the record.
      *
-     * @var list<array{source: array{string, ChannelSpec|ProcNode}, superseded: bool, consumed: bool, keyed: bool}>
+     * @var list<array{source: array{string, ChannelSpec|ProcNode}, links: list<array<string, mixed>>, superseded: bool, edge: ?ConsumerEdge}>
      */
-    public array $chains = [];
-    /**
-     * What each link refused as it was declared, in declaration order.
-     *
-     * @var list<array{channel: string, issue: string}>
-     */
-    public array $linkIssues = [];
+    private array $chains = [];
+
+    private bool $sealed = false;
 
     public bool $effectivelyOnce = false;
-    public AckGranularity $ackGranularity = AckGranularity::PerInput;
+    public bool $checkpointAck = false;
     public ?int $checkpointEvery = null;
     public CheckpointOutputs $checkpointOutputs = CheckpointOutputs::AsProduced;
     public ?int $checkpointMaxDelayMs = null;
@@ -70,40 +65,33 @@ final class Builder
     /**
      * Acknowledge at the checkpoint rather than per input; the interval closes
      * only on an explicit `ctx.checkpoint()`. Requires `effectivelyOnce()`.
+     *
+     * Each of the three below writes its own raw flag and nothing else: the
+     * acknowledgement granularity is DERIVED by the core, which is the one
+     * place any checkpoint key implies it.
      */
     public function checkpointAck(): self
     {
-        return $this->amendCheckpoint(static function (): void {
-        });
+        $this->checkpointAck = true;
+
+        return $this;
     }
 
     /** Close the checkpoint interval every `$count` inputs, and on demand. */
     public function checkpointEvery(int $count): self
     {
-        return $this->amendCheckpoint(function () use ($count): void {
-            $this->checkpointEvery = $count;
-        });
+        $this->checkpointEvery = $count;
+
+        return $this;
     }
 
     /** Hold outputs until the interval closes, for at most `$maxDelayMs`. */
     public function outputsAtCheckpoint(?int $maxDelayMs = null): self
     {
-        return $this->amendCheckpoint(function () use ($maxDelayMs): void {
-            $this->checkpointOutputs = CheckpointOutputs::AtCheckpoint;
-            if ($maxDelayMs !== null) {
-                $this->checkpointMaxDelayMs = $maxDelayMs;
-            }
-        });
-    }
-
-    /**
-     * Turn the checkpoint granularity on (idempotent) and amend its policy, so
-     * each option is one call that preserves the others.
-     */
-    private function amendCheckpoint(callable $amend): self
-    {
-        $this->ackGranularity = AckGranularity::Checkpoint;
-        $amend();
+        $this->checkpointOutputs = CheckpointOutputs::AtCheckpoint;
+        if ($maxDelayMs !== null) {
+            $this->checkpointMaxDelayMs = $maxDelayMs;
+        }
 
         return $this;
     }
@@ -176,11 +164,15 @@ final class Builder
             if ($node->class === $class) {
                 return $node;
             }
+            // The node table is keyed by identity and physically cannot hold
+            // two, so the record the core would judge is unwritable. The
+            // refusal answers under the core's own name all the same.
             throw new DeclarationException(
                 $this->factoryId,
                 $identity,
                 'two different procedures claim this node identity; name one of them on the '
-                . '`into(...)` so each node has its own'
+                . '`into(...)` so each node has its own',
+                ['NodeIdentityCollision']
             );
         }
 
@@ -218,104 +210,67 @@ final class Builder
     }
 
     /**
-     * Extend the chain at `$base` (or open one on `$source`) with one more
-     * link, answering the new chain's id.
+     * Record one more link on the sequence at `$base`, or open one on
+     * `$source`, and answer the new sequence's id.
      *
-     * The three refusals the references raise from their own `extend_pending`
-     * are raised here: a link declared behind a plugin sink, a transform
-     * declared after the key it would feed, and a second key — which without
-     * this would overwrite the author's first without a word.
+     * The links are copied rather than appended in place: a handle held over a
+     * branch point extends the prefix twice, and two sequences sharing one
+     * list would each see the other's links.
+     *
+     * `$edge` is the consumer an `into` sequence closes on, held aside for the
+     * core to name back on the edge it derives from this chain.
      *
      * @param array{string, ChannelSpec|ProcNode} $source
+     * @param array<string, mixed>                $link
      */
-    public function extendChain(array $source, ?int $base, bool $key): int
+    public function linkChain(array $source, ?int $base, array $link, ?ConsumerEdge $edge = null): int
     {
-        $channel = $this->channelName($source);
-        if ($this->sinkAttached($source)) {
-            $this->linkIssues[] = ['channel' => $channel, 'issue' => 'TransformAfterTerminal'];
-        }
-        $priorKey = $base !== null && $this->chains[$base]['keyed'];
+        $links = $base === null ? [] : $this->chains[$base]['links'];
         if ($base !== null) {
             $this->chains[$base]['superseded'] = true;
         }
-        // The key is evaluated on the final post-transform value, so a
-        // transform declared after it would hand it a value of a type it was
-        // never written against.
-        if ($priorKey && !$key) {
-            $this->linkIssues[] = ['channel' => $channel, 'issue' => 'TransformAfterKeyBy'];
-        }
-        if ($priorKey && $key) {
-            $this->linkIssues[] = ['channel' => $channel, 'issue' => 'DuplicateKeyBy'];
-        }
-        $this->chains[] = [
-            'source' => $source,
-            'superseded' => false,
-            'consumed' => false,
-            'keyed' => $key || $priorKey,
-        ];
+        $links[] = $link;
+        $this->chains[] = ['source' => $source, 'links' => $links, 'superseded' => false, 'edge' => $edge];
 
         return count($this->chains) - 1;
     }
 
-    /** Mark a chain closed by an `into(...)`. A bare edge closes nothing. */
-    public function closeChain(?int $chain): void
-    {
-        if ($chain !== null) {
-            $this->chains[$chain]['consumed'] = true;
-        }
-    }
-
     /**
-     * Every transform-chain defect this declaration carries: what each link
-     * refused as it was declared, then the tips no `into(...)` closed — the
-     * order the references report them in, so the sharper defect wins over the
-     * dangling one it also produces.
+     * File every sequence on the channel it was declared off, in declaration
+     * order — the `chains` the record carries.
      *
-     * @return list<array{channel: string, issue: string}>
+     * A channel named only by a sequence no terminator closed is created here,
+     * so a dangling chain is submitted rather than dropped on the way to the
+     * core. Idempotent: a spec is assembled once, but a builder is reachable.
      */
-    public function chainIssues(): array
+    public function seal(): self
     {
-        $issues = $this->linkIssues;
+        if ($this->sealed) {
+            return $this;
+        }
+        $this->sealed = true;
         foreach ($this->chains as $chain) {
-            if (!$chain['superseded'] && !$chain['consumed']) {
-                $issues[] = [
-                    'channel' => $this->channelName($chain['source']),
-                    'issue' => 'DanglingTransformChain',
-                ];
+            if ($chain['superseded']) {
+                continue;
             }
+            $channel = $this->channelOf($chain['source']);
+            $channel->chains[] = $chain['links'];
+            $channel->chainEdges[] = $chain['edge'];
         }
 
-        return $issues;
+        return $this;
     }
 
     /**
-     * The name of the channel an edge's values leave on: the entry's own, or
-     * the producing node's — its materialised channel when one exists, since a
-     * `named(...)` override lives there, and the name it would derive otherwise.
+     * The channel an edge's values leave on: the entry's own, or the producing
+     * node's, created on first use.
      *
      * @param array{string, ChannelSpec|ProcNode} $source
      */
-    public function channelName(array $source): string
-    {
-        $from = $source[1];
-        if ($source[0] === 'entry' || !($from instanceof ProcNode)) {
-            return $from->name;
-        }
-
-        return $from->output?->name ?? $from->name;
-    }
-
-    /**
-     * Whether the channel an edge's values leave on already has a plugin sink.
-     * Only a procedure's can: `sink(...)` refuses an entry edge, and a node's
-     * channel is created on first use, so one without a channel has no sink.
-     *
-     * @param array{string, ChannelSpec|ProcNode} $source
-     */
-    private function sinkAttached(array $source): bool
+    private function channelOf(array $source): ChannelSpec
     {
         $from = $source[1];
 
-        return $from instanceof ProcNode && $from->output?->sink !== null;
+        return $from instanceof ProcNode ? $this->outputChannelFor($from) : $from;
     }
 }

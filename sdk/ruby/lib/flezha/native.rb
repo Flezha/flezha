@@ -70,7 +70,7 @@ module Flezha
     # exports, so an entry point added there and not here is a red build rather
     # than a method that quietly does not exist.
     ENTRY_POINTS = %i[
-      declare_class start poll wait_starvation complete abandon shutdown
+      declare_class check_class start poll wait_starvation complete abandon shutdown
       workflow_emit workflow_recv workflow_cancelled spawn_workflow
       monotonic_nanos entry_last_delivery_nanos idle_watch_new idle_watch_poll
       idle_watch_free last_error

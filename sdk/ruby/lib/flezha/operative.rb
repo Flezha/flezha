@@ -55,11 +55,13 @@ module Flezha
       private
 
       def build_spec
-        builder = build_builder
+        # Sealed before the channels are read: filing every declared sequence
+        # on its channel is what can still create one.
+        builder = build_builder.seal
         ClassSpec.new(
           factory_id: @factory_id, kind: :stream, persistent: persistent,
           effectively_once: builder.effectively_once_flag,
-          ack_granularity: builder.ack_granularity,
+          checkpoint_ack: builder.checkpoint_ack_flag,
           checkpoint_every: builder.checkpoint_every_value,
           checkpoint_outputs: builder.checkpoint_outputs_value,
           checkpoint_max_delay_ms: builder.checkpoint_max_delay_ms_value,
@@ -67,8 +69,7 @@ module Flezha
           beyond_window_policy: builder.beyond_window_policy_value,
           compact_after_bytes: builder.compact_after_bytes_value,
           sync_durability: builder.sync_durability_flag,
-          procedures: builder.procedures, channels: builder.channels,
-          chain_issues: builder.chain_issues
+          procedures: builder.procedures, channels: builder.channels
         )
       end
     end
@@ -97,14 +98,13 @@ module Flezha
                                      "declares neither a run body nor a channels graph")
         end
 
-        builder = build_builder
+        builder = build_builder.seal
         ClassSpec.new(
           factory_id: @factory_id, kind: :workflow, persistent: persistent,
-          effectively_once: builder.effectively_once_flag, ack_granularity: :per_input,
+          effectively_once: builder.effectively_once_flag, checkpoint_ack: false,
           checkpoint_outputs: :as_produced, beyond_window_policy: :process_as_arrival,
           sync_durability: sync_durability_declared?,
           procedures: builder.procedures, channels: builder.channels,
-          chain_issues: builder.chain_issues,
           workflow: {
             loop_mode: (loop_mode || :once).to_sym,
             rollback_mode: (rollback_mode || :all_or_nothing).to_sym,

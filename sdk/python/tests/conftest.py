@@ -16,7 +16,18 @@ from typing import Any
 import pytest
 
 import flezha
-from flezha import codec
+from flezha import codec, native
+
+#: The process context ``graph.validate`` submits a record through. One per test
+#: session: a check registers nothing, so every suite shares it.
+CHECK_CORE = native.Core.create()
+
+
+def declare(operative: flezha.Operative) -> dict[str, Any]:
+    """Submit one operative's record, and answer what the core derived from it."""
+    from flezha import graph
+
+    return graph.validate(operative.spec, CHECK_CORE)
 
 
 @flezha.state
@@ -101,6 +112,12 @@ class FakeCore:
 
     def declare_class(self, json_bytes: bytes) -> None:
         self.declared.append(json_bytes)
+
+    def check_class(self, json_bytes: bytes) -> bytes:
+        # The one entry point the fake does not fake: a check registers nothing
+        # and mutates nothing, so the real core is what a test wants an answer
+        # from — a fake verdict would only prove the fake.
+        return CHECK_CORE.check_class(json_bytes)
 
     def start(self, namespace: str) -> None:
         self.started = namespace
@@ -232,11 +249,10 @@ def deps_for(operative: flezha.Operative, core: FakeCore) -> Any:
     DispatchDeps` out longhand; this is that, once, so a change to what a
     dispatch loop needs is one edit.
     """
-    from flezha import graph
     from flezha.dispatch import DispatchDeps, Registry
 
     registry = Registry()
-    graph.validate(operative.spec)
+    declare(operative)
     registry.add(operative.spec)
     return DispatchDeps(
         registry=registry,

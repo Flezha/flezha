@@ -121,12 +121,18 @@ final class BindingTest extends TestCase
     public function testHoldingOutputsAtTheCheckpointAcknowledgesAtTheCheckpoint(): void
     {
         $decl = HostClassDecl::of(CheckpointOutputsOnly::spec());
-        self::assertSame('checkpoint', $decl['ack_granularity']);
+        // The raw flag, and only it: the builder never asks for the
+        // granularity, and the class registers because the core implies it
+        // from this key.
+        self::assertFalse($decl['checkpoint_ack']);
+        self::assertSame('at_checkpoint', $decl['checkpoint_outputs']);
 
         $core = Core::create();
 
         try {
-            $core->declareClass((string) json_encode($decl));
+            $json = (string) json_encode($decl);
+            $core->declareClass($json);
+            self::assertSame('checkpoint', self::granularity($core, $json));
         } finally {
             $core->free();
         }
@@ -135,16 +141,54 @@ final class BindingTest extends TestCase
     public function testTheBareCheckpointOptInRegistersWithNoCadence(): void
     {
         $decl = HostClassDecl::of(CheckpointAckOnly::spec());
-        self::assertSame('checkpoint', $decl['ack_granularity']);
+        self::assertTrue($decl['checkpoint_ack']);
         self::assertArrayNotHasKey('checkpoint_every', $decl);
 
         $core = Core::create();
 
         try {
-            $core->declareClass((string) json_encode($decl));
+            $json = (string) json_encode($decl);
+            $core->declareClass($json);
+            self::assertSame('checkpoint', self::granularity($core, $json));
         } finally {
             $core->free();
         }
+    }
+
+    /**
+     * The read-only half of the declaration: a record the core cannot honour
+     * is refused with the vocabulary every SDK renders, and nothing is
+     * registered.
+     */
+    public function testARefusedRecordAnswersTheVerdictAndRegistersNothing(): void
+    {
+        $core = Core::create();
+        $verdict = null;
+
+        try {
+            $core->checkClass('{"factory_id":"x","channels":[],"procedures":[]}', $verdict);
+            self::fail('the core refuses a record it cannot honour');
+        } catch (FlezhaException $e) {
+            self::assertStringContainsString('topology rejected [', $e->getMessage());
+            // The same verdict as DATA: the ABI fills the out-buffer on the
+            // refusal status too, so this veneer takes it — and frees it —
+            // there as well, and a reader never parses the rendered prose.
+            /** @var array{issues: list<array{name: string, text: string}>} $decoded */
+            $decoded = json_decode((string) $verdict, true, 512, JSON_THROW_ON_ERROR);
+            self::assertNotSame([], $decoded['issues']);
+            self::assertStringContainsString($decoded['issues'][0]['name'], $e->getMessage());
+        } finally {
+            $core->free();
+        }
+    }
+
+    /** The acknowledgement granularity the core derived from a record. */
+    private static function granularity(Core $core, string $json): string
+    {
+        /** @var array{ack_granularity: string} $derived */
+        $derived = json_decode($core->checkClass($json), true, 512, JSON_THROW_ON_ERROR);
+
+        return $derived['ack_granularity'];
     }
 
     public function testTheMonotonicClockAdvances(): void

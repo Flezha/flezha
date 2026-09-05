@@ -19,13 +19,12 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
   use Mimic
-  import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1, unique_id_path: 1]
 
   alias Flezha.Operative.Builder
-  alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias FlezhaTest.Helper.DeclarationSnapshot
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :sdk_smoke
@@ -125,9 +124,9 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
       # frame names the SINK rather than the producing channel and the durable
       # handoff a workflow journals is the wrong one. The channel name on the
       # frame is what makes that visible from the controller.
-      @tag scenario: "hybrid channel",
-           capability: :graph_builder,
-           skip: FlezhaTest.SystemCase.deferral(:graph_builder)
+      @tag capability: :graph_builder,
+           skip: FlezhaTest.SystemCase.deferral(:graph_builder),
+           scenario: "hybrid channel"
       test "one emit on a hybrid channel reaches the plugin sink and the consumer", ctx do
         {port, _id} =
           NodeTestHelper.start_runner_port(ctx.namespace,
@@ -235,63 +234,6 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # belongs to — so a deferring SDK skips them by the same rule as everything
   # else.
 
-  describe "declared surface: graph_builder" do
-    @describetag capability: :graph_builder,
-                 skip: FlezhaTest.SystemCase.deferral(:graph_builder)
-
-    test "the reference operative's declaration matches its golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "static_entity", :stream)
-    end
-
-    test "the sugared reference operative declares the same as the hand-written one", ctx do
-      assert_declaration_snapshot(ctx.namespace, "sugar_static_entity", :stream)
-    end
-  end
-
-  describe "declared surface: state_persistence" do
-    @describetag capability: :state_persistence,
-                 skip: FlezhaTest.SystemCase.deferral(:state_persistence)
-
-    test "a persistent class's declaration matches its golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "store_input", :stream)
-    end
-  end
-
-  describe "declared surface: effectively_once" do
-    @describetag capability: :effectively_once,
-                 skip: FlezhaTest.SystemCase.deferral(:effectively_once)
-
-    test "the tier declaration matches its golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "tier_store", :stream)
-    end
-
-    test "the checkpoint-interval declarations match their golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "checkpoint_batched_store", :stream)
-    end
-  end
-
-  describe "declared surface: correction_window" do
-    @describetag capability: :correction_window,
-                 skip: FlezhaTest.SystemCase.deferral(:correction_window)
-
-    test "the correction-window declaration matches its golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "candle", :stream)
-    end
-  end
-
-  describe "declared surface: workflow" do
-    @describetag capability: :workflow,
-                 skip: FlezhaTest.SystemCase.deferral(:workflow)
-
-    test "a durable chain's declaration matches its golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "commit_block_workflow", :workflow)
-    end
-
-    test "a compensating chain's declaration matches its golden", ctx do
-      assert_declaration_snapshot(ctx.namespace, "saga_block_workflow", :workflow)
-    end
-  end
-
   describe "declared surface: keyed_channels" do
     @describetag capability: :keyed_channels,
                  skip: FlezhaTest.SystemCase.deferral(:keyed_channels)
@@ -321,73 +263,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         |> Enum.filter(&String.starts_with?(&1, "flz."))
         |> Enum.sort()
 
-      assert stamps == golden("keyed_output_stamps", stamps)
-    end
-  end
-
-  # Bind `factory` with `decode_declarations/1` intercepted, and compare the raw
-  # metadata map the controller decoded against the committed golden. The stub
-  # delegates, so the bind itself is unchanged.
-  defp assert_declaration_snapshot(namespace, factory, kind) do
-    NodeTestHelper.start_runner(namespace)
-    parent = self()
-
-    Mimic.stub(ClassRegistry, :decode_declarations, fn raw ->
-      send(parent, {:declaration_metadata, decoded_metadata(raw)})
-      Mimic.call_original(ClassRegistry, :decode_declarations, [raw])
-    end)
-
-    set_mimic_global_until_exit()
-
-    assert {:ok, _} =
-             OperativeManager.start_operative(namespace, %Builder{
-               id: unique("d_#{factory}"),
-               factory_id: factory,
-               kind: kind,
-               init_values: %{"seed" => "go"}
-             })
-
-    assert_receive {:declaration_metadata, metadata}, 60_000
-    assert metadata == golden(factory, metadata)
-  end
-
-  # The same wire form `ClassRegistry.decode_declarations/1` reads, kept raw so
-  # a key an SDK adds, drops or spells differently is a diff.
-  defp decoded_metadata(raw) when is_binary(raw) and raw != "" do
-    case RunnerCommands.AddOperativeResponse.decode(raw) do
-      {:ok, %{metadata: metadata}} -> metadata
-      {:error, _} -> %{}
-    end
-  end
-
-  defp decoded_metadata(_raw), do: %{}
-
-  # The committed golden for `name`, or `actual` written back when
-  # `FLEZHA_E2E_SNAPSHOT=update` is set under the reference runtime.
-  defp golden(name, actual) do
-    path = Path.join(@golden_dir, "#{name}.json")
-
-    cond do
-      System.get_env("FLEZHA_E2E_SNAPSHOT") != "update" ->
-        assert File.exists?(path),
-               "no golden at #{path}; regenerate with " <>
-                 "`FLEZHA_E2E_SNAPSHOT=update " <>
-                 "FLEZHA_E2E_RUNTIME=#{NodeTestHelper.reference_runtime()} " <>
-                 "mix test --include sdk_smoke`"
-
-        path |> File.read!() |> Jason.decode!()
-
-      NodeTestHelper.runtime() != NodeTestHelper.reference_runtime() ->
-        flunk(
-          "a golden is regenerated only under the reference runtime " <>
-            "(#{NodeTestHelper.reference_runtime()}); this run is " <>
-            "#{NodeTestHelper.runtime()}"
-        )
-
-      true ->
-        File.mkdir_p!(@golden_dir)
-        File.write!(path, Jason.encode!(actual, pretty: true) <> "\n")
-        actual
+      assert stamps == DeclarationSnapshot.golden("keyed_output_stamps", stamps)
     end
   end
 

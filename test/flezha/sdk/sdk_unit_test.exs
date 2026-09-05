@@ -139,103 +139,12 @@ defmodule Flezha.SDK.UnitTest do
   end
 
   # --- builder refusals ---
-
-  defp issues(module), do: Enum.map(refusals(module), &elem(&1, 0))
-
-  defp refusals(module) do
-    assert {:error, {:invalid_topology, issues}} = Topology.build(module)
-    issues
-  end
-
-  test "DuplicateChannel" do
-    defmodule DupChan do
-      def factory_id, do: "d"
-
-      def channels(c) do
-        Channels.input(c, "in")
-        Channels.input(c, "in")
-      end
-    end
-
-    assert :DuplicateChannel in issues(DupChan)
-  end
-
-  test "TransformAfterKeyBy" do
-    defmodule TAK do
-      def factory_id, do: "t"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.input("in")
-          |> Channels.key_by(& &1)
-          |> Channels.map(& &1)
-          |> Channels.into(KeyedProc)
-    end
-
-    assert :TransformAfterKeyBy in issues(TAK)
-  end
-
-  test "RetryMaxZero" do
-    defmodule RMZ do
-      def factory_id, do: "r"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.input("in")
-          |> Channels.retry_max(0)
-          |> Channels.into(EchoProc)
-          |> Channels.sink("o")
-    end
-
-    assert :RetryMaxZero in issues(RMZ)
-  end
-
-  test "KeyByOnUnkeyableTarget — key_by into a Static procedure" do
-    defmodule KBU do
-      def factory_id, do: "k"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.input("in")
-          |> Channels.key_by(& &1)
-          |> Channels.into(StaticProc)
-          |> Channels.sink("o")
-    end
-
-    assert :KeyByOnUnkeyableTarget in issues(KBU)
-  end
-
-  test "NodeIdentityCollision — one name, two modules" do
-    defmodule NIC do
-      def factory_id, do: "n"
-
-      def channels(c) do
-        c |> Channels.input("in") |> Channels.into_named(EchoProc, "same")
-        c |> Channels.input("in2") |> Channels.into_named(KeyedProc, "same")
-      end
-    end
-
-    assert :NodeIdentityCollision in issues(NIC)
-  end
-
-  test "Cycle" do
-    defmodule Cyc do
-      def factory_id, do: "c"
-
-      def channels(c) do
-        c
-        |> Channels.input("in")
-        |> Channels.into(EchoProc)
-        |> Channels.into(KeyedProc)
-        |> Channels.into(EchoProc)
-      end
-    end
-
-    assert :Cycle in issues(Cyc)
-  end
+  #
+  # Only the shapes no row of `test/fixtures/reference_topologies.txt` states
+  # are asserted here: the names the reference vocabulary does not carry, and
+  # the ways this SDK's own surface composes. Every `{:invalid_topology,
+  # [Name]}` case whose shape is a fixture row is retired — the conformance run
+  # drives those rows through this builder.
 
   test "UnservableClock, EventTimeClockWithoutExtractor, UnknownClock — a clock the runtime cannot serve" do
     defmodule LogicalNoChange do
@@ -279,9 +188,22 @@ defmodule Flezha.SDK.UnitTest do
     assert length(issues) == 3
   end
 
-  test "KeyedInterProcedureChannel and KeyedOnEntry — keyed/1 needs a plugin sink" do
-    defmodule KeyedEdge do
-      def factory_id, do: "keyed_edge"
+  test "KeyedOnEntry — an entry channel has no output of its own to stamp" do
+    defmodule KeyedEntry do
+      def factory_id, do: "keyed_entry"
+      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink("out")
+    end
+
+    assert {:error, {:invalid_topology, [{:KeyedOnEntry, "in"}]}} = Topology.build(KeyedEntry)
+  end
+
+  # The two names this SDK gains from the reference vocabulary here. Both are
+  # rows of `test/fixtures/reference_topologies.txt`, so this test is the one
+  # to retire once the conformance run drives those rows through this builder;
+  # until then it is their only reader.
+  test "the two refusals this SDK gains from the reference vocabulary" do
+    defmodule KeyedNoWire do
+      def factory_id, do: "keyed_no_wire"
 
       def channels(c),
         do:
@@ -290,17 +212,18 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.into(EchoProc)
           |> Channels.keyed()
           |> Channels.into(KeyedProc)
-          |> Channels.sink("out")
     end
 
-    defmodule KeyedEntry do
-      def factory_id, do: "keyed_entry"
-      def channels(c), do: c |> Channels.input("in") |> Channels.keyed() |> Channels.sink("out")
+    defmodule SyncStream do
+      def factory_id, do: "sync_stream"
+      def sync_durability, do: true
+
+      def channels(c),
+        do: c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.sink("out")
     end
 
-    assert {:error, {:invalid_topology, issues}} = Topology.build(KeyedEdge)
-    assert Enum.any?(issues, &match?({:KeyedInterProcedureChannel, _}, &1))
-    assert {:error, {:invalid_topology, [{:KeyedOnEntry, "in"}]}} = Topology.build(KeyedEntry)
+    assert {:KeyedChannelWithoutPluginWire, "echo"} = one_issue(KeyedNoWire)
+    assert {:SyncDurabilityOnStream, _} = one_issue(SyncStream)
   end
 
   test "the ctx refuses a keyless emit where a key is required, and a key where none is allowed" do
@@ -397,36 +320,9 @@ defmodule Flezha.SDK.UnitTest do
     assert b.checkpoint == a.checkpoint
   end
 
-  test "the five tier refusals by name" do
-    defmodule AckWithoutTier do
-      def factory_id, do: "ack_no_tier"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.checkpoint_ack()
-          |> Channels.input("in")
-          |> Channels.into(KeyedProc)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink("out")
-    end
-
-    defmodule EveryZero do
-      def factory_id, do: "every_zero"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.effectively_once()
-          |> Channels.checkpoint_every(0)
-          |> Channels.input("in")
-          |> Channels.into(KeyedProc)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink("out")
-    end
-
+  # A zero delay is the one checkpoint refusal the reference vocabulary spells
+  # as free text rather than as a name, so no fixture row states it.
+  test "CheckpointMaxDelayZero — an interval that closes after no time at all" do
     defmodule DelayZero do
       def factory_id, do: "delay_zero"
 
@@ -442,86 +338,12 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.sink("out")
     end
 
-    defmodule UnkeyedSink do
-      def factory_id, do: "unkeyed_sink"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.effectively_once()
-          |> Channels.input("in")
-          |> Channels.into(KeyedProc)
-          |> Channels.named("sink")
-          |> Channels.sink("out")
-    end
-
-    defmodule Shedding do
-      def factory_id, do: "shedding"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.effectively_once()
-          |> Channels.input("in")
-          |> Channels.on_full(:drop_newest)
-          |> Channels.into(KeyedProc)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink("out")
-    end
-
-    assert {:CheckpointAckWithoutTier, _} = one_issue(AckWithoutTier)
-    assert {:CheckpointEveryZero, _} = one_issue(EveryZero)
     assert {:CheckpointMaxDelayZero, _} = one_issue(DelayZero)
-    assert {:UnkeyedChannelUnderEffectivelyOnce, "sink"} = one_issue(UnkeyedSink)
-    assert {:DroppingPolicyUnderEffectivelyOnce, "in", :drop_newest} = one_issue(Shedding)
   end
 
-  test "the three correction refusals by name, and the tier's shedding refusal covers the fourth" do
-    defmodule WindowWithoutTier do
-      def factory_id, do: "window_no_tier"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.correction_window(600_000)
-          |> Channels.input("in")
-          |> Channels.into(EventTimeProc)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink("out")
-    end
-
-    defmodule WindowWithoutEventTime do
-      def factory_id, do: "window_no_event_time"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.effectively_once()
-          |> Channels.correction_window(600_000)
-          |> Channels.input("in")
-          |> Channels.into(KeyedProc)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink("out")
-    end
-
-    defmodule WindowZero do
-      def factory_id, do: "window_zero"
-
-      def channels(c),
-        do:
-          c
-          |> Channels.effectively_once()
-          |> Channels.correction_window(0)
-          |> Channels.input("in")
-          |> Channels.into(EventTimeProc)
-          |> Channels.named("sink")
-          |> Channels.keyed()
-          |> Channels.sink("out")
-    end
-
+  # How the two correction options compose is this SDK's own rule, not a row:
+  # a fate declared alone leaves the window at zero, which is refused.
+  test "a beyond-window policy declared alone is a window of zero" do
     defmodule PolicyWithoutWindow do
       def factory_id, do: "policy_no_window"
 
@@ -537,11 +359,6 @@ defmodule Flezha.SDK.UnitTest do
           |> Channels.sink("out")
     end
 
-    assert {:CorrectionWithoutTier, _} = one_issue(WindowWithoutTier)
-
-    assert {:CorrectionWithoutEventTime, "keyed", :wall} = one_issue(WindowWithoutEventTime)
-
-    assert {:CorrectionWindowZero, _} = one_issue(WindowZero)
     assert {:CorrectionWindowZero, _} = one_issue(PolicyWithoutWindow)
   end
 

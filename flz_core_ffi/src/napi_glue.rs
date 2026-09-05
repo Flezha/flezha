@@ -313,6 +313,27 @@ pub fn declare_class(json: Buffer) -> Result<()> {
     Ok(veneer::declare_class(context()?, &json)?)
 }
 
+/// Judge one host class declaration without registering it. Answers the
+/// derived declaration as JSON; throws the core's verdict on a refusal.
+///
+/// The thrown error's `cause` carries that verdict as the core's own JSON —
+/// `{"issues":[{"name","text"}]}` — so the SDK reads which refusals fired off
+/// data rather than out of the rendered message, which is unchanged.
+#[napi]
+pub fn check_class(json: Buffer) -> Result<Buffer> {
+    let ctx = context()?;
+    match veneer::check_class(ctx, &json) {
+        Ok(derived) => Ok(derived.into()),
+        Err((refusal, verdict)) => {
+            let mut refused = Error::from(refusal);
+            refused.cause = Some(Box::new(Error::from_reason(
+                String::from_utf8_lossy(&verdict).into_owned(),
+            )));
+            Err(refused)
+        }
+    }
+}
+
 /// Connect to the controller and start the runner loop. Asynchronous: the ABI
 /// call waits up to ten seconds for the connect confirmation, which is ten
 /// seconds an event loop may not spend inside native code.
@@ -512,6 +533,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("contextNew", "flz_core_context_new"),
         veneer("contextFree", "flz_core_context_free"),
         veneer("declareClass", "flz_core_declare_class"),
+        veneer("checkClass", "flz_core_check_class"),
         veneer("start", "flz_core_start"),
         veneer("complete", "flz_core_complete"),
         veneer("abandon", "flz_core_abandon"),

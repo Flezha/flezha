@@ -180,6 +180,8 @@ export interface Native {
   contextNew(shimSchemaVersion: number): void;
   contextFree(): void;
   declareClass(json: Buffer): void;
+  /** Judge a declaration without registering it; answers the derived one. */
+  checkClass(json: Buffer): Buffer;
   start(namespace: string): Promise<void>;
   complete(result: NativeActivationResult): Promise<void>;
   abandon(token: bigint): void;

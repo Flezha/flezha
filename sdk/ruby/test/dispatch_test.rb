@@ -33,8 +33,20 @@ class DispatchTest < Minitest::Test
 
   def setup
     @core = Flezha::TestSupport::FakeCore.new
-    @deps = Flezha::TestSupport.deps(CounterOperative, @core)
+    @deps = wired_deps(CounterOperative)
     @registry = @deps.registry
+  end
+
+  # The dependencies over a declared class whose edges are bound.
+  #
+  # A channel's consumers are the CORE's answer: the builder records the chains
+  # an author declared and the core says which of them became edges, so a
+  # dispatch over a graph needs a real context to have judged the record first.
+  def wired_deps(operative)
+    skip "needs the compiled veneer (scripts/build-ruby-sdk.sh)" unless Flezha::TestSupport.native?
+
+    Flezha::TestSupport.validate(operative.spec)
+    Flezha::TestSupport.deps(operative, @core)
   end
 
   def activation(kind, **extra)
@@ -279,7 +291,7 @@ class DispatchTest < Minitest::Test
   end
 
   def stamp_answer(payload, operative: StampOperative, factory: "stamp_op", items: nil)
-    deps = Flezha::TestSupport.deps(operative, @core)
+    deps = wired_deps(operative)
     activation = Flezha::TestSupport.activation(
       factory: factory, kind: :work, entity_key: "ek", change_seq: 5,
       items: items || [input_item(payload)]
@@ -380,7 +392,7 @@ class DispatchTest < Minitest::Test
   end
 
   def emit_arm_outputs(operative, factory)
-    deps = Flezha::TestSupport.deps(operative, @core)
+    deps = wired_deps(operative)
     activation = Flezha::TestSupport.activation(
       factory: factory, kind: :work, entity_key: "ek", change_seq: 0,
       items: [input_item(Flezha::Codec.encode(10))]
@@ -412,7 +424,7 @@ class DispatchTest < Minitest::Test
 
   def delivered(operative, factory, procedure, payload)
     DELIVERED.clear
-    deps = Flezha::TestSupport.deps(operative, @core)
+    deps = wired_deps(operative)
     activation = Flezha::TestSupport.activation(
       factory: factory, kind: :work, procedure: procedure, entity_key: "ek",
       items: [input_item(payload, channel: 1)]

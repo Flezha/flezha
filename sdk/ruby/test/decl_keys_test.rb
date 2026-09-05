@@ -110,7 +110,7 @@ class DeclKeysTest < Minitest::Test
   # checkpoint acknowledgement the first refusal leaves unreachable there. One
   # builder serves both kinds, so the gate lives in it.
   REFUSED_ON_WORKFLOW = %w[
-    effectively_once ack_granularity checkpoint_every checkpoint_outputs
+    effectively_once checkpoint_ack checkpoint_every checkpoint_outputs
     checkpoint_max_delay_ms correction_window_ms beyond_window_policy
   ].freeze
 
@@ -136,10 +136,10 @@ end
 # The cross-language topology golden.
 #
 # `test/fixtures/reference_topologies.txt` is the Rust reference's channel
-# topology for two fixtures, transcribed by hand. Four SDKs implement one
+# topology for two fixtures, transcribed by hand. Several SDKs implement one
 # design with no compiler between them, so the file is what keeps them from
 # drifting: this builder declares both shapes in Ruby's spelling and the lines
-# must be the golden's, in order.
+# the CORE DERIVES from its record must be the golden's, in order.
 class ReferenceTopologiesTest < Minitest::Test
   TOPOLOGIES_FILE =
     File.join(Flezha::TestSupport.repo_root, "test/fixtures/reference_topologies.txt")
@@ -189,17 +189,24 @@ class ReferenceTopologiesTest < Minitest::Test
         .select { |line| line.start_with?("#{topology} |") }
   end
 
-  # The declaration rendered in the golden's columns, one line per channel.
+  # The DERIVED declaration rendered in the golden's columns, one line per
+  # channel. Every column but the index is the core's answer now — the record
+  # carries chains, and the consumers, the plugin kind and the sink name are
+  # read off them.
   def emitted(topology, spec)
-    Flezha::Graph.to_host_class_decl(spec)["channels"].each_with_index.map do |channel, index|
-      consumers = channel["consumers"] || []
+    Flezha::TestSupport.validate(spec)["channels"].each_with_index.map do |channel, index|
+      consumers = channel["consumers"]
       [
         topology, index, channel["name"], channel["kind"],
         channel["producer"] || "-",
-        consumers.empty? ? "-" : consumers.join(","),
-        spec.channels[index].sink || "-"
+        consumers.empty? ? "-" : consumers.map { |edge| edge["procedure"] }.join(","),
+        channel["sink"] || "-"
       ].join(" | ")
     end
+  end
+
+  def setup
+    skip "needs the compiled veneer (scripts/build-ruby-sdk.sh)" unless Flezha::TestSupport.native?
   end
 
   def test_the_hybrid_stream_topology_is_the_reference

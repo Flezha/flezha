@@ -19,6 +19,10 @@ use Flezha\Procedure;
  */
 final class Edge
 {
+    /** The two links a fluent call adds; every `map` records the same one. */
+    private const TRANSFORM = ['link' => 'transform'];
+    private const KEY = ['link' => 'key'];
+
     /**
      * @param array{string, ChannelSpec|ProcNode} $from
      * @param array<string, mixed>                $pending
@@ -39,7 +43,7 @@ final class Edge
     /** Transform every value on this edge. Evaluated producer-side. */
     public function map(callable $transform): self
     {
-        return $this->relink(['transforms' => [...$this->transforms(), $transform]]);
+        return $this->relink(self::TRANSFORM, ['transforms' => [...$this->transforms(), $transform]]);
     }
 
     /**
@@ -64,7 +68,7 @@ final class Edge
     /** Route by a computed key: the consumer becomes a dynamic keyed procedure. */
     public function keyBy(callable $key): self
     {
-        return $this->relink(['keyBy' => $key]);
+        return $this->relink(self::KEY, ['keyBy' => $key]);
     }
 
     public function onFull(Overflow $policy): self
@@ -92,22 +96,14 @@ final class Edge
      * Fan out: each arm receives this same edge, so `branch` builds exactly
      * the topology the separate `into(...)` statements would.
      *
+     * The arity is recorded as a sequence of its own, so the arms extend the
+     * prefix this edge already carries rather than the branch's own record.
+     *
      * @param callable(self):mixed ...$arms
      */
     public function branch(callable ...$arms): self
     {
-        if (count($arms) < 2) {
-            throw new DeclarationException(
-                $this->builder->factoryId,
-                $this->pending['channelName'] ?? $this->sourceName(),
-                sprintf(
-                    'branch(...) requires at least two arms; %d given — a single arm is '
-                    . '`into(...)` written the long way',
-                    count($arms),
-                ),
-            );
-        }
-
+        $this->builder->linkChain($this->from, null, ['link' => 'branch', 'arms' => count($arms)]);
         foreach ($arms as $arm) {
             $arm($this);
         }
@@ -123,43 +119,22 @@ final class Edge
     public function into(string $class, ?string $nodeName = null): self
     {
         $node = $this->builder->nodeFor($class, $nodeName);
-        $this->builder->closeChain($this->pending['chain'] ?? null);
 
+        // Creates this edge's channel and applies its pending options, before
+        // the link that closes on it is recorded.
+        $this->channel();
         // The transforms and the key belong to this edge, not to the channel:
         // one channel may feed several procedures, and a chain declared before
-        // one `into` must not reach another.
-        $channel = $this->channel();
-        $existing = null;
-        foreach ($channel->consumers as $edge) {
-            if ($edge->procedure === $node->index) {
-                $existing = $edge;
-                break;
-            }
-        }
-        $declares = $this->transforms() !== [] || ($this->pending['keyBy'] ?? null) !== null;
-        if ($existing === null) {
-            $channel->consumers[] = new ConsumerEdge(
-                $node->index,
-                $this->transforms(),
-                $this->pending['keyBy'] ?? null,
-            );
-        } elseif ($existing->transforms !== [] || $existing->keyBy !== null || $declares) {
-            // Re-declaring one where either side carries a transform or a key
-            // is refused rather than silently dropped — the edge would
-            // otherwise keep whichever closure was declared first and deliver
-            // the wrong value, to the wrong Entity, forever. Re-declaring a
-            // bare edge is the fan-in / repeated `into` case and stays a no-op.
-            throw new DeclarationException(
-                $this->builder->factoryId,
-                $channel->name,
-                sprintf(
-                    'EdgeAlreadyWired: already feeds procedure `%s`; an edge carries exactly one '
-                    . 'transform and one key or neither, so a re-declaration where either side '
-                    . 'carries one is refused rather than silently keeping the first',
-                    $node->name,
-                ),
-            );
-        }
+        // one `into` must not reach another. They ride the chain that closes on
+        // them, and the core names that chain back on the edge it derived — so
+        // whether a re-declaration is the legal fan-in no-op or
+        // `EdgeAlreadyWired` is answered there and nowhere here.
+        $this->builder->linkChain(
+            $this->from,
+            $this->pending['chain'] ?? null,
+            ['link' => 'into', 'procedure' => $node->index],
+            new ConsumerEdge($node->index, $this->transforms(), $this->pending['keyBy'] ?? null),
+        );
 
         return new self($this->builder, ['procedure', $node], []);
     }
@@ -171,6 +146,10 @@ final class Edge
      * reaches both. A channel with no consumer behind it is the plugin-bound
      * terminal — terminality is the absence of further wiring, not a different
      * method.
+     *
+     * The one refusal left here: a channel with no producer has no value to
+     * serialize, and the core reads a sink as the terminal of the channel it
+     * sits on — it cannot see that this one is fed by the controller.
      *
      * @param (callable(mixed):string)|null $encode
      */
@@ -185,16 +164,17 @@ final class Edge
         }
 
         $channel = $this->channel();
-        if ($channel->sink !== null) {
-            throw new DeclarationException(
-                $this->builder->factoryId,
-                $channel->name,
-                'declares a plugin sink more than once'
-            );
+        $this->builder->linkChain(
+            $this->from,
+            $this->pending['chain'] ?? null,
+            ['link' => 'sink', 'name' => $name],
+        );
+        // First call wins on the builder's own side, as the reference does; a
+        // second `sink` link is what the core refuses the class for.
+        if ($channel->sink === null) {
+            $channel->sink = $name;
+            $channel->sinkEncode = $encode;
         }
-
-        $channel->sink = $name;
-        $channel->sinkEncode = $encode;
 
         return $this;
     }
@@ -210,8 +190,13 @@ final class Edge
             $channel = $this->from[1];
         } else {
             $channel = $this->builder->outputChannelFor($this->from[1]);
-            if (isset($this->pending['channelName'])) {
-                $channel->name = $this->pending['channelName'];
+            $rename = $this->pending['channelName'] ?? null;
+            // Recorded where it is APPLIED, so the core reads the overrides in
+            // the order this builder took them and the two cannot disagree
+            // about which name a channel ends up with.
+            if ($rename !== null && $channel->name !== $rename) {
+                $channel->name = $rename;
+                $this->builder->linkChain($this->from, null, ['link' => 'named', 'name' => $rename]);
             }
         }
         $this->applyPending($channel);
@@ -233,26 +218,18 @@ final class Edge
 
     /**
      * This edge with one more chain link — the one place a transform's or a
-     * key's result edge is built, so every link is registered and a chain no
-     * `into(...)` closes is reported rather than silently discarded.
+     * key's result edge is built, so every link reaches the record and a chain
+     * no `into(...)` closes is submitted rather than silently discarded.
      *
+     * @param array<string, mixed> $link
      * @param array<string, mixed> $next
      */
-    private function relink(array $next): self
+    private function relink(array $link, array $next): self
     {
         return $this->with([
             ...$next,
-            'chain' => $this->builder->extendChain(
-                $this->from,
-                $this->pending['chain'] ?? null,
-                array_key_exists('keyBy', $next),
-            ),
+            'chain' => $this->builder->linkChain($this->from, $this->pending['chain'] ?? null, $link),
         ]);
-    }
-
-    private function sourceName(): string
-    {
-        return $this->builder->channelName($this->from);
     }
 
     private function applyPending(ChannelSpec $channel): void

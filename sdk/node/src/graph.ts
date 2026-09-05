@@ -1,24 +1,24 @@
 /**
- * Registration-time refusals, and the `HostClassDecl` the core is handed.
+ * The record the core is handed, and the verdict it answers.
+ *
+ * Every rule a declared topology can be refused under is one function in
+ * `flz_core::host::register::check`, and `validate` is the call that submits
+ * to it: this SDK records what the author declared, hands it over, and renders
+ * the answer as its own exception. Nothing here restates a rule the core
+ * holds — a refusal added there reaches Node with no edit to this file.
+ *
+ * What is still refused here is what the record cannot carry: a closure the
+ * declaration never names, which the core has nothing to judge.
  *
  * Static typing catches a wrong edge type before the program runs (a
  * `.into(procedure)` whose producer's value the procedure's declared input
  * does not accept is a compile error, pinned by the fixtures under
- * `types-tests/`). Everything typing cannot see is refused here, naming the
- * handler and the specific defect — the same set, for the same reasons, as the
- * Rust builder's `TopologyIssue`, so an author moving between SDKs meets one
- * vocabulary.
- *
- * The core validates again on its side. That is not redundancy: a
- * hand-written declaration reaching the ABI directly must not slip past, and
- * an author who declared through this surface deserves the error before any
- * data moves.
+ * `types-tests/`); that backstop is unchanged and earlier than this one.
  */
 
-import type { ChainIssueName, ChannelKind, ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
+import type { ChannelKind, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode } from './authoring.js';
+import { loadNative, type Native } from './native.js';
 import { DeclarationError } from './types.js';
-
-const MAX_MAILBOX_CAPACITY = 1_048_576;
 
 /** The Node SDK's byte in the core's `sdk_lang` allocation table. */
 export const SDK_LANG_NODE = 4;
@@ -36,6 +36,37 @@ export const SDK_VERSION = '0.1.0';
 /** MessagePack, shared with every SDK whose codec is MessagePack. */
 export const FORMAT_ID_MSGPACK = 5;
 
+/** One consumer edge, as the core read it off the channel's chains. */
+export interface DerivedEdge {
+  procedure: number;
+  /** Which of the channel's chains produced this edge; the host holds its closures. */
+  chain: number;
+}
+
+/** One refusal, as the core answers it beside the rendered verdict. */
+interface VerdictIssue {
+  name: string;
+}
+
+/** One channel, as the core derived it from the record. */
+export interface DerivedChannel {
+  index: number;
+  /** The last `named` override, else the name the builder wrote. */
+  name: string;
+  /** The declared kind after the wiring rule: a sink with no consumer is `plugin`. */
+  kind: ChannelKind;
+  producer: number | null;
+  consumers: DerivedEdge[];
+  sink: string | null;
+}
+
+/** The declaration the core derived: the answer a passing `validate` gives. */
+export interface DerivedDecl {
+  channels: DerivedChannel[];
+  /** `checkpoint` when any checkpoint key was declared, else `per_input`. */
+  ack_granularity: 'per_input' | 'checkpoint';
+}
+
 function refuse(spec: ClassSpec, handler: string | null, defect: string): never {
   throw new DeclarationError(spec.factoryId, handler, defect);
 }
@@ -52,153 +83,15 @@ function entityMode(node: ProcNode): 'single' | 'static' | 'dynamic' {
 }
 
 /**
- * The kind the wire carries. Terminality is derived from the wiring, not from
- * which method the author called: a sink with nothing consuming behind it IS
- * the plugin-bound terminal, and a sink declared alongside consumers is the
- * hybrid — one channel the core journals as inter-procedure and whose values
- * also reach the plugin.
+ * The two defects the record cannot carry, per procedure.
+ *
+ * An event-time extractor and a migration are host closures: the declaration
+ * names neither, so the core has nothing to read and these are the only
+ * procedure-level refusals left on this side.
  */
-export function declaredKind(channel: ChannelSpec): ChannelKind {
-  return channel.sink !== undefined && channel.consumers.length === 0 ? 'plugin' : channel.kind;
-}
-
-/**
- * What each transform-chain refusal says, under the reference's own name. A
- * chain is stored on the consumer edge it terminates in, which is why every one
- * of these is a link the runtime would otherwise drop or overwrite in silence.
- */
-const CHAIN_DEFECTS: Record<ChainIssueName, string> = {
-  DuplicateKeyBy: 'declares keyBy(...) twice before one into(...)',
-  TransformAfterTerminal:
-    "declares a transform or keyBy(...) after a plugin sink; the sink serializes the channel's " +
-    'own value, so nothing downstream of it can be reshaped',
-  TransformAfterKeyBy:
-    'declares a transform after keyBy(...); the key is evaluated on the final post-transform ' +
-    'value, so it must be the last link before into(...)',
-  DanglingTransformChain:
-    'declares a transform or keyBy(...) that is never closed by into(...); a transform chain ' +
-    'is stored on the consumer edge it terminates in, so a dangling one would silently do ' +
-    'nothing',
-};
-
-/**
- * Refuse every defect a transform/key chain declared, in the order the
- * references collect them: what a link refused as it was declared, then the
- * tips no `into(...)` closed. Only a tip is reported as dangling — every
- * earlier link was superseded by the next.
- */
-function checkChainIssues(spec: ClassSpec): void {
-  for (const { channel, issue } of spec.chainIssues) {
-    refuse(spec, channel, `${issue}: ${CHAIN_DEFECTS[issue]}`);
-  }
-}
-
-function checkChannels(spec: ClassSpec): void {
-  const names = new Set<string>();
-
-  for (const channel of spec.channels) {
-    if (names.has(channel.name)) {
-      refuse(spec, channel.name, 'this channel name is declared more than once');
-    }
-    names.add(channel.name);
-    checkChannelWiring(spec, channel);
-    checkOverflow(spec, channel);
-
-    if (channel.kind === 'entry' && channel.consumers.length === 0) {
-      refuse(spec, channel.name, 'is an entry channel that names no consumer');
-    }
-    if (declaredKind(channel) === 'inter_proc' && channel.consumers.length === 0) {
-      refuse(spec, channel.name, 'is an inter-procedure channel that names no consumer');
-    }
-  }
-}
-
-function checkChannelWiring(spec: ClassSpec, channel: ChannelSpec): void {
-  if (channel.sink === undefined && channel.keyed) {
-    refuse(
-      spec,
-      channel.name,
-      'is declared keyed() but has no plugin wire; output identity stamps only exist ' +
-        'on plugin-bound frames, so add a sink(...) or drop the keyed()',
-    );
-  }
-
-  if (spec.effectivelyOnce && channel.sink !== undefined && !channel.keyed) {
-    refuse(
-      spec,
-      channel.name,
-      'has a plugin wire but is not declared keyed(); the effectively-once tier ' +
-        'deduplicates by output identity, so every plugin-bound channel of a class ' +
-        'that declares effectivelyOnce() must opt in with keyed()',
-    );
-  }
-}
-
-function checkOverflow(spec: ClassSpec, channel: ChannelSpec): void {
-  if (channel.overflow !== 'drop_nothing') {
-    if (spec.effectivelyOnce) {
-      refuse(
-        spec,
-        channel.name,
-        `declares onFull(${channel.overflow}) on a class that declares effectivelyOnce(); ` +
-          "a shed input's offset is still advanced past by the tier's watermark, so the " +
-          'loss is permanent and reported nowhere — declare one or the other, not both',
-      );
-    }
-    if (spec.correctionWindowMs !== undefined) {
-      refuse(
-        spec,
-        channel.name,
-        `declares onFull(${channel.overflow}) on a class that declares a correction ` +
-          'window; a correction re-folds a replayed slice and its answer may not depend ' +
-          'on which items a full mailbox happened to keep',
-      );
-    }
-  }
-
-  if (channel.retryMax === 0) {
-    refuse(
-      spec,
-      channel.name,
-      'declares retryMax(0); at least one attempt is required — throw a non-retryable ' +
-        'error to park without retries',
-    );
-  }
-}
-
-function checkKeying(spec: ClassSpec): void {
-  const dynamic = new Set(
-    spec.procedures.filter((node) => entityMode(node) === 'dynamic').map((node) => node.index),
-  );
-
-  for (const channel of spec.channels) {
-    for (const edge of channel.consumers) {
-      const node = spec.procedures[edge.procedure] as ProcNode;
-      if (edge.keyBy && entityMode(node) === 'static') {
-        refuse(
-          spec,
-          channel.name,
-          `declares keyBy(...) into procedure \`${node.name}\`, which declares a static key ` +
-            'set; static keying routes by entitiesFor and may name several entities, edge ' +
-            'keying names exactly one — declare one or the other, not both',
-        );
-      }
-      if (!edge.keyBy && dynamic.has(edge.procedure)) {
-        refuse(
-          spec,
-          channel.name,
-          `feeds dynamic procedure \`${node.name}\` without a keyBy(...); every edge into a ` +
-            'dynamic procedure must name the entity its inputs reach',
-        );
-      }
-    }
-  }
-}
-
 function checkProcedures(spec: ClassSpec): void {
   for (const node of spec.procedures) {
     checkClocks(spec, node);
-    checkEntities(spec, node);
     checkSchema(spec, node);
   }
 }
@@ -221,45 +114,6 @@ function checkClocks(spec: ClassSpec, node: ProcNode): void {
       node.name,
       `declares an eventTime extractor with clock \`${clock}\`; the extractor is only ` +
         'consulted by an event_time clock, so one of the two is not what was meant',
-    );
-  }
-  if (clock === 'logical' && !def.initialState) {
-    refuse(
-      spec,
-      node.name,
-      'declares a logical clock but no state; logical time IS the durable change ' +
-        'sequence, which never advances for a procedure that records no changes',
-    );
-  }
-}
-
-function checkEntities(spec: ClassSpec, node: ProcNode): void {
-  const def = node.procedure.definition;
-
-  if (def.entities && !def.entities.entitiesFor) {
-    refuse(
-      spec,
-      node.name,
-      'declares a static key set without an entitiesFor; static keying needs the ' +
-        'function that says which declared entities an input belongs to',
-    );
-  }
-  if (def.mailboxCapacity !== undefined) {
-    const capacity = def.mailboxCapacity;
-    if (capacity < 1 || capacity > MAX_MAILBOX_CAPACITY) {
-      refuse(
-        spec,
-        node.name,
-        `declares mailboxCapacity ${capacity}; capacity must be in 1..=${MAX_MAILBOX_CAPACITY}`,
-      );
-    }
-  }
-  if (def.dynamicEntities?.maxEntities === 0) {
-    refuse(
-      spec,
-      node.name,
-      'declares maxEntities 0; a dynamic procedure that may hold no ' +
-        'entity can process nothing',
     );
   }
 }
@@ -287,170 +141,52 @@ function checkSchema(spec: ClassSpec, node: ProcNode): void {
   }
 }
 
-function checkTier(spec: ClassSpec): void {
-  if (spec.effectivelyOnce && !spec.persistent) {
-    refuse(spec, null, 'declares effectivelyOnce() without persistence: the tier IS durable state');
-  }
-  if (spec.ackGranularity === 'checkpoint' && !spec.effectivelyOnce) {
-    refuse(
-      spec,
-      null,
-      'declares checkpoint acknowledgement without effectivelyOnce(); the checkpoint is ' +
-        "where the tier's consumed offset advances, and a class without the tier has no " +
-        'durable offset to hold back',
-    );
-  }
-  if (spec.checkpointEvery === 0) {
-    refuse(
-      spec,
-      null,
-      'declares checkpointEvery(0); an interval that closes every zero inputs is not an ' +
-        'interval — omit it to close only on an explicit ctx.checkpoint()',
-    );
-  }
-  if (spec.checkpointOutputs === 'at_checkpoint' && spec.checkpointMaxDelayMs === undefined) {
-    refuse(
-      spec,
-      null,
-      'declares outputsAtCheckpoint() with no maximum delay; an interval that never closes ' +
-        'would hold its outputs forever on a quiet entity',
-    );
-  }
+/**
+ * The core's verdict as this SDK's own exception. The names are read off the
+ * verdict the core answered with — JSON on the thrown error's `cause` — and
+ * kept apart on `refusals`, so a caller reads data rather than the prose.
+ */
+function refusalOf(spec: ClassSpec, error: Error): DeclarationError {
+  const verdict = error.cause;
+  const issues =
+    verdict instanceof Error
+      ? (JSON.parse(verdict.message) as { issues: VerdictIssue[] }).issues
+      : [];
+  return new DeclarationError(
+    spec.factoryId,
+    null,
+    error.message,
+    issues.map((issue) => issue.name),
+  );
 }
 
-function checkWindow(spec: ClassSpec): void {
-  if (spec.correctionWindowMs === undefined) return;
-
-  if (spec.correctionWindowMs === 0) {
-    refuse(spec, null, 'declares a correction window of zero; a zero window can correct nothing');
-  }
-  if (!spec.effectivelyOnce) {
-    refuse(
-      spec,
-      null,
-      'declares a correction window without effectivelyOnce(); correction replays the input ' +
-        'log against a rewound baseline, and only the tier journals inputs before ' +
-        'forwarding them',
-    );
-  }
-  const eventTimed = spec.procedures.find((node) => clockOf(node) === 'event_time');
-  if (!eventTimed) {
-    refuse(
-      spec,
-      null,
-      'declares a correction window but no procedure declares an event_time clock; ' +
-        'correction orders a replayed slice by event time',
-    );
-  }
-}
-
-function checkTopology(spec: ClassSpec): void {
-  const entries = spec.channels.filter((c) => c.kind === 'entry');
-  if (spec.kind === 'stream' && entries.length === 0) {
-    refuse(spec, null, 'declares no entry channel; a stream class is fed by the controller');
-  }
-  if (spec.procedures.length === 0) {
-    if (spec.kind === 'stream') {
-      refuse(spec, null, 'declares no procedure');
-    }
-    return;
-  }
-  checkDag(spec, entries, successorsOf(spec));
-}
-
-function successorsOf(spec: ClassSpec): Map<number, number[]> {
-  const successors = new Map<number, number[]>();
-  for (const channel of spec.channels) {
-    if (channel.kind !== 'inter_proc' || channel.producer === undefined) continue;
-    const list = successors.get(channel.producer) ?? [];
-    list.push(...channel.consumers.map((edge) => edge.procedure));
-    successors.set(channel.producer, list);
-  }
-  return successors;
-}
-
-/** Every procedure reachable from an entry channel, and no cycle among them. */
-function checkDag(
-  spec: ClassSpec,
-  entries: ChannelSpec[],
-  successors: Map<number, number[]>,
-): void {
-  const reachable = new Set<number>();
-  const frontier = entries.flatMap((c) => c.consumers.map((edge) => edge.procedure));
-  while (frontier.length > 0) {
-    const next = frontier.pop() as number;
-    if (reachable.has(next)) continue;
-    reachable.add(next);
-    frontier.push(...(successors.get(next) ?? []));
-  }
-
-  // A cycle is found before unreachability is reported: a node on a cycle with
-  // no path from an entry is both, and the cycle is the more useful answer.
-  const WHITE = 0;
-  const GREY = 1;
-  const BLACK = 2;
-  const colour = new Map<number, number>();
-  const visit = (node: number): void => {
-    const state = colour.get(node) ?? WHITE;
-    if (state === BLACK) return;
-    if (state === GREY) {
-      refuse(
-        spec,
-        (spec.procedures[node] as ProcNode).name,
-        "is on a cycle; an operative topology is a DAG — a node's output may never reach " +
-          'its own input',
-      );
-    }
-    colour.set(node, GREY);
-    for (const next of successors.get(node) ?? []) visit(next);
-    colour.set(node, BLACK);
-  };
-  for (const node of spec.procedures) visit(node.index);
-
-  for (const node of spec.procedures) {
-    if (!reachable.has(node.index)) {
-      refuse(spec, node.name, 'is not reachable from any entry channel');
-    }
-  }
-}
-
-function checkWorkflow(spec: ClassSpec): void {
-  if (spec.kind !== 'workflow') {
-    if (spec.syncDurability) {
-      refuse(
-        spec,
-        null,
-        'declares syncDurability() on a stream class; a stream class acknowledges at input ' +
-          'rates, and a remote round trip per acknowledgement is not a guarantee it can keep',
-      );
-    }
-    return;
-  }
-  if (spec.correctionWindowMs !== undefined) {
-    refuse(spec, null, 'is a workflow class and cannot declare a correction window');
-  }
-  if (spec.run && spec.channels.length > 0) {
-    refuse(
-      spec,
-      null,
-      'declares a run body and channels; a run-sugar workflow is one imperative body',
-    );
-  }
-  if (spec.syncDurability && !spec.persistent) {
-    refuse(spec, null, 'declares syncDurability() without persistence');
-  }
-}
-
-/** Refuse every defect static typing cannot see, naming handler and defect. */
-export function validate(spec: ClassSpec): void {
-  checkWorkflow(spec);
-  checkTier(spec);
-  checkWindow(spec);
-  checkChainIssues(spec);
-  checkChannels(spec);
+/**
+ * Submit the record and answer what the core derived from it.
+ *
+ * On a refusal this throws the verdict — every name the core returned, in one
+ * `DeclarationError`. On success the derived channel names are written back,
+ * so the name this host addresses a channel by is the one the core registered.
+ */
+export function validate(spec: ClassSpec, native: Native = loadNative()): DerivedDecl {
   checkProcedures(spec);
-  checkKeying(spec);
-  checkTopology(spec);
+  let derived: DerivedDecl;
+  try {
+    const answer = native.checkClass(Buffer.from(JSON.stringify(toHostClassDecl(spec))));
+    derived = JSON.parse(answer.toString('utf8')) as DerivedDecl;
+  } catch (error) {
+    throw refusalOf(spec, error as Error);
+  }
+  for (const channel of derived.channels) {
+    const declared = spec.channels[channel.index] as ChannelSpec;
+    declared.name = channel.name;
+    // The runtime edges ARE the core's answer: it says which chains produced a
+    // consumer and in what order, and the host attaches the closures that
+    // chain declared.
+    declared.consumers = channel.consumers.map(
+      (edge) => declared.chainEdges.get(edge.chain) as ConsumerEdge,
+    );
+  }
+  return derived;
 }
 
 /** Drop the keys whose value is undefined, so the JSON omits them. */
@@ -464,9 +200,9 @@ function compact<T extends Record<string, unknown>>(value: T): T {
 function channelJson(channel: ChannelSpec): Record<string, unknown> {
   return compact({
     name: channel.name,
-    kind: declaredKind(channel),
+    kind: channel.kind,
     producer: channel.producer,
-    consumers: channel.consumers.map((edge) => edge.procedure),
+    chains: channel.chains,
     retry_max: channel.retryMax,
     retry_backoff_ms: channel.retryBackoffMs,
     overflow: channel.overflow,
@@ -474,7 +210,7 @@ function channelJson(channel: ChannelSpec): Record<string, unknown> {
   });
 }
 
-function procedureJson(node: ProcNode): Record<string, unknown> {
+function procedureJson(spec: ClassSpec, node: ProcNode): Record<string, unknown> {
   const def = node.procedure.definition;
   return compact({
     name: node.name,
@@ -486,6 +222,10 @@ function procedureJson(node: ProcNode): Record<string, unknown> {
     compensate_overridden: def.compensate !== undefined,
     clock: def.clock ?? 'wall',
     mailbox_capacity: def.mailboxCapacity ?? 1024,
+    // A procedure that folds no change has the empty Change type, so a logical
+    // clock over it would never advance; a class that journals nothing has it
+    // for every procedure.
+    change_is_nochange: !spec.persistent || def.applyChange === undefined,
     schema_version: def.schemaVersion ?? 1,
     min_readable_schema_version: def.minReadableSchemaVersion,
   });
@@ -505,7 +245,7 @@ function streamTierJson(spec: ClassSpec): Record<string, unknown> {
   if (spec.kind !== 'stream') return {};
   return {
     effectively_once: spec.effectivelyOnce,
-    ack_granularity: spec.ackGranularity,
+    checkpoint_ack: spec.checkpointAck,
     checkpoint_every: spec.checkpointEvery,
     checkpoint_outputs: spec.checkpointOutputs,
     checkpoint_max_delay_ms: spec.checkpointMaxDelayMs,
@@ -530,7 +270,7 @@ export function toHostClassDecl(spec: ClassSpec): Record<string, unknown> {
     compact_after_bytes: spec.compactAfterBytes,
     sync_durability: spec.syncDurability,
     channels: spec.channels.map(channelJson),
-    procedures: spec.procedures.map(procedureJson),
+    procedures: spec.procedures.map((node) => procedureJson(spec, node)),
     workflow: spec.workflow
       ? compact({
           loop_mode: spec.workflow.loopMode,

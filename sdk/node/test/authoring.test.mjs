@@ -1,16 +1,27 @@
-// The graph builder and the refusals static typing cannot make.
+// The graph builder, what it records, and the refusals it still makes itself.
+//
+// Every topology rule now lives in `flz_core::host::register::check`, and
+// `test/fixtures/reference_topologies.txt` is where each one's case lives — one
+// row per refusal, read by every SDK's conformance run. What is left here is
+// the authoring surface: the shape a declaration builds, the names it derives,
+// which closure reaches which edge, and the two defects the record cannot
+// carry. `validate` is the call that submits, so it needs the process context.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ACTIVATION_SCHEMA_VERSION,
   DeclarationError,
   defineOperative,
   defineProcedure,
   defineWorkflow,
+  loadNative,
   toHostClassDecl,
   validate,
 } from '../dist/esm/index.js';
 import { ProcedureTestHarness } from '../dist/esm/testing.js';
+
+loadNative().contextNew(ACTIVATION_SCHEMA_VERSION);
 
 const echo = (name) => defineProcedure({ name, handle: (input) => input });
 
@@ -20,10 +31,19 @@ const refusal = (build) => {
     validate(spec);
   } catch (error) {
     assert.ok(error instanceof DeclarationError, `expected a DeclarationError, got ${error}`);
-    return error.message;
+    return error;
   }
   assert.fail('expected a refusal');
 };
+
+/** The channels the core derived, as `[name, kind, producer, consumers]`. */
+const derivedChannels = (spec) =>
+  validate(spec).channels.map((channel) => [
+    channel.name,
+    channel.kind,
+    channel.producer,
+    channel.consumers.map((edge) => edge.procedure),
+  ]);
 
 test('a graph builds and its topology reaches the declaration', () => {
   const first = echo('first');
@@ -34,15 +54,20 @@ test('a graph builds and its topology reaches the declaration', () => {
       c.input('in').into(first).into(second).sink('out');
     },
   });
-  validate(spec);
-  const decl = toHostClassDecl(spec);
+  // The record carries the DECLARED kind; the plugin kind is the wiring rule,
+  // which the core applies and hands back.
   assert.deepEqual(
-    decl.channels.map((channel) => [channel.name, channel.kind]),
+    validate(spec).channels.map((channel) => [channel.name, channel.kind]),
     [
       ['in', 'entry'],
       ['first', 'inter_proc'],
       ['second', 'plugin'],
     ],
+  );
+  const decl = toHostClassDecl(spec);
+  assert.deepEqual(
+    decl.channels.map((channel) => channel.kind),
+    ['entry', 'inter_proc', 'inter_proc'],
   );
   assert.deepEqual(
     decl.procedures.map((p) => p.name),
@@ -82,49 +107,39 @@ test('keyBy declares a dynamic consumer and the key reaches the channel', () => 
   assert.equal(decl.channels[1].keyed, true);
 });
 
-test('a cycle is refused naming a participating procedure', () => {
-  const a = echo('a');
-  const b = echo('b');
-  const message = refusal(() =>
+// The record carries `change_is_nochange` per procedure: a handler that folds
+// no change has the empty Change type, and a logical clock over it never
+// advances. The refusal is the core's `UnservableClock`; what is asserted here
+// is that this builder writes the fact it reads.
+test('a procedure that folds no change declares it, and a logical clock over it is refused', () => {
+  const spec = defineOperative({
+    factoryId: 'unservable',
+    channels: (c) =>
+      c
+        .input('in')
+        .into(defineProcedure({ name: 'ticker', clock: 'logical', handle: (i) => i }))
+        .sink('out'),
+  });
+  assert.equal(toHostClassDecl(spec).procedures[0].change_is_nochange, true);
+  assert.deepEqual(refusal(() => spec).refusals, ['UnservableClock']);
+});
+
+// The verdict itself: one exception carrying every name the core answered with.
+test('a refusal reaches the author under the core’s own names', () => {
+  const target = echo('target');
+  const refused = refusal(() =>
     defineOperative({
-      factoryId: 'cyclic',
+      factoryId: 'edge_already_wired',
       channels: (c) => {
-        // The third mention finds the node the first created, so this wires
-        // b back into a.
-        c.input('in').into(a).into(b).into(a);
+        const edge = c.input('in');
+        edge.into(target);
+        edge.map((value) => `${value}!`).into(target);
       },
     }),
   );
-  assert.match(message, /cyclic: (a|b): is on a cycle/);
-});
-
-test('an unreachable procedure is refused by name', () => {
-  // Not reachable through the fluent builder, where every node is created by
-  // an `into` that already has a path from an entry. It is reachable by a
-  // hand-built declaration, which is exactly what the backstop is for.
-  const reached = echo('reached');
-  const orphan = echo('orphan');
-  const spec = defineOperative({
-    factoryId: 'orphaned',
-    channels: (c) => {
-      c.input('in').into(reached).sink('out');
-    },
-  });
-  spec.procedures.push({ index: 1, name: 'orphan', procedure: orphan });
-  spec.channels.push({
-    index: spec.channels.length,
-    name: 'dangling',
-    kind: 'inter_proc',
-    producer: 1,
-    consumers: [0],
-    overflow: 'drop_nothing',
-    keyed: false,
-    transforms: [],
-  });
-  assert.throws(
-    () => validate(spec),
-    (error) => error instanceof DeclarationError && /orphan: is not reachable/.test(error.message),
-  );
+  assert.deepEqual(refused.refusals, ['EdgeAlreadyWired']);
+  assert.match(refused.message, /topology rejected \[EdgeAlreadyWired\]/);
+  assert.match(refused.message, /already feeds procedure `target`/);
 });
 
 test('a named edge names the channel, not the consuming node', () => {
@@ -164,7 +179,7 @@ test('a second mention under its own node name is a second node', () => {
 });
 
 test('two procedures claiming one node identity are refused', () => {
-  const message = refusal(() => {
+  const refused = refusal(() => {
     const first = defineProcedure({ name: 'same', handle: (i) => i });
     const second = defineProcedure({ name: 'same', handle: (i) => i });
     return defineOperative({
@@ -174,75 +189,26 @@ test('two procedures claiming one node identity are refused', () => {
       },
     });
   });
-  assert.match(message, /node identity/);
+  assert.match(refused.message, /node identity/);
 });
 
 test('an event-time clock without an extractor is refused', () => {
-  const message = refusal(() => {
+  const refused = refusal(() => {
     const proc = defineProcedure({ name: 'windowed', clock: 'event_time', handle: (i) => i });
     return defineOperative({
       factoryId: 'no_extractor',
       channels: (c) => c.input('in').into(proc).sink('out'),
     });
   });
-  assert.match(message, /windowed: declares an event_time clock but no eventTime extractor/);
-});
-
-test('a logical clock on a stateless procedure is unservable and refused', () => {
-  const message = refusal(() => {
-    const proc = defineProcedure({ name: 'ticker', clock: 'logical', handle: (i) => i });
-    return defineOperative({
-      factoryId: 'unservable',
-      channels: (c) => c.input('in').into(proc).sink('out'),
-    });
-  });
-  assert.match(message, /logical clock but no state/);
-});
-
-test('keyed() without a plugin wire is refused', () => {
-  const message = refusal(() => {
-    const a = echo('a');
-    const b = echo('b');
-    return defineOperative({
-      factoryId: 'keyed_edge',
-      channels: (c) => c.input('in').into(a).keyed().into(b).sink('out'),
-    });
-  });
-  assert.match(message, /keyed\(\) but has no plugin wire/);
-});
-
-test('a tier class with an unkeyed sink is refused', () => {
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'tier_unkeyed',
-      channels: (c) => {
-        c.effectivelyOnce();
-        c.input('in').into(echo('p')).sink('out');
-      },
-    }),
+  assert.match(
+    refused.message,
+    /windowed: declares an event_time clock but no eventTime extractor/,
   );
-  assert.match(message, /effectively-once tier deduplicates by output identity/);
 });
 
-for (const [option, declare] of [
-  ['checkpointAck', (c) => c.checkpointAck()],
-  ['checkpointEvery', (c) => c.checkpointEvery(4)],
-  ['outputsAtCheckpoint', (c) => c.outputsAtCheckpoint(250)],
-]) {
-  test(`${option}() without the tier is refused`, () => {
-    const message = refusal(() =>
-      defineOperative({
-        factoryId: `ckpt_${option}`,
-        channels: (c) => {
-          declare(c);
-          c.input('in').into(echo('p')).keyed().sink('out');
-        },
-      }),
-    );
-    assert.match(message, /checkpoint acknowledgement without effectivelyOnce/);
-  });
-}
-
+// KI-122: three options, one implication. Each writes its own raw flag and the
+// core derives the acknowledgement granularity from any of them, so no order
+// of calls can clear another's.
 test('the checkpoint options compose in any order, and none clears another', () => {
   const spec = defineOperative({
     factoryId: 'compose',
@@ -254,85 +220,12 @@ test('the checkpoint options compose in any order, and none clears another', () 
       c.input('in').into(echo('p')).keyed().sink('out');
     },
   });
-  validate(spec);
+  assert.equal(validate(spec).ack_granularity, 'checkpoint');
   const decl = toHostClassDecl(spec);
-  assert.equal(decl.ack_granularity, 'checkpoint');
+  assert.equal(decl.checkpoint_ack, true);
   assert.equal(decl.checkpoint_every, 4);
   assert.equal(decl.checkpoint_outputs, 'at_checkpoint');
   assert.equal(decl.checkpoint_max_delay_ms, 250);
-});
-
-test('a correction window without the tier is refused', () => {
-  const message = refusal(() => {
-    const proc = defineProcedure({
-      name: 'candle',
-      clock: 'event_time',
-      eventTime: (input) => BigInt(input.at),
-      handle: (i) => i,
-    });
-    return defineOperative({
-      factoryId: 'correction',
-      channels: (c) => {
-        c.correctionWindow(60_000);
-        c.input('in').into(proc).keyed().sink('out');
-      },
-    });
-  });
-  assert.match(message, /correction window without effectivelyOnce/);
-});
-
-test('a correction window with no event-time procedure is refused', () => {
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'correction_wall',
-      channels: (c) => {
-        c.effectivelyOnce();
-        c.correctionWindow(60_000);
-        c.input('in').into(echo('p')).keyed().sink('out');
-      },
-    }),
-  );
-  assert.match(message, /no procedure declares an event_time clock/);
-});
-
-test('a dropping overflow under the tier is refused', () => {
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'shedding_tier',
-      channels: (c) => {
-        c.effectivelyOnce();
-        c.input('in').onFull('drop_oldest').into(echo('p')).keyed().sink('out');
-      },
-    }),
-  );
-  assert.match(message, /loss is permanent/);
-});
-
-test('branch below two arms is refused', () => {
-  assert.throws(
-    () =>
-      defineOperative({
-        factoryId: 'one_arm',
-        channels: (c) => c.input('in').branch([(edge) => edge.into(echo('a'))]),
-      }),
-    (error) => error instanceof DeclarationError && /at least two arms/.test(error.message),
-  );
-});
-
-// A procedure owns one output channel, so a second sink on it is the
-// reference's `DuplicatePluginSink`. Two procedures may name one sink; that is
-// several channels naming one plugin, which the reference permits.
-test('a duplicate plugin sink is refused', () => {
-  const message = refusal(() => {
-    const a = echo('a');
-    return defineOperative({
-      factoryId: 'twice',
-      channels: (c) => {
-        c.input('in').into(a).sink('out').sink('out_again');
-      },
-    });
-  });
-  assert.match(message, /declares a plugin sink more than once/);
 });
 
 test('two procedures may name one plugin sink', () => {
@@ -347,70 +240,14 @@ test('two procedures may name one plugin sink', () => {
       ]);
     },
   });
-  validate(spec);
   assert.deepEqual(
-    toHostClassDecl(spec).channels.map((channel) => [channel.name, channel.kind]),
+    validate(spec).channels.map((channel) => [channel.name, channel.kind, channel.sink]),
     [
-      ['in', 'entry'],
-      ['a', 'plugin'],
-      ['b', 'plugin'],
+      ['in', 'entry', null],
+      ['a', 'plugin', 'out'],
+      ['b', 'plugin', 'out'],
     ],
   );
-});
-
-test('an unkeyed edge into a dynamic procedure is refused', () => {
-  const message = refusal(() => {
-    const dynamic = defineProcedure({
-      name: 'dyn',
-      dynamicEntities: {},
-      handle: (i) => i,
-    });
-    return defineOperative({
-      factoryId: 'unkeyed_dynamic',
-      channels: (c) => c.input('in').into(dynamic).sink('out'),
-    });
-  });
-  assert.match(message, /without a keyBy/);
-});
-
-test('keyBy into a statically keyed procedure is refused', () => {
-  const message = refusal(() => {
-    const statik = defineProcedure({
-      name: 'fixed',
-      entities: { keys: ['a', 'b'], entitiesFor: () => ['a'] },
-      handle: (i) => i,
-    });
-    return defineOperative({
-      factoryId: 'both_keyings',
-      channels: (c) =>
-        c
-          .input('in')
-          .keyBy(() => 'a')
-          .into(statik)
-          .sink('out'),
-    });
-  });
-  assert.match(message, /one or the other, not both/);
-});
-
-test('a static key set without entitiesFor is refused', () => {
-  const message = refusal(() => {
-    const statik = defineProcedure({
-      name: 'fixed',
-      entities: { keys: ['a'] },
-      handle: (i) => i,
-    });
-    return defineOperative({
-      factoryId: 'no_entities_for',
-      channels: (c) => c.input('in').into(statik).sink('out'),
-    });
-  });
-  assert.match(message, /static key set without an entitiesFor/);
-});
-
-test('a stream class with no entry channel is refused', () => {
-  const message = refusal(() => defineOperative({ factoryId: 'no_entry', channels: () => {} }));
-  assert.match(message, /declares no entry channel/);
 });
 
 test('a workflow declaring both a body and a graph is refused', () => {
@@ -529,6 +366,14 @@ test('an unnamed edge terminating on a sink takes the producing node’s name', 
 // same producer, which the core resolves by first match
 // (`host/register.rs` `procedure_wiring`) and so silently truncates.
 
+// --- one output channel per producing procedure ------------------------------
+//
+// The model Rust and Java carry: a procedure node owns ONE output channel,
+// created on first wiring and reused after. A held handle wired twice appends
+// a second consumer to it — it does not declare a second channel claiming the
+// same producer, which the core resolves by first match
+// (`host/register.rs` `procedure_wiring`) and so silently truncates.
+
 test('a held handle wired twice is one channel with two consumers', () => {
   const producer = echo('producer');
   const spec = defineOperative({
@@ -539,28 +384,26 @@ test('a held handle wired twice is one channel with two consumers', () => {
       edge.into(echo('c'));
     },
   });
-  validate(spec);
-  const channels = toHostClassDecl(spec).channels;
-  assert.deepEqual(
-    channels.map((channel) => [channel.name, channel.kind, channel.producer, channel.consumers]),
-    [
-      ['in', 'entry', undefined, [0]],
-      ['producer', 'inter_proc', 0, [1, 2]],
-    ],
-  );
-  assert.equal(channels.filter((channel) => channel.producer === 0).length, 1);
+  const channels = derivedChannels(spec);
+  assert.deepEqual(channels, [
+    ['in', 'entry', null, [0]],
+    ['producer', 'inter_proc', 0, [1, 2]],
+  ]);
+  assert.equal(channels.filter((channel) => channel[2] === 0).length, 1);
 });
 
-test('branch(...) and two into(...) statements build the identical declaration', () => {
+test('branch(...) and two into(...) statements derive the identical topology', () => {
+  // The record differs by one link — the sugar's declared arity — and the
+  // topology the core derives from the two does not.
   const graph = (factoryId, wire) =>
     JSON.stringify(
-      toHostClassDecl(
+      derivedChannels(
         defineOperative({
           factoryId,
           channels: (c) => wire(c.input('in').into(echo('producer'))),
         }),
       ),
-    ).replace(factoryId, '<id>');
+    );
 
   const separate = graph('separate', (edge) => {
     edge.into(echo('b'));
@@ -583,33 +426,25 @@ test('sink(...) returns the handle, so a consumer wires behind it', () => {
         .into(echo('consumer'));
     },
   });
-  validate(spec);
   assert.deepEqual(
-    toHostClassDecl(spec).channels.map((channel) => [
+    validate(spec).channels.map((channel) => [
       channel.name,
       channel.kind,
       channel.producer,
-      channel.consumers,
+      channel.consumers.map((edge) => edge.procedure),
+      channel.sink,
     ]),
     [
-      ['in', 'entry', undefined, [0]],
-      ['hybrid_indicator', 'inter_proc', 0, [1]],
+      ['in', 'entry', null, [0], null],
+      // A sink alongside a consumer stays inter-procedure: the value reaches
+      // both, and the channel is journalled as the edge it still is.
+      ['hybrid_indicator', 'inter_proc', 0, [1], 'hybrid_indicators'],
     ],
   );
 });
 
-test('keyed() is refused without a plugin sink, and accepted with one', () => {
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'keyed_no_sink',
-      channels: (c) => {
-        c.input('in').into(echo('producer')).named('mid').keyed().into(echo('consumer'));
-      },
-    }),
-  );
-  assert.match(message, /is declared keyed\(\) but has no plugin wire/);
-
-  const hybrid = defineOperative({
+test('keyed() reaches the channel of a handle that also declares a sink', () => {
+  const spec = defineOperative({
     factoryId: 'keyed_hybrid',
     channels: (c) => {
       c.input('in')
@@ -620,8 +455,8 @@ test('keyed() is refused without a plugin sink, and accepted with one', () => {
         .into(echo('consumer'));
     },
   });
-  validate(hybrid);
-  assert.equal(toHostClassDecl(hybrid).channels[1].keyed, true);
+  validate(spec);
+  assert.equal(toHostClassDecl(spec).channels[1].keyed, true);
 });
 
 test('a transform declared before one into(...) reaches that consumer only', () => {
@@ -648,135 +483,7 @@ test('a transform declared before one into(...) reaches that consumer only', () 
 // `TopologyIssue::DanglingTransformChain` and Java's `danglingTransformChain`.
 // A transform lives on the consumer edge it terminates in, so one no `into(...)`
 // closed has nowhere to run and would be discarded without a word.
-test('a transform chain no into(...) closes is refused', () => {
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'dangling',
-      channels: (c) => {
-        c.input('in')
-          .into(echo('validate'))
-          .map((value) => `${value}!`)
-          .sink('s');
-      },
-    }),
-  );
-  assert.match(
-    message,
-    /validate: DanglingTransformChain: declares a transform or keyBy\(\.\.\.\)/,
-  );
 
-  // A key dangles the same way. Declared on a channel another edge consumes, so
-  // no other refusal reaches the declaration first.
-  const keyed = refusal(() =>
-    defineOperative({
-      factoryId: 'dangling_key',
-      channels: (c) => {
-        const edge = c.input('in');
-        edge.into(echo('kept'));
-        edge.keyBy((value) => String(value));
-      },
-    }),
-  );
-  assert.match(keyed, /in: DanglingTransformChain:/);
-});
-
-// The three refusals both references raise from their own `extend_pending` —
-// Rust's `TopologyIssue::{DuplicateKeyBy, TransformAfterKeyBy,
-// TransformAfterTerminal}` and Java's factory methods of the same names. Each
-// shape was ACCEPTED here before this: a second `keyBy` overwrote the author's
-// first without a word, and neither a prior key nor an attached sink was
-// inspected at all.
-test('a second keyBy is refused rather than overwriting the first', () => {
-  const keyed = defineProcedure({
-    name: 'keyed',
-    dynamicEntities: { idleTtlMs: 60_000, maxEntities: 100 },
-    handle: (input) => input,
-  });
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'dup_key_by',
-      channels: (c) => {
-        c.input('in')
-          .keyBy(() => 'a')
-          .keyBy(() => 'b')
-          .into(keyed);
-      },
-    }),
-  );
-  assert.match(
-    message,
-    /in: DuplicateKeyBy: declares keyBy\(\.\.\.\) twice before one into\(\.\.\.\)/,
-  );
-});
-
-// The key is evaluated on the final post-transform value, so it must be the
-// last link before the `into(...)` that closes the chain.
-test('a transform after keyBy is refused', () => {
-  const keyed = defineProcedure({
-    name: 'keyed',
-    dynamicEntities: { idleTtlMs: 60_000, maxEntities: 100 },
-    handle: (input) => input,
-  });
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'transform_after_key_by',
-      channels: (c) => {
-        c.input('in')
-          .keyBy(() => 'a')
-          .map((value) => `${value}!`)
-          .into(keyed);
-      },
-    }),
-  );
-  assert.match(message, /in: TransformAfterKeyBy: declares a transform after keyBy\(\.\.\.\)/);
-});
-
-// The sink serializes the channel's own value, so nothing declared behind it
-// can reshape what it already wrote.
-test('a transform after a plugin sink is refused', () => {
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'transform_after_terminal',
-      channels: (c) => {
-        c.input('in')
-          .into(echo('emit'))
-          .sink('s')
-          .map((value) => `${value}!`)
-          .into(echo('tail'));
-      },
-    }),
-  );
-  assert.match(
-    message,
-    /emit: TransformAfterTerminal: declares a transform or keyBy\(\.\.\.\) after a plugin sink/,
-  );
-});
-
-// The refusal both references raise from consumer wiring rather than chain
-// extension — Rust's `attach_consumer` and Java's `attachEdge`. Both shapes
-// were ACCEPTED here before this, leaving two consumer edges naming one
-// procedure, so the value reached it twice.
-test('a re-declared edge carrying a transform is refused', () => {
-  const target = echo('target');
-  const message = refusal(() =>
-    defineOperative({
-      factoryId: 'edge_already_wired',
-      channels: (c) => {
-        const edge = c.input('in');
-        edge.into(target);
-        edge.map((value) => `${value}!`).into(target);
-      },
-    }),
-  );
-  assert.match(
-    message,
-    /in: EdgeAlreadyWired: already feeds procedure `target`; an edge carries exactly one/,
-  );
-});
-
-// A re-declaration carrying neither transform nor key is the fan-in /
-// repeated-`into` case both references make a true no-op: one consumer edge,
-// not two, and not a refusal.
 test('a bare re-declared edge is a no-op, not a second edge', () => {
   const target = echo('target');
   const spec = defineOperative({
@@ -799,6 +506,7 @@ test('a bare re-declared edge is a no-op, not a second edge', () => {
 // read where the workflow spec is assembled rather than written as `false`. It
 // stays off the wire: the core refuses `effectively_once` on a workflow class,
 // and Java's `HostClassDeclaration.forWorkflow` never writes it either.
+
 test('a workflow class carries its effectivelyOnce() declaration', () => {
   const spec = defineWorkflow({
     factoryId: 'tier_workflow',

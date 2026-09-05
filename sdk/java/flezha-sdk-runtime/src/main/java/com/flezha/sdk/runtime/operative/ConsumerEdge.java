@@ -22,12 +22,6 @@ public record ConsumerEdge(
         @Nonnull Optional<Function<Object, EdgeYield>> transform,
         @Nonnull Optional<Function<Object, String>> key) {
 
-    /** An edge with neither closure — the bare {@code .into} case. */
-    @Nonnull
-    public static ConsumerEdge bare(int procedure) {
-        return new ConsumerEdge(procedure, Optional.empty(), Optional.empty());
-    }
-
     /**
      * Apply this edge's transform, or {@code null} when the edge declares none
      * — a transform-free edge, which is every pre-existing topology, allocates
