@@ -8,6 +8,7 @@ defmodule Flezha.Convergence.Probe do
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Probe.Judge
   alias Flezha.Convergence.Snapshot
   alias Flezha.Plugin.Extension.Table
@@ -15,12 +16,6 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.State.WriterRegistry
-
-  @operative_call_timeout_ms 1_000
-  # Headroom above the Overwatch call for provider health probes. Each plugin's
-  # probe is individually bounded by `ProviderBehaviour.worker_health/3`, and an
-  # operative's plugins are probed in series, so allow for a few wedged ones.
-  @health_probe_budget_ms Flezha.Plugin.ProviderBehaviour.probe_budget_ms() * 3
 
   @type placement :: %{
           {binary(), binary()} => %{local: [binary()] | :unknown, remote_nodes: [node()]}
@@ -102,7 +97,7 @@ defmodule Flezha.Convergence.Probe do
     |> Task.async_stream(
       fn {ref, pid} -> {ref, observe_operative(pid)} end,
       max_concurrency: System.schedulers_online() * 4,
-      timeout: @operative_call_timeout_ms + @health_probe_budget_ms,
+      timeout: Durations.get(:operative_call_timeout_ms) + Durations.get(:health_probe_budget_ms),
       on_timeout: :kill_task,
       ordered: true
     )
@@ -114,7 +109,7 @@ defmodule Flezha.Convergence.Probe do
   end
 
   defp observe_operative(pid) when is_pid(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, @operative_call_timeout_ms) do
+    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:operative_call_timeout_ms)) do
       {:ok, ow} when is_map(ow) ->
         observed(%{
           pid: pid,

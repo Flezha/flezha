@@ -341,14 +341,6 @@ defmodule Flezha.Schedule.JobTest do
       refute_received {:spawned, ^failing_id}
     end
 
-    test "the backoff ladder is exponential and capped at one minute" do
-      alias Flezha.Plugin.ProviderBehaviour
-      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 1) == 1_000
-      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 2) == 2_000
-      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 7) == 60_000
-      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 20) == 60_000
-    end
-
     test "an unparsable cron goes dormant instead of crash-looping" do
       warning_level()
 

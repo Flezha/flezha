@@ -7,6 +7,8 @@ defmodule Flezha.Service.OperativeManager.Init do
 
   require Logger
 
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager.Teardown
@@ -31,10 +33,6 @@ defmodule Flezha.Service.OperativeManager.Init do
     end
   end
 
-  @no_response_retry_attempts 8
-
-  @no_response_retry_initial_ms 150
-
   def init_operative(exist?, namespace, operative, attempt \\ 0) do
     result = start_child(namespace, operative)
 
@@ -43,15 +41,14 @@ defmodule Flezha.Service.OperativeManager.Init do
     # local hub's `dist_sup` was momentarily missing or dead, so
     # `Service.State.is_partitioned?/1` returned `true`. The dist_sup
     # restarts on its own; the only thing the caller can do is wait it
-    # out. Retry up to @no_response_retry_attempts times with
-    # exponential backoff (150, 300, 600, 1200, 2400, ... ms, capped at
-    # 5s) so a transient partition during controller/cluster startup, a
-    # snapshot/restore taking down `dist_sup`, or parallel-suite test
-    # churn doesn't surface as a hard failure. Stable steady-state
-    # `:no_response` (8 attempts, ~14s of wait) still propagates.
+    # out, on the `:no_response` row of the backoff table, so a transient
+    # partition during controller/cluster startup, a snapshot/restore
+    # taking down `dist_sup`, or parallel-suite test churn doesn't surface
+    # as a hard failure. A steady-state `:no_response` still propagates
+    # once the row gives up.
     cond do
-      no_response?(result) and attempt < @no_response_retry_attempts ->
-        Process.sleep(min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000))
+      no_response?(result) and not Backoff.give_up?(:no_response, attempt) ->
+        Backoff.wait(:no_response, attempt + 1, operative.id)
         init_operative(exist?, namespace, operative, attempt + 1)
 
       true ->
@@ -75,7 +72,7 @@ defmodule Flezha.Service.OperativeManager.Init do
       awaitable: true,
       # We will get the errors from the start result.
       disable_logging: true,
-      timeout: 15_000,
+      timeout: Durations.get(:hub_start_child_ms),
       # A partition member's identity is on its row from the first
       # registration, so `PartitionGroup.members/2` sees it before it binds.
       metadata: partition_metadata(operative),

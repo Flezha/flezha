@@ -19,9 +19,10 @@ defmodule Flezha.State.DurabilityTier.Backend.Postgres do
 
   @behaviour Flezha.State.DurabilityTier.Backend
 
+  alias Flezha.Config.Durations
+
   @conn __MODULE__.Conn
   @default_table "flezha_durability_artifacts"
-  @query_timeout_ms 30_000
 
   @impl true
   def child_spec(opts) do
@@ -169,7 +170,7 @@ defmodule Flezha.State.DurabilityTier.Backend.Postgres do
   end
 
   defp query(sql, params) do
-    Postgrex.query(@conn, sql, params, timeout: @query_timeout_ms)
+    Postgrex.query(@conn, sql, params, timeout: Durations.get(:durability_pg_query_ms))
   catch
     :exit, reason -> {:error, {:no_connection, reason}}
   end

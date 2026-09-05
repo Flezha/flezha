@@ -18,24 +18,24 @@ defmodule Flezha.Shutdown do
 
   require Logger
 
+  alias Flezha.Config.Durations
+
   @table Flezha.Shutdown.State
   @steps_key {__MODULE__, :steps}
 
   # The one budget an operative stop has, and the source the process teardown
   # derives its own from.
-  @stop_timeout_ms 15_000
-  @process_slack_ms 1_000
 
   @type scope :: Flezha.Shutdown.Step.scope()
   @type report :: %{ran: [atom()], skipped: [atom()], errors: [{atom(), term()}], results: map()}
 
   @doc "The budget of an operative stop."
   @spec stop_timeout_ms() :: pos_integer()
-  def stop_timeout_ms(), do: @stop_timeout_ms
+  def stop_timeout_ms(), do: Durations.get(:stop_release_timeout_ms)
 
   @doc "The budget of a process teardown: the operative stop's, less the slack the stop keeps."
   @spec process_budget_ms() :: pos_integer()
-  def process_budget_ms(), do: @stop_timeout_ms - @process_slack_ms
+  def process_budget_ms(), do: Durations.get(:stop_process_budget_ms)
 
   @doc """
   Walk `scope`'s steps against `target` under `budget_ms`. A step that answers

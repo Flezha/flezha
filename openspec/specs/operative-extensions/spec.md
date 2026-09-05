@@ -285,6 +285,8 @@ Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Fil
 
 `idle_timeout_ms` SHALL retain its name, its `30_000` default, and its `0`-disables-the-watchdog semantics. Because any inbound frame refreshes `last_frame_at`, a connection that carries a periodic heartbeat (or any control traffic) SHALL NOT be reconnected merely because no market-data frame has arrived.
 
+The socket-level reconnect — the path a refused upgrade or a dropped connection takes without the process exiting — SHALL ride the `:ws_reconnect` row of the backoff table: the connection library's initial and maximum backoff SHALL be set from that row (an operator's explicit `ws_opts` still winning), and every reconnect wait SHALL be emitted on `[:flezha, :backoff, :wait]` for ladder `:ws_reconnect`, so an upstream that answers `429` is retried on a declared, observable schedule rather than on one the tree neither configures nor sees.
+
 #### Scenario: Heartbeat-only traffic keeps the connection open past the data-silence window
 - **GIVEN** a websocket plugin with `idle_timeout_ms: 30_000` and `ignore_pattern: "heartbeat"`
 - **WHEN** the upstream sends only heartbeat frames (matching `ignore_pattern`) for 5 minutes and no data frame
@@ -299,6 +301,11 @@ Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Fil
 - **WHEN** the only inbound traffic for a period is websocket control frames (ping/pong) handled by `handle_control/2`
 - **THEN** each control frame SHALL refresh `last_frame_at`
 - **AND** the watchdog SHALL NOT reconnect
+
+#### Scenario: A refused upgrade is retried on the declared row
+- **GIVEN** a websocket plugin whose upstream answers every upgrade with `429`
+- **WHEN** the socket reconnects for 20 seconds
+- **THEN** each reconnect SHALL be preceded by one `[:flezha, :backoff, :wait]` for ladder `:ws_reconnect` carrying the row's delay for that attempt, and the connect timestamps SHALL follow those delays rather than a library default
 
 ### Requirement: Websocket data-liveness watchdog re-subscribes in place on a live socket
 

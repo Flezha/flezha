@@ -1,10 +1,10 @@
 defmodule Flezha.Service.PortPilot do
   require Logger
 
+  alias Flezha.Config.Backoff
   alias Flezha.Socket.Support
 
   @port_down_counter 10
-  @backoff_ms 5_000
 
   use GenServer
 
@@ -278,10 +278,16 @@ defmodule Flezha.Service.PortPilot do
         command ->
           if counter > @port_down_counter do
             Logger.error(
-              "Port application malfunction — too many crashes (#{counter}), backing off #{@backoff_ms}ms"
+              "Port application malfunction — too many crashes (#{counter}), " <>
+                "backing off #{Backoff.delay(:port_restart)}ms"
             )
 
-            Process.send_after(self(), {:restart_port, command}, @backoff_ms)
+            Process.send_after(
+              self(),
+              {:restart_port, command},
+              Backoff.arm(:port_restart, counter, command)
+            )
+
             ports
           else
             {new_port, _} = open_port(command)

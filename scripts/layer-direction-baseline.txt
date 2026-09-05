@@ -129,7 +129,6 @@ lib/flezha/state/recovery.ex -> Flezha.Service.HubManager
 lib/flezha/state/wal_writer/admission.ex -> Flezha.Convergence.Facts
 lib/flezha/state/watchdog.ex -> Flezha.AuthZ.NamespaceStore
 lib/flezha/state/watchdog.ex -> Flezha.AuthZ.Quotas
-lib/flezha/state/watchdog.ex -> Flezha.Convergence.Backoff
 lib/flezha/state/watchdog.ex -> Flezha.Convergence.Facts
 lib/flezha/state/watchdog.ex -> Flezha.Convergence.Snapshot
 lib/flezha/transport/server.ex -> Flezha.Runner.FleetManager

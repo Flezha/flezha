@@ -19,11 +19,8 @@ defmodule Flezha.State.FsyncBatcher do
 
   use GenServer
 
+  alias Flezha.Config.Durations
   alias Flezha.State.{WalWriter, WriterRegistry}
-
-  @default_interval_ms 5
-  @min_interval_ms 1
-  @max_interval_ms 1000
 
   defstruct [:dirty_set, :tick_ref, :tick_interval_ms]
 
@@ -82,8 +79,14 @@ defmodule Flezha.State.FsyncBatcher do
       not is_integer(interval) ->
         {:stop, {:invalid_interval, interval}}
 
-      interval < @min_interval_ms or interval > @max_interval_ms ->
-        {:stop, {:interval_out_of_range, interval, [@min_interval_ms, @max_interval_ms]}}
+      interval < Durations.get(:agent_fsync_min_interval_ms) or
+          interval > Durations.get(:agent_fsync_max_interval_ms) ->
+        {:stop,
+         {:interval_out_of_range, interval,
+          [
+            Durations.get(:agent_fsync_min_interval_ms),
+            Durations.get(:agent_fsync_max_interval_ms)
+          ]}}
 
       true ->
         ref = Process.send_after(self(), :tick, interval)
@@ -166,6 +169,6 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   defp configured_interval_ms() do
-    Application.get_env(:flezha, :agent_fsync_interval_ms, @default_interval_ms)
+    Durations.get(:agent_fsync_interval_ms)
   end
 end

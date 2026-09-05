@@ -13,14 +13,13 @@ defmodule Flezha.Runner.ControlUnit do
   """
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
 
   use GenServer
 
   require Logger
-
-  @default_reply_timeout_ms 5_000
 
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({namespace, runner_id}) do
@@ -64,7 +63,7 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   defp default_ping_timeout_ms,
-    do: Application.get_env(:flezha, :overwatch_ping_timeout_ms, 2_000)
+    do: Durations.get(:overwatch_ping_timeout_ms)
 
   @doc """
   Sends a `OperativeMessage` to the SDK-side operative via the control
@@ -101,7 +100,7 @@ defmodule Flezha.Runner.ControlUnit do
   `send_operative_message/3`, the credit-window handshake, the operative
   handover round-trips, and the compaction response inspection all use it.
 
-  Options: `:timeout` (default #{@default_reply_timeout_ms} ms) and
+  Options: `:timeout` (default #{Durations.get(:control_unit_reply_timeout_ms)} ms) and
   `:metadata`. With `metadata: true` the reply is
   `{:ok, raw_data, frame_metadata}` — the reply frame's own metadata map, which
   is where an SDK answer carries anything that must not change the payload's
@@ -126,7 +125,7 @@ defmodule Flezha.Runner.ControlUnit do
         GenServer.call(
           Identificator.control_unit(runner_id),
           {:send_control, command, Keyword.get(opts, :metadata, false)},
-          Keyword.get(opts, :timeout, @default_reply_timeout_ms)
+          Keyword.get(opts, :timeout, Durations.get(:control_unit_reply_timeout_ms))
         )
     end
   catch
@@ -533,8 +532,8 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   defp heartbeat_interval_ms,
-    do: Application.get_env(:flezha, :control_unit_heartbeat_interval_ms, 15_000)
+    do: Durations.get(:control_unit_heartbeat_interval_ms)
 
   defp pending_reply_timeout_ms,
-    do: Application.get_env(:flezha, :control_unit_pending_reply_timeout_ms, 90_000)
+    do: Durations.get(:control_unit_pending_reply_timeout_ms)
 end

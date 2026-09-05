@@ -15,10 +15,8 @@ defmodule Flezha.Observability.Export.OtlpClient do
 
   use GenServer
 
-  @backoffs_ms [250, 500, 1_000, 2_000, 4_000]
-  @max_attempts 5
-  @request_timeout_ms 10_000
-
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.Http.Client, as: HttpClient
 
   # ---------- Public API ----------
@@ -44,10 +42,6 @@ defmodule Flezha.Observability.Export.OtlpClient do
     end
   end
 
-  @doc false
-  @spec backoff_schedule() :: [pos_integer()]
-  def backoff_schedule(), do: @backoffs_ms
-
   # ---------- GenServer ----------
 
   @impl true
@@ -66,27 +60,31 @@ defmodule Flezha.Observability.Export.OtlpClient do
     {:reply, result, state}
   end
 
-  defp do_post_with_retry(state, kind, body, attempts) when attempts < @max_attempts do
-    case attempt_post(state, kind, body) do
-      {{:ok, status}, state} when status < 500 ->
-        {{:ok, status}, state}
+  defp do_post_with_retry(state, kind, body, attempts) do
+    if Backoff.give_up?(:otlp_post, attempts) do
+      {{:error, :retries_exhausted}, state}
+    else
+      case attempt_post(state, kind, body) do
+        {{:ok, status}, state} when status < 500 ->
+          {{:ok, status}, state}
 
-      {{:ok, _status}, state} ->
-        backoff(attempts)
-        do_post_with_retry(close_conn(state), kind, body, attempts + 1)
+        {{:ok, _status}, state} ->
+          retry(state, kind, body, attempts)
 
-      {{:error, reason}, state} when reason in [:closed, :timeout, :econnrefused] ->
-        backoff(attempts)
-        do_post_with_retry(close_conn(state), kind, body, attempts + 1)
+        {{:error, reason}, state} when reason in [:closed, :timeout, :econnrefused] ->
+          retry(state, kind, body, attempts)
 
-      {{:error, _} = err, state} ->
-        # Non-transient error — give up early.
-        {err, state}
+        {{:error, _} = err, state} ->
+          # Non-transient error — give up early.
+          {err, state}
+      end
     end
   end
 
-  defp do_post_with_retry(state, _kind, _body, _attempts),
-    do: {{:error, :retries_exhausted}, state}
+  defp retry(state, kind, body, attempts) do
+    Backoff.wait(:otlp_post, attempts + 1, kind)
+    do_post_with_retry(close_conn(state), kind, body, attempts + 1)
+  end
 
   defp attempt_post(state, kind, body) do
     case state.endpoint do
@@ -137,7 +135,14 @@ defmodule Flezha.Observability.Export.OtlpClient do
       [{"content-type", "application/x-protobuf"}] ++
         Enum.map(extra, fn {k, v} -> {to_string(k), to_string(v)} end)
 
-    case HttpClient.request(conn, "POST", path, headers, body, @request_timeout_ms) do
+    case HttpClient.request(
+           conn,
+           "POST",
+           path,
+           headers,
+           body,
+           Durations.get(:otlp_request_timeout_ms)
+         ) do
       {:ok, conn, status, _headers, _body} -> {:ok, %{state | conn: conn}, status}
       {:error, reason, conn} -> {:error, reason, %{state | conn: conn}}
     end
@@ -148,11 +153,6 @@ defmodule Flezha.Observability.Export.OtlpClient do
   defp close_conn(%{conn: conn} = state) do
     HttpClient.close(conn)
     %{state | conn: nil}
-  end
-
-  defp backoff(attempt) do
-    Enum.at(@backoffs_ms, attempt, 4_000)
-    |> Process.sleep()
   end
 
   defp load_endpoint() do

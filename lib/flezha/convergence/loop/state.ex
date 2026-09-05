@@ -13,21 +13,19 @@ defmodule Flezha.Convergence.Loop.State do
   the intent-mismatch evidence cache.
   """
 
-  alias Flezha.Convergence.Backoff
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
 
-  @default_tick_ms 5_000
-  @default_grace_ms 60_000
-
-  defstruct tick_ms: @default_tick_ms,
+  defstruct tick_ms: Durations.get(:convergence_tick_ms),
             # Grace after which a declared fact nothing re-declares ages out,
             # and the STUCK grace of the producing-liveness classifier.
-            fact_grace_ms: @default_grace_ms,
+            fact_grace_ms: Durations.get(:convergence_output_stall_grace_ms),
             # The periodic tick's timer, and whether an immediate one is
             # already on its way — declarations arriving before it runs fold
             # into that one tick.
             tick_timer: nil,
             tick_pending?: false,
-            backoff: Backoff.new(),
+            backoff: Backoff.new(:heal),
             # {kind, target} => %{at, args}: everything a site declared through
             # `Flezha.Convergence.Facts.declare/1` that is not yet repaired.
             facts: %{},
@@ -74,9 +72,9 @@ defmodule Flezha.Convergence.Loop.State do
 
   @doc "Tick interval when neither an option nor app config sets one."
   @spec default_tick_ms() :: pos_integer()
-  def default_tick_ms, do: @default_tick_ms
+  def default_tick_ms, do: Durations.get(:convergence_tick_ms)
 
   @doc "Fact grace when neither an option nor app config sets one."
   @spec default_output_stall_grace_ms() :: pos_integer()
-  def default_output_stall_grace_ms, do: @default_grace_ms
+  def default_output_stall_grace_ms, do: Durations.get(:convergence_output_stall_grace_ms)
 end

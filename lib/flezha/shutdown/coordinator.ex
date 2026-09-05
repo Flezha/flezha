@@ -32,6 +32,7 @@ defmodule Flezha.Shutdown.Coordinator do
   use GenServer, shutdown: 30_000
   require Logger
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Observability.AuditLog.Writer
@@ -41,11 +42,9 @@ defmodule Flezha.Shutdown.Coordinator do
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
 
-  @finalise_call_timeout_ms 5_000
   # Slack reserved off the drain budget so finalise still runs inside the
   # overall bound; also the floor so `Migration.drain/2` always gets a
   # positive deadline.
-  @drain_budget_slack_ms 1_000
 
   defstruct phase: :idle,
             reason: nil,
@@ -344,8 +343,8 @@ defmodule Flezha.Shutdown.Coordinator do
 
   defp drain_budget(state, now) do
     max(
-      state.timeout_ms - (now - state.start_ms) - @drain_budget_slack_ms,
-      @drain_budget_slack_ms
+      state.timeout_ms - (now - state.start_ms) - Durations.get(:drain_budget_slack_ms),
+      Durations.get(:drain_budget_slack_ms)
     )
   end
 
@@ -366,7 +365,7 @@ defmodule Flezha.Shutdown.Coordinator do
   defp safe_close_audit_writer() do
     if Process.whereis(Flezha.Observability.AuditLog.Writer) do
       safe_finalise_step(:audit_log_writer, fn ->
-        Writer.close(@finalise_call_timeout_ms)
+        Writer.close(Durations.get(:shutdown_finalise_call_ms))
       end)
     else
       :ok
@@ -376,7 +375,7 @@ defmodule Flezha.Shutdown.Coordinator do
   defp safe_flush_fsync_batcher() do
     if Process.whereis(FsyncBatcher) do
       safe_finalise_step(:fsync_batcher, fn ->
-        GenServer.call(FsyncBatcher, :flush_all, @finalise_call_timeout_ms)
+        GenServer.call(FsyncBatcher, :flush_all, Durations.get(:shutdown_finalise_call_ms))
       end)
     else
       :ok
@@ -399,7 +398,7 @@ defmodule Flezha.Shutdown.Coordinator do
   # derives `max_defer_time` from it so the two never drift.
   @doc false
   def configured_timeout_ms() do
-    Application.get_env(:flezha, :graceful_shutdown_timeout_ms, 60_000)
+    Durations.get(:graceful_shutdown_timeout_ms)
   end
 
   defp monotonic_ms(), do: System.monotonic_time(:millisecond)

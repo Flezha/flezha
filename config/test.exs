@@ -104,6 +104,9 @@ config :flezha,
   # `/healthz` is opt-in everywhere (off in prod by default too); tests
   # that exercise it bring up the listener inline.
   healthz_enabled: false,
+  # A test that brings the listener up binds loopback — an environment's
+  # choice, not the endpoint's default (`Flezha.Healthz.Server.default_bind/0`).
+  healthz_bind: "127.0.0.1",
   overwatch_ping_timeout_ms: 500,
   # Tests that hit the real test runners leave ping enabled and rely on
   # the SDK's `Ping` handler. Tests that drive the retry/parked-state

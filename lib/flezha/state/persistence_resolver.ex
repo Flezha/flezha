@@ -16,6 +16,7 @@ defmodule Flezha.State.PersistenceResolver do
   """
 
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
@@ -26,9 +27,6 @@ defmodule Flezha.State.PersistenceResolver do
   @default_retention_hours 6
   @default_wal_high_watermark_bytes 16 * 1024 * 1024
   @default_compact_after_bytes 8 * 1024 * 1024
-  @default_output_stall_timeout_ms 60_000
-  @default_compaction_timeout_ms 30_000
-  @default_compact_after_age_ms 300_000
   @default_workflow_completed_retention_hours 72
   @default_record_log_cut_after_bytes 64 * 1024
 
@@ -159,13 +157,7 @@ defmodule Flezha.State.PersistenceResolver do
   def output_stall_timeout_ms(operative_class, metadata \\ %{}) when is_binary(operative_class) do
     resolve(:output_stall_timeout_ms, :output_stall_timeout_ms, operative_class, metadata,
       valid: &non_neg_int?/1,
-      default: fn ->
-        Application.get_env(
-          :flezha,
-          :default_output_stall_timeout_ms,
-          @default_output_stall_timeout_ms
-        )
-      end
+      default: fn -> Durations.get(:output_stall_timeout_ms) end
     )
   end
 
@@ -205,7 +197,7 @@ defmodule Flezha.State.PersistenceResolver do
 
   @spec compaction_timeout_ms() :: non_neg_integer()
   def compaction_timeout_ms(),
-    do: global_non_neg(:compaction_timeout_ms, @default_compaction_timeout_ms)
+    do: global_non_neg(:compaction_timeout_ms, Durations.default(:compaction_timeout_ms))
 
   @doc """
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
@@ -238,7 +230,7 @@ defmodule Flezha.State.PersistenceResolver do
   def compact_after_age_ms(operative_class \\ nil, metadata \\ %{})
 
   def compact_after_age_ms(nil, _metadata),
-    do: global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms)
+    do: global_non_neg(:compact_after_age_ms, Durations.default(:compact_after_age_ms))
 
   def compact_after_age_ms(operative_class, metadata) when is_binary(operative_class) do
     case configured_compact_after_age_ms(operative_class, metadata) do
@@ -256,7 +248,9 @@ defmodule Flezha.State.PersistenceResolver do
       when is_binary(operative_class) do
     resolve(:compact_after_age_ms, :compact_after_age_ms, operative_class, metadata,
       valid: &(is_integer(&1) and &1 >= 0),
-      default: fn -> global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms) end
+      default: fn ->
+        global_non_neg(:compact_after_age_ms, Durations.default(:compact_after_age_ms))
+      end
     )
   end
 
@@ -333,7 +327,7 @@ defmodule Flezha.State.PersistenceResolver do
   """
   @spec announce_derived_retention(binary(), pos_integer()) :: :ok
   def announce_derived_retention(operative_class, window_ms) do
-    configured_hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    configured_hold = Durations.get(:input_log_hold_window_ms)
     derived_hold = InputLog.hold_window_ms(operative_class)
 
     if derived_hold > configured_hold do

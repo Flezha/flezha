@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   backpressure propagates into the source Overwatch.
   """
 
+  alias Flezha.Config.Backoff
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
@@ -220,7 +221,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
       state
       | buffer: rest,
         buffer_len: state.buffer_len - 1,
-        attempts: 0
+        attempts: Backoff.reset(:forward_deliver, state.target_operative_id)
     }
 
     emit_delivered(verdict_tag(verdict), state.labels)
@@ -234,10 +235,9 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
     attempts = state.attempts + 1
 
     backoff =
-      ProviderBehaviour.retry_backoff_ms(
-        state.retry_backoff_ms,
-        state.retry_max_backoff_ms,
-        attempts
+      Backoff.arm(:forward_deliver, attempts, state.target_operative_id,
+        base: state.retry_backoff_ms,
+        cap: state.retry_max_backoff_ms
       )
 
     emit_retry(attempts, backoff, reason, state.labels)

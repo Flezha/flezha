@@ -19,6 +19,7 @@ defmodule Flezha.State.Retention do
 
   use GenServer
 
+  alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.InputLog.Sweep
 
@@ -73,7 +74,7 @@ defmodule Flezha.State.Retention do
   def handle_info(_msg, state), do: {:noreply, state}
 
   defp schedule_sweep() do
-    interval = Application.get_env(:flezha, :time_travel_retention_check_interval_ms, 60_000)
+    interval = Durations.get(:time_travel_retention_check_interval_ms)
     if interval > 0, do: Process.send_after(self(), :retention_tick, interval)
   end
 

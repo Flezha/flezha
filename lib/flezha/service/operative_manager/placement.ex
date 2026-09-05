@@ -6,20 +6,15 @@ defmodule Flezha.Service.OperativeManager.Placement do
 
   require Logger
 
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
 
-  @runner_poll_interval_ms 50
-
-  @runner_lookup_timeout_ms 5_000
-
   # Per-attempt budget for the polling path. Must stay well under any caller's
   # deadline, or one blocked lookup consumes it and the loop never iterates.
-  @runner_poll_call_timeout_ms 250
 
   # Floor for the clamped attempt: below this a healthy FleetManager could not
   # answer, and we would blame it for our own exhausted budget.
-  @runner_min_call_timeout_ms 25
 
   @doc """
   Pick an active compute engine for `operative_id` in `namespace`.
@@ -41,7 +36,7 @@ defmodule Flezha.Service.OperativeManager.Placement do
   """
   @spec assign_runner(String.t(), binary() | nil, binary()) :: binary() | nil
   def assign_runner(namespace, factory_id, operative_id) do
-    case resolve_runner(namespace, factory_id, operative_id, @runner_lookup_timeout_ms) do
+    case resolve_runner(namespace, factory_id, operative_id, Durations.get(:runner_lookup_ms)) do
       {:ok, runner_id} -> runner_id
       {:error, :unavailable} -> nil
     end
@@ -66,8 +61,8 @@ defmodule Flezha.Service.OperativeManager.Placement do
   placeable only after `FleetManager` finishes its `runner_connect/3` handler,
   which is the same handler that starts the hub and its recovery replay.
 
-  Every attempt is capped at the smaller of #{@runner_poll_call_timeout_ms} ms
-  and what is left of `timeout_ms`, floored at #{@runner_min_call_timeout_ms} ms,
+  Every attempt is capped at the smaller of #{Durations.get(:runner_poll_call_ms)} ms
+  and what is left of `timeout_ms`, floored at #{Durations.get(:runner_min_call_ms)} ms,
   so a blocked `FleetManager` can overrun the deadline by at most that floor no
   matter how many callers share one budget.
   """
@@ -110,18 +105,18 @@ defmodule Flezha.Service.OperativeManager.Placement do
   end
 
   defp poll_again(namespace, factory_id, operative_id, deadline, ready_fun, last_reason) do
-    if System.monotonic_time(:millisecond) + @runner_poll_interval_ms >= deadline do
+    if System.monotonic_time(:millisecond) + Durations.get(:runner_poll_interval_ms) >= deadline do
       {:error, last_reason}
     else
-      Process.sleep(@runner_poll_interval_ms)
+      Process.sleep(Durations.get(:runner_poll_interval_ms))
       do_await_runner(namespace, factory_id, operative_id, deadline, ready_fun)
     end
   end
 
   defp call_timeout(deadline) do
     (deadline - System.monotonic_time(:millisecond))
-    |> min(@runner_poll_call_timeout_ms)
-    |> max(@runner_min_call_timeout_ms)
+    |> min(Durations.get(:runner_poll_call_ms))
+    |> max(Durations.get(:runner_min_call_ms))
   end
 
   defp resolve_runner(namespace, factory_id, operative_id, call_timeout_ms) do

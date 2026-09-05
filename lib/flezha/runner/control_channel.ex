@@ -14,6 +14,7 @@ defmodule Flezha.Runner.ControlChannel do
   request.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Operative.Migration
   alias Flezha.Runner.ControlChannel.Commits
@@ -37,13 +38,10 @@ defmodule Flezha.Runner.ControlChannel do
   # carries. Closes the UDS wedged-but-connected blind spot and makes UDS
   # symmetric with QUIC's idle timeout. Mirrors the data-plane `StreamChannel`
   # last_seen/threshold watchdog.
-  @control_liveness_window_ms 45_000
-  @control_liveness_interval_ms 15_000
 
   # OTP's own `GenServer.call/2` default, made explicit because `send_control/3`
   # answers on it rather than letting a slow channel exit its caller. Tests pass
   # a short one to reach that arm without waiting five seconds.
-  @control_call_timeout_ms 5_000
 
   def start_link({namespace, runner_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, nil},
@@ -66,7 +64,7 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   @spec send_control(binary(), tuple(), timeout()) :: {:ok, binary()} | {:error, term()}
-  def send_control(runner_id, command, timeout_ms \\ @control_call_timeout_ms) do
+  def send_control(runner_id, command, timeout_ms \\ Durations.get(:control_call_timeout_ms)) do
     control_channel = Identificator.control_channel(runner_id)
 
     case GenServer.whereis(control_channel) do
@@ -283,7 +281,8 @@ defmodule Flezha.Runner.ControlChannel do
   # inbound frame, not even the SDK keepalive ping — is a process/control-channel
   # wedge UDS never surfaces as EOF. Route through the SAME
   # `handle_connection_closed/1` a real socket close uses (no parallel eviction
-  # path). The window is generous (3x the keepalive) and jittered, so a brief
+  # path). The window is the `control_liveness_window_ms` row — derived from the
+  # keepalive it must outlast, not written beside it — and jittered, so a brief
   # GC/contention pause or a single missed ping never trips it.
   @impl true
   def handle_info(:liveness_tick, state) do
@@ -354,10 +353,10 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   defp liveness_window_ms,
-    do: Application.get_env(:flezha, :control_liveness_window_ms, @control_liveness_window_ms)
+    do: Durations.get(:control_liveness_window_ms)
 
   defp liveness_interval_ms,
-    do: Application.get_env(:flezha, :control_liveness_interval_ms, @control_liveness_interval_ms)
+    do: Durations.get(:control_liveness_interval_ms)
 
   # Full jitter into [interval/2, interval] so a fleet's control channels do
   # not all wake in lockstep (mirrors the SDK's `liveness::jittered`).
@@ -532,15 +531,18 @@ defmodule Flezha.Runner.ControlChannel do
   #     ever lost, and a frame routed to an Overwatch that has since been
   #     replaced is exactly that loss.
   #   * the journal is WAITED for, unchanged: `pending_entries/1` is an exact,
-  #     durable, re-drivable debt, and `@drain_owed_ms` keeps a sink that never
+  #     durable, re-drivable debt, and `Durations.get(:drain_owed_ms)` keeps a sink that never
   #     confirms from holding the teardown — the retained journal keeps the
   #     debt. Under a start storm the flush itself queues behind the channel
   #     for tens of seconds, and the instance is retained either way.
-  @drain_owed_ms 60_000
 
   defp drain_owed_outputs(runner_id, operative_id) do
     StreamPool.flush_channels(runner_id)
-    await_owed_journal(operative_id, System.monotonic_time(:millisecond) + @drain_owed_ms)
+
+    await_owed_journal(
+      operative_id,
+      System.monotonic_time(:millisecond) + Durations.get(:drain_owed_ms)
+    )
   end
 
   defp await_owed_journal(operative_id, deadline) do

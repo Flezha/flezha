@@ -17,6 +17,8 @@ defmodule Flezha.Convergence.Facts do
   facts stays outside the dependency cycle every site sits in.
   """
 
+  alias Flezha.Config.Durations
+
   # The loop's registered name, spelled as the atom it is: writing the alias
   # would be a compile-time edge back into the loop, and an intake that
   # names the loop drags every declaring site into the loop's cycle —
@@ -27,7 +29,6 @@ defmodule Flezha.Convergence.Facts do
   # this long: a provider that reaches `:running` and crashes again a second
   # later keeps its rung, which is what stops a fast-failing upstream (a WS
   # that keeps 429-ing) from retrying at the base delay for ever.
-  @stable_uptime_ms 60_000
 
   @typedoc "What a site declares: the kind, the target it is about, and its arguments."
   @type fact :: {kind :: atom(), target :: term(), args :: map()}
@@ -153,7 +154,7 @@ defmodule Flezha.Convergence.Facts do
 
   @doc "How long a restarted plugin must stay `:running` before its key resets."
   @spec stable_uptime_ms() :: pos_integer()
-  def stable_uptime_ms(), do: @stable_uptime_ms
+  def stable_uptime_ms(), do: Durations.get(:plugin_stable_uptime_ms)
 
   @doc "The kinds the loop holds in its map, with their entries."
   @spec holding() :: %{atom() => map()}
@@ -307,9 +308,14 @@ defmodule Flezha.Convergence.Facts do
   # so a plugin that reaches `:running` and crashes again keeps both.
   defp repaired?(:plugin_down, {ns, id, plugin_id}, _args, reality) do
     case get_in(reality, [:operatives, {ns, id}]) do
-      %{bound_runner: :unknown} -> false
-      %{plugin_uptimes: uptimes} -> Map.get(uptimes, plugin_id, -1) >= @stable_uptime_ms
-      _ -> true
+      %{bound_runner: :unknown} ->
+        false
+
+      %{plugin_uptimes: uptimes} ->
+        Map.get(uptimes, plugin_id, -1) >= Durations.get(:plugin_stable_uptime_ms)
+
+      _ ->
+        true
     end
   end
 

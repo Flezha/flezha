@@ -5,6 +5,7 @@ defmodule Flezha.Service.HubManager do
   here is what names this module's own supervisor identity.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
@@ -50,12 +51,9 @@ defmodule Flezha.Service.HubManager do
   defdelegate unregister_handler(arg1, arg2), to: Placement
   defdelegate with_live_hub_id(arg1, arg2, arg3), to: Rows
 
-  @default_await_timeout_ms 60_000
-
   # Bounds one whole start request: WorkerQueue kills it at this deadline and
   # `Stream.run/1` discards the exit, so an overrun silently drops the batch's
   # registry update. Every wait on the child-start path must fit inside it.
-  @cross_node_request_timeout_ms 10_000
 
   # Deliberately off the `<namespace>_hub` convention: `Identificator.hub_id?/1` filters it
   # out, so every operative-oriented walker (Convergence, RecoveryGate,
@@ -96,7 +94,7 @@ defmodule Flezha.Service.HubManager do
   """
   @spec await_recovery_complete(non_neg_integer()) ::
           :ok | {:error, {:recovery_timeout, [atom()]}}
-  def await_recovery_complete(timeout_ms \\ @default_await_timeout_ms)
+  def await_recovery_complete(timeout_ms \\ Durations.get(:hub_await_recovery_ms))
       when is_integer(timeout_ms) and timeout_ms >= 0 do
     RecoveryGate.await_recovery_complete(nil, timeout_ms)
   end
@@ -222,7 +220,7 @@ defmodule Flezha.Service.HubManager do
       auto_recovery: Rows.auto_recovery_config(),
       # Operative startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
-      cross_node_request_timeout: @cross_node_request_timeout_ms,
+      cross_node_request_timeout: Durations.get(:hub_cross_node_request_ms),
       hooks:
         Map.merge(
           %{

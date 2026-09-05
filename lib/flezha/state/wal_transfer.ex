@@ -17,10 +17,10 @@ defmodule Flezha.State.WalTransfer do
   this is NOT ongoing replication.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.State.Paths
 
   @chunk_bytes 64 * 1024
-  @call_timeout_ms 30_000
 
   @type entity_id :: {binary(), binary(), binary()}
 
@@ -85,7 +85,7 @@ defmodule Flezha.State.WalTransfer do
   def pull_operative(source_node, _operative_class, _opts) when source_node == node(), do: 0
 
   def pull_operative(source_node, operative_class, opts) do
-    timeout = Keyword.get(opts, :timeout, @call_timeout_ms)
+    timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
 
     case call(source_node, :entities, [operative_class], timeout) do
       {:ok, entity_ids} ->
@@ -118,7 +118,7 @@ defmodule Flezha.State.WalTransfer do
   end
 
   def pull_entity(source_node, {_, _, _} = entity_id, opts) do
-    timeout = Keyword.get(opts, :timeout, @call_timeout_ms)
+    timeout = Keyword.get(opts, :timeout, Durations.get(:wal_transfer_call_ms))
     destination = Keyword.get(opts, :as, entity_id)
 
     case call(source_node, :manifest, [entity_id], timeout) do
@@ -179,7 +179,15 @@ defmodule Flezha.State.WalTransfer do
       {:ok, files} ->
         # Only now: the destination copy is on disk and fsynced, so dropping
         # the source cannot lose the Entity.
-        _ = :erpc.call(source_node, Paths, :delete_files, [source], @call_timeout_ms)
+        _ =
+          :erpc.call(
+            source_node,
+            Paths,
+            :delete_files,
+            [source],
+            Durations.get(:wal_transfer_call_ms)
+          )
+
         emit(:wal_moved, %{entity_id: source, destination: destination, files: files})
         {:ok, files}
 

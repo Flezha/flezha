@@ -50,6 +50,7 @@ defmodule Flezha.Convergence.Heal do
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Planner
   alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
@@ -60,9 +61,6 @@ defmodule Flezha.Convergence.Heal do
   alias ProcessHub.Service.Migration
 
   require Logger
-
-  @operative_call_timeout_ms 1_000
-  @migrate_timeout_ms 2_000
 
   # The primitive table: the name, the executor the op reaches, and the
   # evidence that resets its key — `:ok` (the executor's own answer) or the
@@ -220,7 +218,7 @@ defmodule Flezha.Convergence.Heal do
       case ControlUnit.disconnect(runner_id,
              terminal: true,
              reason: why,
-             timeout: @migrate_timeout_ms
+             timeout: Durations.get(:migrate_timeout_ms)
            ) do
         {:ok, _} ->
           emit_restart(runner_id, layer)
@@ -250,7 +248,7 @@ defmodule Flezha.Convergence.Heal do
   # itself — so the primitive asks it to, under a call timeout.
   defp apply_primitive(:publish_binding, %{namespace: namespace, target: operative_id}) do
     on_operative(namespace, operative_id, fn pid ->
-      case SafeCall.bounded(pid, :publish_binding, @operative_call_timeout_ms) do
+      case SafeCall.bounded(pid, :publish_binding, Durations.get(:operative_call_timeout_ms)) do
         {:ok, :ok} -> :ok
         _ -> :error
       end
@@ -272,7 +270,8 @@ defmodule Flezha.Convergence.Heal do
          false <- skip_rebind?(namespace, factory, prev, op),
          target when is_binary(target) <-
            OperativeManager.assign_runner(namespace, factory, operative_id),
-         {:ok, :ok} <- SafeCall.bounded(pid, {:runner_migrate, target}, @migrate_timeout_ms) do
+         {:ok, :ok} <-
+           SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
       _ = HubManager.operative_set_runner(namespace, operative_id, target)
       _ = HubManager.hook_insert_local_pid(target, operative_id, pid)
 
@@ -335,7 +334,7 @@ defmodule Flezha.Convergence.Heal do
   # The reply is always the full `%Overwatch{}` struct — callers hand it to
   # `Overwatch`'s own functions (the consent gate) or read its fields.
   defp overwatch_snapshot(pid) do
-    case SafeCall.bounded(pid, :get_overwatch_state, @operative_call_timeout_ms) do
+    case SafeCall.bounded(pid, :get_overwatch_state, Durations.get(:operative_call_timeout_ms)) do
       {:ok, %Overwatch{} = ow} -> ow
       _ -> nil
     end

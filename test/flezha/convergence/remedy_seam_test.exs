@@ -19,8 +19,9 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
   alias Flezha.Cluster.Directory
 
+  alias Flezha.Config.Backoff
+
   alias Flezha.Convergence.{
-    Backoff,
     Diff,
     Facts,
     Heal,
@@ -254,7 +255,9 @@ defmodule Flezha.Convergence.RemedySeamTest do
           do: assert(p in Heal.primitives(), "rule #{field} plans unknown primitive #{p}")
 
       sample = Map.fetch!(@rule_samples, field)
-      planned = sample |> Planner.plan(Backoff.new()) |> Enum.map(& &1.primitive) |> Enum.uniq()
+
+      planned =
+        sample |> Planner.plan(Backoff.new(:heal)) |> Enum.map(& &1.primitive) |> Enum.uniq()
 
       assert planned != [] and Enum.all?(planned, &(&1 in primitives)),
              "rule #{field} planned #{inspect(planned)}, declared #{inspect(primitives)}"

@@ -16,6 +16,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   Required opts `:url` and `:channel`; the rest: `docs/plugins/http_poll.md`.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
@@ -46,7 +47,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   # otherwise a merely slow endpoint would read as a dead one.
   @idle_intervals 3
 
-  @min_interval_ms 1_000
   @max_body_ceiling_bytes 64 * 1_048_576
 
   # Field-guarded and therefore already total; see `Postgres`.
@@ -263,8 +263,13 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   # A sub-second interval is a hammer, not a poll; an unbounded body cap
   # defeats the cap. Both are refused rather than clamped so a typo is visible.
-  defp bound(:interval_ms, value) when value < @min_interval_ms,
-    do: {:error, "http_poll interval_ms #{value} is below the #{@min_interval_ms} ms minimum"}
+  defp bound(:interval_ms, value) do
+    minimum = Durations.get(:http_poll_min_interval_ms)
+
+    if value < minimum,
+      do: {:error, "http_poll interval_ms #{value} is below the #{minimum} ms minimum"},
+      else: :ok
+  end
 
   defp bound(:max_body_bytes, value) when value > @max_body_ceiling_bytes,
     do:

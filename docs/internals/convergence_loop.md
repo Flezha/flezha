@@ -54,7 +54,7 @@ through `HubManager.drain_hub/2` from the shutdown plan only.
 | `Convergence.Diff` | Pure: intent + reality + verdict records → `%Diff{unbound_operatives, misbound_operatives, parked_operatives, replace_operatives, stalled_operatives, resync_entities, missing_plugins, extra_plugins, unhealthy_plugins, stale_tags, data_plane_wedge, data_plane_layer, draining}` |
 | `Convergence.Planner` | Pure: `%Diff{}` + `%Backoff{}` → ordered, cooldown-filtered op list capped at `max_ops` (default 20). The one place a divergence becomes an op |
 | `Convergence.Heal` | The primitive table: ten idempotent primitives, each naming its executor and the evidence that resets its key — `rebind_operative`, `replace_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` |
-| `Convergence.Backoff` | The one cooldown table: 5 s → 30 s → 60 s → 300 s, held at 300 s. Keyed `{primitive, target}`, `{primitive, {operative, plugin}}` for a plugin op, or `{reason, target}` for one carrying a declared reason |
+| `Config.Backoff` | The ladder table for the whole tree, at the foundation layer so every directory may read it: one row per key — rungs or a geometric base/cap, a jitter flag, a reset rule and a give-up bound — read by every site that waits before trying again, in the controller and in the Elixir SDK. The loop's own row is `:heal` (5 s → 30 s → 60 s → 300 s, held at 300 s), keyed `{primitive, target}`, `{primitive, {operative, plugin}}` for a plugin op, or `{reason, target}` for one carrying a declared reason. Every wait and every reset is announced on `[:flezha, :backoff, :wait]` / `[:flezha, :backoff, :reset]` |
 | `Convergence.Snapshot` | Public ETS table read by `/healthz`, the CLI and telemetry: `:current` (per-tick summary), `{:recovery, hub_id}`, `{:sensor, name}` |
 | `Convergence.RecoveryGate` | Hub recovery queries: `ready_namespaces/1`; `await_recovery_complete/2` behind `HubManager.await_recovery_complete/1` (the `Boot.Loader` and `FleetManager` boot gates) |
 | `Flezha.SafeCall` | Not a convergence module — the control plane's bounded-call wrapper, at the root and named by five trees. Returns `{:error, reason}` on timeout / `:noproc` / any exit; probes a timed-out local target's mailbox and `current_function` |
@@ -193,7 +193,7 @@ no site.
 
 ## The key and the evidence rule
 
-One `%Backoff{}` per node, `5 s → 30 s → 60 s → 300 s`. A key is `{primitive, target}`, or
+One `%Backoff{}` per node over the `:heal` row, `5 s → 30 s → 60 s → 300 s`. A key is `{primitive, target}`, or
 `{primitive, {operative, plugin}}` for a plugin op — per plugin, so one crashing plugin never
 throttles its siblings' starts — or `{reason, target}` for an op carrying a declared reason, so
 every rung of that reason's ladder walks ONE cooldown and the attempt count IS the rung.

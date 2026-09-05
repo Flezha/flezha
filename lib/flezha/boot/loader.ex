@@ -15,6 +15,7 @@ defmodule Flezha.Boot.Loader do
 
   use GenServer
 
+  alias Flezha.Config.Durations
   alias Flezha.Service.HubManager
   alias Flezha.Socket.Support
   alias Flezha.Transport.CertGenerator
@@ -89,7 +90,7 @@ defmodule Flezha.Boot.Loader do
   # block boot — the marker-gated recovery has its own background
   # continuation and the convergence watcher (phase 4) corrects drift.
   defp await_namespace_hubs() do
-    timeout_ms = Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
+    timeout_ms = Durations.get(:boot_replay_timeout_ms)
 
     try do
       case HubManager.await_recovery_complete(timeout_ms) do

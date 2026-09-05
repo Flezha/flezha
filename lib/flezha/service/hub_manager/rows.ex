@@ -11,6 +11,7 @@ defmodule Flezha.Service.HubManager.Rows do
   `UndefinedFunctionError`.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
   alias Flezha.Plugin
@@ -403,9 +404,8 @@ defmodule Flezha.Service.HubManager.Rows do
     # finish their handshake, since an orphan start needs one to place against.
     if durable_starts?() do
       [
-        reconcile_grace_ms: Application.get_env(:flezha, :process_hub_reconcile_grace_ms, 45_000),
-        reconcile_interval_ms:
-          Application.get_env(:flezha, :process_hub_reconcile_interval_ms, 30_000),
+        reconcile_grace_ms: Durations.get(:process_hub_reconcile_grace_ms),
+        reconcile_interval_ms: Durations.get(:process_hub_reconcile_interval_ms),
         remote_manifest: remote_manifest_config()
       ]
     else

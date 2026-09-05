@@ -21,6 +21,7 @@ defmodule Flezha.State.InputLog do
 
   require Logger
 
+  alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
@@ -773,7 +774,7 @@ defmodule Flezha.State.InputLog do
   """
   @spec hold_window_ms(binary()) :: non_neg_integer()
   def hold_window_ms(operative_class) when is_binary(operative_class) do
-    configured = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    configured = Durations.get(:input_log_hold_window_ms)
     declared = ClassRegistry.correction_window_ms(operative_class) || 0
     max(configured, declared)
   end

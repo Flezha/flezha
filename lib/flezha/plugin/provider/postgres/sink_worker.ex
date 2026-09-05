@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   flush cursor.
   """
 
+  alias Flezha.Config.Backoff
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
 
@@ -238,7 +239,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
           state
           | buffer: rest,
             buffer_len: rest_len,
-            consecutive_failures: 0,
+            consecutive_failures: Backoff.reset(:postgres_flush, state.plugin_id),
             last_error: nil,
             missing_tables: nil,
             last_commit_ms: System.monotonic_time(:millisecond)
@@ -252,10 +253,9 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
         log_failure(state, "flush failed (attempt #{failures})", reason)
 
         backoff =
-          ProviderBehaviour.retry_backoff_ms(
-            state.retry_backoff_ms,
-            state.retry_max_backoff_ms,
-            failures
+          Backoff.arm(:postgres_flush, failures, state.plugin_id,
+            base: state.retry_backoff_ms,
+            cap: state.retry_max_backoff_ms
           )
 
         %{

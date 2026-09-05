@@ -21,17 +21,15 @@ defmodule Flezha.Schedule.Hub do
   require Logger
 
   alias Flezha.Cluster.Orchestrator
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.SafeCall
   alias Flezha.Schedule.{Job, Store}
   alias Flezha.Service.HubManager
 
-  @hub_retry_ms 5_000
   # A wedged job must not stall the list render; it reports node only.
-  @status_timeout_ms 1_000
   # Covers the residual case only: definitions asserted while the hub was down
   # or mid-formation. ProcessHub itself re-places children on nodedown.
-  @reassert_interval_ms 60_000
-  @retract_timeout_ms 5_000
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -77,7 +75,10 @@ defmodule Flezha.Schedule.Hub do
       # a failed retract leaves a job with no store row — hence the log.
       with {:error, reason} <-
              hub_id
-             |> ProcessHub.stop_child(name, awaitable: true, await_timeout: @retract_timeout_ms)
+             |> ProcessHub.stop_child(name,
+               awaitable: true,
+               await_timeout: Durations.get(:schedule_retract_timeout_ms)
+             )
              |> ProcessHub.Future.await() do
         Logger.warning("[schedule] retracting #{name} failed: #{inspect(reason)}")
       end
@@ -107,7 +108,8 @@ defmodule Flezha.Schedule.Hub do
 
   defp job_last_fire(node_pids) do
     with pid when is_pid(pid) <- HubManager.live_pid(node_pids),
-         {:ok, %{last_fire: last_fire}} <- SafeCall.bounded(pid, :status, @status_timeout_ms) do
+         {:ok, %{last_fire: last_fire}} <-
+           SafeCall.bounded(pid, :status, Durations.get(:schedule_status_call_ms)) do
       last_fire
     else
       _ -> nil
@@ -156,13 +158,13 @@ defmodule Flezha.Schedule.Hub do
         # Never crash: this owner sits under the application's one_for_one
         # supervisor, so a restart loop would take the controller down.
         Logger.error("[schedule] schedule hub failed to start: #{inspect(reason)}; retrying")
-        Process.send_after(self(), :retry_hub, @hub_retry_ms)
+        Process.send_after(self(), :retry_hub, Backoff.arm(:hub_retry, 1, :schedule_hub))
         state
     end
   end
 
   defp schedule_reassert(state) do
-    Process.send_after(self(), :reassert, @reassert_interval_ms)
+    Process.send_after(self(), :reassert, Durations.get(:schedule_reassert_interval_ms))
     state
   end
 

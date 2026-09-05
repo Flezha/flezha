@@ -14,6 +14,7 @@ defmodule Flezha.Operative.Replay do
   `self()` is not the Overwatch.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Overwatch
   alias Flezha.Runner.StreamChannel.Gate
@@ -90,7 +91,7 @@ defmodule Flezha.Operative.Replay do
   end
 
   defp correction_debounce_ms(),
-    do: Application.get_env(:flezha, :correction_debounce_ms, 200)
+    do: Durations.get(:correction_debounce_ms)
 
   # ---------- bind-time restore ----------
 

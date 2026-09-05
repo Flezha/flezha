@@ -13,6 +13,7 @@ defmodule Flezha.Runner.StreamChannel do
   without a call, so a frame never queues behind this process.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel.Gate
@@ -27,9 +28,6 @@ defmodule Flezha.Runner.StreamChannel do
   def start_link({runner_id, name, type}) do
     GenServer.start_link(__MODULE__, {runner_id, type, name}, name: name)
   end
-
-  @io_liveness_interval_ms 10_000
-  @io_liveness_threshold_ms 30_000
 
   # Every payload-id this channel forwards onto an Entity's durable write path;
   # the takeover fence (`:fence_write_path`) refuses exactly this set.
@@ -169,7 +167,7 @@ defmodule Flezha.Runner.StreamChannel do
 
   defp schedule_io_liveness_check do
     interval =
-      Application.get_env(:flezha, :io_stream_liveness_interval_ms, @io_liveness_interval_ms)
+      Durations.get(:io_stream_liveness_interval_ms)
 
     if interval > 0, do: Process.send_after(self(), :io_liveness_check, interval)
   end
@@ -378,7 +376,7 @@ defmodule Flezha.Runner.StreamChannel do
     schedule_io_liveness_check()
 
     threshold =
-      Application.get_env(:flezha, :io_stream_liveness_threshold_ms, @io_liveness_threshold_ms)
+      Durations.get(:io_stream_liveness_threshold_ms)
 
     stale? = System.monotonic_time(:millisecond) - state.last_seen >= threshold
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Every wait before a retry in the controller and the Elixir SDK is one declared
+  row of `Flezha.Config.Backoff`, and every timeout, interval, grace and budget
+  one row of `Flezha.Config.Durations`. Waits and resets are emitted on
+  `[:flezha, :backoff, :wait]` and `[:flezha, :backoff, :reset]`. Values are
+  unchanged except for three named jitter differences (the cluster reconnect and
+  the Kafka produce retry now use the one jitter rule, and the SDK reconnect's
+  jittered wait no longer exceeds its 30 s cap). `FLEZHA_HEALTHZ_BIND` has one
+  default again, the documented `0.0.0.0`.
+
 ### Added — run a declared operative graph in your own process, with no controller
 
 `LocalOperative` (Rust, Java) and `Flezha.SDK.Local` (Elixir) take the operative

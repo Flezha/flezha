@@ -9,6 +9,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   `Websocket`.
   """
 
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.Websocket.Subscription
 
@@ -16,21 +18,20 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
   use Fresh
 
-  @default_idle_timeout_ms 30_000
-  @default_resubscribe_after_ms 0
-  @min_tick_interval_ms 1_000
-
   @doc "Default idle-watchdog deadline, in ms."
   @spec default_idle_timeout_ms() :: non_neg_integer()
-  def default_idle_timeout_ms, do: @default_idle_timeout_ms
+  def default_idle_timeout_ms, do: Durations.get(:ws_idle_timeout_ms)
 
   @doc "Default data-liveness re-subscribe deadline, in ms. 0 disables it."
   @spec default_resubscribe_after_ms() :: non_neg_integer()
-  def default_resubscribe_after_ms, do: @default_resubscribe_after_ms
+  def default_resubscribe_after_ms, do: Durations.get(:ws_resubscribe_after_ms)
 
   def start_link(uri, opts) do
-    idle_timeout_ms = Keyword.get(opts, :idle_timeout_ms, @default_idle_timeout_ms)
-    resubscribe_after_ms = Keyword.get(opts, :resubscribe_after_ms, @default_resubscribe_after_ms)
+    idle_timeout_ms = Keyword.get(opts, :idle_timeout_ms, default_idle_timeout_ms())
+
+    resubscribe_after_ms =
+      Keyword.get(opts, :resubscribe_after_ms, default_resubscribe_after_ms())
+
     ignore_pattern = Keyword.get(opts, :ignore_pattern)
     plugin_id = Keyword.get(opts, :plugin_id) || uri
 
@@ -52,15 +53,28 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       frames_seen: 0,
       last_frame_at: now,
       last_data_frame_at: now,
-      last_resubscribe_at: now
+      last_resubscribe_at: now,
+      reconnect_attempt: 0
     }
 
     Fresh.start_link(
       uri,
       __MODULE__,
       with_subscription_state(state, opts),
-      opts[:ws_opts]
+      reconnect_opts(opts[:ws_opts])
     )
+  end
+
+  # The socket-level reconnect is the `:ws_reconnect` row: the library walks
+  # the schedule, and the row is what says where it starts and where it stops.
+  # An operator's own `ws_opts` still wins — the row is the default, not a
+  # ceiling.
+  defp reconnect_opts(ws_opts) do
+    row = Backoff.ladder(:ws_reconnect)
+
+    (ws_opts || [])
+    |> Keyword.put_new(:backoff_initial, row.base)
+    |> Keyword.put_new(:backoff_max, row.cap)
   end
 
   # The reconcile-loop fields exist ONLY on a plugin that configured a source.
@@ -116,13 +130,15 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
     now = :erlang.monotonic_time(:millisecond)
 
-    state = %{
-      state
-      | websocket_established?: true,
-        last_frame_at: now,
-        last_data_frame_at: now,
-        last_resubscribe_at: now
-    }
+    state =
+      %{
+        state
+        | websocket_established?: true,
+          last_frame_at: now,
+          last_data_frame_at: now,
+          last_resubscribe_at: now
+      }
+      |> Map.put(:reconnect_attempt, Backoff.reset(:ws_reconnect, state.plugin_id))
 
     schedule_idle_check(state)
     state = Subscription.schedule_subscription_poll(state)
@@ -143,9 +159,33 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     end
   end
 
+  # Fresh owns the reconnect timer; the row owns the schedule it walks, and
+  # this is where the wait becomes visible — the delay announced here is the
+  # one the library is about to sleep.
   @impl Fresh
   def handle_disconnect(_code, _reason, state) do
-    {:reconnect, %{state | websocket_established?: false}}
+    {:reconnect, announce_reconnect(state)}
+  end
+
+  @impl Fresh
+  def handle_error(reason, state) do
+    Logger.warning("Websocket error: #{inspect(reason)}")
+    {:reconnect, announce_reconnect(state)}
+  end
+
+  defp announce_reconnect(state) do
+    attempt = Map.get(state, :reconnect_attempt, 0) + 1
+    _ = Backoff.delay(:ws_reconnect, attempt) |> announce_wait(attempt, state.plugin_id)
+    state |> Map.put(:websocket_established?, false) |> Map.put(:reconnect_attempt, attempt)
+  end
+
+  defp announce_wait(delay, attempt, plugin_id) do
+    :telemetry.execute([:flezha, :backoff, :wait], %{delay_ms: delay, attempt: attempt}, %{
+      ladder: :ws_reconnect,
+      target: plugin_id
+    })
+
+    delay
   end
 
   # Any control frame (ping/pong) proves the socket is alive, so it
@@ -353,7 +393,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   def idle_tick_interval(state) do
     case Enum.filter([state.idle_timeout_ms, state.resubscribe_after_ms], &(&1 > 0)) do
       [] -> nil
-      enabled -> max(@min_tick_interval_ms, div(Enum.min(enabled), 2))
+      enabled -> max(Durations.get(:ws_min_tick_interval_ms), div(Enum.min(enabled), 2))
     end
   end
 

@@ -14,7 +14,8 @@ defmodule Flezha.ShutdownTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Convergence.{Backoff, Intent, Planner}
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Intent, Planner}
   alias Flezha.Service.{HubManager, PluginManager}
   alias Flezha.Shutdown
 
@@ -174,12 +175,15 @@ defmodule Flezha.ShutdownTest do
       assert delta.draining
       assert delta.misbound_operatives == [] and delta.unbound_operatives == []
       assert delta.parked_operatives == [] and delta.stale_tags == []
-      assert Planner.plan(delta, Backoff.new()) == []
+      assert Planner.plan(delta, Backoff.new(:heal)) == []
 
       # The same reality with no drain plans every binding.
       plain = placing_delta(%{})
       refute plain.draining
-      planned = plain |> Planner.plan(Backoff.new()) |> Enum.map(& &1.primitive) |> Enum.uniq()
+
+      planned =
+        plain |> Planner.plan(Backoff.new(:heal)) |> Enum.map(& &1.primitive) |> Enum.uniq()
+
       assert :rebind_operative in planned and :publish_binding in planned
     end
   end

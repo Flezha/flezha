@@ -502,8 +502,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       :sys.replace_state(producer_pid, fn state ->
         %{
           state
-          | send_fn: fn _w, _r, _ns -> {:error, :network_exception} end,
-            jitter_fn: fn _ -> 0 end
+          | send_fn: fn _w, _r, _ns -> {:error, :network_exception} end
         }
       end)
 

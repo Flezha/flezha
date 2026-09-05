@@ -22,12 +22,12 @@ defmodule Flezha.Observability.AuditLog.Sink do
   @behaviour Flezha.Observability.Sink
 
   alias Flezha.AuthZ.Verbs
+  alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.{Codec, Writer}
   alias Flezha.Observability.Registry, as: ObsRegistry
 
   @sink_name :audit_log
   @default_high_watermark 10_000
-  @default_block_timeout_ms 30_000
 
   # The system pairs. Every source an operator verb's row declares joins them
   # at boot, so a declared audit is durable by construction.
@@ -133,7 +133,7 @@ defmodule Flezha.Observability.AuditLog.Sink do
         filter: filter(),
         overflow: :block,
         mailbox_high_watermark: @default_high_watermark,
-        block_timeout_ms: @default_block_timeout_ms,
+        block_timeout_ms: Durations.get(:audit_log_block_timeout_ms),
         pid: pid
       })
 

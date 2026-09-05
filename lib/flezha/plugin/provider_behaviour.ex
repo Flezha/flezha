@@ -30,6 +30,8 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   """
   @type probe_result() :: health_verdict() | {:fail_open, reason :: term()}
 
+  alias Flezha.Config.Durations
+
   @doc """
   Optional health verdict for a *running* provider instance. The reconciler
   (`Flezha.Plugin.Extension.Table.health/1`) queries this to escalate — restart
@@ -132,18 +134,6 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   def refuse_value(field, value), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
 
-  @doc """
-  The sink retry ladder shared by every provider that holds a bounded queue and
-  retries a failing flush: `base × 2^(attempt-1) + jitter_ms`, capped at `max`.
-  `attempt` counts from 1 (the first retry). A caller that spreads a thundering
-  herd passes its own jitter; the default is the plain ladder.
-  """
-  @spec retry_backoff_ms(pos_integer(), pos_integer(), pos_integer(), non_neg_integer()) ::
-          pos_integer()
-  def retry_backoff_ms(base, max, attempt, jitter_ms \\ 0) when attempt >= 1 do
-    min(base * Integer.pow(2, attempt - 1) + jitter_ms, max)
-  end
-
   @doc "Has the worker's queue reached its bound?"
   @spec saturated?(struct()) :: boolean()
   def saturated?(state), do: state.buffer_len >= state.queue_max
@@ -180,15 +170,13 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     end
   end
 
-  @probe_timeout_ms 500
-
   @doc """
   The per-plugin health-probe budget. Callers that time-box a whole operative's
   probe sweep size their allowance from this rather than from a provider's own
   call timeout.
   """
   @spec probe_budget_ms() :: pos_integer()
-  def probe_budget_ms(), do: @probe_timeout_ms
+  def probe_budget_ms(), do: Durations.get(:provider_probe_timeout_ms)
 
   @fail_open_event [:flezha, :plugin, :health, :fail_open]
 
@@ -250,7 +238,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   `reasons` carries `:absent` and `:dead` (the atoms this provider reports),
   optionally `:pid`, the opts keys to resolve in order — a provider that stores
   its worker under its own key lists that first and `:owned_pid` after — and
-  optionally `:budget_ms` (default #{@probe_timeout_ms}).
+  optionally `:budget_ms` (default `probe_budget_ms/0`).
 
   The verdict is computed off the caller and abandoned past the budget. That
   bound is the point: `Extension.Table.health/1` runs on the convergence loop's
@@ -272,7 +260,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         {:unhealthy, Keyword.fetch!(reasons, :dead)}
 
       true ->
-        workflow_verdict(verdict_fun, pid, Keyword.get(reasons, :budget_ms, @probe_timeout_ms))
+        workflow_verdict(verdict_fun, pid, Keyword.get(reasons, :budget_ms, probe_budget_ms()))
     end
   end
 
@@ -320,7 +308,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   reported `:timeout`, which callers read as uncertainty — see `worker_health/3`.
   """
   @spec ask(pid(), atom(), timeout()) :: {:ok, term()} | :timeout
-  def ask(pid, tag, timeout \\ @probe_timeout_ms) do
+  def ask(pid, tag, timeout \\ probe_budget_ms()) do
     ref = make_ref()
     send(pid, {tag, self(), ref})
 

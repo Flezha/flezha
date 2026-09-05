@@ -9,6 +9,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Cluster.Directory
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Rows
@@ -22,7 +23,6 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   # A force pass fires AT the drain deadline and its handover is async, so this
   # window is carved out of the drain timeout to let it land.
-  @forced_handover_grace_ms 2_000
 
   def on_hub_started(hub_id, pid, namespace) do
     wait_until_hub_alive(hub_id)
@@ -117,7 +117,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
         namespaces,
         fn ns -> drain_hub(ns, budget_ms: budget) end,
         max_concurrency: max(total, 1),
-        timeout: budget + @forced_handover_grace_ms,
+        timeout: budget + Durations.get(:forced_handover_grace_ms),
         on_timeout: :kill_task
       )
 
@@ -200,7 +200,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   @spec drain_hub(binary(), keyword()) :: {:ok, map()} | {:error, term()} | :deadline
   def drain_hub(namespace, opts) do
     budget = Keyword.fetch!(opts, :budget_ms)
-    grace = Keyword.get(opts, :handover_grace_ms, @forced_handover_grace_ms)
+    grace = Keyword.get(opts, :handover_grace_ms, Durations.get(:forced_handover_grace_ms))
     deadline = System.monotonic_time(:millisecond) + budget
 
     Rows.with_live_hub(namespace, {:error, :no_target_nodes}, fn hub_id ->
@@ -275,8 +275,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     opts = Application.get_env(:flezha, :migration_consent, [])
 
     %ProcessHub.Strategy.Migration.MigrationConsent{
-      consent_timeout: Keyword.get(opts, :consent_timeout_ms, 5_000),
-      retry_interval: Keyword.get(opts, :retry_interval_ms, 2_000),
+      consent_timeout: Durations.get(:migration_consent_timeout_ms),
+      retry_interval: Durations.get(:migration_retry_interval_ms),
       max_defer_time: Keyword.get(opts, :max_defer_ms) || Coordinator.configured_timeout_ms()
     }
   end

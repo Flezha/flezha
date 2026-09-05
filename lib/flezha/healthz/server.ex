@@ -66,6 +66,7 @@ defmodule Flezha.Healthz.Server do
   use GenServer
 
   alias Flezha.Boot.Readiness
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.{Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
   alias Flezha.State.DurabilityTier
@@ -75,6 +76,16 @@ defmodule Flezha.Healthz.Server do
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
+
+  @doc """
+  The bind address the endpoint listens on when nothing configures one.
+
+  `0.0.0.0` so a kubelet `httpGet` probe reaches the pod IP; it is the ONE
+  default, read here and by `config/runtime.exs`. A test environment states
+  its loopback bind in `config/test.exs` rather than shadowing this.
+  """
+  @spec default_bind() :: binary()
+  def default_bind(), do: "0.0.0.0"
 
   @doc "Return the listening port — useful for tests that bind to port 0."
   @spec listen_port() :: {:ok, :inet.port_number()} | :error
@@ -90,7 +101,7 @@ defmodule Flezha.Healthz.Server do
   @impl true
   def init(_opts) do
     port = Application.get_env(:flezha, :healthz_port, 9569)
-    bind = Application.get_env(:flezha, :healthz_bind, "127.0.0.1")
+    bind = Application.get_env(:flezha, :healthz_bind, default_bind())
 
     case Listener.listen(port, bind) do
       {:ok, listen_socket, actual_port} ->
@@ -259,10 +270,10 @@ defmodule Flezha.Healthz.Server do
   defp fabric_503_polls(),
     do: Application.get_env(:flezha, :convergence_fabric_503_polls, 3)
 
-  defp tick_ms(), do: Application.get_env(:flezha, :convergence_tick_ms, 5_000)
+  defp tick_ms(), do: Durations.get(:convergence_tick_ms)
 
   defp unmet_intent_grace_ms(),
-    do: Application.get_env(:flezha, :convergence_unmet_intent_grace_ms, 120_000)
+    do: Durations.get(:convergence_unmet_intent_grace_ms)
 
   defp tick_age(nil), do: nil
   defp tick_age(last_tick_at), do: now_ms() - last_tick_at

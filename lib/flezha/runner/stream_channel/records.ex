@@ -17,6 +17,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   registry behind it.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.Replay
@@ -32,8 +33,6 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.Transport.LivenessCounters
 
   require Logger
-
-  @credit_handshake_timeout_ms 10_000
 
   @doc """
   Write one operative's route into the cache: `operative_mapping` is what
@@ -356,7 +355,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
         ControlUnit.send_control_await(
           runner_id,
           {:credit_window_init, init},
-          timeout: @credit_handshake_timeout_ms
+          timeout: Durations.get(:credit_handshake_timeout_ms)
         )
 
       send(parent, {credit_verdict(outcome, session), session})

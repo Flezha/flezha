@@ -7,7 +7,8 @@ defmodule Flezha.Http.Listener do
   request to a response. No Cowboy/Plug dependency.
   """
 
-  @idle_timeout_ms 5_000
+  alias Flezha.Config.Durations
+
   @max_request_line_bytes 8_192
 
   @type request :: {:get, binary()} | {:method_not_allowed, binary()} | :bad
@@ -95,7 +96,7 @@ defmodule Flezha.Http.Listener do
   defp read_request_line(socket) do
     :inet.setopts(socket, packet: :line)
 
-    case :gen_tcp.recv(socket, 0, @idle_timeout_ms) do
+    case :gen_tcp.recv(socket, 0, Durations.get(:http_listener_idle_ms)) do
       {:ok, line} when byte_size(line) > @max_request_line_bytes -> {:error, :too_long}
       {:ok, line} -> {:ok, line}
       err -> err

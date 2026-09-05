@@ -17,21 +17,17 @@ defmodule Flezha.State.DurabilityTier do
   `children/0` refuses an unset `FLEZHA_DURABILITY_BACKEND`.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
 
-  @default_ship_interval_ms 30_000
-  @default_rpo_target_ms 120_000
-  @default_gc_interval_ms 3_600_000
   # Bounded by the slowest plausible ship, not tuned: both backends time out at
   # 30 s and the retry ladder caps at 30 s, and a failed manifest write
   # re-uploads its blobs — refreshing their age — so the real gap between an
   # upload and the entry naming it is minutes at worst. An hour is the headroom.
-  @default_gc_grace_ms 3_600_000
-  @default_gc_abandoned_after_ms 604_800_000
 
   # ---------- configuration ----------
 
@@ -114,15 +110,16 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc "Backstop sweep period — the bound on how stale a quiet entity's remote copy gets."
   @spec ship_interval_ms() :: pos_integer()
-  def ship_interval_ms(), do: config(:ship_interval_ms, @default_ship_interval_ms)
+  def ship_interval_ms(),
+    do: config(:ship_interval_ms, Durations.default(:durability_ship_interval_ms))
 
   @doc "Time since the last successful ship at which the RPO alarm fires."
   @spec rpo_target_ms() :: pos_integer()
-  def rpo_target_ms(), do: config(:rpo_target_ms, @default_rpo_target_ms)
+  def rpo_target_ms(), do: config(:rpo_target_ms, Durations.default(:durability_rpo_target_ms))
 
   @doc "Orphan-blob collection period."
   @spec gc_interval_ms() :: pos_integer()
-  def gc_interval_ms(), do: config(:gc_interval_ms, @default_gc_interval_ms)
+  def gc_interval_ms(), do: config(:gc_interval_ms, Durations.default(:durability_gc_interval_ms))
 
   @doc """
   Age below which an unreferenced artifact is never collected, whoever owns it.
@@ -132,7 +129,7 @@ defmodule Flezha.State.DurabilityTier do
   controller mid-ship is covered without any coordination between the two.
   """
   @spec gc_grace_ms() :: pos_integer()
-  def gc_grace_ms(), do: config(:gc_grace_ms, @default_gc_grace_ms)
+  def gc_grace_ms(), do: config(:gc_grace_ms, Durations.default(:durability_gc_grace_ms))
 
   @doc """
   Age at which an unreferenced artifact is collected even though no node holds
@@ -145,7 +142,7 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec gc_abandoned_after_ms() :: pos_integer()
   def gc_abandoned_after_ms(),
-    do: config(:gc_abandoned_after_ms, @default_gc_abandoned_after_ms)
+    do: config(:gc_abandoned_after_ms, Durations.default(:durability_gc_abandoned_after_ms))
 
   defp config(key, default) do
     case Application.get_env(:flezha, :durability_tier, []) |> Keyword.get(key, default) do

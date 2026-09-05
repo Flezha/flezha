@@ -86,7 +86,7 @@ The system SHALL provide a built-in Sink `Flezha.Observability.Export.OtlpSink` 
 
 ### Requirement: OTLP retry and back-pressure semantics
 
-The OTLP sink SHALL apply bounded exponential backoff on transient HTTP failures (`5xx`, connection refused, timeout) with at most `5` attempts and an interval cap of `4_000` ms. After `5` failed attempts the batch SHALL be dropped, the per-sink `:dropped` counter SHALL increment, and an `:otlp_batch_dropped` event SHALL be emitted on source `:observability_export` carrying the batch size and attempt count. The sink's `:block` overflow policy SHALL bound producer-side back-pressure to the configured retry window so an unreachable endpoint SHALL NOT wedge producers indefinitely.
+The OTLP sink SHALL apply bounded exponential backoff on transient HTTP failures (`5xx`, connection refused, timeout) with at most `5` attempts and an interval cap of `4_000` ms; that schedule SHALL be the `:otlp_post` row of the backoff table (`250, 500, 1_000, 2_000, 4_000` ms, no jitter, five attempts), read from the table and emitted on `[:flezha, :backoff, :wait]` per attempt. After `5` failed attempts the batch SHALL be dropped, the per-sink `:dropped` counter SHALL increment, and an `:otlp_batch_dropped` event SHALL be emitted on source `:observability_export` carrying the batch size and attempt count. The sink's `:block` overflow policy SHALL bound producer-side back-pressure to the configured retry window so an unreachable endpoint SHALL NOT wedge producers indefinitely.
 
 #### Scenario: Transient failure retries with backoff
 - **WHEN** the OTLP endpoint returns `503` on the first attempt
@@ -99,6 +99,10 @@ The OTLP sink SHALL apply bounded exponential backoff on transient HTTP failures
 #### Scenario: Producer back-pressure is bounded
 - **WHEN** the OTLP endpoint is unreachable for `60` seconds and a producer continuously emits signals
 - **THEN** the producer's `Bus.emit/1` calls SHALL never block for longer than `mailbox_high_watermark × max_backoff` and SHALL eventually return as batches drop
+
+#### Scenario: The schedule is read from the table, not the client
+- **WHEN** the `:otlp_post` row is read beside the sink's five waits on `[:flezha, :backoff, :wait]`
+- **THEN** the emitted delays SHALL equal the row's rungs exactly, and the client module SHALL hold no rung list of its own
 
 ### Requirement: Export supervisor and enable flags
 

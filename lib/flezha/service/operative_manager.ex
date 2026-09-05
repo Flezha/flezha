@@ -5,6 +5,7 @@ defmodule Flezha.Service.OperativeManager do
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Cluster.Directory
+  alias Flezha.Config.Durations
   alias Flezha.Operative.Builder, as: OperativeBuilder
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Runner.ControlUnit
@@ -88,10 +89,9 @@ defmodule Flezha.Service.OperativeManager do
   # One workflow forward; an unreachable or crashed peer maps through `on_error`
   # instead of raising into the caller. Must exceed the remote start's own
   # internal budget (ProcessHub's 15s wait plus the :no_response retry ladder).
-  @route_call_timeout_ms 30_000
 
   defp route_call(target, fun, args, on_error) do
-    :erpc.call(target, __MODULE__, fun, args, @route_call_timeout_ms)
+    :erpc.call(target, __MODULE__, fun, args, Durations.get(:route_call_timeout_ms))
   catch
     kind, reason -> on_error.({:routed_call_failed, target, kind, reason})
   end
@@ -638,5 +638,5 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp overwatch_call_timeout_ms,
-    do: Application.get_env(:flezha, :overwatch_call_timeout_ms, 5_000)
+    do: Durations.get(:overwatch_call_timeout_ms)
 end

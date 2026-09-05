@@ -14,11 +14,12 @@ defmodule Flezha.Runner.FleetManager.Marks do
   later, unrelated close of the same runner.
   """
 
+  alias Flezha.Config.Durations
+
   # Takeover fence marks (see `mark_session_superseded/1`). Entries outlive
   # eviction only long enough to cover in-flight mailbox residue; pruned on
   # the periodic cleanup tick.
   @superseded_table :flezha_superseded_sessions
-  @superseded_ttl_ms 600_000
   # Runners the controller is itself closing, so the close their sockets report
   # is diagnosed as expected rather than as an incident. Same mechanism as the
   # fence above — a TTL-expiring mark on an identity string, pruned on the
@@ -99,7 +100,7 @@ defmodule Flezha.Runner.FleetManager.Marks do
   @spec prune() :: :ok
   def prune do
     for {table, ttl} <- [
-          {@superseded_table, @superseded_ttl_ms},
+          {@superseded_table, Durations.get(:superseded_mark_ttl_ms)},
           {@retiring_table, retiring_ttl_ms()}
         ],
         :ets.whereis(table) != :undefined do
@@ -111,7 +112,7 @@ defmodule Flezha.Runner.FleetManager.Marks do
   end
 
   defp retiring_ttl_ms,
-    do: Application.get_env(:flezha, :runner_retiring_mark_ttl_ms, 30_000)
+    do: Durations.get(:runner_retiring_mark_ttl_ms)
 
   defp ensure_marks_table(table) do
     case :ets.whereis(table) do

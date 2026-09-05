@@ -15,6 +15,7 @@ defmodule Flezha.Operative.Overwatch do
   journaled while it runs.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Operative.Handover
   alias Flezha.Operative.Ingest
@@ -140,7 +141,6 @@ defmodule Flezha.Operative.Overwatch do
   # belongs here rather than to each caller: an Overwatch busy folding an entry
   # is the normal case, and a caller that inherits its exit takes down a
   # node-wide service (`PluginManager`) or a convergence tick.
-  @plugin_call_timeout_ms 2_000
 
   @doc """
   Subscribe `plugin` to a running Overwatch — the client side of
@@ -161,7 +161,7 @@ defmodule Flezha.Operative.Overwatch do
     do: plugin_call(pid, {:plugin_restart, plugin_id, plugin})
 
   defp plugin_call(pid, request) do
-    case SafeCall.bounded(pid, request, @plugin_call_timeout_ms) do
+    case SafeCall.bounded(pid, request, Durations.get(:plugin_call_timeout_ms)) do
       {:ok, :ok} -> :ok
       {:ok, {:error, reason}} -> {:error, reason}
       {:error, _} = err -> err
@@ -200,7 +200,7 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   defp proc_warn_ms,
-    do: Application.get_env(:flezha, :overwatch_proc_warn_ms, 2_000)
+    do: Durations.get(:overwatch_proc_warn_ms)
 
   # ---------------------------------------------------------------
   # Start-up

@@ -18,7 +18,8 @@ defmodule Flezha.Convergence.Loop do
 
   use GenServer
 
-  alias Flezha.Convergence.{Backoff, Diff, Facts, Heal, Intent, Planner, Probe, RecoveryGate}
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Diff, Facts, Heal, Intent, Planner, Probe, RecoveryGate}
   alias Flezha.Convergence.Verdict
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}

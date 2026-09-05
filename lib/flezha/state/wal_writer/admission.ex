@@ -10,6 +10,7 @@ defmodule Flezha.State.WalWriter.Admission do
   rather than back-pressure.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.State.{Commands, Metrics, PersistenceResolver}
   alias Flezha.State.WalWriter.State
@@ -223,7 +224,7 @@ defmodule Flezha.State.WalWriter.Admission do
       hard_watermark: Application.get_env(:flezha, :wal_hard_watermark_bytes, high * 4),
       pending_msg_cap: Application.get_env(:flezha, :wal_pending_msg_cap, 5_000),
       outbox_inflight_max: Application.get_env(:flezha, :outbox_inflight_max, 1_000),
-      outbox_resettle_ms: Application.get_env(:flezha, :outbox_resettle_ms, 60_000)
+      outbox_resettle_ms: Durations.get(:outbox_resettle_ms)
     }
   end
 end

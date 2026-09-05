@@ -45,7 +45,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
         init_producer_id_fn: Fakes.init_producer_id_ok(1, 0),
         metadata_refresh_fn: Fakes.metadata_refresh_ok(),
         create_topic_fn: Fakes.create_topic_ok(),
-        jitter_fn: fn _ -> 0 end,
         name: nil
       )
 

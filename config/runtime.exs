@@ -1,5 +1,8 @@
 import Config
 
+alias Flezha.Config.Durations
+alias Flezha.Healthz.Server, as: HealthzServer
+
 external_processes =
   if config_env() in [:test] do
     {:ok, current_path} = :file.get_cwd()
@@ -106,8 +109,7 @@ config :flezha,
 
   # Upper bound for the exponential, jittered reconnect backoff (base is
   # `reconnect_interval`). Caps how far apart late reconnect attempts spread.
-  reconnect_max_backoff_ms:
-    System.get_env("FLEZHA_RECONNECT_MAX_BACKOFF_MS", "30000") |> String.to_integer(),
+  reconnect_max_backoff_ms: Durations.env(:reconnect_max_backoff_ms),
 
   # The cluster update interval in milliseconds.
   cluster_update_interval:
@@ -117,8 +119,7 @@ config :flezha,
   # this long for discovered peers to connect before declaring the cluster ready
   # and allowing hubs to be created. A genuinely single-node deployment still
   # boots after this elapses. See `Flezha.Cluster.Orchestrator.cluster_ready?/0`.
-  cluster_formation_timeout_ms:
-    System.get_env("FLEZHA_CLUSTER_FORMATION_TIMEOUT_MS", "15000") |> String.to_integer(),
+  cluster_formation_timeout_ms: Durations.env(:cluster_formation_timeout_ms),
 
   # The node base name that is to generate the full name including the host address.
   node_base_name: node_base_name,
@@ -277,8 +278,7 @@ config :flezha,
   #
   # The default is 30 seconds.
   runner_keepalive: System.get_env("FLEZHA_RUNNER_KEEPALIVE", "30000") |> String.to_integer(),
-  runner_retiring_mark_ttl_ms:
-    System.get_env("FLEZHA_RUNNER_RETIRING_MARK_TTL_MS", "30000") |> String.to_integer(),
+  runner_retiring_mark_ttl_ms: Durations.env(:runner_retiring_mark_ttl_ms),
 
   # ------------------------------------------------------------------------------------------------
   # Control-plane liveness watchdog (runner-controller-connection-healing).
@@ -292,17 +292,14 @@ config :flezha,
   # Pair `window_ms` with the QUIC `max_idle_timeout` (FLEZHA_CONTROL_IDLE_TIMEOUT_MS)
   # so both transports declare death in the same window. See
   # `docs/internals/transport_liveness.md`.
-  control_liveness_window_ms:
-    System.get_env("FLEZHA_CONTROL_LIVENESS_WINDOW_MS", "45000") |> String.to_integer(),
-  control_liveness_interval_ms:
-    System.get_env("FLEZHA_CONTROL_LIVENESS_INTERVAL_MS", "15000") |> String.to_integer(),
+  control_liveness_window_ms: Durations.env(:control_liveness_window_ms),
+  control_liveness_interval_ms: Durations.env(:control_liveness_interval_ms),
 
   # How long an Overwatch waits for the end-to-end `:ping_runner` round-trip it
   # takes before `:start_operative`. It bounds a proof, not a data path: a
   # runner that has not answered within the window is retried under the
   # bounded-retry governor rather than cut.
-  overwatch_ping_timeout_ms:
-    System.get_env("FLEZHA_OVERWATCH_PING_TIMEOUT_MS", "2000") |> String.to_integer(),
+  overwatch_ping_timeout_ms: Durations.env(:overwatch_ping_timeout_ms),
 
   # ------------------------------------------------------------------------------------------------
   # Graceful shutdown (controller-graceful-shutdown).
@@ -321,8 +318,7 @@ config :flezha,
        nil -> config_env() != :test
        val -> String.downcase(val) in ["1", "true", "yes", "on"]
      end),
-  graceful_shutdown_timeout_ms:
-    System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS", "60000") |> String.to_integer(),
+  graceful_shutdown_timeout_ms: Durations.env(:graceful_shutdown_timeout_ms),
 
   # ------------------------------------------------------------------------------------------------
   # Migration consent (processhub-deferred-migration).
@@ -332,10 +328,8 @@ config :flezha,
   # `retry_interval_ms` until ready, force-migrated after `max_defer_ms`.
   # `max_defer_ms` nil = derive from `graceful_shutdown_timeout_ms`.
   migration_consent: [
-    consent_timeout_ms:
-      System.get_env("FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS", "5000") |> String.to_integer(),
-    retry_interval_ms:
-      System.get_env("FLEZHA_MIGRATION_RETRY_INTERVAL_MS", "2000") |> String.to_integer(),
+    consent_timeout_ms: Durations.env(:migration_consent_timeout_ms),
+    retry_interval_ms: Durations.env(:migration_retry_interval_ms),
     max_defer_ms:
       case System.get_env("FLEZHA_MIGRATION_MAX_DEFER_MS") do
         nil -> nil
@@ -398,8 +392,7 @@ config :flezha,
   # MORE than every declaration asks for — e.g. to give an operator-driven
   # `flz operative replay` room to reach further back than any automatic
   # correction would.
-  input_log_hold_window_ms:
-    System.get_env("FLEZHA_INPUT_LOG_HOLD_WINDOW_MS", "0") |> String.to_integer(),
+  input_log_hold_window_ms: Durations.env(:input_log_hold_window_ms),
   # Credit-grant flow control on the runner→controller state stream.
   # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
   # every session to the legacy EntityMailboxStatus + shed path.
@@ -432,27 +425,21 @@ config :flezha,
       end,
     # Backstop for entities that reach no compaction / checkpoint / commit
     # boundary — the bound on how stale a quiet entity's remote copy gets.
-    ship_interval_ms:
-      System.get_env("FLEZHA_DURABILITY_SHIP_INTERVAL_MS", "30000") |> String.to_integer(),
+    ship_interval_ms: Durations.env(:durability_ship_interval_ms),
     # Time since the last successful ship at which the RPO alarm fires. Two
     # sweeps' worth by default, so one missed sweep is not an alarm.
-    rpo_target_ms:
-      System.get_env("FLEZHA_DURABILITY_RPO_TARGET_MS", "120000") |> String.to_integer(),
+    rpo_target_ms: Durations.env(:durability_rpo_target_ms),
     # Orphan-blob collection: blobs no live manifest references (torn uploads,
     # superseded ranges). Never touches a referenced key.
-    gc_interval_ms:
-      System.get_env("FLEZHA_DURABILITY_GC_INTERVAL_MS", "3600000") |> String.to_integer(),
+    gc_interval_ms: Durations.env(:durability_gc_interval_ms),
     # Never collect an artifact younger than this, whoever owns it — an upload
     # still in flight on a peer controller is young by definition, so this is
     # what makes collection safe without coordinating between nodes.
-    gc_grace_ms:
-      System.get_env("FLEZHA_DURABILITY_GC_GRACE_MS", "3600000") |> String.to_integer(),
+    gc_grace_ms: Durations.env(:durability_gc_grace_ms),
     # Collect even outside this node's scope past this age, so a reference no
     # node holds any more does not leak forever. Deliberately far longer than
     # the grace.
-    gc_abandoned_after_ms:
-      System.get_env("FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS", "604800000")
-      |> String.to_integer(),
+    gc_abandoned_after_ms: Durations.env(:durability_gc_abandoned_after_ms),
     backend_opts: [
       # Postgres backend (`postgrex`, already in tree for the Postgres sink).
       hostname: System.get_env("FLEZHA_DURABILITY_PG_HOST", "localhost"),
@@ -555,8 +542,7 @@ config :flezha,
   # ones — missed slots are never back-filled.
   schedules: [
     dir: System.get_env("FLEZHA_SCHEDULE_DIR", "app_data/schedules"),
-    misfire_grace_ms:
-      String.to_integer(System.get_env("FLEZHA_SCHEDULE_MISFIRE_GRACE_MS", "120000"))
+    misfire_grace_ms: Durations.env(:schedule_misfire_grace_ms)
   ]
 
 # ------------------------------------------------------------------------------------------------
@@ -632,23 +618,17 @@ if config_env() != :test do
     # `:recovering`, so it is what the boot gate waits on; it is set above
     # the runner handshake window because an orphan start needs a runner to
     # place against.
-    process_hub_reconcile_grace_ms:
-      System.get_env("FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS", "45000")
-      |> String.to_integer(),
-    process_hub_reconcile_interval_ms:
-      System.get_env("FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS", "30000")
-      |> String.to_integer(),
-    boot_replay_timeout_ms:
-      System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
+    process_hub_reconcile_grace_ms: Durations.env(:process_hub_reconcile_grace_ms),
+    process_hub_reconcile_interval_ms: Durations.env(:process_hub_reconcile_interval_ms),
+    boot_replay_timeout_ms: Durations.env(:boot_replay_timeout_ms),
     auto_restore_enabled: System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
     # Per-Entity output-stall + compaction-timeout watchdog cadence
     # (Flezha.State.Watchdog holds its own timer after
     # `consume-recovery-mode-and-self-heal` §4 retired the
     # Flezha.Reconciler.Loop periodic sweep that previously drove it).
-    output_watchdog_interval_ms:
-      System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
+    output_watchdog_interval_ms: Durations.env(:output_watchdog_interval_ms),
     time_travel_retention_check_interval_ms:
-      System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer(),
+      Durations.env(:time_travel_retention_check_interval_ms),
     # How long a finished workflow operative's data (retained Entity state +
     # completion record) is kept before the retention sweeper reclaims it.
     default_workflow_completed_retention_hours:
@@ -658,31 +638,22 @@ if config_env() != :test do
     # window before an output-stall triggers a rebind.
     convergence_health_enabled:
       System.get_env("FLEZHA_USE_CONVERGENCE_HEALTH", "true") in ["true", "1"],
-    convergence_tick_ms:
-      System.get_env("FLEZHA_CONVERGENCE_TICK_MS", "5000") |> String.to_integer(),
-    convergence_output_stall_grace_ms:
-      System.get_env("FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS", "60000")
-      |> String.to_integer(),
+    convergence_tick_ms: Durations.env(:convergence_tick_ms),
+    convergence_output_stall_grace_ms: Durations.env(:convergence_output_stall_grace_ms),
     # Grace before declared-but-unbound operatives flip /healthz to degraded.
-    convergence_unmet_intent_grace_ms:
-      System.get_env("FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS", "120000")
-      |> String.to_integer(),
+    convergence_unmet_intent_grace_ms: Durations.env(:convergence_unmet_intent_grace_ms),
     # How long one activation may stay outstanding on a runner before the
     # classifier calls that Entity stalled. Far above the longest activation
     # the bench fleet produces on purpose: from the runner, a slow Procedure
     # and a handout its host lost are indistinguishable, so the threshold is
     # what separates them and the remedy is a rebind from durable state.
-    convergence_entity_stall_ms:
-      System.get_env("FLEZHA_CONVERGENCE_ENTITY_STALL_MS", "300000")
-      |> String.to_integer(),
+    convergence_entity_stall_ms: Durations.env(:convergence_entity_stall_ms),
     convergence_plugin_strike_threshold:
       System.get_env("FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD", "2")
       |> String.to_integer(),
     # A tick slower than this counts as a latency breach; ≥ 3 consecutive
     # breaches (or ticks stopping) flips /healthz to 503 (proposal §2).
-    convergence_tick_latency_threshold_ms:
-      System.get_env("FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS", "1000")
-      |> String.to_integer(),
+    convergence_tick_latency_threshold_ms: Durations.env(:convergence_tick_latency_threshold_ms),
     # Consecutive classifier polls reporting a controller-fabric wedge
     # (`driver_loop_frozen` / `nif_queue_backing_up`) before /healthz answers
     # 503. No BEAM-level heal reaches a wedged NIF driver thread, so the
@@ -694,7 +665,7 @@ if config_env() != :test do
     # /healthz listener — default bind 0.0.0.0 so a kubelet httpGet probe reaches the pod IP.
     healthz_enabled: System.get_env("FLEZHA_HEALTHZ_ENABLED", "false") in ["true", "1"],
     healthz_port: System.get_env("FLEZHA_HEALTHZ_PORT", "9569") |> String.to_integer(),
-    healthz_bind: System.get_env("FLEZHA_HEALTHZ_BIND", "0.0.0.0")
+    healthz_bind: System.get_env("FLEZHA_HEALTHZ_BIND", HealthzServer.default_bind())
 end
 
 # ------------------------------------------------------------------------------------------------

@@ -257,9 +257,8 @@ cannot both win).
 ## Failure posture and alarms
 
 Async shipping never touches an ack path: a slow or failing backend delays no append, fsync,
-ack or watermark advance; failed ships retry on the
-`Flezha.Plugin.ProviderBehaviour.retry_backoff_ms/3` ladder (500 ms base, 30 s cap) while
-local operation continues. What degrades is the guarantee, and that is loud:
+ack or watermark advance; failed ships retry on the `:durability_ship` row of
+`Flezha.Config.Backoff` (500 ms base, 30 s cap) while local operation continues. What degrades is the guarantee, and that is loud:
 
 | Event (`[:flezha, :state, …]`) | Grade  | Meaning                                                                                                                                                                                                       |
 | ------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

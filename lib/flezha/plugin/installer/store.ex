@@ -19,8 +19,9 @@ defmodule Flezha.Plugin.Installer.Store do
 
   require Logger
 
+  alias Flezha.Config.Durations
+
   @table :flz_installed_plugins
-  @auto_save_ms 5_000
   @dets_filename "installed_plugins.dets"
 
   @type plugin_id() :: binary()
@@ -193,7 +194,7 @@ defmodule Flezha.Plugin.Installer.Store do
   defp open_dets(file_path) do
     case :dets.open_file(@table, [
            {:type, :set},
-           {:auto_save, @auto_save_ms},
+           {:auto_save, Durations.get(:installer_auto_save_ms)},
            {:file, String.to_charlist(file_path)}
          ]) do
       {:ok, @table} ->
@@ -219,7 +220,7 @@ defmodule Flezha.Plugin.Installer.Store do
 
         :dets.open_file(@table, [
           {:type, :set},
-          {:auto_save, @auto_save_ms},
+          {:auto_save, Durations.get(:installer_auto_save_ms)},
           {:file, String.to_charlist(file_path)}
         ])
 

@@ -4,6 +4,7 @@ defmodule Flezha.Service.HubManager.Placement do
   the refusals an unplaceable runner earns, and the runner-assignment wait.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Runner.StreamPool
@@ -19,7 +20,6 @@ defmodule Flezha.Service.HubManager.Placement do
 
   # 20% of the request bound, leaving the rest for the operative starts the
   # bound was sized for. Overrunning it is not fatal — see `unplaceable_runner/5`.
-  @runner_assign_wait_ms 2_000
 
   @doc """
   Register `runner_id`'s operative-insertion hook on the namespace's hub.
@@ -287,7 +287,7 @@ defmodule Flezha.Service.HubManager.Placement do
 
     deadline =
       Process.get(@batch_runner_wait_key) ||
-        now + Application.get_env(:flezha, :hub_runner_assign_wait_ms, @runner_assign_wait_ms)
+        now + Durations.get(:hub_runner_assign_wait_ms)
 
     Process.put(@batch_runner_wait_key, deadline)
     max(deadline - now, 0)

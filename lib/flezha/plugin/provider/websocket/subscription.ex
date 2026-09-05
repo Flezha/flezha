@@ -13,6 +13,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   which subscribes with its `post_connect` payload and never polls anything.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.ProviderBehaviour
 
@@ -24,13 +25,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   # however late, can never be mistaken for a pending delta's.
   @reassert_req_id 0
 
-  @default_interval_ms 30_000
-  @min_interval_ms 1_000
-
   # The source is a small document on an operator-controlled endpoint; both
   # bounds are deliberately fixed rather than tunable, so a subscription source
   # cannot be configured into a slow-loris or an unbounded allocation.
-  @timeout_ms 10_000
   @max_body_bytes 1_048_576
 
   @items_placeholder "{{items}}"
@@ -48,7 +45,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
                 # belongs to a group member. `nil` = the whole space.
                 range: nil,
                 headers: %{},
-                interval_ms: @default_interval_ms,
+                interval_ms: Durations.get(:ws_subscription_interval_ms),
                 ack_mode: "required"
               ]
 
@@ -152,16 +149,17 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
     end
   end
 
-  defp interval(nil), do: {:ok, @default_interval_ms}
+  defp interval(nil), do: {:ok, Durations.get(:ws_subscription_interval_ms)}
 
   defp interval(value) do
+    minimum = Durations.get(:ws_subscription_min_interval_ms)
+
     case ProviderBehaviour.parse_int(value, :subscription_interval_ms) do
-      {:ok, ms} when ms >= @min_interval_ms ->
+      {:ok, ms} when ms >= minimum ->
         {:ok, ms}
 
       {:ok, ms} ->
-        {:error,
-         "websocket subscription_interval_ms #{ms} is below the #{@min_interval_ms} ms minimum"}
+        {:error, "websocket subscription_interval_ms #{ms} is below the #{minimum} ms minimum"}
 
       {:error, reason} ->
         {:error, "websocket #{reason}"}
@@ -201,7 +199,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
       url: subscription.url,
       headers: subscription.headers,
       etag: etag,
-      timeout_ms: @timeout_ms,
+      timeout_ms: Durations.get(:ws_subscription_timeout_ms),
       max_body_bytes: @max_body_bytes
     }
   end

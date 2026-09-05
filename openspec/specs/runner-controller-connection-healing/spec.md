@@ -354,12 +354,21 @@ silently skipped when `FLEZHA_TRANSPORT=quic`.
 Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter so that a
 controller restart dropping many runners does not produce a synchronized reconnect
 storm. Attempts SHALL remain stream (the runner must keep trying until a live
-controller is found).
+controller is found). The Elixir SDK, which inherits nothing from `flz_core`, SHALL
+carry the same schedule as the `:sdk_reconnect` row of the backoff table —
+`100 ms · 2^min(n, 8)`, capped at 30 s, jittered in `[d/2, 3d/2)` and capped again, reset
+on connect — and a test SHALL pin that row, and the `:sdk_retry` row
+(`base · 2^(n−1)` capped at 5 s), to the constants `flz_core` compiles, so the two
+runtimes cannot drift apart silently.
 
 #### Scenario: Fleet reconnect does not thunder
 - **GIVEN** N runners whose controller restarts simultaneously
 - **WHEN** they all enter their reconnect loops
 - **THEN** their attempts SHALL be spread by jitter rather than firing in lockstep
+
+#### Scenario: The Elixir SDK's reconnect ladder equals the core's
+- **WHEN** the cross-runtime pin test reads `flz_core`'s reconnect and retry constants and the Elixir SDK's two rows
+- **THEN** base, exponent cap, delay cap and jitter band SHALL be equal, and a change to either side alone SHALL fail the test naming both files
 
 ### Requirement: Java SDK transport-edge and decode events SHALL NOT crash the runtime thread
 

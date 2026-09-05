@@ -19,6 +19,7 @@ defmodule Flezha.Observability.Export.OtlpSink do
 
   @behaviour Flezha.Observability.Sink
 
+  alias Flezha.Config.Backoff
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.Export.{OtlpClient, OtlpCodec}
   alias Flezha.Observability.Registry, as: ObsRegistry
@@ -151,7 +152,7 @@ defmodule Flezha.Observability.Export.OtlpSink do
           kind: :event,
           source: :observability_export,
           name: :otlp_batch_dropped,
-          measurements: %{batch_size: size, attempts: length(OtlpClient.backoff_schedule())},
+          measurements: %{batch_size: size, attempts: Backoff.ladder(:otlp_post).give_up},
           metadata: %{
             failures: Enum.map(failures, fn {kind, {:error, r}} -> {kind, r} end) |> inspect()
           }

@@ -19,12 +19,12 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
 
   @behaviour Flezha.State.DurabilityTier.Backend
 
+  alias Flezha.Config.Durations
   alias Flezha.Http.Client, as: HttpClient
   alias Flezha.State.DurabilityTier.Backend
 
   @algorithm "AWS4-HMAC-SHA256"
   @service "s3"
-  @recv_timeout_ms 30_000
 
   @impl true
   def child_spec(_opts), do: :ignore
@@ -223,7 +223,7 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
     case HttpClient.connect(scheme, uri.host, port) do
       {:ok, conn} ->
         conn
-        |> HttpClient.request(method, path, headers, body, @recv_timeout_ms)
+        |> HttpClient.request(method, path, headers, body, Durations.get(:durability_s3_recv_ms))
         |> close_after()
 
       {:error, reason} ->

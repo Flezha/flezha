@@ -17,6 +17,7 @@ defmodule Flezha.Operative.PartitionGroup do
   require Logger
 
   alias Flezha.AuthZ.Quotas
+  alias Flezha.Config.Durations
   alias Flezha.Dlq
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Partition
@@ -446,10 +447,6 @@ defmodule Flezha.Operative.PartitionGroup do
     end
   end
 
-  @peer_call_timeout_ms 30_000
-  @quiesce_timeout_ms 30_000
-  @quiesce_poll_ms 250
-
   # Sources off, every input log fully consumed, no parked entries anywhere.
   # Until all three hold, moving an Entity's files would move it away from
   # input it has not read yet.
@@ -459,7 +456,7 @@ defmodule Flezha.Operative.PartitionGroup do
     with :ok <- refuse_on_parked_entries(members) do
       deadline =
         System.monotonic_time(:millisecond) +
-          Keyword.get(opts, :quiesce_timeout_ms, @quiesce_timeout_ms)
+          Keyword.get(opts, :quiesce_timeout_ms, Durations.get(:partition_quiesce_timeout_ms))
 
       await_consumed(members, deadline)
     end
@@ -489,7 +486,7 @@ defmodule Flezha.Operative.PartitionGroup do
         if System.monotonic_time(:millisecond) >= deadline do
           {:error, quiesce_timeout_message(laggard.id)}
         else
-          Process.sleep(@quiesce_poll_ms)
+          Process.sleep(Durations.get(:partition_quiesce_poll_ms))
           await_consumed(members, deadline)
         end
     end
@@ -550,7 +547,13 @@ defmodule Flezha.Operative.PartitionGroup do
   # A peer that cannot be reached would silently contribute no moves, leaving
   # its Entities behind under a member that is about to stop. Say so.
   defp peer_entities(source_node, member_id) do
-    case :erpc.call(source_node, WalTransfer, :entities, [member_id], @peer_call_timeout_ms) do
+    case :erpc.call(
+           source_node,
+           WalTransfer,
+           :entities,
+           [member_id],
+           Durations.get(:partition_peer_call_ms)
+         ) do
       entities when is_list(entities) -> entities
       other -> log_unreachable_peer(source_node, member_id, other)
     end
@@ -595,7 +598,7 @@ defmodule Flezha.Operative.PartitionGroup do
            "rescale aborted: #{held} was stopped but still holds its id after " <>
              "#{Shutdown.stop_timeout_ms()}ms; nothing was moved — retry once it has gone"}
         else
-          Process.sleep(@quiesce_poll_ms)
+          Process.sleep(Durations.get(:partition_quiesce_poll_ms))
           await_ids_released(namespace, ids, deadline)
         end
     end

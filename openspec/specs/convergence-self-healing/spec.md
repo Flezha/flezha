@@ -108,7 +108,7 @@ Committing the binding first records `bound_runner ∈ active_runners` for a run
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
-Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by ONE per-node `Convergence.Backoff` table, `5 s → 30 s → 60 s → 300 s`, keyed `{primitive, target}` or, for an op that carries a reason, `{reason, target}`, so a persistent fault is not re-healed every tick and no site holds a ladder, counter or clock of its own. Two reset rules exist and both are THE rule: a primitive whose repair is observable inline resets its key on its own `:ok`; a primitive whose repair is only visible later — a ladder — records `:error` on every application and resets only when its declared evidence arrives (bound, `:running` and stable, gap closed, compaction observed complete, wedge verdict cleared). Which primitives are ladders is read from the declared kinds, not from a case in the loop. The operator keys `:overwatch_retry_backoff_ms` and `:wal_resync_retry_interval_ms` SHALL NOT exist.
+Every cross-process call inside the Loop MUST be wrapped in `Flezha.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick; that backoff is the `:heal` row of the ladder table (`5 s → 30 s → 60 s → 300 s`, held at 300 s, reset on `:ok`), and the Watchdog's compaction handshake rides the `:compaction` row of the same table under the same rungs.
 
 The wrapper is control-plane-wide, not a convergence concept: it is named by `convergence`, `schedule`, `runner` and `service`, so it sits at the root. Its telemetry event stays `[:flezha, :convergence, :safe_call]`, which is a published surface and MUST NOT be renamed with the module.
 
@@ -117,19 +117,9 @@ The wrapper is control-plane-wide, not a convergence concept: it is named by `co
 - **WHEN** the same divergence is observed on the next tick
 - **THEN** the Planner filters the repeat `rebind_operative` op under backoff and does not re-issue it until the backoff window elapses.
 
-#### Scenario: an inline repair resets on success
-- **GIVEN** `publish_binding` is applied for an operative and answers `:ok`
-- **WHEN** the next tick runs
-- **THEN** the key `{publish_binding, id}` SHALL be reset and a later divergence on the same target SHALL be eligible at once
-
-#### Scenario: a ladder resets on evidence only
-- **GIVEN** `restart_plugin` brought a plugin to `:running`, which crashed again a second later
-- **WHEN** the next tick plans
-- **THEN** the key `{restart_plugin, {id, plugin_id}}` SHALL stay on its rung, and only `:running` observed for the stable window SHALL reset it
-
-#### Scenario: the two knobs are gone
-- **WHEN** `config/runtime.exs` and the configuration reference are read
-- **THEN** neither `:overwatch_retry_backoff_ms` nor `:wal_resync_retry_interval_ms` SHALL be named, and the loop's table SHALL be the only schedule a controller-side remedy follows
+#### Scenario: the loop's rungs are the table's
+- **WHEN** a heal of one target fails on four consecutive eligible ticks
+- **THEN** the four waits emitted on `[:flezha, :backoff, :wait]` for ladder `:heal` SHALL be `5_000`, `30_000`, `60_000`, `300_000`, and a fifth failure SHALL wait `300_000` again
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
@@ -757,6 +747,51 @@ so a session that is alive over a data plane that is dead is two fields of one r
 - **THEN** its subjects SHALL be judged, published and rendered on every surface, and its
   events SHALL be bridged, with no change to the Diff, the snapshot, `/healthz`, the CLI
   readers or the bridge
+
+### Requirement: Every retry ladder is one declared row of the backoff table
+
+Every wait-before-retry in the controller and the Elixir SDK SHALL be one row of
+`Flezha.Config.Backoff`'s ladder table — rungs or a geometric base and cap, a jitter
+flag, a reset rule (`:on_success`, or `{:stable_for, duration}` where success means an
+owned process stayed up) and a give-up bound — and every site SHALL obtain its delay
+from that row through `Backoff.delay/3`, `Backoff.wait/3` or the `%Backoff{}` struct,
+never from its own arithmetic, list or literal. Jitter SHALL be one rule, uniform in
+`[d/2, 3d/2)` and then capped at the row's cap. Every wait and every reset SHALL be
+emitted on `[:flezha, :backoff, :wait]` (`delay_ms`, `attempt`; `ladder`, `target`) and
+`[:flezha, :backoff, :reset]`, so a ladder's behaviour is observable without reading its
+site. A successful attempt SHALL reset the row's attempt count, under the row's own
+definition of success. A row's values at landing SHALL be the values its site carried
+before: the loop's `5 s → 30 s → 60 s → 300 s`, the OTLP post's `250 ms → 4 s` in five
+attempts, the cluster reconnect's `1 s` doubling to its `:reconnect_max_backoff_ms`
+knob, the hub-call retry's `150 ms → 5 s` in eight attempts, the schedule's
+`1 s → 60 s`, the shipper's `500 ms → 30 s`, the websocket socket reconnect's
+`250 ms × 1.5 → 30 s` and the SDK's `50 ms → 5 s` and `100 ms → 30 s`.
+
+#### Scenario: A site beside the table fails the seam test
+
+- **WHEN** a module under `lib/flezha` outside `convergence/backoff.ex` gains a retry
+  arithmetic — a `Process.sleep` over a doubling expression, a rung list, a `2^attempt`
+  — or its own jitter
+- **THEN** `test/flezha/config/backoff_seam_test.exs` SHALL fail naming the file
+  and line
+
+#### Scenario: Every row is observable through its real entry point
+
+- **GIVEN** a ladder row and the failure that walks it induced through the real
+  transport or process (a stopped listener, a failing procedure, a 429 on a websocket
+  upgrade, an unanswered call)
+- **WHEN** the site retries
+- **THEN** one `[:flezha, :backoff, :wait]` per attempt SHALL carry the row's declared
+  delay for that attempt, attempts SHALL ascend, and the first success SHALL emit
+  `[:flezha, :backoff, :reset]` after which the next wait is attempt 1 again
+
+#### Scenario: A row that no site drives fails the drill by name
+
+- **GIVEN** a ladder declared in the table
+- **WHEN** `test/system/backoff_table_drill_test.exs` walks `Backoff.ladders/0`
+- **THEN** a row that neither a device drives nor an entry accounts for — naming the
+  suite that drives its site — SHALL fail the drill by name, so a new ladder is covered
+  with no test edit
 
 ## Removed Requirements
 

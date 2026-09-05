@@ -12,7 +12,8 @@ defmodule Flezha.Convergence.DiffTest do
   import FlezhaTest.Helper.ConvergenceFixtures, only: [diff: 2]
   use Mimic
 
-  alias Flezha.Convergence.{Backoff, Diff, Intent, Planner}
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Diff, Intent, Planner}
   alias Flezha.Plugin
 
   defp plugin(id) do
@@ -65,7 +66,7 @@ defmodule Flezha.Convergence.DiffTest do
 
       assert [%{primitive: :start_plugin, target: "r"}] =
                delta
-               |> Planner.plan(Backoff.new())
+               |> Planner.plan(Backoff.new(:heal))
                |> Enum.map(&Map.take(&1, [:primitive, :target]))
     end
 
@@ -77,7 +78,7 @@ defmodule Flezha.Convergence.DiffTest do
         )
 
       assert delta.missing_plugins == []
-      assert Planner.plan(delta, Backoff.new()) == []
+      assert Planner.plan(delta, Backoff.new(:heal)) == []
     end
 
     test "an undeclared plugin is extra in BOTH phases" do
@@ -112,13 +113,13 @@ defmodule Flezha.Convergence.DiffTest do
           plugin_reality(%{running_plugins: [], subscribed_plugins: ["src"]})
         )
 
-      [op] = Planner.plan(delta, Backoff.new())
+      [op] = Planner.plan(delta, Backoff.new(:heal))
 
       # `Plugins.subscribe/3` now answers `:error` for a plugin that did not
       # reach `:running`, so `Loop.ladder_outcome/2` records the heal as failed.
       # The divergence is recomputed from the Probe each tick and so is still
       # there — but the ladder holds the retry until its cooldown opens.
-      backoff = Backoff.update(Backoff.new(), Planner.key(op), :error, 0)
+      backoff = Backoff.update(Backoff.new(:heal), Planner.key(op), :error, 0)
 
       refute Backoff.eligible?(backoff, Planner.key(op), 0)
       assert Backoff.eligible?(backoff, Planner.key(op), 5_000)
@@ -127,7 +128,7 @@ defmodule Flezha.Convergence.DiffTest do
 
   describe "Backoff" do
     test "fresh keys are eligible; failures arm an exponential cooldown" do
-      b = Backoff.new()
+      b = Backoff.new(:heal)
       key = {:rebind_operative, "btc"}
       now = 1_000
 
@@ -145,7 +146,7 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "filter drops ops still in cooldown, keeps the rest" do
       now = 0
-      b = Backoff.update(Backoff.new(), {:rebind_operative, "a"}, :error, now)
+      b = Backoff.update(Backoff.new(:heal), {:rebind_operative, "a"}, :error, now)
 
       ops = [
         %{primitive: :rebind_operative, target: "a"},
@@ -528,7 +529,7 @@ defmodule Flezha.Convergence.DiffTest do
   describe "Planner.plan/3" do
     test "orders eviction before rebind for misbound operatives" do
       delta = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]}
-      plan = Planner.plan(delta, Backoff.new())
+      plan = Planner.plan(delta, Backoff.new(:heal))
 
       assert [
                %{primitive: :evict_runner, target: "e_dead"},
@@ -542,14 +543,14 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "caps ops per tick at max_ops" do
       delta = %Diff{unbound_operatives: for(i <- 1..30, do: {:ns, "r#{i}"})}
-      assert length(Planner.plan(delta, Backoff.new(), max_ops: 5)) == 5
+      assert length(Planner.plan(delta, Backoff.new(:heal), max_ops: 5)) == 5
     end
 
     test "unbound operatives bind via rebind_operative (un-park), not a no-op" do
       delta = %Diff{unbound_operatives: [{:ns, "parked"}]}
 
       assert [%{primitive: :rebind_operative, namespace: :ns, target: "parked"}] =
-               Planner.plan(delta, Backoff.new())
+               Planner.plan(delta, Backoff.new(:heal))
     end
 
     test "a re-place evicts its dead runner first and keys its own backoff" do
@@ -558,7 +559,7 @@ defmodule Flezha.Convergence.DiffTest do
       assert [
                %{primitive: :evict_runner, target: "e_dead"},
                %{primitive: :replace_operative, namespace: :ns, target: "r"} = replace
-             ] = Planner.plan(delta, Backoff.new())
+             ] = Planner.plan(delta, Backoff.new(:heal))
 
       assert Planner.key(replace) == {:replace_operative, "r"}
     end
@@ -567,7 +568,7 @@ defmodule Flezha.Convergence.DiffTest do
       delta = %Diff{replace_operatives: [{{:ns, "r"}, nil}]}
 
       assert [%{primitive: :replace_operative, namespace: :ns, target: "r"}] =
-               Planner.plan(delta, Backoff.new())
+               Planner.plan(delta, Backoff.new(:heal))
     end
 
     test "missing plugins emit start_plugin carrying the full %Plugin{}" do
@@ -575,7 +576,7 @@ defmodule Flezha.Convergence.DiffTest do
       delta = %Diff{missing_plugins: [{{:ns, "r"}, "p1", p}]}
 
       assert [%{primitive: :start_plugin, namespace: :ns, target: "r", args: args}] =
-               Planner.plan(delta, Backoff.new())
+               Planner.plan(delta, Backoff.new(:heal))
 
       assert args.plugin_id == "p1"
       assert args.plugin == p
@@ -586,7 +587,7 @@ defmodule Flezha.Convergence.DiffTest do
       delta = %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", p, :produce_stalled}]}
 
       assert [%{primitive: :restart_plugin, namespace: :ns, target: "r", args: args} = op] =
-               Planner.plan(delta, Backoff.new())
+               Planner.plan(delta, Backoff.new(:heal))
 
       assert args.plugin_id == "p1"
       assert args.plugin == p
@@ -597,12 +598,12 @@ defmodule Flezha.Convergence.DiffTest do
 
     test "a declared disconnect keys the rebind on the fact, a probed one on the primitive" do
       declared = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :runner_disconnected}]}
-      [_evict, rebind] = Planner.plan(declared, Backoff.new())
+      [_evict, rebind] = Planner.plan(declared, Backoff.new(:heal))
       assert Planner.key(rebind) == {:runner_disconnected, "r"}
       refute Planner.ladder?(rebind)
 
       probed = %Diff{misbound_operatives: [{{:ns, "r"}, "e_dead", :probe}]}
-      [_evict, rebind] = Planner.plan(probed, Backoff.new())
+      [_evict, rebind] = Planner.plan(probed, Backoff.new(:heal))
       assert Planner.key(rebind) == {:rebind_operative, "r"}
     end
 
@@ -619,7 +620,7 @@ defmodule Flezha.Convergence.DiffTest do
       assert [
                %{primitive: :reset_control_channel, target: "e1"},
                %{primitive: :rebind_operative, target: "r"} = rebind
-             ] = Planner.plan(dead, Backoff.new())
+             ] = Planner.plan(dead, Backoff.new(:heal))
 
       assert Planner.key(rebind) == {:parked, "r"}
       assert Planner.ladder?(rebind)
@@ -633,7 +634,7 @@ defmodule Flezha.Convergence.DiffTest do
           ]
         }
 
-      assert [%{primitive: :rebind_operative}] = Planner.plan(busy, Backoff.new())
+      assert [%{primitive: :rebind_operative}] = Planner.plan(busy, Backoff.new(:heal))
 
       # Two rungs recorded long enough ago that the cooldown has opened, so
       # the tick plans both the cut and the retry it precedes. The clock is
@@ -642,7 +643,7 @@ defmodule Flezha.Convergence.DiffTest do
       long_ago = System.monotonic_time(:millisecond) - 1_000_000
 
       walked =
-        Enum.reduce(1..2, Backoff.new(), fn _, b ->
+        Enum.reduce(1..2, Backoff.new(:heal), fn _, b ->
           Backoff.update(b, {:parked, "r"}, :error, long_ago)
         end)
 
@@ -661,7 +662,7 @@ defmodule Flezha.Convergence.DiffTest do
       assert [
                %{primitive: :resync_runner, target: ^entity, args: args} = resync,
                %{primitive: :publish_binding, namespace: :ns, target: "r"} = publish
-             ] = Planner.plan(delta, Backoff.new())
+             ] = Planner.plan(delta, Backoff.new(:heal))
 
       assert args.runner_id == "e1"
       assert Planner.key(resync) == {:seq_gap, entity}

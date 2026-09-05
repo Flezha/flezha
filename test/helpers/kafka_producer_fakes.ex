@@ -57,7 +57,6 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
       init_producer_id_fn: Keyword.get(opts, :init_producer_id_fn, init_producer_id_ok()),
       metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, metadata_refresh_ok()),
       create_topic_fn: Keyword.get(opts, :create_topic_fn, create_topic_ok()),
-      jitter_fn: fn _ -> 0 end,
       now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
       name: nil
     ]

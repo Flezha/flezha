@@ -15,6 +15,7 @@ defmodule Flezha.Runner.StreamPool do
   """
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.SafeCall
 
@@ -60,10 +61,9 @@ defmodule Flezha.Runner.StreamPool do
   fence is caught by the superseded-session mark instead. `flush_channels/1`
   is the one caller whose budget comes from somewhere else.
   """
-  @default_budget_ms 1_000
 
   @spec call_channels(binary(), term(), non_neg_integer()) :: :ok
-  def call_channels(runner_id, request, budget_ms \\ @default_budget_ms) do
+  def call_channels(runner_id, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
     deadline = System.monotonic_time(:millisecond) + budget_ms
 
     Enum.each(channel_pids(runner_id), fn pid ->
@@ -86,11 +86,10 @@ defmodule Flezha.Runner.StreamPool do
   and the whole barrier stays well inside the 30 s window the same classifier
   calls a data-plane stall. A teardown must not outlive the wait it replaced.
   """
-  @flush_budget_ms 5_000
 
   @spec flush_channels(binary()) :: :ok
   def flush_channels(runner_id),
-    do: call_channels(runner_id, :stream_ref_status, @flush_budget_ms)
+    do: call_channels(runner_id, :stream_ref_status, Durations.get(:stream_pool_flush_budget_ms))
 
   @doc """
   Walk `candidate_names` and bind `stream_ref` to the first channel currently

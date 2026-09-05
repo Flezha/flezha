@@ -14,6 +14,8 @@ defmodule Flezha.Cluster.Orchestrator do
   alias Flezha.Cluster.DiscoveryProtocol
   alias Flezha.Cluster.K8sPodDiscovery
   alias Flezha.Cluster.ManualDiscovery
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
 
   require Logger
 
@@ -215,19 +217,9 @@ defmodule Flezha.Cluster.Orchestrator do
         Process.send_after(
           self(),
           {:scheduled_reconnect, node, retries_count},
-          backoff_with_jitter(base, retries_count)
+          Backoff.arm(:cluster_reconnect, retries_count + 1, node, base: base)
         )
     end
-  end
-
-  # Exponential backoff (`base * 2^retries`) capped at `:reconnect_max_backoff_ms`
-  # with equal jitter (half fixed, half random) so a fleet of controllers that
-  # lost the same peer do not all reconnect in lockstep.
-  defp backoff_with_jitter(base, retries) do
-    max = Application.get_env(:flezha, :reconnect_max_backoff_ms, 30_000)
-    capped = min(base * Integer.pow(2, retries), max)
-    half = max(div(capped, 2), 1)
-    half + :rand.uniform(half)
   end
 
   defp schedule_cluster_update() do
@@ -236,9 +228,7 @@ defmodule Flezha.Cluster.Orchestrator do
     Process.send_after(self(), :update_cluster, interval)
   end
 
-  defp formation_timeout_ms() do
-    Application.get_env(:flezha, :cluster_formation_timeout_ms, 15_000)
-  end
+  defp formation_timeout_ms(), do: Durations.get(:cluster_formation_timeout_ms)
 
   defp get_discovery_handler() do
     result =

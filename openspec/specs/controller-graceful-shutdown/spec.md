@@ -217,9 +217,9 @@ The RPC SHALL work whether the controller is running as a release, under `mix ru
 The controller SHALL expose two configuration knobs, readable from both `config/runtime.exs` (Elixir) and the docker entrypoint (shell):
 
 - `:flezha, :graceful_shutdown_enabled` — boolean, default `true`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (truthy values: `1, true, yes, on`; falsy: `0, false, no, off`; case-insensitive).
-- `:flezha, :graceful_shutdown_timeout_ms` — positive integer, default `60_000`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`.
+- `:flezha, :graceful_shutdown_timeout_ms` — positive integer, default `60_000`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. The default SHALL be declared once, as the `graceful_shutdown_timeout_ms` row of `Flezha.Config.Durations`; `runtime.exs` translates the env name and carries no default of its own.
 
-`kubernetes/flezha-configmap.yaml` SHALL declare the timeout knob so that the BEAM and the entrypoint shell read it from one place. The DaemonSet's `terminationGracePeriodSeconds` and the docker-compose `stop_grace_period` SHALL be set 15 seconds longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000` to leave headroom for finalise and supervision-tree shutdown — operators changing one MUST change the others. The pairing is documented in `docs/operations/graceful_shutdown.md`.
+`kubernetes/flezha-configmap.yaml` SHALL declare the timeout knob so that the BEAM and the entrypoint shell read it from one place. The DaemonSet's `terminationGracePeriodSeconds` and the docker-compose `stop_grace_period` SHALL be set 15 seconds longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000` to leave headroom for finalise and supervision-tree shutdown — operators changing one MUST change the others. The pairing SHALL be a derived row of the same table (`orchestrator_grace_ms`, the timeout plus 15 s of headroom) and a test SHALL read the DaemonSet and both compose files and fail when either departs from it. The pairing is documented in `docs/operations/graceful_shutdown.md`.
 
 #### Scenario: Default boot has graceful shutdown enabled
 
@@ -238,6 +238,12 @@ The controller SHALL expose two configuration knobs, readable from both `config/
 - **GIVEN** the controller is started with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=off`
 - **WHEN** the application boots
 - **THEN** `SignalHandler` does not install OS signal handlers, `prep_stop/1` falls back to the legacy `HubManager.stop_hub_manager/0` call, and `flz controller status` reports `graceful_shutdown_enabled: false`
+
+#### Scenario: A manifest that breaks the pairing fails a test
+
+- **GIVEN** `graceful_shutdown_timeout_ms` at its default of `60_000`
+- **WHEN** `kubernetes/flezha-daemonset.yaml`'s `terminationGracePeriodSeconds` or a compose file's `stop_grace_period` is set to anything but 75 seconds
+- **THEN** the pairing test SHALL fail naming the file and the value the derived row expects
 
 ### Requirement: Graceful shutdown SHALL be observable via structured logs and telemetry
 

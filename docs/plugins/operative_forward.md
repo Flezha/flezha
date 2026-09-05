@@ -208,8 +208,8 @@ queued-but-undelivered payloads survive it.
 
 The worker is built from the seams every queue-holding provider shares —
 `WorkerSup` for supervision, `ProviderBehaviour.park_or_reply/2` /
-`release_waiters/1` for the overflow policy, `retry_backoff_ms/3` for the
-ladder. See [`lifecycle.md`](lifecycle.md) "Shared helpers for queue-holding
+`release_waiters/1` for the overflow policy, and the `:forward_deliver` row of
+`Flezha.Config.Backoff` for the ladder. See [`lifecycle.md`](lifecycle.md) "Shared helpers for queue-holding
 workers" before writing another sink of this shape; its two rules (never
 deliver from the worker's own `handle_call`, and pick `restart` deliberately)
 are both load-bearing here.

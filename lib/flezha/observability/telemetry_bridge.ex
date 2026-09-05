@@ -88,7 +88,11 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :plugin, :http_poll, :injected] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
     [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
-    [:flezha, :operative, :parked] => {:flezha_operative, :operative_parked_total, :metric}
+    [:flezha, :operative, :parked] => {:flezha_operative, :operative_parked_total, :metric},
+    # The backoff table's two events: every wait a ladder takes and every reset
+    # a success records, whichever site walks the row.
+    [:flezha, :backoff, :wait] => {:flezha_convergence, :backoff_wait, :metric},
+    [:flezha, :backoff, :reset] => {:flezha_convergence, :backoff_reset, :metric}
   }
 
   # Executed `[:flezha, …]` events with no bridge line yet. Every one is

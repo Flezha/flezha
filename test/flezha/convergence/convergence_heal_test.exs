@@ -12,7 +12,8 @@ defmodule Flezha.Convergence.HealTest do
   import FlezhaTest.Helper.ConvergenceFixtures, only: [diff: 2, diff: 3]
   use Mimic
 
-  alias Flezha.Convergence.{Backoff, Diff, Heal, Intent, Planner, Snapshot}
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Diff, Heal, Intent, Planner, Snapshot}
   alias Flezha.SafeCall
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -44,7 +45,7 @@ defmodule Flezha.Convergence.HealTest do
     defp plan_for(verdict) do
       wedge_intent()
       |> diff(wedge_reality(), %{stall_verdict: verdict})
-      |> Planner.plan(Backoff.new())
+      |> Planner.plan(Backoff.new(:heal))
     end
 
     test "a wedged runner pool is restarted terminally" do
@@ -101,7 +102,12 @@ defmodule Flezha.Convergence.HealTest do
       now = System.monotonic_time(:millisecond)
 
       backoff =
-        Backoff.update(Backoff.new(), Planner.ladder_key(:data_plane_wedge, "rc_a"), :error, now)
+        Backoff.update(
+          Backoff.new(:heal),
+          Planner.ladder_key(:data_plane_wedge, "rc_a"),
+          :error,
+          now
+        )
         |> Backoff.update(Planner.ladder_key(:data_plane_wedge, "rc_b"), :error, now)
 
       assert wedge_intent()
@@ -127,7 +133,7 @@ defmodule Flezha.Convergence.HealTest do
       # the tick that applied the restart is what reaches the eviction.
       backoff =
         Backoff.update(
-          Backoff.new(),
+          Backoff.new(:heal),
           Planner.ladder_key(:data_plane_wedge, "e_live"),
           :error,
           now - 60_000
@@ -344,7 +350,7 @@ defmodule Flezha.Convergence.HealTest do
 
     test "the first eligible attempt resyncs the existing binding, not a migration" do
       assert [%{primitive: :resync_runner, target: "op_a", args: %{reason: :output_stall}}] =
-               Planner.plan(stalled_diff("op_a"), Backoff.new())
+               Planner.plan(stalled_diff("op_a"), Backoff.new(:heal))
     end
 
     test "a stall that survived the resync escalates to rebind_operative" do
@@ -353,7 +359,7 @@ defmodule Flezha.Convergence.HealTest do
       # One ladder attempt recorded and its cooldown already elapsed: the same
       # stall is still flagged, so the next rung is the migration.
       backoff =
-        Backoff.update(Backoff.new(), Planner.ladder_key("op_a"), :error, now - 10_000)
+        Backoff.update(Backoff.new(:heal), Planner.ladder_key("op_a"), :error, now - 10_000)
 
       assert [%{primitive: :rebind_operative, target: "op_a", args: %{reason: :output_stall}}] =
                Planner.plan(stalled_diff("op_a"), backoff)
@@ -371,14 +377,14 @@ defmodule Flezha.Convergence.HealTest do
       delta = stalled_diff("op_dup", bound_runner: nil)
 
       assert [%{primitive: :rebind_operative, target: "op_dup", args: args}] =
-               Planner.plan(delta, Backoff.new())
+               Planner.plan(delta, Backoff.new(:heal))
 
       refute Map.has_key?(args, :reason)
     end
 
     test "a stalled operative in backoff cooldown is filtered out" do
       now = System.monotonic_time(:millisecond)
-      backoff = Backoff.update(Backoff.new(), Planner.ladder_key("op_cool"), :error, now)
+      backoff = Backoff.update(Backoff.new(:heal), Planner.ladder_key("op_cool"), :error, now)
 
       assert Planner.plan(stalled_diff("op_cool"), backoff) == []
     end
@@ -388,7 +394,7 @@ defmodule Flezha.Convergence.HealTest do
       delta = %Diff{stalled | stalled_operatives: [{@stall_ns, "op_a"}]}
 
       assert [%{primitive: :resync_runner, target: "op_a"}] =
-               Planner.plan(delta, Backoff.new(), max_ops: 0)
+               Planner.plan(delta, Backoff.new(:heal), max_ops: 0)
     end
 
     test "a ladder rung is recognisable as one; a structural op is not" do
@@ -453,7 +459,7 @@ defmodule Flezha.Convergence.HealTest do
         }
       }
 
-      assert Planner.plan(diff(intent, reality), Backoff.new()) == []
+      assert Planner.plan(diff(intent, reality), Backoff.new(:heal)) == []
     end
   end
 

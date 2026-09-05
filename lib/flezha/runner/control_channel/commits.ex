@@ -19,6 +19,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   require Logger
 
+  alias Flezha.Config.Backoff
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.State.Commands
@@ -27,7 +28,6 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   # Re-attempt cadence for a journaled outbox whose operative is not bound yet
   # (mirrors the stream outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
-  @proc_outbox_retry_ms 1_000
 
   def start_link({namespace, runner_id}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id},
@@ -294,7 +294,12 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         :ok
 
       {:error, :no_overwatch} ->
-        Process.send_after(self(), {:proc_outbox_retry, operative_id}, @proc_outbox_retry_ms)
+        Process.send_after(
+          self(),
+          {:proc_outbox_retry, operative_id},
+          Backoff.arm(:proc_outbox_retry, 1, operative_id)
+        )
+
         :ok
     end
   end

@@ -17,6 +17,7 @@ defmodule Flezha.Operative.Lifecycle do
   """
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Operative.ClassRegistry
@@ -258,7 +259,7 @@ defmodule Flezha.Operative.Lifecycle do
   end
 
   defp stream_bind_wait_ms,
-    do: Application.get_env(:flezha, :stream_bind_wait_ms, 30_000)
+    do: Durations.get(:stream_bind_wait_ms)
 
   @doc """
   Point the state at `runner_id` and the stream channel that serves it.
@@ -417,7 +418,7 @@ defmodule Flezha.Operative.Lifecycle do
   defp parking_plugin(_reason), do: nil
 
   defp runner_wait_ms,
-    do: Application.get_env(:flezha, :overwatch_runner_wait_ms, 30_000)
+    do: Durations.get(:overwatch_runner_wait_ms)
 
   # The runner's control unit GenServer registers itself in
   # `Flezha.Identificator` as the first child of its supervision

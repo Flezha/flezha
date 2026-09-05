@@ -15,6 +15,7 @@ defmodule Flezha.Runner.FleetManager do
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -28,8 +29,6 @@ defmodule Flezha.Runner.FleetManager do
   require Logger
 
   use GenServer
-
-  @lookup_timeout_ms 5_000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -76,7 +75,7 @@ defmodule Flezha.Runner.FleetManager do
 
   # Pollers pass a short timeout so a FleetManager busy inside `runner_connect/3`
   # costs them one attempt rather than their whole deadline.
-  def active_runners(namespace, timeout \\ @lookup_timeout_ms) do
+  def active_runners(namespace, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:active_runners, namespace}, timeout)
   end
 
@@ -112,7 +111,7 @@ defmodule Flezha.Runner.FleetManager do
   on the foreign node and generates a `enqueue: operative X not found`
   warning on every input.
   """
-  def runners_for_factory(namespace, factory_id, timeout \\ @lookup_timeout_ms) do
+  def runners_for_factory(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:runners_for_factory, namespace, factory_id}, timeout)
   end
 
@@ -131,7 +130,7 @@ defmodule Flezha.Runner.FleetManager do
           | :ambiguous_language
           | :no_language_declared
           | {:language, byte()}
-  def placement_refusal(namespace, factory_id, timeout \\ @lookup_timeout_ms) do
+  def placement_refusal(namespace, factory_id, timeout \\ Durations.get(:runner_lookup_ms)) do
     GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
   end
 
@@ -147,7 +146,13 @@ defmodule Flezha.Runner.FleetManager do
       |> Enum.uniq()
       |> Enum.flat_map(fn n ->
         try do
-          :erpc.call(n, __MODULE__, :active_runners, [namespace], @lookup_timeout_ms)
+          :erpc.call(
+            n,
+            __MODULE__,
+            :active_runners,
+            [namespace],
+            Durations.get(:runner_lookup_ms)
+          )
         catch
           _, _ -> []
         end
@@ -240,7 +245,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp boot_recovery_timeout() do
-    Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000)
+    Durations.get(:boot_replay_timeout_ms)
   end
 
   @impl true
@@ -504,7 +509,5 @@ defmodule Flezha.Runner.FleetManager do
   # budget as the work the manager may be doing.
   defp manager_call_timeout, do: runner_connect_timeout()
 
-  defp runner_connect_timeout do
-    Application.get_env(:flezha, :cluster_formation_timeout_ms, 15_000) + 5_000
-  end
+  defp runner_connect_timeout, do: Durations.get(:cluster_formation_wait_ms)
 end

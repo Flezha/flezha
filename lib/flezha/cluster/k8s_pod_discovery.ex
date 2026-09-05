@@ -7,6 +7,7 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
   """
 
   alias Flezha.Cluster.DiscoveryProtocol
+  alias Flezha.Config.Durations
 
   require Logger
 
@@ -68,7 +69,12 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
         end
 
       headers = [{~c"authorization", ~c"Bearer #{get_token(service_account_path)}"}]
-      http_options = [ssl: get_ssl_opts(service_account_path), timeout: 15_000]
+
+      http_options = [
+        ssl: get_ssl_opts(service_account_path),
+        timeout: Durations.get(:k8s_discovery_request_ms)
+      ]
+
       url = ~c"https://#{master_host(settings)}:#{settings.master_port}/#{path}"
 
       :httpc.request(:get, {url, headers}, http_options, [])

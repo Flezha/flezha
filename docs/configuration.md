@@ -132,11 +132,11 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 
 | Variable | Default | Sets / notes |
 |---|---|---|
-| `FLEZHA_CONTROL_LIVENESS_WINDOW_MS` | `45000` | `:control_liveness_window_ms`; pair with the runner's `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` |
+| `FLEZHA_CONTROL_LIVENESS_WINDOW_MS` | `45000` | `:control_liveness_window_ms` — the `control_liveness_window_ms` row of `Flezha.Config.Durations`, derived as 3 × the keepalive interval, so leaving it unset keeps the pair; it is the same window the runner's `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` declares |
 | `FLEZHA_CONTROL_LIVENESS_INTERVAL_MS` | `15000` | `:control_liveness_interval_ms` |
 | `FLEZHA_OVERWATCH_PING_TIMEOUT_MS` | `2000` | `:overwatch_ping_timeout_ms`; bounds the pre-start `:ping_runner` round-trip, after which the Overwatch retries rather than cutting the channel |
 | `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` | `true` | `:graceful_shutdown_enabled`; when set, anything but `1`/`true`/`yes`/`on` is false |
-| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | `60000` | `:graceful_shutdown_timeout_ms`; the orchestrator grace period must be this + 15 s |
+| `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | `60000` | `:graceful_shutdown_timeout_ms`; the orchestrator grace period is the `orchestrator_grace_ms` row — this + 15 s — and a test reads it back from the DaemonSet and both compose files |
 | `FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS` | `10000` | `:output_watchdog_interval_ms` (not in test) |
 | `FLEZHA_USE_CONVERGENCE_HEALTH` | `true` | `:convergence_health_enabled` (not in test); true only for `true`/`1` |
 | `FLEZHA_CONVERGENCE_TICK_MS` | `5000` | `:convergence_tick_ms` (not in test) |
@@ -349,10 +349,20 @@ the deletion checklist.
 ## Layer 2: application env keys
 
 Read via `Application.get_env(:flezha, key, default)`; `Read in` names the
-module that owns the default. Most keys are set for you by `config/runtime.exs`
+module that reads the key. Most keys are set for you by `config/runtime.exs`
 from the variables above. `—` means the key is always set in `config/` and the
 read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 `:parent[:child]`.
+
+**Every millisecond default below is declared once**, as a row of
+`lib/flezha/config/durations.ex` — the name, the default, the application-env
+key an operator overrides it with, the environment variable `runtime.exs`
+translates into that key, and, where one quantity is another's multiple, the
+derivation. A site reads `Flezha.Config.Durations.get/1`; no module holds a
+millisecond literal of its own, and `config/runtime.exs` carries no second
+default. A retry ladder is the same story one level up: every wait before a
+retry is a row of `lib/flezha/config/backoff.ex`, announced on
+`[:flezha, :backoff, :wait]`.
 
 ### Transport and TLS
 
@@ -454,7 +464,7 @@ read site has no inline default (`fetch_env!`); keyword-list keys are shown as
 | `:convergence_fabric_503_polls` | `3` | `lib/flezha/healthz/server.ex` |
 | `:convergence_entity_stall_ms` | `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`) | `lib/flezha/convergence/loop/liveness.ex` — how long a handout may be out before the per-operative classifier calls that Entity stalled; a non-positive value leaves the default in place |
 | `:healthz_enabled` | `false` | `lib/flezha/application.ex` |
-| `:healthz_port` / `:healthz_bind` | `9569` / `"127.0.0.1"` (`runtime.exs` sets `"0.0.0.0"`) | `lib/flezha/healthz/server.ex` |
+| `:healthz_port` / `:healthz_bind` | `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback) | `lib/flezha/healthz/server.ex` |
 | `:output_watchdog_interval_ms` | `10_000` | `lib/flezha/state/watchdog.ex` |
 | `:catastrophic_dataflow_timeout_ms` | `60_000` | `lib/flezha/state/watchdog.ex` |
 

@@ -19,9 +19,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   require Logger
 
+  alias Flezha.Config.Backoff
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
   alias KafkaEx.Client.NodeSelector
 
@@ -36,9 +36,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   # (the classic clean-broker-restart wedge). A single batch failing this way
   # is authoritative that the client must be recreated — waiting for
   # `@default_stall_threshold` batches strands a low-traffic producer that may
-  # emit only one batch per input burst. Recreate is throttled by
-  # `@force_replace_throttle_ms` so a genuinely-down broker is not recreated on
-  # every batch.
+  # emit only one batch per input burst. Recreate is throttled by the
+  # `:kafka_force_replace` ladder row so a genuinely-down broker is not
+  # recreated on every batch.
   @client_wedged [
     :no_broker,
     :broker_not_available,
@@ -47,7 +47,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     :closed,
     :correlation_mismatch
   ]
-  @force_replace_throttle_ms 2_000
 
   def start_link(opts) when is_list(opts),
     do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
@@ -192,7 +191,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
         Keyword.get(opts, :metadata_refresh_fn, &Wire.default_metadata_refresh/2),
       now_fn: Keyword.get(opts, :now_fn, fn -> System.monotonic_time(:millisecond) end),
       wall_now_fn: Keyword.get(opts, :wall_now_fn, fn -> System.system_time(:millisecond) end),
-      jitter_fn: Keyword.get(opts, :jitter_fn, fn max -> :rand.uniform(max + 1) - 1 end),
       stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold)
     }
   end
@@ -967,11 +965,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   # `attempt` reaches here as 0 for a batch that has never been retried, which
   # is the ladder's first rung.
   defp retry_backoff_ms(state, attempt) do
-    ProviderBehaviour.retry_backoff_ms(
-      state.retry_backoff_ms,
-      state.retry_max_backoff_ms,
-      max(attempt, 1),
-      state.jitter_fn.(100)
+    Backoff.arm(:kafka_produce, max(attempt, 1), {state.topic, state.partition},
+      base: state.retry_backoff_ms,
+      cap: state.retry_max_backoff_ms
     )
   end
 
@@ -1031,7 +1027,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp force_replace_due?(%{last_force_replace_at: nil}), do: true
 
   defp force_replace_due?(state) do
-    state.now_fn.() - state.last_force_replace_at >= @force_replace_throttle_ms
+    state.now_fn.() - state.last_force_replace_at >= Backoff.delay(:kafka_force_replace)
   end
 
   # Reliable recovery: re-acquire a freshly started shared client by identity

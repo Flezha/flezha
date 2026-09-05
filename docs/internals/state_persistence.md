@@ -250,7 +250,7 @@ and truncate is safe because folding already-folded records is idempotent.
 `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a non-empty WAL as a failed handshake
 (`[:flezha, :state, :compaction_failed]`); a snapshot that never arrives is bounded by
 `:compaction_timeout_ms` (default 30 s, `0` disables; `[:flezha, :state, :compaction_timeout]`).
-The Watchdog keeps one `Flezha.Convergence.Backoff` strike per `{:compaction, entity_id}` (5 s →
+The Watchdog keeps one `Flezha.Config.Backoff` strike per `{:compaction, entity_id}` (5 s →
 30 s → 60 s → 300 s); below the give-up threshold a still-correct Entity is not resynced and the
 backoff-gated sweep is the retry. At 4 failed attempts it emits
 `[:flezha, :state, :compaction_gave_up]` (alertable, naming the Entity and attempt count) and

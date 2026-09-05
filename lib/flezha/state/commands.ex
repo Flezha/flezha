@@ -17,6 +17,7 @@ defmodule Flezha.State.Commands do
   per-Entity restore.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -30,7 +31,6 @@ defmodule Flezha.State.Commands do
 
   # Bound on the CompactEntityResponse round-trip. Generous because the SDK
   # serializes the whole Entity State under its lock before replying.
-  @compact_response_timeout_ms 30_000
 
   # ---------- restore ----------
 
@@ -136,7 +136,7 @@ defmodule Flezha.State.Commands do
   end
 
   defp restore_await_timeout_ms(),
-    do: Application.get_env(:flezha, :restore_await_timeout_ms, 15_000)
+    do: Durations.get(:restore_await_timeout_ms)
 
   # ---------- proc journal ----------
 
@@ -265,7 +265,7 @@ defmodule Flezha.State.Commands do
   defp inspect_compact_response(runner_id, {rc, sh, pk} = entity_id, command) do
     with {:ok, raw_data} <-
            ControlUnit.send_control_await(runner_id, command,
-             timeout: @compact_response_timeout_ms
+             timeout: Durations.get(:compaction_timeout_ms)
            ),
          {:ok, %RunnerCommands.CompactEntityResponse{snapshot_seq: 0, snapshot_bytes_size: 0}} <-
            RunnerCommands.CompactEntityResponse.decode(raw_data),

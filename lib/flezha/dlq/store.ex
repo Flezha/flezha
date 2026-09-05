@@ -26,13 +26,13 @@ defmodule Flezha.Dlq.Store do
 
   require Logger
 
+  alias Flezha.Config.Durations
   alias Flezha.State.DurabilityTier
 
   @entries_file "entries.jsonl"
 
   @default_retention_seconds 30 * 86_400
   @default_max_total_bytes 4_294_967_296
-  @default_sweep_interval_ms 3_600_000
 
   # ---------- public API ----------
 
@@ -411,7 +411,7 @@ defmodule Flezha.Dlq.Store do
   end
 
   defp schedule_sweep() do
-    interval = config()[:retention_check_interval_ms] || @default_sweep_interval_ms
+    interval = Durations.get(:dlq_sweep_interval_ms)
     Process.send_after(self(), :sweep, interval)
   end
 

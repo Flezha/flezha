@@ -25,6 +25,8 @@ defmodule Flezha.Service.PluginManager do
   use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ.Namespace
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.Identificator
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.PartitionGroup
@@ -36,15 +38,11 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Service.RegistryUpdate
   alias ProcessHub.Service.ProcessRegistry
 
-  @no_response_retry_attempts 8
-  @no_response_retry_initial_ms 150
-
   # This manager is a node-wide singleton and its table does not survive it:
   # `init/1` starts empty, so an exit here forgets every plugin enabled on the
   # node, not just the one being disabled. The calls it makes into an operative
   # carry `Overwatch`'s own bound, which is the smaller of the two so the
   # manager answers before the caller waiting on it stops waiting.
-  @service_call_timeout_ms 5_000
 
   ## Public API
 
@@ -373,7 +371,7 @@ defmodule Flezha.Service.PluginManager do
   # A bounded call into the manager itself, so a caller tearing a namespace
   # down inherits a busy manager as a value rather than as its own exit.
   defp call_service(request) do
-    case SafeCall.bounded(__MODULE__, request, @service_call_timeout_ms) do
+    case SafeCall.bounded(__MODULE__, request, Durations.get(:plugin_service_call_ms)) do
       {:ok, reply} -> reply
       {:error, _} = err -> err
     end
@@ -453,23 +451,16 @@ defmodule Flezha.Service.PluginManager do
           :ok ->
             :ok
 
-          {:error, :no_response} when attempt < @no_response_retry_attempts ->
-            backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
-            Process.sleep(backoff)
-            do_update_cspec_plugins(namespace, operative_id, update_fn, attempt + 1)
+          {:error, :no_response} ->
+            retry_or_give_up(namespace, operative_id, update_fn, attempt, result)
 
           # The operative row may live on a peer node whose pubsub-based
           # synchronization hasn't fanned out to us yet — retry briefly
           # before surfacing the error.
-          {:error, "No child found"} when attempt < @no_response_retry_attempts ->
-            backoff = min(@no_response_retry_initial_ms * Bitwise.bsl(1, attempt), 5_000)
-            Process.sleep(backoff)
-            do_update_cspec_plugins(namespace, operative_id, update_fn, attempt + 1)
+          {:error, "No child found"} = no_child ->
+            retry_or_give_up(namespace, operative_id, update_fn, attempt, no_child)
 
           {:error, :not_found} ->
-            {:error, :operative_not_found}
-
-          {:error, "No child found"} ->
             {:error, :operative_not_found}
 
           {:error, reason} ->
@@ -477,6 +468,23 @@ defmodule Flezha.Service.PluginManager do
         end
     end
   end
+
+  # `:no_response` (the local hub's `dist_sup` was momentarily missing, so
+  # `execute/2` short-circuited without replying) and "No child found" (a peer
+  # node's row has not fanned out yet) are one condition — the hub has not
+  # settled — so they walk one ladder; only the answer they give up with
+  # differs.
+  defp retry_or_give_up(namespace, operative_id, update_fn, attempt, result) do
+    if Backoff.give_up?(:no_response, attempt) do
+      exhausted(result)
+    else
+      Backoff.wait(:no_response, attempt + 1, operative_id)
+      do_update_cspec_plugins(namespace, operative_id, update_fn, attempt + 1)
+    end
+  end
+
+  defp exhausted({:error, "No child found"}), do: {:error, :operative_not_found}
+  defp exhausted(error), do: error
 
   # ---------- Published surface ----------
   #

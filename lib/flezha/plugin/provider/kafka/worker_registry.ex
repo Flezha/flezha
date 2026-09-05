@@ -17,7 +17,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
   require Logger
 
-  @default_linger_ms 5_000
+  alias Flezha.Config.Durations
 
   @type host :: {binary(), pos_integer()}
   @type identity :: %{
@@ -122,7 +122,7 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
      %{
        starter: Keyword.get(opts, :starter, &default_start/1),
        stopper: Keyword.get(opts, :stopper, &default_stop/1),
-       linger_ms: Keyword.get(opts, :linger_ms, @default_linger_ms),
+       linger_ms: Keyword.get(opts, :linger_ms, Durations.get(:kafka_linger_ms)),
        entries: %{},
        tokens: %{},
        caller_monitors: %{},

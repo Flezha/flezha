@@ -24,21 +24,19 @@ defmodule Flezha.Schedule.Job do
 
   require Logger
 
-  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
   alias Flezha.Service.OperativeManager
 
   # Backoff cap equals the finest cron granularity, so a retrying schedule
   # probes at least once per minute.
-  @retry_base_ms 1_000
-  @retry_cap_ms 60_000
 
   # `Process.send_after/3` tops out near 49.7 days but the cron scan horizon is
   # 1500 days, so a distant slot is re-armed in chunks. The daily recompute is
   # also what absorbs NTP steps and DST: send_after runs on the monotonic
   # clock, cron slots on the wall clock.
-  @rearm_chunk_ms 86_400_000
 
   # The cspec carries the whole definition so a migrated start needs no lookup.
   def child_spec(entry) do
@@ -151,9 +149,11 @@ defmodule Flezha.Schedule.Job do
   @spec arm_action(DateTime.t(), DateTime.t()) ::
           {:fire, non_neg_integer()} | {:rearm, non_neg_integer()}
   def arm_action(target, now) do
+    chunk = Durations.get(:schedule_rearm_chunk_ms)
+
     case DateTime.diff(target, now, :millisecond) do
-      ms when ms <= @rearm_chunk_ms -> {:fire, max(ms, 0)}
-      _ -> {:rearm, @rearm_chunk_ms}
+      ms when ms <= chunk -> {:fire, max(ms, 0)}
+      _ -> {:rearm, chunk}
     end
   end
 
@@ -249,7 +249,7 @@ defmodule Flezha.Schedule.Job do
         record_fire(state, instance_id, :duplicate)
 
       {:error, reason} ->
-        backoff = ProviderBehaviour.retry_backoff_ms(@retry_base_ms, @retry_cap_ms, attempt)
+        backoff = Backoff.arm(:schedule_spawn, attempt, state.entry.name)
         timer = Process.send_after(self(), {:retry, slot, attempt + 1}, backoff)
         state = record_fire(state, instance_id, {:retrying, inspect(reason)})
         %{state | pending_retry: %{slot: slot, attempt: attempt + 1, timer: timer}}
@@ -304,7 +304,5 @@ defmodule Flezha.Schedule.Job do
     end
   end
 
-  defp misfire_grace_ms() do
-    Application.get_env(:flezha, :schedules, []) |> Keyword.get(:misfire_grace_ms, 120_000)
-  end
+  defp misfire_grace_ms(), do: Durations.get(:schedule_misfire_grace_ms)
 end

@@ -16,6 +16,9 @@ ten idempotent primitives (`rebind_operative`, `replace_operative`, `resync_runn
 something — a runner disconnected, a bind parked, a compaction given up, a seq gap opened, a
 subscriber crashed, a registry row written — declares it through `Convergence.Facts.declare/1`
 and decides nothing, so no ladder, counter or clock for choosing a remedy exists anywhere else.
+Waiting before trying again is one job too: every wait in the controller and the Elixir SDK is a
+row of `Flezha.Config.Backoff`'s ladder table, announced on `[:flezha, :backoff, :wait]`,
+and every timeout, interval, grace and budget is a row of `Flezha.Config.Durations`.
 A probe-observed rebind needs two consecutive misbound ticks (a declared disconnect does not), a
 failed read is `:unknown` rather than "gone", and an uncaught error is a skipped tick, never a
 crashed loop.

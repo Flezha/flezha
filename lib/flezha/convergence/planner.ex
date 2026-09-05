@@ -17,7 +17,8 @@ defmodule Flezha.Convergence.Planner do
   entry plus the one rule in `rules/0` that plans it.
   """
 
-  alias Flezha.Convergence.{Backoff, Diff, Facts}
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Diff, Facts}
 
   @type op :: %{primitive: atom(), namespace: atom() | nil, target: term(), args: map()}
 

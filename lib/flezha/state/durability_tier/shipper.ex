@@ -7,7 +7,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   then structural rather than a lock, and a garbage collection can never race an
   upload it is about to declare orphaned. Nothing here is on an ack path: an
   enqueue is a cast, a failing backend retries on the shared
-  `ProviderBehaviour.retry_backoff_ms/3` ladder, and local operation continues
+  `:durability_ship` row of the backoff table, and local operation continues
   at full speed.
 
   The ship itself is manifest-last. Blobs go up first, under content-addressed
@@ -21,17 +21,15 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   require Logger
 
-  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
   @table :flezha_durability_status
-  @retry_base_ms 500
-  @retry_max_ms 30_000
   # Under the SDK's 30 s commit-ack budget: a synchronous barrier must fail
   # loudly here rather than have the driver time out first.
-  @call_timeout_ms 25_000
 
   # `queued` dedups the queue and `manifests` caches the last entry written per
   # reference; everything else about a reference's schedule — superseded,
@@ -65,7 +63,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp call(request) do
     case GenServer.whereis(__MODULE__) do
       nil -> {:error, :durability_tier_not_running}
-      pid -> GenServer.call(pid, request, @call_timeout_ms)
+      pid -> GenServer.call(pid, request, Durations.get(:durability_ship_call_ms))
     end
   catch
     :exit, reason -> {:error, {:shipper_unavailable, reason}}
@@ -506,7 +504,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   defp retry_later(state, ref, reason) do
     attempt = status_of(ref).failures + 1
-    delay = ProviderBehaviour.retry_backoff_ms(@retry_base_ms, @retry_max_ms, attempt)
+    delay = Backoff.arm(:durability_ship, attempt, ref)
     Process.send_after(self(), {:retry, ref}, delay)
     record_failure(ref, reason, attempt, delay)
     emit(:ship_failed, %{attempt: attempt, backoff_ms: delay}, ref, %{reason: inspect(reason)})
@@ -630,7 +628,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
         entry
         | last_shipped_ms: now,
           pending_since_ms: if(caught_up?, do: nil, else: entry.pending_since_ms || now),
-          failures: 0,
+          failures: Backoff.reset(:durability_ship, ref),
           retry_after_ms: nil,
           last_error: nil
       }

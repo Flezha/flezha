@@ -24,7 +24,9 @@ defmodule Flezha.State.Watchdog do
 
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.Quotas
-  alias Flezha.Convergence.{Backoff, Facts, Snapshot}
+  alias Flezha.Config.Durations
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Facts, Snapshot}
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
@@ -35,11 +37,6 @@ defmodule Flezha.State.Watchdog do
     WalWriter,
     WriterRegistry
   }
-
-  # Consecutive compaction failures at which the miss stops being treated as
-  # transient. The backoff schedule has four rungs (5s/30s/60s/300s); crossing
-  # the last is the give-up boundary — a loud, operator-alertable alarm.
-  @compaction_give_up_attempts 4
 
   # `compactions` maps `entity_id => {started_at_ms, runner_id}`: the in-flight
   # handshake plus the runner that owns it, so the timeout path can recover.
@@ -108,7 +105,7 @@ defmodule Flezha.State.Watchdog do
     # (finish-platform-authn-authz §6.2).
     rebuild_disk_counters()
     schedule_sweep()
-    {:ok, %__MODULE__{backoff: Backoff.new()}}
+    {:ok, %__MODULE__{backoff: Backoff.new(:compaction)}}
   end
 
   @impl true
@@ -124,7 +121,7 @@ defmodule Flezha.State.Watchdog do
     if interval > 0, do: Process.send_after(self(), :sweep_tick, interval)
   end
 
-  defp sweep_interval_ms(), do: Application.get_env(:flezha, :output_watchdog_interval_ms, 10_000)
+  defp sweep_interval_ms(), do: Durations.get(:output_watchdog_interval_ms)
 
   @impl true
   def handle_cast({:compaction_started, entity_id, runner_id}, state) do
@@ -338,7 +335,7 @@ defmodule Flezha.State.Watchdog do
   # full timeout — the condition the output-staleness sweep cannot see (no Changes
   # arriving means the entity looks idle, not stalled). Latched per operative_class.
   defp sweep_catastrophic_dataflow(state, now) do
-    timeout = Application.get_env(:flezha, :catastrophic_dataflow_timeout_ms, 60_000)
+    timeout = Durations.get(:catastrophic_dataflow_timeout_ms)
 
     if timeout <= 0 do
       state
@@ -488,7 +485,7 @@ defmodule Flezha.State.Watchdog do
   # its own table. A give-up that cannot name a runner declares nothing: a
   # resync with no runner would be a silent no-op.
   defp maybe_give_up({rc, sh, pk} = pid, attempt, runner_id \\ nil) do
-    if attempt >= @compaction_give_up_attempts do
+    if Backoff.give_up?(:compaction, attempt) do
       emit_give_up(pid, attempt)
       if runner_id, do: Facts.declare({:compaction_gave_up, pid, %{runner_id: runner_id}})
     else

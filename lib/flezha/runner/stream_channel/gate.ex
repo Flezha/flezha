@@ -12,9 +12,8 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   ref, so a bind landing between the decision and the record cannot be missed.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Transport.LivenessCounters
-
-  @send_gate_hold_ms 5_000
 
   # The send, and the hold the send gate asks for. `send_frame/4` answers
   # `{:error, :send_buffer_full}` from one relaxed atomic load, on a crossing
@@ -54,7 +53,7 @@ defmodule Flezha.Runner.StreamChannel.Gate do
   # It is a lost-wake fallback, not a pacing dial: the wake arrives on the
   # crossing, and this only bounds a wake that never came.
   def send_gate_hold_ms,
-    do: Application.get_env(:flezha, :send_gate_hold_ms, @send_gate_hold_ms)
+    do: Durations.get(:send_gate_hold_ms)
 
   # Register interest and wait, in the calling process. Deciding and recording
   # happen in the channel's own turn, so a drain landing between the two cannot
