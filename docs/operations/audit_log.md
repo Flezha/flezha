@@ -139,7 +139,9 @@ flz audit rotate [--json]                  force a rotation of the active file
 same request, and a format nobody recognises is refused rather than rendered as
 text. When the subsystem is disabled
 every verb exits non-zero with `error: audit log is disabled; set
-FLEZHA_AUDIT_ENABLED=true or :audit_log, :enabled: true in config`.
+FLEZHA_AUDIT_ENABLED=true or :audit_log, :enabled: true in config`. Every
+failure is written to stderr, so a run piped into `jq` or a file collects the
+records and never the error.
 
 `Flezha.Service.AuditLog` authorizes every call and filters `read` results to
 the caller's namespace — `admin@_system` and internal callers see everything.

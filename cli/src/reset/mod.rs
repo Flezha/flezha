@@ -13,8 +13,35 @@ use clear::measure_and_clear;
 use plan::{build_plan, preflight_guard, Action, Root};
 use report::{print_human, print_json};
 
+use crate::args::{OptSpec, Reading, APP_DATA_ROOT, JSON_SWITCH, OUTPUT};
 use crate::rpc::{controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
-use crate::{args as cli_args, help};
+
+pub(crate) const YES: OptSpec = OptSpec::switch("--yes", "--yes");
+pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run");
+const INCLUDE_CERTS: OptSpec = OptSpec::switch("--include-certs", "--include-certs");
+const INCLUDE_SOCKETS: OptSpec = OptSpec::switch("--include-sockets", "--include-sockets");
+const ALL: OptSpec = OptSpec::switch("--all", "--all");
+const PROBE_TIMEOUT_MS: OptSpec =
+    OptSpec::number("--probe-timeout-ms", "--probe-timeout-ms", "<ms>");
+
+/// Everything `flz reset` reads. It is one of the two verbs that refuse a word
+/// they do not recognise: this one deletes state, so a typed word it cannot act
+/// on means the run about to happen is not the run that was asked for.
+pub(crate) const OPTIONS: &[OptSpec] = &[
+    YES,
+    DRY_RUN,
+    INCLUDE_CERTS,
+    INCLUDE_SOCKETS,
+    ALL,
+    OUTPUT,
+    JSON_SWITCH,
+    PROBE_TIMEOUT_MS,
+    APP_DATA_ROOT,
+];
+
+/// `--yes` applies and `--dry-run` previews; a run that was asked for both was
+/// asked for neither.
+pub(crate) const CONFLICTS: &[(&str, &str)] = &[(YES.long, DRY_RUN.long)];
 
 #[cfg_attr(test, derive(Debug))]
 struct Flags {
@@ -27,22 +54,26 @@ struct Flags {
     app_data_root: PathBuf,
 }
 
-pub fn handle_reset_command(args: &[String]) {
-    if args
-        .iter()
-        .any(|a| a == "--help" || a == "-h" || a == "help")
-    {
-        help::render(help::RESET);
-        return;
-    }
+/// The flags the walk read, in the shape the plan below wants them. `--all` is
+/// the one that means two others.
+fn flags(read: &Reading) -> Flags {
+    let all = read.switch(ALL.long);
 
-    let flags = match parse_flags(args) {
-        Ok(f) => f,
-        Err((code, msg)) => {
-            eprintln!("{}", msg);
-            exit(code);
-        }
-    };
+    Flags {
+        yes: read.switch(YES.long),
+        dry_run: read.switch(DRY_RUN.long),
+        include_certs: all || read.switch(INCLUDE_CERTS.long),
+        include_sockets: all || read.switch(INCLUDE_SOCKETS.long),
+        json: read.output_format() == "json",
+        probe_timeout_ms: read
+            .num::<u64>(PROBE_TIMEOUT_MS.long)
+            .unwrap_or(DEFAULT_PROBE_TIMEOUT_MS),
+        app_data_root: PathBuf::from(read.opt(APP_DATA_ROOT.long).unwrap_or("./app_data")),
+    }
+}
+
+pub(crate) fn handle_reset_command(read: &Reading) {
+    let flags = flags(read);
 
     refuse_if_controller_is_up(&flags);
 
@@ -143,117 +174,4 @@ fn verdict(
     }
 
     0
-}
-
-/// The live-node probe's deadline. Named because the walk below has to know
-/// which word the reader above consumed.
-const PROBE_TIMEOUT_MS: &str = "--probe-timeout-ms";
-
-/// A boolean switch and the field it sets.
-type Switch = (&'static str, fn(&mut Flags));
-
-/// The boolean switches, and the field each one sets.
-const SWITCHES: &[Switch] = &[
-    ("--yes", |f| f.yes = true),
-    ("--dry-run", |f| f.dry_run = true),
-    ("--include-certs", |f| f.include_certs = true),
-    ("--include-sockets", |f| f.include_sockets = true),
-    ("--all", |f| {
-        f.include_certs = true;
-        f.include_sockets = true;
-    }),
-];
-
-/// The walk stays a walk: an extractor reads the flags it is asked about and
-/// says nothing about the rest, and refusing an argument nobody declared is
-/// this command's whole safety story.
-fn parse_flags(args: &[String]) -> Result<Flags, (i32, String)> {
-    let mut flags = Flags {
-        yes: false,
-        dry_run: false,
-        include_certs: false,
-        include_sockets: false,
-        // The output format is the CLI's one reader's answer here too, so
-        // `--json` and `--output json` cannot mean different things.
-        json: cli_args::parse_output_format(args).map_err(|refusal| (1, refusal))? == "json",
-        probe_timeout_ms: cli_args::number(args, PROBE_TIMEOUT_MS, PROBE_TIMEOUT_MS)
-            .map_err(|refusal| (1, refusal))?
-            .unwrap_or(DEFAULT_PROBE_TIMEOUT_MS),
-        app_data_root: cli_args::app_data_root(args),
-    };
-
-    let mut i = 0;
-    while i < args.len() {
-        let arg = args[i].as_str();
-
-        if let Some((_, set)) = SWITCHES.iter().find(|(name, _)| *name == arg) {
-            set(&mut flags);
-        } else if arg == "--app-data-root"
-            || arg == "--output"
-            || arg == "-o"
-            || arg == PROBE_TIMEOUT_MS
-        {
-            // The readers in the `Flags` literal above answer these, and
-            // refuse a missing or unreadable value there. The walk only steps
-            // over the word they consumed.
-            i += 1;
-        } else if !read_above(arg) {
-            return Err((1, format!("error: unknown argument '{}'", arg)));
-        }
-
-        i += 1;
-    }
-
-    if flags.yes && flags.dry_run {
-        return Err((
-            1,
-            "error: --yes and --dry-run are mutually exclusive".into(),
-        ));
-    }
-
-    Ok(flags)
-}
-
-/// The arguments a reader above has already answered. The walk refuses
-/// everything it does not recognise, so it has to know these are not nobody's.
-fn read_above(arg: &str) -> bool {
-    arg == "--json"
-        || arg.starts_with("--output=")
-        || arg.starts_with("-o=")
-        || arg.starts_with("--app-data-root=")
-        || arg.starts_with(&format!("{}=", PROBE_TIMEOUT_MS))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_flags_yes_and_dry_run_conflict() {
-        let err = parse_flags(&cli_args::owned(&["--yes", "--dry-run"])).unwrap_err();
-        assert_eq!(err.0, 1);
-        assert!(err.1.contains("mutually exclusive"));
-    }
-
-    #[test]
-    fn parse_flags_unknown_arg_rejected() {
-        let err = parse_flags(&cli_args::owned(&["--nope"])).unwrap_err();
-        assert_eq!(err.0, 1);
-        assert!(err.1.contains("unknown argument"));
-    }
-
-    #[test]
-    fn parse_flags_all_implies_includes() {
-        let f = parse_flags(&cli_args::owned(&["--yes", "--all"])).unwrap();
-        assert!(f.include_certs);
-        assert!(f.include_sockets);
-    }
-
-    #[test]
-    fn parse_flags_probe_timeout_value() {
-        let f = parse_flags(&cli_args::owned(&["--probe-timeout-ms", "250"])).unwrap();
-        assert_eq!(f.probe_timeout_ms, 250);
-        let f = parse_flags(&cli_args::owned(&["--probe-timeout-ms=400"])).unwrap();
-        assert_eq!(f.probe_timeout_ms, 400);
-    }
 }

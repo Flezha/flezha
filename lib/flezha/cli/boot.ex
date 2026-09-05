@@ -4,6 +4,7 @@ defmodule Flezha.Service.Cli.Boot do
   """
 
   alias Flezha.Identificator
+  alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery
 
@@ -81,7 +82,7 @@ defmodule Flezha.Service.Cli.Boot do
 
       _ ->
         Enum.each(failures, fn {ns, reason} ->
-          IO.puts(:stderr, "boot await: #{ns}: #{inspect(reason)}")
+          IO.puts(:stderr, "boot await: #{ns}: #{Context.format_reason(reason)}")
         end)
 
         exit(:cli_error)

@@ -9,16 +9,16 @@ use std::process::{Command, Output};
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
-/// Every command with subcommands: its name, the subcommands its screen
-/// documents, and the words its refusal uses. `flz reset` is absent on
-/// purpose — it parses flags rather than dispatching a verb.
-const COMMANDS: &[(&str, &[&str], &str)] = &[
+/// Every command with subcommands, and the subcommands its screen documents.
+/// `flz reset` is absent on purpose — it parses flags rather than dispatching a
+/// verb. A refusal's own words are not listed: the dispatcher renders them from
+/// the table, so this file holds no copy of them to drift.
+const COMMANDS: &[(&str, &[&str])] = &[
     (
         "controller",
         &["start", "stop", "status", "mem-top", "help"],
-        "Invalid argument",
     ),
-    ("cluster", &["status", "help"], "Unknown cluster subcommand"),
+    ("cluster", &["status", "help"]),
     (
         "operative",
         &[
@@ -34,14 +34,12 @@ const COMMANDS: &[(&str, &[&str], &str)] = &[
             "replay",
             "help",
         ],
-        "Invalid argument",
     ),
     (
         "namespace",
         &["list", "create", "delete", "show", "set-quota", "help"],
-        "Invalid argument",
     ),
-    ("runner", &["list", "check", "help"], "Invalid argument"),
+    ("runner", &["list", "check", "help"]),
     (
         "plugin",
         &[
@@ -54,9 +52,8 @@ const COMMANDS: &[(&str, &[&str], &str)] = &[
             "info",
             "help",
         ],
-        "Invalid argument",
     ),
-    ("boot", &["status", "await", "help"], "Invalid argument"),
+    ("boot", &["status", "await", "help"]),
     (
         "state",
         &[
@@ -71,43 +68,20 @@ const COMMANDS: &[(&str, &[&str], &str)] = &[
             "inbox",
             "help",
         ],
-        "Invalid argument",
     ),
     (
         "observe",
         &["sources", "sinks", "tail", "enable", "disable", "help"],
-        "Unknown observe subcommand",
     ),
     (
         "audit",
         &["list", "read", "tail", "stats", "rotate", "help"],
-        "Unknown audit subcommand",
     ),
-    (
-        "dlq",
-        &["list", "show", "replay", "drop"],
-        "Invalid argument",
-    ),
-    (
-        "schedule",
-        &["add", "list", "remove", "run", "help"],
-        "Unknown schedule command",
-    ),
-    (
-        "auth",
-        &["bootstrap", "whoami", "rebootstrap", "help"],
-        "Invalid argument",
-    ),
-    (
-        "token",
-        &["issue", "revoke", "list", "help"],
-        "Invalid argument",
-    ),
-    (
-        "role",
-        &["bind", "unbind", "list", "help"],
-        "Invalid argument",
-    ),
+    ("dlq", &["list", "show", "replay", "drop"]),
+    ("schedule", &["add", "list", "remove", "run", "help"]),
+    ("auth", &["bootstrap", "whoami", "rebootstrap", "help"]),
+    ("token", &["issue", "revoke", "list", "help"]),
+    ("role", &["bind", "unbind", "list", "help"]),
 ];
 
 fn flz(args: &[&str]) -> Output {
@@ -118,7 +92,7 @@ fn flz(args: &[&str]) -> Output {
 fn every_command_help_documents_its_subcommands() {
     let mut wrong: Vec<String> = Vec::new();
 
-    for (command, verbs, _) in COMMANDS {
+    for (command, verbs) in COMMANDS {
         let out = flz(&[command, "help"]);
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
 
@@ -143,16 +117,20 @@ fn every_command_help_documents_its_subcommands() {
 fn every_command_refuses_an_unknown_subcommand_by_name() {
     let mut wrong: Vec<String> = Vec::new();
 
-    for (command, _, refusal) in COMMANDS {
+    for (command, verbs) in COMMANDS {
         let out = flz(&[command, "bogus"]);
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
 
         if out.status.success() {
             wrong.push(format!("flz {} bogus exited 0", command));
         }
-        // The refusal names the word it refused: the dispatcher substitutes it
-        // into each command's own wording.
-        if !stderr.contains(refusal) || !stderr.contains("'bogus'") {
+        // The refusal names the word it refused and offers every verb the
+        // table declares — it is rendered from that table, so a verb added to
+        // it is offered without a sentence being edited.
+        let named = verbs
+            .iter()
+            .all(|verb| stderr.contains(&format!("'{}'", verb)));
+        if !stderr.contains("'bogus'") || !named {
             wrong.push(format!("flz {} bogus said: {}", command, stderr.trim()));
         }
     }
@@ -164,7 +142,7 @@ fn every_command_refuses_an_unknown_subcommand_by_name() {
 fn every_command_refuses_a_missing_subcommand() {
     let mut wrong: Vec<String> = Vec::new();
 
-    for (command, _, _) in COMMANDS {
+    for (command, _) in COMMANDS {
         if flz(&[command]).status.success() {
             wrong.push(format!("flz {} with no subcommand exited 0", command));
         }
@@ -179,7 +157,7 @@ fn every_command_refuses_a_missing_subcommand() {
 fn the_help_spellings_agree_wherever_they_are_accepted() {
     let mut wrong: Vec<String> = Vec::new();
 
-    for (command, _, _) in COMMANDS.iter().filter(|(c, _, _)| *c != "plugin") {
+    for (command, _) in COMMANDS.iter().filter(|(c, _)| *c != "plugin") {
         let screen = String::from_utf8_lossy(&flz(&[command, "help"]).stdout).to_string();
         for spelling in ["--help", "-h"] {
             let got = String::from_utf8_lossy(&flz(&[command, spelling]).stdout).to_string();

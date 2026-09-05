@@ -120,29 +120,16 @@ defmodule Flezha.Service.Cli.Dlq do
     IO.puts("payload            #{rendered}")
   end
 
-  defp render_dlq_error(:not_found) do
-    Context.cli_error!("error: DLQ entry not found", :stderr)
-  end
+  defp render_dlq_error(reason), do: Context.fail!(reason, &dlq_message/1)
 
-  defp render_dlq_error(:bad_entry_ref) do
-    Context.cli_error!("error: expected <operative>/<procedure>/<entry-id>", :stderr)
-  end
+  defp dlq_message(:not_found), do: "DLQ entry not found"
+  defp dlq_message(:bad_entry_ref), do: "expected <operative>/<procedure>/<entry-id>"
 
-  defp render_dlq_error(:payload_not_replayable) do
-    Context.cli_error!(
-      "error: entry carries no payload bytes (inter-procedure input); inspect or drop it",
-      :stderr
-    )
-  end
+  defp dlq_message(:payload_not_replayable),
+    do: "entry carries no payload bytes (inter-procedure input); inspect or drop it"
 
-  defp render_dlq_error(:operative_not_running) do
-    Context.cli_error!(
-      "error: the entry's operative is not running; start it before replaying",
-      :stderr
-    )
-  end
+  defp dlq_message(:operative_not_running),
+    do: "the entry's operative is not running; start it before replaying"
 
-  defp render_dlq_error(reason) do
-    Context.cli_error!("error: #{inspect(reason)}", :stderr)
-  end
+  defp dlq_message(_reason), do: nil
 end

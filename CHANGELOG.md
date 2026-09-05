@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Changed — a `flz` verb declares what it takes, and one reader reads it
+
+Every `flz` verb now declares its positional arguments and its options — the
+long spelling, the short alias, the kind of value, whether it is required, the
+knob that answers it when no flag is written — in the row it already lived in,
+and one walk reads them. The reader, the refusal for a value it cannot carry,
+the arity check and the usage line are all derived from that row, so adding a
+verb no longer means editing an argument walk, a switch scan, an arity refusal
+and a usage string in four places.
+
+Three things change for an operator:
+
+- **An option is read wherever it is written.** `flz operative stop --token t
+  op1` now stops `op1` and carries the credential. It used to send `--token` as
+  the operative id and drop the token entirely, because eight verbs decided
+  which words were options by their position.
+- **Every failure is written to stderr.** The `operative` and `plugin` families
+  printed theirs to stdout, so a run piped into a file or `jq` collected the
+  error as if it were the answer. Exit codes are unchanged. Every failure now
+  also carries one prefix (`error: `) instead of the three the surface had, and
+  a reason that is already a sentence is no longer quoted.
+- **Usage lines are rendered from the row.** The twenty-nine hand-written ones
+  are gone; a verb invoked with too few arguments prints exactly the positionals
+  and options its row declares. `flz audit read`, `flz observe enable` and
+  `flz observe tail` with no arguments now print that line and exit non-zero,
+  where they used to print the whole command screen and exit 0. A verb with no
+  screen of its own shows its usage line above its command's screen, so every
+  option it takes is discoverable from `--help`.
+
+`flz controller status`, `flz observe sources` and `flz observe sinks` now name
+`--output text|json` in their help screens; they always accepted it.
+
 ### Changed — every configuration knob is one row of one table
 
 Every environment variable and application-env key the controller, its SDKs, its

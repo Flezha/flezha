@@ -95,6 +95,8 @@ Every verb rides the sibling `flzvm rpc` into `Flezha.Service.CliManager.observa
 `caller_context` of `source: :cli`, so the service API's authz gates apply. `--json`,
 `--output json`, `--output=json`, `-o json` and `-o=json` are one request read by one
 reader; every verb fails with `observability is disabled` under the master flag.
+A failure is written to stderr, whatever the verb, so a run piped into `jq` or a
+file collects the answer and never the error.
 
 | Verb                                                   | Effect                                                                                   |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |

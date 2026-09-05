@@ -131,6 +131,10 @@ The refusal SHALL survive any widening of how these verbs read their options —
 read in more spellings must not be an argument list checked in fewer, because the silence
 that replaces a refusal is the failure this surface's requirements exist to prevent.
 
+Which verbs refuse SHALL be a field of the verb's declaration rather than a walk each verb
+writes for itself, so that the guarantee is read from one place and extending it to a third
+verb is a decision recorded in that verb's row.
+
 #### Scenario: An argument the verb cannot act on stops the run
 
 - **WHEN** `flz boot await --nope` is run
@@ -142,6 +146,12 @@ that replaces a refusal is the failure this surface's requirements exist to prev
 - **WHEN** `flz boot await --timeout` is run with nothing after it
 - **THEN** the run SHALL exit non-zero saying the option requires a value, and SHALL NOT
   fall back to the default wait
+
+#### Scenario: Strictness is read from the declaration
+
+- **WHEN** the verbs that refuse an unrecognised argument are enumerated
+- **THEN** they SHALL be exactly the verbs whose rows declare it, and no verb SHALL carry
+  an argument walk of its own to obtain it
 
 ### Requirement: An option written with no value SHALL be refused, never defaulted
 
@@ -302,4 +312,84 @@ change; what changes is the request the CLI builds.
 - **WHEN** the CLI's request-shape test runs over every verb the wire contract exports
 - **THEN** it SHALL assert the trailing list for every verb from one table, so that a
   verb added without the list fails the test rather than the operator
+
+### Requirement: Every verb SHALL declare its positional arguments and its options once
+
+Every `flz` verb SHALL declare, in one row beside the verb's own name, the positional
+arguments it takes and every option it reads — the long spelling, the short alias, the
+kind of value and whether it is required — and every reader, refusal, arity check and
+usage line for that verb SHALL be derived from that row rather than written beside it. A
+verb that reads a word the row does not declare, or prints a word the row does not
+declare, is a grammar the operator cannot discover from the surface that teaches it.
+
+The row is the only place a verb's grammar is written down. Help screens stay hand-aligned
+text pinned by their captures, and SHALL be checked against the row rather than generated
+from it: every option a screen or a usage line prints SHALL be declared by the row of the
+verb whose screen it is, and every option the row declares SHALL appear in that screen.
+
+#### Scenario: A verb with no declaration does not ship
+
+- **WHEN** a command table gains a verb row that declares no positionals and no options
+- **THEN** the build or the test suite SHALL fail naming the verb, rather than the verb
+  reading its arguments by hand
+
+#### Scenario: An option printed and not declared fails the suite
+
+- **WHEN** a help screen or a usage line prints an option spelling that the printing
+  verb's row does not declare
+- **THEN** the suite SHALL fail naming the verb, the text it came from and the spelling
+
+#### Scenario: A usage line is the row rendered
+
+- **WHEN** a verb is invoked with too few positional arguments
+- **THEN** the usage line it prints SHALL be rendered from its row, naming exactly the
+  positionals and options the row declares, and SHALL be the same text the verb's help
+  screen shows
+
+### Requirement: An option SHALL be read wherever the operator writes it
+
+Every `flz` option SHALL be read wherever it appears in the argument list, and the
+positional arguments SHALL be the words that remain once the declared options and their
+values are taken out. A verb SHALL NOT decide which words are options by their position,
+because an operator who writes a flag before the subject of the command then has the flag
+itself taken as the subject: the request that reaches the controller is one nobody asked
+for, and the refusal that comes back names the wrong thing.
+
+A word that matches no declared option is a positional argument, whatever it begins with,
+except where the verb's row declares that it refuses unrecognised words.
+
+#### Scenario: A credential written before the subject still authenticates
+
+- **WHEN** `flz operative stop --token <token> op1` is run
+- **THEN** the request SHALL name `op1` as the operative and carry `<token>` in its
+  options list, identically to `flz operative stop op1 --token <token>`
+
+#### Scenario: A namespace written before the subject reaches the request
+
+- **WHEN** a verb that takes `--namespace` is invoked with the flag written before its
+  positional arguments
+- **THEN** the request SHALL carry the namespace, and the positional arguments SHALL be
+  the words that remain
+
+### Requirement: A refusal or a rendered error SHALL be written to stderr
+
+Every refusal and every error a `flz` verb renders SHALL be written to stderr, whatever
+the verb's family, and the stream SHALL NOT be a per-call argument. An operator who pipes
+a verb's output into a file or another program is collecting the answer, not the failure;
+a failure written to stdout is a failure inside the data.
+
+The verb's success output stays on stdout and its exit code does not change: what changes
+is the stream a failure is written to.
+
+#### Scenario: An operative failure is not in the data
+
+- **WHEN** a `flz operative` verb fails and its stdout is captured separately from its
+  stderr
+- **THEN** the error text SHALL appear on stderr and stdout SHALL carry none of it
+
+#### Scenario: One device, declared nowhere per verb
+
+- **WHEN** the controller-side verb bodies are enumerated
+- **THEN** none SHALL name the stream it prints its failure to, and the exit SHALL remain
+  the one this surface already uses
 

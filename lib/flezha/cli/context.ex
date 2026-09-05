@@ -8,6 +8,12 @@ defmodule Flezha.Service.Cli.Context do
 
   alias Flezha.AuthZ.TokenStore
 
+  @doc """
+  A reason as text: the one `inspect/1` on this surface. A binary reason is
+  already a sentence and stays one — quoting it is an artefact of inspecting,
+  not something the operator asked to see.
+  """
+  @spec format_reason(term()) :: String.t()
   def format_reason(reason) when is_binary(reason), do: reason
   def format_reason(reason), do: inspect(reason)
 
@@ -81,13 +87,12 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   @doc """
-  Halt the verb `action` with the refusal `reason`, on the stream its verb
-  family prints errors to. The one spelling of an authorization refusal, so a
-  gated verb never invents its own wording.
+  Halt the verb `action` with the refusal `reason`. The one spelling of an
+  authorization refusal, so a gated verb never invents its own wording.
   """
-  @spec refuse!(atom() | String.t(), term(), :stdio | :stderr) :: no_return()
-  def refuse!(action, reason, device \\ :stderr) do
-    cli_error!("#{action}: #{render_forbidden(reason)}", device)
+  @spec refuse!(atom() | String.t(), term()) :: no_return()
+  def refuse!(action, reason) do
+    cli_error!("#{action}: #{render_forbidden(reason)}")
   end
 
   def render_forbidden(:bootstrap_pending) do
@@ -105,17 +110,85 @@ defmodule Flezha.Service.Cli.Context do
 
   def render_forbidden(reason), do: "refused: #{reason}"
 
-  # Fail the surrounding `flzvm rpc` evaluation: print the message, then exit
-  # only this rpc process. Never System.halt here — every CliManager call runs
-  # ON the controller node via rpc, so halting would stop the controller
-  # itself; :rpc turns the exit into {:badrpc, ...}, which the release script
-  # converts into a non-zero local exit code for the calling script.
-  # `device` mirrors each call site's historical stream (legacy operative and
-  # plugin verbs print errors to stdout; the newer state/observe/audit/dlq and
-  # schedule verbs print to stderr) — the stream is observable behavior.
-  @spec cli_error!(String.t(), :stdio | :stderr) :: no_return()
-  def cli_error!(message, device \\ :stdio) do
-    IO.puts(device, message)
+  @doc """
+  Halt the verb with `reason`, rendered in `vocabulary`'s words when it names
+  that reason and by the one fallback here when it does not. The single prefix
+  and the single `inspect/1` for the whole surface: a family contributes its
+  vocabulary and never its printing.
+  """
+  @spec fail!(term(), (term() -> String.t() | nil)) :: no_return()
+  def fail!(reason, vocabulary \\ fn _ -> nil end) do
+    cli_error!("error: " <> (vocabulary.(reason) || format_reason(reason)))
+  end
+
+  # The one printer. Private, so a `Cli.*` module contributes what it says and
+  # never how it is said: every failure reaches the operator through `fail!`.
+  #
+  # Fail the surrounding `flzvm rpc` evaluation: print the message on stderr,
+  # then exit only this rpc process. Never System.halt here — every CliManager
+  # call runs ON the controller node via rpc, so halting would stop the
+  # controller itself; :rpc turns the exit into {:badrpc, ...}, which the
+  # release script converts into a non-zero local exit code for the calling
+  # script.
+  #
+  # One stream, for every family: an operator who pipes a verb's output is
+  # collecting the answer, not the failure, so a failure never joins the data.
+  @spec cli_error!(String.t()) :: no_return()
+  defp cli_error!(message) do
+    IO.puts(:stderr, message)
     exit(:cli_error)
+  end
+
+  @doc """
+  A JSON document the operator typed. Unlike `Payloader.json_to_map/1`, whose
+  moduledoc calls an undecodable document a defect, an operator's document that
+  will not decode is a refusal: `what` names the flag it was written behind.
+  """
+  @spec json!(String.t() | nil, String.t()) :: map()
+  def json!(written, what) do
+    case written do
+      nil -> %{}
+      "" -> %{}
+      text -> decode_json!(text, what)
+    end
+  end
+
+  defp decode_json!(text, what) do
+    case Jason.decode(text) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      {:ok, _other} -> cli_error!("error: #{what} must be a JSON object")
+      {:error, reason} -> cli_error!("error: invalid #{what} JSON: #{Exception.message(reason)}")
+    end
+  end
+
+  @doc """
+  A whole number the operator typed, refused rather than guessed: a `--limit`
+  nobody can read is not every record.
+  """
+  @spec integer!(term(), String.t()) :: integer()
+  def integer!(written, what) do
+    case Integer.parse(to_string(written)) do
+      {value, ""} -> value
+      _ -> cli_error!("error: invalid #{what} value '#{written}'")
+    end
+  end
+
+  @doc """
+  A word the operator typed, as the atom this surface knows it by. Never
+  `String.to_atom/1`: a word nobody declared would mint an atom the node then
+  keeps for ever.
+  """
+  @spec atom!(String.t(), [atom()], String.t()) :: atom()
+  def atom!(written, allowed, what) do
+    case Enum.find(allowed, &(Atom.to_string(&1) == written)) do
+      nil ->
+        cli_error!(
+          "error: unknown #{what} '#{written}'. Use " <>
+            Enum.map_join(allowed, " or ", &"'#{&1}'") <> "."
+        )
+
+      known ->
+        known
+    end
   end
 end

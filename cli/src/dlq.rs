@@ -1,55 +1,39 @@
-use std::process::exit;
-
-use crate::dispatch::{self, Command};
+use crate::args::{Positional, Reading};
+use crate::dispatch::{self, Command, Missing, Verb};
+use crate::help;
 use crate::rpc::{self, text};
-use crate::{args, help};
+
+const ENTRY_REF: &[Positional] = &[Positional::required("<operative/procedure/entry-id>")];
 
 pub(crate) const TABLE: Command = Command {
+    path: "flz dlq",
     help: help::DLQ,
     verbs: &[
-        ("list", handle_list),
-        ("show", handle_show),
-        ("replay", handle_replay),
-        ("drop", handle_drop),
+        Verb::new("list", handle_list).taking(&[Positional::optional("<operative_class>")]),
+        Verb::new("show", |read| {
+            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_show", rpc::PROPAGATE)
+        })
+        .taking(ENTRY_REF),
+        Verb::new("replay", |read| {
+            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_replay", rpc::PROPAGATE)
+        })
+        .taking(ENTRY_REF),
+        Verb::new("drop", |read| {
+            rpc::one_arg(read, ENTRY_REF[0].name, "dlq_drop", rpc::PROPAGATE)
+        })
+        .taking(ENTRY_REF),
     ],
     help_verbs: dispatch::HELP_VERBS,
-    missing: Some("Error: Invalid number of arguments. See `flz dlq help`."),
-    unknown: "Error: Invalid argument '{}'. Use 'list', 'show', 'replay', 'drop', or 'help'.",
+    missing: Missing::Refuse,
     unknown_prints_help: false,
 };
 
-fn handle_list(args: &[String]) {
-    let operative_class = args::positional(args, 1).map(String::as_str).unwrap_or("");
+fn handle_list(read: &Reading) {
     rpc::run(
         "dlq_list",
-        &[text(operative_class)],
+        &[text(read.pos("<operative_class>"))],
         &[],
-        args,
+        read.token(),
         rpc::PROPAGATE,
     );
-}
-
-fn entry_ref_arg(args: &[String], usage: &str) -> String {
-    match args::positional(args, 1) {
-        Some(entry_ref) => entry_ref.clone(),
-        None => {
-            eprintln!("Usage: {}", usage);
-            exit(1);
-        }
-    }
-}
-
-fn handle_show(args: &[String]) {
-    let entry_ref = entry_ref_arg(args, "flz dlq show <operative/procedure/entry-id>");
-    rpc::run("dlq_show", &[text(&entry_ref)], &[], args, rpc::PROPAGATE);
-}
-
-fn handle_replay(args: &[String]) {
-    let entry_ref = entry_ref_arg(args, "flz dlq replay <operative/procedure/entry-id>");
-    rpc::run("dlq_replay", &[text(&entry_ref)], &[], args, rpc::PROPAGATE);
-}
-
-fn handle_drop(args: &[String]) {
-    let entry_ref = entry_ref_arg(args, "flz dlq drop <operative/procedure/entry-id>");
-    rpc::run("dlq_drop", &[text(&entry_ref)], &[], args, rpc::PROPAGATE);
 }

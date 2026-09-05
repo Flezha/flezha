@@ -16,7 +16,7 @@ defmodule Flezha.Service.CliManager do
 
   use Flezha.AuthZ.Verb,
     identity: &Cli.Context.cli_context/1,
-    refuse: &Cli.Context.refuse!/3,
+    refuse: &Cli.Context.refuse!/2,
     sealed: true
 
   verb audit_log_render_list(format, opts \\ []), to: Cli.Audit, verb: :audit_list
@@ -49,7 +49,7 @@ defmodule Flezha.Service.CliManager do
     verb: :role_unbind,
     row: &Cli.Authz.binding_row/1
 
-  verb authz_render_token_issue(principal, namespace, role, ttl_seconds, opts \\ []),
+  verb authz_render_token_issue(principal, namespace, role, opts \\ []),
     to: Cli.Authz,
     verb: :token_issue
 
@@ -85,7 +85,7 @@ defmodule Flezha.Service.CliManager do
     verb: :plugin_enable,
     row: &Cli.Plugin.enable_row/1
 
-  verb entity_state(namespace, operative_id, opts \\ []), to: Cli.Operative, device: :stdio
+  verb entity_state(namespace, operative_id, opts \\ []), to: Cli.Operative
   verb group_partition_rows(rows), to: Cli.Listing
   verb install_plugin(path, opts \\ []), to: Cli.Plugin
   verb installed_plugin?(plugin_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info
@@ -121,24 +121,20 @@ defmodule Flezha.Service.CliManager do
   verb operative_info(namespace, format \\ "text", opts \\ []), to: Cli.Info
 
   verb operative_listen(namespace, operative_id, io_type, opts \\ []),
-    to: Cli.Operative,
-    device: :stdio
+    to: Cli.Operative
 
   verb operative_replay(namespace, path, from, opts \\ []),
     to: Cli.State,
     row: &Cli.State.replay_row/1
 
   verb operative_rewind(namespace, operative_id, to_iter, opts \\ []),
-    to: Cli.Operative,
-    device: :stdio
+    to: Cli.Operative
 
   verb operative_scale(namespace, group_id, target, opts_json \\ "{}", opts \\ []),
-    to: Cli.Operative,
-    device: :stdio
+    to: Cli.Operative
 
   verb operative_send(namespace, operative_id, message, channel, opts \\ []),
-    to: Cli.Operative,
-    device: :stdio
+    to: Cli.Operative
 
   verb operative_start(
          namespace,
@@ -148,8 +144,7 @@ defmodule Flezha.Service.CliManager do
          opts_json \\ "{}",
          opts \\ []
        ),
-       to: Cli.Operative,
-       device: :stdio
+       to: Cli.Operative
 
   verb operative_stop(namespace, operative_id, opts \\ []), to: Cli.Operative
   verb plugin_help(provider_id, opts \\ []), to: Cli.Plugin, verb: :plugin_info

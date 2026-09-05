@@ -1,7 +1,7 @@
 flz controller status - Print controller status
 
 USAGE:
-    flz controller status [--json]
+    flz controller status [--output text|json] [--json]
 
 OUTPUT FIELDS:
     shutdown_in_progress       True while quiesce/drain/finalise is running

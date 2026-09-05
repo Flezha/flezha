@@ -17,7 +17,7 @@ defmodule Flezha.Service.Cli.Authz do
   def token_row([token_id | _]) do
     case find_token_by_id(token_id) do
       {:ok, entry} -> {:ok, %{namespace: entry.namespace, entry: entry}}
-      :error -> Context.cli_error!("token revoke: :not_found", :stderr)
+      :error -> Context.fail!("token revoke: :not_found")
     end
   end
 
@@ -40,7 +40,7 @@ defmodule Flezha.Service.Cli.Authz do
         IO.puts("admin token (shown once, store it now): #{minted}")
 
       {:error, reason} ->
-        Context.cli_error!("auth bootstrap: #{inspect(reason)}", :stderr)
+        Context.fail!("auth bootstrap: #{Context.format_reason(reason)}")
     end
   end
 
@@ -63,10 +63,10 @@ defmodule Flezha.Service.Cli.Authz do
   end
 
   @doc "CLI entry: `flz token issue <principal> <namespace> <role> [--ttl <seconds>]`."
-  def authz_render_token_issue(principal, namespace, role_string, ttl_seconds, call) do
+  def authz_render_token_issue(principal, namespace, role_string, call) do
     with {:ok, role} <- parse_role(role_string),
          {:ok, raw, entry} <-
-           TokenStore.issue(principal, namespace, role, ttl_seconds,
+           TokenStore.issue(principal, namespace, role, Keyword.fetch!(call.opts, :ttl),
              created_by_principal: actor(call),
              label: Keyword.get(call.opts, :label)
            ) do
@@ -74,7 +74,7 @@ defmodule Flezha.Service.Cli.Authz do
       IO.puts("id:    #{String.slice(entry.token_hash, 0, 12)}")
       IO.puts("token (shown once, store it now): #{raw}")
     else
-      {:error, reason} -> Context.cli_error!("token issue: #{inspect(reason)}", :stderr)
+      {:error, reason} -> Context.fail!("token issue: #{Context.format_reason(reason)}")
     end
   end
 
@@ -82,7 +82,7 @@ defmodule Flezha.Service.Cli.Authz do
   def authz_render_token_revoke(token_id, call) do
     case TokenStore.revoke(token_id, revoked_by_principal: actor(call)) do
       {:ok, entry} -> IO.puts("revoked token #{String.slice(entry.token_hash, 0, 12)}")
-      {:error, reason} -> Context.cli_error!("token revoke: #{inspect(reason)}", :stderr)
+      {:error, reason} -> Context.fail!("token revoke: #{Context.format_reason(reason)}")
     end
   end
 
@@ -125,7 +125,7 @@ defmodule Flezha.Service.Cli.Authz do
          :ok <- RoleStore.bind(principal, namespace, role, bound_by: actor(call)) do
       IO.puts("bound #{principal} as #{role}@#{namespace}")
     else
-      {:error, reason} -> Context.cli_error!("role bind: #{inspect(reason)}", :stderr)
+      {:error, reason} -> Context.fail!("role bind: #{Context.format_reason(reason)}")
     end
   end
 
@@ -156,7 +156,7 @@ defmodule Flezha.Service.Cli.Authz do
       IO.puts("namespace #{name} created")
       print_namespace_entry(entry)
     else
-      {:error, reason} -> Context.cli_error!("namespace create: #{inspect(reason)}", :stderr)
+      {:error, reason} -> Context.fail!("namespace create: #{Context.format_reason(reason)}")
     end
   end
 
@@ -164,7 +164,7 @@ defmodule Flezha.Service.Cli.Authz do
   def authz_render_namespace_delete(name, _call) do
     case Namespace.remove(name) do
       :ok -> IO.puts("namespace #{name} deleted")
-      {:error, reason} -> Context.cli_error!("namespace delete: #{inspect(reason)}", :stderr)
+      {:error, reason} -> Context.fail!("namespace delete: #{Context.format_reason(reason)}")
     end
   end
 
@@ -172,7 +172,7 @@ defmodule Flezha.Service.Cli.Authz do
   def authz_render_namespace_show(name, _call) do
     case NamespaceStore.get(name) do
       {:ok, entry} -> print_namespace_entry(entry)
-      :error -> Context.cli_error!("namespace show: :not_found", :stderr)
+      :error -> Context.fail!("namespace show: :not_found")
     end
   end
 
@@ -183,7 +183,7 @@ defmodule Flezha.Service.Cli.Authz do
       IO.puts("namespace #{name} quotas updated")
       print_namespace_entry(entry)
     else
-      {:error, reason} -> Context.cli_error!("namespace set-quota: #{inspect(reason)}", :stderr)
+      {:error, reason} -> Context.fail!("namespace set-quota: #{Context.format_reason(reason)}")
     end
   end
 
@@ -214,12 +214,10 @@ defmodule Flezha.Service.Cli.Authz do
   # documented quota fields, values must be non-negative integers (validated
   # again by `Namespace.build_quotas/1`).
   defp parse_quota_overrides(quotas_json) when is_binary(quotas_json) do
-    with {:ok, decoded} <- Jason.decode(quotas_json) do
-      {:ok,
-       Map.new(decoded, fn {k, v} ->
-         {String.to_existing_atom(k), parse_quota_value(v)}
-       end)}
-    end
+    {:ok,
+     quotas_json
+     |> Context.json!("quota overrides")
+     |> Map.new(fn {k, v} -> {String.to_existing_atom(k), parse_quota_value(v)} end)}
   rescue
     ArgumentError -> {:error, :unknown_quota_field}
   end
@@ -227,7 +225,7 @@ defmodule Flezha.Service.Cli.Authz do
   defp parse_quota_overrides(%{} = quotas), do: {:ok, quotas}
 
   defp parse_quota_value(v) when is_integer(v), do: v
-  defp parse_quota_value(v) when is_binary(v), do: String.to_integer(v)
+  defp parse_quota_value(v) when is_binary(v), do: Context.integer!(v, "quota value")
 
   defp filter_namespace_for_list(%{role: :admin, namespace: "_system"}), do: :all
   defp filter_namespace_for_list(context), do: Map.get(context, :namespace) || "_system"

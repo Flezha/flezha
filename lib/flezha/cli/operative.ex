@@ -6,7 +6,6 @@ defmodule Flezha.Service.Cli.Operative do
 
   alias Flezha.AuthZ.Namespace
   alias Flezha.Operative.PartitionGroup
-  alias Flezha.Payloader
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Plugin.SpecDecoder
@@ -21,7 +20,7 @@ defmodule Flezha.Service.Cli.Operative do
   """
   def operative_start(namespace, operative_id, factory_id, init_values, opts_json, %{opts: opts}) do
     opts_kw =
-      Payloader.json_to_map(opts_json)
+      Context.json!(opts_json, "--partitions/--snapshot-interval")
       |> Context.atom_converter()
       |> Keyword.new()
 
@@ -56,7 +55,7 @@ defmodule Flezha.Service.Cli.Operative do
           )
 
         {:error, reason} ->
-          Context.cli_error!("Error starting operative: #{inspect(reason)}")
+          Context.fail!("starting operative: #{Context.format_reason(reason)}")
       end
     end
   end
@@ -70,14 +69,12 @@ defmodule Flezha.Service.Cli.Operative do
         {1, rest}
 
       {raw, rest} ->
-        case Integer.parse(to_string(raw)) do
-          {n, ""} when n >= 1 ->
+        case Context.integer!(raw, "--partitions") do
+          n when n >= 1 ->
             {n, rest}
 
           _ ->
-            Context.cli_error!(
-              "Error starting operative: --partitions must be a positive integer"
-            )
+            Context.fail!("starting operative: --partitions must be a positive integer")
         end
     end
   end
@@ -96,7 +93,7 @@ defmodule Flezha.Service.Cli.Operative do
       id: operative_id,
       factory_id: factory_id,
       kind: parse_kind(kind),
-      init_values: Payloader.json_to_map(init_values),
+      init_values: Context.json!(init_values, "--init_values"),
       opts: opts_kw
     }
 
@@ -111,7 +108,7 @@ defmodule Flezha.Service.Cli.Operative do
         report_group_start(operative_id, members, Map.get(result, :already_running, []))
 
       {:error, reason} ->
-        Context.cli_error!("Error starting operative: #{Context.format_reason(reason)}")
+        Context.fail!("starting operative: #{Context.format_reason(reason)}")
     end
   end
 
@@ -142,7 +139,7 @@ defmodule Flezha.Service.Cli.Operative do
       id: operative_id,
       factory_id: factory_id,
       kind: parse_kind(kind),
-      init_values: Payloader.json_to_map(init_values),
+      init_values: Context.json!(init_values, "--init_values"),
       opts: opts_kw
     }
 
@@ -159,7 +156,7 @@ defmodule Flezha.Service.Cli.Operative do
         )
 
       {:error, reason} ->
-        Context.cli_error!("Error starting operative: #{inspect(reason)}")
+        Context.fail!("starting operative: #{Context.format_reason(reason)}")
     end
   end
 
@@ -194,8 +191,8 @@ defmodule Flezha.Service.Cli.Operative do
         IO.puts("Operative group #{group_id} stopped (#{length(results)} partitions)")
 
       failed ->
-        Context.cli_error!(
-          "Error stopping operative group #{group_id}: " <>
+        Context.fail!(
+          "stopping operative group #{group_id}: " <>
             Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)
         )
     end
@@ -213,7 +210,7 @@ defmodule Flezha.Service.Cli.Operative do
         )
 
       {:error, reason} ->
-        Context.cli_error!("Error stopping operative: #{inspect(reason)}")
+        Context.fail!("stopping operative: #{Context.format_reason(reason)}")
     end
   end
 
@@ -227,17 +224,17 @@ defmodule Flezha.Service.Cli.Operative do
   """
   def operative_scale(namespace, group_id, target, opts_json, _call) do
     target =
-      case Integer.parse(to_string(target)) do
-        {n, ""} when n >= 1 ->
+      case Context.integer!(target, "<partitions>") do
+        n when n >= 1 ->
           n
 
         _ ->
-          Context.cli_error!("Error scaling operative: <partitions> must be a positive integer")
+          Context.fail!("scaling operative: <partitions> must be a positive integer")
       end
 
     opts =
-      case Payloader.json_to_map(opts_json) do
-        %{"timeout_ms" => raw} -> [quiesce_timeout_ms: String.to_integer(to_string(raw))]
+      case Context.json!(opts_json, "--timeout") do
+        %{"timeout_ms" => raw} -> [quiesce_timeout_ms: Context.integer!(raw, "--timeout")]
         _ -> []
       end
 
@@ -253,7 +250,7 @@ defmodule Flezha.Service.Cli.Operative do
         Enum.each(result.members, &IO.puts("  #{&1}"))
 
       {:error, reason} ->
-        Context.cli_error!("Error scaling operative: #{Context.format_reason(reason)}")
+        Context.fail!("scaling operative: #{Context.format_reason(reason)}")
     end
   end
 
@@ -272,7 +269,7 @@ defmodule Flezha.Service.Cli.Operative do
 
     case Workflow.rewind_instance(namespace, operative_id, to_iter) do
       {:error, :operative_not_running} ->
-        Context.cli_error!("Error: operative '#{operative_id}' not found")
+        Context.fail!("operative '#{operative_id}' not found")
 
       outcome ->
         print_rewind(operative_id, to_iter, outcome)
@@ -287,18 +284,18 @@ defmodule Flezha.Service.Cli.Operative do
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, {:uncommitted_iteration, []}}) do
-    Context.cli_error!("Error: this operative has no committed iterations to rewind to")
+    Context.fail!("this operative has no committed iterations to rewind to")
   end
 
   defp print_rewind(_operative_id, to_iter, {:error, {:uncommitted_iteration, committed}}) do
-    Context.cli_error!(
+    Context.fail!(
       "Error: iteration #{to_iter} has not committed. " <>
         "Committed iterations: #{Enum.min(committed)}..#{Enum.max(committed)}"
     )
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, {:uncovered, channels}}) do
-    Context.cli_error!(
+    Context.fail!(
       "Error: refusing to rewind — these channels were written by an unwound " <>
         "procedure that declares no `compensate` hook, so the output cannot be " <>
         "undone: #{Enum.join(channels, ", ")}"
@@ -306,7 +303,7 @@ defmodule Flezha.Service.Cli.Operative do
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, reason}) do
-    Context.cli_error!("Error rewinding operative: #{inspect(reason)}")
+    Context.fail!("Error rewinding operative: #{Context.format_reason(reason)}")
   end
 
   @doc """
@@ -333,13 +330,13 @@ defmodule Flezha.Service.Cli.Operative do
         IO.puts("Journaled for suspended '#{operative_id}' — delivers on wake.")
 
       {:error, :not_ready} ->
-        Context.cli_error!("Error: operative '#{operative_id}' is not ready to accept input.")
+        Context.fail!("operative '#{operative_id}' is not ready to accept input.")
 
       {:error, :not_found} ->
-        Context.cli_error!("Error: operative '#{operative_id}' not found.")
+        Context.fail!("operative '#{operative_id}' not found.")
 
       {:error, :refused} ->
-        Context.cli_error!("Error: input refused — durable append failed for '#{operative_id}'.")
+        Context.fail!("input refused — durable append failed for '#{operative_id}'.")
     end
   end
 
@@ -360,16 +357,16 @@ defmodule Flezha.Service.Cli.Operative do
         IO.puts("Operative '#{operative_id}' not found in namespace '#{namespace_display}'.")
 
       {:error, {:unsupported_for_kind, :persistent_state}} ->
-        Context.cli_error!(
+        Context.fail!(
           "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-entity state: " <>
             "its kind does not support state introspection."
         )
 
       {:error, reason} when is_binary(reason) ->
-        Context.cli_error!("Error getting operative state: #{reason}")
+        Context.fail!("Error getting operative state: #{reason}")
 
       {:error, reason} ->
-        Context.cli_error!("Error getting operative state: #{inspect(reason)}")
+        Context.fail!("Error getting operative state: #{Context.format_reason(reason)}")
 
       other ->
         IO.puts("Unexpected result: #{inspect(other)}")

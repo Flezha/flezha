@@ -1,108 +1,78 @@
-use std::process::exit;
-
-use crate::dispatch::{self, Command};
+use crate::args::{OptSpec, Positional, Reading, NAMESPACE};
+use crate::dispatch::{self, Command, Missing, Verb};
+use crate::help;
 use crate::operative::plugins_json_or_refuse;
 use crate::rpc::{self, text, Opt};
-use crate::{args, help};
+
+const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>").required();
+const TZ: OptSpec = OptSpec::text("--tz", "--tz", "<iana>").required();
+const FACTORY: OptSpec = OptSpec::text("--factory", "--factory", "<factory_id>").required();
+const INIT_VALUES: OptSpec = OptSpec::text("--init_values", "-iv", "<json>");
+const KIND: OptSpec = OptSpec::text("--kind", "--kind", "<stream|workflow>");
+const PLUGINS: OptSpec = OptSpec::text("--plugins", "-p", "<json>");
+
+const NAME: &[Positional] = &[Positional::required("<name>")];
 
 pub(crate) const TABLE: Command = Command {
+    path: "flz schedule",
     help: help::SCHEDULE,
     verbs: &[
-        ("add", handle_add),
-        ("list", handle_list),
-        ("remove", handle_remove),
-        ("run", handle_run),
+        Verb::new("add", handle_add).taking(NAME).reading(&[
+            CRON,
+            TZ,
+            FACTORY,
+            NAMESPACE,
+            INIT_VALUES,
+            KIND,
+            PLUGINS,
+        ]),
+        Verb::new("list", |read| {
+            rpc::run("schedule_list", &[], &[], read.token(), rpc::PROPAGATE)
+        }),
+        Verb::new("remove", |read| {
+            rpc::one_arg(read, NAME[0].name, "schedule_remove", rpc::PROPAGATE)
+        })
+        .taking(NAME),
+        Verb::new("run", |read| {
+            rpc::one_arg(read, NAME[0].name, "schedule_run", rpc::PROPAGATE)
+        })
+        .taking(NAME),
     ],
     help_verbs: dispatch::HELP_VERBS,
-    missing: None,
-    unknown: "Error: Unknown schedule command '{}'. Valid: add, list, remove, run, help",
+    missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-fn handle_list(args: &[String]) {
-    rpc::run("schedule_list", &[], &[], args, rpc::PROPAGATE);
-}
 
 /// The flags travel as the options list: the three required ones first, then
 /// each optional one the operator wrote, so an absent flag is absent from the
 /// request and the controller applies its own default. `--plugins` is carried
 /// as the text it was written as, whatever it parses as: the controller's
 /// decoder reads the JSON itself, at every firing.
-fn handle_add(args: &[String]) {
-    let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind workflow]";
-    let rest = &args[1..];
-
-    let name = match args::positional(rest, 0) {
-        Some(name) => name.clone(),
-        None => {
-            eprintln!("Error: missing schedule name.\n {}", usage);
-            exit(1);
-        }
-    };
-
-    let cron = require_param(rest, "--cron", usage);
-    let tz = require_param(rest, "--tz", usage);
-    let factory = require_param(rest, "--factory", usage);
-    let flag = |long, short| args::or_refuse(args::extract_param(rest, long, short));
-    let optional = [
-        ("namespace", Some(args::namespace(rest))),
-        ("init_values", flag("--init_values", "-iv")),
-        ("kind", flag("--kind", "--kind")),
-        (
-            "plugins",
-            flag("--plugins", "-p").map(|p| plugins_json_or_refuse(&p)),
-        ),
-    ];
+fn handle_add(read: &Reading) {
+    let plugins = read.opt(PLUGINS.long).map(plugins_json_or_refuse);
 
     let mut opts: Vec<Opt> = vec![
-        ("cron", text(&cron)),
-        ("tz", text(&tz)),
-        ("factory", text(&factory)),
+        ("cron", text(read.opt(CRON.long).unwrap_or_default())),
+        ("tz", text(read.opt(TZ.long).unwrap_or_default())),
+        ("factory", text(read.opt(FACTORY.long).unwrap_or_default())),
     ];
-    for (key, value) in &optional {
-        if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
-            opts.push((*key, text(value)));
+
+    for (key, value) in [
+        ("namespace", read.opt(NAMESPACE.long)),
+        ("init_values", read.opt(INIT_VALUES.long)),
+        ("kind", read.opt(KIND.long)),
+        ("plugins", plugins.as_deref()),
+    ] {
+        if let Some(value) = value {
+            opts.push((key, text(value)));
         }
     }
 
-    rpc::run("schedule_add", &[text(&name)], &opts, rest, rpc::PROPAGATE);
-}
-
-fn handle_remove(args: &[String]) {
-    named_verb("remove", args);
-}
-
-fn handle_run(args: &[String]) {
-    named_verb("run", args);
-}
-
-/// `remove` and `run` take the schedule's name and the caller's token.
-fn named_verb(verb: &str, args: &[String]) {
     rpc::run(
-        &format!("schedule_{}", verb),
-        &[text(&schedule_name(verb, args))],
-        &[],
-        args,
+        "schedule_add",
+        &[text(read.pos(NAME[0].name))],
+        &opts,
+        read.token(),
         rpc::PROPAGATE,
     );
-}
-
-fn schedule_name(verb: &str, args: &[String]) -> String {
-    match args::positional(args, 1) {
-        Some(name) => name.clone(),
-        None => {
-            eprintln!("Usage: flz schedule {} <name>", verb);
-            exit(1);
-        }
-    }
-}
-
-fn require_param(args: &[String], key: &str, usage: &str) -> String {
-    match args::or_refuse(args::extract_param(args, key, key)) {
-        Some(value) if !value.is_empty() => value,
-        _ => {
-            eprintln!("Error: {} is required.\n {}", key, usage);
-            exit(1);
-        }
-    }
 }

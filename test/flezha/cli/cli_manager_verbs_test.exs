@@ -167,17 +167,26 @@ defmodule Flezha.Service.CliManagerRewindTest do
     end
   end
 
-  # Error verdicts exit(:cli_error) for the CLI exit code (see cli_error!/1) while
-  # a successful rewind returns normally; swallow the exit either way so the
-  # printed report stays assertable.
+  # A rewind that refuses exits `:cli_error` and renders on stderr; one that
+  # succeeds returns normally and reports on stdout. Both streams are captured
+  # so a test can assert on whichever this rewind produced.
   defp rewind(inst, to_iter) do
-    capture_io(fn ->
-      try do
-        CliManager.operative_rewind("default", inst, to_iter)
-      catch
-        :exit, _ -> :ok
-      end
-    end)
+    stderr =
+      capture_io(:stderr, fn ->
+        stdout =
+          capture_io(fn ->
+            try do
+              CliManager.operative_rewind("default", inst, to_iter)
+            catch
+              :exit, _ -> :ok
+            end
+          end)
+
+        send(self(), {:stdout, stdout})
+      end)
+
+    assert_received {:stdout, stdout}
+    stdout <> stderr
   end
 
   test "a rewind that goes through reports where the loop resumes" do
@@ -509,7 +518,8 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
     # `flz token issue` / `whoami` / `list` / `revoke`.
     issue_out =
       capture_io(fn ->
-        CliManager.authz_render_token_issue("carol", "render-ns", "operator", 3_600,
+        CliManager.authz_render_token_issue("carol", "render-ns", "operator",
+          ttl: 3_600,
           token: admin_token
         )
       end)

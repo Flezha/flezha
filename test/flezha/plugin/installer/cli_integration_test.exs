@@ -68,17 +68,24 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     capture_io(fn -> CliManager.install_plugin(fpz) end)
 
     # Enable — this will call PluginManager.enable_plugin which expects a
-    # real operative. Without one, the enable will fail. Verify the error
-    # is surfaced to stdout rather than crashing.
-    enable_output =
-      capture_io(fn ->
-        catch_exit(CliManager.installer_enable_plugin("cli_life_#{unique}"))
+    # real operative. Without one, the enable will fail. Verify the error is
+    # surfaced on stderr, where every `flz` failure goes, rather than crashing.
+    enable_stderr =
+      capture_io(:stderr, fn ->
+        enable_stdout =
+          capture_io(fn ->
+            catch_exit(CliManager.installer_enable_plugin("cli_life_#{unique}"))
+          end)
+
+        send(self(), {:stdout, enable_stdout})
       end)
 
-    # Either succeeds (if the PluginManager path is tolerant) or reports a
-    # structured error and exits :cli_error — both are acceptable CLI
-    # behaviours as long as we don't crash.
-    assert enable_output =~ "Plugin" or enable_output =~ "Error"
+    assert_received {:stdout, enable_stdout}
+
+    # Either succeeds (if the PluginManager path is tolerant) and says so on
+    # stdout, or reports a structured error on stderr and exits :cli_error —
+    # both are acceptable CLI behaviours as long as we don't crash.
+    assert enable_stdout =~ "Plugin" or enable_stderr =~ "error: "
 
     # Disable is idempotent on a not-enabled plugin, so it should always
     # produce the success line.
@@ -135,9 +142,11 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     :ok = Store.update_status("cli_refuse_#{unique}", :enabled)
 
     output =
-      capture_io(fn -> catch_exit(CliManager.uninstall_plugin("cli_refuse_#{unique}")) end)
+      capture_io(:stderr, fn ->
+        catch_exit(CliManager.uninstall_plugin("cli_refuse_#{unique}"))
+      end)
 
-    assert output =~ "Error uninstalling plugin"
+    assert output =~ "error: uninstalling plugin"
     assert output =~ "plugin_enabled"
   end
 
@@ -145,7 +154,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     bad = Path.join(tmp, "bad.fpz")
     File.write!(bad, "not a tarball")
 
-    output = capture_io(fn -> catch_exit(CliManager.install_plugin(bad)) end)
-    assert output =~ "Error installing plugin"
+    output = capture_io(:stderr, fn -> catch_exit(CliManager.install_plugin(bad)) end)
+    assert output =~ "error: installing plugin"
   end
 end

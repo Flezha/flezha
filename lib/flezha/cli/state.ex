@@ -48,7 +48,7 @@ defmodule Flezha.Service.Cli.State do
          %{namespace: OperativeManager.namespace_of_class(operative_class), entity_id: entity_id}}
 
       {:error, reason} ->
-        Context.cli_error!("#{verb}: #{reason}", :stderr)
+        Context.fail!("#{verb}: #{reason}")
     end
   end
 
@@ -62,9 +62,8 @@ defmodule Flezha.Service.Cli.State do
         {:ok, %{namespace: OperativeManager.namespace_of_class(rc), entity_id: {rc, sh, pk}}}
 
       _ ->
-        Context.cli_error!(
-          "state delete: expected <operative>/<procedure>/<entity_key>; got #{path_string}",
-          :stderr
+        Context.fail!(
+          "state delete: expected <operative>/<procedure>/<entity_key>; got #{path_string}"
         )
     end
   end
@@ -77,7 +76,7 @@ defmodule Flezha.Service.Cli.State do
        %{namespace: namespace, targets: targets, procedure: procedure, entity_key: entity_key}}
     else
       {:error, reason} ->
-        Context.cli_error!("state get: #{render_state_get_error(reason)}", :stderr)
+        Context.fail!("state get: #{render_state_get_error(reason)}")
     end
   end
 
@@ -89,7 +88,7 @@ defmodule Flezha.Service.Cli.State do
          %{namespace: OperativeManager.namespace_of_class(operative_class), entity_id: entity_id}}
 
       {:error, reason} ->
-        Context.cli_error!("replay: #{inspect(reason)}", :stderr)
+        Context.fail!("replay: #{Context.format_reason(reason)}")
     end
   end
 
@@ -114,7 +113,7 @@ defmodule Flezha.Service.Cli.State do
       print_state_get(path_string, json, change_seq, output_format)
     else
       {:error, reason} ->
-        Context.cli_error!("state get: #{render_state_get_error(reason)}", :stderr)
+        Context.fail!("state get: #{render_state_get_error(reason)}")
     end
   end
 
@@ -266,7 +265,7 @@ defmodule Flezha.Service.Cli.State do
     end
   end
 
-  defp render_state_get_error(reason), do: inspect(reason)
+  defp render_state_get_error(reason), do: Context.format_reason(reason)
 
   @doc """
   `flz state list <operative_class>` — print one row per Entity under
@@ -330,10 +329,7 @@ defmodule Flezha.Service.Cli.State do
         print_state_at(entity_id, target, result, output_format)
 
       {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
-        Context.cli_error!(
-          "state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})",
-          :stderr
-        )
+        Context.fail!("state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})")
     end
   end
 
@@ -365,11 +361,11 @@ defmodule Flezha.Service.Cli.State do
       {:ok, runner_id} ->
         case Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
           {:ok, _ref} -> IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
-          {:error, reason} -> Context.cli_error!("state rotate: #{inspect(reason)}", :stderr)
+          {:error, reason} -> Context.fail!("state rotate: #{Context.format_reason(reason)}")
         end
 
       {:error, reason} ->
-        Context.cli_error!("state rotate: #{reason}", :stderr)
+        Context.fail!("state rotate: #{reason}")
     end
   end
 
@@ -440,14 +436,13 @@ defmodule Flezha.Service.Cli.State do
       )
     else
       {:error, %{kind: :outside_retention, earliest_available: earliest}} ->
-        Context.cli_error!(
+        Context.fail!(
           "replay: outside_retention — the earliest replayable point for " <>
-            "#{path_string} is seq #{inspect(earliest)}",
-          :stderr
+            "#{path_string} is seq #{inspect(earliest)}"
         )
 
       {:error, reason} ->
-        Context.cli_error!("replay: #{inspect(reason)}", :stderr)
+        Context.fail!("replay: #{Context.format_reason(reason)}")
     end
   end
 
@@ -473,8 +468,8 @@ defmodule Flezha.Service.Cli.State do
   if the runner separately writes it to runtime.exs.
   """
   def state_retention(operative_class, hours_string, _call) do
-    case Integer.parse(hours_string) do
-      {hours, ""} when hours >= 0 ->
+    case Context.integer!(hours_string, "<hours>") do
+      hours when hours >= 0 ->
         current = Config.get(:time_travel_retention_hours)
         updated = Map.put(current, operative_class, hours)
         Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
@@ -484,7 +479,7 @@ defmodule Flezha.Service.Cli.State do
         )
 
       _ ->
-        Context.cli_error!("state retention: hours must be a non-negative integer", :stderr)
+        Context.fail!("state retention: hours must be a non-negative integer")
     end
   end
 

@@ -32,7 +32,7 @@ defmodule Flezha.Service.Cli.Observe do
   """
   def observability_render_tail(source_str, format, %{opts: opts})
       when format in ["text", "json"] do
-    source = String.to_atom(source_str)
+    source = registered_source!(source_str)
     duration_ms = Keyword.get(opts, :duration_ms, 30_000)
 
     case ObsSvc.tail_source(source) do
@@ -42,7 +42,7 @@ defmodule Flezha.Service.Cli.Observe do
   end
 
   def observability_render_enable(source_str, _call) do
-    source = String.to_atom(source_str)
+    source = registered_source!(source_str)
 
     case ObsSvc.enable(source) do
       :ok ->
@@ -55,7 +55,7 @@ defmodule Flezha.Service.Cli.Observe do
   end
 
   def observability_render_disable(source_str, _call) do
-    source = String.to_atom(source_str)
+    source = registered_source!(source_str)
 
     case ObsSvc.disable(source) do
       :ok ->
@@ -184,18 +184,26 @@ defmodule Flezha.Service.Cli.Observe do
     )
   end
 
-  defp render_error(:pubsub_sink_disabled) do
-    Context.cli_error!(
-      "error: pubsub sink is disabled; enable :observability, :pubsub_sink_enabled to use `flz observe tail`",
-      :stderr
-    )
+  # The registry IS the allow-list: a source name the operator typed is read
+  # against what is registered, never with `String.to_atom/1`, which would mint
+  # an atom the node then keeps for ever for every typo.
+  defp registered_source!(written) do
+    case ObsSvc.sources() do
+      {:ok, sources} ->
+        Context.atom!(written, Enum.map(sources, & &1.name), "source")
+
+      {:error, reason} ->
+        render_error(reason)
+    end
   end
 
-  defp render_error(:observability_disabled) do
-    Context.cli_error!("error: observability is disabled", :stderr)
-  end
+  defp render_error(reason), do: Context.fail!(reason, &observe_message/1)
 
-  defp render_error(reason) do
-    Context.cli_error!("error: #{inspect(reason)}", :stderr)
-  end
+  defp observe_message(:pubsub_sink_disabled),
+    do:
+      "pubsub sink is disabled; enable :observability, :pubsub_sink_enabled " <>
+        "to use `flz observe tail`"
+
+  defp observe_message(:observability_disabled), do: "observability is disabled"
+  defp observe_message(_reason), do: nil
 end

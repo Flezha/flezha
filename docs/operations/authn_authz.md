@@ -138,6 +138,17 @@ Every gated verb accepts `--token <t>` or reads `FLEZHA_TOKEN`. Issue and
 revoke emit `:token_issued` / `:token_revoked`. Verification rejects a revoked
 or expired token on the next call — there is no propagation lag.
 
+The credential is read wherever it is written: `flz operative stop --token t
+op1` and `flz operative stop op1 --token t` are the same request. Every `flz`
+option works that way — a verb's positional arguments are the words that remain
+once its declared options and their values are taken out — so a flag written
+before the subject of the command is a flag, and not the subject.
+
+Two verbs are stricter than the rest: `flz boot await` and `flz reset` refuse an
+argument they do not recognise, because one blocks for as long as its option
+says and the other deletes state. Every other verb passes an unrecognised word
+on and answers with its defaults.
+
 ## Namespaces and quotas
 
 Namespaces are the tenancy boundary: every Operative, state file, audit record

@@ -21,9 +21,10 @@ defmodule Flezha.Service.Cli.Plugin do
   options, with the decoded provider, flags and options the body needs.
   """
   def enable_row([_plugin_id, provider_id, plugin_flags_json, opts_json | _]) do
-    with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
-         {:ok, plugin_flags} <- Jason.decode(plugin_flags_json),
-         {:ok, opts} <- Jason.decode(opts_json) do
+    with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id) do
+      plugin_flags = Context.json!(plugin_flags_json, "plugin settings")
+      opts = Context.json!(opts_json, "plugin options")
+
       {:ok,
        %{
          namespace: Map.get(opts, "namespace", "default"),
@@ -32,7 +33,7 @@ defmodule Flezha.Service.Cli.Plugin do
          opts: opts
        }}
     else
-      {:error, reason} -> Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -65,7 +66,7 @@ defmodule Flezha.Service.Cli.Plugin do
         IO.puts("Plugin #{plugin_id} enabled successfully.")
 
       {:error, reason} ->
-        Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
+        Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -128,7 +129,7 @@ defmodule Flezha.Service.Cli.Plugin do
   def disable_plugin(plugin_id, _call) do
     case PluginManager.disable_plugin_group(plugin_id) do
       {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
-      {:error, reason} -> Context.cli_error!("Error disabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> Context.fail!("disabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -141,7 +142,7 @@ defmodule Flezha.Service.Cli.Plugin do
         )
 
       {:error, reason} ->
-        Context.cli_error!("Error installing plugin: #{inspect(reason)}.")
+        Context.fail!("installing plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -149,7 +150,7 @@ defmodule Flezha.Service.Cli.Plugin do
   def upgrade_plugin(plugin_id, path, _call) do
     case Installer.upgrade(plugin_id, path) do
       {:ok, installed} -> IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
-      {:error, reason} -> Context.cli_error!("Error upgrading plugin: #{inspect(reason)}.")
+      {:error, reason} -> Context.fail!("upgrading plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -157,7 +158,7 @@ defmodule Flezha.Service.Cli.Plugin do
   def uninstall_plugin(plugin_id, _call) do
     case Installer.uninstall(plugin_id) do
       :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
-      {:error, reason} -> Context.cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
+      {:error, reason} -> Context.fail!("uninstalling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -165,7 +166,7 @@ defmodule Flezha.Service.Cli.Plugin do
   def installer_enable_plugin(plugin_id, _call) do
     case Installer.enable(plugin_id) do
       :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-      {:error, reason} -> Context.cli_error!("Error enabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> Context.fail!("enabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -173,7 +174,7 @@ defmodule Flezha.Service.Cli.Plugin do
   def installer_disable_plugin(plugin_id, _call) do
     case Installer.disable(plugin_id) do
       :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
-      {:error, reason} -> Context.cli_error!("Error disabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> Context.fail!("disabling plugin: #{Context.format_reason(reason)}")
     end
   end
 
@@ -270,13 +271,11 @@ defmodule Flezha.Service.Cli.Plugin do
             )
 
           e ->
-            Context.cli_error!(
-              "Error getting help for plugin '#{provider_id}': #{Exception.message(e)}"
-            )
+            Context.fail!("getting help for plugin '#{provider_id}': #{Exception.message(e)}")
         end
 
       {:error, reason} ->
-        Context.cli_error!("Error: #{reason}")
+        Context.fail!("#{reason}")
     end
   end
 

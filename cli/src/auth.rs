@@ -1,43 +1,36 @@
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::exit;
 
-use crate::dispatch::{self, Command};
+use crate::args::{Positional, Reading, APP_DATA_ROOT};
+use crate::dispatch::{self, Command, Missing, Verb};
+use crate::help;
 use crate::rpc::{self, controller_is_up, text, DEFAULT_PROBE_TIMEOUT_MS};
-use crate::{args, help};
 
 pub(crate) const TABLE: Command = Command {
+    path: "flz auth",
     help: help::AUTH,
     verbs: &[
-        ("bootstrap", handle_bootstrap),
-        ("whoami", handle_whoami),
-        ("rebootstrap", handle_rebootstrap),
+        Verb::new("bootstrap", handle_bootstrap).taking(&[Positional::required("<token>")]),
+        Verb::new("whoami", |read| {
+            rpc::token_only(read, "authz_render_whoami")
+        }),
+        Verb::new("rebootstrap", handle_rebootstrap).reading(&[APP_DATA_ROOT]),
     ],
     help_verbs: dispatch::HELP_VERBS,
-    missing: None,
-    unknown: "Error: Invalid argument '{}'. Use 'bootstrap', 'whoami', 'rebootstrap', or 'help'.",
+    missing: Missing::Screen,
     unknown_prints_help: false,
 };
 
-fn handle_bootstrap(args: &[String]) {
-    if args.len() < 2 {
-        eprintln!(
-            "Usage: flz auth bootstrap <token> (the token path is logged at controller boot)"
-        );
-        exit(1);
-    }
-
+fn handle_bootstrap(read: &Reading) {
     rpc::run(
         "authz_render_bootstrap",
-        &[text(&args[1])],
+        &[text(read.pos("<token>"))],
         &[],
-        &args[2..],
+        read.token(),
         rpc::PROPAGATE,
     );
-}
-
-fn handle_whoami(args: &[String]) {
-    rpc::token_only(args, "authz_render_whoami");
 }
 
 // Break-glass recovery for a lost admin@_system: OFFLINE by design — it
@@ -46,7 +39,7 @@ fn handle_whoami(args: &[String]) {
 // writes the REBOOTSTRAP marker; the next controller boot consumes it,
 // invalidates the stale admin bindings/tokens, and re-enters the ordinary
 // bootstrap flow with a fresh token.
-fn handle_rebootstrap(args: &[String]) {
+fn handle_rebootstrap(read: &Reading) {
     if controller_is_up(DEFAULT_PROBE_TIMEOUT_MS) {
         eprintln!(
             "flz auth rebootstrap refuses to run while the controller is up. \
@@ -56,8 +49,8 @@ fn handle_rebootstrap(args: &[String]) {
     }
 
     let auth_dir = match std::env::var("FLEZHA_AUTHZ_DIR") {
-        Ok(dir) if !dir.is_empty() => std::path::PathBuf::from(dir),
-        _ => args::app_data_root(&args[1..]).join("auth"),
+        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => PathBuf::from(read.opt(APP_DATA_ROOT.long).unwrap_or("./app_data")).join("auth"),
     };
 
     if !auth_dir.is_dir() {

@@ -41,8 +41,9 @@ defmodule Flezha.Service.Cli.Schedule do
     factory_id = Keyword.get(opts, :factory, "")
     plugins_json = Keyword.get(opts, :plugins, "")
 
+    init_map = Context.json!(Keyword.get(opts, :init_values, ""), "--init_values")
+
     with :ok <- schedule_workflow_only(Keyword.get(opts, :kind, "workflow")),
-         {:ok, init_map} <- schedule_decode_init(Keyword.get(opts, :init_values, "")),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
            Store.add(%{
@@ -161,15 +162,6 @@ defmodule Flezha.Service.Cli.Schedule do
     end
   end
 
-  defp schedule_decode_init(""), do: {:ok, %{}}
-
-  defp schedule_decode_init(json) do
-    case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> {:ok, map}
-      _ -> {:error, {:invalid_init_values, json}}
-    end
-  end
-
   # Warn-only: the factory's runner may simply not have connected yet.
   defp schedule_warn_absent_factory(namespace, factory_id) do
     case FleetManager.runners_for_factory(namespace, factory_id) do
@@ -204,9 +196,7 @@ defmodule Flezha.Service.Cli.Schedule do
     |> Kernel.<>(last)
   end
 
-  defp render_schedule_error(reason) do
-    Context.cli_error!("error: " <> schedule_error_message(reason), :stderr)
-  end
+  defp render_schedule_error(reason), do: Context.fail!(reason, &schedule_error_message/1)
 
   defp schedule_error_message({:not_found, name}), do: "schedule #{name} not found"
   defp schedule_error_message({:invalid_cron, msg}), do: "invalid --cron: #{msg}"
@@ -216,16 +206,13 @@ defmodule Flezha.Service.Cli.Schedule do
 
   defp schedule_error_message({:invalid_name, msg}), do: "invalid schedule name: #{msg}"
 
-  defp schedule_error_message({:invalid_init_values, _}),
-    do: "--init_values must be a JSON object"
-
   defp schedule_error_message({:unschedulable_kind, kind}),
     do: "only workflow operatives are schedulable (got kind #{kind})"
 
   defp schedule_error_message({:invalid_plugins, msg}), do: "invalid --plugins: #{msg}"
 
   defp schedule_error_message({:invalid_plugins_json, reason}),
-    do: "invalid --plugins JSON: #{inspect(reason)}"
+    do: "invalid --plugins JSON: #{Context.format_reason(reason)}"
 
   defp schedule_error_message({:unknown_provider, id}),
     do: "invalid --plugins: unknown provider #{id}"
@@ -237,5 +224,5 @@ defmodule Flezha.Service.Cli.Schedule do
     do: "invalid --plugins opts: #{inspect(detail)}"
 
   defp schedule_error_message(:already_exists), do: "a schedule with that name already exists"
-  defp schedule_error_message(reason), do: inspect(reason)
+  defp schedule_error_message(_reason), do: nil
 end

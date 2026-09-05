@@ -131,7 +131,7 @@ EXAMPLES:
 pub(crate) const CONTROLLER_STATUS: Help = r#"flz controller status - Print controller status
 
 USAGE:
-    flz controller status [--json]
+    flz controller status [--output text|json] [--json]
 
 OUTPUT FIELDS:
     shutdown_in_progress       True while quiesce/drain/finalise is running
@@ -251,11 +251,11 @@ pub(crate) const OBSERVE_DISABLE: Help = r#"flz observe disable <SOURCE>"#;
 
 pub(crate) const OBSERVE_ENABLE: Help = r#"flz observe enable <SOURCE>"#;
 
-pub(crate) const OBSERVE_SINKS: Help = r#"flz observe sinks [--json]
+pub(crate) const OBSERVE_SINKS: Help = r#"flz observe sinks [--output text|json] [--json]
 
 Print one row per registered sink (name, module, overflow, watermark)."#;
 
-pub(crate) const OBSERVE_SOURCES: Help = r#"flz observe sources [--json]
+pub(crate) const OBSERVE_SOURCES: Help = r#"flz observe sources [--output text|json] [--json]
 
 Print one row per registered source (name, status, kinds, cardinality budget)."#;
 

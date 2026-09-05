@@ -255,7 +255,7 @@ const CASES: &[(&[&str], Want)] = &[
     // name rather than answered with the default wait.
     (
         &["boot", "await", "--nope"],
-        Refused("unexpected argument '--nope'"),
+        Refused("unknown argument '--nope'"),
     ),
     (
         &["boot", "await", "--timeout"],
@@ -285,13 +285,13 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["token", "issue", "p", "ns", "viewer"],
         Rpc(
-            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", 86400, [])",
+            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", [ttl: 86400])",
         ),
     ),
     (
         &["token", "issue", "p", "ns", "viewer", "--ttl", "60"],
         Rpc(
-            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", 60, [])",
+            "Flezha.Service.CliManager.authz_render_token_issue(\"p\", \"ns\", \"viewer\", [ttl: 60])",
         ),
     ),
     (

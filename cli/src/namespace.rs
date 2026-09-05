@@ -1,30 +1,54 @@
-use std::process::exit;
-
-use crate::args::{self, extract_x_flags, serialize_flags};
-use crate::dispatch::{self, Command};
+use crate::args::{Positional, Reading, JSON_SWITCH, OUTPUT};
+use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
+use crate::settings::{extract_x_flags, serialize_flags};
+
+const NAME: &[Positional] = &[Positional::required("<name>")];
 
 pub(crate) const TABLE: Command = Command {
+    path: "flz namespace",
     help: help::NAMESPACE,
     verbs: &[
-        ("list", handle_list),
-        ("create", handle_create),
-        ("delete", handle_delete),
-        ("show", handle_show),
-        ("set-quota", handle_set_quota),
+        Verb::new("list", handle_list).reading(&[OUTPUT, JSON_SWITCH]),
+        Verb::new("create", |read| {
+            quota_verb(read, "authz_render_namespace_create")
+        })
+        .taking(NAME)
+        .open(),
+        Verb::new("delete", |read| {
+            rpc::one_arg(
+                read,
+                NAME[0].name,
+                "authz_render_namespace_delete",
+                rpc::PROPAGATE,
+            )
+        })
+        .taking(NAME),
+        Verb::new("show", |read| {
+            rpc::one_arg(
+                read,
+                NAME[0].name,
+                "authz_render_namespace_show",
+                rpc::PROPAGATE,
+            )
+        })
+        .taking(NAME),
+        Verb::new("set-quota", |read| {
+            quota_verb(read, "authz_render_namespace_set_quota")
+        })
+        .taking(NAME)
+        .open(),
     ],
     help_verbs: dispatch::HELP_VERBS,
-    missing: Some("Error: Invalid number of arguments. See help for more information."),
-    unknown:
-        "Error: Invalid argument '{}'. Use 'list', 'create', 'delete', 'show', 'set-quota', or 'help'.",
+    missing: Missing::Refuse,
     unknown_prints_help: false,
 };
 
 /// The only list verb whose RPC takes no namespace: the namespaces ARE the
 /// scope, so `rpc::scoped_read`'s shape does not fit it.
-fn handle_list(args: &[String]) {
-    let output_format = args::output_format(&args[1..]);
+fn handle_list(read: &Reading) {
+    let output_format = read.output_format();
 
     if output_format == "text" {
         println!("Fetching namespaces...");
@@ -34,68 +58,23 @@ fn handle_list(args: &[String]) {
         "list_namespaces",
         &[text(output_format)],
         &[],
-        args,
+        read.token(),
         rpc::REFUSED,
     );
 }
 
-// Quota overrides ride the repeatable `--X<field>=<value>` flags
-// (e.g. `--Xmax_runners=4 --Xmax_state_bytes=1073741824`), serialized to the
-// same JSON object shape every other `--X` surface uses.
-fn quotas_json_literal(args: &[String]) -> String {
-    text(&serialize_flags(&extract_x_flags(args)))
-}
-
-/// The two usage lines that advertise a quota override. Constants because
-/// `args.rs` asserts the parser reads every setting the CLI prints.
-pub(crate) const CREATE_USAGE: &str =
-    "Usage: flz namespace create <name> [--X<quota>=<value> ...] [--token <admin-token>]";
-
-pub(crate) const SET_QUOTA_USAGE: &str =
-    "Usage: flz namespace set-quota <name> --X<quota>=<value> [...] [--token <admin-token>]";
-
-fn handle_create(args: &[String]) {
-    if args.len() < 2 {
-        eprintln!("{}", CREATE_USAGE);
-        exit(1);
-    }
-
+/// The two verbs that carry quota overrides. They ride the repeatable
+/// `--X<field>=<value>` settings (e.g. `--Xmax_runners=4`), serialized to the
+/// same JSON object shape every other `--X` surface uses.
+fn quota_verb(read: &Reading, rpc_fun: &str) {
     rpc::run(
-        "authz_render_namespace_create",
-        &[text(&args[1]), quotas_json_literal(&args[2..])],
+        rpc_fun,
+        &[
+            text(read.pos(NAME[0].name)),
+            text(&serialize_flags(&extract_x_flags(read.rest()))),
+        ],
         &[],
-        args,
-        rpc::PROPAGATE,
-    );
-}
-
-fn handle_delete(args: &[String]) {
-    rpc::one_arg_authz(
-        args,
-        "authz_render_namespace_delete",
-        "Usage: flz namespace delete <name> [--token <admin-token>]",
-    );
-}
-
-fn handle_show(args: &[String]) {
-    rpc::one_arg_authz(
-        args,
-        "authz_render_namespace_show",
-        "Usage: flz namespace show <name> [--token <token>]",
-    );
-}
-
-fn handle_set_quota(args: &[String]) {
-    if args.len() < 2 {
-        eprintln!("{}", SET_QUOTA_USAGE);
-        exit(1);
-    }
-
-    rpc::run(
-        "authz_render_namespace_set_quota",
-        &[text(&args[1]), quotas_json_literal(&args[2..])],
-        &[],
-        args,
+        read.token(),
         rpc::PROPAGATE,
     );
 }

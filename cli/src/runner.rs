@@ -4,26 +4,30 @@ use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::utility::socket_dir::Role;
 use flz_transport::utility::socket_probe::diagnose;
 
-use crate::dispatch::{self, Command};
+use crate::args::{Reading, JSON_SWITCH, NAMESPACE, OUTPUT};
+use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
 
 pub(crate) const TABLE: Command = Command {
+    path: "flz runner",
     help: help::RUNNER,
-    verbs: &[("list", handle_list), ("check", handle_check)],
+    verbs: &[
+        Verb::new("list", handle_list).reading(&[NAMESPACE, OUTPUT, JSON_SWITCH]),
+        Verb::new("check", handle_check),
+    ],
     help_verbs: dispatch::HELP_VERBS,
-    missing: Some("Error: Invalid number of arguments. See help for more information."),
-    unknown: "Error: Invalid argument '{}'. Use 'list', 'check' or 'help'.",
+    missing: Missing::Refuse,
     unknown_prints_help: false,
 };
 
-fn handle_list(args: &[String]) {
-    rpc::scoped_read(&args[1..], "list_runners", Some("runners"));
+fn handle_list(read: &Reading) {
+    rpc::scoped_read(read, "list_runners", Some("runners"));
 }
 
 /// Where this host's controller is, and why a runner cannot reach it — the
 /// same ladder and the same probe a runner walks, from a shell, with no runner
 /// code, no running runner and no controller needed.
-fn handle_check(_args: &[String]) {
+fn handle_check(_read: &Reading) {
     if get_transport_type() == TransportType::Quic {
         println!("note: FLEZHA_TRANSPORT=quic — this check covers the UDS socket directory only");
     }

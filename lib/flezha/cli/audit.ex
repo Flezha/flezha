@@ -183,22 +183,14 @@ defmodule Flezha.Service.Cli.Audit do
     end
   end
 
-  defp render_audit_error(:audit_log_disabled) do
-    Context.cli_error!(
-      "error: audit log is disabled; set FLEZHA_AUDIT_ENABLED=true or :audit_log, :enabled: true in config",
-      :stderr
-    )
-  end
+  defp render_audit_error(reason), do: Context.fail!(reason, &audit_message/1)
 
-  defp render_audit_error(:observability_disabled) do
-    Context.cli_error!("error: observability is disabled", :stderr)
-  end
+  defp audit_message(:audit_log_disabled),
+    do:
+      "audit log is disabled; set FLEZHA_AUDIT_ENABLED=true or " <>
+        ":audit_log, :enabled: true in config"
 
-  defp render_audit_error(:file_not_found) do
-    Context.cli_error!("error: file not found", :stderr)
-  end
-
-  defp render_audit_error(reason) do
-    Context.cli_error!("error: #{inspect(reason)}", :stderr)
-  end
+  defp audit_message(:observability_disabled), do: "observability is disabled"
+  defp audit_message(:file_not_found), do: "file not found"
+  defp audit_message(_reason), do: nil
 end

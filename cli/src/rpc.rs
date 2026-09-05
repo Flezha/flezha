@@ -8,11 +8,11 @@
 //! and the caller's token joins that list here and nowhere else: no verb can be
 //! gated on the controller and token-less on the wire.
 
-use std::process::{exit, Command, ExitStatus};
+use std::process::{exit, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 use std::{env, io};
 
-use crate::args;
+use crate::args::{Reading, DEFAULT_WINDOW_MS, DURATION_MS};
 
 /// What a verb exits with when `flzvm` refuses.
 #[derive(Clone, Copy)]
@@ -97,20 +97,19 @@ pub(crate) const QUIET: Failure = Failure::new(Exit::Fixed(1));
 pub(crate) type Opt<'a> = (&'a str, String);
 
 /// Run one `CliManager` call on the controller: `fun` with `positional` (each
-/// an Elixir literal) and `opts`, the caller's token appended from `args`.
-/// Returns only when the child succeeded, so the caller's next line is its
-/// success path.
+/// an Elixir literal) and `opts`, the caller's token appended. Returns only
+/// when the child succeeded, so the caller's next line is its success path.
 pub(crate) fn run(
     fun: &str,
     positional: &[String],
     opts: &[Opt],
-    args: &[String],
+    token: Option<&str>,
     failure: Failure,
 ) {
     verdict(
         flzvm()
             .arg("rpc")
-            .arg(expression(fun, positional, opts, args))
+            .arg(expression(fun, positional, opts, token))
             .status(),
         failure,
     );
@@ -121,11 +120,32 @@ pub(crate) fn expression(
     fun: &str,
     positional: &[String],
     opts: &[Opt],
-    args: &[String],
+    token: Option<&str>,
 ) -> String {
     let mut parts: Vec<String> = positional.to_vec();
-    parts.push(keyword_opts_fragment(opts, args));
+    parts.push(keyword_opts_fragment(opts, token));
     format!("Flezha.Service.CliManager.{}({})", fun, parts.join(", "))
+}
+
+/// The request whose answer is what the controller printed rather than the
+/// code it exited with. The status is still `verdict`'s to judge, so a verb
+/// that reads stdout does not also decide for itself whether the call worked.
+pub(crate) fn captured(expression: String, failure: Failure) -> String {
+    match flzvm()
+        .arg("rpc")
+        .arg(expression)
+        .stderr(Stdio::inherit())
+        .output()
+    {
+        Ok(output) => {
+            verdict(Ok(output.status), failure);
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+        Err(e) => {
+            verdict(Err(e), failure);
+            String::new()
+        }
+    }
 }
 
 /// Apply a failure policy to a child that has already been waited on.
@@ -160,16 +180,16 @@ pub(crate) fn verdict(status: io::Result<ExitStatus>, failure: Failure) {
 /// The read verbs — a namespace, an output format, a progress line only text
 /// mode prints, and one RPC taking both. `progress` names what is being
 /// fetched; `None` prints no line, which is what `flz cluster status` does.
-pub(crate) fn scoped_read(args: &[String], rpc_fun: &str, progress: Option<&str>) {
-    let namespace = args::namespace(args);
-    let output_format = args::output_format(args);
+pub(crate) fn scoped_read(read: &Reading, rpc_fun: &str, progress: Option<&str>) {
+    let namespace = read.namespace();
+    let output_format = read.output_format();
 
     if let Some(noun) = progress {
         if output_format == "text" {
             let display_namespace = if namespace.is_empty() {
                 "default"
             } else {
-                &namespace
+                namespace
             };
             println!("Fetching {} for namespace '{}'...", noun, display_namespace);
         }
@@ -177,28 +197,48 @@ pub(crate) fn scoped_read(args: &[String], rpc_fun: &str, progress: Option<&str>
 
     run(
         rpc_fun,
-        &[text(&namespace), text(output_format)],
+        &[text(namespace), text(output_format)],
         &[],
-        args,
+        read.token(),
         REFUSED,
     );
 }
 
-/// The authz verbs that take one argument and the caller's token:
-/// `role unbind`, `token revoke`, `namespace delete`, `namespace show`.
-pub(crate) fn one_arg_authz(args: &[String], rpc_fun: &str, usage: &str) {
-    if args.len() < 2 {
-        eprintln!("{}", usage);
-        exit(1);
-    }
+/// The verbs whose whole request is a rendering choice: `flz audit stats`,
+/// `flz observe sinks`, `flz controller status`. They differ in what they ask
+/// for and in what a refusal costs, and in nothing else.
+pub(crate) fn rendered(read: &Reading, rpc_fun: &str, failure: Failure) {
+    run(
+        rpc_fun,
+        &[text(read.output_format())],
+        &[],
+        read.token(),
+        failure,
+    );
+}
 
-    run(rpc_fun, &[text(&args[1])], &[], args, PROPAGATE);
+/// The window a bounded stream runs for, as the option its request carries.
+/// The two verbs that tail name different subjects and share this.
+pub(crate) fn window(read: &Reading) -> Opt<'static> {
+    let ms = read
+        .num::<u64>(DURATION_MS.long)
+        .unwrap_or(DEFAULT_WINDOW_MS);
+
+    ("duration_ms", ms.to_string())
+}
+
+/// The verbs that name one thing and do one thing to it: a dead-letter entry,
+/// an Entity path, a schedule, a plugin, a namespace, an observability source.
+/// They differ in the slot's name and in what a refusal costs, and in nothing
+/// else.
+pub(crate) fn one_arg(read: &Reading, slot: &str, rpc_fun: &str, failure: Failure) {
+    run(rpc_fun, &[text(read.pos(slot))], &[], read.token(), failure);
 }
 
 /// The authz verbs that take nothing but the caller's token: the three list
 /// and identity reads.
-pub(crate) fn token_only(args: &[String], rpc_fun: &str) {
-    run(rpc_fun, &[], &[], args, PROPAGATE);
+pub(crate) fn token_only(read: &Reading, rpc_fun: &str) {
+    run(rpc_fun, &[], &[], read.token(), PROPAGATE);
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its
@@ -235,30 +275,18 @@ pub(crate) fn text(value: &str) -> String {
     serde_json::Value::String(value.to_string()).to_string()
 }
 
-/// The caller's identity token: `--token <t>` flag, else the FLEZHA_TOKEN
-/// environment variable. The CLI process resolves it (the controller's own
-/// env is NOT the caller's).
-fn auth_token(args: &[String]) -> Option<String> {
-    if let Some(t) = args::or_refuse(args::extract_param(args, "--token", "--token")) {
-        if !t.is_empty() {
-            return Some(t);
-        }
-    }
-
-    env::var("FLEZHA_TOKEN").ok().filter(|v| !v.is_empty())
-}
-
 /// The options list every request ends with: `opts` in the order given, then
 /// the caller's identity token when there is one — `[]` when it carries
-/// neither.
-fn keyword_opts_fragment(opts: &[Opt], args: &[String]) -> String {
+/// neither. The token is the walk's answer: the `--token` flag wherever it was
+/// written, else the environment variable its declaration names.
+fn keyword_opts_fragment(opts: &[Opt], token: Option<&str>) -> String {
     let mut entries: Vec<String> = opts
         .iter()
         .map(|(key, value)| format!("{}: {}", key, value))
         .collect();
 
-    if let Some(token) = auth_token(args) {
-        entries.push(format!("token: {}", text(&token)));
+    if let Some(token) = token {
+        entries.push(format!("token: {}", text(token)));
     }
 
     format!("[{}]", entries.join(", "))
@@ -285,7 +313,7 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let mut child = match flzvm()
         .arg("rpc")
-        .arg(expression("boot_status", &[], &[], &[]))
+        .arg(expression("boot_status", &[], &[], None))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -325,19 +353,17 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::args::owned as v;
 
     /// A token with a quote must not break out of the Elixir keyword literal,
     /// and a verb with nothing else still ends with the list.
     #[test]
     fn the_token_closes_the_options_list_and_is_escaped() {
-        let args = v(&["--token", "abc\"def"]);
         assert_eq!(
-            expression("x", &[], &[], &args),
+            expression("x", &[], &[], Some("abc\"def")),
             "Flezha.Service.CliManager.x([token: \"abc\\\"def\"])"
         );
         assert_eq!(
-            expression("x", &[], &[], &[]),
+            expression("x", &[], &[], None),
             "Flezha.Service.CliManager.x([])"
         );
     }
@@ -351,7 +377,7 @@ mod tests {
             ("init_values", text("{\"a\":\"x\\\"y\"}")),
         ];
         assert_eq!(
-            expression("schedule_add", &[text("d")], &opts, &v(&["--token", "t"])),
+            expression("schedule_add", &[text("d")], &opts, Some("t")),
             "Flezha.Service.CliManager.schedule_add(\"d\", [cron: \"0 8 * * *\", init_values: \"{\\\"a\\\":\\\"x\\\\\\\"y\\\"}\", token: \"t\"])"
         );
     }

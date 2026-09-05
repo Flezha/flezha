@@ -1,54 +1,51 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{exit, Stdio};
 
-use crate::dispatch::{self, Command};
-use crate::rpc::{self, text, Exit, Failure, Opt};
-use crate::{args, help};
+use crate::args::{OptSpec, Reading, JSON_SWITCH, OUTPUT};
+use crate::dispatch::{self, Command, Missing, Verb};
+use crate::help;
+use crate::rpc::{self, Exit, Failure, Opt};
 
-pub(crate) const TABLE: Command = Command {
-    help: help::CONTROLLER,
-    verbs: &[
-        ("start", handle_start),
-        ("stop", handle_stop),
-        ("status", handle_status),
-        ("mem-top", handle_mem_top),
-    ],
-    help_verbs: dispatch::HELP_VERBS,
-    missing: Some("Error: Invalid number of arguments. See `help` for more information."),
-    unknown: "Error: Invalid argument '{}'. Use 'start', 'stop', 'status', 'mem-top', or 'help'.",
-    unknown_prints_help: false,
-};
+const MODE: OptSpec = OptSpec::choice(
+    "--mode",
+    "-m",
+    "mode",
+    &["attached", "daemon", "attached_iex", "daemon_iex"],
+);
+const TIMEOUT_MS: OptSpec = OptSpec::number("--timeout-ms", "--timeout-ms", "<ms>");
+const NO_WAIT: OptSpec = OptSpec::switch("--no-wait", "--no-wait");
+const FORCE: OptSpec = OptSpec::switch("--force", "--force");
 
-// Exit codes match `flz controller status` / `stop`:
+// Exit codes match `flz controller status` / `mem-top`:
 //   0 — snapshot printed
 //   3 — controller socket unreachable
-fn handle_mem_top(args: &[String]) {
-    if dispatch::subcommand_help(&args[1..], help::CONTROLLER_MEM_TOP, dispatch::HELP_VERBS) {
-        return;
-    }
+const FORMAT: &[OptSpec] = &[OUTPUT, JSON_SWITCH];
 
-    rpc::run(
-        "controller_mem_top",
-        &[text(args::output_format(args))],
-        &[],
-        args,
-        rpc::UNREACHABLE,
-    );
-}
-
-fn handle_status(args: &[String]) {
-    if dispatch::subcommand_help(&args[1..], help::CONTROLLER_STATUS, dispatch::HELP_VERBS) {
-        return;
-    }
-
-    rpc::run(
-        "controller_status",
-        &[text(args::output_format(args))],
-        &[],
-        args,
-        rpc::UNREACHABLE,
-    );
-}
+pub(crate) const TABLE: Command = Command {
+    path: "flz controller",
+    help: help::CONTROLLER,
+    verbs: &[
+        Verb::new("start", handle_start)
+            .reading(&[MODE])
+            .screen(help::CONTROLLER_START),
+        Verb::new("stop", handle_stop)
+            .reading(&[TIMEOUT_MS, NO_WAIT, FORCE])
+            .screen(help::CONTROLLER_STOP),
+        Verb::new("status", |read| {
+            rpc::rendered(read, "controller_status", rpc::UNREACHABLE)
+        })
+        .reading(FORMAT)
+        .screen(help::CONTROLLER_STATUS),
+        Verb::new("mem-top", |read| {
+            rpc::rendered(read, "controller_mem_top", rpc::UNREACHABLE)
+        })
+        .reading(FORMAT)
+        .screen(help::CONTROLLER_MEM_TOP),
+    ],
+    help_verbs: dispatch::HELP_VERBS,
+    missing: Missing::Refuse,
+    unknown_prints_help: false,
+};
 
 /// The one verb that does not run `flzvm rpc`: it hands `flzvm` a start mode.
 /// `flzvm` halts non-zero when the node refuses to boot.
@@ -56,24 +53,14 @@ const START_FAILED: Failure = Failure::new(Exit::Fixed(1))
     .saying("Unknown code returned: {}")
     .diagnosing("Failed to start program");
 
-fn handle_start(args: &[String]) {
-    if dispatch::subcommand_help(&args[1..], help::CONTROLLER_START, dispatch::HELP_VERBS) {
-        return;
-    }
-
-    let mode_arg =
-        args::or_refuse(args::extract_param(&args[1..], "--mode", "-m")).unwrap_or_default();
-
-    let command_mode = match mode_arg.as_str() {
-        "attached" => "start",
-        "daemon" => "daemon",
-        "attached_iex" => "start_iex",
-        "daemon_iex" => "daemon_iex",
-        "" => "start",
-        _ => {
-            eprintln!("Error: Invalid mode '{}'. Use 'attached', 'daemon', 'attached_iex', or 'daemon_iex'.", mode_arg);
-            exit(1);
-        }
+fn handle_start(read: &Reading) {
+    let command_mode = match read.opt(MODE.long) {
+        Some("daemon") => "daemon",
+        Some("attached_iex") => "start_iex",
+        Some("daemon_iex") => "daemon_iex",
+        // The walk refused every word but these four, so the rest is
+        // `attached`, written or defaulted.
+        _ => "start",
     };
 
     println!("Starting flezha controller...");
@@ -83,19 +70,22 @@ fn handle_start(args: &[String]) {
     println!("Controller started successfully.");
 }
 
+/// The controller could not be reached at all: there is no outcome to report,
+/// only an unreachable socket. Judged by `rpc::verdict` like every other
+/// child, so this verb does not decide its own status.
+const UNREACHABLE_STOP: Failure = Failure::new(Exit::Fixed(3))
+    .saying("error: controller not reachable ({})")
+    .diagnosing("error: failed to run `flzvm rpc`");
+
 // Exit codes (per controller-graceful-shutdown spec):
 //   0 — clean shutdown
 //   1 — partial drain (timeout elapsed, some Operatives still local)
 //   2 — already shutting down (or coordinator not addressable)
 //   3 — controller socket unreachable
-fn handle_stop(args: &[String]) {
-    if dispatch::subcommand_help(&args[1..], help::CONTROLLER_STOP, dispatch::HELP_VERBS) {
-        return;
-    }
-
+fn handle_stop(read: &Reading) {
     // Built before the announcement: a refusal here means no shutdown starts,
     // and a line saying one has is the wrong thing to print above it.
-    let expression = rpc::expression("controller_stop", &[], &stop_opts(&args[1..]), &args[1..]);
+    let expression = rpc::expression("controller_stop", &[], &stop_opts(read), read.token());
 
     eprintln!("Stopping flezha controller...");
 
@@ -115,9 +105,7 @@ fn handle_stop(args: &[String]) {
     });
 }
 
-/// Drive the shutdown and answer its result marker. Exits 3 rather than
-/// returning when the controller could not be reached at all: there is no
-/// outcome to report then, only an unreachable socket.
+/// Drive the shutdown and answer its result marker.
 fn stop_outcome(expression: &str) -> Option<String> {
     let mut child = match rpc::flzvm()
         .arg("rpc")
@@ -126,38 +114,21 @@ fn stop_outcome(expression: &str) -> Option<String> {
         .stderr(Stdio::inherit())
         .spawn()
     {
-        Ok(c) => c,
+        Ok(child) => child,
         Err(e) => {
-            eprintln!("error: failed to spawn `{} rpc`: {}", rpc::flzvm_path(), e);
-            exit(3);
+            rpc::verdict(Err(e), UNREACHABLE_STOP);
+            return None;
         }
     };
 
-    let (outcome, saw_any_output) = read_stop_marker(&mut child);
+    let outcome = read_stop_marker(&mut child);
 
-    let status = match child.wait() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "error: failed to wait on `{} rpc`: {}",
-                rpc::flzvm_path(),
-                e
-            );
-            exit(3);
-        }
-    };
-
-    // `flzvm rpc` exits non-zero when it cannot reach the controller
-    // node (the most common cause being an unstarted controller —
-    // the control socket is also the readiness signal).
-    if !status.success() && outcome.is_none() {
-        if !saw_any_output {
-            eprintln!(
-                "error: controller not reachable (rpc exit {:?})",
-                status.code()
-            );
-        }
-        exit(3);
+    // `flzvm rpc` exits non-zero when it cannot reach the controller node (the
+    // most common cause being an unstarted controller — the control socket is
+    // also the readiness signal). A run that printed its marker has already
+    // said what happened, so only a silent one is judged by its status.
+    if outcome.is_none() {
+        rpc::verdict(child.wait(), UNREACHABLE_STOP);
     }
 
     outcome
@@ -165,18 +136,16 @@ fn stop_outcome(expression: &str) -> Option<String> {
 
 /// The three options a shutdown carries; the credential joins them where
 /// every request's does.
-fn stop_opts(args: &[String]) -> Vec<Opt<'static>> {
+fn stop_opts(read: &Reading) -> Vec<Opt<'static>> {
     let mut opts: Vec<Opt> = Vec::new();
 
-    if let Some(timeout_ms) =
-        args::or_refuse(args::number::<u64>(args, "--timeout-ms", "--timeout-ms"))
-    {
+    if let Some(timeout_ms) = read.opt(TIMEOUT_MS.long) {
         opts.push(("timeout_ms", timeout_ms.to_string()));
     }
-    if args.iter().any(|a| a == "--no-wait") {
+    if read.switch(NO_WAIT.long) {
         opts.push(("no_wait", "true".to_string()));
     }
-    if args.iter().any(|a| a == "--force") {
+    if read.switch(FORCE.long) {
         opts.push(("force", "true".to_string()));
     }
 
@@ -184,17 +153,15 @@ fn stop_opts(args: &[String]) -> Vec<Opt<'static>> {
 }
 
 /// Stream the child's stdout through, holding back the one line that carries
-/// the shutdown outcome. Answers `(outcome, saw_any_output)`.
-fn read_stop_marker(child: &mut std::process::Child) -> (Option<String>, bool) {
+/// the shutdown outcome.
+fn read_stop_marker(child: &mut std::process::Child) -> Option<String> {
     let mut outcome: Option<String> = None;
-    let mut saw_any_output = false;
 
     if let Some(stdout) = child.stdout.take() {
         let reader = BufReader::new(stdout);
         let stdout_handle = std::io::stdout();
 
         for line in reader.lines().map_while(Result::ok) {
-            saw_any_output = true;
             if let Some(rest) = line.strip_prefix("flz-controller-stop-result: ") {
                 outcome = Some(rest.trim().to_string());
             } else {
@@ -204,5 +171,5 @@ fn read_stop_marker(child: &mut std::process::Child) -> (Option<String>, bool) {
         }
     }
 
-    (outcome, saw_any_output)
+    outcome
 }

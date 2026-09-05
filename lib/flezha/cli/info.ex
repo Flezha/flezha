@@ -69,7 +69,7 @@ defmodule Flezha.Service.Cli.Info do
             }
 
           {:error, reason} ->
-            %{id: operative_id, error: inspect(reason)}
+            %{id: operative_id, error: Context.format_reason(reason)}
         end
       end)
 
@@ -97,7 +97,7 @@ defmodule Flezha.Service.Cli.Info do
 
         {:error, reason} ->
           IO.puts("Operative: #{operative_id}")
-          IO.puts("  Error getting overwatch state: #{inspect(reason)}")
+          IO.puts("  Error getting overwatch state: #{Context.format_reason(reason)}")
           IO.puts("")
       end
     end)

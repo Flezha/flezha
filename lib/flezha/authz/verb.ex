@@ -16,7 +16,7 @@ defmodule Flezha.AuthZ.Verb do
   naming the module that carries each body and taking its identity from the
   trailing options list every wire verb ends with:
 
-      use Flezha.AuthZ.Verb, identity: &Context.cli_context/1, refuse: &Context.refuse!/3, sealed: true
+      use Flezha.AuthZ.Verb, identity: &Context.cli_context/1, refuse: &Context.refuse!/2, sealed: true
 
       verb dlq_drop(entry_ref, opts \\\\ []), to: Cli.Dlq, row: &Cli.Dlq.locate/1
 
@@ -74,8 +74,8 @@ defmodule Flezha.AuthZ.Verb do
 
   @doc """
   The wire surface's `run/5`: bind the identity from the trailing options,
-  apply the row, and render a refusal on the binding's device. `binding`
-  carries `:identity`, `:refuse` and optionally `:row`, `:target`, `:device`.
+  apply the row, and render a refusal. `binding` carries `:identity`,
+  `:refuse` and optionally `:row`, `:target`.
   """
   @spec invoke(atom(), [term()], keyword(), effect(), keyword()) :: term()
   def invoke(verb, args, wire_opts, effect, binding) do
@@ -84,8 +84,7 @@ defmodule Flezha.AuthZ.Verb do
 
     case run(verb, caller_context, args, effect, run_opts) do
       {:error, {:forbidden, reason}} ->
-        device = Keyword.get(binding, :device, :stderr)
-        Keyword.fetch!(binding, :refuse).(Verbs.fetch!(verb).action, reason, device)
+        Keyword.fetch!(binding, :refuse).(Verbs.fetch!(verb).action, reason)
 
       other ->
         other
@@ -93,8 +92,7 @@ defmodule Flezha.AuthZ.Verb do
   end
 
   @doc """
-  The bindings a surface module declared: `{function, arity, verb, opts}`, where
-  `opts` is the binding's own rendering choice (`device:` on a wire verb).
+  The bindings a surface module declared: `{function, arity, verb, opts}`.
   """
   @spec bindings(module()) :: [{atom(), arity(), atom(), keyword()}]
   def bindings(module), do: module.__verbs__()
@@ -310,7 +308,7 @@ defmodule Flezha.AuthZ.Verb do
       end
 
     records =
-      for arity <- arities(args), do: {name, arity, verb_name, Keyword.take(opts, [:device])}
+      for arity <- arities(args), do: {name, arity, verb_name, []}
 
     quote do
       unquote_splicing(
@@ -340,7 +338,7 @@ defmodule Flezha.AuthZ.Verb do
     end
 
     {wire_opts, verb_args} = List.pop_at(positional, -1)
-    binding = Keyword.take(opts, [:row, :target, :device])
+    binding = Keyword.take(opts, [:row, :target])
 
     quote do
       unquote(__MODULE__).invoke(

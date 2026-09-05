@@ -5,6 +5,7 @@ defmodule Flezha.Service.Cli.Controller do
   """
 
   alias Flezha.Config
+  alias Flezha.Service.Cli.Context
 
   alias Flezha.Config.Durations
   alias Flezha.Shutdown.Coordinator
@@ -112,7 +113,7 @@ defmodule Flezha.Service.Cli.Controller do
   end
 
   defp render_stop_exit(reason) do
-    IO.puts("[shutdown] coordinator exit: #{inspect(reason)}")
+    IO.puts("[shutdown] coordinator exit: #{Context.format_reason(reason)}")
     IO.puts("flz-controller-stop-result: already_in_progress")
     :ok
   end

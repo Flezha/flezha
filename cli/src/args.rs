@@ -1,10 +1,22 @@
-//! Reading `flz`'s own arguments: one four-form scanner, and the surfaces
-//! built on it.
+//! What a `flz` verb takes, declared — and the one walk that reads it.
+//!
+//! A row declares its positionals, its options (the long spelling, the short
+//! alias, the kind of value, whether it is required, the knob that answers it)
+//! and whether it refuses a word it does not recognise. `read` walks the
+//! operator's words once against that row: every option is taken wherever it
+//! stands, and the positionals are the words that remain. So the reader, the
+//! refusal, the arity check and the usage line are all derived from the row,
+//! and none of them is written beside a verb.
+//!
+//! The words a row declares it does NOT read — a provider's settings document
+//! — are stepped over here and read in `settings.rs`.
 
 use std::env;
-use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
+
+use crate::dispatch::Verb;
+use crate::settings::bare_setting;
 
 /// How one word reads against one option: it carries its own value after an
 /// `=`, it takes the word after it, or it is not this option at all.
@@ -32,49 +44,6 @@ pub(crate) fn resolve_spelling<'a>(arg: &'a str, long_key: &str, short_key: &str
     }
 }
 
-/// The four forms every `flz` option accepts, and the three answers a reader
-/// needs: absent, a value, or written with nothing after it — a refusal naming
-/// the flag, built here because this is the only place that knows the name. A
-/// trailing `--ttl` asks for a lifetime, not for the default.
-///
-/// The one scanner in this crate; every reader below calls it with its own
-/// default.
-pub(crate) fn extract_param(
-    args: &[String],
-    long_key: &str,
-    short_key: &str,
-) -> Result<Option<String>, String> {
-    for (i, arg) in args.iter().enumerate() {
-        match resolve_spelling(arg, long_key, short_key) {
-            Spelling::Attached(value) => return Ok(Some(value.to_string())),
-            Spelling::Separated if i + 1 < args.len() => return Ok(Some(args[i + 1].clone())),
-            Spelling::Separated => return Err(format!("Error: {} requires a value", long_key)),
-            Spelling::Other => {}
-        }
-    }
-
-    Ok(None)
-}
-
-/// The same three answers for an option whose value is a number, and the
-/// second refusal that shape needs: a value this option cannot read. `ok()` on
-/// the parse would map it back onto "nobody wrote it", which is the default —
-/// a `--limit` nobody can read is not every record.
-///
-/// A range is the option's own rule and stays at its call site; only "this is
-/// not a number" is written here, where the option's name is known.
-pub(crate) fn number<T: FromStr>(
-    args: &[String],
-    long_key: &str,
-    short_key: &str,
-) -> Result<Option<T>, String> {
-    let Some(written) = extract_param(args, long_key, short_key)? else {
-        return Ok(None);
-    };
-
-    read_number(long_key, &written).map(Some)
-}
-
 /// One number, one refusal, whichever way the operator spelled it. A value
 /// standing in a positional slot is the same request as one behind a flag, and
 /// a verb that reads only the flag answers one typo two ways; `key` is what the
@@ -98,251 +67,616 @@ pub(crate) fn or_refuse<T>(read: Result<T, String>) -> T {
     }
 }
 
-/// The positional argument at `index`, or `None` when it is absent or is a
-/// flag. A flag is never a positional: `flz dlq list --token X` names no
-/// operative class, and `flz schedule remove --token X` names no schedule.
-pub(crate) fn positional(args: &[String], index: usize) -> Option<&String> {
-    args.get(index).filter(|arg| !arg.starts_with('-'))
+// --- the declaration, and the one walk that reads it -----------------------
+
+/// What an option's value is, and so how it is read and how it is refused.
+pub(crate) enum Kind {
+    /// Any word.
+    Text,
+    /// A word that must parse as a number.
+    Number,
+    /// No value: written, or not written.
+    Switch,
+    /// One of a closed set of words. `noun` is what the refusal calls the
+    /// thing that was not recognised.
+    Choice {
+        noun: &'static str,
+        words: &'static [&'static str],
+    },
 }
 
-pub(crate) fn namespace(args: &[String]) -> String {
-    or_refuse(extract_param(args, "--namespace", "-n")).unwrap_or_default()
+/// One option a verb declares: its two spellings, what its value is called,
+/// whether the verb refuses to run without it, and the environment variable
+/// that answers when the operator writes no flag.
+pub(crate) struct OptSpec {
+    pub(crate) long: &'static str,
+    pub(crate) short: &'static str,
+    pub(crate) kind: Kind,
+    pub(crate) required: bool,
+    /// What the usage line calls the value.
+    value: &'static str,
+    env: Option<&'static str>,
 }
 
-/// The one output-format reader in this crate. `--json` is the switch spelling
-/// of `--output json`; `--output` / `-o` take their value in any of the four
-/// forms above. Every verb that renders reads this, so the two spellings can
-/// never mean different things on different verbs.
-pub(crate) fn output_format(args: &[String]) -> &'static str {
-    or_refuse(parse_output_format(args))
-}
-
-/// The reader without the process exit, for `flz reset` — which answers every
-/// argument refusal with its own exit code — and so the refusal is testable.
-/// A value nobody recognises is refused rather than rendered as text: silently
-/// answering a `--output yaml` with a human table is what a piped `jq` cannot
-/// diagnose.
-pub(crate) fn parse_output_format(args: &[String]) -> Result<&'static str, String> {
-    // Read before the switch is answered: `--json` winning is a precedence
-    // rule, not a licence to leave an unreadable `--output` unrefused.
-    let written = extract_param(args, "--output", "-o")?;
-
-    if args.iter().any(|a| a == "--json") {
-        return Ok("json");
+impl OptSpec {
+    pub(crate) const fn text(long: &'static str, short: &'static str, value: &'static str) -> Self {
+        OptSpec {
+            long,
+            short,
+            kind: Kind::Text,
+            required: false,
+            value,
+            env: None,
+        }
     }
 
-    match written.as_deref() {
-        None | Some("text") => Ok("text"),
-        Some("json") => Ok("json"),
-        Some(other) => Err(format!(
-            "Error: unknown output format '{}'. Use 'text' or 'json'.",
-            other
-        )),
+    pub(crate) const fn number(
+        long: &'static str,
+        short: &'static str,
+        value: &'static str,
+    ) -> Self {
+        OptSpec {
+            kind: Kind::Number,
+            ..OptSpec::text(long, short, value)
+        }
+    }
+
+    pub(crate) const fn switch(long: &'static str, short: &'static str) -> Self {
+        OptSpec {
+            kind: Kind::Switch,
+            ..OptSpec::text(long, short, "")
+        }
+    }
+
+    pub(crate) const fn choice(
+        long: &'static str,
+        short: &'static str,
+        noun: &'static str,
+        words: &'static [&'static str],
+    ) -> Self {
+        OptSpec {
+            kind: Kind::Choice { noun, words },
+            ..OptSpec::text(long, short, "")
+        }
+    }
+
+    pub(crate) const fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    /// The knob that answers this option when the operator writes no flag —
+    /// the one place in this crate that name is read.
+    pub(crate) const fn answered_by(mut self, name: &'static str) -> Self {
+        self.env = Some(name);
+        self
+    }
+
+    /// How this option is written in a usage line, and so what a help screen
+    /// that teaches it has to print.
+    pub(crate) fn spelling(&self) -> String {
+        let mut out = self.long.to_string();
+        if self.short != self.long {
+            out.push_str(" | ");
+            out.push_str(self.short);
+        }
+        match &self.kind {
+            Kind::Switch => {}
+            Kind::Choice { words, .. } => {
+                out.push(' ');
+                out.push_str(&words.join("|"));
+            }
+            _ => {
+                out.push(' ');
+                out.push_str(self.value);
+            }
+        }
+        out
     }
 }
 
-/// A JSON-valued option, defaulting to the empty object.
-pub(crate) fn json(args: &[String], long_key: &str, short_key: &str) -> String {
-    match or_refuse(extract_param(args, long_key, short_key)) {
-        Some(value) if !value.is_empty() => value,
-        _ => "{}".to_string(),
+/// One positional argument a verb declares.
+pub(crate) struct Positional {
+    pub(crate) name: &'static str,
+    pub(crate) kind: Kind,
+    pub(crate) required: bool,
+}
+
+impl Positional {
+    pub(crate) const fn required(name: &'static str) -> Self {
+        Positional {
+            name,
+            kind: Kind::Text,
+            required: true,
+        }
+    }
+
+    pub(crate) const fn optional(name: &'static str) -> Self {
+        Positional {
+            required: false,
+            ..Positional::required(name)
+        }
+    }
+
+    /// A positional whose value must read as a number, refused here rather
+    /// than at the verb that will use it.
+    pub(crate) const fn number(name: &'static str) -> Self {
+        Positional {
+            kind: Kind::Number,
+            ..Positional::required(name)
+        }
+    }
+
+    /// A positional the operator picks from a closed set — refused here, so
+    /// the verb's body never has to.
+    pub(crate) const fn choice(
+        name: &'static str,
+        noun: &'static str,
+        words: &'static [&'static str],
+    ) -> Self {
+        Positional {
+            kind: Kind::Choice { noun, words },
+            ..Positional::required(name)
+        }
     }
 }
 
-/// The `app_data/` root the running Controller would use: `--app-data-root`,
-/// else `FLEZHA_APP_DATA_ROOT`, else `./app_data`.
-pub(crate) fn app_data_root(args: &[String]) -> PathBuf {
-    let env_value = env::var("FLEZHA_APP_DATA_ROOT").ok();
-    or_refuse(resolve_app_data_root(args, env_value))
+/// Whether a verb carries words it does not declare.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Open {
+    /// Every word is a declared option or a declared positional.
+    Closed,
+    /// A settings document rides with the declared words: `X<key>=<value>`
+    /// provider settings, the `--extension NAME` families, and the plain
+    /// `--key value` pairs a provider's own options map carries. Those keys
+    /// belong to the provider and not to this surface, so the walk steps over
+    /// them and `Reading::rest` hands them on unread.
+    Settings,
 }
 
-pub(crate) fn resolve_app_data_root(
-    args: &[String],
-    env_value: Option<String>,
-) -> Result<PathBuf, String> {
-    for candidate in [
-        extract_param(args, "--app-data-root", "--app-data-root")?,
-        env_value,
-    ] {
-        match candidate {
-            Some(v) if !v.is_empty() => return Ok(PathBuf::from(v)),
+/// The options every verb carries, declared once so that no row repeats them
+/// and no verb scans the argument list for them.
+pub(crate) const UNIVERSAL: &[OptSpec] = &[
+    OptSpec::text("--token", "--token", "<token>").answered_by("FLEZHA_TOKEN"),
+    OptSpec::switch("--help", "-h"),
+];
+
+/// The options more than one verb shares, spelled once each.
+pub(crate) const NAMESPACE: OptSpec = OptSpec::text("--namespace", "-n", "<namespace>");
+pub(crate) const OUTPUT: OptSpec =
+    OptSpec::choice("--output", "-o", "output format", &["text", "json"]);
+/// The switch spelling of `--output json`. `Reading::output_format` is where
+/// the two meet, so they cannot mean different things on different verbs.
+pub(crate) const JSON_SWITCH: OptSpec = OptSpec::switch("--json", "--json");
+/// The window a bounded stream runs for, and how long it runs when the
+/// operator names none. Two verbs tail; one option, one default.
+pub(crate) const DURATION_MS: OptSpec =
+    OptSpec::number("--duration-ms", "--duration-ms", "<milliseconds>");
+pub(crate) const DEFAULT_WINDOW_MS: u64 = 30_000;
+pub(crate) const APP_DATA_ROOT: OptSpec =
+    OptSpec::text("--app-data-root", "--app-data-root", "<path>")
+        .answered_by("FLEZHA_APP_DATA_ROOT");
+
+/// Every option a row declares, in declaration order, with what the operator
+/// wrote for it.
+type Slots = Vec<(&'static str, Option<String>)>;
+
+/// The operator's words, read once against one verb's declaration: every
+/// positional it declared, every option it declared, and the settings document
+/// it declared it carries.
+pub(crate) struct Reading {
+    usage: String,
+    positionals: Slots,
+    options: Slots,
+    rest: Vec<String>,
+}
+
+impl Reading {
+    /// A positional the row declared required: the walk refused the run before
+    /// this could be absent.
+    pub(crate) fn pos(&self, name: &str) -> &str {
+        self.maybe_pos(name).unwrap_or_default()
+    }
+
+    /// The positional in the slot at `index`, for the verbs that share a
+    /// handler and name the same slot differently — `flz state list` calls it
+    /// an operative class and `flz state inbox` an instance.
+    pub(crate) fn positional_at(&self, index: usize) -> &str {
+        self.positionals[index].1.as_deref().unwrap_or_default()
+    }
+
+    pub(crate) fn maybe_pos(&self, name: &str) -> Option<&str> {
+        self.positionals
+            .iter()
+            .find(|(declared, _)| *declared == name)
+            .unwrap_or_else(|| panic!("{} declares no positional '{}'", self.usage, name))
+            .1
+            .as_deref()
+    }
+
+    /// A positional the row declared optional, for the verb whose arity only
+    /// the controller's answer settles. The refusal is the walk's own, so the
+    /// wording stays in one place.
+    pub(crate) fn require_pos(&self, name: &str) -> &str {
+        match self.maybe_pos(name) {
+            Some(value) => value,
+            None => {
+                eprintln!("{}", missing_positional(&self.usage));
+                exit(1);
+            }
+        }
+    }
+
+    pub(crate) fn opt(&self, long: &str) -> Option<&str> {
+        self.options
+            .iter()
+            .find(|(declared, _)| *declared == long)
+            .unwrap_or_else(|| panic!("{} declares no option '{}'", self.usage, long))
+            .1
+            .as_deref()
+    }
+
+    /// A declared number. The walk refused an unreadable one, so this parse
+    /// cannot fail.
+    pub(crate) fn num<T: FromStr>(&self, long: &str) -> Option<T> {
+        self.opt(long).and_then(|written| written.parse().ok())
+    }
+
+    pub(crate) fn switch(&self, long: &str) -> bool {
+        self.opt(long).is_some()
+    }
+
+    /// The namespace every scoped verb carries, empty when none was written.
+    pub(crate) fn namespace(&self) -> &str {
+        self.opt(NAMESPACE.long).unwrap_or_default()
+    }
+
+    /// The rendered output format, whichever of the two spellings carried it.
+    /// `--json` wins over an `--output` the walk has already had to accept.
+    pub(crate) fn output_format(&self) -> &'static str {
+        if self.switch(JSON_SWITCH.long) {
+            return "json";
+        }
+        match self.opt(OUTPUT.long) {
+            Some("json") => "json",
+            _ => "text",
+        }
+    }
+
+    /// A JSON-valued option, defaulting to the empty object.
+    pub(crate) fn json(&self, long: &str) -> &str {
+        match self.opt(long) {
+            Some(value) if !value.is_empty() => value,
+            _ => "{}",
+        }
+    }
+
+    /// The words the row declared it does not read: a provider's settings and
+    /// its own options document, in the order they were written.
+    pub(crate) fn rest(&self) -> &[String] {
+        &self.rest
+    }
+
+    /// The caller's identity, wherever it was written and whether it came from
+    /// the flag or from the environment.
+    pub(crate) fn token(&self) -> Option<&str> {
+        self.opt(UNIVERSAL[0].long)
+            .filter(|token| !token.is_empty())
+    }
+
+    pub(crate) fn help_asked(&self) -> bool {
+        self.switch(UNIVERSAL[1].long)
+    }
+}
+
+/// The one refusal for a verb invoked with too few words, rendered from its
+/// row so that it names what the verb actually reads.
+fn missing_positional(usage: &str) -> String {
+    format!("Error: Invalid number of arguments.\n{}", usage)
+}
+
+/// How many words an undeclared settings entry claims at `i`, or `None` when
+/// the word there is a plain one. `extract_x_flags`, `extract_opts` and
+/// `extract_extension_flags` read the entries back out of `Reading::rest`, so
+/// the walk only has to know how far each one reaches.
+fn open_entry(args: &[String], i: usize) -> Option<usize> {
+    let arg = args[i].as_str();
+
+    if bare_setting(arg).is_some() {
+        return Some(1);
+    }
+    if !arg.starts_with('-') {
+        return None;
+    }
+    if arg.contains('=') || i + 1 >= args.len() {
+        return Some(1);
+    }
+    Some(2)
+}
+
+/// The usage line one verb's row renders — the only place this surface says
+/// what a verb takes, so it cannot disagree with what the verb reads.
+pub(crate) fn usage_line(path: &str, verb: &Verb) -> String {
+    let mut out = format!("Usage: {} {}", path, verb.name);
+
+    for slot in verb.positionals {
+        out.push_str(&optional_unless(slot.required, slot.name.to_string()));
+    }
+
+    if verb.open == Open::Settings {
+        out.push_str(" [X<key>=<value> ...] [--<key> <value> ...]");
+    }
+
+    for opt in verb.options {
+        out.push_str(&optional_unless(opt.required, opt.spelling()));
+    }
+
+    out
+}
+
+/// One word of a usage line: bracketed when the verb runs without it.
+fn optional_unless(required: bool, written: String) -> String {
+    if required {
+        format!(" {}", written)
+    } else {
+        format!(" [{}]", written)
+    }
+}
+
+/// The one walk. `path` is what a usage line calls the command
+/// (`flz operative`); `argv` is what the operator wrote after the verb's own
+/// name. Options are read wherever they stand, the positionals are the words
+/// that remain, and the refusals are the row's rather than each verb's own.
+pub(crate) fn read(path: &str, verb: &'static Verb, argv: &[String]) -> Result<Reading, String> {
+    let declared: Vec<&OptSpec> = verb.options.iter().chain(UNIVERSAL.iter()).collect();
+    let usage = usage_line(path, verb);
+    let mut options: Slots = declared.iter().map(|spec| (spec.long, None)).collect();
+
+    let (plain, mut rest, asked_help) = scan(verb, &declared, argv, &mut options)?;
+
+    // The screen answers before the grammar does: `flz observe enable --help`
+    // asks what the verb takes, and refusing it for taking nothing would be
+    // the one answer that cannot help.
+    if asked_help || written(&options, UNIVERSAL[1].long).is_some() {
+        return Ok(Reading {
+            usage,
+            positionals: verb
+                .positionals
+                .iter()
+                .map(|slot| (slot.name, None))
+                .collect(),
+            options: vec![(UNIVERSAL[1].long, Some("true".to_string()))],
+            rest,
+        });
+    }
+
+    // The positionals are judged before the options are: a verb whose subject
+    // will not read is refused for its subject, whatever else it was given.
+    let (positionals, spare) = assign_positionals(verb, plain, &usage)?;
+    rest.extend(spare);
+
+    resolve_options(&declared, &mut options, &usage)?;
+    refuse_conflicts(verb, &options)?;
+
+    Ok(Reading {
+        usage,
+        positionals,
+        options,
+        rest,
+    })
+}
+
+/// One pass over the operator's words: every declared option taken wherever it
+/// stands, and what is left over — the plain words the positionals will be, the
+/// settings the row does not read, and whether a screen was asked for.
+fn scan(
+    verb: &'static Verb,
+    declared: &[&OptSpec],
+    argv: &[String],
+    options: &mut [(&'static str, Option<String>)],
+) -> Result<(Vec<String>, Vec<String>, bool), String> {
+    let mut plain: Vec<String> = Vec::new();
+    let mut rest: Vec<String> = Vec::new();
+    let mut asked_help = false;
+    let mut i = 0;
+
+    while i < argv.len() {
+        if let Some((long, value, width)) = claim(declared, argv, i)? {
+            // First-wins: a repeated flag keeps the value written first.
+            let slot = options
+                .iter_mut()
+                .find(|(declared, _)| *declared == long)
+                .expect("a claimed option is a declared one");
+            if slot.1.is_none() {
+                slot.1 = Some(value);
+            }
+            i += width;
+            continue;
+        }
+
+        // A verb with a screen of its own answers the bare word too: it is the
+        // spelling `flz controller status help` has always used.
+        if verb.help.is_some() && argv[i] == "help" {
+            asked_help = true;
+            i += 1;
+            continue;
+        }
+
+        if verb.strict {
+            return Err(format!("Error: unknown argument '{}'", argv[i]));
+        }
+
+        i += spare(verb, argv, i, &mut plain, &mut rest);
+    }
+
+    Ok((plain, rest, asked_help))
+}
+
+/// A word no declared option claimed: a settings entry the row does not read,
+/// a flag it does not know, or a positional. Answers how many words it took.
+fn spare(
+    verb: &'static Verb,
+    argv: &[String],
+    i: usize,
+    plain: &mut Vec<String>,
+    rest: &mut Vec<String>,
+) -> usize {
+    match open_entry(argv, i).filter(|_| verb.open == Open::Settings) {
+        Some(width) => {
+            rest.extend_from_slice(&argv[i..i + width]);
+            width
+        }
+        None if argv[i].starts_with('-') => {
+            rest.push(argv[i].clone());
+            1
+        }
+        None => {
+            plain.push(argv[i].clone());
+            1
+        }
+    }
+}
+
+/// The plain words in the slots the row declared, each judged against the kind
+/// its slot names. Answers the slots and the words no slot claimed.
+fn assign_positionals(
+    verb: &'static Verb,
+    plain: Vec<String>,
+    usage: &str,
+) -> Result<(Slots, Vec<String>), String> {
+    let mut words = plain.into_iter();
+    let mut positionals: Slots = Vec::new();
+
+    for slot in verb.positionals {
+        let value = words.next();
+        match (&value, &slot.kind) {
+            (None, _) if slot.required => return Err(missing_positional(usage)),
+            (Some(value), Kind::Number) => {
+                read_number::<u64>(slot.name, value)?;
+            }
+            (Some(value), Kind::Choice { noun, words }) if !words.contains(&value.as_str()) => {
+                return Err(unknown_word(noun, value, words))
+            }
+            _ => {}
+        }
+        positionals.push((slot.name, value));
+    }
+
+    Ok((positionals, words.collect()))
+}
+
+/// What each declared option finally carries: the flag's value, else the knob
+/// it names, and the refusal for one the verb cannot run without.
+fn resolve_options(
+    declared: &[&OptSpec],
+    options: &mut [(&'static str, Option<String>)],
+    usage: &str,
+) -> Result<(), String> {
+    for (spec, slot) in declared.iter().zip(options.iter_mut()) {
+        // A knob answers the flag it shadows both when no flag was written and
+        // when one was written empty: `--token ""` is not a credential.
+        if let Some(name) = spec.env {
+            if slot.1.as_deref().unwrap_or_default().is_empty() {
+                slot.1 = env::var(name).ok().filter(|value| !value.is_empty());
+            }
+        }
+
+        match slot.1.as_deref() {
+            None | Some("") if spec.required => {
+                return Err(format!(
+                    "Error: {} is required.\n{}",
+                    spec.spelling(),
+                    usage
+                ))
+            }
+            Some(value) if !value.is_empty() => check_value(spec, value)?,
             _ => {}
         }
     }
-    Ok(PathBuf::from("./app_data"))
+
+    Ok(())
 }
 
-fn strip_quotes(value: &str) -> String {
-    let trimmed = value.trim();
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed[1..trimmed.len() - 1].to_string()
-    } else {
-        value.to_string()
+/// The pairs a row declared it refuses together, because each answers the
+/// other's question differently.
+fn refuse_conflicts(
+    verb: &'static Verb,
+    options: &[(&'static str, Option<String>)],
+) -> Result<(), String> {
+    for (one, other) in verb.conflicts {
+        if written(options, one).is_some() && written(options, other).is_some() {
+            return Err(format!(
+                "error: {} and {} are mutually exclusive",
+                one, other
+            ));
+        }
     }
+
+    Ok(())
 }
 
-pub(crate) fn serialize_flags(flags: &[(String, String)]) -> String {
-    if flags.is_empty() {
-        return "{}".to_string();
-    }
-
-    let json_pairs: Vec<String> = flags
+fn written<'a>(options: &'a [(&'static str, Option<String>)], long: &str) -> Option<&'a str> {
+    options
         .iter()
-        .map(|(key, value)| {
-            // Inline a value as raw JSON only when it actually parses. Looking
-            // merely JSON-shaped is not enough: a subscription template is a
-            // JSON-shaped string carrying `{{items}}` / `{{req_id}}`
-            // placeholders, which no JSON parser accepts, and inlining it
-            // produced a document the controller could not decode.
-            let inline = matches!(value.trim_start().chars().next(), Some('{') | Some('['))
-                && serde_json::from_str::<serde_json::Value>(value).is_ok();
-            if inline {
-                format!("\"{}\": {}", key, value)
-            } else {
-                // Serialize as a JSON string so quotes and backslashes in the
-                // value cannot break out of it.
-                format!("\"{}\": {}", key, serde_json::Value::String(value.clone()))
-            }
-        })
-        .collect();
-
-    format!("{{{}}}", json_pairs.join(", "))
+        .find(|(declared, _)| *declared == long)
+        .and_then(|(_, value)| value.as_deref())
 }
 
-/// The repeatable plugin settings: `--X<key>=<value>`, `--X<key> <value>`, and
-/// the bare `X<key>=<value>` every help screen and usage line advertises.
-///
-/// The `=` is what carries the bare spelling. `--X` announces itself with its
-/// dashes, so it may take its value from the next word; a bare `Xhosts` has no
-/// such signal and is indistinguishable from a plugin id, so only the `=` form
-/// is read without dashes, and a word whose key does not begin with `X` stays
-/// positional.
-pub(crate) fn extract_x_flags(args: &[String]) -> Vec<(String, String)> {
-    let mut flags = Vec::new();
-    let mut i = 0;
+/// The declared option the word at `i` writes, the value it carries and how
+/// many words it took — or `None` when no declaration owns that word.
+fn claim(
+    declared: &[&OptSpec],
+    argv: &[String],
+    i: usize,
+) -> Result<Option<(&'static str, String, usize)>, String> {
+    for spec in declared {
+        let (written, width) = match resolve_spelling(&argv[i], spec.long, spec.short) {
+            Spelling::Attached(value) => (value.to_string(), 1),
+            Spelling::Separated if matches!(spec.kind, Kind::Switch) => ("true".to_string(), 1),
+            Spelling::Separated => match argv.get(i + 1) {
+                Some(value) => (value.clone(), 2),
+                // A trailing `--ttl` asks for a lifetime, not for the default.
+                None => return Err(requires_a_value(spec)),
+            },
+            Spelling::Other => continue,
+        };
 
-    while i < args.len() {
-        let arg = &args[i];
+        return Ok(Some((spec.long, written, width)));
+    }
 
-        if let Some((key, value)) = bare_setting(arg) {
-            flags.push((key.to_string(), strip_quotes(value)));
-        } else if let Some(rest) = arg.strip_prefix("--X") {
-            if let Some((key, value)) = rest.split_once('=') {
-                flags.push((key.to_string(), strip_quotes(value)));
-            } else if let Some(next) = args.get(i + 1) {
-                flags.push((rest.to_string(), strip_quotes(next)));
-                i += 1;
-            }
+    Ok(None)
+}
+
+/// Whether a written value is one this option can carry. Judged after the
+/// positionals are, so a verb whose subject will not read is refused for its
+/// subject rather than for a flag beside it.
+fn check_value(spec: &OptSpec, written: &str) -> Result<(), String> {
+    match &spec.kind {
+        Kind::Number => read_number::<u64>(spec.long, written).map(|_: u64| ()),
+        Kind::Choice { noun, words } if !words.contains(&written) => {
+            Err(unknown_word(noun, written, words))
         }
-
-        i += 1;
+        _ => Ok(()),
     }
-
-    flags
 }
 
-/// `X<key>=<value>` written without its dashes, and only with a key to name:
-/// `X=v` names nothing, so it is left where it stands.
-fn bare_setting(arg: &str) -> Option<(&str, &str)> {
-    let (key, value) = arg.strip_prefix('X')?.split_once('=')?;
-    (!key.is_empty()).then_some((key, value))
+/// The one refusal for a word the declaration does not recognise, wherever it
+/// was written: behind a flag or in a positional slot.
+fn unknown_word(noun: &str, written: &str, words: &[&str]) -> String {
+    format!(
+        "Error: unknown {} '{}'. Use {}.",
+        noun,
+        written,
+        words
+            .iter()
+            .map(|word| format!("'{}'", word))
+            .collect::<Vec<_>>()
+            .join(" or ")
+    )
 }
 
-/// What declares an extension, stated once: `--extension=NAME`, or
-/// `--extension NAME` consuming the token after it.
-fn declared_extension(arg: &str, next: Option<&String>) -> Option<String> {
-    if let Some(rest) = arg.strip_prefix("--extension=") {
-        return Some(strip_quotes(rest));
-    }
-    if arg == "--extension" {
-        return next.map(|n| strip_quotes(n));
-    }
-    None
-}
-
-/// `--NAME.key[=value]` → `(NAME, "key[=value]")`.
-fn dotted_option(arg: &str) -> Option<(&str, &str)> {
-    arg.strip_prefix("--")?.split_once('.')
-}
-
-/// The extension names `args` declares, in declaration order.
-pub(crate) fn extension_names(args: &[String]) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        if let Some(name) = declared_extension(&args[i], args.get(i + 1)) {
-            if args[i] == "--extension" {
-                i += 1;
-            }
-            names.push(name);
-        }
-        i += 1;
-    }
-
-    names
-}
-
-/// Repeatable `--extension=NAME` flags with their `--NAME.key=value`
-/// sub-options, in declaration order. A dotted option only binds to a name
-/// already declared to its left.
-pub(crate) fn extract_extension_flags(args: &[String]) -> Vec<(String, Vec<(String, String)>)> {
-    let mut out: Vec<(String, Vec<(String, String)>)> = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        let arg = &args[i];
-
-        if let Some(name) = declared_extension(arg, args.get(i + 1)) {
-            if arg == "--extension" {
-                i += 1;
-            }
-            if !out.iter().any(|(known, _)| *known == name) {
-                out.push((name, Vec::new()));
-            }
-        } else if let Some((prefix, remainder)) = dotted_option(arg) {
-            if let Some((_, opts)) = out.iter_mut().find(|(name, _)| name == prefix) {
-                if let Some((key, value)) = remainder.split_once('=') {
-                    opts.push((key.to_string(), strip_quotes(value)));
-                } else if let Some(next) = args.get(i + 1) {
-                    opts.push((remainder.to_string(), strip_quotes(next)));
-                    i += 1;
-                }
-            }
-        }
-
-        i += 1;
-    }
-
-    out
-}
-
-/// Strip the extension entries from an argument list so the option parser
-/// below does not read them as plain CLI options.
-pub(crate) fn filter_out_extension_entries(args: &[String]) -> Vec<String> {
-    let declared = extension_names(args);
-    let mut out = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        let arg = &args[i];
-
-        if arg.starts_with("--extension=") || arg == "--extension" {
-            // The dotted form is always `--NAME.key=value`, so only the
-            // `--extension NAME` pair needs its value eaten.
-            if arg == "--extension" && i + 1 < args.len() {
-                i += 1;
-            }
-        } else if !dotted_option(arg).is_some_and(|(p, _)| declared.iter().any(|n| n == p)) {
-            out.push(arg.clone());
-        }
-
-        i += 1;
-    }
-
-    out
+fn requires_a_value(spec: &OptSpec) -> String {
+    format!("Error: {} requires a value", spec.long)
 }
 
 /// An argument list as `env::args()` would produce it. Every test module in
@@ -350,428 +684,4 @@ pub(crate) fn filter_out_extension_entries(args: &[String]) -> Vec<String> {
 #[cfg(test)]
 pub(crate) fn owned(args: &[&str]) -> Vec<String> {
     args.iter().map(|s| s.to_string()).collect()
-}
-
-/// Single-letter option aliases.
-const SHORT_KEYS: &[(&str, &str)] = &[("n", "namespace"), ("o", "output")];
-
-/// The plain `--key value` options of a plugin enable, with `namespace`
-/// defaulted to `"default"`. Both spellings of a setting are skipped:
-/// `extract_x_flags` owns them, and `option_key` refuses the bare one because
-/// it carries no leading `-`.
-pub(crate) fn extract_opts(args: &[String]) -> Vec<(String, String)> {
-    let mut flags = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        let arg = &args[i];
-        let paired = args.get(i + 1);
-
-        if arg.starts_with("--X") {
-            if !arg.contains('=') && paired.is_some() {
-                i += 1;
-            }
-        } else if let Some((flag, value)) = arg.split_once('=') {
-            // `--output=json` and `-o=json` are one option in two spellings, so
-            // both resolve their key through the same alias table as the
-            // space-separated forms below.
-            if let Some(key) = option_key(flag) {
-                flags.push((key, strip_quotes(value)));
-            }
-        } else if let (Some(key), Some(value)) = (option_key(arg), paired) {
-            flags.push((key, strip_quotes(value)));
-            i += 1;
-        }
-
-        i += 1;
-    }
-
-    if !flags.iter().any(|(key, _)| key == "namespace") {
-        flags.push(("namespace".to_string(), "default".to_string()));
-    }
-
-    flags
-}
-
-fn option_key(arg: &str) -> Option<String> {
-    if let Some(long) = arg.strip_prefix("--") {
-        return Some(long.to_string());
-    }
-    let short = arg.strip_prefix('-')?;
-    let key = SHORT_KEYS
-        .iter()
-        .find(|(alias, _)| *alias == short)
-        .map_or(short, |(_, name)| *name);
-    Some(key.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A subscription template is JSON-shaped but carries `{{items}}` /
-    /// `{{req_id}}` placeholders. Inlining it raw produced a document the
-    /// controller rejected with a Jason.DecodeError, so the plugin could never
-    /// be enabled from its own documented invocation.
-    #[test]
-    fn json_shaped_but_unparsable_values_are_quoted_as_strings() {
-        let template =
-            r#"{"method":"subscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}}"#;
-        let out = serialize_flags(&[("subscribe_template".to_string(), template.to_string())]);
-        let parsed: serde_json::Value = serde_json::from_str(&out).expect("must stay decodable");
-        assert_eq!(
-            parsed["subscribe_template"],
-            serde_json::Value::String(template.to_string())
-        );
-    }
-
-    /// Real JSON must still be inlined as JSON — `payload_metadata` and
-    /// `subscription_headers` are objects the controller reads structurally.
-    #[test]
-    fn parsable_json_values_are_still_inlined() {
-        let out = serialize_flags(&[(
-            "payload_metadata".to_string(),
-            r#"{"channel":"trades_in"}"#.to_string(),
-        )]);
-        let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
-        assert_eq!(parsed["payload_metadata"]["channel"], "trades_in");
-    }
-
-    /// A plain value containing a quote must not break out of its own string.
-    #[test]
-    fn quotes_in_plain_values_are_escaped() {
-        let out = serialize_flags(&[(
-            "ignore_pattern".to_string(),
-            r#""event":"heartbeat""#.to_string(),
-        )]);
-        let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
-        assert_eq!(parsed["ignore_pattern"], r#""event":"heartbeat""#);
-    }
-
-    use super::owned as v;
-
-    /// One scanner, four forms — and the same four for a short key.
-    #[test]
-    fn extract_param_reads_all_four_forms() {
-        for form in [
-            v(&["--namespace=prod"]),
-            v(&["--namespace", "prod"]),
-            v(&["-n=prod"]),
-            v(&["-n", "prod"]),
-        ] {
-            assert_eq!(
-                extract_param(&form, "--namespace", "-n")
-                    .unwrap()
-                    .as_deref(),
-                Some("prod"),
-                "{:?}",
-                form
-            );
-        }
-    }
-
-    /// The three answers, and the two the old `Option` could not tell apart:
-    /// an option nobody wrote takes the default, and one written with nothing
-    /// after it is refused by name.
-    #[test]
-    fn an_option_written_with_no_value_is_refused_not_absent() {
-        assert_eq!(extract_param(&v(&[]), "--namespace", "-n"), Ok(None));
-
-        for form in [v(&["--namespace"]), v(&["-o", "json", "-n"])] {
-            let refusal = extract_param(&form, "--namespace", "-n")
-                .expect_err("a trailing flag is a refusal, not an absence");
-            assert_eq!(refusal, "Error: --namespace requires a value", "{:?}", form);
-        }
-    }
-
-    /// The switch spelling settles precedence, never whether the option was
-    /// readable: `--json` may not carry a trailing `--output` past the refusal.
-    #[test]
-    fn the_json_switch_does_not_short_circuit_the_output_refusal() {
-        assert_eq!(
-            parse_output_format(&v(&["--json", "--output", "text"])),
-            Ok("json")
-        );
-
-        let refusal = parse_output_format(&v(&["--json", "--output"])).unwrap_err();
-        assert_eq!(refusal, "Error: --output requires a value");
-    }
-
-    /// The three defaults the scanner's callers add.
-    #[test]
-    fn the_defaulted_readers_agree_with_an_absent_flag() {
-        let none: Vec<String> = v(&[]);
-        assert_eq!(namespace(&none), "");
-        assert_eq!(output_format(&none), "text");
-        assert_eq!(output_format(&v(&["-o", "json"])), "json");
-        assert_eq!(json(&none, "--init_values", "-iv"), "{}");
-        assert_eq!(json(&v(&["-iv", ""]), "--init_values", "-iv"), "{}");
-        assert_eq!(json(&v(&["-iv", "[1]"]), "--init_values", "-iv"), "[1]");
-    }
-
-    /// One reader, both spellings, five forms — and a value nobody recognises
-    /// refused instead of rendered as text.
-    #[test]
-    fn both_output_format_spellings_agree_and_a_third_is_refused() {
-        for form in [
-            v(&["--json"]),
-            v(&["--output", "json"]),
-            v(&["--output=json"]),
-            v(&["-o", "json"]),
-            v(&["-o=json"]),
-        ] {
-            assert_eq!(parse_output_format(&form), Ok("json"), "{:?}", form);
-        }
-
-        assert_eq!(parse_output_format(&v(&[])), Ok("text"));
-        assert_eq!(parse_output_format(&v(&["--output", "text"])), Ok("text"));
-
-        let refusal = parse_output_format(&v(&["--output", "yaml"])).unwrap_err();
-        assert!(
-            refusal.contains("unknown output format 'yaml'"),
-            "{}",
-            refusal
-        );
-    }
-
-    #[test]
-    fn extract_extension_flags_single_no_opts() {
-        let args = v(&["--extension=on_input"]);
-        let got = extract_extension_flags(&args);
-        assert_eq!(got, vec![("on_input".to_string(), vec![])]);
-    }
-
-    #[test]
-    fn extract_extension_flags_multiple_with_dotted_opts() {
-        let args = v(&[
-            "--extension=on_input",
-            "--on_input.position=0",
-            "--extension=on_interval",
-            "--on_interval.interval_ms=5000",
-        ]);
-
-        let got = extract_extension_flags(&args);
-
-        assert_eq!(
-            got,
-            vec![
-                (
-                    "on_input".to_string(),
-                    vec![("position".to_string(), "0".to_string())]
-                ),
-                (
-                    "on_interval".to_string(),
-                    vec![("interval_ms".to_string(), "5000".to_string())]
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn extract_extension_flags_ignores_dotted_opts_for_unknown_extension() {
-        // `on_unknown.x=1` has no corresponding `--extension=on_unknown`, so
-        // it must not be captured.
-        let args = v(&["--extension=on_input", "--on_unknown.x=1"]);
-        let got = extract_extension_flags(&args);
-        assert_eq!(got, vec![("on_input".to_string(), vec![])]);
-    }
-
-    #[test]
-    fn extract_extension_flags_space_separated_form() {
-        let args = v(&["--extension", "on_input", "--extension", "on_terminate"]);
-
-        let got = extract_extension_flags(&args);
-
-        assert_eq!(
-            got,
-            vec![
-                ("on_input".to_string(), vec![]),
-                ("on_terminate".to_string(), vec![]),
-            ]
-        );
-    }
-
-    /// Both extension scanners read `--extension` through one rule; a name the
-    /// list scanner misses is a dotted option the filter would leave behind.
-    #[test]
-    fn both_extension_scanners_see_the_same_names() {
-        let args = v(&[
-            "--extension=on_input",
-            "--extension",
-            "on_terminate",
-            "--on_input.position=0",
-        ]);
-
-        let from_flags: Vec<String> = extract_extension_flags(&args)
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-
-        assert_eq!(extension_names(&args), from_flags);
-        assert_eq!(filter_out_extension_entries(&args), Vec::<String>::new());
-    }
-
-    #[test]
-    fn resolve_app_data_root_prefers_flag_over_env_and_default() {
-        let args = v(&["--app-data-root", "/tmp/flag-root"]);
-        let got = resolve_app_data_root(&args, Some("/var/lib/env-root".to_string())).unwrap();
-        assert_eq!(got, PathBuf::from("/tmp/flag-root"));
-    }
-
-    #[test]
-    fn resolve_app_data_root_uses_env_when_flag_absent() {
-        let args: Vec<String> = v(&[]);
-        let got = resolve_app_data_root(&args, Some("/var/lib/env-root".to_string())).unwrap();
-        assert_eq!(got, PathBuf::from("/var/lib/env-root"));
-    }
-
-    #[test]
-    fn resolve_app_data_root_falls_back_to_default() {
-        let args: Vec<String> = v(&[]);
-        assert_eq!(
-            resolve_app_data_root(&args, None).unwrap(),
-            PathBuf::from("./app_data")
-        );
-        assert_eq!(
-            resolve_app_data_root(&args, Some(String::new())).unwrap(),
-            PathBuf::from("./app_data")
-        );
-    }
-
-    #[test]
-    fn resolve_app_data_root_equals_form() {
-        let args = v(&["--app-data-root=/srv/flezha"]);
-        let got = resolve_app_data_root(&args, None).unwrap();
-        assert_eq!(got, PathBuf::from("/srv/flezha"));
-    }
-
-    #[test]
-    fn extract_opts_ignores_extension_flags() {
-        let args = v(&[
-            "--extension=on_input",
-            "--on_input.position=0",
-            "--namespace=prod",
-        ]);
-
-        let filtered = filter_out_extension_entries(&args);
-        let opts = extract_opts(&filtered);
-
-        assert!(opts.iter().any(|(k, v)| k == "namespace" && v == "prod"));
-        assert!(!opts.iter().any(|(k, _)| k == "extension"));
-        assert!(!opts.iter().any(|(k, _)| k.starts_with("on_input")));
-    }
-
-    /// The option scanner of a plugin enable reads the same four forms as
-    /// `extract_param`: a short flag written with `=` is the option the
-    /// operator typed, and a bare `key=value` word is a positional argument.
-    #[test]
-    fn extract_opts_reads_all_four_forms() {
-        for form in [
-            v(&["--output=json"]),
-            v(&["--output", "json"]),
-            v(&["-o=json"]),
-            v(&["-o", "json"]),
-        ] {
-            let opts = extract_opts(&form);
-            assert!(
-                opts.contains(&("output".to_string(), "json".to_string())),
-                "{:?} -> {:?}",
-                form,
-                opts
-            );
-        }
-
-        let positional = extract_opts(&v(&["topic=t"]));
-        assert!(!positional.iter().any(|(key, _)| key == "topic"));
-    }
-
-    /// Every settings-shaped token in a piece of operator-visible text: a
-    /// word spelled `X<key>=<value>`, with or without its dashes, freed of the
-    /// brackets a usage line wraps it in.
-    fn advertised_settings(text: &str) -> Vec<&str> {
-        text.split_whitespace()
-            .map(|word| word.trim_matches(|c: char| "[]`'\",".contains(c)))
-            .filter(|word| {
-                let bare = word.strip_prefix("--").unwrap_or(word);
-                bare.starts_with('X') && bare.contains('=')
-            })
-            .collect()
-    }
-
-    /// The agreement, not one spelling of it: every plugin setting the CLI's
-    /// own screens and usage lines print must be one the parser reads back
-    /// with the key and value the text shows. An example added to a screen is
-    /// covered by this the day it is written.
-    #[test]
-    fn every_advertised_plugin_setting_is_read_by_the_parser() {
-        let printed = [
-            ("flz help", crate::help::FLZ),
-            ("flz plugin help", crate::help::PLUGIN),
-            ("flz namespace help", crate::help::NAMESPACE),
-            ("flz plugin enable usage", crate::plugin::ENABLE_USAGE),
-            ("flz namespace create usage", crate::namespace::CREATE_USAGE),
-            (
-                "flz namespace set-quota usage",
-                crate::namespace::SET_QUOTA_USAGE,
-            ),
-        ];
-
-        let mut walked = 0;
-        let mut unread: Vec<String> = Vec::new();
-
-        for (source, text) in printed {
-            for token in advertised_settings(text) {
-                walked += 1;
-                let bare = token.strip_prefix("--").unwrap_or(token);
-                let (key, value) = bare[1..].split_once('=').expect("filtered on '='");
-                let got = extract_x_flags(&v(&[token]));
-
-                if got != vec![(key.to_string(), value.to_string())] {
-                    unread.push(format!("{}: {:?} -> {:?}", source, token, got));
-                }
-            }
-        }
-
-        assert!(walked >= 6, "the walk found only {} settings", walked);
-        assert!(
-            unread.is_empty(),
-            "{} of {} advertised plugin settings are not read by the parser:\n{}",
-            unread.len(),
-            walked,
-            unread.join("\n")
-        );
-    }
-
-    /// The `=` is what carries the bare spelling. Without dashes there is
-    /// nothing else to separate a setting from a positional word, so a bare
-    /// `X<key>` names nothing and eats nothing.
-    #[test]
-    fn a_bare_setting_needs_its_equals_and_consumes_no_word() {
-        assert!(extract_x_flags(&v(&["Xhosts", "kafka:9092"])).is_empty());
-        assert!(extract_x_flags(&v(&["X=v"])).is_empty());
-        assert!(extract_x_flags(&v(&["topic=t"])).is_empty());
-    }
-
-    #[test]
-    fn extract_opts_aliases_short_keys_and_defaults_the_namespace() {
-        let opts = extract_opts(&v(&[
-            "-n",
-            "prod",
-            "-o",
-            "json",
-            "--Xhosts",
-            "kafka:9092",
-            "Xtopic=my_topic",
-        ]));
-        assert!(opts.contains(&("namespace".to_string(), "prod".to_string())));
-        assert!(opts.contains(&("output".to_string(), "json".to_string())));
-        // Both spellings of a setting belong to `extract_x_flags`; neither
-        // reaches the plain options under any key.
-        assert!(!opts
-            .iter()
-            .any(|(k, _)| k.starts_with('X') || k == "hosts" || k == "topic"));
-
-        let defaulted = extract_opts(&v(&["--topic", "t"]));
-        assert!(defaulted.contains(&("namespace".to_string(), "default".to_string())));
-    }
 }

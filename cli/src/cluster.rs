@@ -1,15 +1,16 @@
-use crate::dispatch::{self, Command};
+use crate::args::{Reading, JSON_SWITCH, NAMESPACE, OUTPUT};
+use crate::dispatch::{self, Command, Missing, Verb};
 use crate::{help, rpc};
 
 pub(crate) const TABLE: Command = Command {
+    path: "flz cluster",
     help: help::CLUSTER,
-    verbs: &[("status", handle_status)],
+    verbs: &[Verb::new("status", handle_status).reading(&[NAMESPACE, OUTPUT, JSON_SWITCH])],
     help_verbs: dispatch::HELP_VERBS,
-    missing: None,
-    unknown: "Error: Unknown cluster subcommand '{}'",
+    missing: Missing::Screen,
     unknown_prints_help: true,
 };
 
-fn handle_status(args: &[String]) {
-    rpc::scoped_read(&args[1..], "cluster_status", None);
+fn handle_status(read: &Reading) {
+    rpc::scoped_read(read, "cluster_status", None);
 }

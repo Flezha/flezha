@@ -6,10 +6,10 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   of `cli/src` and hands them to `FlezhaTest.Helper.RpcSurface`, which is the
   one resolver both name-resolved consumers share.
 
-  A request is built by `rpc::run(name, positional, opts, args, failure)` or
-  `rpc::expression(name, positional, opts, args)`: the arity the controller must
-  export is the positional slice's length plus the options list every request
-  ends with.
+  A request is built by `rpc::run(name, positional, opts, token, failure)` or
+  `rpc::expression(name, positional, opts, token)`: the arity the controller
+  must export is the positional slice's length plus the options list every
+  request ends with.
   """
   use ExUnit.Case, async: true
 
@@ -21,13 +21,11 @@ defmodule Flezha.Service.CliManagerRpcSurfaceTest do
   # the index of the name argument, the third a prefix the helper adds.
   @generic %{
     "scoped_read" => {3, 1, ""},
-    "one_arg_authz" => {2, 1, ""},
+    "one_arg" => {2, 2, ""},
     "token_only" => {1, 1, ""},
-    "render" => {2, 2, ""},
-    "named_source" => {2, 2, ""},
-    "handle_entity_verb" => {2, 2, ""},
-    "handle_read" => {3, 3, ""},
-    "named_verb" => {2, 0, "schedule_"}
+    "rendered" => {2, 1, ""},
+    "scoped_verb" => {3, 1, ""},
+    "quota_verb" => {3, 1, ""}
   }
 
   # `rpc::run` forwards its name to `rpc::expression`: the seam's own plumbing,
