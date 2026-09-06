@@ -1,7 +1,6 @@
 import WebSocket from 'ws';
 import ServerContract, { ConnectedSocket, InputSockets } from './server_contract';
 import { ConnectionRole, requestPath, roleFor } from './connection_paths';
-import { formatOutputFrame } from './output_frame';
 import { Generator, GeneratorSubscription } from '../generator/generator_contract';
 import { loadGenerators } from '../generator/generator_loader';
 import { loadTestnetConfig, TestnetConfig } from './testnet_config';
@@ -96,7 +95,7 @@ export default class ServerImpl implements ServerContract, InputSockets {
     // and stop. Before the router, so a payload that happens to look like a
     // subscription frame cannot start generators on the sink's own socket.
     if (connection?.role === 'output') {
-      console.log(formatOutputFrame(raw));
+      console.log(`out < ${raw}`);
       return;
     }
 

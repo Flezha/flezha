@@ -65,31 +65,33 @@ stdin is the shutdown channel there, not a keyboard. Force it either way with
 ## Output
 
 A socket connecting on `/out` is treated as a Flezha sink reporting what an
-operative emitted. Its frames are printed and nothing is sent back: no acks, no
-generators, and none of the manual input above. That is what lets one testnet
-process be both ends of a hand-driven run.
+operative emitted. Its frames are printed verbatim and nothing is sent back: no
+acks, no generators, and none of the manual input above. That is what lets one
+testnet process be both ends of a hand-driven run.
 
 ```
 Testnet client connected on /out
-out < {"total":3}  [channel=sums flz.entity=order-7 flz.seq=41]
-out < {"bare":true}
+out < {"total":3}
 ```
 
-Both wire shapes a sink might use are read. An envelope carries the payload and
-its metadata:
+What arrives is whatever the websocket sink was configured to send. With no
+`sink_template` the operative's payload goes out on its own, which is the line
+above. A template composes the frame instead: `{{payload}}` is required, and
+`{{req_id}}`, `{{entity}}` and `{{seq}}` are available.
 
-```json
-{"message": "{\"total\":3}", "encoding": "utf8", "metadata": {"channel": "sums"}}
+A websocket text frame has no header slot, so a template is the only way the
+identity stamps reach the other end. To see them here, give the sink one:
+
+```
+--plugins '[{"provider":"operative_websocket","opts":{
+  "uri":"ws://localhost:4500/out",
+  "sink_template":"{\"payload\":{{payload}},\"entity\":\"{{entity}}\",\"seq\":{{seq}}}"
+},"subscriptions":[["on_output",{}]]}]'
 ```
 
-`encoding` is `utf8` when absent; `base64` is decoded, and printed as
-`<N bytes>` when the bytes are not text. Anything that is not an envelope, a
-bare payload included, is printed as it arrived.
-
-The metadata matters more than it looks: a websocket text frame has no header
-slot, so an envelope is the only place the `channel` tag and the `flz.entity` /
-`flz.seq` / `flz.key` identity stamps can survive the hop. A bare frame is
-readable but carries no way to dedupe or order what arrived.
+```
+out < {"payload":{"total":3},"entity":"order-7","seq":41}
+```
 
 ## Subscriptions
 
