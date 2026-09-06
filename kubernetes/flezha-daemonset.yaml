@@ -156,6 +156,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: flezha-config
+            # RELEASE_COOKIE lives here, and the Secret is not shipped: create
+            # it before applying, or the pod stays pending. Without the cookie
+            # the controller starts with distribution off, no `flz` verb can
+            # reach it, and the readiness probe never passes. See the readme.
+            - secretRef:
+                name: flezha-secrets
           env:
             - name: FLEZHA_NODE_HOST
               valueFrom:

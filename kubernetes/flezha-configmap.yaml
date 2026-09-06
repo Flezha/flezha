@@ -11,6 +11,9 @@ metadata:
     app.kubernetes.io/version: "0.2.0"
     app.kubernetes.io/component: controller
 data:
+  # A prod release refuses to boot with this unset. `none` is local-only;
+  # see operations/deployment/variables.md before changing it.
+  FLEZHA_DURABILITY_BACKEND: "none"
   FLEZHA_TRANSPORT: "uds"
   FLEZHA_CLUSTER_DISCOVERY: "k8s_pod_discovery"
   FLEZHA_K8S_IP_LOOKUP_MODE: "pods"

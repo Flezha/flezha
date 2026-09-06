@@ -20,6 +20,13 @@ services:
     stop_grace_period: 75s
     environment:
       MIX_ENV: prod
+      # A prod release refuses to boot with the durability backend unset;
+      # `none` is the local-only value this smoke test wants.
+      FLEZHA_DURABILITY_BACKEND: ${FLEZHA_DURABILITY_BACKEND:-none}
+      # No cookie means RELEASE_DISTRIBUTION=none: the controller runs but no
+      # `flz` verb can reach it, and the image's own HEALTHCHECK is a `flz`
+      # verb. Set it in .env; there is deliberately no committed default.
+      RELEASE_COOKIE: "${RELEASE_COOKIE:?set it in .env, generate one with openssl rand -base64 48}"
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_LOG_PATH: /flezha/app_data/logs/flezha.log

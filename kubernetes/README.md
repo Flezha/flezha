@@ -3,6 +3,22 @@
 These files can be used as a reference for deploying the Flezha controller to a Kubernetes cluster.
 They create a namespace, role, service account, role binding, and a daemonset.
 
+
+## Before you apply: the cookie Secret
+
+The manifests read `RELEASE_COOKIE` from a Secret named `flezha-secrets`, which
+is deliberately not committed. Create it first, or the DaemonSet's pods stay
+pending:
+
+```bash
+kubectl -n flezha create secret generic flezha-secrets \
+  --from-literal=RELEASE_COOKIE="$(openssl rand -base64 48)"
+```
+
+Without it the controller starts with Erlang distribution off. It looks alive,
+but no `flz` verb can reach it and the readiness probe, which is a `flz` verb,
+never passes.
+
 ## Image and registry
 
 The Flezha controller is a multi-architecture (`linux/amd64`, `linux/arm64`) Docker
