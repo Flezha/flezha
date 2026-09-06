@@ -123,8 +123,6 @@ lib/flezha/service/hub_manager/lifecycle.ex -> Flezha.Shutdown.Step
 lib/flezha/service/operative_manager/teardown.ex -> Flezha.Shutdown.Step
 lib/flezha/service/plugin_manager.ex -> Flezha.Shutdown.Step
 lib/flezha/shutdown.ex -> (no directory owns it)
-lib/flezha/state/durability_tier/artifact.ex -> Flezha.AuthZ.Config
-lib/flezha/state/durability_tier/artifact.ex -> Flezha.Schedule.Store
 lib/flezha/state/persistence_resolver.ex -> Flezha.AuthZ.NamespaceStore
 lib/flezha/state/recovery.ex -> Flezha.Service.HubManager
 lib/flezha/state/wal_writer/admission.ex -> Flezha.Convergence.Facts

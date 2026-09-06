@@ -25,6 +25,7 @@ defmodule Flezha.Boot.StatePathMigrator do
   operator can inspect it.
   """
 
+  alias Flezha.Identificator
   alias Flezha.State.Paths
 
   require Logger
@@ -145,7 +146,7 @@ defmodule Flezha.Boot.StatePathMigrator do
   end
 
   defp looks_like_runner_id?(name) do
-    String.match?(name, ~r/^[A-Za-z0-9_-]{6,}$/)
+    Identificator.validate(:legacy_state_dir, name) == :ok
   end
 
   defp contains_operative_class_subdir?(dir) do

@@ -165,11 +165,22 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
     assert :erpc.call(peer, FleetManager, :active_runners, [namespace]) == [runner_id]
     assert FleetManager.active_runners(namespace) == []
 
-    # Its sockets are in the peer's directory and in no other.
+    # Its sockets are in the peer's directory and in no other. The names are
+    # composed by `flz_transport`, the one implementation both sides reach, so
+    # this asserts the file the runner actually opened rather than a pattern
+    # the transport may have shortened the id out of.
     peer_dir = :erpc.call(peer, Support, :socket_dir, [])
-    assert Path.wildcard(Path.join(peer_dir, "*_stream_#{runner_id}.sock")) != []
-    assert Path.wildcard(Path.join(Support.socket_dir(), "*_stream_#{runner_id}.sock")) == []
-    assert File.exists?(Path.join(peer_dir, Path.basename(Support.control_socket_path())))
+
+    for type <- ["primary", "secondary"] do
+      assert {:ok, peer_socket} = Native.stream_socket_path(peer_dir, runner_id, type)
+      assert File.exists?(peer_socket)
+
+      assert {:ok, mine} = Native.stream_socket_path(Support.socket_dir(), runner_id, type)
+      refute File.exists?(mine)
+    end
+
+    assert {:ok, peer_control} = Native.control_socket_path_in(peer_dir)
+    assert File.exists?(peer_control)
 
     NodeTestHelper.stop_runner_remote(peer, namespace, runner_id)
     NodeTestHelper.stop_peer_node(peer_pid, peer)

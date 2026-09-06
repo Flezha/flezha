@@ -14,6 +14,12 @@ The root is `--app-data-root`, else `FLEZHA_APP_DATA_ROOT`, else `./app_data`.
 Per-store path overrides such as `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` are not
 consulted: a store relocated that way is not found and not cleared.
 
+Which subtrees exist and how each is treated is one declaration, read by both
+runtimes: `lib/flezha/layout/table.ex` on the controller's side and
+`cli/src/reset/plan.rs` on this one. The rows below are the ones that declare
+`by default` or a flag; every other subtree declares that reset never clears
+it.
+
 The socket directory is the exception, because the Controller resolves it from
 a different source. `flz reset` walks the same ladder the Controller, every
 runner and `flz runner check` walk, and clears the directory that is actually
@@ -26,9 +32,9 @@ in use.
 | `app_data/certs/`             | TLS material                           | `--include-certs`   |
 | the resolved socket directory | Flezha's own UDS socket files          | `--include-sockets` |
 
-`--all` is `--include-certs --include-sockets`. Every other `app_data/`
-subdirectory (`auth/`, `audit/`, `dlq/`, `schedules/`, `plugins/`) is left
-alone.
+`--all` is `--include-certs --include-sockets`. Every other subtree the layout
+declares — `auth/`, `audit/`, `dlq/`, `schedules/`, `plugins/`, `logs/` — is
+left alone; clearing `auth/` would destroy an operator's tokens.
 
 ## The socket directory
 

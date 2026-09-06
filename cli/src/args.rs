@@ -12,6 +12,7 @@
 //! — are stepped over here and read in `settings.rs`.
 
 use std::env;
+use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
 
@@ -256,6 +257,18 @@ pub(crate) const DEFAULT_WINDOW_MS: u64 = 30_000;
 pub(crate) const APP_DATA_ROOT: OptSpec =
     OptSpec::text("--app-data-root", "--app-data-root", "<path>")
         .answered_by("FLEZHA_APP_DATA_ROOT");
+/// The `app_data/` root when the operator named none. One spelling: two verbs
+/// read this root, and a default written twice is a default that drifts.
+pub(crate) const APP_DATA_ROOT_DEFAULT: &str = "./app_data";
+
+/// The `app_data/` root this run was given, from the option, the variable it
+/// is answered by, or the default.
+pub(crate) fn app_data_root(read: &Reading) -> PathBuf {
+    PathBuf::from(
+        read.opt(APP_DATA_ROOT.long)
+            .unwrap_or(APP_DATA_ROOT_DEFAULT),
+    )
+}
 
 /// Every option a row declares, in declaration order, with what the operator
 /// wrote for it.

@@ -2,8 +2,8 @@ defmodule Flezha.Schedule.StoreTest do
   # async: false: a shared on-disk root; registered singletons.
   use ExUnit.Case, async: false
 
+  alias Flezha.Identificator
   alias Flezha.Schedule.Store
-  alias Flezha.Service.Validator
   alias FlezhaTest.Helper.ScheduleTestHelper
 
   setup do
@@ -82,10 +82,10 @@ defmodule Flezha.Schedule.StoreTest do
     name = String.duplicate("a", 11)
     assert {:ok, _} = Store.add(fields(%{name: name}))
 
-    assert :ok = Validator.byte_limit_exceed("#{name}@2026-07-27T05:00:00Z")
+    assert :ok = Identificator.validate(:operative, "#{name}@2026-07-27T05:00:00Z")
 
     assert :ok =
-             Validator.byte_limit_exceed("#{name}@manual-#{System.system_time(:second)}")
+             Identificator.validate(:operative, "#{name}@manual-#{System.system_time(:second)}")
   end
 
   test "entries survive a store restart" do

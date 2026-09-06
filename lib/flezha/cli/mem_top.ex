@@ -4,12 +4,14 @@ defmodule Flezha.Service.Cli.MemTop do
   text and JSON renderers.
   """
 
+  alias Flezha.Layout.Table, as: Layout
+
   @top_proc_count 20
 
   @doc """
   `flz controller mem-top` RPC. Captures a single snapshot of the
   Controller's memory hot spots: top-20 processes by `:memory`, ETS
-  tables by `:memory`, DETS files under `app_data/process_hub/`, and
+  tables by `:memory`, DETS files under the configured ProcessHub registry root, and
   the `:recon_alloc.memory(:allocated_types)` allocator breakdown.
 
   `output_format` is `"text"` or `"json"`.
@@ -112,7 +114,7 @@ defmodule Flezha.Service.Cli.MemTop do
   end
 
   defp dets_files_under_process_hub do
-    root = Path.join([File.cwd!(), "app_data", "process_hub"])
+    root = Layout.dir(:process_hub)
 
     if File.exists?(root) do
       root
@@ -220,7 +222,7 @@ defmodule Flezha.Service.Cli.MemTop do
   end
 
   defp print_dets_files(snapshot) do
-    IO.puts("DETS files under app_data/process_hub:")
+    IO.puts("DETS files under #{Layout.dir(:process_hub)}:")
 
     if snapshot.dets_files == [] do
       IO.puts("  (none)")

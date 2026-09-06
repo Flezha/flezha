@@ -12,10 +12,10 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.Identificator
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Validator
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: PostgresBackend
   alias Flezha.State.Outbox
   alias Flezha.State.Paths
@@ -216,7 +216,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   @spec unique(binary(), integer()) :: binary()
   def unique(prefix, counter) do
     suffix = "_" <> Integer.to_string(counter)
-    binary_slice(prefix, 0, max(Validator.id_byte_limit() - byte_size(suffix), 0)) <> suffix
+    binary_slice(prefix, 0, max(Identificator.limit(:operative) - byte_size(suffix), 0)) <> suffix
   end
 
   @doc """

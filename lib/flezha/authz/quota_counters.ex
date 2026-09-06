@@ -17,8 +17,8 @@ defmodule Flezha.AuthZ.QuotaCounters do
   """
 
   use GenServer
+  use Flezha.State.Store
 
-  alias Flezha.AuthZ.Config
   alias Flezha.DetsStore
 
   @table :flz_authz_quota_counters
@@ -69,20 +69,25 @@ defmodule Flezha.AuthZ.QuotaCounters do
     GenServer.call(__MODULE__, {:drop_namespace, namespace})
   end
 
-  @doc "Path of the backing DETS file."
-  @spec path() :: String.t()
-  def path(), do: Path.join(Config.auth_dir(), @filename)
-
   @doc "Documented counter kinds."
   @spec kinds() :: [atom()]
   def kinds(), do: @kinds
 
-  ## ----- GenServer -----
+  ## ----- store declaration -----
 
-  @impl true
-  def init(_opts) do
-    DetsStore.init_cached(@table, @cache, path())
-  end
+  @impl Flezha.State.Store
+  def subtree(), do: :auth
+
+  @impl Flezha.State.Store
+  def filename(), do: @filename
+
+  @impl Flezha.State.Store
+  def table(), do: @table
+
+  @impl Flezha.State.Store
+  def cache(), do: @cache
+
+  ## ----- GenServer -----
 
   @impl true
   def handle_cast({:adjust, namespace, kind, delta}, state) do
@@ -98,18 +103,10 @@ defmodule Flezha.AuthZ.QuotaCounters do
   def handle_call({:drop_namespace, namespace}, _from, state) do
     Enum.each(@kinds, fn kind ->
       key = {namespace, kind}
-      :ok = :dets.delete(@table, key)
-      :ets.delete(@cache, key)
+      :ok = DetsStore.delete(@table, @cache, key)
     end)
 
-    :ok = :dets.sync(@table)
     {:reply, :ok, state}
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
   end
 
   ## ----- private -----
@@ -118,8 +115,8 @@ defmodule Flezha.AuthZ.QuotaCounters do
     key = {namespace, kind}
 
     current =
-      case :dets.lookup(@table, key) do
-        [{^key, v}] when is_integer(v) -> v
+      case DetsStore.fetch(@table, key) do
+        {:ok, v} when is_integer(v) -> v
         _ -> 0
       end
 

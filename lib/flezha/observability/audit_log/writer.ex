@@ -19,6 +19,7 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
   alias Flezha.Config
   alias Flezha.Config.Durations
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability.AuditLog.Codec, as: AuditCodec
   alias Flezha.Observability.AuditLog.Reader
   alias Flezha.Observability.{Bus, Signal}
@@ -107,8 +108,8 @@ defmodule Flezha.Observability.AuditLog.Writer do
 
   @impl true
   def init(opts) do
-    dir = Keyword.get(opts, :dir) || Config.get(:audit_log_dir)
-    File.mkdir_p!(dir)
+    dir = Keyword.get(opts, :dir) || Layout.dir(:audit)
+    :ok = Layout.claim(:audit, dir)
 
     fsync_mode = Config.get(:audit_log_fsync_mode)
     fsync_interval_ms = Config.get(:audit_log_fsync_interval_ms)

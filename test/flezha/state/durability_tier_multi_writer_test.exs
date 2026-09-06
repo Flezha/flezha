@@ -19,7 +19,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.AuthZ.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
@@ -241,7 +241,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     end
 
     test "two controllers' control-plane replicas never collide", ctx do
-      auth_dir = Config.auth_dir()
+      auth_dir = Layout.dir(:auth)
       File.mkdir_p!(auth_dir)
       roles = Path.join(auth_dir, "roles.dets")
 

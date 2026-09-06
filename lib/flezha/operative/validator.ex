@@ -3,27 +3,10 @@ defmodule Flezha.Service.Validator do
   alias Flezha.Operative.Kind
   alias Flezha.Service.HubManager
 
-  use Flezha.Constant
-
   def valid_kind(kind) do
     case Kind.known?(kind) do
       true -> :ok
       false -> {:error, "unknown operative kind: #{inspect(kind)}"}
-    end
-  end
-
-  @doc """
-  The hard operative-id limit in bytes. Read by callers that must budget a
-  suffix against it (a partition group's `#pK`, a schedule's slot) before they
-  mint an id that would be refused.
-  """
-  @spec id_byte_limit() :: pos_integer()
-  def id_byte_limit(), do: @operative_id_max_bytes
-
-  def byte_limit_exceed(value, max_length \\ @operative_id_max_bytes) do
-    case byte_size(value) > max_length do
-      true -> {:error, "operative id exceeds #{@operative_id_max_bytes} bytes"}
-      false -> :ok
     end
   end
 

@@ -648,6 +648,15 @@ Composing a socket path that would exceed the platform limit for a Unix domain s
 bytes, `sun_path` less its NUL — SHALL be refused where the path is composed, naming the path and
 its byte length, rather than surfacing as a listener that failed to start.
 
+The controller SHALL NOT mint a runner id longer than the bound this name applies. The bound
+SHALL be declared once and read by both the minting side and the composing side, so a minted id
+reaches its socket unshortened and an operator diagnosing a socket sees the id the controller
+reports. Shortening remains the rule for an id the controller did not mint — an SDK's own stable
+identity — and is not removed by the mint's bound.
+
+The control socket SHALL be named by the same implementation that names a data socket. No
+component SHALL spell the control socket's filename itself.
+
 #### Scenario: A long runner id is shortened, deterministically
 - **WHEN** a runner id longer than 24 bytes is composed into a data socket name
 - **THEN** the id field is exactly 24 bytes, carries the id's first 11 bytes, a `~`, and 12 hexadecimal characters, and is byte-identical on every composition of the same id
@@ -667,6 +676,14 @@ its byte length, rather than surfacing as a listener that failed to start.
 #### Scenario: A shortened name is still recognised as Flezha's own
 - **WHEN** a directory holds a data socket whose id field was shortened
 - **THEN** the predicate that decides which files in a socket directory belong to Flezha recognises it, and `flz reset --include-sockets` clears it
+
+#### Scenario: A minted runner id reaches its socket unshortened
+- **WHEN** the controller mints a runner id for any namespace and binds that runner's data sockets
+- **THEN** the id field in each socket's name is the minted id in full, and the socket file on disk carries the id the controller reports for that runner
+
+#### Scenario: The control socket's name has one speller
+- **WHEN** the controller establishes its socket directory and a runner of any SDK dials the control channel
+- **THEN** both obtain the control socket's filename from the one composing implementation, and no caller concatenates it
 
 ### Requirement: A bind is one attempt, and its failure is a park the loop is told about
 

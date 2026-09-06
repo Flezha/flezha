@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::exit;
 
-use crate::args::{Positional, Reading, APP_DATA_ROOT};
+use crate::args::{app_data_root, Positional, Reading, APP_DATA_ROOT};
 use crate::dispatch::{self, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, controller_is_up, text, DEFAULT_PROBE_TIMEOUT_MS};
@@ -50,7 +50,7 @@ fn handle_rebootstrap(read: &Reading) {
 
     let auth_dir = match std::env::var("FLEZHA_AUTHZ_DIR") {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(read.opt(APP_DATA_ROOT.long).unwrap_or("./app_data")).join("auth"),
+        _ => app_data_root(read).join("auth"),
     };
 
     if !auth_dir.is_dir() {

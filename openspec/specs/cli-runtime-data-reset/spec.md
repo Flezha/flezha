@@ -269,3 +269,53 @@ The other clearable roots are subdirectories of an `app_data/` root the command 
 - **THEN** both Flezha sockets are unlinked
 - **AND** the unrelated file is still present, and the directory itself still exists
 
+### Requirement: The `app_data/` layout SHALL be one declaration both runtimes read
+
+The set of subtrees Flezha writes under the data root SHALL be declared once, and both
+the Controller and `flz` SHALL read that declaration rather than spelling a subtree's
+name. Each row SHALL carry the subtree's name, the configuration key that may move it,
+whether a directory claim is owed before first write, and how `flz reset` treats it —
+cleared by default, cleared only when a flag names it, or never cleared.
+
+No component SHALL derive a root of its own. A module that writes under the data root
+SHALL name its subtree by its declared key and SHALL obtain the directory and any file
+inside it from the declaration, so moving the data root moves every subtree with it.
+
+The socket directory SHALL remain a row whose location is resolved by the socket-directory
+ladder and not by the data root, because the two are resolved from different sources and
+`--app-data-root` SHALL NOT move it. The declaration owns the names inside that directory;
+it does not own the directory.
+
+`flz reset`'s roots SHALL be exactly the rows declaring that they are cleared by default
+or on a flag. Adding a subtree to the declaration SHALL NOT silently enlarge what `flz reset`
+destroys: a new row is `never` unless it says otherwise.
+
+#### Scenario: Moving the data root moves every subtree
+
+- **GIVEN** the Controller is configured with a data root other than `./app_data`
+- **WHEN** it writes durable state, auth state, the plugin catalog, the hub registry, the
+  audit log, the DLQ and the schedule store
+- **THEN** every one of those files SHALL be under the configured root, and no component
+  SHALL write under `./app_data`
+
+#### Scenario: `flz reset` and the Controller name one tree
+
+- **GIVEN** a data root the Controller has written under
+- **WHEN** `flz reset --dry-run --json` reports the roots it would clear
+- **THEN** each reported path SHALL be the path the Controller resolves for that
+  subtree's declared key
+
+#### Scenario: A subtree the declaration marks `never` is not cleared
+
+- **GIVEN** the Controller is not running and the data root holds every declared subtree
+- **WHEN** the operator runs `flz reset --yes --all`
+- **THEN** the subtrees declared `never` — among them the auth store — SHALL be
+  untouched, and only the rows declaring `default` or a flag SHALL be cleared
+
+#### Scenario: The socket row is not under the data root
+
+- **GIVEN** the socket-directory ladder resolves to a per-user runtime directory
+- **WHEN** the layout is asked for the socket row's directory
+- **THEN** it SHALL answer the ladder's directory, unchanged by `--app-data-root` and
+  by the data-root configuration key
+

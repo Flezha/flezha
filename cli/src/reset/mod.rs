@@ -13,7 +13,7 @@ use clear::measure_and_clear;
 use plan::{build_plan, preflight_guard, Action, Root};
 use report::{print_human, print_json};
 
-use crate::args::{OptSpec, Reading, APP_DATA_ROOT, JSON_SWITCH, OUTPUT};
+use crate::args::{app_data_root, OptSpec, Reading, APP_DATA_ROOT, JSON_SWITCH, OUTPUT};
 use crate::rpc::{controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
 pub(crate) const YES: OptSpec = OptSpec::switch("--yes", "--yes");
@@ -68,7 +68,7 @@ fn flags(read: &Reading) -> Flags {
         probe_timeout_ms: read
             .num::<u64>(PROBE_TIMEOUT_MS.long)
             .unwrap_or(DEFAULT_PROBE_TIMEOUT_MS),
-        app_data_root: PathBuf::from(read.opt(APP_DATA_ROOT.long).unwrap_or("./app_data")),
+        app_data_root: app_data_root(read),
     }
 }
 

@@ -7,6 +7,7 @@ defmodule Flezha.Transport.CertGenerator do
   """
 
   alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
 
   require Logger
 
@@ -53,9 +54,8 @@ defmodule Flezha.Transport.CertGenerator do
          client_cert_path,
          client_key_path
        ) do
-    # Ensure directory exists
     cert_dir = Path.dirname(ca_cert_path)
-    File.mkdir_p!(cert_dir)
+    :ok = Layout.claim(:certs)
 
     # Generate CA key pair
     ca_key = :public_key.generate_key({:rsa, 2048, 65_537})

@@ -30,6 +30,7 @@ defmodule Flezha.Dlq.Store do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.State.DurabilityTier
   alias Flezha.State.Paths
 
@@ -159,9 +160,7 @@ defmodule Flezha.Dlq.Store do
   @spec path_component(String.t()) :: String.t()
   def path_component(component), do: safe(component)
 
-  defp root() do
-    Config.get(:dlq_dir)
-  end
+  defp root(), do: Layout.dir(:dlq)
 
   # ---------- GenServer ----------
 

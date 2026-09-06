@@ -15,8 +15,8 @@ defmodule Flezha.AuthZ.AuthState do
   """
 
   use GenServer
+  use Flezha.State.Store
 
-  alias Flezha.AuthZ.Config
   alias Flezha.DetsStore
 
   @table :flz_authz_state
@@ -56,19 +56,22 @@ defmodule Flezha.AuthZ.AuthState do
     GenServer.call(__MODULE__, :reset)
   end
 
-  @doc "Absolute path of the backing DETS file."
-  @spec path() :: String.t()
-  def path() do
-    Path.join(Config.auth_dir(), @filename)
-  end
+  ## ----- store declaration -----
+
+  @impl Flezha.State.Store
+  def subtree(), do: :auth
+
+  @impl Flezha.State.Store
+  def filename(), do: @filename
+
+  @impl Flezha.State.Store
+  def table(), do: @table
+
+  # The ETS cache shares the DETS table's name (separate namespaces).
+  @impl Flezha.State.Store
+  def cache(), do: @table
 
   ## ----- GenServer -----
-
-  @impl true
-  def init(_opts) do
-    # The ETS cache shares the DETS table's name (separate namespaces).
-    DetsStore.init_cached(@table, @table, path())
-  end
 
   @impl true
   def handle_call(:set_enabled, _from, state) do
@@ -79,11 +82,5 @@ defmodule Flezha.AuthZ.AuthState do
   def handle_call(:reset, _from, state) do
     :ok = DetsStore.put(@table, @table, @key, false)
     {:reply, :ok, state}
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
   end
 end

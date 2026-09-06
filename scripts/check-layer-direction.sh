@@ -108,6 +108,7 @@ LAYERS = {
     # holds a single outbound `Flezha.` name, which is the property that keeps
     # them foundations rather than a second junk drawer.
     "config": 0,  # the key table, durations, constants
+    "layout": 0,  # the subtree table: where a file lands, and who clears it
     "process": 0,  # the shared process primitives: bounded call, concurrency, names
     # 1 — the machine underneath: framing, sockets, certificates, and the
     # cluster's own membership. Read by everything, reaching for nothing.

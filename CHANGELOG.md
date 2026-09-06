@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed — one layout, one store, one identifier rule
+
+Where this product puts its files is now one declaration. Ten subtrees are
+listed once, each with the setting that moves it and what `flz reset` does with
+it, and both the controller and the `flz` command read that list — so the
+directory the controller writes to and the one a reset reports are the same
+path, and `flz controller mem-top` reads the configured ProcessHub root instead
+of always looking in `./app_data`.
+
+The seven durable key-value stores now share one contract. Opening, rotating a
+corrupt file, syncing every mutation and closing on shutdown are done in one
+place instead of once per owner, and the plugin catalog — which had its own copy
+of all of that — joins them. Each store's recovery instructions are unchanged.
+
+Identifiers are one table too, a row per kind with its length limits and its
+pattern. That closes a real defect: the controller could mint a runner id longer
+than a socket name can hold, and the transport would quietly rename it, so the
+socket on disk carried an id no operator surface ever reported. A minted id now
+fits, and the control socket's filename is composed by the same code every SDK
+already reaches for the data sockets.
+
 ### Changed — one durable record frame, one crc, one way a durable file lands
 
 Four pieces of code decided what a durable record was, and they gave three

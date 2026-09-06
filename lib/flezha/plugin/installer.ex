@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.Installer do
   require Logger
 
   alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Plugin
   alias Flezha.Plugin.Installer.Checksums
   alias Flezha.Plugin.Installer.Compiler
@@ -608,21 +609,15 @@ defmodule Flezha.Plugin.Installer do
   end
 
   defp plugin_root_for(plugin_id) do
-    Path.join([Config.get(:plugin_root), "installed", plugin_id])
+    Layout.file(:plugins, ["installed", plugin_id])
   end
 
   defp install_dir_for(plugin_id, version) do
-    Path.join([
-      Config.get(:plugin_root),
-      "installed",
-      plugin_id,
-      version
-    ])
+    Layout.file(:plugins, ["installed", plugin_id, version])
   end
 
   defp stage_path() do
-    Path.join([
-      Config.get(:plugin_root),
+    Layout.file(:plugins, [
       "staging",
       Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
     ])

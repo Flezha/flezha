@@ -129,6 +129,24 @@ fn stream_socket_path(
         .map_err(|refusal| refusal.to_string())
 }
 
+/// The control-socket path in `socket_dir` — the composer beside
+/// `stream_socket_path/3`, so the controller that listens and the Elixir SDK
+/// runner that dials read one file name from `flz_transport` rather than each
+/// spelling it.
+#[rustler::nif]
+fn control_socket_path_in(socket_dir: String) -> Result<String, String> {
+    socket_dir::control_socket_path_in(Path::new(&socket_dir))
+        .map_err(|refusal| refusal.to_string())
+}
+
+/// The runner-id ceiling a data-socket name applies. Read by the controller so
+/// the id it MINTS fits the socket it will open, rather than being shortened
+/// into a name the controller never reports.
+#[rustler::nif]
+fn stream_socket_id_max() -> usize {
+    socket_dir::stream_socket_id_max()
+}
+
 /// Why this node cannot reach a controller over `transport`, in the words the
 /// Rust runner and `flz runner check` use. `socket_dir` and `quic_addresses`
 /// carry the caller's environment view, as in `resolve_connect/3`.

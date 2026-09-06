@@ -24,7 +24,7 @@ pub const RUN_CANDIDATE: &str = "/run/flezha";
 /// The repository fallback, so the development loop needs no configuration.
 pub const REPOSITORY_CANDIDATE: &str = "app_data/sockets";
 
-pub(crate) const CONTROL_SOCKET_FILE: &str = "runner_control_channel.sock";
+const CONTROL_SOCKET_FILE: &str = "runner_control_channel.sock";
 /// A per-runner data socket is `<stream type>_stream_<id field>.sock`.
 const STREAM_SOCKET_INFIX: &str = "_stream_";
 const SOCKET_SUFFIX: &str = ".sock";
@@ -180,10 +180,30 @@ fn resolve_from(candidates: Vec<(Rung, PathBuf)>, role: Role) -> Result<SocketDi
 /// The absolute control-socket path a runner dials, resolved through the
 /// ladder.
 pub fn control_socket_path() -> Result<String, SocketDirError> {
-    within_sun_path(path_in(
-        &resolve_socket_dir(Role::Runner, None)?.path,
-        CONTROL_SOCKET_FILE,
-    ))
+    control_socket_path_in(&resolve_socket_dir(Role::Runner, None)?.path)
+}
+
+/// The control-socket path in `dir`. The composer beside
+/// `stream_socket_path_in`, so a caller that resolved its own directory asks
+/// for the name here rather than spelling it: the controller listening and
+/// every runner dialling then read one file name from one place.
+pub fn control_socket_path_in(dir: &Path) -> Result<String, SocketDirError> {
+    within_sun_path(control_socket_file_in(dir))
+}
+
+/// The control socket's path in `dir` without the address-length refusal: the
+/// crate's own probe asks whether a file is there, and a path too long to bind
+/// is unreachable rather than malformed. The one place the file name is
+/// joined to a directory.
+pub(crate) fn control_socket_file_in(dir: &Path) -> String {
+    path_in(dir, CONTROL_SOCKET_FILE)
+}
+
+/// The id field's ceiling, published so the side that MINTS a runner id can
+/// bound what it mints. A longer id is still accepted and shortened, but the
+/// socket then carries a name the minting side did not choose.
+pub const fn stream_socket_id_max() -> usize {
+    STREAM_SOCKET_ID_MAX
 }
 
 /// A per-runner data-socket path, in the directory the control channel

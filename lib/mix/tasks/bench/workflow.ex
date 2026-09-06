@@ -1,6 +1,7 @@
 defmodule Mix.Tasks.Bench.Workflow do
   use Mix.Task
 
+  alias Flezha.Layout.Table, as: Layout
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Workflow.Run
@@ -175,8 +176,8 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   defp reset_namespace do
     for dir <- [
-          Path.join(["app_data", "state", Run.namespace()]),
-          Path.join(["app_data", "process_hub", "#{Run.namespace()}_hub"])
+          Layout.file(:state, Run.namespace()),
+          Layout.file(:process_hub, "#{Run.namespace()}_hub")
         ] do
       File.rm_rf!(dir)
     end

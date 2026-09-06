@@ -14,7 +14,7 @@ use std::{fmt, fs};
 
 use crate::transport::config::{self, TransportType};
 use crate::utility::socket_dir::{
-    join_paths, path_in, resolve_socket_dir, Role, SocketDir, SocketDirError, CONTROL_SOCKET_FILE,
+    control_socket_file_in, join_paths, resolve_socket_dir, Role, SocketDir, SocketDirError,
     SOCKET_DIR_VAR,
 };
 
@@ -177,7 +177,7 @@ fn quic_candidate_note(quic_addresses: Option<&str>) -> String {
 /// Which of the situations a socket directory is in, by `stat` and one
 /// connect.
 pub fn probe(dir: &Path) -> Reach {
-    let socket = PathBuf::from(path_in(dir, CONTROL_SOCKET_FILE));
+    let socket = PathBuf::from(control_socket_file_in(dir));
 
     let dir_meta = match fs::metadata(dir) {
         Ok(meta) => Some(meta),
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(probe(empty.path()), Reach::SocketMissing);
 
         let stale = TempDir::new().unwrap();
-        fs::write(path_in(stale.path(), CONTROL_SOCKET_FILE), b"").unwrap();
+        fs::write(control_socket_file_in(stale.path()), b"").unwrap();
         assert_eq!(probe(stale.path()), Reach::StaleSocket);
 
         let live = TempDir::new().unwrap();

@@ -16,10 +16,6 @@ defmodule Flezha.AuthZ.Config do
   @spec config_enabled?() :: boolean()
   def config_enabled?(), do: Config.get(:authz_enabled)
 
-  @doc "Resolve the auth directory."
-  @spec auth_dir() :: String.t()
-  def auth_dir(), do: Config.get(:authz_auth_dir)
-
   @doc "Path of the bootstrap token file."
   @spec bootstrap_token_path() :: String.t()
   def bootstrap_token_path(), do: Config.get(:authz_bootstrap_token_path)

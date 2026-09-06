@@ -10,10 +10,10 @@ defmodule Flezha.Schedule.Store do
   """
 
   use GenServer
-  use Flezha.Constant
+  use Flezha.State.Store
 
-  alias Flezha.Config
   alias Flezha.DetsStore
+  alias Flezha.Identificator
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
 
@@ -22,11 +22,8 @@ defmodule Flezha.Schedule.Store do
   @cache :flz_schedule_defs_cache
   @filename "schedules.dets"
 
-  @name_re ~r/^[A-Za-z0-9][A-Za-z0-9_-]*$/
   # A UTC slot renders as a fixed-width suffix; the composed cron instance
   # id `<name>@<slot-iso>` must fit the operative id byte limit.
-  @slot_suffix_bytes byte_size("@2026-01-01T00:00:00Z")
-  @max_name_bytes @operative_id_max_bytes - @slot_suffix_bytes
 
   @type entry :: %{
           required(:name) => binary(),
@@ -84,22 +81,21 @@ defmodule Flezha.Schedule.Store do
   @spec list() :: [entry()]
   def list(), do: DetsStore.cache_values(@cache) |> Enum.sort_by(& &1.name)
 
-  @doc "Absolute path of the backing DETS file."
-  @spec path() :: String.t()
-  def path(), do: Path.join(dir(), @filename)
+  ## ----- store declaration -----
 
-  @doc "Directory holding the durable schedule definitions."
-  @spec dir() :: String.t()
-  def dir() do
-    Config.get(:schedule_dir)
-  end
+  @impl Flezha.State.Store
+  def subtree(), do: :schedules
+
+  @impl Flezha.State.Store
+  def filename(), do: @filename
+
+  @impl Flezha.State.Store
+  def table(), do: @table
+
+  @impl Flezha.State.Store
+  def cache(), do: @cache
 
   ## ----- GenServer -----
-
-  @impl true
-  def init(_opts) do
-    DetsStore.init_cached(@table, @cache, path())
-  end
 
   @impl true
   def handle_call({:add, entry}, _from, state) do
@@ -110,20 +106,14 @@ defmodule Flezha.Schedule.Store do
   end
 
   def handle_call({:remove, name}, _from, state) do
-    case :dets.lookup(@table, name) do
-      [] ->
+    case DetsStore.fetch(@table, name) do
+      :error ->
         {:reply, {:error, :not_found}, state}
 
-      [_] ->
+      {:ok, _} ->
         :ok = DetsStore.delete(@table, @cache, name)
         {:reply, :ok, state}
     end
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
   end
 
   ## ----- private -----
@@ -132,14 +122,16 @@ defmodule Flezha.Schedule.Store do
   # unambiguous there (no `@`, no whitespace, filesystem-safe) and short
   # enough that every fire's composed id passes the operative id limit.
   defp validate_name(name) when is_binary(name) do
-    if Regex.match?(@name_re, name) and byte_size(name) <= @max_name_bytes do
-      :ok
-    else
-      {:error,
-       {:invalid_name,
-        "schedule name must match [A-Za-z0-9][A-Za-z0-9_-]* and be at most " <>
-          "#{@max_name_bytes} bytes (`<name>@<slot>` must fit the " <>
-          "#{@operative_id_max_bytes}-byte operative id limit)"}}
+    case Identificator.validate(:schedule_name, name) do
+      :ok ->
+        :ok
+
+      {:error, _refusal} ->
+        {:error,
+         {:invalid_name,
+          "schedule name must match [A-Za-z0-9][A-Za-z0-9_-]* and be at most " <>
+            "#{Identificator.limit(:schedule_name)} bytes (`<name>@<slot>` must fit the " <>
+            "#{Identificator.limit(:operative)}-byte operative id limit)"}}
     end
   end
 

@@ -8,6 +8,126 @@ defmodule Flezha.Identificator do
 
   alias Flezha.Process.Cspec
 
+  use Flezha.Constant
+
+  @typedoc "The kinds of identifier this tree bounds."
+  @type kind ::
+          :operative
+          | :namespace
+          | :plugin
+          | :schedule_name
+          | :token
+          | :runner
+          | :legacy_state_dir
+
+  @typedoc "Why an identifier was refused."
+  @type refusal ::
+          {:too_short, kind(), pos_integer()}
+          | {:too_long, kind(), pos_integer()}
+          | {:malformed, kind()}
+
+  # The width `mint/2` spends on the random field: six bytes of strong
+  # randomness as lowercase hex. Fixed, so a minted id's length is decided by
+  # its kind's row and never by the draw.
+  @mint_suffix_bytes 12
+
+  # `<name>@<slot>` is one operative id, and the slot is an ISO-8601 instant,
+  # so a schedule name may spend only what the slot leaves.
+  @schedule_slot_bytes byte_size("@2026-01-01T00:00:00Z")
+
+  # One row per kind of identifier: `{min, max, regex}` in bytes, `nil` for a
+  # rule the kind does not carry. Every limit in this tree is a row here —
+  # before, the same question was answered by an attribute in a fifth file, an
+  # inline `byte_size(...) >= 8` and a truncation in Rust that the minting side
+  # never read.
+  #
+  # `:runner` is bounded by what a data-socket name can hold. The transport
+  # shortens a longer id into `<11 bytes>~<12 hex>`, so an unbounded mint gave
+  # the controller one id and the socket another. The value is declared here,
+  # at the foundation rank, and `Flezha.Transport.Native.stream_socket_id_max/0`
+  # is pinned to it by test rather than read from it: this module names nothing
+  # above its own layer.
+  @kinds %{
+    operative: %{min: 1, max: @operative_id_max_bytes, regex: nil},
+    runner: %{min: 1, max: @stream_socket_id_max_bytes, regex: nil},
+    namespace: %{min: 1, max: 63, regex: ~r/\A[a-z][a-z0-9-]{0,62}\z/},
+    plugin: %{min: 1, max: 64, regex: ~r/^[a-z0-9][a-z0-9_]*$/},
+    schedule_name: %{
+      min: 1,
+      max: @operative_id_max_bytes - @schedule_slot_bytes,
+      regex: ~r/^[A-Za-z0-9][A-Za-z0-9_-]*$/
+    },
+    token: %{min: 8, max: 64, regex: ~r/^[0-9a-f]+$/},
+    legacy_state_dir: %{min: 6, max: 255, regex: ~r/^[A-Za-z0-9_-]+$/}
+  }
+
+  @doc "Every declared kind."
+  @spec kinds() :: [kind()]
+  def kinds(), do: Map.keys(@kinds)
+
+  @doc "The rule `kind` carries: `min` and `max` bytes, and its regex or `nil`."
+  @spec rule(kind()) :: %{min: pos_integer(), max: pos_integer(), regex: Regex.t() | nil}
+  def rule(kind), do: Map.fetch!(@kinds, kind)
+
+  @doc "The byte ceiling `kind` allows. What a caller budgets a suffix against."
+  @spec limit(kind()) :: pos_integer()
+  def limit(kind), do: rule(kind).max
+
+  @doc """
+  Whether `value` may be an identifier of `kind`.
+
+  A refusal names which rule was broken and the limit it broke, so each caller
+  renders it in the words its own surface has always used.
+  """
+  @spec validate(kind(), term()) :: :ok | {:error, refusal()}
+  def validate(kind, value) when is_binary(value) do
+    %{min: min, max: max, regex: regex} = rule(kind)
+
+    cond do
+      byte_size(value) < min -> {:error, {:too_short, kind, min}}
+      byte_size(value) > max -> {:error, {:too_long, kind, max}}
+      regex != nil and not Regex.match?(regex, value) -> {:error, {:malformed, kind}}
+      true -> :ok
+    end
+  end
+
+  def validate(kind, _value), do: {:error, {:malformed, kind}}
+
+  @doc """
+  Mint an identifier of `kind` under `prefix`, bounded by the kind's own rule.
+
+  The prefix is trimmed to whatever the rule leaves after the random field, so
+  what is minted always passes `validate/2` — a mint that could exceed its own
+  limit is a name the rest of the system renames behind the minter's back.
+  Retries on a name the registry already holds.
+  """
+  @spec mint(kind(), binary()) :: binary()
+  def mint(kind, prefix) when is_binary(prefix) do
+    id = trim(prefix, limit(kind) - @mint_suffix_bytes - 1) <> "_" <> mint_suffix()
+
+    case Registry.lookup(__MODULE__, id) do
+      [] -> id
+      _ -> mint(kind, prefix)
+    end
+  end
+
+  # The prefix, cut to `budget` bytes, without the separator the cut may land
+  # on: a namespace trimmed mid-word reads badly enough in a log line without
+  # `colocation__<hex>` on top of it.
+  defp trim(prefix, budget) when budget > 0 do
+    prefix
+    |> binary_part(0, min(byte_size(prefix), budget))
+    |> String.replace(~r/[_-]+$/, "")
+  end
+
+  defp trim(_prefix, _budget), do: ""
+
+  defp mint_suffix() do
+    div(@mint_suffix_bytes, 2)
+    |> :crypto.strong_rand_bytes()
+    |> Base.encode16(case: :lower)
+  end
+
   def child_spec(opts) do
     Cspec.build(__MODULE__, {__MODULE__, :start_link, [opts]}, :worker_permanent, shutdown: 500)
   end
@@ -20,23 +140,12 @@ defmodule Flezha.Identificator do
     )
   end
 
-  def unique_id(namespace) do
-    rand_nums =
-      Enum.reduce(1..4, "", fn _x, acc ->
-        rand_num =
-          Enum.random(1..1000)
-          |> Integer.to_string()
-
-        rand_num <> acc
-      end)
-
-    id = namespace <> "_" <> rand_nums
-
-    case Registry.lookup(__MODULE__, id) do
-      [] -> id
-      _ -> unique_id(namespace)
-    end
-  end
+  @doc """
+  A fresh runner id under `namespace`, bounded by the `:runner` rule so the
+  data socket the controller opens carries the id the controller reports.
+  """
+  @spec unique_id(binary()) :: binary()
+  def unique_id(namespace), do: mint(:runner, namespace)
 
   def unit_sup(runner_id) do
     gen_via(runner_id, "wus")
@@ -109,10 +218,6 @@ defmodule Flezha.Identificator do
     {:via, Registry, {__MODULE__, gen_id(prefix, suffix)}}
   end
 
-  # defp gen_via(runner_id, runner_id, type_str) do
-  #   {:via, Registry, {__MODULE__, gen_id(runner_id, runner_id, type_str)}}
-  # end
-
   defp gen_id(runner_id, type_str) when is_atom(runner_id) do
     gen_id(Atom.to_string(runner_id), type_str)
   end
@@ -120,8 +225,4 @@ defmodule Flezha.Identificator do
   defp gen_id(runner_id, type_str) do
     runner_id <> "_" <> type_str
   end
-
-  # defp gen_id(runner_id, runner_id, type_str) do
-  #   runner_id <> "_" <> runner_id <> "_" <> type_str
-  # end
 end

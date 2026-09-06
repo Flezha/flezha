@@ -27,6 +27,7 @@ defmodule Flezha.AuthZ.Bootstrap do
   require Logger
 
   alias Flezha.AuthZ.{AuthState, Config, Namespace, RoleStore, TokenStore}
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability.{Bus, Signal}
 
   @source :platform_authz
@@ -83,7 +84,7 @@ defmodule Flezha.AuthZ.Bootstrap do
 
   @doc "Path of the break-glass recovery marker inside the auth dir."
   @spec recovery_marker_path() :: String.t()
-  def recovery_marker_path(), do: Path.join(Config.auth_dir(), @recovery_marker)
+  def recovery_marker_path(), do: Layout.file(:auth, @recovery_marker)
 
   @doc """
   Detect missing-bootstrap state and emit a one-time token to disk.
@@ -178,10 +179,8 @@ defmodule Flezha.AuthZ.Bootstrap do
   defp ensure_dir_safe(dir) do
     parent = Path.dirname(dir)
 
-    with :ok <- check_parent_mode(parent),
-         :ok <- File.mkdir_p(dir) do
-      _ = File.chmod(dir, 0o700)
-      :ok
+    with :ok <- check_parent_mode(parent) do
+      Layout.claim(:auth, dir)
     end
   end
 

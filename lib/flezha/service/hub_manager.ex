@@ -5,12 +5,11 @@ defmodule Flezha.Service.HubManager do
   here is what names this module's own supervisor identity.
   """
 
-  alias Flezha.Config
-
   alias Flezha.Config.Durations
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Convergence.Snapshot
   alias Flezha.Identificator
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Process.Hub
   alias Flezha.Service.HubManager.Lifecycle
   alias Flezha.Service.HubManager.Placement
@@ -320,15 +319,14 @@ defmodule Flezha.Service.HubManager do
   # On-disk registry.dets for a hub that has not started yet.
   defp unstarted_hub_has_registry?() do
     running = MapSet.new(list_running_hub_ids())
-    root = Config.get(:process_hub_registry_root)
 
-    case File.ls(root) do
+    case File.ls(Layout.dir(:process_hub)) do
       {:ok, entries} ->
         Enum.any?(entries, fn entry ->
           hub_id = String.to_atom(entry)
 
           not MapSet.member?(running, hub_id) and
-            File.regular?(Path.join([root, entry, "registry.dets"]))
+            File.regular?(Layout.file(:process_hub, [entry, Layout.hub_registry_file()]))
         end)
 
       _ ->

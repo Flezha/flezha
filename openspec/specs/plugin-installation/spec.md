@@ -220,7 +220,9 @@ The installer SHALL write installed plugin files to `app_data/plugins/installed/
 
 ### Requirement: Installed-plugin catalog persistence
 
-The system SHALL maintain a DETS-backed catalog at `app_data/recovery/installed_plugins.dets` via `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk via `:dets.sync/1` at the end of each install, upgrade, enable, disable, and uninstall procedure before the procedure returns.
+The system SHALL maintain a DETS-backed catalog named `installed_plugins.dets` in the layout's plugin subtree, reached through `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk at the end of each install, upgrade, enable, disable, and uninstall procedure before the procedure returns.
+
+The catalog SHALL be one declared durable store: the store names its layout subtree and its filename, and the opening, the corrupt-file rotation, the per-mutation sync and the close on shutdown SHALL be performed by the shared store implementation. `Flezha.Plugin.Installer.Store` SHALL NOT open, rotate, sync or close a DETS table itself, and SHALL NOT create its directory itself.
 
 #### Scenario: Install writes a :disabled row
 - **WHEN** an install completes successfully
@@ -228,7 +230,7 @@ The system SHALL maintain a DETS-backed catalog at `app_data/recovery/installed_
 
 #### Scenario: Enable flips status to :enabled
 - **WHEN** `Flezha.Plugin.Installer.enable/2` succeeds for a `:disabled` plugin
-- **THEN** the catalog row for that plugin id MUST now have `status: :enabled`, and the change MUST be persisted via `:dets.sync/1` before the call returns
+- **THEN** the catalog row for that plugin id MUST now have `status: :enabled`, and the change MUST be persisted to disk before the call returns
 
 #### Scenario: Uninstall deletes the row
 - **WHEN** `Flezha.Plugin.Installer.uninstall/2` succeeds
@@ -241,6 +243,10 @@ The system SHALL maintain a DETS-backed catalog at `app_data/recovery/installed_
 #### Scenario: Corrupt catalog rotates and starts fresh
 - **WHEN** the DETS file fails to open because it is corrupt
 - **THEN** the Store MUST rename it to `installed_plugins.dets.corrupt-<timestamp>`, open a fresh empty DETS file at the original path, log an error with both paths, and continue starting
+
+#### Scenario: The catalog follows the configured plugin root
+- **WHEN** the plugin root is configured to a directory other than the default
+- **THEN** the catalog file MUST be created under that directory, and no component MUST spell a plugin root of its own
 
 ### Requirement: Boot-time module loading
 

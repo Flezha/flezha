@@ -17,6 +17,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
   use Flezha.Process.Timer, keys: [:tick]
 
   alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.AuditLog.{Index, Writer}
 
@@ -35,7 +36,7 @@ defmodule Flezha.Observability.AuditLog.Retention do
   @impl true
   def init(_opts) do
     state = %{
-      dir: Config.get(:audit_log_dir),
+      dir: Layout.dir(:audit),
       interval_ms: Config.get(:audit_log_retention_check_interval_ms),
       retention_seconds: Config.get(:audit_log_retention_seconds),
       max_total_bytes: Config.get(:audit_log_max_total_bytes)

@@ -37,6 +37,17 @@ pub(super) enum Source {
 }
 
 impl Source {
+    /// The subtree name this source is declared under in
+    /// `test/fixtures/layout_rows.txt`. Only the fixture check reads it: the
+    /// run itself names a root by its path, not by its row.
+    #[cfg(test)]
+    fn row_name(self) -> &'static str {
+        match self {
+            Source::AppData(name) => name,
+            Source::SocketLadder => "sockets",
+        }
+    }
+
     pub(super) fn covers(self, file_name: &OsStr) -> bool {
         match self {
             Source::AppData(_) => true,
@@ -50,8 +61,12 @@ impl Source {
 /// directory, or it was asked and refused.
 const UNRESOLVED_SOCKET_ROOT: &str = "socket directory";
 
-// Update this table when a new durable runtime store lands under
-// `app_data/`. Order is the order of output.
+// The rows `flz reset` may clear, in the order it reports them. This is the
+// shell's half of one declaration: `test/fixtures/layout_rows.txt` carries the
+// whole subtree list with each row's reset mode, `Flezha.Layout.Table` is the
+// controller's half, and `agrees_with_the_shared_layout_rows` below reads the
+// fixture so the two cannot drift. A subtree the fixture calls `never` must
+// not appear here — clearing `auth` would destroy an operator's tokens.
 const CLEARABLE_ROOTS: &[(Source, ClearMode)] = &[
     (Source::AppData("state"), ClearMode::Default),
     (Source::AppData("process_hub"), ClearMode::Default),
@@ -275,6 +290,61 @@ mod tests {
             let err = preflight_guard(&plan, &base).unwrap_err();
             assert!(err.contains("refusing"));
             let _ = fs::remove_dir_all(&base);
+        }
+    }
+
+    /// The shell and the controller declare one layout. This reads the shared
+    /// fixture and holds `CLEARABLE_ROOTS` to it: every `default`/`flag` row
+    /// is here with the matching mode and in the fixture's order, and every
+    /// `never` row is absent.
+    #[test]
+    fn agrees_with_the_shared_layout_rows() {
+        let fixture = include_str!("../../../test/fixtures/layout_rows.txt");
+
+        let declared: Vec<(&str, &str)> = fixture
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                let (name, mode) = line.split_once('|').expect("row is `<name>|<reset mode>`");
+                (name, mode)
+            })
+            .collect();
+        assert!(
+            declared.len() >= 10,
+            "fixture read as {} rows",
+            declared.len()
+        );
+
+        let clearable: Vec<(&str, &str)> = CLEARABLE_ROOTS
+            .iter()
+            .map(|(source, mode)| {
+                let word = match mode {
+                    ClearMode::Default => "default",
+                    ClearMode::OptIn(_, _) => "flag",
+                };
+                (source.row_name(), word)
+            })
+            .collect();
+
+        let expected: Vec<(&str, &str)> = declared
+            .iter()
+            .copied()
+            .filter(|(_, mode)| *mode != "never")
+            .collect();
+        assert_eq!(
+            clearable, expected,
+            "reset's rows disagree with the layout table"
+        );
+
+        for (name, mode) in declared {
+            if mode == "never" {
+                assert!(
+                    !clearable.iter().any(|(cleared, _)| *cleared == name),
+                    "{} is declared `never` and reset would clear it",
+                    name
+                );
+            }
         }
     }
 }

@@ -159,6 +159,22 @@ defmodule Flezha.Transport.Native do
     do: :erlang.nif_error(:not_loaded)
 
   @doc """
+  The control-socket path in `socket_dir` — the composer beside
+  `stream_socket_path/3`. The controller that listens and the Elixir SDK
+  runner that dials both ask for the name here, so neither spells it.
+  """
+  @spec control_socket_path_in(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def control_socket_path_in(_socket_dir), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  The runner-id ceiling a data-socket name applies, in bytes. Read so the side
+  that MINTS a runner id can bound what it mints: a longer id is shortened by
+  the transport into a name the minting side never reports.
+  """
+  @spec stream_socket_id_max() :: non_neg_integer()
+  def stream_socket_id_max(), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
   Claim `state_root` for this controller with an exclusive advisory lock on a
   file inside it, held for the OS process lifetime and released by the kernel
   when it exits. `{:ok, lock_file}`, or `{:error, holder}` naming the process

@@ -14,12 +14,10 @@ defmodule Flezha.AuthZ.Namespace do
   `Flezha.AuthZ.NamespaceStore`.
   """
 
+  alias Flezha.Identificator
+
   @system "_system"
   @default "default"
-
-  # Reserved prefix; new namespace names cannot start with an
-  # underscore so we keep room for future system-owned namespaces.
-  @name_regex ~r/\A[a-z][a-z0-9-]{0,62}\z/
 
   @default_quotas %{
     max_operatives: 100,
@@ -64,10 +62,14 @@ defmodule Flezha.AuthZ.Namespace do
   @spec validate_name(term()) :: :ok | {:error, :invalid_namespace_name}
   def validate_name(@system), do: :ok
 
+  # The rule is the `:namespace` row: lower-case, digit-or-dash after the first
+  # letter, and no leading underscore, which keeps that prefix for system-owned
+  # namespaces.
   def validate_name(name) when is_binary(name) do
-    if Regex.match?(@name_regex, name),
-      do: :ok,
-      else: {:error, :invalid_namespace_name}
+    case Identificator.validate(:namespace, name) do
+      :ok -> :ok
+      {:error, _refusal} -> {:error, :invalid_namespace_name}
+    end
   end
 
   def validate_name(_), do: {:error, :invalid_namespace_name}

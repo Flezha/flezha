@@ -9,9 +9,9 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Cluster.Directory
-  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Parallel
   alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
@@ -236,8 +236,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   end
 
   def wipe_registry_dir(hub_id) do
-    root = Config.get(:process_hub_registry_root)
-    File.rm_rf(Path.join(root, Atom.to_string(hub_id)))
+    File.rm_rf(Layout.file(:process_hub, Atom.to_string(hub_id)))
   end
 
   @doc false
@@ -278,9 +277,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   end
 
   defp registry_path(hub_id) do
-    root = Config.get(:process_hub_registry_root)
-    dir = Path.join(root, Atom.to_string(hub_id))
-    File.mkdir_p!(dir)
-    Path.join(dir, "registry.dets")
+    path = Layout.file(:process_hub, [Atom.to_string(hub_id), Layout.hub_registry_file()])
+    File.mkdir_p!(Path.dirname(path))
+    path
   end
 end

@@ -14,8 +14,8 @@ defmodule Flezha.AuthZ.RoleStore do
   """
 
   use GenServer
+  use Flezha.State.Store
 
-  alias Flezha.AuthZ.Config
   alias Flezha.AuthZ.{Namespace, Role}
   alias Flezha.DetsStore
 
@@ -78,16 +78,21 @@ defmodule Flezha.AuthZ.RoleStore do
     end)
   end
 
-  @doc "Absolute path of the backing DETS file."
-  @spec path() :: String.t()
-  def path(), do: Path.join(Config.auth_dir(), @filename)
+  ## ----- store declaration -----
+
+  @impl Flezha.State.Store
+  def subtree(), do: :auth
+
+  @impl Flezha.State.Store
+  def filename(), do: @filename
+
+  @impl Flezha.State.Store
+  def table(), do: @table
+
+  @impl Flezha.State.Store
+  def cache(), do: @cache
 
   ## ----- GenServer -----
-
-  @impl true
-  def init(_opts) do
-    DetsStore.init_cached(@table, @cache, path())
-  end
 
   @impl true
   def handle_call({:bind, principal, namespace, role, bound_by}, _from, state) do
@@ -106,11 +111,5 @@ defmodule Flezha.AuthZ.RoleStore do
   def handle_call({:unbind, principal}, _from, state) do
     :ok = DetsStore.delete(@table, @cache, principal)
     {:reply, :ok, state}
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
   end
 end

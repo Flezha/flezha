@@ -19,7 +19,7 @@ defmodule Flezha.Service.AuditLog do
   use Flezha.AuthZ.Verb
 
   alias Flezha.AuthZ
-  alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability
   alias Flezha.Observability.AuditLog.{Reader, Sink, Writer}
   alias Flezha.Observability.AuditLog.Rotation
@@ -175,7 +175,5 @@ defmodule Flezha.Service.AuditLog do
     end
   end
 
-  defp audit_dir() do
-    Config.get(:audit_log_dir)
-  end
+  defp audit_dir(), do: Layout.dir(:audit)
 end

@@ -19,6 +19,7 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.AuthZ.Quotas
   alias Flezha.Config.Durations
   alias Flezha.Dlq
+  alias Flezha.Identificator
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Plugin
@@ -108,7 +109,7 @@ defmodule Flezha.Operative.PartitionGroup do
          "#{operative.id} is already running as an unpartitioned operative; a partitioned " <>
            "start cannot converge it — stop it first or choose another group id"}
 
-      byte_size(Partition.member_id(operative.id, partitions - 1)) > Validator.id_byte_limit() ->
+      byte_size(Partition.member_id(operative.id, partitions - 1)) > id_limit() ->
         {:error, id_budget_refusal(operative.id, partitions)}
 
       ClassRegistry.keyless?(operative.factory_id) ->
@@ -127,8 +128,8 @@ defmodule Flezha.Operative.PartitionGroup do
     suffix = byte_size(Partition.member_suffix(partitions - 1))
 
     "operative id #{base_id} is #{byte_size(base_id)} bytes; #{partitions} partitions append " <>
-      "#{suffix} more and the limit is #{Validator.id_byte_limit()} — " <>
-      "the base id may be at most #{Validator.id_byte_limit() - suffix} bytes for this N"
+      "#{suffix} more and the limit is #{id_limit()} — " <>
+      "the base id may be at most #{id_limit() - suffix} bytes for this N"
   end
 
   # One preflight for all N units. Allocation itself stays per-member (there is
@@ -620,6 +621,9 @@ defmodule Flezha.Operative.PartitionGroup do
       class
     end)
   end
+
+  # The ceiling a member id's `#pK` suffix is budgeted against.
+  defp id_limit(), do: Identificator.limit(:operative)
 
   defp vacated?(class) do
     Paths.entities_of(class) == [] and consumed?(class)

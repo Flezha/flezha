@@ -172,9 +172,15 @@ The system SHALL expose `Flezha.Service.CliManager.authz_*`, `namespace_*`, and 
 
 `app_data/auth/tokens.dets`, `app_data/auth/roles.dets`, `app_data/auth/namespaces.dets`, `app_data/auth/quota_counters.dets`, and `app_data/auth/state.dets` SHALL be opened with `:sync` writes so every mutation is durably written before the mutating call returns. On Controller boot, if any of these files is detected as corrupt, the system SHALL rename the corrupt file to `<name>.corrupt-<unix_ts>` and open a fresh empty file. While `:enabled` is `true`, the Controller SHALL refuse to leave `Flezha.AuthZ.Supervisor` healthy unless either (a) the recovered state contains at least one `admin@_system` role binding, or (b) `bootstrap.token` is present, or (c) `FLEZHA_AUTHZ_ENABLED=false` is set in the environment.
 
+Each of these files SHALL be one declared durable store: it names the layout subtree it lives in and its filename, and the opening, the corrupt-file rotation, the per-mutation sync and the close on shutdown SHALL be performed by the shared store implementation rather than by the owning module. The directory SHALL be claimed through the layout declaration, so the five files follow the configured auth directory with no module joining a root of its own.
+
 #### Scenario: Corrupt DETS is rotated
 - **WHEN** the Controller boots and one of the auth DETS files cannot be opened
 - **THEN** the file SHALL be renamed to `<name>.corrupt-<unix_ts>` AND a fresh empty file SHALL be opened in its place
+
+#### Scenario: Every store closes on shutdown through one implementation
+- **WHEN** the Controller shuts down cleanly
+- **THEN** each declared store's table SHALL be closed by the shared implementation, and no owning module SHALL close its own table
 
 ### Requirement: Runtime configuration surface
 
@@ -487,4 +493,30 @@ so that the refusal says nothing about whether the name exists.
   each with the same principal and the same target
 - **THEN** both SHALL reach the same verdict in the same scope, and an authorized act
   SHALL be audited once with one record shape
+
+### Requirement: Every identifier kind SHALL be one declared rule
+
+An identifier the system accepts or mints SHALL be governed by one declaration holding a row per kind — at minimum the operative id, the namespace name, the plugin id, the schedule name, the authorization token id and the runner id — and each row SHALL carry the kind's minimum length, its maximum length in bytes, and the pattern a value must match.
+
+Validation SHALL be performed by the declaration's own function. No module SHALL carry a second length constant or name pattern for a kind the declaration already holds, and a kind absent from the declaration SHALL NOT be validated by a private rule.
+
+Minting SHALL respect the same row: a value the system generates for a kind SHALL satisfy that kind's rule at the moment it is generated, so a generated identifier is never rejected or rewritten by a consumer downstream.
+
+A rule that a different runtime enforces — the byte bound a runner id must satisfy to fit its socket name — SHALL be one value both runtimes read, rather than a number one side applies to the other side's output.
+
+#### Scenario: A value one byte over its kind's limit is refused
+- **WHEN** a value one byte longer than its kind's declared maximum is submitted for any declared kind
+- **THEN** validation SHALL refuse it, naming the kind and the limit
+
+#### Scenario: A value at its kind's limit is accepted
+- **WHEN** a value of exactly the declared maximum, matching the kind's pattern, is submitted
+- **THEN** validation SHALL accept it
+
+#### Scenario: A minted identifier satisfies its own kind's rule
+- **WHEN** the system mints an identifier for a kind
+- **THEN** the minted value SHALL satisfy that kind's declared rule, including any byte bound another runtime enforces on it
+
+#### Scenario: A new kind is a row, not a module
+- **WHEN** a kind of identifier is added to the system
+- **THEN** it SHALL be added as a row of the declaration, and no module SHALL gain a length constant or a name pattern of its own
 

@@ -61,9 +61,13 @@ defmodule Flezha.Socket.Support do
     :inet.setopts(socket, [{:active, true}])
   end
 
-  def control_socket_path() do
-    socket_dir() <> "/runner_control_channel.sock"
-  end
+  @doc """
+  The absolute path of this controller's control socket. Composed by
+  `flz_transport`, the same implementation every runner's own side reaches, so
+  the two cannot spell one controller's socket two ways.
+  """
+  @spec control_socket_path() :: String.t()
+  def control_socket_path(), do: composed!(Native.control_socket_path_in(socket_dir()))
 
   @doc """
   The absolute path of `runner_id`'s data socket of `type`. Composed by
@@ -71,12 +75,14 @@ defmodule Flezha.Socket.Support do
   two cannot spell one runner's socket two ways; raises when the directory is
   long enough that no name fits a Unix domain socket address.
   """
-  def stream_socket_path(runner_id, type) do
-    case Native.stream_socket_path(socket_dir(), to_string(runner_id), to_string(type)) do
-      {:ok, path} -> path
-      {:error, refusal} -> raise refusal
-    end
-  end
+  def stream_socket_path(runner_id, type),
+    do: composed!(Native.stream_socket_path(socket_dir(), to_string(runner_id), to_string(type)))
+
+  # `flz_transport` refuses a name no Unix domain socket address can hold. The
+  # refusal is the caller's own words and there is nothing to fall back to, so
+  # both composers raise it rather than each unwrapping the same tuple.
+  defp composed!({:ok, path}), do: path
+  defp composed!({:error, refusal}), do: raise(refusal)
 
   # Liveness is `flz_transport`'s probe, the one every runner's diagnosis asks:
   # a second implementation here would be a second answer to drift from.

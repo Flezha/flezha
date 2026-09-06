@@ -9,7 +9,7 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
 
   import FlezhaTest.Helper.TierE2EHarness, only: [unique: 2, unique_id_path: 1]
 
-  alias Flezha.Service.Validator
+  alias Flezha.Identificator
 
   # The widest prefix the suite mints, and two computed ones. 24 bytes leaves
   # room for 7 digits, which is one more than a full run reaches.
@@ -23,7 +23,7 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
       counter = counter_of(digits)
       id = unique(prefix, counter)
 
-      assert Validator.byte_limit_exceed(id) == :ok,
+      assert Identificator.validate(:operative, id) == :ok,
              "#{byte_size(prefix)}-byte prefix at #{digits} digits: #{id} is #{byte_size(id)} bytes"
 
       assert String.ends_with?(id, "_" <> Integer.to_string(counter))
@@ -36,7 +36,7 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
       plain = @widest <> "_" <> Integer.to_string(counter)
 
       # The claim is only about ids that fit, so say so rather than skipping.
-      assert byte_size(plain) <= Validator.id_byte_limit()
+      assert byte_size(plain) <= Identificator.limit(:operative)
       assert unique(@widest, counter) == plain
     end
   end
@@ -47,7 +47,7 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
       suffix = "_" <> Integer.to_string(counter)
       id = unique(@widest, counter)
 
-      assert byte_size(id) == Validator.id_byte_limit()
+      assert byte_size(id) == Identificator.limit(:operative)
       assert String.ends_with?(id, suffix)
 
       kept = binary_slice(id, 0, byte_size(id) - byte_size(suffix))
@@ -57,10 +57,10 @@ defmodule FlezhaTest.Helper.TierE2EHarnessTest do
   end
 
   test "two ids that truncate to the same prefix still differ by counter" do
-    spent = String.duplicate("z", Validator.id_byte_limit() * 2)
+    spent = String.duplicate("z", Identificator.limit(:operative) * 2)
 
     assert unique(spent, 11_111_111) != unique(spent, 22_222_222)
-    assert Validator.byte_limit_exceed(unique(spent, 11_111_111)) == :ok
+    assert Identificator.validate(:operative, unique(spent, 11_111_111)) == :ok
   end
 
   test "a runner id path is an absent file inside a directory this call made" do

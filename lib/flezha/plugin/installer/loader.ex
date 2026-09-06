@@ -14,7 +14,7 @@ defmodule Flezha.Plugin.Installer.Loader do
 
   require Logger
 
-  alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Plugin.Installer.Store
   alias Flezha.Plugin.Providers
 
@@ -259,7 +259,7 @@ defmodule Flezha.Plugin.Installer.Loader do
   end
 
   defp under_plugin_root?(path) do
-    installed_root = Path.expand(Path.join(Config.get(:plugin_root), "installed"))
+    installed_root = Path.expand(Layout.file(:plugins, "installed"))
     String.starts_with?(Path.expand(path), installed_root)
   end
 

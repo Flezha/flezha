@@ -1,0 +1,23 @@
+# Where this product puts its files, and what `flz reset` does with each
+# subtree. One row per subtree, `<name>|<reset mode>`, read by both runtimes:
+# `Flezha.Layout.Table` declares the controller's side and
+# `cli/src/reset/plan.rs`'s `CLEARABLE_ROOTS` the shell's, and a test on each
+# side reads this file. Before, the two spelled the list separately and an
+# operator could not tell which one was right.
+#
+# `default` is cleared on every reset, `flag` only when the operator asks for
+# it by name, and `never` is not reset's to clear — clearing `auth` would
+# destroy an operator's tokens. A `never` row must be ABSENT from the Rust
+# table, which is what makes this file a check rather than a copy.
+#
+# Order is the order reset reports.
+state|default
+process_hub|default
+certs|flag
+sockets|flag
+auth|never
+audit|never
+dlq|never
+plugins|never
+schedules|never
+logs|never

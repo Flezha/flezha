@@ -32,6 +32,36 @@ output, not just its performance, so they belong with the code that relies on
 them. The effectively-once, checkpoint and output-batching options are all
 [Layer 3](#layer-3-operative-declarations-sdk).
 
+## Where files land
+
+Ten subtrees are all this product writes, and `lib/flezha/layout/table.ex`
+declares them: for each, the knob above that may move it, whether a directory
+claim is owed before the first write, and how `flz reset` treats it. Both
+runtimes read that declaration — the controller through
+`Flezha.Layout.Table.dir/1`, `flz reset` through the matching rows in
+`cli/src/reset/plan.rs` — so the directory the controller uses and the one an
+operator's reset reports are one path.
+
+| Subtree | Knob | `flz reset` |
+|---|---|---|
+| state | `FLEZHA_STATE_DIR` | cleared by default |
+| process_hub | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | cleared by default |
+| certs | `FLEZHA_CA_CERT_PATH` and its siblings | `--include-certs` |
+| sockets | `FLEZHA_SOCKET_FILES_PATH` (the ladder) | `--include-sockets` |
+| auth | `FLEZHA_AUTHZ_DIR` | never |
+| audit | `FLEZHA_AUDIT_DIR` | never |
+| dlq | `FLEZHA_DLQ_DIR` | never |
+| plugins | `FLEZHA_PLUGIN_ROOT` | never |
+| schedules | `FLEZHA_SCHEDULE_DIR` | never |
+| logs | `FLEZHA_LOG_PATH` | never |
+
+Each knob's default and precedence are its row in the table below; this section
+states only which subtrees exist and what reset does with them. The `sockets`
+row is the one that is not a subdirectory of the data root: it is resolved by
+the ladder described under
+[the socket-directory ladder](#the-socket-directory-ladder), is frequently outside
+`app_data/` altogether, and `--app-data-root` does not move it.
+
 ## Layer 1: environment variables
 
 Read at boot by `config/runtime.exs`, which asks the table, unless the notes say

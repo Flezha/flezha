@@ -16,6 +16,8 @@ defmodule Flezha.Plugin.Installer.Manifest do
   `Version`.
   """
 
+  alias Flezha.Identificator
+
   @type manifest :: %{
           required(:id) => binary(),
           required(:version) => binary(),
@@ -25,9 +27,6 @@ defmodule Flezha.Plugin.Installer.Manifest do
           optional(:description) => binary(),
           optional(:author) => binary()
         }
-
-  @id_regex ~r/^[a-z0-9][a-z0-9_]*$/
-  @max_id_len 64
 
   @doc """
   Parses manifest source bytes into an Elixir term. Returns
@@ -119,15 +118,12 @@ defmodule Flezha.Plugin.Installer.Manifest do
     end
   end
 
-  defp validate_id(id) when is_binary(id) do
-    cond do
-      byte_size(id) > @max_id_len -> {:error, {:manifest_invalid, {:invalid_id, id}}}
-      Regex.match?(@id_regex, id) -> :ok
-      true -> {:error, {:manifest_invalid, {:invalid_id, id}}}
+  defp validate_id(id) do
+    case Identificator.validate(:plugin, id) do
+      :ok -> :ok
+      {:error, _refusal} -> {:error, {:manifest_invalid, {:invalid_id, id}}}
     end
   end
-
-  defp validate_id(id), do: {:error, {:manifest_invalid, {:invalid_id, id}}}
 
   defp validate_version(v) when is_binary(v) do
     case Version.parse(v) do

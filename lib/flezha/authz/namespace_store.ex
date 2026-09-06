@@ -11,6 +11,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
   """
 
   use GenServer
+  use Flezha.State.Store
 
   alias Flezha.AuthZ.{Config, Namespace}
   alias Flezha.DetsStore
@@ -63,19 +64,24 @@ defmodule Flezha.AuthZ.NamespaceStore do
     end
   end
 
-  @doc "Absolute path of the backing DETS file."
-  @spec path() :: String.t()
-  def path(), do: Path.join(Config.auth_dir(), @filename)
+  ## ----- store declaration -----
+
+  @impl Flezha.State.Store
+  def subtree(), do: :auth
+
+  @impl Flezha.State.Store
+  def filename(), do: @filename
+
+  @impl Flezha.State.Store
+  def table(), do: @table
+
+  @impl Flezha.State.Store
+  def cache(), do: @cache
+
+  @impl Flezha.State.Store
+  def after_open(_state), do: seed_system_namespace_if_absent()
 
   ## ----- GenServer -----
-
-  @impl true
-  def init(_opts) do
-    with {:ok, state} <- DetsStore.init_cached(@table, @cache, path()) do
-      :ok = seed_system_namespace_if_absent()
-      {:ok, state}
-    end
-  end
 
   @impl true
   def handle_call({:create, name, quotas, by}, _from, state) do
@@ -104,19 +110,13 @@ defmodule Flezha.AuthZ.NamespaceStore do
     end
   end
 
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
-  end
-
   ## ----- private -----
 
   defp seed_system_namespace_if_absent() do
     system = Namespace.system_name()
 
-    case :dets.lookup(@table, system) do
-      [] ->
+    case DetsStore.fetch(@table, system) do
+      :error ->
         {:ok, quotas} = build_full_quotas(system, %{})
 
         entry = %{

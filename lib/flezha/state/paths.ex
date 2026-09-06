@@ -16,7 +16,7 @@ defmodule Flezha.State.Paths do
   `decode_entity_key/1` reverses the encoding.
   """
 
-  alias Flezha.Config
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.State.Durable
 
   @type entity_id ::
@@ -92,7 +92,7 @@ defmodule Flezha.State.Paths do
     do: wal_path(inbox_id(instance_id))
 
   @spec state_root() :: binary()
-  def state_root(), do: Config.get(:state_root)
+  def state_root(), do: Layout.dir(:state)
 
   # ----- namespace resolution (finish-platform-authn-authz) -----
   #

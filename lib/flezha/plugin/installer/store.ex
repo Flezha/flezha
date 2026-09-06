@@ -16,12 +16,12 @@ defmodule Flezha.Plugin.Installer.Store do
   """
 
   use GenServer
-
-  require Logger
+  use Flezha.State.Store
 
   alias Flezha.Config
-
+  alias Flezha.DetsStore
   alias Flezha.Config.Durations
+  alias Flezha.Layout.Table, as: Layout
 
   @table :flz_installed_plugins
   @dets_filename "installed_plugins.dets"
@@ -63,9 +63,9 @@ defmodule Flezha.Plugin.Installer.Store do
   @spec get(plugin_id()) :: row() | nil
   def get(plugin_id) when is_binary(plugin_id) do
     if table_ready?() do
-      case :dets.lookup(@table, plugin_id) do
-        [{^plugin_id, row}] -> row
-        _ -> nil
+      case DetsStore.fetch(@table, plugin_id) do
+        {:ok, row} -> row
+        :error -> nil
       end
     else
       nil
@@ -82,7 +82,7 @@ defmodule Flezha.Plugin.Installer.Store do
   @spec all() :: [{plugin_id(), row()}]
   def all do
     if table_ready?() do
-      :dets.match_object(@table, {:_, :_})
+      DetsStore.all(@table)
     else
       []
     end
@@ -92,10 +92,7 @@ defmodule Flezha.Plugin.Installer.Store do
   @spec count() :: non_neg_integer()
   def count do
     if table_ready?() do
-      case :dets.info(@table, :size) do
-        n when is_integer(n) -> n
-        _ -> 0
-      end
+      DetsStore.count(@table)
     else
       0
     end
@@ -111,141 +108,69 @@ defmodule Flezha.Plugin.Installer.Store do
     GenServer.call(__MODULE__, {:update_status, plugin_id, status})
   end
 
-  @doc "Absolute path of the backing DETS file."
-  @spec path() :: String.t()
-  def path do
-    GenServer.call(__MODULE__, :path)
-  end
-
   @doc "Close the DETS table. Primarily for tests."
   @spec close() :: :ok | {:error, term()}
   def close, do: GenServer.call(__MODULE__, :close)
 
-  ## GenServer
+  ## ----- store declaration -----
 
-  @impl true
-  def init(_opts) do
-    dir = installer_data_dir()
-    :ok = File.mkdir_p!(dir)
-    file_path = Path.join(dir, @dets_filename)
+  @impl Flezha.State.Store
+  def subtree(), do: :plugins
 
-    case open_dets(file_path) do
-      {:ok, _} ->
-        rows = count()
+  @impl Flezha.State.Store
+  def filename(), do: @dets_filename
 
-        :telemetry.execute(
-          [:flezha, :plugin_installer, :store_opened],
-          %{rows: rows},
-          %{path: file_path}
-        )
+  @impl Flezha.State.Store
+  def table(), do: @table
 
-        {:ok, %{path: file_path}}
+  # The catalog rotates to `installed_plugins.dets.corrupt-<monotonic>` and
+  # auto-saves on the installer's own interval; both are published, so the
+  # store declares them rather than taking the seam's defaults.
+  @impl Flezha.State.Store
+  def open_opts(),
+    do: [auto_save: Durations.get(:installer_auto_save_ms), corrupt_suffix: :monotonic]
 
-      {:error, reason} ->
-        {:stop, {:dets_open_failed, file_path, reason}}
-    end
+  # Tests isolate the catalog with a directory of their own; production keeps
+  # it beside the installed package trees, which is the `:plugins` root.
+  @impl Flezha.State.Store
+  def dir(), do: Config.get(:plugin_installer_data_dir) || Layout.dir(:plugins)
+
+  @impl Flezha.State.Store
+  def after_open(%{path: path}) do
+    :telemetry.execute(
+      [:flezha, :plugin_installer, :store_opened],
+      %{rows: DetsStore.count(@table)},
+      %{path: path}
+    )
   end
+
+  ## ----- GenServer -----
 
   @impl true
   def handle_call({:put, plugin_id, row}, _from, state) do
-    reply =
-      case :dets.insert(@table, {plugin_id, row}) do
-        :ok ->
-          _ = :dets.sync(@table)
-          :ok
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-
-    {:reply, reply, state}
+    {:reply, DetsStore.put(@table, plugin_id, row), state}
   end
 
   def handle_call({:delete, plugin_id}, _from, state) do
-    _ = :dets.delete(@table, plugin_id)
-    _ = :dets.sync(@table)
+    :ok = DetsStore.delete(@table, plugin_id)
     {:reply, :ok, state}
   end
 
   def handle_call({:update_status, plugin_id, status}, _from, state) do
     reply =
-      case :dets.lookup(@table, plugin_id) do
-        [{^plugin_id, row}] ->
-          :ok = :dets.insert(@table, {plugin_id, Map.put(row, :status, status)})
-          _ = :dets.sync(@table)
-          :ok
-
-        _ ->
-          {:error, :not_found}
+      case DetsStore.fetch(@table, plugin_id) do
+        {:ok, row} -> DetsStore.put(@table, plugin_id, Map.put(row, :status, status))
+        :error -> {:error, :not_found}
       end
 
     {:reply, reply, state}
   end
 
-  def handle_call(:path, _from, %{path: path} = state), do: {:reply, path, state}
-  def handle_call(:close, _from, state), do: {:reply, :dets.close(@table), state}
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
-  end
+  def handle_call(:close, _from, state), do: {:reply, Flezha.State.Store.close(__MODULE__), state}
 
   ## Private
 
-  defp open_dets(file_path) do
-    case :dets.open_file(@table, [
-           {:type, :set},
-           {:auto_save, Durations.get(:installer_auto_save_ms)},
-           {:file, String.to_charlist(file_path)}
-         ]) do
-      {:ok, @table} ->
-        {:ok, @table}
-
-      {:error, reason} ->
-        rotate_and_retry(file_path, reason)
-    end
-  end
-
-  # A corrupt file is a deployment hazard, not a fatal error: rename out of
-  # the way, log both paths so the runner can recover manually, and start
-  # fresh. The on-disk `installed/<id>/<version>/` trees are unaffected.
-  defp rotate_and_retry(file_path, reason) do
-    rotated = file_path <> ".corrupt-" <> Integer.to_string(System.monotonic_time())
-
-    case File.rename(file_path, rotated) do
-      :ok ->
-        Logger.error(
-          "[plugin_installer] corrupt DETS at #{file_path} (#{inspect(reason)}); " <>
-            "rotated to #{rotated}, starting fresh"
-        )
-
-        :dets.open_file(@table, [
-          {:type, :set},
-          {:auto_save, Durations.get(:installer_auto_save_ms)},
-          {:file, String.to_charlist(file_path)}
-        ])
-
-      {:error, rename_reason} ->
-        Logger.error(
-          "[plugin_installer] corrupt DETS at #{file_path} (#{inspect(reason)}) and " <>
-            "rename failed: #{inspect(rename_reason)}"
-        )
-
-        {:error, reason}
-    end
-  end
-
   defp table_ready? do
     not is_nil(Process.whereis(__MODULE__))
-  end
-
-  # Resolve the directory where `installed_plugins.dets` lives. Tests
-  # override via `Application.put_env(:flezha, :plugin_installer_data_dir, ...)`
-  # to isolate fixtures; production reads `:plugin_installer.plugin_root`
-  # so the catalog sits next to the installed package trees the installer
-  # manages.
-  defp installer_data_dir do
-    Config.get(:plugin_installer_data_dir) || Config.get(:plugin_root)
   end
 end

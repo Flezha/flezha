@@ -13,6 +13,11 @@ plugins are subscribed.
 
 ## On-disk layout
 
+The state root is one row of `lib/flezha/layout/table.ex`, which declares every
+subtree this product writes, the knob that moves each one and what `flz reset`
+does with it. This section describes what is inside the state root; the table
+is where the root itself is decided.
+
 ```text
 <state_root>/                        # :flezha, :state_root → FLEZHA_STATE_DIR → app_data/state
   .layout                            # namespaced-layout marker

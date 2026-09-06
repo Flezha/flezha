@@ -17,9 +17,10 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   offset moves where a seq range does not.
   """
 
-  alias Flezha.AuthZ.Config
   alias Flezha.Dlq
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.State.DurabilityTier.Manifest
+  alias Flezha.State.Store
   alias Flezha.State.{Outbox, Paths, RecordFrame, Restore, Wire}
 
   @type ref :: Manifest.ref()
@@ -35,10 +36,12 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   # one-shot secret that must never leave the node. A resurrected controller
   # reads "already claimed" out of `state.dets`, so it never needs the token
   # back.
-  @control_stores %{
-    "authz" => ~w(state.dets roles.dets namespaces.dets tokens.dets quota_counters.dets),
-    "schedules" => ~w(schedules.dets)
-  }
+  # Which layout subtree each durable control-store group lives in. The group
+  # NAME is durable — it rides an artifact ref and a manifest key — so it stays
+  # written down; the files inside it are each store's own `filename/0`,
+  # gathered through `Flezha.State.Store`, so a store added to a subtree ships
+  # with it instead of being listed a second time here.
+  @control_subtrees %{"authz" => :auth, "schedules" => :schedules}
 
   @doc """
   Every Entity reference of `operative_class` that has local durable files —
@@ -78,7 +81,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec payload_files(ref()) :: {binary(), [binary()]} | nil
   def payload_files({:cspec, {hub_id, _writer}}),
-    do: present(Path.join(cspec_root(), hub_id), ["registry.dets"])
+    do: present(Layout.file(:process_hub, hub_id), [Layout.hub_registry_file()])
 
   def payload_files({:dlq, {operative_class, procedure_id}}) do
     root = Dlq.Store.proc_dir(operative_class, procedure_id)
@@ -90,12 +93,16 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   def payload_files({:control, {store, _writer}}),
-    do: present(control_root(store), Map.fetch!(@control_stores, store))
+    do: present(control_root(store), Store.filenames_in(subtree_of(store)))
 
   def payload_files(_ref), do: nil
 
-  defp control_root("authz"), do: Config.auth_dir()
-  defp control_root("schedules"), do: Flezha.Schedule.Store.dir()
+  # The subtree, not the owner: reaching into `AuthZ.Config` and
+  # `Schedule.Store` for a directory was this module asking two services where
+  # their files are, when one table already says.
+  defp control_root(store), do: Layout.dir(subtree_of(store))
+
+  defp subtree_of(store), do: Map.fetch!(@control_subtrees, store)
 
   defp present(root, names) do
     {root, Enum.filter(names, &non_empty?(Path.join(root, &1)))}
@@ -150,7 +157,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec control_refs(binary()) :: [ref()]
   def control_refs(writer) when is_binary(writer) do
-    @control_stores
+    @control_subtrees
     |> Map.keys()
     |> Enum.map(&{:control, {&1, writer}})
     |> Enum.filter(&has_local_state?/1)
@@ -168,8 +175,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def state_key({:dlq, {class, _procedure}}), do: class
   def state_key({:control, {store, _writer}}), do: store
 
-  defp cspec_root(),
-    do: Flezha.Config.get(:process_hub_registry_root)
+  defp cspec_root(), do: Layout.dir(:process_hub)
 
   @doc "Local snapshot files of `ref`, oldest first. Only Entities have them."
   @spec snapshots(ref()) :: [{non_neg_integer(), binary()}]

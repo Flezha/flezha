@@ -15,6 +15,7 @@ defmodule Flezha.Observability.AuditLog.Index do
 
   require Logger
 
+  alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability.AuditLog.Reader
   alias Flezha.State.Paths
 
@@ -66,7 +67,7 @@ defmodule Flezha.Observability.AuditLog.Index do
   """
   @spec rebuild(String.t()) :: {:ok, [entry()]} | {:error, term()}
   def rebuild(dir) when is_binary(dir) do
-    File.mkdir_p!(dir)
+    :ok = Layout.claim(:audit, dir)
 
     entries =
       dir

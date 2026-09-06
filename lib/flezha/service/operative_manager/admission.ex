@@ -6,6 +6,7 @@ defmodule Flezha.Service.OperativeManager.Admission do
   """
 
   alias Flezha.AuthZ.Quotas
+  alias Flezha.Identificator
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Validator
@@ -110,12 +111,23 @@ defmodule Flezha.Service.OperativeManager.Admission do
 
   def validate_operative(namespace, operative) do
     with :ok <- Validator.valid_kind(operative.kind),
-         :ok <- Validator.byte_limit_exceed(operative.id),
+         :ok <- operative_id_within_limit(operative.id),
          :ok <- Validator.valid_namespace(namespace),
          :ok <- Validator.operative_unique(namespace, operative.id) do
       :ok
     else
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # The rule is the `:operative` row; the wording is this surface's, unchanged.
+  defp operative_id_within_limit(id) do
+    case Identificator.validate(:operative, id) do
+      :ok ->
+        :ok
+
+      {:error, _refusal} ->
+        {:error, "operative id exceeds #{Identificator.limit(:operative)} bytes"}
     end
   end
 

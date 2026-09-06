@@ -13,9 +13,11 @@ defmodule Flezha.AuthZ.TokenStore do
   """
 
   use GenServer
+  use Flezha.State.Store
 
-  alias Flezha.AuthZ.{Config, Namespace, Role}
+  alias Flezha.AuthZ.{Namespace, Role}
   alias Flezha.DetsStore
+  alias Flezha.Identificator
   alias Flezha.Observability.{Bus, Signal}
 
   @table :flz_authz_tokens
@@ -137,8 +139,11 @@ defmodule Flezha.AuthZ.TokenStore do
   `{:error, :not_found | :ambiguous}`.
   """
   @spec revoke(binary(), keyword()) :: {:ok, entry()} | {:error, term()}
-  def revoke(id, opts \\ []) when is_binary(id) and byte_size(id) >= 8 do
-    GenServer.call(__MODULE__, {:revoke, id, opts})
+  def revoke(id, opts \\ []) when is_binary(id) do
+    case Identificator.validate(:token, id) do
+      :ok -> GenServer.call(__MODULE__, {:revoke, id, opts})
+      {:error, _refusal} -> {:error, :not_found}
+    end
   end
 
   @doc """
@@ -164,27 +169,28 @@ defmodule Flezha.AuthZ.TokenStore do
     all_entries() |> Enum.filter(&(&1.namespace == namespace))
   end
 
-  @doc "Absolute path of the backing DETS file."
-  @spec path() :: String.t()
-  def path(), do: Path.join(Config.auth_dir(), @filename)
+  ## ----- store declaration -----
+
+  @impl Flezha.State.Store
+  def subtree(), do: :auth
+
+  @impl Flezha.State.Store
+  def filename(), do: @filename
+
+  @impl Flezha.State.Store
+  def table(), do: @table
 
   ## ----- GenServer -----
 
   @impl true
-  def init(_opts) do
-    DetsStore.init_table(@table, path())
-  end
-
-  @impl true
   def handle_call({:insert, hash, entry}, _from, state) do
-    :ok = :dets.insert(@table, {hash, entry})
-    :ok = :dets.sync(@table)
+    :ok = DetsStore.put(@table, hash, entry)
     {:reply, :ok, state}
   end
 
   def handle_call({:revoke, id, opts}, _from, state) do
     matches =
-      :dets.match_object(@table, {:_, :_})
+      DetsStore.all(@table)
       |> Enum.filter(fn {hash, _entry} -> String.starts_with?(hash, id) end)
 
     reply =
@@ -204,21 +210,12 @@ defmodule Flezha.AuthZ.TokenStore do
 
   def handle_call({:revoke_by_hash, hash}, _from, state) do
     reply =
-      case :dets.lookup(@table, hash) do
-        [{^hash, entry}] ->
-          revoke_entry(hash, entry, nil)
-
-        _ ->
-          {:error, :not_found}
+      case DetsStore.fetch(@table, hash) do
+        {:ok, entry} -> revoke_entry(hash, entry, nil)
+        :error -> {:error, :not_found}
       end
 
     {:reply, reply, state}
-  end
-
-  @impl true
-  def terminate(_reason, _state) do
-    _ = :dets.close(@table)
-    :ok
   end
 
   ## ----- private -----
@@ -231,8 +228,7 @@ defmodule Flezha.AuthZ.TokenStore do
   # Mark the row revoked, sync, and emit the audit event.
   defp revoke_entry(hash, entry, revoked_by) do
     updated = %{entry | revoked_at: System.system_time(:second)}
-    :ok = :dets.insert(@table, {hash, updated})
-    :ok = :dets.sync(@table)
+    :ok = DetsStore.put(@table, hash, updated)
     emit_revoked(updated, revoked_by)
     {:ok, updated}
   end
@@ -246,17 +242,10 @@ defmodule Flezha.AuthZ.TokenStore do
     Map.take(entry, [:principal, :namespace, :role, :expires_at])
   end
 
-  defp lookup_by_hash(hash) do
-    case :dets.lookup(@table, hash) do
-      [{^hash, entry}] -> {:ok, entry}
-      _ -> :error
-    end
-  rescue
-    _ -> :error
-  end
+  defp lookup_by_hash(hash), do: DetsStore.fetch(@table, hash)
 
   defp all_entries() do
-    :dets.match_object(@table, {:_, :_})
+    DetsStore.all(@table)
     |> Enum.map(fn {_hash, entry} -> entry end)
   rescue
     _ -> []
