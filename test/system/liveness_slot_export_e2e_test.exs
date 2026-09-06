@@ -165,9 +165,9 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     # The two stamps are read on the channel that WRITES them, not on the
     # collapsed row: a monotonic reading is negative on the BEAM, and the
     # per-runner collapse takes the maximum against a channel that never wrote
-    # the slot, so the collapsed value is 0. That is a defect of its own,
-    # filed in NEW-FINDINGS; this change preserves the behaviour rather than
-    # changing it, and asserts the stamp at the only place it is honest.
+    # the slot, so the collapsed value is 0. That is a defect of its own; this
+    # test preserves the behaviour rather than changing it, and asserts the stamp
+    # at the only place it is honest.
     control = Enum.find(channels, &(&1.runner_id == runner_id and &1.name == :control))
     assert control, "the control channel registered no counters"
     assert control.last_control_frame_ms != 0, "the control stamp was never written"

@@ -83,9 +83,8 @@ lang | 7 | python
 #
 # Every row declares `min_readable <= running`. A procedure that declares a
 # floor ABOVE its own running version is out of this table: the two cores agree
-# on the verdict there and disagree on the floor the refusal names, which is
-# recorded in `docs/refactor/NEW-FINDINGS.md` and is not this fixture's to
-# settle.
+# on the verdict there and disagree on the floor the refusal names, and
+# settling that disagreement is not this fixture's job.
 
 schema | 1 | 1 | 1 | decode
 schema | 3 | 3 | 1 | decode

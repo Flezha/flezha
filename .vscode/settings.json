@@ -8,5 +8,6 @@
         "./cli/plugin/Cargo.toml",
     ],
     "rust-analyzer.cargo.loadOutDirsFromCheck": true,
-    "rust-analyzer.procMacro.enable": true
+    "rust-analyzer.procMacro.enable": true,
+    "java.compile.nullAnalysis.mode": "automatic"
 }

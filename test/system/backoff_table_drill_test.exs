@@ -56,7 +56,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
     hub_retry: "test/flezha/schedule/hub_test.exs — the schedule hub retries its start",
     proc_outbox_retry:
       "test/flezha/runner/control_channel_commits_test.exs — the proc outbox re-drives",
-    port_restart: "no suite drives the crash-loop path (docs/refactor/NEW-FINDINGS.md)",
+    port_restart: "no suite drives the crash-loop path",
     kafka_force_replace:
       "test/flezha/plugin/kafka_test.exs — a wedged client is replaced once per window",
     postgres_flush:
