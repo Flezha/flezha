@@ -46,8 +46,10 @@
 # would fail a developer who has written the test and not yet staged it, and a
 # gate that goes red on correct work is a gate somebody disables.
 #
-# Exit 2 means the gate is broken rather than the tree dirty: no spec, no
-# scenarios, or no Java test sources. Takes no arguments.
+# The gate has no answer when there is no spec, no scenario or no Java test
+# source. That is exit 3, not exit 2: `scripts/naming_gate.py` documents the
+# contract at the top, where 2 means a tool this gate needs is absent and 3
+# means it ran and reached no verdict. Takes no arguments.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -82,7 +84,7 @@ def fingerprint(text):
 
 def fail(message):
     print(message, file=sys.stderr)
-    sys.exit(2)
+    sys.exit(naming_gate.NO_ANSWER)
 
 
 try:
@@ -165,7 +167,7 @@ if problems:
           f"or — for a gap you are recording rather than closing — add its "
           f"`Requirement :: Scenario` line to {BASELINE}. That list may only shrink.",
           file=sys.stderr)
-    sys.exit(1)
+    sys.exit(naming_gate.FINDING)
 
 print(f"java-sdk scenario coverage OK: {len(scenarios)} scenarios, "
       f"{len(scenarios) - len(uncovered)} named by a test, "

@@ -1,24 +1,24 @@
 [package]
 name = "flz_core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Flezha SDK kernel — poll-based dispatch, durable state, retries, timers and transport shared by the Rust and Java SDKs"
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-postcard = { version = "1.0", features = ["use-std"] }
-prost = "0.13.5"
+serde.workspace = true
+postcard.workspace = true
+prost.workspace = true
 flz_transport = { path = "../flz_transport" }
-signal-hook = "0.3"
-tracing = "0.1"
-crc32fast = "1.4"
-dashmap = "6"
-serde_json = "1.0"
-crossbeam = "0.8"
-crossbeam-deque = "0.8"
-thiserror = "1.0"
+signal-hook.workspace = true
+tracing.workspace = true
+crc32fast.workspace = true
+dashmap.workspace = true
+serde_json.workspace = true
+crossbeam.workspace = true
+crossbeam-deque.workspace = true
+thiserror.workspace = true
 
 [features]
 # The bench scaffolding `flz_core_ffi`'s `host_loop` and the `sdk/rust`

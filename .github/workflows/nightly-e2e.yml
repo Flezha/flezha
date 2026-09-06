@@ -94,73 +94,30 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Java 21
+      - name: Set up Java
         if: matrix.runtime == 'java'
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 21
+        uses: ./.github/actions/setup-java
 
-      - name: Set up Node 22
+      - name: Set up Node
         if: matrix.runtime == 'node'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+        uses: ./.github/actions/setup-node
 
-      - name: Set up Ruby 3.4
+      - name: Set up Ruby
         if: matrix.runtime == 'ruby'
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
+        uses: ./.github/actions/setup-ruby
 
-      - name: Set up PHP 8.4
+      - name: Set up PHP
         if: matrix.runtime == 'php'
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.4"
-          extensions: ffi
-          ini-values: ffi.enable=true
-          tools: composer
+        uses: ./.github/actions/setup-php
 
       - name: Set up Erlang + Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "28"
-          elixir-version: "1.20.2"
+        uses: ./.github/actions/setup-beam
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Elixir deps + build
-        uses: actions/cache@v5
-        with:
-          path: |
-            deps
-            _build
-          key: elixir-${{ runner.os }}-otp28-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            elixir-${{ runner.os }}-otp28-
-
-      - name: Cache Cargo registry + workspace target
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            test/apps/rust_runner/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "23.4"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fetch Elixir deps
-        run: mix deps.get
+        uses: ./.github/actions/setup-protoc
 
       - name: Compile Elixir (warnings as errors)
         run: mix compile --warnings-as-errors

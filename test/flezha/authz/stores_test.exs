@@ -8,22 +8,12 @@ defmodule Flezha.AuthZ.StoresTest do
 
   # async: false: a shared on-disk root; the primary Logger; registered singletons.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [{:auth_stores, prefix: "flz_authz_stores", stores: [], enabled: :unchanged}],
+    async: false
 
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, TokenStore}
-  alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
-
-  setup do
-    %{auth_dir: auth_dir} =
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_authz_stores",
-        stores: [],
-        enabled: :unchanged
-      )
-
-    {:ok, tmp: auth_dir}
-  end
 
   describe "AuthState" do
     test "starts disabled by default and flips durably" do
@@ -156,9 +146,9 @@ defmodule Flezha.AuthZ.StoresTest do
   end
 
   describe "crash recovery" do
-    test "corrupt DETS file is rotated and a fresh one is opened", %{tmp: tmp} do
-      target = Path.join(tmp, "tokens.dets")
-      File.mkdir_p!(tmp)
+    test "corrupt DETS file is rotated and a fresh one is opened", %{auth_dir: auth_dir} do
+      target = Path.join(auth_dir, "tokens.dets")
+      File.mkdir_p!(auth_dir)
       File.write!(target, "this-is-not-a-dets-file")
 
       log =
@@ -169,7 +159,7 @@ defmodule Flezha.AuthZ.StoresTest do
       assert log =~ "corrupt DETS"
 
       rotated_files =
-        File.ls!(tmp)
+        File.ls!(auth_dir)
         |> Enum.filter(&String.starts_with?(&1, "tokens.dets.corrupt-"))
 
       assert length(rotated_files) == 1

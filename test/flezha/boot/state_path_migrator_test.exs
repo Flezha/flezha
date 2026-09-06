@@ -1,26 +1,13 @@
 defmodule Flezha.Boot.StatePathMigratorTest do
   # async: false: writes Application env; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   alias Flezha.Boot.StatePathMigrator
   alias Flezha.State.Paths
   alias Flezha.State.TestHelpers
 
-  setup do
-    base =
-      Path.join([
-        System.tmp_dir!(),
-        "flezha_state_migrator_test_" <>
-          Integer.to_string(System.unique_integer([:positive]))
-      ])
-
-    File.mkdir_p!(base)
+  setup %{tmp: base} do
     Application.put_env(:flezha, :state_root, base)
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
 
     %{base: base}
   end
@@ -143,12 +130,6 @@ defmodule Flezha.Boot.StatePathMigratorTest do
   # Folded from the coherence module: the migrator and the reader must agree on
   # one on-disk layout, so a controller restart never orphans WAL/snapshot files.
   describe "resolver/migrator coherence" do
-    setup do
-      on_exit(fn -> Application.delete_env(:flezha, :state_root) end)
-
-      :ok
-    end
-
     test "migrate/0 leaves resolver-written WAL in place and the reader finds it" do
       root = TestHelpers.tmp_app_data_dir()
       on_exit(fn -> File.rm_rf!(root) end)

@@ -26,7 +26,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
   # async: false: writes Application env; the live controller and its fleet; node-global tables.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   @namespace "default"
   @factory "store_input"
@@ -35,10 +35,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     test_pid = self()
     ets = :ets.new(:overwatch_retry_test, [:public, :set])
 
-    on_exit(fn ->
-      OperativeManager.stop_all_operatives(@namespace)
-      Application.delete_env(:flezha, :overwatch_ping_fn)
-    end)
+    on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
 
     {:ok, test_pid: test_pid, ets: ets}
   end
@@ -285,25 +282,13 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
   raised above its configured value is announced.
   """
   # async: false: writes Application env; a shared on-disk root; global telemetry handlers.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{InputLog, PersistenceResolver, TestHelpers}
+  alias Flezha.State.{InputLog, PersistenceResolver}
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
     ClassRegistry.ensure_table()
-
-    prev_hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
-    prev_age = Application.get_env(:flezha, :compact_after_age_ms, 0)
-
-    on_exit(fn ->
-      Application.put_env(:flezha, :input_log_hold_window_ms, prev_hold)
-      Application.put_env(:flezha, :compact_after_age_ms, prev_age)
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(base)
-    end)
-
     :ok
   end
 

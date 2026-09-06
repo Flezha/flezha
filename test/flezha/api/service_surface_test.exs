@@ -12,7 +12,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   The table is also the surface's call shapes written down: what each published
   function wants, in order, before the context.
   """
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [], async: false
 
   alias Flezha.AuthZ.{Verb, Verbs}
   alias Flezha.Service.Controller
@@ -23,7 +23,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Schedule
   alias Flezha.Service.Workflow
-  alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.RpcSurface
 
   @published %{
@@ -158,7 +157,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
   describe "an unbound caller under enforcement" do
     setup do
-      AuthTestHelper.setup_auth_stores(enabled: true, claim: true)
+      FlezhaTest.Case.install([{:auth_stores, enabled: true, claim: true}])
       :ok
     end
 

@@ -12,7 +12,7 @@ defmodule Flezha.Service.DlqTest do
   """
   # async: false: writes Application env, a shared on-disk root, auth stores and
   # global telemetry handlers.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   alias Flezha.Dlq.Store
   alias Flezha.Observability.{RingBufferSink, TestSinks}
@@ -20,15 +20,9 @@ defmodule Flezha.Service.DlqTest do
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DlqFixtures
 
-  setup do
-    dir = Path.join(System.tmp_dir!(), "flezha_dlq_svc_#{System.unique_integer([:positive])}")
+  setup %{tmp: dir} do
     original = Application.get_env(:flezha, :dlq, [])
     Application.put_env(:flezha, :dlq, Keyword.merge(original, dir: dir, replay_grace_ms: 200))
-
-    on_exit(fn ->
-      Application.put_env(:flezha, :dlq, original)
-      File.rm_rf!(dir)
-    end)
 
     operative_class = "dlqsvc_" <> Integer.to_string(System.unique_integer([:positive]))
 

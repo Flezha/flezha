@@ -297,13 +297,52 @@ context the same size as a clean checkout's.
 
 ### Requirement: CI workflows SHALL use a single, consistent OTP/Elixir version pair
 
-Every workflow under `.github/workflows/` that sets up Erlang/Elixir SHALL use the same `(otp, elixir)` pair. The pair SHALL match the version used by the agent's prod Docker build. If the prod build pins OTP 27 + Elixir 1.17, every CI workflow SHALL pin OTP 27 + Elixir 1.17 — no workflow SHALL silently use a different pair.
+A workflow SHALL take every toolchain version from one declared version set,
+and SHALL NOT write a version literal of its own. Every workflow under
+`.github/workflows/` that sets up a language toolchain is bound by this. The set
+SHALL cover every toolchain CI installs —
+Erlang/Elixir, Java, Node, Python, Ruby, PHP and Rust — and the `(otp, elixir)`
+pair SHALL match the version used by the agent's prod Docker build. If the prod
+build pins OTP 27 + Elixir 1.17, the declared set SHALL say OTP 27 + Elixir
+1.17, and no workflow SHALL silently use a different pair.
+
+A workflow SHALL obtain a toolchain through the shared composite action for that
+toolchain, which owns the setup step, the cache key and the dependency fetch. A
+deliberate fan-out over several versions — a test matrix proving an SDK on more
+than one runtime version — SHALL be expressed as an input to that action, and
+the versions it fans out over SHALL be declared beside the set.
+
+An SDK's own test-toolchain pin SHALL stay in that SDK's own manifest and SHALL
+be read from it, not copied into the version set; only the CI steps that read
+the pin are shared.
 
 #### Scenario: All workflows pin matching versions
 
 - **GIVEN** the merged set of CI workflows
 - **WHEN** every `setup-beam` step is inspected
-- **THEN** every step's `otp-version` and `elixir-version` SHALL match the pair used in `docker/prod/Dockerfile.controller`
+- **THEN** every step's `otp-version` and `elixir-version` SHALL match the pair
+  used in `docker/prod/Dockerfile.controller`
+
+#### Scenario: A version literal in a workflow is refused
+
+- **GIVEN** a workflow that sets `node-version: 24` directly
+- **WHEN** the CI gate runs
+- **THEN** it fails naming the workflow, the line and the toolchain, because the
+  version belongs to the declared set
+
+#### Scenario: A matrix fan-out is an input, not a second pin
+
+- **GIVEN** an SDK workflow that proves its package on two runtime versions
+- **WHEN** it passes those versions to the composite action as an input
+- **THEN** the gate passes, and the fan-out's versions are declared beside the
+  set rather than written into the job
+
+#### Scenario: The Docker toolchain reads the same set
+
+- **GIVEN** the Dockerfiles that install a Rust toolchain
+- **WHEN** the images are built
+- **THEN** the toolchain version comes from the declared set, through one base
+  stage, rather than from a literal written per Dockerfile
 
 ### Requirement: A CI gate SHALL prevent prod-image size regressions
 

@@ -1,0 +1,36 @@
+name: Set up Java
+description: >
+  A Temurin JDK at the version .github/toolchains.json names, with the Maven
+  cache when the caller wants one.
+
+inputs:
+  version:
+    description: Override the manifest's Java version. Empty reads the manifest.
+    required: false
+    default: ""
+  cache:
+    description: >
+      Package manager for actions/setup-java's own dependency cache, `maven`
+      or empty for none. A job whose Maven work is a one-shot package step
+      caches nothing.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the Java version
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="${INPUT_VERSION:-$("${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" java)}"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: ${{ steps.resolve.outputs.version }}
+        cache: ${{ inputs.cache }}

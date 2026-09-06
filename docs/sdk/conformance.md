@@ -202,6 +202,47 @@ uses an id belonging to a capability it did not declare.
 | `FLEZHA_RUNNER_ID_PATH` | every test app | Where the runner persists its stable identity. Two runners in one namespace need two paths, or the second replaces the first |
 | `FLEZHA_WORKFLOW_E2E_RELEASE` | workflow fixtures | Releases a parked crash-resume fixture — see the contract below |
 
+## The test tiers
+
+A tier is a slice of the suite plain `mix test` does not run. `FlezhaTest.Tiers`
+(`test/helpers/tiers.ex`) is where one is declared: the tag, the workflow that
+runs it or the reason a person has to, what a host needs first, the transports
+it covers and the section of this page that describes it. `test/test_helper.exs`
+derives its `exclude:` from that table, and `test/sdk_conformance/gate_test.exs`
+fails when a selector names a tier the table does not declare, when a declared
+tier is run by nothing and says no reason, or when a tier names a section of
+this page that is not here.
+
+| Tier | Runs in | Blocks merge | Needs |
+| --- | --- | --- | --- |
+| `:system` | `nightly-e2e.yml` | no | an SDK runtime named by `FLEZHA_E2E_RUNTIME`, built as an OS process |
+| `:sdk_smoke` | `java-sdk.yml`, a subset of `:system` | yes | the same runtime; the two-minute inner loop |
+| `:workflow_crash_resume` | `nightly-e2e.yml`, a subset of `:system` | no | the same runtime; the crash-and-resume slice |
+| `:interop` | `nightly-e2e.yml` | no | two SDK runtimes in one run, and a namespace no other tier is using |
+| `:multi_node` | `nightly-e2e.yml` | no | a peer BEAM this tier boots and stops mid-suite |
+| `:testnet` | a person | no | `mix test.setup`, then a free port `Flezha.Testnet.ws_port/0` derives |
+| `:kafka_integration` | a person | no | a reachable Kafka broker |
+| `:postgres_integration` | a person | no | the `postgres` compose service |
+| `:s3_integration` | a person | no | the `minio` compose service and `S3_INTEGRATION=1` |
+| `:memory_drift` | a person | no | `MIX_RUN_MEMORY_DRIFT=1` and the time the harness takes |
+| `:credit_soak` | a person | no | the time the soak takes |
+
+`Blocks merge` is derived, never declared: a tier blocks merge when the workflow
+that runs it has a `pull_request` trigger. Everything above answering `no` is
+proven nightly or by hand, which is a fact this table prints rather than one a
+reader reconstructs from an exclude list plus a workflow trigger.
+
+A tier is selected by name, and only by name: an ExUnit **include beats an
+exclude**, so `--include system` runs an excluded tier however it is excluded.
+A tier that must not ride another one's include declares `self_skip` and its
+modules call `FlezhaTest.Tiers.skip_unless_included/1`, because a skip is
+honoured whatever the filters say. `:interop` is the one tier that needs it.
+
+A scenario is NOT selected by a tag of its own. The axis a `test/system` module
+declares is its `capability:`, which the manifests read; a second tag naming the
+same scenario reads like a filter and selects nothing. Run one module by naming
+its file.
+
 ## The report
 
 With `FLEZHA_E2E_RUNTIME` set, or after any `:system` test ran, the

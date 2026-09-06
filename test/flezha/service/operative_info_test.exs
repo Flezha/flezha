@@ -11,7 +11,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -21,16 +21,13 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.{Completion, TestHelpers}
+  alias Flezha.State.Completion
 
   @namespace "operative-info-test"
 
   setup :set_mimic_global_until_exit
 
   setup do
-    # Isolate the state root `operative_info` scans for finished-job records.
-    TestHelpers.tmp_app_data_dir()
-
     # The published health map is process-global; restore what was there.
     published = Snapshot.current()
     on_exit(fn -> Snapshot.publish(published) end)
@@ -217,7 +214,6 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   test "a finished operative outside the retention window is not surfaced" do
     stub(OperativeManager, :get_operative_ids, fn _ns -> {:ok, []} end)
     Application.put_env(:flezha, :workflow_completed_retention_hours, %{"done-old" => 0})
-    on_exit(fn -> Application.delete_env(:flezha, :workflow_completed_retention_hours) end)
 
     :ok =
       Completion.write("done-old", %{

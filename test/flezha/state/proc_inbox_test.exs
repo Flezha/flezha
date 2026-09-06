@@ -5,7 +5,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
   consumed offset, torn-tail recovery, and invisibility to the Entity scanners.
   """
   # async: false: writes Application env; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
@@ -13,7 +13,6 @@ defmodule FlezhaTest.State.ProcInboxTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
-    TestHelpers.tmp_app_data_dir()
     # Every release rewrites the file at once, so the cases can read it.
     on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
 

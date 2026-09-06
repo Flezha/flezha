@@ -1,14 +1,12 @@
 defmodule Flezha.State.FsyncBatcherTest do
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import ExUnit.CaptureLog
 
   alias Flezha.State.{FsyncBatcher, Supervisor, TestHelpers, WalWriter}
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
-
     case start_supervised({Elixir.Registry, keys: :unique, name: Supervisor.registry_name()}) do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
@@ -19,7 +17,7 @@ defmodule Flezha.State.FsyncBatcherTest do
       {:error, {:already_started, _}} -> :ok
     end
 
-    %{base: base}
+    :ok
   end
 
   describe "init validation" do

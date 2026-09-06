@@ -55,13 +55,11 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   # lazily-created Entity with its flusher, so a dynamic Entity's state never
   # reaches disk there. That gap predates edge keying; the live-state read
   # below is what every SDK is held to.
-  @tag :dynamic_entity_e2e
   @tag reference_runtime: true
   test "lazy-created Entity's state is shipped, then reaped + deleted controller-side" do
     run_dynamic_entity_case()
   end
 
-  @tag :dynamic_entity_e2e
   test "a live dynamic Entity is readable by name, narrowed to one key" do
     run_live_read_case()
   end

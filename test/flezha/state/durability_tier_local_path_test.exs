@@ -8,17 +8,12 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
 
   # async: false: writes Application env; a shared on-disk root.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   alias Flezha.State.DurabilityTier.Backend.LocalPath
   alias Flezha.State.DurabilityTier.DeclaredManifest
 
-  setup do
-    root =
-      Path.join([System.tmp_dir!(), "flezha_local_path_#{System.unique_integer([:positive])}"])
-
-    File.mkdir_p!(root)
-    on_exit(fn -> File.rm_rf(root) end)
+  setup %{tmp: root} do
     %{opts: [path: root], root: root}
   end
 
@@ -71,18 +66,10 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
 
   describe "DeclaredManifest over the resolved backend" do
     setup %{root: root} do
-      previous = Application.get_env(:flezha, :durability_tier)
-
       Application.put_env(:flezha, :durability_tier,
         backend: :local_path,
         backend_opts: [path: root]
       )
-
-      on_exit(fn ->
-        if previous,
-          do: Application.put_env(:flezha, :durability_tier, previous),
-          else: Application.delete_env(:flezha, :durability_tier)
-      end)
 
       :ok
     end

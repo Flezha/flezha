@@ -14,12 +14,16 @@ split coherent over time.
 Run the same gates CI runs:
 
 ```bash
-scripts/format-check.sh        # every formatter, reuse lint, third-party notices
-scripts/check-sdk-boundary.sh  # the Elixir SDK must not reach into controller internals
-scripts/check-kind-naming.sh   # operative kinds are `stream` and `workflow`
-scripts/check-mimic-global.sh  # a test must release Mimic's global mode
-scripts/check-layer-direction.sh  # a lower directory must not name a higher one
+python3 scripts/naming_gate.py --run @naming    # every gate CI's naming job runs
+python3 scripts/naming_gate.py --run @format    # formatters, reuse lint, notices
+python3 scripts/naming_gate.py --list           # every declared gate and its command
 ```
+
+Every gate is a row in `scripts/naming_gate.py`, and `--run` is the one reader.
+CI calls the same runner, so a gate cannot exist and go uncalled: adding one is
+a row, not a row plus a workflow step somebody has to remember. `--run <id>`
+runs one, and each gate's own script still runs on its own when that is what you
+want.
 
 `check-layer-direction.sh` reads `lib/flezha/` against the controller's
 dependency order: a file in one directory may not name a module whose own file
@@ -29,16 +33,16 @@ into the directory that owns its feature is what closes an entry.
 `scripts/layer-direction-baseline.txt` records what the tree held when the gate
 landed — the gate fails on anything outside that list and on any entry the tree
 no longer holds, so the list may only shrink. A directory the gate's layer
-table does not rank makes it exit 2: rank the new directory in the script
-before adding code to it.
+table does not rank makes it exit 3, the gate with no answer: rank the new
+directory in the script before adding code to it.
 
-`format-check.sh` reports every language it can and ends on one of three
-non-zero statuses: **1** when something is unformatted, **2** when a formatter
-is not installed on your box, and **3** when a formatter ran and did not finish
-— a missing runtime extension, an input it cannot parse, a toolchain it cannot
-reach. The summary names which checks landed where, and every other language is
-still reported whichever it is. Only **1** says anything about your source: on
-**2** and **3** that language has been checked by nothing, so neither is a pass.
+The runner reports every gate it can and ends on one of three non-zero
+statuses: **1** when a gate found something, **2** when a tool a gate needs is
+not installed on your box, and **3** when a tool ran and did not finish, or a
+gate reached no verdict. The summary names which gates landed where, and every
+other gate is still reported whichever it is. Only **1** says anything about
+your source: on **2** and **3** that gate has checked nothing, so neither is a
+pass. CI fails on all three; your box may choose to skip on **2**.
 
 Two repo-wide rules that are easy to miss:
 

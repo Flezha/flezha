@@ -5,7 +5,7 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   breach alarm that never interrupts durable writes.
   """
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   import ExUnit.CaptureLog
 
@@ -26,7 +26,6 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
     state_root = Path.join(tmp, "state")
     File.mkdir_p!(state_root)
     Application.put_env(:flezha, :state_root, state_root)
-    on_exit(fn -> Application.delete_env(:flezha, :state_root) end)
 
     {:ok, state_root: state_root}
   end

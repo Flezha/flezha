@@ -83,7 +83,7 @@ if missing:
     print("\nCorrect scripts/check-local-mode-naming.sh: a gate that stopped "
           "reading a file is indistinguishable from a clean tree.\n",
           file=sys.stderr)
-    sys.exit(1)
+    sys.exit(naming_gate.FINDING)
 
 symbol = naming_gate.pattern_check(SYMBOL)
 surface = naming_gate.pattern_check(SURFACE_NAMES)

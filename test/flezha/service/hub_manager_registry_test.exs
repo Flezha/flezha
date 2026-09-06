@@ -9,7 +9,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   to assert the consumers select the live/local pid instead of crashing.
   """
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   alias Flezha.Convergence.Snapshot
   alias FlezhaTest.Helper.NodeTestHelper
@@ -145,7 +145,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   describe "durable_registry_pending?/0" do
     @pending_ns "mn_pending_test"
 
-    setup do
+    setup %{tmp: root} do
       # Start the hub while auto-restore is off so it keeps the in-memory `:ets`
       # registry backend (no DETS file under the shared tmp root, so the
       # unstarted-hub on-disk branch stays out of these assertions). Then flip
@@ -175,24 +175,13 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       {:ok, _} = ensure_hub(@pending_ns)
 
-      prev_restore = Application.get_env(:flezha, :auto_restore_enabled)
-      prev_root = Application.get_env(:flezha, :process_hub_registry_root)
       # Empty root so the unstarted-hub on-disk branch can never fire from
       # residue left by other suites — these assertions isolate the
       # running-hub `dump`-vs-`get_all_operatives` discriminator.
-      root =
-        Path.join(System.tmp_dir!(), "flezha_pending_test_#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(root)
       Application.put_env(:flezha, :process_hub_registry_root, root)
       Application.put_env(:flezha, :auto_restore_enabled, true)
 
-      on_exit(fn ->
-        restore_env(:auto_restore_enabled, prev_restore)
-        restore_env(:process_hub_registry_root, prev_root)
-        File.rm_rf(root)
-        HubManager.stop_hub(@pending_ns)
-      end)
+      on_exit(fn -> HubManager.stop_hub(@pending_ns) end)
 
       :ok
     end
@@ -212,7 +201,4 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       assert HubManager.durable_registry_pending?()
     end
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
-  defp restore_env(key, val), do: Application.put_env(:flezha, key, val)
 end

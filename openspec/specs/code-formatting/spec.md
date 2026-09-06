@@ -93,24 +93,26 @@ The Maven parent at `sdk/java/pom.xml` SHALL configure `spotless-maven-plugin` w
 
 ### Requirement: Project SHALL ship local format scripts
 
-The repository SHALL ship two scripts at `scripts/format-check.sh` and `scripts/format-apply.sh`. Both SHALL attempt every check they cover and report the outcome of each; neither SHALL let one check's failure — or one tool's absence — prevent the checks behind it from running. The check script SHALL run every language's formatter in check mode and then the licensing checks; the apply script SHALL run every language's formatter in write mode to fix the whole tree in one command. Both SHALL be tracked under version control and documented in the top-level `README.md`.
+The repository SHALL ship one script at `scripts/format-apply.sh` that runs every language's formatter in write mode to fix the whole tree in one command, and SHALL expose the same list in check mode together with the licensing checks as rows of the gate runner, reached by `python3 scripts/naming_gate.py --run @format`. The script and the runner SHALL attempt every check they cover and report the outcome of each; neither SHALL let one check's failure, or one tool's absence, prevent the checks behind it from running. Both SHALL be tracked under version control and documented in the top-level `README.md`.
 
-The scripts SHALL exit non-zero when anything is unformatted, non-zero when a tool they need is unavailable, and non-zero when a tool they ran did not complete, using a different status for each, and the CI workflow SHALL invoke the same script rather than maintaining its own list of formatters.
+There SHALL NOT be a second script that re-spells the same checks. Two lists drift: a local gate that claims to cover a language CI never runs is worse than no gate, because its green reads as a verdict.
 
-#### Scenario: Developer runs format-check locally
+The script and the runner SHALL exit non-zero when anything is unformatted, non-zero when a tool they need is unavailable, and non-zero when a tool they ran did not complete, using a different status for each, and the CI workflow SHALL invoke the same runner rather than maintaining its own list of formatters or of checks.
 
-- **WHEN** a developer runs `scripts/format-check.sh` from the repo root
-- **THEN** the script runs every formatter it can, then the licensing checks
+#### Scenario: Developer runs the format gate locally
+
+- **WHEN** a developer runs `python3 scripts/naming_gate.py --run @format` from the repo root
+- **THEN** the runner runs every formatter it can, then the licensing checks
 - **AND** a failure in one of them does not prevent the rest from running
 - **AND** the summary names every check that failed, every tool that was missing, and every tool that did not complete
-- **AND** on full success the script exits 0
+- **AND** on full success the runner exits 0
 
 #### Scenario: Developer fixes formatting in one shot
 
 - **WHEN** a developer runs `scripts/format-apply.sh` from the repo root
 - **THEN** the script runs every language's formatter in write mode
 - **AND** every authored source file whose formatter is installed conforms to it on completion
-- **AND** subsequent `scripts/format-check.sh` invocations exit 0 on a box with every formatter installed
+- **AND** a subsequent `python3 scripts/naming_gate.py --run @format` exits 0 on a box with every formatter installed
 
 ### Requirement: Project SHALL track bulk-format SHAs in `.git-blame-ignore-revs`
 
@@ -145,12 +147,12 @@ A formatter sweep landed under this capability SHALL NOT introduce semantic chan
 
 ### Requirement: Every language SHALL have a pinned formatter reachable through one command
 
-The Node, Ruby, PHP and Python SDKs SHALL each declare one formatter as a pinned development dependency, and `scripts/format-apply.sh` / `scripts/format-check.sh` SHALL invoke every language's formatter, so that one command formats or checks the whole repository. The Elixir formatter version SHALL be the same locally and in CI.
+The Node, Ruby, PHP and Python SDKs SHALL each declare one formatter as a pinned development dependency, and `scripts/format-apply.sh` SHALL invoke every language's formatter, so that one command formats the whole repository and one runner call checks it. The Elixir formatter version SHALL be the same locally and in CI.
 
 #### Scenario: One command formats every language
 
 - **WHEN** `scripts/format-apply.sh` runs twice on a clean tree
-- **THEN** the second run SHALL change no file, and `scripts/format-check.sh` SHALL exit zero
+- **THEN** the second run SHALL change no file, and `python3 scripts/naming_gate.py --run @format` SHALL exit zero
 
 #### Scenario: Local and CI formatter output agree
 

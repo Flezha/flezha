@@ -2,14 +2,13 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.StreamChannel
   alias Flezha.State.Paths
-  alias Flezha.State.TestHelpers
   alias Flezha.State.Wire
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: writes Application env; a shared on-disk root; registered runner channels.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, async: false
 
   setup context do
     name =
@@ -135,8 +134,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     @threshold_ms 25
 
     setup %{name: name} do
-      prev_threshold = Application.get_env(:flezha, :io_stream_liveness_threshold_ms)
-      prev_interval = Application.get_env(:flezha, :io_stream_liveness_interval_ms)
+      FlezhaTest.Case.install([:env])
+
       # Small threshold for a fast test; interval 0 disables the auto-timer so the
       # only liveness ticks are the ones the test drives explicitly.
       Application.put_env(:flezha, :io_stream_liveness_threshold_ms, @threshold_ms)
@@ -152,11 +151,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
         nil
       )
 
-      on_exit(fn ->
-        :telemetry.detach(id)
-        restore_env(:io_stream_liveness_threshold_ms, prev_threshold)
-        restore_env(:io_stream_liveness_interval_ms, prev_interval)
-      end)
+      on_exit(fn -> :telemetry.detach(id) end)
 
       # Heartbeats only arrive on secondary streams; the check is gated to them.
       sec_name = :"#{name}_secondary"
@@ -314,7 +309,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
   describe "output_stall / delete gating (kind-aware)" do
     setup do
-      TestHelpers.tmp_app_data_dir()
+      FlezhaTest.Case.install([:tmp_app_data])
       ClassRegistry.ensure_table()
 
       :ok
@@ -369,7 +364,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
   describe "route cache invalidation" do
     setup do
-      TestHelpers.tmp_app_data_dir()
+      FlezhaTest.Case.install([:tmp_app_data])
       ClassRegistry.ensure_table()
 
       :ok
@@ -426,9 +421,6 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       Process.exit(holder, :kill)
     end
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
-  defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
 
   defp monitors_of(pid) do
     {:monitors, monitors} = Process.info(pid, :monitors)

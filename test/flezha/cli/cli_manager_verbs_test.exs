@@ -243,7 +243,7 @@ defmodule Flezha.Service.CliManagerDlqTest do
   a drop is audited.
   """
   # async: false: writes Application env; a shared on-disk root; global telemetry handlers.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [{:isolated_dlq_dir, replay_grace_ms: 400}], async: false
 
   import ExUnit.CaptureIO
 
@@ -255,7 +255,6 @@ defmodule Flezha.Service.CliManagerDlqTest do
   alias FlezhaTest.Helper.DlqFixtures
 
   setup do
-    DlqFixtures.isolated_dir(replay_grace_ms: 400)
     ClassRegistry.ensure_table()
 
     rc = "dlqcli_" <> Integer.to_string(System.unique_integer([:positive]))
@@ -448,19 +447,13 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
   wrappers, driven end to end against live auth stores.
   """
   # async: false: a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [{:auth_stores, prefix: "flz_authz_render"}], async: false
 
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, Config, TokenStore}
-  alias FlezhaTest.Helper.AuthTestHelper
 
   alias Flezha.Service.CliManager
-
-  setup do
-    _ = AuthTestHelper.setup_auth_stores(prefix: "flz_authz_render")
-    :ok
-  end
 
   test "the whole verb-family flow: bootstrap → namespace → role → token → whoami" do
     # `flz auth bootstrap <token>` — claims and prints the minted admin token.

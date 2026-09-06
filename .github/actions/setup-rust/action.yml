@@ -1,0 +1,76 @@
+name: Set up Rust
+description: >
+  The Rust toolchain at the channel .github/toolchains.json names, plus the
+  cargo registry and workspace target cache under one key.
+
+# One step for both channels. Nightly is not a different toolchain here, it is
+# a different row in the same manifest: rustfmt.toml uses `imports_granularity`,
+# `group_imports` and `ignore`, all nightly-only, so the format gate asks for
+# `channel: nightly` and gets the pinned date. Pin the date so style decisions
+# do not drift with nightly bumps; bump it in the manifest alongside
+# rustfmt.toml and the same pin in scripts/format-apply.sh.
+
+inputs:
+  channel:
+    description: stable or nightly. Selects which manifest row is read.
+    required: false
+    default: stable
+  version:
+    description: Override the manifest's toolchain name entirely.
+    required: false
+    default: ""
+  components:
+    description: Comma-separated rustup components (for example rustfmt).
+    required: false
+    default: ""
+  targets:
+    description: Comma-separated extra rustup targets to install.
+    required: false
+    default: ""
+  cache:
+    description: Restore and save the cargo registry and the workspace target dir.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the toolchain
+      id: resolve
+      shell: bash
+      env:
+        INPUT_CHANNEL: ${{ inputs.channel }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "$INPUT_CHANNEL" in
+          stable) key=rust ;;
+          nightly) key=rust_nightly ;;
+          *) echo "channel must be stable or nightly, got '$INPUT_CHANNEL'" >&2; exit 2 ;;
+        esac
+        version="${INPUT_VERSION:-$("${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" "$key")}"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+    # `@master` with an explicit `toolchain:` rather than the `@stable` branch
+    # alias: one action reference has to serve both channels, and the alias
+    # carries its channel in the ref where nothing can override it.
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.resolve.outputs.version }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    # test/apps/rust_runner/target is in the path list because the e2e
+    # pre-build writes there on the jobs that have one; a path that does not
+    # exist in a given job is skipped rather than failing the step.
+    - if: inputs.cache == 'true'
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          test/apps/rust_runner/target
+        key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-${{ runner.os }}-

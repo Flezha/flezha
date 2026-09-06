@@ -1,0 +1,12 @@
+{
+  "otp": "28",
+  "elixir": "1.20.2",
+  "java": "21",
+  "node": "22",
+  "python": "3.11",
+  "ruby": "3.4",
+  "php": "8.4",
+  "protoc": "23.4",
+  "rust": "stable",
+  "rust_nightly": "nightly-2026-05-07"
+}

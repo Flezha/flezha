@@ -49,15 +49,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v5
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
         with:
-          distribution: temurin
-          java-version: 21
           cache: maven
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        # No cargo cache: what this job reuses is the staged binary below,
+        # keyed on the crates that end up inside it.
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
 
       - name: Cache the host-triple native binary
         # Keyed on the host triple and on every crate that ends up inside
@@ -103,56 +105,38 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 21
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
 
       - name: Set up Erlang + Elixir
-        uses: erlef/setup-beam@v1
+        # No deps/_build cache: this job compiles the tree under test from
+        # source, and what it reuses is the cargo tree below.
+        uses: ./.github/actions/setup-beam
         with:
-          otp-version: "28"
-          elixir-version: "1.20.2"
+          cache: "false"
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
-      - name: Install protoc 23.4
+      - name: Install protoc
         # `mix compile` in lib/flezha/runner/commands_proto.ex uses
         # `Protox`, which shells out to system protoc. Installed manually
         # from the GitHub release so no JavaScript action is involved
         # (arduino/setup-protoc still ships on Node 20 and trips the
-        # runner's deprecation warning).
+        # runner's deprecation warning) — the version is still the one the
+        # toolchain manifest names.
         run: |
-          PROTOC_VERSION=23.4
+          PROTOC_VERSION=$(scripts/manifest_pin.sh .github/toolchains.json protoc)
           curl -fsSL -o /tmp/protoc.zip \
             "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
           sudo unzip -oq /tmp/protoc.zip -d /usr/local
           rm /tmp/protoc.zip
           protoc --version
 
-      - name: Cargo cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
-
       - name: Set up Node.js (for testnet build)
-        uses: actions/setup-node@v5
+        uses: ./.github/actions/setup-node
         with:
-          node-version: "22"
-
-      - name: Cache testnet node_modules
-        uses: actions/cache@v5
-        with:
-          path: test/apps/testnet/node_modules
-          key: testnet-${{ runner.os }}-${{ hashFiles('test/apps/testnet/package-lock.json', 'test/apps/testnet/package.json') }}
+          deps-dir: test/apps/testnet
 
       - name: Build testnet
         # Flezha.Testnet is a child of Flezha.Application in :test env
@@ -160,15 +144,8 @@ jobs:
         # `npm start --prefix test/apps/testnet` at boot, which runs
         # `node dist/index.js`. dist/ is gitignored, so it has to be
         # built before mix test boots the application.
-        # `npm ci` alone honours the committed lockfile and fails when it has
-        # drifted; `|| npm install` turned that report into a silent re-resolve.
         working-directory: test/apps/testnet
-        run: |
-          npm ci
-          npm run build
-
-      - name: Elixir dependencies
-        run: mix deps.get
+        run: npm run build
 
       - name: Pre-build rust_runner
         # PortPilot launches two `cargo run --quiet` processes for
@@ -219,15 +196,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v5
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
         with:
-          distribution: temurin
-          java-version: 21
           cache: maven
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        # No cargo cache: a release build starts from the tag's own tree.
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
 
       - name: Build all five triples and both fat jars
         # The same script that is run locally. It installs cargo-zigbuild and a

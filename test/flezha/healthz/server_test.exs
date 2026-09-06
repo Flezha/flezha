@@ -18,7 +18,7 @@ defmodule Flezha.Healthz.ServerTest do
 
   # async: false: writes Application env; registered singletons; node-global tables.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   import FlezhaTest.Helper.ConvergenceFixtures, only: [verdicts: 1]
 
@@ -28,7 +28,6 @@ defmodule Flezha.Healthz.ServerTest do
   alias Flezha.Service.HubManager
 
   setup do
-    previous_port = Application.get_env(:flezha, :healthz_port)
     Application.put_env(:flezha, :healthz_port, 0)
 
     # Clear recovery states from prior tests so the recovery summary starts with
@@ -54,10 +53,6 @@ defmodule Flezha.Healthz.ServerTest do
 
       Snapshot.reset_recovery_states()
       fresh_sensor()
-
-      if previous_port,
-        do: Application.put_env(:flezha, :healthz_port, previous_port),
-        else: Application.delete_env(:flezha, :healthz_port)
     end)
 
     {:ok, port: port}
@@ -251,14 +246,7 @@ defmodule Flezha.Healthz.ServerTest do
     # at `recovering` forever. Once `unmet_intent_ms` exceeds the grace the
     # reader escalates to `degraded` so it alarms (still 200 — a restart can't
     # re-bind an orphaned operative).
-    prev = Application.get_env(:flezha, :convergence_unmet_intent_grace_ms)
     Application.put_env(:flezha, :convergence_unmet_intent_grace_ms, 100)
-
-    on_exit(fn ->
-      if prev,
-        do: Application.put_env(:flezha, :convergence_unmet_intent_grace_ms, prev),
-        else: Application.delete_env(:flezha, :convergence_unmet_intent_grace_ms)
-    end)
 
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
@@ -327,14 +315,7 @@ defmodule Flezha.Healthz.ServerTest do
 
   test "tick stale → 503 with reason: tick_stale (when configured for fast staleness)",
        %{port: port} do
-    previous = Application.get_env(:flezha, :convergence_tick_ms)
     Application.put_env(:flezha, :convergence_tick_ms, 10)
-
-    on_exit(fn ->
-      if previous,
-        do: Application.put_env(:flezha, :convergence_tick_ms, previous),
-        else: Application.delete_env(:flezha, :convergence_tick_ms)
-    end)
 
     # A tick whose timestamp is already past tick_ms × 2: the staleness window
     # has elapsed.
@@ -455,15 +436,7 @@ defmodule Flezha.Healthz.ServerTest do
 
   describe "controller-fabric wedge → 503 (D4)" do
     setup do
-      previous = Application.get_env(:flezha, :convergence_fabric_503_polls)
       Application.put_env(:flezha, :convergence_fabric_503_polls, 3)
-
-      on_exit(fn ->
-        if previous,
-          do: Application.put_env(:flezha, :convergence_fabric_503_polls, previous),
-          else: Application.delete_env(:flezha, :convergence_fabric_503_polls)
-      end)
-
       :ok
     end
 
@@ -688,8 +661,8 @@ defmodule Flezha.Healthz.ServerTest do
       File.write!(Path.join(hub_dir, "registry.dets"), "")
       on_exit(fn -> File.rm_rf!(root) end)
 
-      put_env_for_test(:process_hub_registry_root, root)
-      put_env_for_test(:auto_restore_enabled, true)
+      Application.put_env(:flezha, :process_hub_registry_root, root)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
 
       # The Loop derives the Snapshot field from this very predicate
       # (`Convergence.Loop.Summary`), so publishing it is what the Loop's next
@@ -730,7 +703,7 @@ defmodule Flezha.Healthz.ServerTest do
       Readiness.publish_sequence_complete()
       # Auto-restore is on in production, which is what makes the durable
       # registry row consult HubManager at all.
-      put_env_for_test(:auto_restore_enabled, true)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
 
       pid = Process.whereis(HubManager)
       Process.unregister(HubManager)
@@ -748,23 +721,6 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["status"] == "recovering"
       assert "durable_registry_loaded" in decoded["unmet"]
     end
-  end
-
-  # Set one application env for the duration of a test, restoring exactly what
-  # was there — including its absence. Reading the current value and writing it
-  # back turns "not set" into "set to nil", which is a different fact for every
-  # reader that passes a default.
-  defp put_env_for_test(key, value) do
-    previous = Application.fetch_env(:flezha, key)
-
-    on_exit(fn ->
-      case previous do
-        {:ok, was} -> Application.put_env(:flezha, key, was)
-        :error -> Application.delete_env(:flezha, key)
-      end
-    end)
-
-    Application.put_env(:flezha, key, value)
   end
 
   defp get(port, path), do: request(port, "GET", path)

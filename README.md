@@ -161,8 +161,9 @@ blocks merge. The workflow runs the same script you do, so the two cannot
 cover different languages:
 
 ```bash
-scripts/format-check.sh   # every formatter in check mode, plus the licensing checks
-scripts/format-apply.sh   # auto-fix the formatting the check reports
+python3 scripts/naming_gate.py --run @format   # every formatter in check mode,
+                                              # plus the licensing checks
+scripts/format-apply.sh                       # auto-fix what the check reports
 ```
 
 Both report every language they can and name any formatter that is not

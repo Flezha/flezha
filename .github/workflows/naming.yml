@@ -45,12 +45,25 @@ name: Naming
 # `test/helpers/mimic_global.ex` defines the releasing wrapper and is the one
 # exemption, declared by path.
 #
-# Seven of these gates share one walk (scripts/naming_gate.py), whose recorded-history
-# escape hatch decides which lines each gate reads. Its self-test proves that
-# escape scopes to its own block: it runs the walk over a throwaway git tree
-# where a whole record on one line, a two-line block and a block left open each
-# have a known answer. A gate that says OK because it stopped reading is
-# indistinguishable from one that says OK because the tree is clean.
+# Every gate here is a ROW in scripts/naming_gate.py, and `--run @naming` is the
+# one reader. This file lists no gate by name, so a gate cannot be added to the
+# repository and left uncalled by CI, which is what nine hand-written steps
+# allowed. `--list` prints the table; `--run <id>` runs one.
+#
+# Most of these gates also share one walk (scripts/naming_gate.py), whose
+# recorded-history escape hatch decides which lines each gate reads. Its
+# self-test, itself a row, proves that escape scopes to its own block: it runs
+# the walk over a throwaway git tree where a whole record on one line, a
+# two-line block and a block left open each have a known answer, and it drives
+# the exit contract over gates with known outcomes. A gate that says OK because
+# it stopped reading is indistinguishable from one that says OK because the
+# tree is clean.
+#
+# check-test-fixture refuses a test module that builds a fixture in its own
+# `setup` and declares none; check-ci-toolchain refuses a workflow that sets a
+# toolchain up itself instead of using the composite action that reads
+# .github/toolchains.json. Both read DISK rather than the git index, because a
+# file being written is exactly the work they should judge.
 #
 # check-build-artifacts is the repository-weight gate: `tracked` refuses a
 # committed build artefact (native libraries and fat jars are build output —
@@ -72,39 +85,13 @@ on:
     branches: [main]
 
 jobs:
-  kind-naming:
+  gates:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - name: check-kind-naming
-        run: scripts/check-kind-naming.sh
-      - name: check-overflow-naming
-        run: scripts/check-overflow-naming.sh
-      - name: check-local-mode-naming
-        run: scripts/check-local-mode-naming.sh
-      - name: check-module-naming
-        run: scripts/check-module-naming.sh
-      - name: check-sdk-boundary
-        run: scripts/check-sdk-boundary.sh
-      - name: check-layer-direction
-        run: scripts/check-layer-direction.sh
-      - name: check-mimic-global
-        run: scripts/check-mimic-global.sh
-      - name: check-docs-citations
-        run: scripts/check-docs-citations.sh
-      - name: naming_gate self-test
-        run: python3 scripts/naming_gate.py --self-test
-      - name: check-layer-direction self-test
-        run: scripts/check-layer-direction.sh --self-test
-
-  build-artifacts:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-      - name: check-build-artifacts tracked
-        run: scripts/check-build-artifacts.sh tracked
+      - name: Every naming, structure and weight gate
+        run: python3 scripts/naming_gate.py --run @naming
 
   repo-size:
     runs-on: ubuntu-latest
@@ -114,4 +101,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: check-build-artifacts size
-        run: scripts/check-build-artifacts.sh size
+        run: python3 scripts/naming_gate.py --run build-artifacts-size

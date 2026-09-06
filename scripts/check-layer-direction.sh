@@ -52,8 +52,8 @@
 #   * a baseline entry the tree no longer holds — the list may only shrink, so
 #     a cut edge comes off it and the count is the restructuring's own number;
 #   * a directory under lib/flezha/ that the layer table does not rank, which
-#     is exit 2, the gate broken. A new directory has to declare where it sits
-#     before it can be judged, so the table cannot rot behind the tree.
+#     is exit 3, the gate with no answer. A new directory has to declare where
+#     it sits before it can be judged, so the table cannot rot behind the tree.
 #
 # SOURCES ARE READ FROM DISK, not from `git ls-files`. An untracked module has
 # existed under lib/flezha/ here before (`trace_tmp.ex`), and a walk that reads
@@ -63,7 +63,8 @@
 # `--write-baseline` records the current tree. It is for the change that lands
 # a deliberate structural move, and like every recording in this repository it
 # is a judgement, not a reset: what it absorbs is exactly what the gate exists
-# to report. Exit 2 means the gate is broken rather than the tree dirty.
+# to report. Exit 3 means the gate reached no verdict rather than the tree being
+# dirty; `scripts/naming_gate.py` documents the four codes.
 #
 # `--self-test` runs the whole judgement over a throwaway tree with known
 # answers, including the one claim the gate is built on: that moving a file
@@ -176,12 +177,7 @@ DOC_LINE = re.compile(r"^\s*@(?:module|type|)doc\b")
 
 
 def source_files():
-    out = []
-    for dirpath, _, names in os.walk(LIB):
-        for name in names:
-            if name.endswith(".ex"):
-                out.append(os.path.join(dirpath, name))
-    return sorted(out)
+    return [rel for rel in naming_gate.disk_files([LIB]) if rel.endswith(".ex")]
 
 
 def directory_of(rel):
@@ -230,7 +226,7 @@ def expand_multi(text):
 
 
 class Broken(Exception):
-    """The gate cannot reach a verdict, which is exit 2 and never a clean tree."""
+    """The gate cannot reach a verdict, which is exit 3 and never a clean tree."""
 
 
 def census():
@@ -309,13 +305,13 @@ def main(args):
             "usage: check-layer-direction.sh [--write-baseline | --self-test]",
             file=sys.stderr,
         )
-        return 2
+        return naming_gate.NO_ANSWER
 
     try:
         found = census()
     except Broken as broken:
         print(broken, file=sys.stderr)
-        return 2
+        return naming_gate.NO_ANSWER
 
     if write:
         with open(BASELINE, "w", encoding="utf-8") as fh:
@@ -329,7 +325,7 @@ def main(args):
         recorded = naming_gate.load_baseline(BASELINE)
     except OSError as exc:
         print(f"cannot read {BASELINE}, so nothing can be judged: {exc}", file=sys.stderr)
-        return 2
+        return naming_gate.NO_ANSWER
 
     new = sorted(found - recorded)
     closed = sorted(recorded - found)

@@ -11,7 +11,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   and asserts the operative follows the runner onto its new session.
   """
   # async: false: Mimic global mode; Mimic stubs; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -32,16 +32,10 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   @factory "do_nothing"
   @stale_runner "runner_from_a_previous_boot"
 
-  setup do
-    id_path =
-      Path.join(System.tmp_dir!(), "flezha-stable-id-#{System.unique_integer([:positive])}")
+  setup %{tmp: tmp} do
+    on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
 
-    on_exit(fn ->
-      FleetManager.stop_namespace(@namespace)
-      File.rm_rf(id_path)
-    end)
-
-    {:ok, id_path: id_path}
+    {:ok, id_path: Path.join(tmp, "flezha-stable-id")}
   end
 
   test "an operative survives a runner restart via the stable-id binding swap", %{

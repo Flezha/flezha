@@ -34,12 +34,10 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   # kill the runner before it fires.
   @timeout_ms "600"
 
-  @tag :entity_timers_e2e
   test "a quiet session is closed by its own idle timer" do
     run_fires_case()
   end
 
-  @tag :entity_timers_e2e
   test "a pending timer survives a re-seat from disk and still fires" do
     run_crash_case()
   end

@@ -52,7 +52,6 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     :ok
   end
 
-  @tag :task_kind_e2e
   test "task runs once on start and is deregistered on completion" do
     operative_id = "task_e2e_#{System.unique_integer([:positive])}"
 

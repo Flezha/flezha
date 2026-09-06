@@ -9,22 +9,17 @@ defmodule Flezha.AuthZTest do
 
   # async: false: writes Application env; a shared on-disk root.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [
+      {:auth_stores,
+       prefix: "flz_authz",
+       stores: [Flezha.AuthZ.AuthState, Flezha.AuthZ.RoleStore, Flezha.AuthZ.NamespaceStore],
+       claim: true}
+    ],
+    async: false
 
   alias Flezha.AuthZ
-  alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, Scope}
-  alias FlezhaTest.Helper.AuthTestHelper
-
-  setup do
-    ctx =
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_authz",
-        stores: [AuthState, RoleStore, NamespaceStore],
-        claim: true
-      )
-
-    {:ok, Map.to_list(ctx)}
-  end
+  alias Flezha.AuthZ.{AuthState, RoleStore, Scope}
 
   test "internal-source callers are pre-authorized" do
     assert :ok =

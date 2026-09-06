@@ -1,18 +1,18 @@
 [package]
 name = "flz"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 license = "MPL-2.0"
 repository.workspace = true
 publish = false
 
 [dependencies]
-serde_json = "1.0"
+serde_json.workspace = true
 # `flz runner check` runs the runner's own probe, not a second copy of it.
 flz_transport = { path = "../flz_transport" }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [[bin]]
 name = "flz"

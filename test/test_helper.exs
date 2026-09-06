@@ -1,26 +1,12 @@
-# `:system` is excluded by convention — those tests boot extra OS processes;
-# `mix test --include system` runs them against the SDK runtime named by
-# `FLEZHA_E2E_RUNTIME` (default `rust`), and `--include sdk_smoke` runs the
-# smoke tier alone. What that runtime carries comes from its manifest
-# (`test/apps/<runtime>_runner/conformance.json`) — see
-# `docs/sdk/conformance.md`.
-# `:testnet` is excluded because the WS testnet daemon serves a bundle that
-# `mix test.setup` builds. The run starts the daemon itself, on a port it
-# derives (`Flezha.Testnet.ws_port/0`), so two suites on one checkout do not
-# contend for it — `mix test.setup`, then `mix test --include testnet`.
-# `:memory_drift` is the long-running load harness in
-# `test/load/memory_drift_test.exs`; it also requires
-# `MIX_RUN_MEMORY_DRIFT=1`.
-# `:s3_integration` needs the `minio` compose service (localhost:9100) and
-# `S3_INTEGRATION=1`.
-# `:interop` is the one scenario that places TWO SDK runtimes in one run: the
-# tiers are one-runtime-per-run by contract, and its namespace must not be alive
-# while another tier's cleanup tick walks the fleet. An ExUnit include BEATS an
-# exclude, so `--include system` would run it however it is excluded here — the
-# module skips itself unless `--include interop` is passed too.
-# `:multi_node` boots a peer BEAM and stops it mid-suite, which disturbs the
-# shared cluster state the boot-time runners and the concurrently-running
-# namespace tests depend on. Run with `mix test --include multi_node`.
+# Which tags plain `mix test` skips is `FlezhaTest.Tiers`, one row per tier: the
+# tag, the workflow that runs it or the reason a person has to, what a host
+# needs first, and the anchor in `docs/sdk/conformance.md` that describes it.
+# That table is the one place a tier is declared; this file only reads it.
+#
+# One rule the table cannot express and every reader needs: an ExUnit include
+# BEATS an exclude, so `--include system` runs an excluded tier too. A tier that
+# must not ride another one's include says so with `self_skip`, and its module
+# skips itself unless its own tag is included.
 alias FlezhaTest.Helper.NodeTestHelper
 
 # What the selected runtime carries is not a filter: `--include system` is how
@@ -37,19 +23,7 @@ if Enum.any?([:system, :sdk_smoke], &(&1 in (ExUnit.configuration()[:include] ||
   )
 end
 
-ExUnit.start(
-  exclude: [
-    :system,
-    :interop,
-    :kafka_integration,
-    :postgres_integration,
-    :s3_integration,
-    :testnet,
-    :memory_drift,
-    :credit_soak,
-    :multi_node
-  ]
-)
+ExUnit.start(exclude: FlezhaTest.Tiers.excluded())
 
 # ProcessHub's `LoggerService.error/3` logs every `StartChildrenRequest`
 # failure at error level — useful in production, but multiple tests

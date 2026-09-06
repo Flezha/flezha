@@ -14,7 +14,7 @@ defmodule Flezha.Api.OperatorVerbGateTest do
   callers it had: the role the action is granted to still gets through, and
   the entry read hands no payload bytes to a caller it refuses.
   """
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:isolated_dlq_dir], async: false
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Schedule.Store, as: ScheduleStore
@@ -22,7 +22,6 @@ defmodule Flezha.Api.OperatorVerbGateTest do
   alias Flezha.Service.Schedule
   alias Flezha.Service.Workflow
   alias FlezhaTest.Helper.AuthTestHelper
-  alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.ScheduleTestHelper
 
   # No operative of this class runs and none has state on disk, so
@@ -39,8 +38,6 @@ defmodule Flezha.Api.OperatorVerbGateTest do
     AuthTestHelper.setup_auth_stores(enabled: true, claim: true)
     ScheduleTestHelper.isolated_store_setup()
     ScheduleTestHelper.schedule_hub_setup()
-
-    DlqFixtures.isolated_dir()
 
     {:ok, entry_ref} =
       DlqStore.append(%{

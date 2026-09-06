@@ -21,7 +21,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
@@ -47,20 +47,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   @recorded_runner "recorded_runner_from_previous_boot"
   @seeded_runner "seeded_live_runner"
 
-  setup do
+  setup %{tmp: tmp_dir} do
     fleet_state = :sys.get_state(FleetManager)
     on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> fleet_state end) end)
-
-    previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
-    previous_root = Application.get_env(:flezha, :process_hub_registry_root)
-    previous_grace = Application.get_env(:flezha, :process_hub_reconcile_grace_ms)
-    previous_interval = Application.get_env(:flezha, :process_hub_reconcile_interval_ms)
-
-    tmp_dir =
-      Path.join([System.tmp_dir!(), "flezha_recovery_test_#{System.unique_integer([:positive])}"])
-
-    File.rm_rf(tmp_dir)
-    File.mkdir_p!(tmp_dir)
 
     Application.put_env(:flezha, :auto_restore_enabled, true)
     Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
@@ -70,25 +59,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     Application.put_env(:flezha, :process_hub_reconcile_grace_ms, @reconcile_grace_ms)
     Application.put_env(:flezha, :process_hub_reconcile_interval_ms, 1_000)
 
-    on_exit(fn ->
-      _ = HubManager.stop_hub(@namespace)
-      File.rm_rf(tmp_dir)
-      Application.put_env(:flezha, :auto_restore_enabled, previous_enabled)
+    on_exit(fn -> HubManager.stop_hub(@namespace) end)
 
-      if previous_root,
-        do: Application.put_env(:flezha, :process_hub_registry_root, previous_root),
-        else: Application.delete_env(:flezha, :process_hub_registry_root)
-
-      if previous_grace,
-        do: Application.put_env(:flezha, :process_hub_reconcile_grace_ms, previous_grace),
-        else: Application.delete_env(:flezha, :process_hub_reconcile_grace_ms)
-
-      if previous_interval,
-        do: Application.put_env(:flezha, :process_hub_reconcile_interval_ms, previous_interval),
-        else: Application.delete_env(:flezha, :process_hub_reconcile_interval_ms)
-    end)
-
-    {:ok, tmp_dir: tmp_dir}
+    :ok
   end
 
   # fails when: recovery needs operator action again. Under the marker
@@ -365,20 +338,13 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
         Path.join([System.tmp_dir!(), "flezha_tier_#{System.unique_integer([:positive])}"])
 
       File.mkdir_p!(tier_dir)
-      previous_tier = Application.get_env(:flezha, :durability_tier)
 
       Application.put_env(:flezha, :durability_tier,
         backend: :local_path,
         backend_opts: [path: tier_dir]
       )
 
-      on_exit(fn ->
-        File.rm_rf(tier_dir)
-
-        if previous_tier,
-          do: Application.put_env(:flezha, :durability_tier, previous_tier),
-          else: Application.delete_env(:flezha, :durability_tier)
-      end)
+      on_exit(fn -> File.rm_rf(tier_dir) end)
 
       hub_id = Identificator.hub(@namespace)
       operative_id = "declared_disk_loss_op"

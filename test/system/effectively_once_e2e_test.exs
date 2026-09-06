@@ -26,7 +26,6 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
 
-  @moduletag :effectively_once_e2e
   @moduletag timeout: 300_000
 
   @factory "tier_store"

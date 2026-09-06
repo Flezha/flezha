@@ -29,7 +29,6 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
 
-  @moduletag :effectively_once_e2e
   @moduletag timeout: 300_000
 
   @factory "checkpoint_store"

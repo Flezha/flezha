@@ -74,7 +74,6 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     :ok
   end
 
-  @tag :credit_flow_e2e
   test "an overdriven entity parks on credit, resumes on grants, zero sheds and zero drops" do
     run_credit_scenario()
   end

@@ -13,25 +13,26 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
 
   # async: false: a shared on-disk root.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [
+      {:auth_stores,
+       prefix: "flz_authz_audit",
+       stores: [
+         Flezha.AuthZ.AuthState,
+         Flezha.AuthZ.RoleStore,
+         Flezha.AuthZ.NamespaceStore,
+         Flezha.AuthZ.TokenStore
+       ],
+       register_source: true}
+    ],
+    async: false
 
-  alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Bootstrap, RoleStore, TokenStore}
   alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.AuthTestHelper
 
   @source :platform_authz
-
-  setup do
-    ctx =
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_authz_audit",
-        stores: [AuthState, RoleStore, NamespaceStore, TokenStore],
-        register_source: true
-      )
-
-    {:ok, Map.to_list(ctx)}
-  end
 
   test "TokenStore.issue/5 emits exactly one :token_issued event" do
     boundary = now_us()

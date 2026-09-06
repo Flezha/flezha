@@ -1,7 +1,7 @@
 [package]
 name = "flz_nif"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 license = "MPL-2.0"
 repository.workspace = true
 publish = false
@@ -14,13 +14,13 @@ crate-type = ["cdylib"]
 [dependencies]
 flz_transport = { path = "../flz_transport" }
 rustler = "0.35"
-crossbeam = "0.8"
-libc = "0.2"
-mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
-quinn-proto = "0.11"
-bytes = "1"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2"
+crossbeam.workspace = true
+libc.workspace = true
+mio.workspace = true
+quinn-proto.workspace = true
+bytes.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
 
 [dev-dependencies]
 flz_transport = { path = "../flz_transport", features = ["test-support"] }

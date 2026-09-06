@@ -1,0 +1,36 @@
+name: Set up Python
+description: >
+  CPython at the version .github/toolchains.json names.
+
+# The manifest's single-version pin is 3.11. `sdk/python/pyproject.toml`
+# declares `requires-python = ">=3.11"`, and python-sdk.yml runs the package
+# suite across 3.11, 3.14 and the free-threaded 3.14t, so a job that needs one
+# interpreter rather than an interpreter matrix runs on the declared floor —
+# the version the SDK promises to work on, and the one arm every wheel tier is
+# built against. A single-version job on an interpreter no matrix covers is a
+# version nothing else in CI proves.
+#
+# A matrix arm overrides the pin with `version:` and stays a fan-out.
+
+inputs:
+  version:
+    description: Override the manifest's Python version. Empty reads the manifest.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the Python version
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="${INPUT_VERSION:-$("${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" python)}"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: ${{ steps.resolve.outputs.version }}

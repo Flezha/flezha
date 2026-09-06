@@ -13,7 +13,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   `overwatch_restore_async_test` does — the state machine is the unit here.
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -26,7 +26,6 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    TestHelpers.tmp_app_data_dir()
     # The rehydrate drives the real (un-park) bind task, which has no runner to
     # reach in a unit test: bound its wait so the assertions about the state
     # machine do not pay the production window.
@@ -473,7 +472,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
   # async: false: writes Application env; the live controller and its fleet; the primary Logger.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
@@ -488,10 +487,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     test_pid = self()
     ets = :ets.new(:overwatch_async_migrate_test, [:public, :set])
 
-    on_exit(fn ->
-      OperativeManager.stop_all_operatives(@namespace)
-      Application.delete_env(:flezha, :overwatch_ping_fn)
-    end)
+    on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
 
     {:ok, test_pid: test_pid, ets: ets}
   end

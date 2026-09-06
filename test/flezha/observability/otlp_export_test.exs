@@ -1,6 +1,6 @@
 defmodule Flezha.Observability.OtlpExportTest do
   # async: false: writes Application env; the observability registry; registered singletons.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   import Bitwise
 

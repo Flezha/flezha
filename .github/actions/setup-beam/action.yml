@@ -1,0 +1,69 @@
+name: Set up Erlang and Elixir
+description: >
+  The BEAM toolchain at the versions .github/toolchains.json names, the deps
+  and _build cache under one key, and mix deps.get.
+
+# One step for a toolchain, so the version, the cache key and the fetch are
+# decided once instead of per workflow. The versions come out of the manifest
+# through scripts/manifest_pin.sh, which is the reader every pinned version in
+# CI already goes through; nothing here writes a version down.
+
+inputs:
+  otp-version:
+    description: Override the manifest's OTP version. Empty reads the manifest.
+    required: false
+    default: ""
+  elixir-version:
+    description: Override the manifest's Elixir version. Empty reads the manifest.
+    required: false
+    default: ""
+  cache:
+    description: Restore and save deps/ and _build/.
+    required: false
+    default: "true"
+  deps:
+    description: Run mix deps.get after the toolchain is installed.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # An explicit resolve rather than `inputs.x || <manifest>` in each `with:`:
+    # a fallback expression is evaluated where it is written, and the manifest
+    # read is a shell command, so there is nowhere for it to run but a step.
+    - name: Resolve the BEAM versions
+      id: resolve
+      shell: bash
+      env:
+        INPUT_OTP: ${{ inputs.otp-version }}
+        INPUT_ELIXIR: ${{ inputs.elixir-version }}
+      run: |
+        set -euo pipefail
+        pin() { "${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" "$1"; }
+        otp="${INPUT_OTP:-$(pin otp)}"
+        elixir="${INPUT_ELIXIR:-$(pin elixir)}"
+        printf 'otp=%s\n' "$otp" >> "$GITHUB_OUTPUT"
+        printf 'elixir=%s\n' "$elixir" >> "$GITHUB_OUTPUT"
+
+    - uses: erlef/setup-beam@v1
+      with:
+        otp-version: ${{ steps.resolve.outputs.otp }}
+        elixir-version: ${{ steps.resolve.outputs.elixir }}
+
+    # One key spelling for the whole repository. The OTP version is in it
+    # because a beam file compiled by one OTP is not loadable by another, and
+    # mix.lock is what decides which deps are in there.
+    - if: inputs.cache == 'true'
+      uses: actions/cache@v5
+      with:
+        path: |
+          deps
+          _build
+        key: elixir-${{ runner.os }}-otp${{ steps.resolve.outputs.otp }}-${{ hashFiles('**/mix.lock') }}
+        restore-keys: |
+          elixir-${{ runner.os }}-otp${{ steps.resolve.outputs.otp }}-
+
+    - if: inputs.deps == 'true'
+      shell: bash
+      run: mix deps.get

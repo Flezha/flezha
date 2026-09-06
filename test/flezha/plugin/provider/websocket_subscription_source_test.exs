@@ -199,7 +199,10 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
 
       assert {:reply, _, _} = poll(s, source(["a", "c", "d"]))
 
-      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :reconcile], %{added: 2, removed: 1}, meta}, 500
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :reconcile],
+                      %{added: 2, removed: 1}, meta},
+                     500
+
       assert meta.plugin_id == "test_ws"
     end
 

@@ -9,7 +9,7 @@ defmodule Flezha.State.WatchdogTest do
 
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree, :env], async: false
 
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
 
@@ -27,21 +27,12 @@ defmodule Flezha.State.WatchdogTest do
   @stall_ms 20
   @compaction_ms 20
 
-  setup do
-    base = TestHelpers.tmp_app_data_dir()
-
-    for spec <- [
-          {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
-          Supervisor,
-          Flezha.State.FsyncBatcher,
-          # The reconciler drives sweeps in production; these tests drive them
-          # explicitly via sweep_now/0 (the Watchdog holds no self-timer).
-          Watchdog
-        ] do
-      case start_supervised(spec) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-      end
+  setup %{base: base} do
+    # The reconciler drives sweeps in production; these tests drive them
+    # explicitly via sweep_now/0 (the Watchdog holds no self-timer).
+    case start_supervised(Watchdog) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
     end
 
     # The durability sweep enumerates every registry cspec on this node, so the
@@ -94,18 +85,11 @@ defmodule Flezha.State.WatchdogTest do
       nil
     )
 
-    prev_bytes = Application.get_env(:flezha, :default_compact_after_bytes)
-    prev_age = Application.get_env(:flezha, :compact_after_age_ms)
-
     on_exit(fn ->
       :telemetry.detach(out_id)
       :telemetry.detach(comp_id)
       :telemetry.detach(trig_id)
       :telemetry.detach(give_id)
-      Application.put_env(:flezha, :default_compact_after_bytes, prev_bytes)
-      Application.put_env(:flezha, :compact_after_age_ms, prev_age)
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
     end)
 
     %{header: TestHelpers.stub_header()}

@@ -3,20 +3,13 @@ defmodule Flezha.Plugin.Installer.ChecksumsTest do
   Spec-driven tests for `Flezha.Plugin.Installer.Checksums`.
   """
 
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Plugin.Installer.Checksums
 
-  setup do
-    tmp =
-      Path.join(
-        System.tmp_dir!(),
-        "flz_checksums_test_#{System.unique_integer([:positive])}"
-      )
-
+  setup %{tmp: tmp} do
     File.mkdir_p!(Path.join(tmp, "src"))
-    on_exit(fn -> File.rm_rf!(tmp) end)
-    {:ok, tmp: tmp}
+    :ok
   end
 
   test "parse tolerates blank lines and comments" do

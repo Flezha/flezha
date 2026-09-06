@@ -7,7 +7,7 @@ defmodule Flezha.Convergence.LoopTest do
 
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, async: false
   use Mimic
 
   alias Flezha.Convergence.{Diff, Intent}
@@ -50,27 +50,12 @@ defmodule Flezha.Convergence.LoopTest do
     alias Flezha.Service.HubManager
 
     setup do
-      root =
-        Path.join(
-          System.tmp_dir!(),
-          "flezha_intent_mismatch_#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(root)
-      prev = Application.get_env(:flezha, :state_root)
+      %{tmp: root} = FlezhaTest.Case.install([:tmp_dir, :env])
       Application.put_env(:flezha, :state_root, root)
 
       # Other suites leak hubs into the global registry; pin the durable-
       # registry evidence to empty so only the on-disk dirs drive these tests.
       stub(HubManager, :durable_operative_ids, fn -> MapSet.new() end)
-
-      on_exit(fn ->
-        File.rm_rf!(root)
-
-        if prev,
-          do: Application.put_env(:flezha, :state_root, prev),
-          else: Application.delete_env(:flezha, :state_root)
-      end)
 
       {:ok, root: root}
     end
@@ -140,25 +125,17 @@ defmodule Flezha.Convergence.LoopTest do
   describe "Progress.progress_markers/0 — the tier cursors reach the classifier" do
     alias Flezha.Convergence.{Loop, StallClassifier}
     alias Flezha.Operative.ClassRegistry
-    alias Flezha.State.{FsyncBatcher, InputLog, Supervisor, TestHelpers, WalWriter, Wire}
+    alias Flezha.State.{InputLog, Supervisor, WalWriter, Wire}
 
     setup do
-      base = TestHelpers.tmp_app_data_dir()
+      FlezhaTest.Case.install([:tmp_app_data, :state_tree])
       ClassRegistry.ensure_table()
 
-      for child <- [
-            {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
-            Supervisor,
-            FsyncBatcher,
-            Flezha.State.Watchdog
-          ] do
-        case start_supervised(child) do
-          {:ok, _} -> :ok
-          {:error, {:already_started, _}} -> :ok
-        end
+      case start_supervised(Flezha.State.Watchdog) do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
       end
 
-      on_exit(fn -> File.rm_rf(base) end)
       :ok
     end
 

@@ -68,7 +68,6 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     {:ok, namespace: namespace}
   end
 
-  @tag :schema_evolution_e2e
   test "state written at v1 comes back through the migration a bumped v2 declares", %{
     namespace: namespace
   } do
@@ -151,7 +150,6 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
                    "a second restore must find records at the running version"
   end
 
-  @tag :schema_evolution_e2e
   test "v1 code meeting v2 state is refused, not decoded", %{namespace: namespace} do
     {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)

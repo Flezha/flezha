@@ -2,7 +2,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   # async: false — exercises the singleton Coordinator GenServer and the
   # named ETS table. Tests reset state between cases.
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
@@ -30,7 +30,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   describe "status/0" do
     test "reports idle phase and configured knobs" do
       Application.put_env(:flezha, :graceful_shutdown_timeout_ms, 4_321)
-      on_exit(fn -> Application.delete_env(:flezha, :graceful_shutdown_timeout_ms) end)
 
       status = Coordinator.status()
 

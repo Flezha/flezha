@@ -30,7 +30,7 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   # async: false: registered channel names, a real driver thread and a socket.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: false
 
   # Comfortably past the 8 MiB default cap at 64 KiB a frame, so the gate has
   # to engage well before the last one.
@@ -43,8 +43,7 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
       |> String.replace(~r/[^a-zA-Z0-9_]/, "_")
       |> String.to_atom()
 
-    path =
-      Path.join(System.tmp_dir!(), "flz_send_gate_#{System.unique_integer([:positive])}.sock")
+    path = Path.join(context.tmp, "send_gate.sock")
 
     {:ok, server} = Native.start_uds_server(path, self())
 
@@ -70,7 +69,6 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
       :gen_tcp.close(peer)
       NodeTestHelper.ensure_stopped(pid)
       Native.stop_server(server)
-      File.rm(path)
     end)
 
     %{pid: pid, name: name, peer: peer, server: server, stream: stream}

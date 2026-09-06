@@ -32,11 +32,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
   # future runner spawn to pick up whichever SDK the run happened to select.
   @moduletag reference_runtime: true
 
-  @moduletag skip:
-               FlezhaTest.SystemCase.skip_unless(
-                 :interop in (ExUnit.configuration()[:include] || []),
-                 "interop places two runtimes in one run; pass --include interop"
-               )
+  @moduletag skip: FlezhaTest.Tiers.skip_unless_included(:interop)
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry

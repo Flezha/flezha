@@ -1,0 +1,26 @@
+name: Set up Ruby
+description: >
+  Ruby at the version .github/toolchains.json names.
+
+inputs:
+  version:
+    description: Override the manifest's Ruby version. Empty reads the manifest.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the Ruby version
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="${INPUT_VERSION:-$("${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" ruby)}"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ steps.resolve.outputs.version }}

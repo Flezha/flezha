@@ -6,22 +6,13 @@ defmodule Flezha.State.PathsTest do
   path seam.
   """
   # async: false: writes Application env; a shared on-disk root; OS environment variables.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.State.Paths
 
   describe "state_root/0" do
     setup do
-      prev_app = Application.fetch_env(:flezha, :state_root)
       Application.delete_env(:flezha, :state_root)
-
-      on_exit(fn ->
-        case prev_app do
-          {:ok, v} -> Application.put_env(:flezha, :state_root, v)
-          :error -> Application.delete_env(:flezha, :state_root)
-        end
-      end)
-
       :ok
     end
 
@@ -43,25 +34,14 @@ defmodule Flezha.State.PathsTest do
 
   describe "namespace resolution" do
     setup do
-      base =
-        Path.join([
-          System.tmp_dir!(),
-          "flz_registry_ns_#{System.unique_integer([:positive])}"
-        ])
-
-      File.mkdir_p!(base)
+      context = %{tmp: base} = FlezhaTest.Case.install([:tmp_dir])
       Application.put_env(:flezha, :state_root, base)
       Paths.ensure_claims_table()
 
-      on_exit(fn ->
-        Application.delete_env(:flezha, :state_root)
-        File.rm_rf!(base)
-      end)
-
-      %{base: base}
+      context
     end
 
-    test "a claimed class resolves every path under its namespace", %{base: base} do
+    test "a claimed class resolves every path under its namespace", %{tmp: base} do
       assert :ok = Paths.claim_namespace("orders-op", "team-orders")
 
       assert Paths.namespace_of_class("orders-op") == "team-orders"
@@ -74,7 +54,7 @@ defmodule Flezha.State.PathsTest do
                Path.join([base, "team-orders", "orders-op", "input.log"])
     end
 
-    test "a write through the registry paths restores through the same resolution", %{base: base} do
+    test "a write through the registry paths restores through the same resolution", %{tmp: base} do
       assert :ok = Paths.claim_namespace("orders-op", "team-orders")
 
       entity_id = {"orders-op", "proc-0", "k1"}
@@ -92,14 +72,14 @@ defmodule Flezha.State.PathsTest do
       assert "orders-op" in Paths.operative_classes()
     end
 
-    test "an unclaimed class resolves from the on-disk layout, else _system", %{base: base} do
+    test "an unclaimed class resolves from the on-disk layout, else _system", %{tmp: base} do
       File.mkdir_p!(Path.join([base, "team-a", "disk-op", "proc-0"]))
 
       assert Paths.namespace_of_class("disk-op") == "team-a"
       assert Paths.namespace_of_class("never-seen-op") == "_system"
     end
 
-    test "a real namespace adopts a class migrated under _system", %{base: base} do
+    test "a real namespace adopts a class migrated under _system", %{tmp: base} do
       legacy = Path.join([base, "_system", "adopted-op", "proc-0"])
       File.mkdir_p!(legacy)
       File.write!(Path.join(legacy, "k1.wal"), "legacy-bytes")
@@ -115,7 +95,7 @@ defmodule Flezha.State.PathsTest do
       assert Paths.namespace_of_class("adopted-op") == "default"
     end
 
-    test "a class owned by another namespace is refused, not hijacked", %{base: base} do
+    test "a class owned by another namespace is refused, not hijacked", %{tmp: base} do
       File.mkdir_p!(Path.join([base, "team-a", "contested-op", "proc-0"]))
 
       assert {:error, {:namespace_conflict, "contested-op", "team-a"}} =
@@ -125,7 +105,7 @@ defmodule Flezha.State.PathsTest do
       assert :ok = Paths.claim_namespace("contested-op", "team-a")
     end
 
-    test "deleting the last entity releases the claim", %{base: base} do
+    test "deleting the last entity releases the claim", %{tmp: base} do
       assert :ok = Paths.claim_namespace("gone-op", "team-a")
 
       entity_id = {"gone-op", "proc-0", "k1"}

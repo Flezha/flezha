@@ -1,24 +1,16 @@
 defmodule Flezha.Boot.RecoveryHooksTest do
   # async: false: writes Application env; the observability registry; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Observability.TelemetryBridge
 
   setup do
-    # Restore the configured value rather than deleting the key: `config/test.exs`
-    # sets this `false`, but every reader defaults to `true`, so a delete leaves
-    # auto-restore ON for the rest of the BEAM. Hubs started later then boot into
-    # `:recovering` and hold there for `reconcile_grace_ms`, which stalls
-    # `RecoveryGate` and any convergence assertion behind it.
-    previous = Application.get_env(:flezha, :auto_restore_enabled)
+    # `config/test.exs` sets this `false` while every reader defaults to `true`,
+    # so auto-restore left ON boots later hubs into `:recovering`, where they
+    # hold for `reconcile_grace_ms` and stall `RecoveryGate` and any convergence
+    # assertion behind it.
     Application.put_env(:flezha, :auto_restore_enabled, true)
-
-    on_exit(fn ->
-      if previous == nil,
-        do: Application.delete_env(:flezha, :auto_restore_enabled),
-        else: Application.put_env(:flezha, :auto_restore_enabled, previous)
-    end)
 
     :ok
   end

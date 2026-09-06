@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Changed — a test fixture, a CI toolchain step, a gate and a test tier are each declared
+
+A test declares the fixtures it needs (`use FlezhaTest.Case, fixtures: [...]`)
+rather than building a temporary directory, an environment key or an auth store in
+its own `setup`, and a module that builds one anyway fails a gate. CI installs
+every toolchain through the composite actions under `.github/actions/`, which read
+one version set in `.github/toolchains.json`; a workflow that sets a toolchain up
+itself or writes a version literal fails a gate. Node and Python each had two live
+values across the workflows and now have one.
+
+Every repository gate is a row in `scripts/naming_gate.py`, which owns running it
+and one exit contract: `0` clean, `1` a finding, `2` a tool the gate needs is
+absent, `3` a tool ran and reached no verdict. CI calls the runner once instead of
+listing gates by hand, so a gate cannot be added and left uncalled. `scripts/gate_lib.sh`
+and `scripts/format-check.sh` are removed; the local gate is now
+`python3 scripts/naming_gate.py --run @format`.
+
+Every test tier is one row in `FlezhaTest.Tiers` saying where it runs, what it
+needs, which transports it covers and where it is documented, and
+`docs/sdk/conformance.md` publishes the table. A tier that no workflow runs and
+gives no reason is a failure, as is a tag spelled like a tier selector that
+nothing selects. Ten such tag names were removed: each of their modules already
+declares the same axis as a `capability:`.
+
+The Rust workspace pins every shared dependency once in `[workspace.dependencies]`,
+and every crate takes its version from the workspace.
+
 ### Changed — the controller says "ready" once, and not through the health endpoint
 
 Readiness is one verdict folded from a declared table of preconditions, and three

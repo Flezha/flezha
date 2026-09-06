@@ -12,23 +12,16 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   that has since gone, on every bind, would be noise.
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
-  alias Flezha.State.TestHelpers
   alias Flezha.State.WalTransfer
 
   setup :set_mimic_global_until_exit
-
-  setup do
-    root = TestHelpers.tmp_app_data_dir()
-
-    :ok
-  end
 
   defp state(operative_id) do
     %Overwatch{
@@ -122,7 +115,7 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
 
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
 
   import ExUnit.CaptureLog, only: [with_log: 1]
@@ -141,12 +134,6 @@ defmodule FlezhaTest.Operative.RestoreRefusalTest do
   # Both refusal cases stub the SDK with this and then assert the log line
   # carries it back: the diagnostic is what they test, not noise they emit.
   @refusal "sdk_lang mismatch: this SDK is rust (1), the record was written by java (2)"
-
-  setup do
-    base = TestHelpers.tmp_app_data_dir()
-
-    :ok
-  end
 
   defp entity(base) do
     {"#{base}_#{System.unique_integer([:positive])}", "p0", "k"}
@@ -328,7 +315,7 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
   """
   # async: false: registered channel names, a shared state tree, :state_root,
   # a global telemetry handler.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Overwatch
@@ -342,18 +329,12 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
     class = "bindfwd_" <> Integer.to_string(System.unique_integer([:positive]))
-    TestHelpers.start_state_tree()
 
     {channel, channel_pid} = NodeTestHelper.unbound_stream_channel("bindfwd_runner")
     assert GenServer.call(channel, :stream_ref_status) == nil
 
-    on_exit(fn ->
-      TestHelpers.close_input_log(class)
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
+    on_exit(fn -> TestHelpers.close_input_log(class) end)
 
     %{class: class, channel: channel, channel_pid: channel_pid}
   end

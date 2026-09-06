@@ -1,0 +1,60 @@
+name: Set up Node
+description: >
+  Node at the version .github/toolchains.json names, plus an optional
+  npm ci over one directory and the node_modules cache for it.
+
+# The manifest's single-version pin is 22. `sdk/node/package.json` declares the
+# floor as `>=20.0.0` and node-sdk.yml runs the package suite on 20 and 24 on
+# every change to the SDK, so a job that needs one Node rather than a Node
+# matrix sits inside a window that is proved at both ends. 22 is inside that
+# window; 24 is its upper edge and is proved by the matrix arm rather than by
+# being the version every unrelated job happens to install.
+#
+# A matrix arm overrides the pin with `version:` and stays a fan-out: the
+# manifest fixes the jobs that name one version, which is the only place two
+# jobs can disagree by accident.
+
+inputs:
+  version:
+    description: Override the manifest's Node version. Empty reads the manifest.
+    required: false
+    default: ""
+  deps-dir:
+    description: >
+      Directory to run `npm ci` in, cached on its own lockfile. Empty installs
+      nothing, which is what a job that builds the package through
+      scripts/build-node-sdk.sh wants.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the Node version
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="${INPUT_VERSION:-$("${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" node)}"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-node@v5
+      with:
+        node-version: ${{ steps.resolve.outputs.version }}
+
+    - if: inputs.deps-dir != ''
+      uses: actions/cache@v5
+      with:
+        path: ${{ inputs.deps-dir }}/node_modules
+        key: node-${{ runner.os }}-${{ hashFiles(format('{0}/package-lock.json', inputs.deps-dir), format('{0}/package.json', inputs.deps-dir)) }}
+
+    # `npm ci` with no `|| npm install` behind it: the fallback fires exactly
+    # when the lockfile disagrees with package.json, which is the one time the
+    # disagreement needs reporting, and replaces it with a fresh resolve whose
+    # rewritten lock CI then discards.
+    - if: inputs.deps-dir != ''
+      shell: bash
+      working-directory: ${{ inputs.deps-dir }}
+      run: npm ci

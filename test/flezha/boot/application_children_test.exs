@@ -10,7 +10,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
   """
 
   # Pins `:flezha` application env for the duration of a test.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   @pinned [
     transports: [:uds],
@@ -62,17 +62,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
   ]
 
   setup do
-    previous = Enum.map(@pinned, fn {k, _} -> {k, Application.fetch_env(:flezha, k)} end)
-
     Enum.each(@pinned, fn {k, v} -> Application.put_env(:flezha, k, v) end)
-
-    on_exit(fn ->
-      Enum.each(previous, fn
-        {k, {:ok, v}} -> Application.put_env(:flezha, k, v)
-        {k, :error} -> Application.delete_env(:flezha, k)
-      end)
-    end)
-
     :ok
   end
 

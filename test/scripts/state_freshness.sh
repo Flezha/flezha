@@ -27,7 +27,7 @@
 # verification lives in:
 #
 #   test/system/state_freshness_e2e_test.exs
-#       (mix test --include system --only state_freshness_e2e)
+#       (mix test --include system test/system/state_freshness_e2e_test.exs)
 #
 # That test boots a real Rust SDK subprocess via the existing
 # `Flezha.Service.PortPilot` infrastructure, sends inputs through the

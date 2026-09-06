@@ -332,7 +332,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   stop paths rather than doubles of them.
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -348,7 +348,6 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.Service.PluginManager
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
-  alias Flezha.State.TestHelpers
   alias Flezha.State.WalTransfer
   alias FlezhaTest.Helper.FakeStartRegistry
 
@@ -359,7 +358,6 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
     parent = self()
 
     # Three live members, each owning a third of the key space.
@@ -389,7 +387,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
     ClassRegistry.ensure_table()
     ClassRegistry.put_keyless(@factory, false)
 
-    %{base: base, registry: registry}
+    %{registry: registry}
   end
 
   defp write_entity(class, procedure, key, bytes) do

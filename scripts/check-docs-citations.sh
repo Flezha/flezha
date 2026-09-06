@@ -119,11 +119,11 @@ try:
         MAVEN_MODULES = {m.strip() for m in re.findall(r"<module>([^<]+)</module>", _fh.read())}
 except OSError as exc:
     print(f"cannot read {MAVEN_POM}, so no Maven module can be judged: {exc}", file=sys.stderr)
-    sys.exit(2)
+    sys.exit(naming_gate.NO_ANSWER)
 if not MAVEN_MODULES:
     print(f"{MAVEN_POM} lists no <module> entries, so no Maven module can be judged",
           file=sys.stderr)
-    sys.exit(2)
+    sys.exit(naming_gate.NO_ANSWER)
 
 SOURCE_EXT_SKIP = {".md"}
 NAME = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")

@@ -56,71 +56,27 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Erlang + Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "28"
-          elixir-version: "1.20.2"
+        uses: ./.github/actions/setup-beam
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Set up Node.js (for testnet build)
-        uses: actions/setup-node@v5
+        uses: ./.github/actions/setup-node
         with:
-          node-version: "22"
-
-      - name: Cache Elixir deps + build
-        uses: actions/cache@v5
-        with:
-          path: |
-            deps
-            _build
-          key: elixir-${{ runner.os }}-otp28-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            elixir-${{ runner.os }}-otp28-
-
-      - name: Cache Cargo registry + workspace target
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            test/apps/rust_runner/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
-
-      - name: Cache testnet node_modules
-        uses: actions/cache@v5
-        with:
-          path: test/apps/testnet/node_modules
-          key: testnet-${{ runner.os }}-${{ hashFiles('test/apps/testnet/package-lock.json', 'test/apps/testnet/package.json') }}
+          deps-dir: test/apps/testnet
 
       - name: Install protoc (Protox runtime parses .proto, but the Rust
               workspace's prost path also needs the binary on $PATH)
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "23.4"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
 
       - name: Build testnet
-        # Equivalent to `mix test.setup` (mix.exs alias) but with `npm ci`
-        # for reproducible CI installs. Without the bundle the WS-dependent
-        # ExUnit cases are auto-skipped at compile time; the inline build
-        # keeps them in scope for CI.
-        #
-        # A bare `npm ci`, with no `|| npm install` behind it: the fallback
-        # fired exactly when the lockfile disagreed with package.json, which is
-        # the one time the disagreement needs reporting, and replaced it with a
-        # fresh resolve whose rewritten lock CI then discards.
+        # Equivalent to `mix test.setup` (mix.exs alias); the install half is
+        # the `npm ci` the Node setup step above ran. Without the bundle the
+        # WS-dependent ExUnit cases are auto-skipped at compile time, so the
+        # build keeps them in scope for CI.
         working-directory: test/apps/testnet
-        run: |
-          npm ci
-          npm run build
-
-      - name: Fetch Elixir deps
-        run: mix deps.get
+        run: npm run build
 
       - name: Compile Elixir (warnings as errors)
         run: mix compile --warnings-as-errors

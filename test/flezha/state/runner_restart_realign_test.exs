@@ -26,7 +26,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
 
@@ -36,19 +36,6 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   alias Flezha.Transport.LivenessCounters
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
-
-    for spec <- [
-          {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
-          Supervisor,
-          Flezha.State.FsyncBatcher
-        ] do
-      case start_supervised(spec) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-      end
-    end
-
     entity_id = TestHelpers.sample_entity_id("realign_" <> uniq())
     {:ok, _} = Supervisor.find_or_start(entity_id)
     {:ok, writer} = Supervisor.lookup(entity_id)
@@ -63,8 +50,6 @@ defmodule Flezha.State.RunnerRestartRealignTest do
       :telemetry.detach(gap_handler)
       :telemetry.detach(realign_handler)
       :telemetry.detach(stale_handler)
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
     end)
 
     %{entity_id: entity_id, writer: writer, header: header, parent: parent}

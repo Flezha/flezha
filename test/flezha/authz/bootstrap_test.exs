@@ -1,19 +1,20 @@
 defmodule Flezha.AuthZ.BootstrapTest do
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [
+      {:auth_stores,
+       prefix: "flz_authz_boot",
+       stores: [
+         Flezha.AuthZ.AuthState,
+         Flezha.AuthZ.RoleStore,
+         Flezha.AuthZ.NamespaceStore,
+         Flezha.AuthZ.TokenStore
+       ]}
+    ],
+    async: false
 
-  alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Bootstrap, RoleStore, TokenStore}
   alias FlezhaTest.Helper.AuthTestHelper
-
-  setup do
-    ctx =
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_authz_boot",
-        stores: [AuthState, RoleStore, NamespaceStore, TokenStore]
-      )
-
-    {:ok, Map.to_list(ctx)}
-  end
 
   test "first boot writes a bootstrap token (mode 0600)" do
     assert :ok = Bootstrap.check_and_write()

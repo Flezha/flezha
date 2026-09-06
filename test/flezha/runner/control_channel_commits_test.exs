@@ -11,7 +11,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   (`Flezha.Transport.Native` is a NIF and cannot be Mimic-copied).
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
@@ -32,14 +32,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   @namespace "ctrl-chan-proc-commit-test"
 
   setup do
-    root = TestHelpers.tmp_app_data_dir()
     ClassRegistry.ensure_table()
-
-    on_exit(fn ->
-      Stub.uninstall()
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf(root)
-    end)
+    on_exit(&Stub.uninstall/0)
 
     :ok
   end

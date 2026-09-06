@@ -11,37 +11,16 @@ defmodule Flezha.State.WalRewindTest do
   input-log watermark falls back with the records that reported it.
   """
   # async: false: writes Application env; a shared on-disk root; registered singletons.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   alias Flezha.Operative.ClassRegistry
 
-  alias Flezha.State.{
-    FsyncBatcher,
-    InputLog,
-    Paths,
-    RecordFrame,
-    Supervisor,
-    TestHelpers,
-    WalWriter,
-    Wire
-  }
+  alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, WalWriter, Wire}
 
   alias Flezha.State.Snapshot, as: StateSnapshot
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
     ClassRegistry.ensure_table()
-
-    for child <- [
-          {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
-          Supervisor,
-          FsyncBatcher
-        ] do
-      case start_supervised(child) do
-        {:ok, _} -> :ok
-        {:error, {:already_started, _}} -> :ok
-      end
-    end
 
     rc = "rw_" <> Integer.to_string(System.unique_integer([:positive]))
     entity_id = {rc, "proc", "k1"}
@@ -51,12 +30,9 @@ defmodule Flezha.State.WalRewindTest do
         {:ok, pid} -> WalWriter.close(pid)
         :error -> :ok
       end
-
-      Application.delete_env(:flezha, :state_root)
-      _ = File.rm_rf(base)
     end)
 
-    %{rc: rc, entity_id: entity_id, base: base}
+    %{rc: rc, entity_id: entity_id}
   end
 
   defp effect_header(), do: <<1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0>>

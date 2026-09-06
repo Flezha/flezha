@@ -9,7 +9,7 @@ defmodule FlezhaTest.Operative.IngestTest do
   needs the payload held uses the confirming path instead.
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -19,12 +19,6 @@ defmodule FlezhaTest.Operative.IngestTest do
   alias Flezha.State.{InputLog, ProcInbox, Supervisor, TestHelpers}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
-
-  setup do
-    root = TestHelpers.tmp_app_data_dir()
-    on_exit(fn -> File.rm_rf(root) end)
-    :ok
-  end
 
   defp instance_id(), do: "confirm_#{System.unique_integer([:positive])}"
 
@@ -109,8 +103,7 @@ defmodule FlezhaTest.Operative.IngestTest do
     setup :set_mimic_global_until_exit
 
     setup do
-      TestHelpers.start_state_tree()
-      :ok
+      FlezhaTest.Case.install([:state_tree])
     end
 
     # A writer that refuses every append.
@@ -301,7 +294,7 @@ defmodule FlezhaTest.Operative.IngestTest do
     defp entity(inst), do: {inst, "proc", "a"}
 
     setup do
-      TestHelpers.start_state_tree()
+      FlezhaTest.Case.install([:state_tree])
       on_exit(TestHelpers.override_env(:source_credit_window_bytes, @window))
       inst = instance_id()
       state = state(inst, effectively_once: true, channel: fake_channel(:ok))

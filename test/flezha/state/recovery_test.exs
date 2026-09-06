@@ -5,7 +5,7 @@ defmodule Flezha.State.RecoveryTest do
   """
 
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, async: false
   use Mimic
 
   import Flezha.State.TestHelpers, only: [uniq: 0]
@@ -16,8 +16,7 @@ defmodule Flezha.State.RecoveryTest do
 
   describe "resync/2" do
     setup do
-      TestHelpers.tmp_app_data_dir()
-      TestHelpers.start_state_tree()
+      FlezhaTest.Case.install([:tmp_app_data, :state_tree])
 
       parent = self()
 

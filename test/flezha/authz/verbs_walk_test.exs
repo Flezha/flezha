@@ -12,7 +12,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
   """
   # async: false: the auth stores, the schedule store and the audit sink are
   # singletons; Mimic stubs.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:isolated_dlq_dir, :env], async: false
   use Mimic
 
   import ExUnit.CaptureIO
@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
-  alias FlezhaTest.Helper.{AuthTestHelper, DlqFixtures, ScheduleTestHelper}
+  alias FlezhaTest.Helper.{AuthTestHelper, ScheduleTestHelper}
 
   @elsewhere "walk-elsewhere"
 
@@ -32,10 +32,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     AuthTestHelper.setup_auth_stores(prefix: "flz_verbs_walk", enabled: true, claim: true)
     ScheduleTestHelper.isolated_store_setup()
     ScheduleTestHelper.schedule_hub_setup()
-    DlqFixtures.isolated_dir()
     audit_dir = start_audit_log()
-
-    prev_retention = Application.get_env(:flezha, :time_travel_retention_hours, %{})
 
     _ =
       Flezha.Observability.Registry.register_source(%{
@@ -45,10 +42,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
         cardinality_budget: 10
       })
 
-    on_exit(fn ->
-      Application.put_env(:flezha, :time_travel_retention_hours, prev_retention)
-      Flezha.Observability.Registry.unregister_source(:walk_source)
-    end)
+    on_exit(fn -> Flezha.Observability.Registry.unregister_source(:walk_source) end)
 
     assert Flezha.AuthZ.enforcement_posture() == :enforced
 

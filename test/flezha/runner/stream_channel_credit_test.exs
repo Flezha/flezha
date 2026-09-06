@@ -8,7 +8,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
   use Mimic
@@ -60,8 +60,6 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   end
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
-
     # Keep fsync under test control: the real batcher never learns about the
     # writers, so credit is minted only by explicit WalWriter.fsync/1 calls.
     stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _entity_id -> :ok end)
@@ -74,13 +72,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       :ok
     end)
 
-    on_exit(fn ->
-      TestHelpers.reset_all_entities()
-      Application.delete_env(:flezha, :state_root)
-      Application.delete_env(:flezha, :credit_window_bytes)
-      Application.delete_env(:flezha, :credit_flow_control_enabled)
-      File.rm_rf!(base)
-    end)
+    on_exit(&TestHelpers.reset_all_entities/0)
 
     uniq = System.unique_integer([:positive])
     runner_id = "credit_exec_#{uniq}"

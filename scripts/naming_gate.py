@@ -33,8 +33,35 @@ that goes with it: `load_baseline`.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
+
+# ---------------------------------------------------------------------------
+# The exit contract every gate in this repository answers on.
+#
+# A check has three outcomes and none of them is another. A tool that is not
+# installed removes its own check from the report and nothing else; a tool that
+# ran and says the tree is wrong is a finding; a tool that ran and never reached
+# a verdict is neither, and gets its own list. Conflating the first two is what
+# made the old gate unreadable: it tested every tool BEFORE running any check,
+# so one absent formatter ended the run and said nothing about the six languages
+# behind it. Conflating the last two names a defect in a tree that does not have
+# one, and sends the reader to fix what is already correct.
+#
+#   0  everything ran, nothing to report
+#   1  a check ran and found something
+#   2  nothing failed, but a tool was missing so some check did not run
+#   3  a tool ran and did not complete, so its check has no answer
+#
+# When several apply the status is 3, else 1, else 2: an unanswered check is
+# reported before one that answered "no", because until it runs the silence
+# behind it means nothing. CI fails on 1, 2 and 3; a developer's box may choose
+# to skip on 2.
+OK = 0
+FINDING = 1
+TOOL_MISSING = 2
+NO_ANSWER = 3
 
 BINARY_EXT = {
     ".jar", ".so", ".dll", ".dylib", ".png", ".jpg", ".gif", ".ico", ".pdf",
@@ -84,6 +111,35 @@ def tracked_files(pathspec=()):
     return [rel for rel in listing.split("\0") if rel]
 
 
+# Directories that hold build output or a vendored tree rather than source.
+# A disk walk has to name them; `git ls-files` never lists them at all.
+UNWALKED_DIRS = {
+    ".git", "_build", "deps", "target", "node_modules", "vendor", ".venv",
+    "app_data", "dist", "__pycache__", ".elixir_ls", "cover",
+}
+
+
+def disk_files(roots):
+    """Every readable file under `roots` as it is on disk, build output aside.
+
+    The counterpart to `tracked_files`, and an option rather than a second
+    walker: a gate that judges work in progress must see a file its author has
+    written and not yet staged. `check-layer-direction.sh` states the reason a
+    gate reaches for this — an untracked module has existed under lib/flezha/
+    here before, and a walk that reads the index alone called that tree clean.
+    A blind walk always flatters.
+    """
+    found = []
+    for root in roots:
+        if os.path.isfile(root):
+            found.append(root)
+            continue
+        for base, dirs, names in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d not in UNWALKED_DIRS)
+            found.extend(os.path.join(base, name) for name in sorted(names))
+    return found
+
+
 def pattern_check(patterns, allowlist=()):
     """A `check` that flags any line still matching `patterns` once the
     allowlist rules in scope for the file have been erased from it. The
@@ -106,7 +162,7 @@ def pattern_check(patterns, allowlist=()):
 
 def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
          prefilter=None, self_files=frozenset(), record_tag=None,
-         noun="occurrence(s)"):
+         noun="occurrence(s)", source="tracked", roots=()):
     """Run `check` over every tracked file and report what it flags.
 
     `check(rel, line)` returns a list of messages, empty when the line is
@@ -115,12 +171,17 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
     files, which carry the retired names as data. `record_tag` names the marker
     pair that exempts a block of prose: the exemption covers the lines the
     markers delimit and no others, both markers on one line exempt that line,
-    and a block left open at end of file fails. Returns an exit code.
+    and a block left open at end of file fails.
+
+    `source` picks the listing: `"tracked"` reads `git ls-files` (the default,
+    and what every naming gate wants), `"disk"` reads `roots` as they are on
+    disk so an unstaged file is still judged. Returns an exit code.
     """
     begin, end = (f"{record_tag}:begin", f"{record_tag}:end") if record_tag else (None, None)
     failures = []
     unclosed = []
-    for rel in tracked_files(pathspec):
+    listing = disk_files(roots) if source == "disk" else tracked_files(pathspec)
+    for rel in listing:
         if rel in self_files or "/dist/" in rel:
             continue
         if path_filter and not path_filter(rel):
@@ -174,6 +235,327 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
         return 1
 
     print(ok_message)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# The gate registry. One row per gate; `--run` is the one reader.
+#
+# A gate is declared here and nowhere else: CI runs `naming_gate.py --run @<group>`
+# rather than re-spelling one step per gate, so adding a gate is a row and a
+# workflow that forgets to call it is not a thing that can happen. `tools` names
+# what the gate needs on PATH together with how to install it; an absent tool
+# takes that gate out of the report and nothing else. A gate answers on this contract
+# unless it declares `finding`, which is how a tool whose status alone cannot
+# tell "found something" from "did not complete" says which it was.
+GATES = (
+    {"id": "kind-naming", "group": "naming",
+     "argv": ["scripts/check-kind-naming.sh"]},
+    {"id": "overflow-naming", "group": "naming",
+     "argv": ["scripts/check-overflow-naming.sh"]},
+    {"id": "local-mode-naming", "group": "naming",
+     "argv": ["scripts/check-local-mode-naming.sh"]},
+    {"id": "module-naming", "group": "naming",
+     "argv": ["scripts/check-module-naming.sh"]},
+    {"id": "sdk-boundary", "group": "naming",
+     "argv": ["scripts/check-sdk-boundary.sh"]},
+    {"id": "layer-direction", "group": "naming",
+     "argv": ["scripts/check-layer-direction.sh"]},
+    {"id": "mimic-global", "group": "naming",
+     "argv": ["scripts/check-mimic-global.sh"]},
+    {"id": "docs-citations", "group": "naming",
+     "argv": ["scripts/check-docs-citations.sh"]},
+    {"id": "test-fixture", "group": "naming",
+     "argv": ["scripts/check-test-fixture.sh"]},
+    {"id": "ci-toolchain", "group": "naming",
+     "argv": ["scripts/check-ci-toolchain.sh"]},
+    {"id": "build-artifacts-tracked", "group": "naming",
+     "argv": ["scripts/check-build-artifacts.sh", "tracked"]},
+    {"id": "naming-gate-self-test", "group": "naming",
+     "argv": ["python3", "scripts/naming_gate.py", "--self-test"]},
+    {"id": "layer-direction-self-test", "group": "naming",
+     "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
+    # Its `size` arm reads the packed repository, so it needs the whole history
+    # and runs in a job that checks out with fetch-depth 0.
+    {"id": "build-artifacts-size", "group": "history",
+     "argv": ["scripts/check-build-artifacts.sh", "size"]},
+    # The source-shape gate. `format-apply.sh --check` answers on this contract
+    # itself, so its status is read as one of ours instead of being flattened.
+    {"id": "formatters", "group": "format",
+     "argv": ["scripts/format-apply.sh", "--check"]},
+    # `reuse lint-file` over git-listed paths: a full `reuse lint` walks the
+    # tree and chokes on the stale test sockets under app_data/, which git never
+    # lists. xargs collapses every status from 1 to 125 into 123, which alone
+    # would make a reuse crash and a file with no licence header the same
+    # number, so the wrapper keeps reuse's own 1 and turns every other failure
+    # into 255 — which xargs reports as 124.
+    {"id": "reuse-lint", "group": "format", "finding": "status:123",
+     "tools": ["reuse:pipx install reuse"],
+     "argv": ["bash", "-c",
+              "git ls-files -co --exclude-standard -z | "
+              "xargs -0 sh -c 'reuse lint-file \"$@\" || exit $(($? == 1 ? 1 : 255))' reuse-lint"]},
+    {"id": "third-party-notices", "group": "format", "finding": "status:1",
+     "tools": ["cargo-about:cargo install cargo-about"],
+     "argv": ["bash", "-c",
+              'g="${TMPDIR:-/tmp}/third_party_notices.md"; '
+              # A generator that cannot run is not a stale notices file: keep
+              # its status out of diff's, whose 1 is the only finding here.
+              'cargo about generate about.hbs -o "$g" || exit 255; '
+              'diff -u THIRD_PARTY_NOTICES.md "$g"']},
+    # Bound to `mvn -f sdk/java verify`, so it runs in the Java inner loop
+    # rather than in the naming job.
+    {"id": "java-spec-coverage", "group": "java",
+     "argv": ["scripts/check-java-spec-coverage.sh"]},
+)
+
+# `scripts/check-feature-symbols.sh` is deliberately not a row. It is not a gate
+# over the tree: it builds an artefact three ways and compares the exported
+# symbols, so it takes arguments, needs a compiler, and answers about one build
+# rather than about the repository. Two workflows call it directly.
+
+
+def gate(gate_id):
+    """The declared row for `gate_id`, or None."""
+    return next((row for row in GATES if row["id"] == gate_id), None)
+
+
+def select(spec):
+    """The rows `spec` names: `all`, `@<group>`, or a comma list of ids."""
+    if spec == "all":
+        return list(GATES)
+    rows = []
+    for name in spec.split(","):
+        if name.startswith("@"):
+            group = name[1:]
+            matched = [row for row in GATES if row["group"] == group]
+            if not matched:
+                raise KeyError(f"no gate is declared in group {group!r}")
+            rows.extend(matched)
+        else:
+            row = gate(name)
+            if row is None:
+                raise KeyError(f"no gate is declared as {name!r}")
+            rows.append(row)
+    return rows
+
+
+def run_gate(row, report):
+    """Run one declared gate and file its outcome under this contract.
+
+    `report` is the three lists `run_gates` prints. Returns nothing: the verdict
+    is the lists, because a gate that could not run must not end the loop. That
+    rule is the whole point — testing every tool before running any check is
+    what let one absent formatter hide six unformatted languages, and only the
+    install hint survived from it.
+    """
+    label = row["id"]
+    missing = [need for need in row.get("tools", ())
+               if shutil.which(need.split(":", 1)[0]) is None]
+    if missing:
+        for need in missing:
+            tool, _, hint = need.partition(":")
+            report["unavailable"].append(f"{label} — no {tool}: {hint}")
+        print(f"==> {label} — NOT RUN, see the summary")
+        return
+
+    print(f"==> {label}", flush=True)
+    proc = subprocess.Popen(row["argv"], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT)
+    captured = []
+    for chunk in proc.stdout:
+        line = chunk.decode("utf-8", "replace")
+        captured.append(line)
+        sys.stdout.write(line)
+    sys.stdout.flush()
+    status = proc.wait()
+    out = "".join(captured)
+
+    if status == 0:
+        return
+    # A gate that fails and prints nothing has told the reader nothing. It is
+    # not a finding, because a finding names what it found.
+    if not out.strip():
+        report["errored"].append(
+            f"{label} — exit {status} with no output: a gate that fails says what it found")
+        return
+    finding = row.get("finding")
+    if finding is None:
+        # No rule declared, so the gate answers on this contract itself and its
+        # status carries straight up. That is the ordinary case: a plain tool's
+        # 2 is not a gate's 2, which is why the exception has to be the one that
+        # is declared.
+        if status == TOOL_MISSING:
+            report["unavailable"].append(f"{label} — see its own summary above")
+        elif status == NO_ANSWER:
+            report["errored"].append(f"{label} — see its own summary above")
+        elif status == FINDING:
+            report["failed"].append(label)
+        else:
+            report["errored"].append(f"{label} — exit {status}")
+        return
+    if finding.startswith("status:"):
+        codes = {int(code) for code in finding[len("status:"):].split(",")}
+        matched = status in codes
+    else:
+        matched = re.search(finding[len("says:"):], out) is not None
+    if matched:
+        report["failed"].append(label)
+    else:
+        report["errored"].append(f"{label} — exit {status}")
+
+
+def run_gates(rows):
+    """Run `rows` in order and return the status the contract at the top says."""
+    report = {"unavailable": [], "failed": [], "errored": []}
+    for row in rows:
+        run_gate(row, report)
+
+    status = OK
+    if report["unavailable"]:
+        print("\nNOT RUN — the tool is not installed here:")
+        for line in report["unavailable"]:
+            print(f"  {line}")
+        status = TOOL_MISSING
+    if report["failed"]:
+        print("\nFAILED — the output above says why:")
+        for line in report["failed"]:
+            print(f"  {line}")
+        status = FINDING
+    if report["errored"]:
+        print("\nNO ANSWER — the gate ran and did not complete:")
+        for line in report["errored"]:
+            print(f"  {line}")
+        status = NO_ANSWER
+    if status == OK:
+        print(f"\nevery gate ran and had nothing to report ({len(rows)} gates)")
+    return status
+
+
+def _contract_self_test():
+    """Drive the runner over gates with known outcomes and check the verdict.
+
+    The contract is what makes gates substitutable, so it is proved rather than
+    asserted: one gate per outcome, plus the two shapes that are easy to get
+    wrong. A gate that exits non-zero and prints NOTHING is not a finding — a
+    finding names what it found — so it is filed as "no answer"; that is the
+    planted case a bare `1` with no headline has to fail on. And a gate whose
+    tool is absent must leave the loop running, because ending it is the defect
+    this contract removed.
+    """
+    import contextlib
+    import io
+
+    def sh(script):
+        return ["bash", "-c", script]
+
+    rows = {
+        "clean": {"id": "clean", "argv": sh("echo fine")},
+        "finding": {"id": "finding", "argv": sh("echo 'found one'; exit 1")},
+        "silent": {"id": "silent", "argv": sh("exit 1")},
+        "crashed": {"id": "crashed", "argv": sh("echo boom; exit 9")},
+        "absent-tool": {"id": "absent-tool", "argv": sh("echo unreachable"),
+                        "tools": ["flezha-no-such-tool:there is no install for this"]},
+        "says-finding": {"id": "says-finding", "finding": "says:Diff in ",
+                         "argv": sh("echo 'Diff in a.rs'; exit 1")},
+        "says-crash": {"id": "says-crash", "finding": "says:Diff in ",
+                       "argv": sh("echo 'panicked'; exit 1")},
+        "child-missing": {"id": "child-missing", "argv": sh("echo child summary; exit 2")},
+        "child-no-answer": {"id": "child-no-answer", "argv": sh("echo child summary; exit 3")},
+    }
+    # id -> the list the runner must file it under, and the status one such gate
+    # alone must produce.
+    expected = {
+        "clean": (None, OK),
+        "finding": ("failed", FINDING),
+        "silent": ("errored", NO_ANSWER),
+        "crashed": ("errored", NO_ANSWER),
+        "absent-tool": ("unavailable", TOOL_MISSING),
+        "says-finding": ("failed", FINDING),
+        "says-crash": ("errored", NO_ANSWER),
+        "child-missing": ("unavailable", TOOL_MISSING),
+        "child-no-answer": ("errored", NO_ANSWER),
+    }
+
+    problems = []
+    for name, (bucket, status) in expected.items():
+        report = {"unavailable": [], "failed": [], "errored": []}
+        with contextlib.redirect_stdout(io.StringIO()):
+            run_gate(rows[name], report)
+        landed = [key for key, entries in report.items() if entries]
+        if landed != ([bucket] if bucket else []):
+            problems.append(f"  {name}: filed under {landed}, expected {bucket}")
+        with contextlib.redirect_stdout(io.StringIO()):
+            got = run_gates([rows[name]])
+        if got != status:
+            problems.append(f"  {name}: run_gates returned {got}, expected {status}")
+
+    # Several at once: an unanswered check outranks a finding, which outranks a
+    # missing tool, because until a check runs the silence behind it means
+    # nothing.
+    with contextlib.redirect_stdout(io.StringIO()):
+        worst = run_gates([rows["absent-tool"], rows["finding"], rows["crashed"]])
+    if worst != NO_ANSWER:
+        problems.append(f"  precedence: got {worst}, expected {NO_ANSWER}")
+    with contextlib.redirect_stdout(io.StringIO()):
+        pair = run_gates([rows["absent-tool"], rows["finding"]])
+    if pair != FINDING:
+        problems.append(f"  precedence: got {pair}, expected {FINDING}")
+
+    if problems:
+        print("naming_gate exit-contract self-test FAILED", file=sys.stderr)
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+    print(f"naming_gate exit-contract self-test OK ({len(expected)} outcomes)")
+    return 0
+
+
+def _registry_self_test():
+    """Every declared gate is a row a caller can actually run.
+
+    A registry whose rows point at nothing is the silence this table replaced:
+    CI used to hand-write one step per gate, so a gate could be added and never
+    called. Here the row IS the call, and this refuses a row whose command is
+    not on disk, whose id repeats, or whose group nobody selects.
+    """
+    problems = []
+    seen = set()
+    for row in GATES:
+        gate_id = row.get("id")
+        if not gate_id or gate_id in seen:
+            problems.append(f"  {gate_id!r}: missing or repeated id")
+        seen.add(gate_id)
+        if not row.get("group"):
+            problems.append(f"  {gate_id}: declares no group, so no `--run @group` reaches it")
+        argv = row.get("argv") or []
+        if not argv:
+            problems.append(f"  {gate_id}: declares no command")
+            continue
+        # `bash -c` and the interpreter running this file are commands by
+        # construction; anything else is a path in the tree and must be there.
+        head = argv[0]
+        if head == "python3":
+            target = argv[1] if len(argv) > 1 else None
+        elif head == "bash":
+            target = None
+        else:
+            target = head
+        if target and not os.path.isfile(target):
+            problems.append(f"  {gate_id}: {target} is not a file")
+        elif target and head != "python3" and not os.access(target, os.X_OK):
+            problems.append(f"  {gate_id}: {target} is not executable")
+
+    for spec in ("all", "@naming", "@format", "@history", "@java"):
+        try:
+            if not select(spec):
+                problems.append(f"  {spec}: selects no gate")
+        except KeyError as exc:
+            problems.append(f"  {spec}: {exc}")
+
+    if problems:
+        print("naming_gate registry self-test FAILED", file=sys.stderr)
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+    print(f"naming_gate registry self-test OK ({len(GATES)} gates declared)")
     return 0
 
 
@@ -235,8 +617,31 @@ def _self_test():
     return 0
 
 
+USAGE = """usage: naming_gate.py --self-test
+       naming_gate.py --list
+       naming_gate.py --run all|@<group>|<id>[,<id>...]"""
+
+
+def _main(argv):
+    if argv == ["--self-test"]:
+        return max(_self_test(), _contract_self_test(), _registry_self_test())
+    if argv == ["--list"]:
+        for row in GATES:
+            print(f"{row['id']:<26} {row['group']:<8} {' '.join(row['argv'])}")
+        return OK
+    if len(argv) == 2 and argv[0] == "--run":
+        try:
+            rows = select(argv[1])
+        except KeyError as exc:
+            print(f"naming_gate.py: {exc}", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return NO_ANSWER
+        return run_gates(rows)
+    print(USAGE, file=sys.stderr)
+    # Not a gate result: the runner itself was called wrongly, which is the
+    # caller's own mistake and not a verdict about the tree.
+    return TOOL_MISSING
+
+
 if __name__ == "__main__":
-    if sys.argv[1:] != ["--self-test"]:
-        print("usage: naming_gate.py --self-test", file=sys.stderr)
-        sys.exit(2)
-    sys.exit(_self_test())
+    sys.exit(_main(sys.argv[1:]))

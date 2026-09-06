@@ -44,23 +44,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Node ${{ matrix.node }}
-        uses: actions/setup-node@v5
+        uses: ./.github/actions/setup-node
         with:
-          node-version: ${{ matrix.node }}
+          version: ${{ matrix.node }}
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cargo cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Build the addon and the package
         run: scripts/build-node-sdk.sh
@@ -96,19 +85,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cargo cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
       - name: The ABI scenario, driven through the Node veneer
         run: cargo test -p flz_core_ffi --features napi
@@ -117,26 +95,9 @@ jobs:
         # Enabling `napi` adds one exported symbol and removes none, and the
         # JNI exports are untouched when both features are on. Asserted rather
         # than reviewed, because the Java SDK ships a binary built from this
-        # crate.
-        run: |
-          set -euo pipefail
-          syms() { nm -D --defined-only "$1" | awk '{print $3}' | grep -v '^$' | sort; }
-          cargo build -p flz_core_ffi
-          syms target/debug/libflz_core_ffi.so > /tmp/sym.default
-          cargo build -p flz_core_ffi --features napi
-          syms target/debug/libflz_core_ffi.so > /tmp/sym.napi
-          cargo build -p flz_core_ffi --features jni,napi
-          syms target/debug/libflz_core_ffi.so > /tmp/sym.both
-          removed=$(comm -23 /tmp/sym.default /tmp/sym.napi)
-          if [ -n "$removed" ]; then
-            echo "the napi feature removed exported symbols:"; echo "$removed"; exit 1
-          fi
-          added=$(comm -13 /tmp/sym.default /tmp/sym.napi)
-          if [ "$added" != "napi_register_module_v1" ]; then
-            echo "the napi feature added more than the module registration: $added"; exit 1
-          fi
-          grep -q Java_com_flezha_sdk_native_1_FlzCore_poll /tmp/sym.both \
-            || { echo "the JNI exports are missing when both features are on"; exit 1; }
+        # crate. The same assertion holds for every veneer feature, so the
+        # script is the one place that spells it.
+        run: scripts/check-feature-symbols.sh target/debug/libflz_core_ffi.so napi
 
   # The native binaries the per-platform packages carry. Cross-built rather
   # than one runner per platform: N-API is ABI-stable across Node versions, so
@@ -166,15 +127,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Node 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
+      - name: Set up Node
+        uses: ./.github/actions/setup-node
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        # No cargo cache: each arm is a different target triple, and what this
+        # job publishes is the artifact rather than a warm tree.
+        uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
+          cache: "false"
 
       - name: Install the cross linker
         if: matrix.cross

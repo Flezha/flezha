@@ -1192,3 +1192,111 @@ move, and the change SHALL prove it by the suite rather than by assertion.
 - **THEN** the change SHALL be split, so that the move can be proved by a rename-only
   diff and the rename judged on its own migration cost
 
+### Requirement: A test fixture SHALL be declared, not rebuilt in a test's own setup
+
+A test module SHALL obtain every shared fixture — a temporary directory, an
+auth store, an environment override, a state tree, a supervised collaborator —
+by declaring it against one fixture table, and SHALL NOT build one in its own
+`setup` or `setup_all`. The table SHALL live in `test/helpers/`, SHALL hold one
+row per fixture naming its setup and its cleanup, and SHALL run every row's
+cleanup through a single `on_exit` so that a fixture cannot be set up without
+being torn down. A module that must build its own fixture SHALL be named on an
+allow-list with a written reason.
+
+A fixture kind that does something beyond creating and removing a resource —
+restoring an environment key, detaching a telemetry handler, closing a writer,
+uninstalling a stub — SHALL be a row in the table rather than an exception to
+it. A caller running on a second BEAM, where `on_exit` raises, SHALL stay
+guarded outside the table.
+
+#### Scenario: A test declares the fixtures it needs
+
+- **GIVEN** a test module that needs a temporary `app_data` root and an
+  environment override
+- **WHEN** it declares `use FlezhaTest.Case, fixtures: [:tmp_app_data, :env]`
+- **THEN** both fixtures are set up before the first test and both are removed
+  after the last one, with no `on_exit` written in the module
+
+#### Scenario: A hand-built fixture fails the gate
+
+- **GIVEN** a test module whose own `setup` calls `System.tmp_dir!/0` and is not
+  on the allow-list
+- **WHEN** the gate runs
+- **THEN** it reports that module by path and exits with the finding code
+
+#### Scenario: A cleanup that does more than remove a path is a row
+
+- **GIVEN** a fixture that must restore an application environment key it
+  changed
+- **WHEN** it is added to the table as a row whose cleanup restores the key
+- **THEN** every test declaring it gets the restore, and no test file writes its
+  own restoring `on_exit`
+
+### Requirement: Every gate SHALL be a row in one runner with one exit contract
+
+A repository gate SHALL be declared to one runner, and the runner SHALL own
+running it, walking the tree for it and reporting its result. The exit contract
+SHALL be one vocabulary for every gate, and the runner SHALL be where it is
+written down: `0` clean,
+`1` a finding, `2` a tool the gate needs is absent so its check did not run,
+`3` a tool ran and did not complete so its check has no answer. A gate that
+cannot reach a verdict for any other reason — a missing input file, an
+unreadable baseline — SHALL report `3` as well, since the caller's question is
+the same: this check has no answer. CI SHALL fail on `1`, `2` and `3`; a
+developer's box MAY skip on `2`. A gate SHALL NOT spell its own exit code and
+SHALL NOT carry its own tree walk.
+
+A gate that must read the working tree from disk rather than from the index —
+because the sources it judges are not tracked in the same tree, or because an
+untracked file must still be judged — SHALL declare that as an option on the
+runner rather than implement a second walk.
+
+A gate whose tool is absent SHALL be recorded as not run and SHALL NOT stop the
+gates behind it: the runner SHALL run every other requested gate and SHALL list
+the absent tools together, each with the command that installs it. The runner
+SHALL NOT test every tool before running any gate — that preflight is the
+defect removed by `format-gate-tells-the-truth.md`, where one absent formatter
+ended the run and said nothing about the six languages behind it.
+
+#### Scenario: CI runs the gates through one call
+
+- **GIVEN** the naming and formatting workflows
+- **WHEN** they run the repository's gates
+- **THEN** each calls the runner once and no workflow lists gates step by step
+
+#### Scenario: A broken gate is not a clean tree
+
+- **GIVEN** a gate whose input file is missing
+- **WHEN** the runner runs it
+- **THEN** it exits `3` with a message naming the gate and the missing input,
+  and the run is red — never `0`, and never the `2` that means a tool is absent
+
+#### Scenario: An absent local tool is distinguishable from a finding
+
+- **GIVEN** a developer's box without one of the language formatters installed
+- **WHEN** the runner runs the formatting gates
+- **THEN** every other formatter still runs, it exits `2` naming the absent tool
+  and the command that installs it, and the same run in CI is red
+
+#### Scenario: A tool that ran without reaching a verdict is neither
+
+- **GIVEN** a gate whose tool starts, crashes and returns a status its finding
+  rule does not claim
+- **WHEN** the runner runs it
+- **THEN** it exits `3` reporting that check as unanswered, apart from both the
+  findings and the absent tools
+
+#### Scenario: A gate that reads disk declares it
+
+- **GIVEN** a gate that judges test sources that are not tracked in this tree
+- **WHEN** it is declared with the disk-reading option
+- **THEN** the runner walks disk for that gate and the tracked-file walk for
+  every other, with one walk implementation
+
+#### Scenario: A gate cannot bypass the contract
+
+- **GIVEN** a gate added to the runner that returns a bare non-zero code with no
+  headline
+- **WHEN** the runner's self-test runs
+- **THEN** the self-test fails naming that gate
+

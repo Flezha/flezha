@@ -1,0 +1,39 @@
+name: Set up PHP
+description: >
+  PHP at the version .github/toolchains.json names, with the extensions and
+  tools sdk/php needs to install and load at all.
+
+# `ext-ffi` is not optional here: sdk/php/composer.json requires it, so even
+# `composer install` fails without it, and the package loads the native library
+# through it. `ffi.enable=true` is the ini the loaded library needs, and
+# composer is how every PHP job gets a vendor tree.
+
+inputs:
+  version:
+    description: Override the manifest's PHP version. Empty reads the manifest.
+    required: false
+    default: ""
+  ini-values:
+    description: Comma-separated php.ini settings.
+    required: false
+    default: ffi.enable=true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the PHP version
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="${INPUT_VERSION:-$("${GITHUB_WORKSPACE}/scripts/manifest_pin.sh" "${GITHUB_WORKSPACE}/.github/toolchains.json" php)}"
+        printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+    - uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ steps.resolve.outputs.version }}
+        extensions: ffi
+        ini-values: ${{ inputs.ini-values }}
+        tools: composer

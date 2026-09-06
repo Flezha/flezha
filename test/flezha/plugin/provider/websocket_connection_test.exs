@@ -103,7 +103,11 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
         end)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_000
-      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :idle_reconnect], %{silence_ms: ms}, meta}, 500
+
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :idle_reconnect],
+                      %{silence_ms: ms}, meta},
+                     500
+
       assert ms >= 100
       assert meta.plugin_id == "test_ws"
     end
@@ -144,7 +148,11 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
                Websocket.Client.handle_info(:idle_check, s)
 
       assert ns.last_resubscribe_at >= now
-      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: ms}, meta}, 500
+
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :resubscribe],
+                      %{data_silence_ms: ms}, meta},
+                     500
+
       assert ms >= 100
       assert meta.plugin_id == "test_ws"
     end

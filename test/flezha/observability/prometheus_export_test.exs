@@ -1,6 +1,6 @@
 defmodule Flezha.Observability.PrometheusExportTest do
   # async: false: writes Application env; the observability registry; registered singletons.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Observability.Bus
   alias Flezha.Observability.Export.PrometheusHttp
@@ -354,12 +354,10 @@ defmodule Flezha.Observability.PrometheusExportTest do
 
   describe "Export.Supervisor under poison signals" do
     setup do
-      prev = Application.get_env(:flezha, :observability_export, [])
-
       Application.put_env(
         :flezha,
         :observability_export,
-        Keyword.merge(prev,
+        Keyword.merge(Application.get_env(:flezha, :observability_export, []),
           prometheus_enabled: true,
           prometheus_port: 0,
           prometheus_bind: "127.0.0.1",
@@ -367,7 +365,6 @@ defmodule Flezha.Observability.PrometheusExportTest do
         )
       )
 
-      on_exit(fn -> Application.put_env(:flezha, :observability_export, prev) end)
       :ok
     end
 

@@ -8,13 +8,12 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   sidecar.
   """
   # async: false: writes Application env; a shared on-disk root; node-global tables.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Paths, TestHelpers}
+  alias Flezha.State.Paths
 
   setup do
-    TestHelpers.tmp_app_data_dir()
     ClassRegistry.ensure_table()
 
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}

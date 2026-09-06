@@ -201,15 +201,10 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
   runner (the handler replies synchronously instead of spawning the send).
   """
   # async: false: writes Application env.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
-
-  setup do
-    on_exit(fn -> Application.delete_env(:flezha, :operative_persistence) end)
-    :ok
-  end
 
   defp state_for(kind, id \\ "r_gate") do
     %Overwatch{
@@ -382,24 +377,10 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   spawn, a stream operative, or an opted-out workflow one.
   """
   # async: false: writes Application env; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   alias Flezha.Operative.Replay
   alias Flezha.State.{Paths, TestHelpers}
-
-  setup do
-    # A fresh tmp state_root isolates each case: `all_entities/0` +
-    # `has_persisted_state?/1` then see only the Entities this test seeds.
-    root = TestHelpers.tmp_app_data_dir()
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :state_root)
-      Application.delete_env(:flezha, :operative_persistence)
-      File.rm_rf(root)
-    end)
-
-    :ok
-  end
 
   # Drop a minimal WAL file on disk for an Entity so `all_entities/0` enumerates
   # it and `has_persisted_state?/1` returns true (as after a real durable run).

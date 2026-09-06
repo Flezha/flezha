@@ -1,7 +1,7 @@
 [package]
 name = "flz_transport"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Flezha shared transport library — QUIC, UDS, binary framing"
@@ -17,24 +17,24 @@ test-support = []
 
 [dependencies]
 byteorder = "1.4"
-crossbeam = "0.8"
-mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
-quinn-proto = "0.11"
-bytes = "1"
+crossbeam.workspace = true
+mio.workspace = true
+quinn-proto.workspace = true
+bytes.workspace = true
 # Already in the graph via rustls; the direct dependency is one call, the
 # SHA-256 that bounds a data socket's runner-id field.
 ring = "0.17"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2"
-tracing = "0.1"
+rustls.workspace = true
+rustls-pemfile.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # Already in the graph via mio; the direct dependency is one call, `getuid`,
 # for the access-denied diagnosis.
-libc = "0.2"
+libc.workspace = true
 
 [lints]
 workspace = true

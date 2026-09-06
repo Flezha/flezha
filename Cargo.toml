@@ -12,8 +12,36 @@ members = [
 resolver = "2"
 
 [workspace.package]
+version = "0.1.0"
+edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/alfetahe/flezha"
+
+# Every dependency two or more crates pin. A dependency exactly one crate uses
+# stays in that crate, so this stays the shared-pin table and not a catalogue.
+# Features are additive per crate: an entry here carries what every user of it
+# needs, and a crate wanting more adds its own `features = [...]`.
+[workspace.dependencies]
+bytes = "1"
+crc32fast = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+crossbeam = "0.8"
+crossbeam-deque = "0.8"
+dashmap = "6"
+erased-serde = "0.4.6"
+libc = "0.2"
+mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
+postcard = { version = "1.0", features = ["use-std"] }
+prost = "0.13.5"
+quinn-proto = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+signal-hook = "0.3"
+tempfile = "3"
+thiserror = "1.0"
+tracing = "0.1"
 
 # Every crate opts in with `[lints] workspace = true`. The clippy ceiling is
 # docs/refactor/charter.md §7; its threshold lives in clippy.toml.

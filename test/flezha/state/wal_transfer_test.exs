@@ -7,16 +7,10 @@ defmodule FlezhaTest.State.WalTransferTest do
   controller's disk is the only surviving copy — and `state_root` is node-local.
   """
   # async: false: writes Application env; a shared on-disk root; a peer BEAM.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalTransfer, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
-
-  setup do
-    root = TestHelpers.tmp_app_data_dir()
-
-    {:ok, root: root}
-  end
 
   defp seed_entity(suffix) do
     entity_id = TestHelpers.sample_entity_id(suffix)

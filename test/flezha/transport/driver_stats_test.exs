@@ -7,18 +7,15 @@ defmodule Flezha.Transport.DriverStatsTest do
   the stall classifier read one map whatever the transport is.
   """
 
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Convergence.StallClassifier
   alias Flezha.Transport.CertGenerator
   alias Flezha.Transport.Native
   alias FlezhaTest.Helper.NodeTestHelper
 
-  setup do
-    path =
-      Path.join(System.tmp_dir!(), "flz_driver_stats_#{System.unique_integer([:positive])}.sock")
-
-    {:ok, server} = Native.start_uds_server(path, self())
+  setup %{tmp: tmp} do
+    {:ok, server} = Native.start_uds_server(Path.join(tmp, "driver_stats.sock"), self())
     on_exit(fn -> Native.stop_server(server) end)
     {:ok, server: server}
   end

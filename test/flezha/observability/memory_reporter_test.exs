@@ -1,6 +1,6 @@
 defmodule Flezha.Diagnostics.MemoryReporterTest do
   # async: false: the primary Logger; registered singletons; OS environment variables.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   import ExUnit.CaptureLog
 
@@ -11,11 +11,6 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
   @key :memory_report_interval_ms
 
   describe "configured_interval_ms/0" do
-    setup do
-      on_exit(fn -> Application.delete_env(:flezha, @key) end)
-      :ok
-    end
-
     test "returns :disabled when the interval is unset" do
       Application.delete_env(:flezha, @key)
       assert MemoryReporter.configured_interval_ms() == :disabled

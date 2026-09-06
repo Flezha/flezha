@@ -13,9 +13,12 @@
 #   scripts/check-build-artifacts.sh size         # only the packed-size check
 #
 # The `tracked` check answers a question about PATHS, not about what a file
-# says, so it does not ride `scripts/naming_gate.py` — that walk reads every
-# tracked file line by line and skips binaries and `dist/` by construction,
-# which is exactly the population this gate exists to look at.
+# says, so it does not ride `naming_gate.walk` - that walk reads every tracked
+# file line by line and skips binaries and `dist/` by construction, which is
+# exactly the population this gate exists to look at. It does share the
+# LISTING, `naming_gate.tracked_files`, because one gate and another asking
+# git for two different trees is the thing that shape prevents. Its exit codes
+# are the runner's contract, which naming_gate.py documents at the top.
 #
 # A binary fixture whose bytes are the subject of a test is exempt BY PATH in
 # EXEMPT below, never by extension: the extension is what the gate is for.
@@ -27,6 +30,10 @@ exec python3 - "$@" <<'PY'
 import os
 import subprocess
 import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, "scripts")
+import naming_gate
 
 # Whole directories that hold nothing but build output.
 ARTIFACT_DIRS = (
@@ -53,13 +60,9 @@ CEILING_MB = 150
 
 
 def tracked_check():
-    listing = subprocess.run(
-        ["git", "ls-files", "-z"], capture_output=True, check=True
-    ).stdout.decode()
-
     failures = []
-    for rel in listing.split("\0"):
-        if not rel or rel in EXEMPT:
+    for rel in naming_gate.tracked_files():
+        if rel in EXEMPT:
             continue
         for prefix, ignore_entry in ARTIFACT_DIRS:
             if rel.startswith(prefix):
@@ -141,7 +144,7 @@ requested = sys.argv[1:] or list(CHECKS)
 unknown = [name for name in requested if name not in CHECKS]
 if unknown:
     print(f"unknown check(s): {', '.join(unknown)}; known: {', '.join(CHECKS)}", file=sys.stderr)
-    sys.exit(2)
+    sys.exit(naming_gate.NO_ANSWER)
 
 sys.exit(max(CHECKS[name]() for name in requested))
 PY

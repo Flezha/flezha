@@ -7,7 +7,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   remaining hooks and skips already-undone ones.
   """
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import Mimic
 
@@ -16,11 +16,6 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup :verify_on_exit!
-
-  setup do
-    TestHelpers.tmp_app_data_dir()
-    :ok
-  end
 
   # Empty-body compensation wire frame (the record's information is the Entity
   # identity plus the payload-id), matching `Wire.decode_frame/1`: seq 0, a

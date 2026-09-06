@@ -48,23 +48,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v6
+        uses: ./.github/actions/setup-python
         with:
-          python-version: ${{ matrix.python }}
+          version: ${{ matrix.python }}
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cargo cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-python-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-python-${{ runner.os }}-
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
       # The build script names the interpreter it builds the extension for, so
       # the free-threaded arm gets a free-threaded module rather than the
@@ -108,23 +97,10 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
+        uses: ./.github/actions/setup-python
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cargo cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-python-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-python-${{ runner.os }}-
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Build the library and the checkout-local environment
         run: scripts/build-python-sdk.sh
@@ -175,12 +151,15 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v6
+        uses: ./.github/actions/setup-python
         with:
-          python-version: ${{ matrix.python }}
+          version: ${{ matrix.python }}
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        # No cargo cache: maturin builds the wheel from the tag's own tree.
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
 
       - name: Install maturin
         run: pip install "maturin>=1.9,<2.0"
@@ -223,12 +202,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
+        uses: ./.github/actions/setup-python
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        # No cargo cache: the source distribution compiles nothing here.
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
 
       - name: Install maturin
         run: pip install "maturin>=1.9,<2.0"

@@ -5,15 +5,13 @@ defmodule Flezha.Plugin.Installer.CompilerTest do
   global code server doesn't collide across tests.
   """
 
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
 
   alias Flezha.Plugin.Installer.Compiler
 
-  setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_compiler_test_#{System.unique_integer([:positive])}")
+  setup %{tmp: tmp} do
     File.mkdir_p!(Path.join(tmp, "src"))
-    on_exit(fn -> File.rm_rf!(tmp) end)
-    {:ok, tmp: tmp}
+    :ok
   end
 
   test "clean compile returns produced modules", %{tmp: tmp} do

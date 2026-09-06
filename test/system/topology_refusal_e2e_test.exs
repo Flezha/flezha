@@ -41,11 +41,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   @moduletag interop: true
   @moduletag timeout: 300_000
 
-  @moduletag skip:
-               FlezhaTest.SystemCase.skip_unless(
-                 :interop in (ExUnit.configuration()[:include] || []),
-                 "the drill boots every runtime with a manifest; pass --include interop"
-               )
+  @moduletag skip: FlezhaTest.Tiers.skip_unless_included(:interop)
 
   @fixture "test/fixtures/reference_topologies.txt"
 

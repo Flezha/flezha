@@ -13,7 +13,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -21,7 +21,6 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
-  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "ctrl-chan-task-completed-test"
@@ -29,8 +28,6 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    # Isolate the completion record `handle_workflow_completed/2` now writes.
-    base = TestHelpers.tmp_app_data_dir()
     test_pid = self()
     handler_id = "task-completed-test-#{System.unique_integer([:positive])}"
 
@@ -45,11 +42,7 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
       nil
     )
 
-    on_exit(fn ->
-      :telemetry.detach(handler_id)
-      Application.delete_env(:flezha, :state_root)
-      File.rm_rf!(base)
-    end)
+    on_exit(fn -> :telemetry.detach(handler_id) end)
 
     :ok
   end

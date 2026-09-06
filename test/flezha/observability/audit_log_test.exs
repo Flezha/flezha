@@ -1,6 +1,6 @@
 defmodule Flezha.Observability.AuditLogTest do
   # async: false: writes Application env; a shared on-disk root; the observability registry.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
   # Supervised AuditLog children log a benign "shut down abnormally (exit) normal"
   # on teardown; capture so a green run stays quiet (logs still print on failure).
@@ -23,21 +23,8 @@ defmodule Flezha.Observability.AuditLogTest do
 
   @moduletag :audit_log
 
-  setup do
-    base_dir =
-      Path.join([
-        System.tmp_dir!(),
-        "flezha_audit_test_#{:erlang.unique_integer([:positive])}"
-      ])
-
-    File.mkdir_p!(base_dir)
-
-    on_exit(fn ->
-      stop_audit_supervisor()
-      _ = Application.put_env(:flezha, :audit_log, default_config())
-      File.rm_rf!(base_dir)
-    end)
-
+  setup %{tmp: base_dir} do
+    on_exit(&stop_audit_supervisor/0)
     {:ok, dir: base_dir}
   end
 

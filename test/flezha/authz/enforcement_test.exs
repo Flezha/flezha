@@ -5,7 +5,9 @@ defmodule Flezha.AuthZ.EnforcementTest do
   namespace handshake), destructive verbs are gated, and denials are audited.
   """
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [{:auth_stores, prefix: "flz_enforcement", register_source: true}],
+    async: false
 
   import ExUnit.CaptureIO
 
@@ -15,16 +17,6 @@ defmodule Flezha.AuthZ.EnforcementTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
   alias FlezhaTest.Helper.AuthTestHelper
-
-  setup do
-    ctx =
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_enforcement",
-        register_source: true
-      )
-
-    {:ok, Map.to_list(ctx)}
-  end
 
   defp claim!() do
     :ok = AuthState.set_enabled()

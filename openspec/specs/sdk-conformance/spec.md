@@ -628,3 +628,68 @@ the gap intact.
 - **WHEN** the shared core's builder is reformatted so a key's tuple wraps across lines
 - **THEN** the gate SHALL still read that key, and a scrape that reads fewer keys than the builder writes SHALL be treated as a gate defect
 
+### Requirement: Every test tier SHALL be one declared row, and a tier nothing runs SHALL be a gate failure
+
+The suite SHALL declare its test tiers in one table under `test/helpers/`, one
+row per tier, and every other reader SHALL derive from that table rather than
+restate it. A row SHALL carry the tier's tag, where it runs (`:default`,
+`:pull_request`, `:nightly`, `:sdk_workflow` or `:manual`), the workflow that
+runs it, the services it needs, the transports it covers, and the anchor in
+`docs/sdk/conformance.md` that documents it. `test/test_helper.exs` SHALL derive
+its `exclude:` list from the table and SHALL NOT hold a hand-written list.
+
+A gate SHALL fail when a tier tag named in `test/`, `.github/`, `scripts/` or
+`docs/sdk/conformance.md` is not a declared row; when a declared row names no
+workflow and is not `:manual` with a written reason; or when a row's
+documentation anchor does not resolve. A tag that selects nothing anywhere SHALL
+be declared as a tier or removed.
+
+A tier's `:default` or `:pull_request` standing SHALL be derived from the
+trigger of the workflow the row names, not asserted in the row, so that a tier
+believed to block merge cannot silently stop doing so.
+
+The `capability:` vocabulary read by the conformance manifests is a different
+vocabulary from the tier tags and SHALL NOT be folded into it.
+
+#### Scenario: The exclude list is derived
+
+- **GIVEN** the tier table
+- **WHEN** `mix test` starts
+- **THEN** `ExUnit.start` excludes exactly the tags whose rows do not run in the
+  default tier, and no tag is listed in `test_helper.exs` itself
+
+#### Scenario: A tier no workflow runs is red
+
+- **GIVEN** a tier row whose `workflow` field is empty and whose `runs_in` is
+  not `:manual`
+- **WHEN** the conformance gate runs
+- **THEN** it fails naming that tier, and the message says that no job runs it
+
+#### Scenario: An undeclared tag is red
+
+- **GIVEN** a test module tagged with a name that is not a declared tier
+- **WHEN** the conformance gate runs
+- **THEN** it fails naming the tag and the file that spells it
+
+#### Scenario: A tier that is manual says why
+
+- **GIVEN** a tier that requires a service no CI runner provides
+- **WHEN** its row declares `runs_in: :manual` with the reason
+- **THEN** the gate passes and the reason appears in the generated tier table
+
+#### Scenario: An include still beats an exclude
+
+- **GIVEN** the interop tier, which places two SDK runtimes in one run and must
+  not be pulled in by `--include system`
+- **WHEN** `mix test --include system` runs
+- **THEN** the interop module skips itself, as its row declares, and running it
+  requires `--include interop` as well
+
+#### Scenario: Transport coverage is reported, per tier
+
+- **GIVEN** a tier whose modules fan out over the transports its runtime's
+  manifest declares
+- **WHEN** the conformance report is printed
+- **THEN** the report states, per tier, how many of its modules ran over each
+  declared transport
+

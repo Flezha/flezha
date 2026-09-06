@@ -9,7 +9,6 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
   lets a test assert on the exact frames a given source transition produces.
   """
 
-
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.Websocket.Subscription
 

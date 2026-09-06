@@ -64,16 +64,15 @@ defmodule FlezhaTest.OutboxCase do
   end
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
+    %{base: base} = FlezhaTest.Case.install([:tmp_app_data, :state_tree])
     ClassRegistry.ensure_table()
-
-    TestHelpers.start_state_tree()
 
     rc = "wo_" <> Integer.to_string(System.unique_integer([:positive]))
     entity_id = {rc, "proc", "k1"}
 
+    # Registered after the fixture table's own, so it runs BEFORE it: the writer
+    # has to stop before `:tmp_app_data` removes the root under it.
     on_exit(fn ->
-      # Stop the writer first so a late persist cannot race the rm_rf.
       try do
         case Supervisor.lookup(entity_id) do
           {:ok, pid} -> WalWriter.close(pid)
@@ -84,9 +83,6 @@ defmodule FlezhaTest.OutboxCase do
         # until the sweep lands; stopping it twice is not a failure.
         :exit, _ -> :ok
       end
-
-      Application.delete_env(:flezha, :state_root)
-      _ = File.rm_rf(base)
     end)
 
     %{rc: rc, entity_id: entity_id, base: base}

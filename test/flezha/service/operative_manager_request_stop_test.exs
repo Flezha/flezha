@@ -15,7 +15,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
@@ -24,18 +24,12 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   alias Flezha.Runner.ControlUnit
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.{Completion, Paths, TestHelpers}
+  alias Flezha.State.{Completion, Paths}
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "op-mgr-request-stop-test"
 
   setup :set_mimic_global_until_exit
-
-  setup do
-    # Isolate the on-disk state dir the teardown deletes-or-retains.
-    TestHelpers.tmp_app_data_dir()
-    :ok
-  end
 
   defp start_stub(state_reply), do: StubOverwatch.start_link(state_reply, self())
 

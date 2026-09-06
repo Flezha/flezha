@@ -5,7 +5,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
   alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
   import ExUnit.CaptureLog
@@ -42,16 +42,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
 
     test "a permanently failed batch parks the record instead of dropping it", %{
       rc: rc,
-      entity_id: entity_id
+      entity_id: entity_id,
+      tmp: dir
     } do
       original = Application.get_env(:flezha, :dlq, [])
-      dir = Path.join(System.tmp_dir!(), "dlq_#{System.unique_integer([:positive])}")
       Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, dir))
-
-      on_exit(fn ->
-        Application.put_env(:flezha, :dlq, original)
-        File.rm_rf(dir)
-      end)
 
       {pid, _} = start_worker(script: [{:return, Fakes.err_response(@topic, @partition, 18)}])
 

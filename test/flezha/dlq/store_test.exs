@@ -1,15 +1,13 @@
 defmodule Flezha.Dlq.StoreTest do
   # Rebinds the global :dlq config to a tmp dir.
   # async: false: writes Application env; a shared on-disk root; registered singletons.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:isolated_dlq_dir], async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 3]
 
   alias Flezha.Dlq.Store
-  alias FlezhaTest.Helper.DlqFixtures
 
-  setup do
-    dir = DlqFixtures.isolated_dir()
+  setup %{dlq_dir: dir} do
     name = :"dlq_store_#{System.unique_integer([:positive])}"
     pid = start_supervised!(Supervisor.child_spec({Store, name: name}, id: name))
     %{store: pid, dir: dir, name: name}

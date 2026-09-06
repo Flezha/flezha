@@ -6,23 +6,24 @@ defmodule Flezha.AuthZ.RebootstrapTest do
   fresh token.
   """
   # async: false: a shared on-disk root; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [
+      {:auth_stores,
+       prefix: "flz_rebootstrap",
+       stores: [
+         Flezha.AuthZ.AuthState,
+         Flezha.AuthZ.RoleStore,
+         Flezha.AuthZ.NamespaceStore,
+         Flezha.AuthZ.TokenStore
+       ]}
+    ],
+    async: false
 
   import ExUnit.CaptureLog
 
-  alias Flezha.AuthZ.{AuthState, Bootstrap, Config, NamespaceStore, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Bootstrap, Config, RoleStore, TokenStore}
   alias Flezha.AuthZ.Bootstrap.OnBoot
   alias FlezhaTest.Helper.AuthTestHelper
-
-  setup do
-    ctx =
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_rebootstrap",
-        stores: [AuthState, RoleStore, NamespaceStore, TokenStore]
-      )
-
-    {:ok, Map.to_list(ctx)}
-  end
 
   defp claim_bootstrap!() do
     :ok = Bootstrap.check_and_write()

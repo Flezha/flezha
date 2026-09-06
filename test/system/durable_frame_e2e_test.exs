@@ -60,7 +60,6 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     :ok
   end
 
-  @tag :durable_frame_e2e
   @tag timeout: 300_000
   test "the frame a runner writes is the frame every reader folds" do
     {entity_id, path} = drive_a_wal(10)
@@ -101,7 +100,6 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     assert payload.terminal_seq_hint == List.last(seqs)
   end
 
-  @tag :durable_frame_e2e
   @tag timeout: 300_000
   test "a torn tail is repaired and a corrupt record is refused, with the file left on disk" do
     {entity_id, path} = drive_a_wal(10)

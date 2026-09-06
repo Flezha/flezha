@@ -1,17 +1,15 @@
 defmodule Flezha.AuthZ.QuotasTest do
   # async: false: a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case,
+    fixtures: [{:auth_stores, prefix: "flz_authz_quotas", claim: true}],
+    async: false
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, Quotas}
-  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
-    ctx =
-      AuthTestHelper.setup_auth_stores(prefix: "flz_authz_quotas", claim: true)
-
     assert AuthZ.enabled?()
-    {:ok, Map.to_list(ctx)}
+    :ok
   end
 
   test "unknown namespace surfaces :namespace_unknown" do

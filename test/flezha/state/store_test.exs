@@ -10,16 +10,10 @@ defmodule FlezhaTest.State.StoreTest do
   The implementers are discovered from the behaviour, never from a list here,
   so a store cannot be added without being proved.
   """
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_dir], async: false
 
   alias Flezha.DetsStore
   alias Flezha.State.Store
-
-  setup do
-    base = Path.join(System.tmp_dir!(), "store_conformance_#{System.unique_integer([:positive])}")
-    on_exit(fn -> File.rm_rf(base) end)
-    {:ok, base: base}
-  end
 
   test "the behaviour is declared by every durable control-plane store" do
     declared = MapSet.new(implementers())
@@ -56,7 +50,7 @@ defmodule FlezhaTest.State.StoreTest do
   end
 
   describe "the contract, per implementer" do
-    test "declares a subtree, a file and a table, and answers one path", %{base: base} do
+    test "declares a subtree, a file and a table, and answers one path", %{tmp: base} do
       for module <- implementers() do
         assert module.subtree() in Flezha.Layout.Table.subtrees(),
                "#{inspect(module)} declares subtree #{inspect(module.subtree())}"
@@ -70,7 +64,7 @@ defmodule FlezhaTest.State.StoreTest do
     end
 
     test "open -> put -> crash -> reopen keeps the row; close releases the table",
-         %{base: base} do
+         %{tmp: base} do
       for module <- implementers() do
         dir = Path.join(base, Atom.to_string(module))
         path = Path.join(dir, module.filename())
@@ -96,7 +90,7 @@ defmodule FlezhaTest.State.StoreTest do
       end
     end
 
-    test "a corrupt file is rotated aside and a fresh one opened", %{base: base} do
+    test "a corrupt file is rotated aside and a fresh one opened", %{tmp: base} do
       for module <- implementers() do
         dir = Path.join(base, "corrupt_#{module}")
         path = Path.join(dir, module.filename())

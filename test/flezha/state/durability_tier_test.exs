@@ -13,7 +13,7 @@ defmodule Flezha.State.DurabilityTierTest do
   directly is both the real input and the only way to pin a seq range exactly.
   """
   # async: false: writes Application env; a shared on-disk root; registered singletons.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   import ExUnit.CaptureIO
 
@@ -27,22 +27,16 @@ defmodule Flezha.State.DurabilityTierTest do
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.NodeTestHelper
 
-  setup do
-    base = TestHelpers.tmp_app_data_dir()
+  setup %{base: base} do
     hub_root = Path.join(base, "process_hub")
     Application.put_env(:flezha, :process_hub_registry_root, hub_root)
 
     class = "dur_" <> Integer.to_string(System.unique_integer([:positive]))
     entity_id = {class, "proc", "k1"}
 
-    on_exit(fn ->
-      Stub.uninstall()
-      Application.delete_env(:flezha, :state_root)
-      Application.delete_env(:flezha, :process_hub_registry_root)
-      _ = File.rm_rf(base)
-    end)
+    on_exit(&Stub.uninstall/0)
 
-    %{base: base, hub_root: hub_root, class: class, entity_id: entity_id}
+    %{hub_root: hub_root, class: class, entity_id: entity_id}
   end
 
   # ---------- default off ----------
@@ -651,7 +645,6 @@ defmodule Flezha.State.DurabilityTierTest do
       instance = "inst_" <> Integer.to_string(System.unique_integer([:positive]))
       ClassRegistry.put_state_keys(instance, ctx.class)
 
-      on_exit(fn -> Application.delete_env(:flezha, :sync_durability) end)
       Map.put(ctx, :instance, instance)
     end
 

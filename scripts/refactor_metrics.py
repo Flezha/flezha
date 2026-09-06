@@ -696,7 +696,15 @@ def measure(area_filter=None, lint=False):
 
 def seam_jobs(path=None):
     """The rows of the seam ledger: id, seam, the alternations of its shape, the
-    files allowed to match, the roots it is measured under."""
+    files allowed to match, the roots it is measured under, and optionally the
+    file extensions it reads.
+
+    A seam is measured over source files by default, the same population the
+    area metrics count. A job whose subject is not source says so with `exts`:
+    the CI toolchain lives in `.yml` and a gate's exit contract in `.sh`, and a
+    ledger that could not name them would be a ratchet with a hole exactly where
+    this programme found the widest scatter. `exts` widens that one job's
+    listing and touches no area number."""
     path = path or os.path.join(ROOT, SEAMS)
     if not os.path.exists(path):
         return []
@@ -711,6 +719,7 @@ def seam_jobs(path=None):
                 "spellings": [re.compile(alt) for alt in split_alternations(job["shape"])],
                 "allow": set(job.get("allow", [])),
                 "roots": tuple(job.get("roots", [""])),
+                "exts": tuple(job.get("exts", ())),
             }
         )
     return jobs
@@ -745,7 +754,12 @@ def measure_seams(paths, jobs, root=ROOT):
     for job in jobs:
         sites, spellings, bypasses = 0, set(), []
         for path in paths:
-            if not path.startswith(job["roots"]) or language(path) is None:
+            if not path.startswith(job["roots"]):
+                continue
+            if job["exts"]:
+                if not path.endswith(job["exts"]):
+                    continue
+            elif language(path) is None:
                 continue
             for number, line in enumerate(read_lines(os.path.join(root, path)) or [], 1):
                 for index, spelling in enumerate(job["spellings"]):

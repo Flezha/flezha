@@ -15,7 +15,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   than it reads.
   """
   # async: false: writes Application env; a shared on-disk root; the primary Logger.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   import ExUnit.CaptureLog
 
@@ -70,8 +70,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     def delete(key, opts), do: Stub.delete(key, opts)
   end
 
-  setup do
-    base = TestHelpers.tmp_app_data_dir()
+  setup %{base: base} do
     peer_base = base <> "_peer"
     File.mkdir_p!(peer_base)
     Application.put_env(:flezha, :process_hub_registry_root, Path.join(base, "process_hub"))
@@ -90,13 +89,10 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     on_exit(fn ->
       HookedBackend.disarm()
       Stub.uninstall()
-      Application.delete_env(:flezha, :state_root)
-      Application.delete_env(:flezha, :process_hub_registry_root)
-      File.rm_rf(base)
       File.rm_rf(peer_base)
     end)
 
-    %{base: base, peer_base: peer_base, class: class, entity_id: entity_id}
+    %{peer_base: peer_base, class: class, entity_id: entity_id}
   end
 
   test "a peer's collection cannot delete a blob whose manifest entry is still in flight",

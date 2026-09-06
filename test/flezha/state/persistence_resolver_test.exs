@@ -4,28 +4,10 @@ defmodule Flezha.State.PersistenceResolverTest do
   opt-out per class) and the finished-job retention window resolver.
   """
   # async: false: writes Application env.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.PersistenceResolver
-
-  setup do
-    # runtime.exs seeds these two in every env (age is 0 in :test so the
-    # global Watchdog never surprise-compacts); restore them after the
-    # default-probing tests below delete/override them.
-    prev_bytes = Application.get_env(:flezha, :default_compact_after_bytes)
-    prev_age = Application.get_env(:flezha, :compact_after_age_ms)
-
-    on_exit(fn ->
-      Application.delete_env(:flezha, :operative_persistence)
-      Application.delete_env(:flezha, :workflow_completed_retention_hours)
-      Application.delete_env(:flezha, :default_workflow_completed_retention_hours)
-      Application.put_env(:flezha, :default_compact_after_bytes, prev_bytes)
-      Application.put_env(:flezha, :compact_after_age_ms, prev_age)
-    end)
-
-    :ok
-  end
 
   describe "persistent_state?/3" do
     test ":stream is always durable" do
@@ -89,10 +71,7 @@ defmodule Flezha.State.PersistenceResolverTest do
       ClassRegistry.put_compact_after_bytes("ovr_bytes_class", 4 * 1024 * 1024)
       Application.put_env(:flezha, :compact_after_bytes, %{"ovr_bytes_class" => 1024})
 
-      on_exit(fn ->
-        ClassRegistry.delete("ovr_bytes_class")
-        Application.delete_env(:flezha, :compact_after_bytes)
-      end)
+      on_exit(fn -> ClassRegistry.delete("ovr_bytes_class") end)
 
       assert PersistenceResolver.compact_after_bytes("ovr_bytes_class") == 1024
     end
@@ -119,10 +98,7 @@ defmodule Flezha.State.PersistenceResolverTest do
       ClassRegistry.put_sync_durability("ovr_sync_class", true)
       Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => false})
 
-      on_exit(fn ->
-        ClassRegistry.delete("ovr_sync_class")
-        Application.delete_env(:flezha, :sync_durability)
-      end)
+      on_exit(fn -> ClassRegistry.delete("ovr_sync_class") end)
 
       refute PersistenceResolver.sync_durability?("ovr_sync_class")
 

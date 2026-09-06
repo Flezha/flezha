@@ -4,10 +4,11 @@ defmodule FlezhaTest.InstallerCase do
 
       use FlezhaTest.InstallerCase, async: false
 
-  Each test gets a directory of its own as `:plugin_installer_data_dir`,
-  arriving in the context as `:tmp`; the `:plugin_installer_data_dir` and
-  `:plugin_installer` values in force before it are restored and the directory
-  removed when the test ends.
+  Two rows of the `FlezhaTest.Case` fixture table. `:tmp_dir` gives each test a
+  directory of its own, arriving in the context as `:tmp` and pointed at by
+  `:plugin_installer_data_dir`; `:env` puts back every `:flezha` key the test
+  changed, which is both installer keys and anything `start_installer_tree/1`
+  set.
 
   `start_installer_tree/1` runs `Store`, `Loader` and `Installer` over that
   directory at the test defaults; a module needing a different option set, or
@@ -38,19 +39,10 @@ defmodule FlezhaTest.InstallerCase do
   end
 
   setup do
-    tmp = NodeTestHelper.claim_tmp_dir("flz_installer_test")
-    prev_data_dir = Application.get_env(:flezha, :plugin_installer_data_dir)
-    prev_installer = Application.get_env(:flezha, :plugin_installer)
-
+    context = %{tmp: tmp} = FlezhaTest.Case.install([:tmp_dir, :env])
     Application.put_env(:flezha, :plugin_installer_data_dir, tmp)
 
-    on_exit(fn ->
-      restore_env(:plugin_installer_data_dir, prev_data_dir)
-      restore_env(:plugin_installer, prev_installer)
-      File.rm_rf!(tmp)
-    end)
-
-    %{tmp: tmp}
+    context
   end
 
   @doc """
@@ -107,7 +99,4 @@ defmodule FlezhaTest.InstallerCase do
   catch
     :exit, _ -> :ok
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
-  defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
 end

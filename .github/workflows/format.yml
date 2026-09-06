@@ -1,15 +1,16 @@
 name: Format
 
-# Source-shape gate. Installs every toolchain `scripts/format-apply.sh` needs
-# and runs that script in `--check` mode, then `reuse lint` (the per-path
-# license map) and a freshness diff of the generated THIRD_PARTY_NOTICES.md.
-# Failure blocks merge. The matching local script is `scripts/format-check.sh`;
-# auto-fix with `scripts/format-apply.sh`.
+# Source-shape gate. Installs every toolchain the formatters need, then calls
+# the gate runner once for the `format` group: every formatter in check mode,
+# `reuse lint` (the per-path license map) and a freshness diff of the generated
+# THIRD_PARTY_NOTICES.md. Failure blocks merge. Locally the same call is
+# `python3 scripts/naming_gate.py --run @format`; auto-fix with
+# `scripts/format-apply.sh`.
 #
-# CI does not keep its own list of formatters. It runs the same script the
-# local gate runs, because two lists drift: for a long time this workflow ran
-# spotless and nothing else, so prettier, ruff, rubocop and php-cs-fixer had
-# never executed in CI at all while `format-check.sh` claimed to cover them.
+# CI keeps no list of its own, of formatters or of checks. Two lists drift: for
+# a long time this workflow ran spotless and nothing else, so prettier, ruff,
+# rubocop and php-cs-fixer had never executed in CI at all while a second local
+# script claimed to cover them.
 
 on:
   # An ignore-list, not an allow-list. The gate covers seven languages across
@@ -37,64 +38,35 @@ jobs:
 
       # Nightly rustfmt is required because rustfmt.toml uses
       # `imports_granularity`, `group_imports`, and `ignore` — all
-      # nightly-only. Pin the date so style decisions don't drift with
-      # nightly bumps; bump intentionally alongside rustfmt.toml and the same
-      # pin in scripts/format-apply.sh.
+      # nightly-only. The date is pinned in .github/toolchains.json; bump it
+      # there alongside rustfmt.toml and the same pin in
+      # scripts/format-apply.sh. No cargo cache: nothing here compiles.
       - name: Install Rust nightly (rustfmt)
-        uses: dtolnay/rust-toolchain@master
+        uses: ./.github/actions/setup-rust
         with:
-          toolchain: nightly-2026-05-07
+          channel: nightly
           components: rustfmt
+          cache: "false"
 
       - name: Set up Erlang + Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "28"
-          elixir-version: "1.20.2"
+        uses: ./.github/actions/setup-beam
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v5
+      - name: Set up Java
+        uses: ./.github/actions/setup-java
         with:
-          distribution: temurin
-          java-version: 21
           cache: maven
 
       - name: Set up Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: 24
+        uses: ./.github/actions/setup-node
 
       - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+        uses: ./.github/actions/setup-python
 
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
+        uses: ./.github/actions/setup-ruby
 
-      # `composer install` below resolves sdk/php/composer.json, which requires
-      # ext-ffi even to install.
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.4"
-          extensions: ffi
-          tools: composer
-
-      - name: Cache Elixir deps + build
-        uses: actions/cache@v5
-        with:
-          path: |
-            deps
-            _build
-          key: format-elixir-${{ runner.os }}-otp28-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            format-elixir-${{ runner.os }}-otp28-
-
-      - name: Fetch Elixir deps
-        run: mix deps.get
+        uses: ./.github/actions/setup-php
 
       # Each veneer formatter is that SDK's own pinned development dependency,
       # and every version comes out of the SDK's manifest rather than being
@@ -125,23 +97,20 @@ jobs:
         working-directory: sdk/php
         run: composer install --no-interaction --no-progress
 
-      # One step, one list — the same list the local gate uses. It covers Rust,
-      # Elixir, Java, Node, Python, Ruby and PHP, and prints a `==>` line per
-      # language. If an install step above ever stops working, the script names
-      # the tool it could not find and still reports every other language,
-      # instead of dropping one silently.
-      - name: Every formatter, in check mode
-        run: scripts/format-apply.sh --check
-
-      - name: reuse lint
-        uses: fsfe/reuse-action@v5
+      - name: Install reuse
+        run: pip install reuse
 
       - name: Install cargo-about
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-about
 
-      - name: THIRD_PARTY_NOTICES.md is fresh
-        run: |
-          cargo about generate about.hbs -o "${RUNNER_TEMP}/third_party_notices.md"
-          diff -u THIRD_PARTY_NOTICES.md "${RUNNER_TEMP}/third_party_notices.md"
+      # One step, and CI keeps no list of its own. The three checks are rows in
+      # the gate runner: the formatter driver (which covers Rust, Elixir, Java,
+      # Node, Python, Ruby and PHP and prints a `==>` line per language), the
+      # per-path licence lint, and the freshness diff of the generated notices.
+      # If an install step above ever stops working, the runner names the tool
+      # it could not find, still reports every other check, and ends non-zero
+      # instead of dropping one silently.
+      - name: The source-shape gates
+        run: python3 scripts/naming_gate.py --run @format

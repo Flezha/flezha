@@ -11,7 +11,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   Tagged `:system` so it stays out of the default `mix test` budget —
   it boots a real SDK subprocess, which can be slow on cold caches. Run via:
 
-      mix test --only state_freshness_e2e
+      mix test test/system/state_freshness_e2e_test.exs
       mix test --include system test/system/state_freshness_e2e_test.exs
 
   The complementary unit-level coverage lives in
@@ -48,7 +48,6 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     :ok
   end
 
-  @tag :state_freshness_e2e
   test "SIGTERM to the runner populates Overwatch.state.snapshot via RunnerShutdownNotification" do
     {port, ce_id} = NodeTestHelper.start_runner_port(@namespace, transport: :uds)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)

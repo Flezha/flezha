@@ -6,7 +6,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
   the bind ships back on `AddOperative.proc_journal`.
   """
   # async: false: writes Application env; a shared on-disk root.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
@@ -16,11 +16,6 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
   import Flezha.State.TestHelpers,
     only: [next_output: 0, refute_dispatched: 0, refute_dispatched: 1]
-
-  setup do
-    TestHelpers.tmp_app_data_dir()
-    :ok
-  end
 
   defp instance_id(), do: "opj_inst_#{System.unique_integer([:positive])}"
 

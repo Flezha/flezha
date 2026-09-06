@@ -7,7 +7,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
   use Mimic
@@ -20,8 +20,6 @@ defmodule Flezha.State.WalWriterCreditTest do
   @session "wal-credit-session"
 
   setup do
-    base = TestHelpers.tmp_app_data_dir()
-
     stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _entity_id -> :ok end)
 
     test_pid = self()
@@ -31,13 +29,7 @@ defmodule Flezha.State.WalWriterCreditTest do
       :ok
     end)
 
-    on_exit(fn ->
-      TestHelpers.reset_all_entities()
-      Application.delete_env(:flezha, :state_root)
-      Application.delete_env(:flezha, :wal_high_watermark_bytes)
-      Application.delete_env(:flezha, :wal_low_watermark_bytes)
-      File.rm_rf!(base)
-    end)
+    on_exit(&TestHelpers.reset_all_entities/0)
 
     entity_id = TestHelpers.sample_entity_id("credit_#{System.unique_integer([:positive])}")
     {:ok, pid} = Supervisor.find_or_start(entity_id)
@@ -104,14 +96,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
     # Flood past the pending-msg cap while suspended so the resumed writer
     # sheds; every queued append carries a debit that must come back.
-    prev_cap = Application.get_env(:flezha, :wal_pending_msg_cap)
     Application.put_env(:flezha, :wal_pending_msg_cap, 5)
-
-    on_exit(fn ->
-      if prev_cap,
-        do: Application.put_env(:flezha, :wal_pending_msg_cap, prev_cap),
-        else: Application.delete_env(:flezha, :wal_pending_msg_cap)
-    end)
 
     # Restart the writer so it picks up the tiny cap. The stop's terminate
     # flushes the first append's tracked bytes — drain those reports so the

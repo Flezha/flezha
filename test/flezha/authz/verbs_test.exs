@@ -8,7 +8,7 @@ defmodule Flezha.AuthZ.VerbsTest do
   rides.
   """
   # async: false: the auth stores are singletons and the posture is flipped.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [], async: false
 
   alias Flezha.AuthZ.{Action, Policy, Verb, Verbs}
   alias Flezha.Service.CliManager
@@ -69,12 +69,9 @@ defmodule Flezha.AuthZ.VerbsTest do
 
   describe "under :enforced" do
     setup do
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_verbs",
-        enabled: true,
-        claim: true,
-        register_source: true
-      )
+      FlezhaTest.Case.install([
+        {:auth_stores, prefix: "flz_verbs", enabled: true, claim: true, register_source: true}
+      ])
 
       assert Flezha.AuthZ.enforcement_posture() == :enforced
       :ok

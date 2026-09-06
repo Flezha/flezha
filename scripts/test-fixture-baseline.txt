@@ -1,0 +1,37 @@
+# Modules that build a fixture in their own `setup` and stay that way, each with
+# the reason. Read by scripts/check-test-fixture.sh through
+# `naming_gate.load_baseline`, so the rule that list carries applies: it MAY
+# ONLY SHRINK. An entry the tree no longer holds fails the gate, so a module
+# that later moves onto `FlezhaTest.Case` must come off this list.
+#
+# Sixty-seven modules were on this list when the fixture table landed. Sixty-two
+# came off it in the same change. These five are the shapes the table cannot
+# express without changing what the module proves.
+
+# The exact path LENGTH of `@peer_dir` is the subject: three tests assert the
+# composed socket string literally and one asserts the 107-byte `sun_path`
+# ceiling. A `:tmp_dir` of a different length would make those vacuous.
+test/flezha/transport/socket/support_test.exs
+
+# `@tmp_base` is the RELATIVE path `app_data/test_transport_auth`, and one test
+# pins that `Support.socket_dir()` expands a relative configured path to an
+# absolute one. An absolute `/tmp` root would prove nothing. Its environment
+# restores are `try/after` blocks rather than `on_exit`, which `:env` cannot
+# absorb without restructuring the tests.
+test/flezha/transport/transport_auth_test.exs
+
+# `@artifact_dir` is `test/load/artifacts`, a DURABLE output directory the run
+# writes its memory series into for the operator to read afterwards. A fixture
+# row would delete it with the test.
+test/load/memory_drift_test.exs
+
+# The directory is a `setup_all` fixture: five subdirectories and the release
+# daemon's whole environment are derived from it before any test runs, and the
+# table installs per test.
+test/flezha/plugin/installer/release_cli_system_test.exs
+
+# `OrchestratorTest`'s own teardown restarts the Orchestrator and must see the
+# RESTORED environment. The table registers its cleanup first, so a module's own
+# `on_exit` runs BEFORE it, and the singleton would be restarted against the
+# ghost-peer configuration the test set.
+test/flezha/cluster/cluster_test.exs
