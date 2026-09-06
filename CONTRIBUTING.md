@@ -57,6 +57,15 @@ Two repo-wide rules that are easy to miss:
 
 Keep a change to one concern.
 
+## Working on a batch of related changes
+
+`wip/README.md` documents how larger sets of work are run here: one item at a
+time, reproduced before it is coded, reviewed by someone other than its author,
+and landed with its documentation and spec changes in the same commit. The
+directory carries the templates, the worker briefs and three small scripts. The
+method is worth reading before taking on a batch of defects or a migration; a
+single focused pull request does not need it.
+
 ## Security issues
 
 Do not open a public issue — see [SECURITY.md](SECURITY.md).
