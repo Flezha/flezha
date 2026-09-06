@@ -298,7 +298,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   Write fetched WAL bytes as `ref`'s local WAL, and fetched snapshot bytes as
   its snapshot files.
 
-  Written through `Paths.atomic_install/2` — the same `.transferring` →
+  Written through `Paths.atomic_install/3` — the same `.transferring` →
   fsync → rename the cross-controller pull uses, so a failure leaves the
   destination cold rather than half-restored.
   """
@@ -388,5 +388,5 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   defp atomic_write(path, bytes),
-    do: Paths.atomic_install(path, &:file.write(&1, bytes))
+    do: Paths.atomic_install(path, &:file.write(&1, bytes), :tier_artifact)
 end

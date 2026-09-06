@@ -219,7 +219,7 @@ defmodule Flezha.State.WalTransfer do
     end
   end
 
-  # `Paths.atomic_install/2` owns the `.transferring` → fsync → rename dance;
+  # `Paths.atomic_install/3` owns the `.transferring` → fsync → rename dance;
   # this only fills the handle it is given.
   defp pull_file(source_node, {_, _, _} = entity_id, name, timeout, destination) do
     case Paths.entity_file_path(destination, name) do
@@ -231,7 +231,8 @@ defmodule Flezha.State.WalTransfer do
 
         Paths.atomic_install(
           dest,
-          &copy_chunks(source_node, entity_id, name, &1, 0, timeout)
+          &copy_chunks(source_node, entity_id, name, &1, 0, timeout),
+          :wal_transfer
         )
     end
   end

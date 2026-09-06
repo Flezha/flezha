@@ -43,18 +43,14 @@ defmodule Flezha.State.Completion do
   """
   @spec write(binary(), t()) :: :ok
   def write(operative_class, %{} = record) when is_binary(operative_class) do
-    dir = Paths.class_dir(operative_class)
-    final = Path.join(dir, @filename)
-    tmp = final <> ".tmp"
+    final = Path.join(Paths.class_dir(operative_class), @filename)
+    bytes = :erlang.term_to_binary(record)
 
-    with :ok <- File.mkdir_p(dir),
-         :ok <- File.write(tmp, :erlang.term_to_binary(record)),
-         :ok <- File.rename(tmp, final) do
-      :ok
-    else
+    case Paths.atomic_install(final, &:file.write(&1, bytes), :completion) do
+      :ok ->
+        :ok
+
       {:error, reason} ->
-        _ = File.rm(tmp)
-
         Logger.warning(
           "[state] completion record write failed for #{operative_class}: #{inspect(reason)}"
         )

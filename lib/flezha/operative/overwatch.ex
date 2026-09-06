@@ -37,7 +37,10 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Transport.LivenessCounters
 
   # Reply-frame metadata key carrying the `change_seq` a single selected Entity
-  # was serialized at (stamped by both SDKs' `EntityState` handler).
+  # was serialized at (stamped by both SDKs' `EntityState` handler). Spelled
+  # here rather than read from `Flezha.State.Wire`, which owns the wire's other
+  # `flz.` keys: `operative` ranks below `state`, so naming it would be a new
+  # upward reference `scripts/check-layer-direction.sh` refuses.
   @change_seq_meta_key "flz.change_seq"
 
   require Logger

@@ -408,12 +408,22 @@ defmodule Flezha.State.WalWriter.Settlement do
     do: state
 
   def persist_dedup(state) do
-    _ =
-      Outbox.write(state.entity_id, %{
-        last_persisted_seq: max(state.last_persisted_seq, 0),
-        outbox_flushed_seq: state.outbox_flushed_seq,
-        epoch: state.outbox_epoch
-      })
+    # The cursors as one record; only the persistence watermark is clamped,
+    # because the dedup file's own guard has no room for the empty-log `-1`.
+    progress = %{State.progress(state) | last_persisted_seq: max(state.last_persisted_seq, 0)}
+
+    # An out-of-order record is not written. The cursor may lag and never lead
+    # (`Flezha.State.DurabilityTier.Hydrator`), so keeping the older, consistent
+    # record re-drives work the sinks dedup — writing a flush cursor ahead of
+    # what is durable would drop those outputs for good.
+    if State.ordered?(progress) do
+      _ = Outbox.write(state.entity_id, progress)
+    else
+      Logger.error(
+        "[state] refusing to persist an out-of-order cursor record for " <>
+          "#{inspect(state.entity_id)}: #{inspect(progress)}"
+      )
+    end
 
     state
   end

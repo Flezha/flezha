@@ -322,4 +322,177 @@ mod tests {
         }
         assert!(sink.changes.is_empty());
     }
+
+    mod shared_fixture {
+        //! The frame both runtimes read, from the one file that holds it:
+        //! `test/fixtures/durable_frame.txt`. The Elixir side folds the same
+        //! rows in `test/flezha/state/durable_frame_conformance_test.exs`, so a
+        //! framing change on either side fails the other side's suite.
+
+        use super::*;
+        use crate::header::{decide_schema, decode_header, sdk_lang_name, SchemaDecision};
+
+        const FIXTURE: &str = include_str!("../../test/fixtures/durable_frame.txt");
+
+        /// Rows of one kind, already split on `|` and trimmed.
+        fn rows(kind: &str) -> Vec<Vec<String>> {
+            FIXTURE
+                .lines()
+                .filter(|line| !line.trim_start().starts_with('#'))
+                .map(|line| {
+                    line.split('|')
+                        .map(|f| f.trim().to_string())
+                        .collect::<Vec<_>>()
+                })
+                .filter(|fields| fields.first().map(String::as_str) == Some(kind))
+                .map(|fields| fields[1..].to_vec())
+                .collect()
+        }
+
+        fn from_hex(hex: &str) -> Vec<u8> {
+            if hex == "-" {
+                return Vec::new();
+            }
+            hex.as_bytes()
+                .chunks(2)
+                .map(|pair| {
+                    u8::from_str_radix(std::str::from_utf8(pair).expect("ascii hex"), 16)
+                        .expect("hex byte")
+                })
+                .collect()
+        }
+
+        /// The stamp every `frame` row carries, per the fixture's own header.
+        fn fixture_template() -> HeaderTemplate {
+            HeaderTemplate {
+                sdk_lang: SDK_LANG_RUST,
+                sdk_version: 65_536,
+                schema_version: 1,
+                format_id: FORMAT_ID_POSTCARD,
+            }
+        }
+
+        #[test]
+        fn every_frame_row_folds_to_the_verdict_the_fixture_states() {
+            let rows = rows("frame");
+            assert!(!rows.is_empty(), "the fixture holds no frame rows");
+
+            for row in rows {
+                let (name, hex, verdict, seqs) = (&row[0], &row[1], &row[2], &row[3]);
+                let log = from_hex(hex);
+                let mut sink = RecordingSink::default();
+                let folded = fold_change_log(&log, &fixture_template(), 1, &mut sink);
+
+                match verdict.as_str() {
+                    "ok" => {
+                        folded.unwrap_or_else(|e| panic!("row {name}: expected ok, got {e:?}"));
+                        let walked: Vec<u64> = iter_change_log_records(&log)
+                            .map(|r| r.expect("row folds").seq)
+                            .collect();
+                        let expected: Vec<u64> = if seqs == "-" {
+                            Vec::new()
+                        } else {
+                            seqs.split(',').map(|s| s.parse().expect("seq")).collect()
+                        };
+                        assert_eq!(walked, expected, "row {name}");
+                    }
+                    "crc_mismatch" => match folded {
+                        Err(RestoreError::CrcMismatch { .. }) => {}
+                        other => panic!("row {name}: expected a crc mismatch, got {other:?}"),
+                    },
+                    other => panic!("row {name}: the fixture states an unknown verdict {other}"),
+                }
+            }
+        }
+
+        #[test]
+        fn every_header_row_decodes_to_the_fields_the_fixture_states() {
+            let rows = rows("header");
+            assert!(!rows.is_empty(), "the fixture holds no header rows");
+
+            for row in rows {
+                let name = &row[0];
+                let decoded = decode_header(&from_hex(&row[1]))
+                    .unwrap_or_else(|e| panic!("row {name}: {e:?}"));
+
+                assert_eq!(
+                    decoded.sdk_lang,
+                    row[2].parse::<u8>().expect("lang"),
+                    "row {name}"
+                );
+                assert_eq!(
+                    decoded.sdk_version,
+                    row[3].parse::<u32>().expect("version"),
+                    "row {name}"
+                );
+                assert_eq!(
+                    decoded.schema_version,
+                    row[4].parse::<u32>().expect("schema"),
+                    "row {name}"
+                );
+                assert_eq!(
+                    decoded.format_id,
+                    row[5].parse::<u8>().expect("format"),
+                    "row {name}"
+                );
+                assert_eq!(
+                    decoded.crc32,
+                    u32::from_str_radix(&row[6], 16).expect("crc"),
+                    "row {name}"
+                );
+            }
+        }
+
+        #[test]
+        fn the_language_table_names_what_the_fixture_names() {
+            let rows = rows("lang");
+            assert!(!rows.is_empty(), "the fixture holds no language rows");
+
+            for row in rows {
+                let value: u8 = row[0].parse().expect("lang value");
+                // `unspecified` is allocated in the table but is not an SDK, so
+                // the kernel answers `unallocated` for it; every other row is a
+                // language both runtimes name the same way.
+                if value == 0 {
+                    continue;
+                }
+                assert_eq!(sdk_lang_name(value), row[1], "lang {value}");
+            }
+        }
+
+        #[test]
+        fn every_schema_row_reaches_the_verdict_the_fixture_states() {
+            let rows = rows("schema");
+            assert!(!rows.is_empty(), "the fixture holds no schema rows");
+
+            for row in rows {
+                let stamped: u32 = row[0].parse().expect("stamped");
+                let running: u32 = row[1].parse().expect("running");
+                let floor: u32 = row[2].parse().expect("min_readable");
+                let decided = decide_schema(stamped, running, floor);
+
+                match row[3].as_str() {
+                    "decode" => assert_eq!(decided.unwrap(), SchemaDecision::Decode),
+                    "from_future" => assert!(matches!(
+                        decided,
+                        Err(RestoreError::SchemaFromTheFuture { .. })
+                    )),
+                    "too_old" => {
+                        assert!(matches!(decided, Err(RestoreError::SchemaTooOld { .. })))
+                    }
+                    other => {
+                        let from: u32 = other
+                            .strip_prefix("migrate:")
+                            .expect("a known verdict")
+                            .parse()
+                            .expect("from version");
+                        assert_eq!(
+                            decided.unwrap(),
+                            SchemaDecision::Migrate { from_version: from }
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

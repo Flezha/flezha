@@ -33,20 +33,12 @@ defmodule Flezha.State.Snapshot do
     if byte_size(header) != @header_size do
       {:error, {:bad_header_size, byte_size(header)}}
     else
-      dir = Paths.state_dir(entity_id)
-      File.mkdir_p!(dir)
-
       final_path = Paths.snapshot_path(entity_id, seq)
-      tmp_path = final_path <> ".tmp"
 
-      crc = :erlang.crc32(<<header::binary, snapshot_bytes::binary>>)
+      crc = RecordFrame.crc32(header, snapshot_bytes)
       bytes = <<header::binary, snapshot_bytes::binary, crc::32-big>>
 
-      with {:ok, dst} <- :file.open(tmp_path, [:raw, :write, :binary]),
-           :ok <- :file.write(dst, bytes),
-           :ok <- :file.sync(dst),
-           :ok <- :file.close(dst),
-           :ok <- File.rename(tmp_path, final_path) do
+      with :ok <- Paths.atomic_install(final_path, &:file.write(&1, bytes), :snapshot) do
         case WriterRegistry.lookup(entity_id) do
           {:ok, pid} -> WalWriter.truncate_up_to(pid, seq)
           :error -> :ok
@@ -73,7 +65,7 @@ defmodule Flezha.State.Snapshot do
         <<header::binary-size(@header_size), bytes::binary-size(^payload_size), crc::32-big>> =
           body
 
-        if :erlang.crc32(<<header::binary, bytes::binary>>) == crc do
+        if RecordFrame.crc32(header, bytes) == crc do
           {:ok, header, bytes}
         else
           {:error, :crc_mismatch}

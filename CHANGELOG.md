@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed — one durable record frame, one crc, one way a durable file lands
+
+Four pieces of code decided what a durable record was, and they gave three
+different answers to a damaged one. There is one now: every read and write of
+the on-disk record framing, its 16-byte header and its checksum goes through a
+single module, on the controller side and in the Elixir SDK alike, and the
+kernel's own reader is held to the same bytes by a fixture both runtimes' tests
+read. A change to the framing on either side now fails the other side's tests.
+
+Whole durable files also land one way. Each one declares how it is written, what
+makes its bytes durable and the name it wears while it is being written, and one
+install performs that ceremony; the scanners that must ignore a file being
+written derive what to skip from those declarations instead of listing suffixes,
+so a new durable file cannot show up as a phantom Entity because a scanner was
+not edited.
+
+An Elixir-hosted runner now reports how much queued input a restore threw away,
+under the same heartbeat key every other runtime uses. It was the only runtime
+that reported neither the count nor the key, which left that operator surface
+correct for six SDKs and blank for the seventh.
+
 ### Fixed — a QUIC peer ending a stream is now reported, and reported the same way
 
 The controller's transport server ran two separate drivers, one for Unix

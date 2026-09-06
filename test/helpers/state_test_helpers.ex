@@ -317,8 +317,10 @@ defmodule Flezha.State.TestHelpers do
         nil
 
       offset ->
-        <<_seq::64-big, len::32-big>> = binary_part(data, offset, 12)
-        {offset, offset + 12 + len + 4}
+        {:ok, _seq, _header, _body, _raw, consumed} =
+          RecordFrame.decode_bytes(binary_part(data, offset, byte_size(data) - offset))
+
+        {offset, offset + consumed}
     end)
     |> Enum.to_list()
   end
@@ -348,7 +350,7 @@ defmodule Flezha.State.TestHelpers do
   @spec write_wal_of_lang(Paths.entity_id(), byte()) :: :ok
   def write_wal_of_lang(entity_id, sdk_lang) do
     body = "state-bytes"
-    header = <<sdk_lang, 0::32, 1::32, 1, 0::16, :erlang.crc32(body)::32>>
+    header = RecordFrame.encode_header(sdk_lang, 0, 1, RecordFrame.format_id(:postcard), body)
     path = Paths.wal_path(entity_id)
 
     File.mkdir_p!(Path.dirname(path))

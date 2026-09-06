@@ -393,14 +393,9 @@ defmodule Flezha.Service.Cli.State do
           WalWriter.outbox_status(pid)
 
         :error ->
-          dedup = Outbox.read(entity_id)
-
-          %{
-            last_persisted_seq: dedup.last_persisted_seq,
-            outbox_flushed_seq: dedup.outbox_flushed_seq,
-            epoch: dedup.epoch,
-            pending: nil
-          }
+          # The same cursor record the writer answers with, read off the dedup
+          # file instead of the live writer; only the outbox depth is unknown.
+          Map.put(Outbox.read(entity_id), :pending, nil)
       end
 
     watermark = InputLog.watermark(rc)

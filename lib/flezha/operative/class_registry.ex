@@ -574,16 +574,12 @@ defmodule Flezha.Operative.ClassRegistry do
 
   defp write_sidecar_file(operative_class, filename, content) do
     path = sidecar_path(operative_class, filename)
-    tmp = path <> ".tmp"
 
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(tmp, content),
-         :ok <- File.rename(tmp, path) do
-      :ok
-    else
+    case Paths.atomic_install(path, &:file.write(&1, content), :class_kind) do
+      :ok ->
+        :ok
+
       {:error, reason} ->
-        _ = File.rm(tmp)
-
         Logger.warning(
           "[operative] #{filename} sidecar write failed for #{operative_class}: #{inspect(reason)}"
         )

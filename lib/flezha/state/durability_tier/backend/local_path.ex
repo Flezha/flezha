@@ -19,7 +19,9 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
 
   @behaviour Flezha.State.DurabilityTier.Backend
 
+  alias Flezha.State.Durable
   alias Flezha.State.DurabilityTier.Backend
+  alias Flezha.State.Paths
 
   @claim_suffix ".claim"
 
@@ -56,7 +58,7 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
     keys =
       root
       |> walk_files()
-      |> Enum.reject(&(String.ends_with?(&1, @claim_suffix) or String.contains?(&1, ".tmp.")))
+      |> Enum.reject(&(String.ends_with?(&1, @claim_suffix) or Durable.in_progress?(&1)))
       |> Enum.map(&Path.relative_to(&1, root))
       |> Enum.filter(&String.starts_with?(&1, prefix))
       |> Enum.map(&{&1, age_of(Path.join(root, &1), now)})
@@ -93,31 +95,14 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
     end
   end
 
+  # The rename is only atomic-durable if the bytes it points at are already on
+  # the platter — this tier's whole contract — which is what the declaration's
+  # `durability: :inline` buys. The suffix is unique per write because two
+  # claimants may race one key.
   defp write_atomic(path, content) do
-    File.mkdir_p!(Path.dirname(path))
-    tmp = "#{path}.tmp.#{System.unique_integer([:positive])}"
-
-    with :ok <- write_synced(tmp, content),
-         :ok <- File.rename(tmp, path) do
-      :ok
-    else
-      {:error, reason} ->
-        _ = File.rm(tmp)
-        {:error, reason}
-    end
+    Paths.atomic_install(path, &:file.write(&1, content), :tier_object)
   rescue
     error -> {:error, error}
-  end
-
-  # The rename is only atomic-durable if the bytes it points at are already on
-  # the platter — this tier's whole contract — so the temp file is fsynced
-  # before it is renamed into place.
-  defp write_synced(path, content) do
-    with {:ok, io} <- :file.open(path, [:write, :binary, :raw]),
-         :ok <- :file.write(io, content),
-         :ok <- :file.sync(io) do
-      :file.close(io)
-    end
   end
 
   defp rm_idempotent(path) do

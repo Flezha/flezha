@@ -144,6 +144,16 @@ defmodule Flezha.State.Wire do
   end
 
   @doc """
+  The reply-frame metadata key carrying the `change_seq` a single selected
+  Entity was serialized at.
+
+  One Elixir owner beside `flz_core`'s `CHANGE_SEQ_META_KEY`, in the module
+  that already builds the wire's other `flz.` keys.
+  """
+  @spec change_seq_key() :: binary()
+  def change_seq_key, do: "flz.change_seq"
+
+  @doc """
   The reserved output-identity metadata stamped on every durable output as it
   reaches the `:on_output` plugin chain — the ONE definition of the contract a
   conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,

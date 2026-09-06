@@ -7,6 +7,8 @@ defmodule Flezha.SDK.PersistenceTest do
   """
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   import FlezhaTest.Helper.SdkOperativeHarness
 
   alias Flezha.SDK.{
@@ -170,15 +172,23 @@ defmodule Flezha.SDK.PersistenceTest do
       assert {:ok, :decode} = Record.resolve(Record.header(body, 2), {2, 5})
     end
 
-    test "a crc that does not cover header and body is refused naming the seq" do
+    test "a crc that does not cover header and body is refused with the frame seam's refusal" do
       body = Record.encode_body({:delta, 1})
       header = Record.header(body, 1)
 
       corrupt =
         <<3::64-big, 16 + byte_size(body)::32-big, header::binary, body::binary, 0::32-big>>
 
-      assert {:error, "crc32 mismatch on change record (seq=3)"} =
-               Record.fold(CounterProc, nil, <<>>, <<>>, corrupt, 0)
+      # The seam's own sentence, not a second one phrased in the SDK's words: a
+      # payload has no torn tail to repair, so a crc failure is refused however
+      # few bytes follow it.
+      log =
+        capture_log(fn ->
+          assert {:error, reason} = Record.fold(CounterProc, nil, <<>>, <<>>, corrupt, 0)
+          assert reason =~ "durable record refused (crc_mismatch) in change log at byte offset 0"
+        end)
+
+      assert log =~ "durable record refused (crc_mismatch)"
     end
 
     test "a short snapshot header is a malformed header" do

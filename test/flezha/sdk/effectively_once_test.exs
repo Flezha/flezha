@@ -208,15 +208,21 @@ defmodule Flezha.SDK.EffectivelyOnceTest do
   end
 
   test "a restore discards the staged interval, and a replacement re-holds it from the slot" do
-    %{op: op} = start_operative(CheckpointStoreOp)
+    %{op: op, counters: counters} = start_operative(CheckpointStoreOp)
     pid = entity!(op, @proc)
     push(op, "k1=a", 1)
     push(op, "k2=b", 2)
     assert [_, _] = frames(2)
+    before = Counters.restore_discarded_inputs(counters)
 
     # The two changes are staged, not durable: a restore re-seats the Entity
     # on a past in which neither was applied.
     assert {:ok, 0, false} = Entity.restore(pid, <<>>, <<>>, <<>>, 0)
+
+    # And the two inputs it threw away are reported, under the key every other
+    # runtime carries: the controller re-forwards them, but an operator has to
+    # be able to see that they went.
+    assert Counters.restore_discarded_inputs(counters) - before == 2
     assert {:ok, %{}, 1} = Entity.read(pid, 1_000)
 
     push(op, "commit:now", 3)

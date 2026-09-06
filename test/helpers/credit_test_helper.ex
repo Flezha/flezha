@@ -16,8 +16,7 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
     sid = Wire.encode_entity_id(class, procedure, key)
     header = TestHelpers.stub_header()
 
-    <<byte_size(sid)::16-big, sid::binary, seq::64-big, header::binary, byte_size(body)::32-big,
-      body::binary, :erlang.crc32(body)::32-big>>
+    Wire.encode_frame(sid, seq, header, body)
   end
 
   @doc "Every LivenessCounters channel row registered for `runner_id`."

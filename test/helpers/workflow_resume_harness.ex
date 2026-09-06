@@ -21,6 +21,7 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
   alias Flezha.State.ProcJournal
+  alias Flezha.State.RecordFrame
   alias FlezhaTest.Helper.NodeTestHelper
 
   def collect_loop(acc) do
@@ -172,14 +173,15 @@ defmodule FlezhaTest.Helper.WorkflowResumeHarness do
   end
 
   @doc """
-  Every record seq in a WAL file's bytes, newest first. The WAL is a stream of
-  `<seq::64><len::32><body::len><crc::32>` records.
+  Every record seq in a WAL file's bytes, newest first, through the one walk
+  that reads the framing.
   """
-  def wal_seqs(
-        <<seq::64-big, len::32-big, _body::binary-size(len), _crc::32-big, rest::binary>>,
-        acc
-      ),
-      do: wal_seqs(rest, [seq | acc])
+  def wal_seqs(bytes, acc) do
+    {:ok, seqs} =
+      RecordFrame.fold_bytes(bytes, {:log, "wal_seqs"}, acc, fn {seq, _h, _b, _raw}, acc ->
+        {:cont, [seq | acc]}
+      end)
 
-  def wal_seqs(_, acc), do: acc
+    seqs
+  end
 end

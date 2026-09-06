@@ -17,6 +17,7 @@ defmodule Flezha.State.Paths do
   """
 
   alias Flezha.Config
+  alias Flezha.State.Durable
 
   @type entity_id ::
           {operative_class :: binary(), procedure_id :: binary(), entity_key :: binary()}
@@ -173,9 +174,10 @@ defmodule Flezha.State.Paths do
 
   @doc """
   Remove a class's state tree — the one guard every deletion of durable state
-  passes: a procedure directory holding a `.tmp` or `.rewriting` marker has a
-  write in flight, and truncating it would corrupt the rename ceremony, so it
-  is skipped (with WARN) and the class directory stays until it is empty.
+  passes: a procedure directory holding a file under any in-progress suffix
+  `Flezha.State.Durable` declares has a write in flight, and truncating it
+  would corrupt the rename ceremony, so it is skipped (with WARN) and the class
+  directory stays until it is empty.
   """
   @spec delete_class_dir(binary()) :: :ok
   def delete_class_dir(operative_class) when is_binary(operative_class) do
@@ -199,12 +201,10 @@ defmodule Flezha.State.Paths do
   defp maybe_delete_procedure(procedure_dir) do
     case File.ls(procedure_dir) do
       {:ok, names} ->
-        if Enum.any?(
-             names,
-             &(String.ends_with?(&1, ".tmp") or String.ends_with?(&1, ".rewriting"))
-           ) do
+        if Enum.any?(names, &Durable.in_progress?/1) do
           Logger.warning(
-            "[state] skipping state dir #{procedure_dir}: write in flight (.tmp / .rewriting present)"
+            "[state] skipping state dir #{procedure_dir}: write in flight " <>
+              "(#{Enum.join(Durable.suffixes(), " / ")} present)"
           )
         else
           _ = File.rm_rf(procedure_dir)
@@ -466,9 +466,9 @@ defmodule Flezha.State.Paths do
   Enumerate Entity files under a Operative tree.
 
   Pass `{operative_class, procedure_id, ""}` to scan the whole Procedure. Returns lists
-  of `{entity_key, ...}` tuples grouped by file type. Files matching
-  `.tmp` / `.rewriting` suffixes are intentionally skipped — they
-  represent crash-residue from atomic-rename workflows.
+  of `{entity_key, ...}` tuples grouped by file type. A file wearing any
+  in-progress suffix `Flezha.State.Durable` declares is skipped — it is
+  crash-residue from an atomic-rename workflow, not an Entity.
   """
   @spec scan_dir(entity_id()) :: scan_result()
   def scan_dir({_, _, _} = pid) do
@@ -478,7 +478,7 @@ defmodule Flezha.State.Paths do
     |> list_dir()
     |> Enum.reduce(%{wal_files: [], snapshot_files: [], outbox_files: []}, fn name, acc ->
       cond do
-        String.ends_with?(name, ".tmp") or String.ends_with?(name, ".rewriting") ->
+        Durable.in_progress?(name) ->
           acc
 
         # The per-instance journal and inbox ride the Entity substrate but are
@@ -553,41 +553,54 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Replace `path` atomically: `write.(fd)` fills a `.transferring` sibling, which
-  is fsynced and then renamed over `path`. Any failure removes the sibling and
-  leaves whatever was there before — never a half-written file, and never a
-  residue the Entity scanners would surface (`.transferring` matches none of
-  their suffixes).
+  Replace `path` atomically for the durable file `durable` declares: `write.(fd)`
+  fills an in-progress sibling under the declared suffix, which is fsynced when
+  the declaration says the install owes the sync, and then renamed over `path`.
+  Any failure removes the sibling and leaves whatever was there before — never a
+  half-written file, and never a residue a scanner would surface
+  (`Flezha.State.Durable.in_progress?/1` recognises every declared suffix).
 
-  The one definition of how a durable file lands, shared by the
-  cross-controller pull and the remote durability tier's hydration.
+  The one definition of how a durable file lands. What varies between callers —
+  the suffix, whether the ceremony fsyncs, whether it creates the directory — is
+  read from `Flezha.State.Durable`'s row rather than re-implemented around it.
   """
-  @spec atomic_install(binary(), (:file.io_device() -> :ok | {:error, term()})) ::
+  @spec atomic_install(binary(), (:file.io_device() -> :ok | {:error, term()}), atom()) ::
           :ok | {:error, term()}
-  def atomic_install(path, write) when is_function(write, 1) do
-    transferring = path <> ".transferring"
+  def atomic_install(path, write, durable) when is_function(write, 1) and is_atom(durable) do
+    row = Durable.fetch!(durable)
+    in_progress = Durable.in_progress_path(path, durable)
 
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         {:ok, fd} <- :file.open(transferring, [:raw, :write, :binary]) do
-      result = with :ok <- write.(fd), do: :file.datasync(fd)
+    with :ok <- ensure_dir(path, row.create_dir?),
+         {:ok, fd} <- :file.open(in_progress, [:raw, :write, :binary]) do
+      result = with :ok <- write.(fd), do: install_sync(fd, row.durability)
       _ = :file.close(fd)
 
       case result do
-        :ok -> rename_or_discard(transferring, path)
-        {:error, _} = err -> discard_install(transferring, err)
+        :ok -> rename_or_discard(in_progress, path)
+        {:error, _} = err -> discard_install(in_progress, err)
       end
     end
   end
 
-  defp rename_or_discard(transferring, path) do
-    case File.rename(transferring, path) do
+  # A file whose owner already fsyncs on a cadence of its own does not pay a
+  # second sync here; the declaration is what says which.
+  defp install_sync(fd, :inline), do: :file.datasync(fd)
+  defp install_sync(_fd, :batched), do: :ok
+
+  # Where the directory's existence is the signal that an Entity is alive, the
+  # install must fail with `:enoent` rather than resurrect a removed one.
+  defp ensure_dir(path, true), do: File.mkdir_p(Path.dirname(path))
+  defp ensure_dir(_path, false), do: :ok
+
+  defp rename_or_discard(in_progress, path) do
+    case File.rename(in_progress, path) do
       :ok -> :ok
-      {:error, _} = err -> discard_install(transferring, err)
+      {:error, _} = err -> discard_install(in_progress, err)
     end
   end
 
-  defp discard_install(transferring, err) do
-    _ = File.rm(transferring)
+  defp discard_install(in_progress, err) do
+    _ = File.rm(in_progress)
     err
   end
 

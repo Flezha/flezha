@@ -1248,3 +1248,92 @@ A refusal SHALL leave the bytes on disk untouched and SHALL leave the operative 
 - **WHEN** the Controller's reader, the Elixir SDK's restore fold and the kernel's change-log fold are each given the same corrupt record
 - **THEN** all three SHALL refuse by name, and none SHALL return a partial result as success
 
+### Requirement: The durable record frame SHALL have exactly one reader and one writer
+
+Every read and every write of the durable record framing `[seq: u64 BE][len: u32 BE][header: 16 B][change_bytes][crc32: u32 BE]` SHALL go through `Flezha.State.RecordFrame`, on disk and over a binary alike.
+
+A module that holds framed records SHALL NOT decompose the framing itself, SHALL NOT compute the framing crc32 itself, and SHALL NOT restate the header's byte length. This applies to the Controller's restore path and to the Elixir SDK, which reads the same framing from bytes the Controller ships rather than from a file, and which reaches the seam through the packaging-boundary allow-list the way it already reaches `Flezha.State.Wire`.
+
+The crc32 over `header <> change_bytes` SHALL be written and verified in one expression. Two spellings of the same value — `crc32(header <> body)` and `crc32(crc32(header), body)` — are the same crc computed twice, and only one of them SHALL remain.
+
+The kernel's reader (`flz_core::restore::fold_change_log`) is the second runtime and SHALL NOT share code with the Elixir seam. The two SHALL share a byte fixture instead: golden record bytes, stored once, read by both runtimes' tests, so that a framing change on either side fails on both.
+
+#### Scenario: One walk, and the documentation that says so is true
+
+- **WHEN** the readers of the durable record framing are enumerated
+- **THEN** exactly one module SHALL decompose it, and the published statement that `RecordFrame.fold_records/3` is the one walk every reader uses SHALL be true of the tree
+
+#### Scenario: A byte-oriented reader uses the same decoder as a device-oriented one
+
+- **GIVEN** a restore that has read a whole log into memory and an input log that reads a file device
+- **WHEN** each folds its records
+- **THEN** both SHALL reach the same decoder, and a record decoded from bytes and the same record decoded from a device SHALL yield identical `seq`, header and body
+
+#### Scenario: Both runtimes agree on the bytes
+
+- **WHEN** the shared frame fixture is encoded by the Elixir seam
+- **THEN** the kernel's reader SHALL fold those exact bytes to the same records, and a change to either encoder SHALL fail the other runtime's test
+
+#### Scenario: A second frame reader cannot be added quietly
+
+- **WHEN** a module outside the seam decomposes the record framing or computes its crc32
+- **THEN** the declaration test SHALL fail and name the module
+
+### Requirement: A durable file SHALL be installed by one crash-atomic ceremony and SHALL declare its durability
+
+Every whole-file install of durable data SHALL use the one install function, which writes to an in-progress path, fsyncs the descriptor, renames onto the final path, and removes the in-progress file on any failure.
+
+What varies between callers SHALL be read from the durable file's declaration rather than being a constant inside the function: the in-progress suffix it writes under, whether the install owes an fsync of its own, and whether it creates the directory it writes into. A caller that needs a different suffix uses the ceremony instead of re-implementing it.
+
+A runtime packaged separately from the Controller is out of this ceremony, and the reason SHALL be stated where its install lives: the packaging boundary refuses it the module the ceremony belongs to, so an install of its own is the boundary holding rather than a bypass.
+
+Every module that owns durable bytes on disk SHALL declare, in one table, the frame it uses (`record` or `whole-file`), its durability mode (batched through the shared fsync cadence, or fsynced inline) and its in-progress suffix. The scanners that must ignore in-progress files SHALL derive their exclusions from those declared suffixes rather than listing them, so that a new durable file cannot be surfaced as a phantom Entity by omission.
+
+An ownership marker that shares a directory with durable data — a fencing claim file — is not an in-progress file and SHALL stay excluded by name, with the reason stated.
+
+#### Scenario: Every install is the same ceremony
+
+- **WHEN** the tree's whole-file installs of durable data are enumerated
+- **THEN** each SHALL call the one install function, and none SHALL open, write, sync and rename by hand
+
+#### Scenario: A crash mid-install leaves the previous file
+
+- **GIVEN** a durable file being replaced
+- **WHEN** the process dies after the in-progress write and before the rename
+- **THEN** the final path SHALL still hold the previous contents, and the in-progress file SHALL be ignored by every scanner
+
+#### Scenario: A new durable file is a declaration
+
+- **WHEN** a module gains durable bytes on disk
+- **THEN** adding its row to the declaration SHALL be sufficient for the fsync cadence and for the scanners' exclusions, with no second edit in a scanner
+
+#### Scenario: The declaration and the tree cannot disagree
+
+- **WHEN** a module declares itself durable and is absent from the table, or a table row names no module
+- **THEN** the declaration test SHALL fail and name the discrepancy
+
+### Requirement: An Entity's durable cursors SHALL be one record with one stated ordering
+
+The four cursors an Entity's writer carries — the last persisted seq, the outbox durable seq, the outbox flush cursor and the realign epoch they are counted under — SHALL be read through one accessor that returns them together, and a reader SHALL NOT copy the individual fields out of the writer's state.
+
+The ordering the cursors assume SHALL be stated once at the value and asked before the record is written, not restated by each reader: an output is confirmed only after its record is fsynced and a record is fsynced only after it is appended, so the flush cursor SHALL NOT exceed the durable seq and the durable seq SHALL NOT exceed the last persisted seq. Advance SHALL be monotone; a rewind SHALL happen only under an epoch realign.
+
+The snapshot cursor is deliberately outside that chain. It counts how much state a compaction folded away and the flush cursor how much output was confirmed, so an Entity that emits nothing snapshots past a flush cursor that never leaves its empty-log floor; ordering the two against each other would be false of every Entity outside the effectively-once tier.
+
+A cursor's name SHALL mean one thing. Where several names denote "the last durable seq", they SHALL resolve to one field of the record rather than to independent copies that can drift.
+
+#### Scenario: A reader reads the record, not the fields
+
+- **WHEN** an operator surface, a time-travel query, a hydrator or a replay needs an Entity's progress
+- **THEN** it SHALL call the one accessor, and the writer's individual cursor fields SHALL NOT appear in its module
+
+#### Scenario: The ordering is enforced where the value lives
+
+- **WHEN** the cursor record is about to be persisted
+- **THEN** the ordering SHALL be asked of the record, and a record that does not hold it SHALL be refused and reported rather than written, leaving the older record that does
+
+#### Scenario: A rewind happens only under an epoch realign
+
+- **WHEN** a cursor moves backwards
+- **THEN** the move SHALL be attributable to an epoch realign, and any other backwards move SHALL be refused
+

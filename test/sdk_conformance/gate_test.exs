@@ -658,6 +658,28 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         )
       end
     end
+
+    test "the Elixir SDK's heartbeat carries every key the controller mirrors" do
+      # The Elixir SDK is its own core: `flz_core`'s key set says nothing about
+      # what it sends. A key the controller holds a slot for and this runtime
+      # omits is an operator surface that is correct for six SDKs and blank for
+      # the seventh.
+      sent = Flezha.SDK.RunnerServer.heartbeat_metadata(Flezha.SDK.Counters.new())
+      mirrored = MapSet.new(Flezha.Runner.StreamChannel.heartbeat_keys())
+      missing = MapSet.difference(mirrored, MapSet.new(Map.keys(sent)))
+
+      if MapSet.size(missing) > 0 do
+        fail(
+          "the Elixir SDK's data heartbeat omits #{Enum.join(Enum.sort(missing), ", ")}, " <>
+            "which the controller mirrors into a liveness slot"
+        )
+      end
+
+      # A runtime that discarded nothing reports zero rather than omitting the
+      # key: "nothing was discarded" and "nothing was measured" are different
+      # answers, and only the first is honest about a runtime that was asked.
+      assert sent["restore_discarded_inputs"] == "0"
+    end
   end
 
   describe "runner diagnostics" do

@@ -123,6 +123,55 @@ defmodule Flezha.State.WalWriter.State do
           outbox_resettle_ms: pos_integer()
         }
 
+  @typedoc """
+  An Entity's durable progress, read as one value: how far its records are
+  persisted, how far they are fsynced, how far its outbox has been confirmed,
+  and the realign epoch all three are counted under.
+  """
+  @type progress :: %{
+          last_persisted_seq: integer(),
+          outbox_durable_seq: integer(),
+          outbox_flushed_seq: integer(),
+          epoch: non_neg_integer()
+        }
+
+  @doc """
+  The Entity's durable cursors as one record.
+
+  The one accessor: a reader that needs an Entity's progress takes this rather
+  than copying the writer's fields, so the four cursors cannot be read at four
+  different moments and reported as one picture.
+  """
+  @spec progress(t()) :: progress()
+  def progress(%__MODULE__{} = state) do
+    %{
+      last_persisted_seq: state.last_persisted_seq,
+      outbox_durable_seq: state.outbox_durable_seq,
+      outbox_flushed_seq: state.outbox_flushed_seq,
+      epoch: state.outbox_epoch
+    }
+  end
+
+  @doc """
+  Whether `progress` holds the ordering the cursors assume: an output is
+  confirmed only after its record is fsynced, and a record is fsynced only
+  after it is appended, so `outbox_flushed_seq <= outbox_durable_seq <=
+  last_persisted_seq`.
+
+  The snapshot cursor is deliberately not in that chain. It counts how much
+  state a compaction folded away, the flush cursor how much output was
+  confirmed; an Entity that emits nothing snapshots past a flush cursor that
+  never leaves `-1`, and ordering the two against each other would be false of
+  every Entity outside the effectively-once tier.
+  """
+  @spec ordered?(progress()) :: boolean()
+  def ordered?(%{
+        last_persisted_seq: persisted,
+        outbox_durable_seq: durable,
+        outbox_flushed_seq: flushed
+      }),
+      do: flushed <= durable and durable <= persisted
+
   @doc "The writer family's monotonic clock, in milliseconds."
   def now_ms(), do: :erlang.monotonic_time(:millisecond)
 end

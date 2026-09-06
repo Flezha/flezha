@@ -1,0 +1,95 @@
+# The durable record frame, pinned as bytes — the cross-runtime instrument for
+# "one frame, one crc, one header layout", in the shape
+# `test/fixtures/reference_topologies.txt` uses for topologies.
+#
+# Two runtimes read this file and neither derives it. The controller and the
+# Elixir SDK fold it through `Flezha.State.RecordFrame`
+# (`test/flezha/state/durable_frame_conformance_test.exs`); the kernel folds it
+# through `flz_core::restore` (`flz_core/src/restore.rs`'s tests). A framing
+# change on either side fails the other side's suite, which is the only thing
+# that keeps two independent implementations of one on-disk format honest.
+#
+# Provenance: TRANSCRIBED BY HAND from one run of the Elixir encoder at
+# `7f23ed68` and checked in. A golden a runtime derives at test time is not a
+# golden, it is a second copy of the thing under test.
+#
+# The record frame is `[seq: u64 BE][len: u32 BE][header: 16 B][body][crc32: u32
+# BE]`, `len = 16 + byte_size(body)`, the trailing crc32 over `header <> body`.
+# The header is `[sdk_lang: u8][sdk_version: u32 BE][schema_version: u32 BE]
+# [format_id: u8][reserved: 2 B zero][crc32 of the body: u32 BE]`.
+#
+# Every `frame` row below carries records stamped `sdk_lang` 1 (rust),
+# `sdk_version` 65536 (1.0.0), `schema_version` 1, `format_id` 1 (postcard), so
+# a reader may fold them without a language or schema refusal getting in first.
+# Bodies are `01 02 03` at seq 0, `04 05` at seq 1, empty at seq 2.
+
+# ---------------------------------------------------------------------------
+# frames — one row per log. Columns, `|`-separated:
+#   frame | name | hex | verdict | seqs
+#
+# `hex` is the whole log, `-` for an empty one. `verdict` is `ok` or the reason
+# tag a refusal carries (`crc_mismatch`). `seqs` is the comma-separated seq of
+# every record the fold delivers, `-` for none.
+
+frame | empty | - | ok | -
+frame | one_record | 00000000000000000000001301000100000000000101000055bc801d010203018d454b | ok | 0
+frame | three_records | 00000000000000000000001301000100000000000101000055bc801d010203018d454b00000000000000010000001201000100000000000101000055df237404057c07175b00000000000000020000001001000100000000000101000000000000b5013098 | ok | 0,1,2
+frame | crc_bit_flip_with_a_record_behind_it | 00000000000000000000001301000100000000000101000055bc801d010203018d454a00000000000000010000001201000100000000000101000055df237404057c07175b | crc_mismatch | -
+
+# ---------------------------------------------------------------------------
+# headers — one row per allocated value of the two table bytes. Columns:
+#   header | name | hex | sdk_lang | sdk_version | schema_version | format_id | body_crc32
+#
+# The body every row's crc covers is `01 02 03`. Adding an SDK language or a
+# body codec is a row here and a row in each runtime's table, and the two
+# cannot drift without this file failing.
+
+header | lang_rust | 01000100000000000101000055bc801d | 1 | 65536 | 1 | 1 | 55bc801d
+header | lang_java | 02000100000000000101000055bc801d | 2 | 65536 | 1 | 1 | 55bc801d
+header | lang_elixir | 03000100000000000101000055bc801d | 3 | 65536 | 1 | 1 | 55bc801d
+header | lang_node | 04000100000000000101000055bc801d | 4 | 65536 | 1 | 1 | 55bc801d
+header | lang_ruby | 05000100000000000101000055bc801d | 5 | 65536 | 1 | 1 | 55bc801d
+header | lang_php | 06000100000000000101000055bc801d | 6 | 65536 | 1 | 1 | 55bc801d
+header | lang_python | 07000100000000000101000055bc801d | 7 | 65536 | 1 | 1 | 55bc801d
+header | format_postcard | 01000100000000000101000055bc801d | 1 | 65536 | 1 | 1 | 55bc801d
+header | format_effect_record | 01000100000000000102000055bc801d | 1 | 65536 | 1 | 2 | 55bc801d
+header | format_timer_ops | 01000100000000000103000055bc801d | 1 | 65536 | 1 | 3 | 55bc801d
+header | format_kryo | 01000100000000000104000055bc801d | 1 | 65536 | 1 | 4 | 55bc801d
+header | format_msgpack | 01000100000000000105000055bc801d | 1 | 65536 | 1 | 5 | 55bc801d
+header | format_json | 01000100000000000106000055bc801d | 1 | 65536 | 1 | 6 | 55bc801d
+header | format_etf | 01000100000000000107000055bc801d | 1 | 65536 | 1 | 7 | 55bc801d
+
+# ---------------------------------------------------------------------------
+# languages — the `sdk_lang` allocation table, one row per value. Columns:
+#   lang | value | name
+
+lang | 0 | unspecified
+lang | 1 | rust
+lang | 2 | java
+lang | 3 | elixir
+lang | 4 | node
+lang | 5 | ruby
+lang | 6 | php
+lang | 7 | python
+
+# ---------------------------------------------------------------------------
+# schema decisions — one row per case both cores answer. Columns:
+#   schema | stamped | running | min_readable | verdict
+#
+# `verdict` is `decode`, `migrate:<from>`, `too_old` or `from_future`. The
+# refusal sentence for `too_old` and `from_future` is one string per condition
+# and is identical in both cores, which is what lets a caller match on the text
+# without knowing which runtime refused.
+#
+# Every row declares `min_readable <= running`. A procedure that declares a
+# floor ABOVE its own running version is out of this table: the two cores agree
+# on the verdict there and disagree on the floor the refusal names, which is
+# recorded in `docs/refactor/NEW-FINDINGS.md` and is not this fixture's to
+# settle.
+
+schema | 1 | 1 | 1 | decode
+schema | 3 | 3 | 1 | decode
+schema | 2 | 3 | 1 | migrate:2
+schema | 1 | 3 | 1 | migrate:1
+schema | 4 | 3 | 1 | from_future
+schema | 1 | 3 | 2 | too_old

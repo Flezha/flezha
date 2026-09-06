@@ -13,6 +13,7 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
 
   alias Flezha.SDK.{Counters, KeyGroup, Operative, Record, Topology}
   alias Flezha.SDK.Operative.Inbox
+  alias Flezha.State.RecordFrame
   alias Flezha.State.Wire
   alias Flezha.Transport.Local
 
@@ -109,11 +110,8 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
     pid
   end
 
-  @doc "The controller's on-disk record: `[seq][len][header][body][crc over header <> body]`."
-  def disk_record(seq, header, body) do
-    <<seq::64-big, byte_size(header) + byte_size(body)::32-big, header::binary, body::binary,
-      :erlang.crc32(header <> body)::32-big>>
-  end
+  @doc "The controller's on-disk record, framed by the one encoder that writes it."
+  def disk_record(seq, header, body), do: RecordFrame.encode_record(seq, header, body)
 
   @doc "A change record this SDK would have written, at `schema`."
   def change_record(seq, change, schema \\ 1) do

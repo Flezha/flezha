@@ -31,6 +31,7 @@ defmodule Flezha.Dlq.Store do
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry
   alias Flezha.State.DurabilityTier
+  alias Flezha.State.Paths
 
   @entries_file "entries.jsonl"
 
@@ -499,12 +500,8 @@ defmodule Flezha.Dlq.Store do
   defp rewrite_entries(rc, sh, map_fun) do
     entries = load_entries(rc, sh) |> Enum.map(map_fun) |> Enum.reject(&is_nil/1)
     path = entries_path(rc, sh)
-    tmp = path <> ".tmp"
     content = Enum.map_join(entries, "", &(Jason.encode!(&1) <> "\n"))
-    File.write!(tmp, content, [:binary])
-    fsync_file(tmp)
-    File.rename!(tmp, path)
-    :ok
+    :ok = Paths.atomic_install(path, &:file.write(&1, content), :dlq_entries)
   end
 
   defp remove_entry(rc, sh, id) do

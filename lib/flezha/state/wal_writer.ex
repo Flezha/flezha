@@ -2,9 +2,8 @@ defmodule Flezha.State.WalWriter do
   @moduledoc """
   Per-Entity `GenServer` wrapping a single open WAL file handle.
 
-  Each appended record is `<<seq::64-big, len::32-big, header::binary,
-  change_bytes::binary, crc32::32-big>>` where `len = 16 + byte_size(change_bytes)`
-  and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`.
+  Each appended record is framed by `Flezha.State.RecordFrame`, which owns the
+  layout and its crc; nothing here restates either.
 
   fsync is decoupled from append: the writer registers as dirty with
   `Flezha.State.FsyncBatcher` which drives the actual `:file.datasync/1`
@@ -410,13 +409,11 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_call(:outbox_status, _from, state) do
-    status = %{
-      last_persisted_seq: state.last_persisted_seq,
-      outbox_flushed_seq: state.outbox_flushed_seq,
-      epoch: state.outbox_epoch,
-      pending: :queue.len(state.pending_outbox),
-      awaiting: map_size(state.outbox_awaiting)
-    }
+    status =
+      Map.merge(State.progress(state), %{
+        pending: :queue.len(state.pending_outbox),
+        awaiting: map_size(state.outbox_awaiting)
+      })
 
     {:reply, status, state}
   end

@@ -934,7 +934,7 @@ right per-Entity WAL without a side table:
 | 5..9 | `schema_version: u32 BE` | the Procedure's declared schema version |
 | 9 | `format_id: u8` | `1` postcard change, `2` effect record, `3` timer-ops record, `4` Kryo change (Java), `5` MessagePack change (Node, Ruby, Python), `6` JSON change (PHP), `7` External Term Format change (Elixir) |
 | 10..12 | reserved | zero |
-| 12..16 | `crc32: u32 BE` | over the body |
+| 12..16 | `crc32: u32 BE` | over the body — written, and read back by nothing: the record frame's own trailing crc is the one that is checked |
 
 The controller stores, truncates and re-ships every `format_id` identically
 and decodes only `format_id = 2`. A **timer-ops record** (`format_id = 3`)
@@ -1095,6 +1095,18 @@ framing, back to back:
 [change_bytes]
 [crc32:  u32 BE]    <- crc32 over header + change_bytes
 ```
+
+One frame, one crc, two runtimes. `Flezha.State.RecordFrame` is the only module
+on the controller side that cuts this framing or computes that crc — the Elixir
+SDK folds a shipped change log through the same one — and
+`flz_core::restore::fold_change_log` is the kernel's own reader for every host
+it serves. The two share no code and are held together by bytes instead:
+`test/fixtures/durable_frame.txt` carries golden records, headers, the
+`sdk_lang` allocation table and the schema-decision cases, and both runtimes'
+tests fold it, so a change to the framing on either side fails the other side's
+suite. Note that the trailing crc32 here covers `header <> change_bytes`, while
+the wire frame above crcs the **body alone** — two contracts that both say
+"frame".
 
 `snapshot_header` is the snapshot file's stored header, shipped rather than
 stripped: it carries the `schema_version` the snapshot was written at, and

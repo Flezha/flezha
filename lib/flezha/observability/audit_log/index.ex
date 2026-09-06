@@ -16,6 +16,7 @@ defmodule Flezha.Observability.AuditLog.Index do
   require Logger
 
   alias Flezha.Observability.AuditLog.Reader
+  alias Flezha.State.Paths
 
   @index_filename "INDEX"
 
@@ -47,21 +48,15 @@ defmodule Flezha.Observability.AuditLog.Index do
   end
 
   @doc """
-  Write the catalog atomically. Writes to `INDEX.tmp` and renames over
-  `INDEX` so a crash mid-write never leaves a partial file as the
+  Write the catalog atomically through `Flezha.State.Paths.atomic_install/3`:
+  the bytes land under the declared in-progress suffix, are fsynced and then
+  renamed over `INDEX`, so a crash mid-write never leaves a partial file as the
   current catalog.
   """
   @spec write(String.t(), [entry()]) :: :ok | {:error, term()}
   def write(dir, entries) when is_binary(dir) and is_list(entries) do
-    File.mkdir_p!(dir)
-    file = path(dir)
-    tmp = file <> ".tmp"
     bin = :erlang.term_to_binary(entries)
-
-    with :ok <- File.write(tmp, bin),
-         :ok <- File.rename(tmp, file) do
-      :ok
-    end
+    Paths.atomic_install(path(dir), &:file.write(&1, bin), :audit_index)
   end
 
   @doc """

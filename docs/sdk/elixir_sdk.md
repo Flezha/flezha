@@ -526,8 +526,12 @@ SDK modules (`lib/flezha/sdk/`) touch the controller application only through na
 `Flezha.SDK.Codec` (the only module that may reference `Flezha.Runner.CommandsProto` /
 `RunnerCommands`), `Flezha.State.Wire` (the frame and entity-id codec, the postcard park body),
 `Flezha.Partition.group_of/1` (key-group hash), `Flezha.Transport.Stream`,
-`Flezha.Transport.Local(.Stream)` and `Flezha.Transport.Server` (native), and
-`Flezha.Transport.Native` (the `flz_nif` client entry points, socket modes).
+`Flezha.Transport.Local(.Stream)` and `Flezha.Transport.Server` (native),
+`Flezha.Transport.Native` (the `flz_nif` client entry points, socket modes), and
+`Flezha.SDK.Knob` (the only module that may reference `Flezha.Config` and the tables under
+it — a runner is a different process and reads the environment, never the controller's
+application env, so every other SDK module asks `Knob.get/1` for a value and
+`Knob.arm/4`/`Knob.wait/4` for a wait).
 `scripts/check-sdk-boundary.sh` enforces it, so the hex extraction (`package-elixir-sdk`) is a
 swap of seam internals, not a rewrite.
 

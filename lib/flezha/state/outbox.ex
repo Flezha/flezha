@@ -54,15 +54,17 @@ defmodule Flezha.State.Outbox do
       })
       when is_integer(seq) and seq >= 0 and is_integer(flushed) and flushed >= -1 and
              is_integer(epoch) and epoch >= 0 do
-    path = Paths.outbox_dedup_path(entity_id)
-    tmp_path = path <> ".tmp"
+    bytes = <<seq::64-big, flushed::64-big-signed, epoch::64-big>>
 
-    # No mkdir: the WAL open owns dir creation, so a cache write can never
-    # resurrect a deleted Entity dir (it fails with :enoent instead).
-    with :ok <- File.write(tmp_path, <<seq::64-big, flushed::64-big-signed, epoch::64-big>>),
-         :ok <- File.rename(tmp_path, path) do
-      :ok
-    end
+    # The declaration creates no directory here: the WAL open owns that, so a
+    # cache write can never resurrect a deleted Entity dir (it fails with
+    # `:enoent` instead), and it owes no fsync of its own — the writer's batch
+    # is what makes the watermark mean anything.
+    Paths.atomic_install(
+      Paths.outbox_dedup_path(entity_id),
+      &:file.write(&1, bytes),
+      :outbox_dedup
+    )
   end
 
   # ---------- delivery confirmation ----------

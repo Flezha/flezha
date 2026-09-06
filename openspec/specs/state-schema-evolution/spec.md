@@ -146,3 +146,29 @@ restart for the remainder of its life.
 - **WHEN** the Entity is restored again
 - **THEN** every record in the payload SHALL be stamped at the running version and no migration entry point SHALL be invoked
 
+### Requirement: The two SDK cores SHALL decide a record's schema from one table of cases
+
+The schema decision — decode, migrate from a named version, or refuse — SHALL be expressed as one table of cases that both SDK cores read, so the kernel's decision and the Elixir SDK's decision are tested as substitutable rather than as two independent implementations.
+
+The kernel (`flz_core`) and the Elixir SDK are two runtimes by the cross-SDK rule and SHALL NOT share code. They SHALL share the table: a fixture listing, per case, the record's stamped `schema_version`, the running Procedure's declared version and readable floor, and the expected verdict. Each core's tests SHALL read that fixture.
+
+The refusal text SHALL be one sentence per condition, character-for-character identical between the two cores. The Controller matches error tokens by prefix and the veneers assert on substrings, so a re-worded refusal in one runtime is a behaviour change even when the verdict is unchanged.
+
+The order of the gates SHALL be the same in both: the language byte first, then the format, then the schema. A record written by another SDK is neither a format question nor a schema one.
+
+#### Scenario: Both cores reach the same verdict for every listed case
+
+- **WHEN** the shared decision fixture is read by the kernel's tests and by the Elixir SDK's tests
+- **THEN** every case SHALL produce the same verdict in both, and a case that differs SHALL fail both suites
+
+#### Scenario: A refusal reads the same in either runtime
+
+- **GIVEN** a record stamped below the running Procedure's readable floor
+- **WHEN** each core refuses it
+- **THEN** the two refusal sentences SHALL be identical, so a caller matching on the text cannot tell which runtime produced it
+
+#### Scenario: A new case is added once
+
+- **WHEN** a schema condition is added
+- **THEN** it SHALL be a row of the shared fixture, and neither core SHALL need a case its own tests alone describe
+

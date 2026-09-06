@@ -78,10 +78,15 @@ defmodule Flezha.Config.BackoffSeamTest do
     test "every :on_success row announces its reset, and no :per_call row does" do
       sites = read_text(lib_files() -- [@ladder_seam])
 
+      # Two readers of the one table: the controller calls it by name, and the
+      # Elixir SDK calls it through `Flezha.SDK.Knob`, which is the single SDK
+      # file the packaging boundary lets name the controller's configuration.
       for {key, %{reset: reset}} <- Backoff.ladders() do
         announced? =
-          String.contains?(sites, "Backoff.reset(:#{key}") or
-            String.contains?(sites, "Backoff.new(:#{key})")
+          Enum.any?(["Backoff", "Knob"], fn reader ->
+            String.contains?(sites, "#{reader}.reset(:#{key}") or
+              String.contains?(sites, "#{reader}.new(:#{key})")
+          end)
 
         case reset do
           :on_success ->

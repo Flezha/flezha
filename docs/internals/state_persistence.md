@@ -119,8 +119,45 @@ reported (`[:flezha, :state, :record_frame, :repaired]`). Anything else — most
 record whose crc fails with complete records behind it — is **refused**: the bytes stay on disk,
 the writer stays alive and refuses to serve, and one error line and one telemetry event
 (`[:flezha, :state, :record_frame, :refused]`) name the file, the last seq that verified and the
-byte offset. `RecordFrame.fold_records/4` is the one walk every reader uses and gives the same
-answer. A snapshot file is `<<header::16-bytes, snapshot_bytes, crc32::32-big>>`.
+byte offset. `Flezha.State.RecordFrame` is the one walk every reader uses and gives the same answer:
+`fold_records/4` over an open device, `fold_bytes/4` over bytes already in memory — a restore
+reading a whole WAL, or the Elixir SDK folding a change log the Controller shipped — and one
+`decode_bytes/1` beneath both, so a record read from a device and the same record read from
+bytes decode identically. The two differ in one stated thing: a device log may have a torn tail
+an append left, and a payload shipped whole has none, so a crc failure in a payload is refused
+however few bytes follow it. `test/flezha/state/durable_frame_conformance_test.exs` folds the
+same golden log through every one of them, and `flz_core/src/restore.rs` folds the same bytes in
+the kernel from `test/fixtures/durable_frame.txt` — a framing change on either side fails the
+other side's suite.
+
+A snapshot file is `<<header::16-bytes, snapshot_bytes, crc32::32-big>>` — a third on-disk
+format, not this frame, though its crc is the same expression over the same two ranges
+(`RecordFrame.crc32/2`).
+
+## Durability, and how a whole file lands
+
+A durable file is one row of `Flezha.State.Durable`. The row says how the file is framed
+(`:record` for a log appended and cut record by record, `:whole` for a file replaced entire),
+what makes its bytes durable (`:inline` when the install fsyncs before it renames, `:batched`
+when a sync the owner already runs is what makes them durable) and the suffix it wears while it
+is being written.
+
+`Paths.atomic_install/3` is the one ceremony: it fills an in-progress sibling under the declared
+suffix, fsyncs the descriptor when the declaration says the install owes the sync, renames onto
+the final path, and removes the sibling on any failure. Nothing else opens, writes, syncs and
+renames a durable file by hand. A caller passes its declared id; the suffix, the sync and
+whether the ceremony creates the directory come from the row, so a new durable file is a
+declaration rather than a fourth copy of the ceremony.
+
+Two exclusions derive from the same rows. `Paths.scan_dir/1` and the durability tier's local
+backend ask `Durable.in_progress?/1` rather than listing suffixes, so a new durable file cannot
+be surfaced as a phantom Entity by a scanner nobody edited. A `.claim` sidecar is not
+in-progress and is excluded by name where it lives: it is the durability tier's fencing counter
+and it outlives every write.
+
+The Elixir SDK's runner-id file is the one whole-file install outside the ceremony, and the
+reason is packaging rather than durability: the SDK is its own core and
+`scripts/check-sdk-boundary.sh` refuses it `Flezha.State.Paths`.
 
 ## Reserved-log record formats
 

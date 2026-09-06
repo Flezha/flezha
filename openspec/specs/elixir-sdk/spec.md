@@ -824,3 +824,51 @@ does, and a heartbeat is delivered when any bound secondary took it.
 - **WHEN** a write names a payload id the class table does not declare
 - **THEN** the SDK SHALL refuse the write rather than apply a default policy
 
+### Requirement: The Elixir SDK SHALL read the durable frame through the shared frame seam
+
+The Elixir SDK SHALL decode the durable record framing through the Controller's frame module rather than through a walker of its own, and SHALL NOT hold its own copy of the header length, the language-name table, the format identifiers or the framing crc32.
+
+The Elixir SDK is its own core and inherits nothing from `flz_core`; this requirement is about an Elixir module shared inside one repository, not about linking the kernel. The packaging-boundary gate SHALL name the frame module as an allowed seam, on the same ground it already names the postcard encoding seam: the module is pure, it takes binaries and file devices, it owns no process and no Controller state, and the hex extraction swaps it.
+
+The SDK's answer to a record whose crc32 fails SHALL be the refusal the frame seam defines, not a second refusal phrased in the SDK's own words. That refusal names the byte offset the record failed at and the last `seq` that verified before it; the SDK SHALL NOT restate it with a `seq` of its own.
+
+#### Scenario: The SDK holds no second copy of the frame
+
+- **WHEN** the Elixir SDK's record module is read
+- **THEN** it SHALL contain no header-length constant, no language-name table, no format-identifier literal and no crc32 expression of its own
+
+#### Scenario: The packaging boundary stays green
+
+- **WHEN** the packaging-boundary gate runs over the Elixir SDK
+- **THEN** it SHALL pass, and the frame module SHALL be one of the named seams rather than an unlisted Controller reference
+
+#### Scenario: The SDK refuses a corrupt record the way the seam does
+
+- **GIVEN** a restore payload holding a record whose crc32 does not verify
+- **WHEN** the Elixir SDK folds it
+- **THEN** it SHALL refuse with the seam's refusal, naming the byte offset and the last `seq` that verified, and SHALL NOT return a partial state as success
+
+### Requirement: The Elixir SDK SHALL report what a restore does to queued input
+
+The Elixir SDK SHALL carry the restore-time queued-input outcome on its heartbeat, under the same key every other runtime uses, so that the fate of queued input is readable for an Elixir-hosted Operative as it is for every other host.
+
+The Controller already mirrors that key into its liveness counters and its observability source, and the kernel already emits it; the Elixir SDK is the only runtime that carries neither the counter nor the key. A key that one runtime pays for on the wire and another omits leaves an operator surface that is correct for six SDKs and blank for the seventh.
+
+If the Elixir SDK discards no queued input on restore, it SHALL still declare the key and report zero, and the reason SHALL be stated where the key is declared. A key reported as absent and a key reported as zero are different answers to an operator, and only the second is honest about a runtime that was asked.
+
+#### Scenario: The heartbeat carries the key
+
+- **WHEN** an Elixir-hosted runner sends a data heartbeat
+- **THEN** the restore-time discard count SHALL be among its keys, and the Controller's mirror SHALL accept it without a slot mismatch
+
+#### Scenario: A discard is visible to an operator
+
+- **GIVEN** an Elixir-hosted Entity holding queued input when a restore lands
+- **WHEN** the restore discards that input
+- **THEN** the count SHALL rise on the operator surface that reports it for every other runtime
+
+#### Scenario: A runtime that discards nothing says so
+
+- **WHEN** the Elixir SDK performs a restore that discards no queued input
+- **THEN** it SHALL report zero rather than omitting the key, so the surface distinguishes "nothing was discarded" from "nothing was measured"
+
