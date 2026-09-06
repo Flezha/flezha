@@ -484,6 +484,14 @@ impl Core {
         Ok(())
     }
 
+    /// Watch standard input and end the process on end of file, on the core's
+    /// own thread. The host reads descriptor 0 nowhere.
+    fn watch_stdin_eof(&self, grace_ms: u32) -> PyResult<()> {
+        self.ptr()?;
+        veneer::watch_stdin_eof(grace_ms);
+        Ok(())
+    }
+
     /// Emit one output payload from a live workflow run-sugar body.
     /// Non-blocking in the core (an unbounded coordinator send), so it holds
     /// the GIL.
@@ -631,6 +639,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.complete", "flz_core_complete"),
     ("Core.abandon", "flz_core_abandon"),
     ("Core.shutdown", "flz_core_shutdown"),
+    ("Core.watch_stdin_eof", "flz_core_watch_stdin_eof"),
     ("Core.workflow_emit", "flz_core_workflow_emit"),
     ("Core.workflow_recv", "flz_core_workflow_recv"),
     ("Core.workflow_cancelled", "flz_core_workflow_cancelled"),

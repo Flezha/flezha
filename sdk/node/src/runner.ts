@@ -307,18 +307,13 @@ export class Runner {
    * controller each have their own: end of file on standard input, a signal,
    * and the core's own stop.
    *
-   * End of file is watched natively rather than on this loop. A compute-bound
-   * handler holds the loop that would otherwise notice it, and in the
-   * single-loop configuration there is no second loop to notice instead — so a
-   * wedged runner would be unstoppable without a signal, which is exactly what
-   * a harness that closes pipes does not send.
+   * The first two are the core's, on a thread of its own rather than on this
+   * loop. A compute-bound handler holds the loop that would otherwise notice
+   * either, and in the single-loop configuration there is no second loop to
+   * notice instead — so a wedged runner would be unstoppable, which is exactly
+   * what a harness that closes pipes cannot fix by signalling.
    */
   private observeShutdown(native: Native): void {
-    const stop = () => void this.stop();
-    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-      process.on(signal, stop);
-      this.teardown.push(() => process.off(signal, stop));
-    }
     if (!process.stdin.isTTY) {
       native.watchStdinEof(STDIN_EOF_GRACE_MS);
     }

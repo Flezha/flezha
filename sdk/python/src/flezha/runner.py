@@ -19,7 +19,6 @@ from __future__ import annotations
 import importlib
 import json
 import os
-import signal
 import sys
 import threading
 from collections.abc import Callable
@@ -41,6 +40,9 @@ from .operative import Operative
 __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
 
 _log = logger("runner")
+
+# What a healthy runner has to drain in after standard input closes.
+_STDIN_EOF_GRACE_MS = 5_000
 
 #: Only one runner may be *started* per process: a runner is a transport
 #: connection and a connection lives in one process. Any number of unstarted
@@ -341,45 +343,21 @@ class Runner:
         """Shutdown is observed three ways, because the harness, an operator and
         the controller each have their own: end of file on standard input, a
         signal, and the core's own stop — which every worker sees as
-        ``shutting_down`` from its next poll."""
-        if threading.current_thread() is threading.main_thread():
-            for name in ("SIGINT", "SIGTERM"):
-                sig = getattr(signal, name, None)
-                if sig is None:
-                    continue
-                previous = signal.signal(sig, lambda *_: self.stop())
-                self._teardown.append(lambda s=sig, p=previous: signal.signal(s, p))
-        if not sys.stdin.isatty():
-            self._watch_stdin_eof()
+        ``shutting_down`` from its next poll.
 
-    def _watch_stdin_eof(self) -> None:
-        """Exit on end of file on standard input.
-
-        The e2e harness manages a runner as an Erlang Port and stops it by
-        closing the port — which is this process's standard input. A read
-        *error* is not end of file, and conflating the two is how a runner shuts
-        itself down moments after connecting; only a genuine EOF, or a
-        descriptor that has gone away, ends the watch.
+        The first two are the core's, on a thread of its own: it installs the
+        SIGINT and SIGTERM handler when the runner starts, and the watch below
+        is the same exit by another name. Nothing here reads a signal or a
+        descriptor, so neither is missed while a handler body holds this
+        interpreter.
         """
-
-        def watch() -> None:
-            # Unbuffered on purpose: a read through `sys.stdin.buffer` holds
-            # the reader's lock for as long as it blocks, and the interpreter's
-            # finalisation aborts the process rather than wait on a daemon
-            # thread for it. A raw read holds nothing finalisation needs.
-            while True:
-                try:
-                    if os.read(sys.stdin.fileno(), 1) == b"":
-                        break
-                except (BlockingIOError, InterruptedError):
-                    continue
-                except (ValueError, OSError):
-                    break
-            _log.info("standard input reached end of file; draining")
-            self.stop()
-
-        thread = threading.Thread(target=watch, name="flezha-stdin", daemon=True)
-        thread.start()
+        if not sys.stdin.isatty():
+            # The e2e harness manages a runner as an Erlang Port and stops it
+            # by closing the port, which is this process's standard input. The
+            # watch is the core's, on a thread that holds nothing the
+            # interpreter's finalisation waits on.
+            assert self._core is not None
+            self._core.watch_stdin_eof(_STDIN_EOF_GRACE_MS)
 
 
 def create_runner(namespace: str) -> Runner:

@@ -315,7 +315,7 @@ pub fn send_plugin_frame(
     // The wire's other writer holds a frame it could not send and drives the
     // reconnect that replays it; an output is not worth less than a record.
     let frame = payloader::build_from_binary(instance_id, bytes, metadata.clone());
-    crate::state_sink::write_or_hold("plugin output", stream, frame);
+    crate::state_sink::write(crate::state_sink::Class::Output, Some(stream), frame);
 }
 
 /// The stream readers' handle onto the live instance registry.

@@ -8,7 +8,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.SDK.{Entity, Record}
+  alias Flezha.SDK.{Entity, Hold, Record}
   alias Flezha.SDK.Entity.{State, Tier}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.State.Wire
@@ -57,7 +57,7 @@ defmodule Flezha.SDK.CorrectionWindowTest do
       s
       | timers: %{s.timers | high_water: high_water},
         tier: %{s.tier | correction: policy},
-        stream: %{s.stream | handle: secondary}
+        stream: Hold.new(streams: List.wrap(secondary))
     }
   end
 

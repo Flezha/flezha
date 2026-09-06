@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::net::Shutdown;
 
 use flz_transport::service::payloader;
@@ -186,14 +185,14 @@ pub fn handle_command(
     match handler_type {
         CommandActionType::Regular(handler) => {
             let reply = command::exec_control(runner, handler, payload_id, message, reference_id);
-            if let Err(e) = (&*stream).write_all(&reply) {
+            if let Err(e) = write_reply(stream, reply) {
                 eprintln!("[flezha] Failed to write command response: {}", e);
             }
         }
 
         CommandActionType::RunnerDisconnect(handler) => {
             let reply = command::exec_control(runner, handler, payload_id, message, reference_id);
-            if let Err(e) = (&*stream).write_all(&reply) {
+            if let Err(e) = write_reply(stream, reply) {
                 eprintln!("[flezha] Failed to write disconnect response: {}", e);
             }
             finish_disconnect(stream);
@@ -244,6 +243,13 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
 /// After the disconnect ack is written: a terminal disconnect ships its
 /// state first (the notifications ride this channel), then only the write
 /// half closes so the ack lands before the peer sees the close.
+/// A command reply on the control stream. The class refuses it rather than
+/// holding it: a reply re-driven after its waiter timed out is a stale answer,
+/// and the reconnect re-issues the request it belonged to.
+fn write_reply(stream: &FlezhaStream, reply: Vec<u8>) -> std::io::Result<()> {
+    crate::state_sink::write(crate::state_sink::Class::Control, Some(stream), reply).refused()
+}
+
 fn finish_disconnect(stream: &FlezhaStream) {
     let terminal = crate::shutdown::take_terminal_exit();
     if terminal.is_some() {

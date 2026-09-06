@@ -21,6 +21,10 @@ defmodule Flezha.SDK.RecordHoldTest do
   alias FlezhaTest.Helper.SdkOperativeHarness
   alias FlezhaTest.Helper.SdkPersistenceFixtures.{CounterOp, OptedOutCounterOp, TimerOp}
 
+  # The saga marker the workflow driver ships on the record wire: a real payload
+  # id, because the class table refuses one it does not declare.
+  @saga_marker Wire.payload_id_compensation_intent()
+
   # One input into `CounterOp` is one dispatch that writes a change record and
   # then a sink output — the two frames whose order the spec governs.
   defp feed(op, n), do: Inbox.input(op, "in", Integer.to_string(n), %{})
@@ -43,26 +47,6 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   describe "a record no stream would take" do
-    test "is held and replayed when the write failed on a dead stream" do
-      %{op: op, sdk_secondary: sdk} = start_operative(CounterOp)
-      :ok = close_secondary(sdk)
-
-      feed(op, 3)
-      rebind_secondary(op)
-
-      assert [{:change, 0, {:delta, 3}}, {:output, "op-1", "3", _}] = kinds(2)
-    end
-
-    test "is held and replayed when there was no stream at all" do
-      %{op: op} = start_operative(CounterOp)
-      send(op, {:secondaries, []})
-
-      feed(op, 5)
-      rebind_secondary(op)
-
-      assert [{:change, 0, {:delta, 5}}, {:output, "op-1", "5", _}] = kinds(2)
-    end
-
     test "keeps its dispatch's timer-ops record behind its change, in seq order" do
       %{op: op} = start_operative(TimerOp)
       send(op, {:secondaries, []})
@@ -112,20 +96,6 @@ defmodule Flezha.SDK.RecordHoldTest do
     # at the same cap, so the counter carries six.
     assert [{:change, 3, {:delta, 4}}, {:change, 4, {:delta, 5}} | _] = kinds(2)
     assert Counters.drops_oldest(counters) == 6
-  end
-
-  test "a replay onto a stream that is gone again re-holds rather than dropping" do
-    %{op: op, counters: counters} = start_operative(CounterOp)
-    send(op, {:secondaries, []})
-    feed(op, 4)
-
-    # The rebind lands on a wire that is already dead: every replayed write
-    # fails and every frame goes back into the hold, none of it shed.
-    send(op, {:secondaries, [dead_secondary()]})
-    rebind_secondary(op)
-
-    assert [{:change, 0, {:delta, 4}}, {:output, "op-1", "4", _}] = kinds(2)
-    assert Counters.drops_oldest(counters) == 0
   end
 
   test "the credit window is debited by the write, never by the hold" do
@@ -232,13 +202,13 @@ defmodule Flezha.SDK.RecordHoldTest do
     test "a record and an output cast with no stream bound are held and replayed" do
       s = runner_state([])
 
-      s = cast(s, {:record, "compensation_marker", <<1, 2, 3>>})
+      s = cast(s, {:record, @saga_marker, <<1, 2, 3>>})
       s = cast(s, {:emit_output, "op-1", %{"channel" => "c"}, "body"})
 
       bind(s)
 
       assert [
-               {"compensation_marker", <<1, 2, 3>>, %{}},
+               {@saga_marker, <<1, 2, 3>>, %{}},
                {"op-1", "body", %{"channel" => "c"}}
              ] = frames(2)
     end
@@ -246,12 +216,12 @@ defmodule Flezha.SDK.RecordHoldTest do
     test "a write the wire refuses is held rather than discarded" do
       s = runner_state([dead_secondary()])
 
-      s = cast(s, {:record, "compensation_marker", <<4>>})
+      s = cast(s, {:record, @saga_marker, <<4>>})
       s = cast(s, {:emit_output, "op-1", %{}, "body"})
 
       bind(s)
 
-      assert [{"compensation_marker", <<4>>, %{}}, {"op-1", "body", %{}}] = frames(2)
+      assert [{@saga_marker, <<4>>, %{}}, {"op-1", "body", %{}}] = frames(2)
     end
 
     test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
@@ -260,11 +230,11 @@ defmodule Flezha.SDK.RecordHoldTest do
 
       counters = Counters.new()
       s = runner_state([], counters)
-      s = Enum.reduce(1..5, s, &cast(&2, {:record, "compensation_marker", <<&1>>}))
+      s = Enum.reduce(1..5, s, &cast(&2, {:record, @saga_marker, <<&1>>}))
 
       bind(s)
 
-      assert [{"compensation_marker", <<4>>, %{}}, {"compensation_marker", <<5>>, %{}}] =
+      assert [{@saga_marker, <<4>>, %{}}, {@saga_marker, <<5>>, %{}}] =
                frames(2)
 
       assert Counters.drops_oldest(counters) == 3
@@ -284,7 +254,8 @@ defmodule Flezha.SDK.RecordHoldTest do
       registry: :ets.new(:runner_hold_registry, [:public, :set]),
       control_handle: control_handle,
       secondaries: secondaries,
-      held: Hold.new()
+      held: Hold.new(counters: counters),
+      control: Hold.new(counters: counters)
     }
   end
 

@@ -275,3 +275,37 @@ and the key set SHALL be pinned by `test/fixtures/host_class_decl_keys.txt` as t
 - **WHEN** a builder still sends `channel.consumers` or `class.ack_granularity`
 - **THEN** the core refuses the declaration at `deny_unknown_fields` naming the key
 
+### Requirement: The standard-input end-of-file watch SHALL be an ABI entry, not a per-host reimplementation
+
+`flz_core` SHALL own the standard-input end-of-file watch beside the SIGTERM
+handler it already installs, and `flz_core_ffi` SHALL export it as one ABI entry
+taking a grace in milliseconds. Every erased host SHALL reach it through that
+entry rather than reading descriptor 0 itself, so that the rule "a read error is
+not end of file, and conflating the two shuts the runner down moments after
+connecting" is written once instead of once per host. The watch SHALL end the
+process through the same `run_active_graceful_shutdown` path the SIGTERM handler
+uses, so a host needs no thread of its own and no callback into its own virtual
+machine.
+
+The entry SHALL appear in the C ABI table of every host that carries one, and
+the existing Node-only export SHALL become a caller of it rather than a second
+implementation.
+
+#### Scenario: A host asks the core to watch its standard input
+
+- **WHEN** an erased host starts its runner
+- **THEN** one ABI call SHALL install the watch, and the host SHALL carry no
+  reader of descriptor 0 of its own
+
+#### Scenario: The watch and the signal handler share one exit
+
+- **WHEN** either standard-input end-of-file or SIGTERM is observed
+- **THEN** the same registered shutdown bridge SHALL run, so the two facts have
+  one remedy and a host cannot drain differently for one than for the other
+
+#### Scenario: The ABI table names the entry in every host
+
+- **WHEN** the C ABI table is compared across the hosts that carry one
+- **THEN** the entry SHALL be present in each, and the ABI-cannot-lag check SHALL
+  fail if a host is missing it
+

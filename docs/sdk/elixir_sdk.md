@@ -331,17 +331,28 @@ its records are on the wire, so an Entity killed untrappably comes back on the s
 rather than at seq 0, where the controller's writer would drop every later record as a
 duplicate.
 
-A record no stream will take — the write refused, or no stream bound at all — is held in the
-Entity and replayed onto the stream the next rebind wires, in the order the records were
-written, so a `change_seq` is never inverted. The hold is bounded by
-`FLEZHA_RECONNECT_RING_CAPACITY` (default 1024), drops the oldest past that and counts the
-shed as `drops_oldest`. Every frame this SDK writes to a secondary stream is held on those
-same terms: the Operative's plugin-bound outputs, the frames an Entity hands on when it
-stops, and the workflow driver's outputs and records, which have no stream of their own and
-are relayed through the runner. The holds are ordered against each other: on a rebind the
-Operative replays what stopped Entities handed it, then rebinds every live Entity and waits,
-then replays its own outputs — so a dispatch's records reach the wire ahead of its output
-frame on a replay exactly as they do live, and a dead Entity's delete ahead of both.
+Every frame this SDK writes to a stream goes through one seam, `Flezha.SDK.Hold.write/3`, and
+the frame's payload id declares its **guarantee class** — the writer names the frame it is
+writing and never what happens when the wire refuses it. A `:durable` frame (a change record,
+an effect record, a compaction snapshot, an eviction's delete, a saga marker, a park payload,
+the shutdown state ship) is held and replayed onto the stream the next rebind wires, in the
+order it was written, so a `change_seq` is never inverted. An `:output` is held already framed,
+so a keyed emit's channel and its `flz.*` stamps survive the replay. A `:control` frame is
+refused to its caller and never held, because the reconnect re-issues the request it belonged
+to. The `data_heartbeat` is `:probe`: it is owed no delivery, and its misses feed the same
+reconnect ladder the shared core runs — `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` misses inside
+`FLEZHA_BROKEN_PIPE_WINDOW_MS`, re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS` — with a
+heartbeat counted delivered when any bound secondary took it. A payload id the table does not
+name is refused at the call rather than given a default.
+
+The hold is bounded by `FLEZHA_RECONNECT_RING_CAPACITY` (default 1024), drops the oldest past
+that and counts the shed as `drops_oldest`. There is one hold per wire a process writes to: the
+Entity's records, the Operative's plugin-bound outputs, the frames an Entity hands on when it
+stops, and the runner's own two — the secondaries the workflow driver's writes and parks go on,
+and the control channel. The holds are ordered against each other: on a rebind the Operative
+replays what stopped Entities handed it, then rebinds every live Entity and waits, then replays
+its own outputs — so a dispatch's records reach the wire ahead of its output frame on a replay
+exactly as they do live, and a dead Entity's delete ahead of both.
 
 The controller's commands are answered by `Flezha.SDK.Commands`, off the runner's loop:
 `RestoreInitState` folds the snapshot then the change log in the controller's on-disk framing

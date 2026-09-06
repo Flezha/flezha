@@ -31,7 +31,7 @@ impl CommandAction for ConnectSocket {
                     bytes: Vec::new(),
                 }
             }
-            TransportType::Quic => handle_quic(self, runner),
+            TransportType::Quic => handle_quic(self, runner, _errors),
         }
     }
 }
@@ -66,7 +66,7 @@ fn handle_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
     }
 }
 
-fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
+fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode, errors: &mut Vec<String>) -> Reply {
     let io_streams = runner.get_io_streams();
 
     let quic_client = runner.get_quic_client().expect("QUIC client not available");
@@ -74,19 +74,23 @@ fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
     let mut stream_pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)> = Vec::new();
 
     for key in 0..cmd.sockets_count {
-        let mut primary = quic_client
+        let primary = quic_client
             .open_bidi_stream()
             .expect("Failed to open primary QUIC stream");
-        primary
-            .write_all(&[protocol::STREAM_TYPE_PRIMARY, key as u8])
-            .expect("Failed to send primary stream type");
+        // The stream-type byte is a control frame: a runner that cannot write
+        // it fails its connect and says so, rather than aborting the process.
+        if let Err(e) = write_stream_type(&primary, protocol::STREAM_TYPE_PRIMARY, key) {
+            errors.push(format!("primary stream type write failed: {e}"));
+            return connected_reply();
+        }
 
-        let mut secondary = quic_client
+        let secondary = quic_client
             .open_bidi_stream()
             .expect("Failed to open secondary QUIC stream");
-        secondary
-            .write_all(&[protocol::STREAM_TYPE_SECONDARY, key as u8])
-            .expect("Failed to send secondary stream type");
+        if let Err(e) = write_stream_type(&secondary, protocol::STREAM_TYPE_SECONDARY, key) {
+            errors.push(format!("secondary stream type write failed: {e}"));
+            return connected_reply();
+        }
 
         let secondary_for_store = FlezhaStream::Quic(secondary.clone_handle());
         io_streams.write().unwrap().insert(key, secondary_for_store);
@@ -97,10 +101,31 @@ fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
 
     install_state_sink(&stream_pairs);
     spawn_listener_quic(runner, stream_pairs);
+    connected_reply()
+}
+
+/// The `ConnectSocket` answer; the errors the caller collected are what say
+/// whether the pairs came up.
+fn connected_reply() -> Reply {
     Reply {
         payload_id: "connect_sockets",
         bytes: Vec::new(),
     }
+}
+
+/// The stream-type byte a fresh QUIC stream opens with, through the class so
+/// no writer on this wire chooses its own answer to a refusal.
+fn write_stream_type(
+    stream: &flz_transport::transport::quic::QuicBidiStream,
+    stream_type: u8,
+    key: u32,
+) -> std::io::Result<()> {
+    state_sink::write(
+        state_sink::Class::Control,
+        Some(&FlezhaStream::Quic(stream.clone_handle())),
+        vec![stream_type, key as u8],
+    )
+    .refused()
 }
 
 /// Install the global `state_sink` wrapping the FIRST

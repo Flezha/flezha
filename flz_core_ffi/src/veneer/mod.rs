@@ -206,6 +206,13 @@ pub fn shutdown(ctx: CtxPtr) {
     unsafe { crate::flz_core_shutdown(ctx.get()) }
 }
 
+/// Ask the core to watch standard input and end the process on end of file.
+/// The watch is the core's, on a thread no host's virtual machine owns, so a
+/// host carries no reader of descriptor 0 of its own.
+pub fn watch_stdin_eof(grace_ms: u32) {
+    crate::flz_core_watch_stdin_eof(grace_ms)
+}
+
 pub fn declare_class(ctx: CtxPtr, json: &[u8]) -> Result<(), Refusal> {
     let status = unsafe { crate::flz_core_declare_class(ctx.get(), json.as_ptr(), json.len()) };
     verdict(ctx, status)

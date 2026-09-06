@@ -704,3 +704,37 @@ The convergence loop SHALL publish one verdict record per connected runner whose
 - **WHEN** the watchdog fires
 - **THEN** it SHALL close the session exactly as before, and the `[:flezha, :runner, :liveness_timeout]` it executes SHALL appear on the observability bus as a signal with no hand-written bridge line
 
+### Requirement: A shutdown notification the wire refuses SHALL be held, never printed and dropped
+
+A refused `RunnerShutdownNotification` SHALL be treated as the durable frame it
+is: when its write to the control channel is refused it SHALL be held for replay
+on the next bound stream, and counted if it is shed, rather than reported to
+standard error or a log line and lost. The frame carries the operative's final state, which is the
+whole reason reconnect-resume is loss-free; a runner that prints the failure and
+exits leaves the agent holding a snapshot as stale as the last periodic one,
+which is the outcome the shutdown ship exists to prevent.
+
+This SHALL hold in every runtime: the shared core's ship path and the Elixir
+SDK's own SHALL answer a refused write the same way, and neither SHALL make the
+loss visible only as a line an operator has to be reading at the time.
+
+#### Scenario: The control channel is refused while the runner is shutting down
+
+- **WHEN** a runner writes `RunnerShutdownNotification` during graceful shutdown
+  and the write is refused
+- **THEN** the frame SHALL be held for the next bound stream and SHALL NOT be
+  discarded behind a printed line
+
+#### Scenario: A shed shutdown ship is counted
+
+- **WHEN** a held shutdown notification is shed at the ring's bound
+- **THEN** the shed SHALL be counted where every drop-oldest on this wire is
+  counted, so a lost final state is visible as a number rather than as silence
+
+#### Scenario: The ack timeout is unchanged by the hold
+
+- **WHEN** the notification is written successfully and no `RunnerShutdownAck`
+  arrives within the 2 s budget
+- **THEN** the runner SHALL proceed to exit exactly as it does today, because an
+  unacked frame and an unwritten frame are different facts
+

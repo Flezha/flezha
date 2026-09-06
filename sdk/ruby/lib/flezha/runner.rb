@@ -29,6 +29,9 @@ module Flezha
   # threads that `fork(2)` does not carry, and `Core#guard!` raises naming that
   # rule rather than letting a child serve nothing.
   class Runner
+    # What a healthy runner has to drain in after standard input closes.
+    STDIN_EOF_GRACE_MS = 5_000
+
     attr_reader :namespace
 
     def initialize(namespace)
@@ -206,37 +209,14 @@ module Flezha
     # controller each have their own: end of file on standard input, a signal,
     # and the core's own stop — which every worker sees as `:shutting_down`
     # from its next poll.
-    def observe_shutdown
-      %w[INT TERM].each do |signal|
-        previous = Signal.trap(signal) { Thread.new { stop } }
-        @teardown << -> { Signal.trap(signal, previous) }
-      end
-      watch_stdin_eof unless $stdin.tty?
-    end
-
-    # The e2e harness manages a runner as an Erlang Port and stops it by
-    # closing the port — which is this process's standard input. Exit on end of
-    # file so `Port.close/1` reliably tears the runner down.
     #
-    # A read ERROR is not end of file, and conflating the two is how a runner
-    # shuts itself down moments after connecting. Only a genuine EOF, or a
-    # descriptor that has gone away, ends the watch.
-    def watch_stdin_eof
-      watcher = Thread.new do
-        loop do
-          begin
-            $stdin.readpartial(64)
-          rescue EOFError, IOError, Errno::EBADF, Errno::EPIPE
-            break
-          rescue Errno::EINTR, IO::WaitReadable
-            IO.select([$stdin], nil, nil, 1)
-          end
-        end
-        Flezha.log.info("standard input reached end of file; draining")
-        stop
-      end
-      watcher.name = "flezha-stdin"
-      @teardown << -> { watcher.kill }
+    # The first two are the core's, on a thread that holds no GVL and no Ruby
+    # object: it installs the SIGINT and SIGTERM handler when the runner starts,
+    # and the watch below is the same exit by another name. The harness manages
+    # a runner as an Erlang Port and stops it by closing the port, which is this
+    # process's standard input.
+    def observe_shutdown
+      @core.watch_stdin_eof(STDIN_EOF_GRACE_MS) unless $stdin.tty?
     end
 
     # YJIT is on by default because handler bodies are the one thing the GVL

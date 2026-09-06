@@ -6,11 +6,8 @@
 //! request's reply is matched through.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(windows))]
-use std::sync::Once;
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, Once, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -122,11 +119,14 @@ fn ship_notification(
 
     let rx = register_pending_ack(reference_id.clone());
 
-    if let Err(e) = (&**stream).write_all(&payload) {
-        eprintln!(
-            "[flezha] Failed to write RunnerShutdownNotification for {}: {}",
-            operative_id, e
-        );
+    // The operative's final state is what makes a reconnect-resume loss-free,
+    // so a refused write is held for the next bound stream rather than printed
+    // and lost. Only what reached the wire is waited on: an ack cannot answer
+    // a held frame.
+    if !matches!(
+        crate::state_sink::write(crate::state_sink::Class::Durable, Some(stream), payload),
+        crate::state_sink::Verdict::Written
+    ) {
         drop_pending_ack(&reference_id);
         return None;
     }
@@ -134,7 +134,9 @@ fn ship_notification(
     Some(thread::spawn(move || match rx.recv_timeout(ACK_TIMEOUT) {
         Ok(_) => {}
         Err(_) => {
-            eprintln!("[flezha] RunnerShutdownAck timeout for {}", operative_id);
+            say(&format!(
+                "[flezha] RunnerShutdownAck timeout for {operative_id}"
+            ));
             drop_pending_ack(&reference_id);
         }
     }))
@@ -226,11 +228,10 @@ pub const TERMINAL_EXIT_CODE: i32 = 70;
 /// placeable wedges again and only the orchestrator restarts a failure.
 /// Called after the disconnect response is on the wire.
 pub fn exit_terminally(reason: &str) -> ! {
-    eprintln!(
-        "[flezha] controller ordered a terminal disconnect (reason={}); exiting {} so the \
-         orchestrator restarts this runner",
-        reason, TERMINAL_EXIT_CODE
-    );
+    say(&format!(
+        "[flezha] controller ordered a terminal disconnect (reason={reason}); exiting \
+         {TERMINAL_EXIT_CODE} so the orchestrator restarts this runner"
+    ));
     // A no-op when the caller already shipped state — the bridge latches.
     run_active_graceful_shutdown();
     crate::poll_core::global().shutdown();
@@ -246,26 +247,127 @@ pub fn run_active_graceful_shutdown() {
     }
 }
 
-/// Install the SIGTERM handler once: it runs the active bridge's shutdown,
-/// then exits.
+/// What a healthy runner has to drain in once SIGTERM has been observed. Small
+/// beside a container's grace period, and the same budget a closed standard
+/// input gives, because both end the same way.
+const SIGTERM_GRACE_MS: u32 = 5_000;
+
+/// Poll interval for a standard input the host runtime has made non-blocking,
+/// and for the drain the exit waits on.
+const STDIN_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// End the process when standard input reaches end of file, on a thread of the
+/// core's own.
+///
+/// Native, and that is the point. A conformance harness stops a runner by
+/// closing its pipes rather than by signalling it, and the obvious place to
+/// observe that is the host's event loop — which is exactly the thread a
+/// compute-bound handler holds. A runner whose only loop is wedged would then
+/// be unstoppable without a signal, so the watch runs beside
+/// [`install_sigterm_handler`] and reaches the exit the same way: through
+/// [`run_active_graceful_shutdown`], on a thread no host's virtual machine
+/// owns.
+///
+/// A read ERROR is not end of file. Standard input is non-blocking whenever the
+/// runtime has taken an interest in it — which it has the moment a worker
+/// thread exists — so a read with nothing buffered answers `WouldBlock`.
+/// Conflating that with end of file shuts the runner down a few hundred
+/// milliseconds after it connects, every time. Only a genuine end of file, or a
+/// descriptor that has gone away, ends the watch.
+///
+/// A healthy runner has `grace_ms` to drain and exit on its own; one that has
+/// not exited by then is ended, because nothing is left that could.
+pub fn watch_stdin_eof(grace_ms: u32) {
+    static WATCHING: Once = Once::new();
+    WATCHING.call_once(|| {
+        if let Err(e) = thread::Builder::new()
+            .name("flz-stdin-eof".into())
+            .spawn(move || {
+                wait_for_stdin_eof();
+                end_gracefully("standard input reached end of file", grace_ms);
+            })
+        {
+            say(&format!(
+                "[flezha] Failed to start the standard-input watcher ({e}); a closed \
+                 standard input will not end this runner."
+            ));
+        }
+    });
+}
+
+/// A line to standard error that cannot take the caller down with it.
+///
+/// A conformance harness stops a runner by closing its pipes, so the very
+/// thread that then has to end the process is writing to a pipe with no reader.
+/// `eprintln!` panics on that EPIPE, and a panicked watcher leaves the runner
+/// alive for ever — which is the outcome the watch exists to prevent.
+fn say(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
+/// The one exit both facts lead to: ship every operative's final state, tell
+/// the host's pollers to stop so its own workers drain, give a healthy runner
+/// `grace_ms` to finish, then end. A host needs no thread and no callback of
+/// its own for either, so a runner cannot drain differently for one than for
+/// the other.
+fn end_gracefully(what: &str, grace_ms: u32) -> ! {
+    say(&format!("[flezha] {what}; draining"));
+    run_active_graceful_shutdown();
+    let core = crate::poll_core::global();
+    core.shutdown();
+    // A healthy runner finishes what it is holding and its pollers leave on
+    // the core's word; one that has not by the deadline is ended, because
+    // nothing is left that could.
+    let deadline = std::time::Instant::now() + Duration::from_millis(u64::from(grace_ms));
+    while core.outstanding_count() > 0 && std::time::Instant::now() < deadline {
+        thread::sleep(DRAIN_POLL_INTERVAL);
+    }
+    std::process::exit(0);
+}
+
+fn wait_for_stdin_eof() {
+    use std::io::{ErrorKind, Read};
+    let mut byte = [0u8; 1];
+    loop {
+        match std::io::stdin().read(&mut byte) {
+            // End of file: the far end closed. The only read outcome that
+            // means shutdown.
+            Ok(0) => return,
+            Ok(_) => continue,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => thread::sleep(STDIN_POLL_INTERVAL),
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            // Anything else means the descriptor is gone, which is end of file
+            // by another name.
+            Err(_) => return,
+        }
+    }
+}
+
+/// Install the termination-signal handler once: SIGTERM and SIGINT both run the
+/// active bridge's shutdown and then exit, on a thread the core owns rather
+/// than on the host's own — which is what lets every host stop installing a
+/// trap of its own beside this one.
 #[cfg(not(windows))]
 fn install_sigterm_handler() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
-        match signal_hook::iterator::Signals::new([signal_hook::consts::SIGTERM]) {
+        match signal_hook::iterator::Signals::new([
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGINT,
+        ]) {
             Ok(mut signals) => {
                 thread::spawn(move || {
                     if signals.forever().next().is_some() {
-                        eprintln!("[flezha] SIGTERM received; running graceful shutdown");
-                        run_active_graceful_shutdown();
-                        std::process::exit(0);
+                        end_gracefully("termination signal received", SIGTERM_GRACE_MS);
                     }
                 });
             }
             Err(e) => {
                 eprintln!(
-                    "[flezha] Failed to install SIGTERM handler ({}); graceful \
-                     shutdown will rely on Drop only.",
+                    "[flezha] Failed to install the termination-signal handler ({}); \
+                     graceful shutdown will rely on Drop only.",
                     e
                 );
             }

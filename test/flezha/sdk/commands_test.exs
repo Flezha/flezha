@@ -9,7 +9,7 @@ defmodule Flezha.SDK.CommandsTest do
 
   import FlezhaTest.Helper.SdkOperativeHarness
 
-  alias Flezha.SDK.{Codec, Commands, Counters, Credit, Entity, Park, Record}
+  alias Flezha.SDK.{Codec, Commands, Counters, Credit, Entity, Hold, Park, Record}
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.SDK.RunnerServer.State, as: ServerState
   alias Flezha.State.Wire
@@ -425,7 +425,11 @@ defmodule Flezha.SDK.CommandsTest do
 
       assert :ok =
                Commands.shutdown(
-                 %ServerState{control_handle: sdk, operatives: %{"op-1" => {op, "f"}}},
+                 %ServerState{
+                   control_handle: sdk,
+                   control: Hold.new(),
+                   operatives: %{"op-1" => {op, "f"}}
+                 },
                  2_000
                )
 
@@ -445,7 +449,11 @@ defmodule Flezha.SDK.CommandsTest do
         ExUnit.CaptureLog.capture_log(fn ->
           assert :ok =
                    Commands.shutdown(
-                     %ServerState{control_handle: sdk, operatives: %{"op-1" => {op, "f"}}},
+                     %ServerState{
+                       control_handle: sdk,
+                       control: Hold.new(),
+                       operatives: %{"op-1" => {op, "f"}}
+                     },
                      200
                    )
         end)

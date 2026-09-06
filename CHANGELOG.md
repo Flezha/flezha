@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed — every frame declares what the wire owes it
+
+An SDK that cannot write a frame no longer decides what to do about it at the
+write site. Every frame now carries a guarantee class, and the class answers
+once for every writer: a control frame is refused to its caller and never held,
+a durable record or a plugin output is held in the bounded ring and replayed on
+the next bound stream, and the data heartbeat is held by nothing at all because
+it reports a moment that has passed. A payload id no class table names is
+refused rather than given a default.
+
+What changes for an operator:
+
+- **A shutdown notification the wire refuses is held and counted, not printed
+  and lost.** The operative's final state is what makes reconnect-resume
+  loss-free, so it is now treated as the durable frame it is.
+- **A runner ends when its wire goes, whatever its host language.** Standard
+  input closing and SIGINT or SIGTERM are detected once, in the shared core, on
+  a thread no host loop can hold up — so a runner asleep inside a long
+  activation still exits. Python, Ruby, PHP and Node stop installing detectors
+  of their own; the Java SDK keeps its JVM shutdown hook.
+- **An undelivered heartbeat asks for a reconnect on every runtime.** The Elixir
+  SDK now runs the same flood ladder the shared core does, and a runner with one
+  live and one dead secondary does not reconnect for ever.
+
+A latent defect this closed: on the shared exit path a line to standard error
+could take the runner down with it once the harness had closed its pipes,
+leaving the process alive instead of ending it.
+
 ### Changed — one bounded call, one lookup, one timer, one child spec
 
 Five jobs every process in the controller does — call another process, find the

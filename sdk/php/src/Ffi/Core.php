@@ -218,6 +218,19 @@ final class Core implements SpawnBridge, EntryIdleBridge
         $this->ffi->flz_core_shutdown($this->live());
     }
 
+    /**
+     * Ask the core to watch standard input and end this process on end of file.
+     *
+     * The watch is the core's, on a thread of its own, which is why a runner
+     * with no second thread of its own still observes a harness that stops it
+     * by closing its pipes — even from inside an activation body.
+     */
+    public function watchStdinEof(int $graceMs): void
+    {
+        $this->live();
+        $this->ffi->flz_core_watch_stdin_eof($graceMs);
+    }
+
     /** Emit one output payload from a live workflow run-sugar body. */
     public function workflowEmit(string $instanceId, string $payload): void
     {

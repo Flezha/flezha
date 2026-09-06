@@ -5,7 +5,6 @@
 //! straight into the targeted operative's entity mailboxes.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
@@ -416,7 +415,7 @@ impl Coordinator {
                 result,
             }),
         );
-        if let Err(e) = (&*self.control_stream).write_all(&frame) {
+        if let Err(e) = self.write_control(frame) {
             warn!(
                 target: "flezha",
                 "[flezha] WorkflowCompleted write failed for {}: {}", operative_id, e
@@ -428,12 +427,20 @@ impl Coordinator {
     /// its waiter; a failed write is left to the waiter's timeout.
     fn write_control_request(&self, reference_id: String, command: Command) {
         let frame = framed_request(reference_id, command);
-        if let Err(e) = (&*self.control_stream).write_all(&frame) {
+        if let Err(e) = self.write_control(frame) {
             warn!(
                 target: "flezha",
                 "[flezha] SDK-initiated control request write failed: {}", e
             );
         }
+    }
+
+    /// A control frame on the control stream: refused to its caller and never
+    /// held, because a reply re-driven after its waiter timed out is a stale
+    /// answer and the reconnect re-issues the request it belonged to.
+    fn write_control(&self, frame: Vec<u8>) -> std::io::Result<()> {
+        let stream = Some(&*self.control_stream);
+        crate::state_sink::write(crate::state_sink::Class::Control, stream, frame).refused()
     }
 }
 
@@ -454,14 +461,11 @@ fn write_workflow_output(
     let streams = io_streams.read().unwrap();
     // Held framed, not as a record: the ring re-frames a record with empty
     // metadata, which would strip a stamped output of its identity.
-    match streams.values().next() {
-        Some(stream) => crate::state_sink::write_or_hold("workflow output", stream, frame),
-        None => crate::state_sink::hold_failed_frame(
-            "workflow output",
-            frame,
-            &"no secondary stream available",
-        ),
-    }
+    crate::state_sink::write(
+        crate::state_sink::Class::Output,
+        streams.values().next(),
+        frame,
+    );
 }
 
 /// A `control_command` frame under a `<ref_prefix>-<nonce>` reference id.
@@ -498,8 +502,13 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool 
     let streams = io_streams.read().unwrap();
     let mut delivered = false;
     for stream in streams.values() {
-        let mut w: &FlezhaStream = stream;
-        if w.write_all(&frame).is_ok() {
+        // A heartbeat is owed no delivery: the class never holds it, and the
+        // caller's ladder is what a tick that reached nothing feeds.
+        let class = crate::state_sink::Class::Probe;
+        if crate::state_sink::write(class, Some(stream), frame.clone())
+            .refused()
+            .is_ok()
+        {
             delivered = true;
         }
     }

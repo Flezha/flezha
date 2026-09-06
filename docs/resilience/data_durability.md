@@ -23,6 +23,19 @@ and the operator playbook. Operative *placement* recovery is
 The core invariant: **on a graceful stop no state is lost; on a hard kill a small best-effort
 window can lose the most recent un-persisted state.**
 
+Between the two sits the wire itself, and what a runner does when it refuses a frame is decided
+by the frame's declared **guarantee class**, never at the write site. A change record, a
+snapshot, an eviction's delete, a saga marker, a park payload and the shutdown state ship are
+`durable`: held in a bounded drop-oldest ring, the shed counted, replayed in write order on the
+next bound stream. A plugin or workflow emit is `output`: held already framed, so a keyed
+output's channel and identity stamps survive the replay. A control frame is refused to its
+caller and never held, because the reconnect re-issues the request it belonged to, and the data
+heartbeat is held by nothing at all — it reports a moment that has passed. The seam is
+`flz_core::state_sink::write` for every runtime built on the shared core and
+`Flezha.SDK.Hold.write/3` for the Elixir SDK, which is its own core; a payload id no class table
+names is refused at the call rather than given a default. See
+[`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) §7.
+
 A third durable artifact is the operative's **plugin manifest**: it lives in the registry cspec
 and is written cluster-wide (`propagate: true`), so an operative restarted from any node
 re-attaches its full plugin set and the convergence loop re-adds anything missing.

@@ -766,20 +766,41 @@ metadata = user metadata + `channel` (+ the `flz.*` identity stamps on
 `.keyed()` channels). Outputs are batched into one write syscall where possible
 (`payloader::build_from_binary_into`). An output whose write the stream refuses,
 or that finds no stream at all, is held for the next bound one rather than
-dropped — the same ring the state sink uses below. On the effectively-once tier
+dropped — its class says so, and the ring is the one below. On the effectively-once tier
 plugin emits never ride this path: they travel inside the effect record (§11) and
 the controller dispatches them only after the record's fsync.
 
-**Reliable state sink.** Persistence frames (§11) and plugin-bound outputs alike
-go through a reliable sink: frames produced while no secondary stream is
-installed, or whose write failed, are queued in a ring of
+**What the wire owes a frame, per class.** Every frame an SDK writes carries a
+declared **guarantee class**, and the class — not the write site — decides what
+happens when the wire refuses it. There are three, the same in every runtime:
+
+- **control** — a control-channel command, a reply, a keepalive ping, a channel
+  handshake. Refused to its caller, or counted where the caller is a cast, and
+  never held: a reply re-driven after its waiter timed out is a stale answer,
+  and the reconnect re-issues the request it belonged to.
+- **durable** — a change record, an effect record, a compaction snapshot, an
+  eviction's delete, a saga marker, a park payload, a shutdown state ship. Held
+  in the ring below and replayed in write order on the next bound stream.
+- **output** — a plugin or workflow emit. Held **already framed**, so a keyed
+  output's `channel` and its `flz.*` identity stamps survive the replay; a
+  re-framed record would carry empty metadata and strip them.
+
+The `data_heartbeat` is owed nothing at all and is never held: it reports a
+moment that has passed, so replaying it after a rebind is worse than losing it.
+Its write verdict feeds the reconnect ladder instead. A payload id no class
+table names is refused at the call rather than given a default, which is what
+makes a write site with a policy of its own impossible.
+
+**Reliable state sink.** The held classes queue in a ring of
 `FLEZHA_RECONNECT_RING_CAPACITY` (default 1024; the oldest is dropped on
-overflow, counted as a drop-oldest shed) and replayed once a stream is back — a
-record re-framed under its own payload id, a frame a writer built itself replayed
-byte for byte so its `flz.*` stamps survive. `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` (10) write failures
+overflow, counted as a drop-oldest shed) and are replayed once a stream is back
+— a record re-framed under its own payload id, a frame a writer built itself
+replayed byte for byte. `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` (10) write failures
 inside `FLEZHA_BROKEN_PIPE_WINDOW_MS` (5000) request a control reconnect with
 reason `broken_pipe_flood`, re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS`
-(30000) if unanswered.
+(30000) if unanswered. The entry points are `flz_core::state_sink::write` for
+every runtime built on the shared core and `Flezha.SDK.Hold.write/3` for the
+Elixir SDK, which is its own core.
 
 **Non-blocking I/O.** Primary sockets are non-blocking and polled through an
 event mechanism (the `flz_core` reader uses `mio`;

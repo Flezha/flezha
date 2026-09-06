@@ -224,7 +224,6 @@ final class SwooleExecutor implements Executor
         $atCeilingLogged = false;
 
         while (!($this->state?->stopping() ?? true)) {
-            $runner->observeShutdown();
             $runner->observeIdle();
             $this->prune();
             // A pool that lost every worker starves and cannot say so from

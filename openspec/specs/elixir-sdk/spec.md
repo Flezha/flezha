@@ -780,3 +780,47 @@ conformance run skips by name. The single checkpoint implication site SHALL rema
 - **THEN** it reports the row as skipped for `merge`, and the seam test accepts the skip
   only while the documented subset carries no `merge`
 
+### Requirement: The Elixir SDK SHALL declare the guarantee class of every frame it writes
+
+Every frame the Elixir SDK writes to a stream SHALL carry a declared guarantee
+class, and the class SHALL decide what happens when the write is refused. A
+writer SHALL name the frame's payload id and SHALL NOT choose a policy, so that
+adding a frame kind is adding a row rather than adding a behaviour. The classes
+are `:control` (a control frame — refused to its caller, or counted where the
+caller is a cast, and never held, because a reply re-driven after its waiter
+timed out is a stale answer), `:durable` (a change record, a snapshot, a delete,
+a park payload or a shutdown state ship — held in the bounded ring, drop-oldest
+counted, replayed in write order on the next bound stream) and `:output` (a
+plugin or workflow emit — held already framed, so a keyed output's channel and
+its identity stamps survive the replay). A payload id the table does not name
+SHALL be refused at the call rather than given a default.
+
+The data heartbeat SHALL NOT be held. It reports a moment that has passed, so
+replaying it after a rebind is worse than losing it; its write verdict SHALL
+instead feed a reconnect ladder on the same terms the shared core's heartbeat
+does, and a heartbeat is delivered when any bound secondary took it.
+
+#### Scenario: A durable frame refused by a dead stream is replayed
+
+- **WHEN** the SDK writes a frame of class `:durable` and the write is refused,
+  or no stream is bound
+- **THEN** the frame SHALL be held and replayed on the next bound stream, and a
+  shed at the bound SHALL be counted where every drop-oldest on this wire is counted
+
+#### Scenario: A control frame is refused rather than held
+
+- **WHEN** the SDK writes a frame of class `:control` and the write is refused
+- **THEN** the refusal SHALL reach the caller, or be counted where the caller is
+  a cast, and the frame SHALL NOT enter the hold
+
+#### Scenario: An undelivered heartbeat asks for a reconnect
+
+- **WHEN** no bound secondary takes the SDK's `data_heartbeat`
+- **THEN** the miss SHALL feed the reconnect ladder rather than being discarded,
+  and a runner with one live and one dead secondary SHALL NOT reconnect
+
+#### Scenario: A frame the table does not name is refused
+
+- **WHEN** a write names a payload id the class table does not declare
+- **THEN** the SDK SHALL refuse the write rather than apply a default policy
+

@@ -107,6 +107,7 @@ class FakeCore:
         self.dispatch_threads: set[int] = set()
         self.idle_watches = 0
         self.idle_freed: list[int] = []
+        self.stdin_watch_grace_ms: int | None = None
 
     # -- the ABI ----------------------------------------------------------
 
@@ -174,6 +175,9 @@ class FakeCore:
     def shutdown(self) -> None:
         self.shut_down = True
         self._shutting.set()
+
+    def watch_stdin_eof(self, grace_ms: int) -> None:
+        self.stdin_watch_grace_ms = grace_ms
 
     def free(self) -> None:
         self.freed = True

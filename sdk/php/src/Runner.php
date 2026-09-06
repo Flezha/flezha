@@ -62,15 +62,16 @@ final class Runner
     private readonly Registry $registry;
     private ?Core $core = null;
     private ?Executor $executor = null;
+    /** What a healthy runner has to drain in after standard input closes. */
+    private const STDIN_EOF_GRACE_MS = 5_000;
+
     private ?Dispatcher $dispatcher = null;
     private ?EntryIdle $idle = null;
     private ?int $maxActivations = null;
-    private Shutdown $shutdown;
 
     public function __construct(public readonly string $namespace)
     {
         $this->registry = new Registry();
-        $this->shutdown = Shutdown::unwatched();
         $this->maxActivations = self::budgetFromEnvironment();
     }
 
@@ -235,7 +236,15 @@ final class Runner
         $this->executor ??= Executors::fromEnvironment($this->maxActivations);
 
         $this->core->start($this->namespace);
-        $this->shutdown = Shutdown::watch($this->stop(...));
+        // Shutdown is observed three ways, because the harness, an operator and
+        // the controller each have their own: end of file on standard input, a
+        // signal, and the core's own stop. The first two are the core's, on a
+        // thread of its own — which is why they are observed even from inside
+        // an activation body, where a non-thread-safe PHP has nothing that
+        // could look. The harness stops a runner by closing its standard input.
+        if (!stream_isatty(STDIN)) {
+            $this->core->watchStdinEof(self::STDIN_EOF_GRACE_MS);
+        }
 
         Logger::current()->info(sprintf(
             'runner up on namespace %s: %s executor, %d operative class(es)',
@@ -285,8 +294,7 @@ final class Runner
         $dispatcher = $this->dispatcher ?? throw new FlezhaException('the runner has no dispatcher');
 
         while (!$state->stopping()) {
-            $this->observeShutdown();
-            $this->observeIdle();
+                $this->observeIdle();
 
             $bytes = null;
             $status = $core->poll(self::POLL_TIMEOUT_MS, $bytes);
@@ -312,19 +320,6 @@ final class Runner
             $started = hrtime(true);
             $dispatcher->dispatch($bytes);
             $state->observe(hrtime(true) - $started);
-        }
-    }
-
-    /**
-     * Observe the two ways a runner is asked to stop that are not the core's
-     * own, between polls. A worker thread's handle watches nothing — only the
-     * thread that started the runner owns its signals and its standard input.
-     */
-    public function observeShutdown(): void
-    {
-        if ($this->shutdown->observe()) {
-            Logger::current()->info('standard input reached end of file; draining');
-            $this->stop();
         }
     }
 

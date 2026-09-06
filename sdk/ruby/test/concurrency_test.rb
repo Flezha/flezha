@@ -270,7 +270,7 @@ class ConcurrencyTest < Minitest::Test
         next unless line.match?(/(^|[^$\w])\$[a-z_]\w*\s*=(?!=)/) || line.match?(/@@\w+/)
 
         # `$stdin` / `$stderr` are read, never rebound, by the logger and the
-        # stdin watcher; the pattern above only matches an assignment.
+        # tty check; the pattern above only matches an assignment.
         (found[path] ||= []) << index + 1
       end
     end

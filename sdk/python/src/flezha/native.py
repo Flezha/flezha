@@ -75,6 +75,7 @@ class Core:
         "complete",
         "abandon",
         "shutdown",
+        "watch_stdin_eof",
         "workflow_emit",
         "workflow_recv",
         "workflow_cancelled",
@@ -144,6 +145,12 @@ class Core:
         """Ship every Entity's state to the controller, then wake every blocked
         poller and stop the runner loop."""
         self._call("shutdown")
+
+    def watch_stdin_eof(self, grace_ms: int) -> None:
+        """Ask the core to watch standard input and end this process on end of
+        file, on a thread of its own — so no reader of descriptor 0 lives here
+        and none holds a lock the interpreter's finalisation waits on."""
+        self._call("watch_stdin_eof", grace_ms)
 
     # -- the poll loop -----------------------------------------------------
 

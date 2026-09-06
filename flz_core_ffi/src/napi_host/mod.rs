@@ -41,11 +41,6 @@ const POLL_TIMEOUT_MS: u64 = 250;
 /// decides when the wait returns.
 const SUPERVISOR_WAIT_MS: u64 = 1_000;
 
-/// How often the standard-input watcher retries a non-blocking read. It has
-/// nothing else to do, and shutdown latency is already bounded by the poll
-/// timeout, so this only has to be small next to that.
-const STDIN_POLL_INTERVAL: Duration = Duration::from_millis(50);
-
 /// How long `stopHost` waits for the fetchers and the pool to drain.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -457,60 +452,17 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
     Ok(promise)
 }
 
-/// Stop the process when standard input reaches end of file.
+/// Ask the core to watch standard input and end the process on end of file.
 ///
-/// Native, and that is the point. A conformance harness stops a runner by
-/// closing its pipes rather than by signalling it, and the obvious place to
-/// observe that is the event loop — which is exactly the thread a compute-bound
-/// handler holds. A runner whose only loop is wedged would then be
-/// unstoppable without a signal, and in the single-loop configuration there is
-/// no second loop to notice.
-///
-/// So the watcher is a thread this binding owns. On end of file it wakes every
-/// blocked poller, giving a healthy runner `grace_ms` to drain and exit on its
-/// own; a runner that has not exited by then is terminated, because there is
-/// nothing left that could.
+/// The watch itself is `flz_core::shutdown::watch_stdin_eof`, reached through
+/// the ABI: a conformance harness stops a runner by closing its pipes rather
+/// than by signalling it, and the thread that would notice is the event loop —
+/// exactly the thread a compute-bound handler holds. The core's thread owns
+/// neither, and it reaches the exit the same way SIGTERM does.
 #[napi]
 pub fn watch_stdin_eof(grace_ms: u32) -> Result<()> {
-    let ctx = context()?;
-    std::thread::Builder::new()
-        .name("flz-stdin-eof".into())
-        .spawn(move || {
-            use std::io::{ErrorKind, Read};
-            let mut byte = [0u8; 1];
-            loop {
-                match std::io::stdin().read(&mut byte) {
-                    // End of file: the far end closed. This is the only read
-                    // outcome that means shutdown.
-                    Ok(0) => break,
-                    Ok(_) => continue,
-                    // NOT end of file. Standard input is non-blocking whenever
-                    // the runtime has taken an interest in it — which it has
-                    // the moment a worker thread exists — so a read with
-                    // nothing buffered answers `WouldBlock`. Treating that as
-                    // end of file shuts the runner down a few hundred
-                    // milliseconds after it connects, every time, and only in
-                    // the multi-loop configuration.
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        std::thread::sleep(STDIN_POLL_INTERVAL);
-                    }
-                    Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                    // Anything else means the descriptor is gone, which is
-                    // end of file by another name.
-                    Err(_) => break,
-                }
-            }
-            log_line(1, "standard input reached end of file; draining");
-            veneer::shutdown(ctx);
-            std::thread::sleep(Duration::from_millis(u64::from(grace_ms)));
-            std::process::exit(0);
-        })
-        .map_err(|e| {
-            Error::new(
-                Status::GenericFailure,
-                format!("could not start the standard-input watcher: {e}"),
-            )
-        })?;
+    context()?;
+    crate::veneer::watch_stdin_eof(grace_ms);
     Ok(())
 }
 

@@ -429,6 +429,15 @@ fn shutdown() -> Result<(), Error> {
     Ok(())
 }
 
+/// Watch standard input and end the process on end of file, on the core's own
+/// thread. The host reads descriptor 0 nowhere.
+fn watch_stdin_eof(grace_ms: u32) -> Result<(), Error> {
+    let ruby = ruby();
+    context(&ruby)?;
+    veneer::watch_stdin_eof(grace_ms);
+    Ok(())
+}
+
 /// Emit one output payload from a live workflow run-sugar body. Non-blocking
 /// in the core (an unbounded coordinator send), so it holds the GVL.
 fn workflow_emit(instance_id: String, payload: RString) -> Result<(), Error> {
@@ -558,6 +567,7 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("complete", "flz_core_complete"),
     ("abandon", "flz_core_abandon"),
     ("shutdown", "flz_core_shutdown"),
+    ("watch_stdin_eof", "flz_core_watch_stdin_eof"),
     ("workflow_emit", "flz_core_workflow_emit"),
     ("workflow_recv", "flz_core_workflow_recv"),
     ("workflow_cancelled", "flz_core_workflow_cancelled"),
@@ -602,6 +612,7 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("complete", function!(complete, 1))?;
     native.define_module_function("abandon", function!(abandon, 1))?;
     native.define_module_function("shutdown", function!(shutdown, 0))?;
+    native.define_module_function("watch_stdin_eof", function!(watch_stdin_eof, 1))?;
     native.define_module_function("workflow_emit", function!(workflow_emit, 2))?;
     native.define_module_function("workflow_recv", function!(workflow_recv, 2))?;
     native.define_module_function("workflow_cancelled", function!(workflow_cancelled, 1))?;

@@ -39,6 +39,23 @@ own timer thread, so a busy runner keeps proving liveness and a brief GC pause c
 `ControlUnit` failing unacked control replies (`fail_stuck_refs`) only unblocks callers; it is not
 a liveness signal.
 
+The runner's own heartbeat is owed no delivery: it reports a moment that has passed, so it is
+never held for a replay. Its write verdict is evidence instead — a heartbeat counts as delivered
+when ANY bound secondary took it, and a run of ticks that reached none crosses
+`FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` misses inside `FLEZHA_BROKEN_PIPE_WINDOW_MS` and asks
+for a reconnect, re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS` so an unanswered request
+cannot disarm the detector. Both runtimes run that ladder: `flz_core`'s `heartbeat_tick` through
+`state_sink::note_transport_failure`, and the Elixir SDK's through its own guarantee class. It is
+the only signal an idle runner gives that its outbound wire is gone.
+
+A wire that has gone for good is a different fact, and it is detected once per runtime rather
+than once per host: `flz_core::shutdown` owns both the standard-input end-of-file watch and the
+SIGINT/SIGTERM handler, on a thread no host's virtual machine owns, and every erased host reaches
+the watch through one ABI entry. Both lead to the same exit — ship every operative's final state,
+stop the poll core so the host's own workers drain, then end — so a runner cannot drain
+differently for one than for the other, and a compute-bound handler holding the host's loop
+cannot delay either.
+
 ## The instrumented path
 
 ```text

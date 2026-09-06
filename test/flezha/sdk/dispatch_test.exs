@@ -216,17 +216,6 @@ defmodule Flezha.SDK.DispatchTest do
   defdelegate rebind_secondary(op), to: SdkOperativeHarness
   defdelegate close_secondary(handle), to: SdkOperativeHarness
 
-  # The property both ways of losing a wire have to satisfy: an output produced
-  # while it is down is held, and lands once a stream is bound again.
-  defp assert_held_then_replayed(op, value) do
-    Inbox.input(op, "in", value, %{})
-    refute_receive {:flz_data, _id, "op-1", _, _}, 200
-
-    rebind_secondary(op)
-
-    assert_receive {:flz_data, _id, "op-1", ^value, %{"channel" => "e"}}, 2_000
-  end
-
   # --- tests ---
 
   test "full dispatch routes input → run → emit → sink output on a secondary" do
@@ -234,23 +223,6 @@ defmodule Flezha.SDK.DispatchTest do
     Inbox.input(op, "in", "hello", %{})
     # The frame names the producing node's channel, never the plugin.
     assert_receive {:flz_data, _id, "op-1", "hello", %{"channel" => "e"}}, 1_000
-  end
-
-  test "an output whose write fails is held, and reaches the stream the rebind wires" do
-    %{op: op, sdk_secondary: sdk} = start_operative(EchoOp)
-    # The wire goes: the stream process stops, so every `send_frame` on the
-    # handle the Operative holds refuses.
-    :ok = close_secondary(sdk)
-
-    assert_held_then_replayed(op, "held")
-  end
-
-  test "an output emitted with no secondary at all is held, not silently dropped" do
-    %{op: op} = start_operative(EchoOp)
-    # The other way a wire goes: the runner hands the Operative no stream at all.
-    send(op, {:secondaries, []})
-
-    assert_held_then_replayed(op, "orphan")
   end
 
   test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do

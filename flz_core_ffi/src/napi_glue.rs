@@ -563,7 +563,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         host("dispatchLoopCount", None, false),
         host("hostStats", None, false),
         host("setHostDrainedCallback", None, false),
-        host("watchStdinEof", Some("flz_core_shutdown"), false),
+        host("watchStdinEof", Some("flz_core_watch_stdin_eof"), false),
         host("nativeSurface", None, false),
     ]
 }

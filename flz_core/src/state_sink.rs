@@ -1,13 +1,12 @@
-//! The process-global send path for durable records, and the holding pen every
-//! writer on the outbound wire shares: [`send`] resolves the live sink on every
-//! call, a frame that cannot be written goes into a drop-oldest ring — through
-//! [`send`] for a record, through [`write_or_hold`] for a writer that framed its
-//! own payload and [`hold_failed_frame`] for one with no stream to try — and
-//! [`install_global_sink`] replays the ring onto
-//! the stream a reconnect wires, so nothing produced mid-reconnect is lost. A
-//! sustained run of write failures is a dead data stream under a live control
-//! channel, and asks the coordinator for a full reconnect. An eviction is the
-//! one outcome that loses a frame, and it is counted as a drop-oldest shed.
+//! The one seam every writer on the outbound wire goes through: [`write`]
+//! answers a refused write by the frame's declared [`Class`] rather than at the
+//! write site, and [`send`] is the same answer for a writer with no stream in
+//! hand. A frame a class holds goes into a drop-oldest ring that
+//! [`install_global_sink`] replays onto the stream a reconnect wires, so
+//! nothing produced mid-reconnect is lost. A sustained run of write failures is
+//! a dead data stream under a live control channel, and asks the coordinator
+//! for a full reconnect. An eviction is the one outcome that loses a frame, and
+//! it is counted as a drop-oldest shed.
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -59,9 +58,9 @@ const DEFAULT_RECONNECT_RETRY_MS: u64 = 30_000;
 
 const RECONNECT_REASON: &str = "broken_pipe_flood";
 
-/// A frame the wire could not take. A record is replayed through the sink
-/// that frames it; a framed payload already carries its own payload id and
-/// metadata, so it is replayed onto the live secondary exactly as it stands.
+/// A frame the wire could not take. A record is replayed through the sink that
+/// frames it; a framed payload carries its own payload id and metadata, so it
+/// is replayed onto the live secondary exactly as it stands.
 enum Pending {
     Record { payload_id: String, frame: Vec<u8> },
     Framed(Vec<u8>),
@@ -221,8 +220,9 @@ pub fn sink_installed() -> bool {
         .is_some()
 }
 
-/// Ship one frame through the live sink, or hold it in the ring; never
-/// blocks the flusher on a dead stream.
+/// [`Class::Durable`] for a writer with no stream in hand: ship one frame
+/// through the live sink, or hold it in the ring as a record the replay
+/// re-frames. Never blocks the flusher on a dead stream.
 pub fn send(payload_id: &str, frame: Vec<u8>) {
     let should_reconnect = {
         let mut st = STATE.lock().expect("state_sink lock poisoned");
@@ -243,21 +243,91 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
     drive_reconnect_if(should_reconnect);
 }
 
-/// Write a framed payload to `stream`, or hold it — the whole posture a writer
-/// on this wire takes, so none of them re-implements the failure half. `kind`
-/// names the writer in the burst's first line.
-pub fn write_or_hold(kind: &str, stream: &FlezhaStream, frame: Vec<u8>) {
-    let mut w: &FlezhaStream = stream;
-    if let Err(e) = w.write_all(&frame) {
-        hold_failed_frame(kind, frame, &e);
+/// The guarantee a frame is owed. A writer names the class of the frame it is
+/// writing and never what happens when the wire refuses it: [`write`] answers
+/// that, once, for every writer on this wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Class {
+    /// Refused to its caller and never held: a reply re-driven after its waiter
+    /// timed out is a stale answer, and the reconnect re-issues the request it
+    /// belonged to.
+    Control,
+    /// A change record, a snapshot, a delete, a park payload or a shutdown
+    /// state ship: held in the bounded ring, drop-oldest counted, replayed in
+    /// write order on the next bound stream.
+    Durable,
+    /// A plugin or workflow emit: held **already framed**, so a keyed output's
+    /// channel and its `flz.*` identity stamps survive the replay — the ring
+    /// re-frames a record with empty metadata and would strip them.
+    Output,
+    /// A heartbeat: owed no delivery at all, because it reports a moment that
+    /// has passed. Its verdict is evidence for the caller's flood ladder.
+    Probe,
+}
+
+impl Class {
+    /// What the burst's first line calls this writer.
+    const fn kind(self) -> &'static str {
+        match self {
+            Class::Control => "control",
+            Class::Durable => "durable",
+            Class::Output => "output",
+            Class::Probe => "probe",
+        }
+    }
+}
+
+/// What a write answered: it reached the wire, the class held it for the next
+/// bound stream, or the class holds nothing and this is the refusal.
+#[derive(Debug)]
+pub enum Verdict {
+    Written,
+    Held,
+    Refused(std::io::Error),
+}
+
+impl Verdict {
+    /// The refusal a class that holds nothing owes its caller; `Ok` for a frame
+    /// that reached the wire or one the class kept.
+    pub fn refused(self) -> std::io::Result<()> {
+        match self {
+            Verdict::Refused(e) => Err(e),
+            Verdict::Written | Verdict::Held => Ok(()),
+        }
+    }
+}
+
+/// Write `frame` under its guarantee class — the one seam every writer on this
+/// wire goes through, so none of them chooses a policy of its own. `stream` is
+/// `None` when nothing is bound, which a class that holds answers exactly as it
+/// answers a refused write.
+pub fn write(class: Class, stream: Option<&FlezhaStream>, frame: Vec<u8>) -> Verdict {
+    let refusal = match stream {
+        Some(stream) => {
+            let mut w: &FlezhaStream = stream;
+            w.write_all(&frame).err()
+        }
+        None => Some(std::io::Error::new(
+            std::io::ErrorKind::NotConnected,
+            "no stream bound",
+        )),
+    };
+
+    match (class, refusal) {
+        (_, None) => Verdict::Written,
+        (Class::Control | Class::Probe, Some(e)) => Verdict::Refused(e),
+        (Class::Durable | Class::Output, Some(e)) => {
+            hold_failed_frame(class.kind(), frame, &e);
+            Verdict::Held
+        }
     }
 }
 
 /// Hold a frame a writer framed itself and could not write — `kind` names that
 /// writer in the burst's first line. The same ring, the same flood ladder and
 /// the same reconnect request [`send`] uses: one wire, one policy for a failed
-/// write. [`write_or_hold`] is the form to reach for with a stream in hand.
-pub fn hold_failed_frame(kind: &str, frame: Vec<u8>, error: &dyn std::fmt::Display) {
+/// write.
+fn hold_failed_frame(kind: &str, frame: Vec<u8>, error: &dyn std::fmt::Display) {
     let should_reconnect = {
         let mut st = STATE.lock().expect("state_sink lock poisoned");
         st.hold_failed(kind, Pending::Framed(frame), error)
@@ -389,6 +459,7 @@ pub(crate) fn reconnect_requested_for_test() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
 
@@ -411,6 +482,106 @@ mod tests {
     }
 
     const PID: &str = super::ENTITY_STATE_CHANGE_PAYLOAD_ID;
+
+    /// A stream whose peer is gone, so every write to it refuses. A pipe takes
+    /// EPIPE on the write and not on the close, so one write lands in the void.
+    fn dead_stream() -> Arc<FlezhaStream> {
+        let (stream, ctrl_end) = crate::test_support::stream_pair();
+        drop(ctrl_end);
+        let mut w: &FlezhaStream = &stream;
+        let _ = w.write_all(b"gone");
+        stream
+    }
+
+    /// Held, and the install replays it onto the live secondary.
+    #[test]
+    fn a_durable_frame_the_wire_refuses_is_held_and_replayed() {
+        let _g = super::test_guard();
+        reset_state();
+
+        let stream = dead_stream();
+        let held = write(Class::Durable, Some(&stream), b"rec".to_vec());
+        assert!(matches!(held, Verdict::Held));
+        assert_eq!(ring_len_for_test(), 1);
+
+        // The framed entry replays onto the live secondary, not through the
+        // sink that would re-frame it.
+        let (live, mut peer) = crate::test_support::stream_pair();
+        set_secondary_stream(Some(Arc::clone(&live)));
+        let (sink, _seen) = recording_sink(Arc::new(AtomicBool::new(false)));
+        install_global_sink(sink);
+
+        let mut got = [0u8; 3];
+        peer.read_exact(&mut got).expect("the held frame replays");
+        assert_eq!(&got, b"rec");
+        assert_eq!(ring_len_for_test(), 0);
+        set_secondary_stream(None);
+        reset_state();
+    }
+
+    /// Nothing bound is answered exactly as a refusal is: the class answers the
+    /// fact, not the shape of the failure.
+    #[test]
+    fn a_durable_frame_with_no_stream_bound_is_held() {
+        let _g = super::test_guard();
+        reset_state();
+
+        assert!(matches!(
+            write(Class::Durable, None, b"rec".to_vec()),
+            Verdict::Held
+        ));
+        assert_eq!(ring_len_for_test(), 1);
+        reset_state();
+    }
+
+    /// The bytes that come back are the bytes that went in: a re-framed record
+    /// would carry empty metadata and strip a keyed output of its stamps.
+    #[test]
+    fn an_output_the_wire_refuses_is_held_already_framed() {
+        let _g = super::test_guard();
+        reset_state();
+
+        let framed = flz_transport::service::payloader::build_from_binary(
+            "op-1",
+            b"body",
+            std::collections::HashMap::from([("flz.key".to_string(), "k".to_string())]),
+        );
+        assert!(matches!(
+            write(Class::Output, Some(&dead_stream()), framed.clone()),
+            Verdict::Held
+        ));
+
+        let (live, mut peer) = crate::test_support::stream_pair();
+        set_secondary_stream(Some(Arc::clone(&live)));
+        let (sink, _seen) = recording_sink(Arc::new(AtomicBool::new(false)));
+        install_global_sink(sink);
+
+        let mut got = vec![0u8; framed.len()];
+        peer.read_exact(&mut got).expect("the held output replays");
+        assert_eq!(got, framed, "the replay ships the bytes the emit framed");
+        set_secondary_stream(None);
+        reset_state();
+    }
+
+    /// Neither holds anything: a re-driven reply is a stale answer, and a
+    /// replayed heartbeat reports a moment that has passed.
+    #[test]
+    fn a_control_frame_and_a_probe_are_refused_rather_than_held() {
+        let _g = super::test_guard();
+        reset_state();
+
+        for class in [Class::Control, Class::Probe] {
+            let stream = dead_stream();
+            let verdict = write(class, Some(&stream), b"c".to_vec());
+            assert!(
+                matches!(verdict, Verdict::Refused(_)),
+                "{class:?} must refuse to its caller, answered {verdict:?}"
+            );
+            assert!(verdict.refused().is_err());
+            assert_eq!(ring_len_for_test(), 0, "{class:?} must hold nothing");
+        }
+        reset_state();
+    }
 
     #[test]
     fn frames_with_no_sink_buffer_and_replay_on_install() {

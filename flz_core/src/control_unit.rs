@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::io::{self, Write};
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread;
 use std::time::Duration;
+use std::{io, thread};
 
 use crossbeam::channel::Sender;
 use flz_transport::service::payloader;
@@ -358,14 +357,16 @@ fn build_keepalive_ping() -> Vec<u8> {
 
 pub fn send_keepalive_ping(stream: &FlezhaStream) -> io::Result<()> {
     let frame = build_keepalive_ping();
-    (&*stream).write_all(&frame).map_err(|e| {
-        tracing::warn!(
-            target: "flezha::transport",
-            kind = ?e.kind(),
-            "control keepalive ping write failed: {}", e
-        );
-        e
-    })
+    crate::state_sink::write(crate::state_sink::Class::Control, Some(stream), frame)
+        .refused()
+        .map_err(|e| {
+            tracing::warn!(
+                target: "flezha::transport",
+                kind = ?e.kind(),
+                "control keepalive ping write failed: {}", e
+            );
+            e
+        })
 }
 
 /// The keepalive timer only signals the coordinator, so it outlives every
@@ -452,14 +453,19 @@ fn send_init_msg(
         payloader::build_from_str("connect_control_channel", &control_message, HashMap::new());
 
     // A failed init write means the peer vanished between connect and write
-    // (e.g. a controller that died mid-handshake); surface it so the caller
-    // drives a reconnect instead of panicking the reader thread.
-    (&*stream_clone).write_all(&payload)
+    // (e.g. a controller that died mid-handshake); the class refuses it to the
+    // caller so it drives a reconnect instead of panicking the reader thread.
+    crate::state_sink::write(
+        crate::state_sink::Class::Control,
+        Some(&stream_clone),
+        payload,
+    )
+    .refused()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{Read, Write};
 
     use crossbeam::channel::unbounded;
 

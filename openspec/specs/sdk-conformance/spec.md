@@ -520,3 +520,75 @@ row's lines in every SDK's conformance run.
   consumer set that differs from the row
 - **THEN** that SDK's conformance run fails naming the row and the line
 
+### Requirement: Every runtime SHALL answer a refused write by the frame's declared guarantee class
+
+Every SDK SHALL answer a write the wire refuses by the guarantee class of the
+frame, and no SDK SHALL choose that answer at the write site. The classes and
+their policies SHALL be the same three in every runtime — a control frame is
+refused or counted and never held; a durable record is held in a bounded ring,
+drop-oldest counted, and replayed in write order on the next bound stream; a
+plugin or workflow output is held already framed so its channel and identity
+stamps survive the replay — with the shared core carrying them for the Rust,
+Java, Node, Python, Ruby and PHP SDKs and the Elixir SDK carrying its own,
+because it inherits nothing from `flz_core`.
+
+A conformance scenario SHALL prove this on the real wire for every runtime the
+manifest does not defer: the stream is severed mid-burst, the runner rebinds,
+and the durable and output frames written during the outage arrive exactly
+once while the control frames are refused and counted.
+
+#### Scenario: A severed stream loses no durable frame on any runtime
+
+- **GIVEN** a runner of the runtime under test producing records and outputs
+- **WHEN** its data stream is severed mid-burst and the runner rebinds
+- **THEN** every `:durable` and `:output` frame written during the outage SHALL
+  arrive after the rebind, and the counters SHALL report what was held and what
+  was shed
+
+#### Scenario: A control frame is not replayed after the rebind
+
+- **WHEN** a control frame's write is refused during the outage
+- **THEN** it SHALL be counted and SHALL NOT arrive after the rebind, because
+  the reconnect re-issues the request it belonged to
+
+#### Scenario: A shed at the bound is counted, never silent
+
+- **WHEN** more frames are held during an outage than the ring's bound allows
+- **THEN** the runtime SHALL count the shed where every drop-oldest on this wire
+  is counted, and the drill SHALL read that count rather than infer it
+
+### Requirement: A departed wire SHALL be detected by one watcher per runtime, not one per host
+
+Standard-input end-of-file and SIGTERM SHALL be detected once per runtime and
+SHALL lead to one graceful exit, rather than being re-implemented by each host
+on top of the core that already owns them. For every host built on `flz_core`
+the detector and the signal handler SHALL be the core's, reached through the
+ABI, and a host SHALL NOT install its own signal trap beside the core's unless
+its runtime gives it no choice — the Java SDK's JVM shutdown hook is such a
+case and is named as one. The Elixir SDK, which is its own core, SHALL keep its
+own terminal-exit path.
+
+A conformance scenario SHALL prove the exit per runtime: the runner ships its
+final state, exits with the declared status, and opens no new control
+connection on the way out.
+
+#### Scenario: SIGTERM ends every runtime the same way
+
+- **WHEN** a runner of the runtime under test is sent SIGTERM mid-activation
+- **THEN** it SHALL ship `RunnerShutdownNotification` for each of its operatives,
+  exit with the declared status, and open no new control connection
+
+#### Scenario: A closed standard input ends the runner
+
+- **WHEN** the harness closes the runner's standard input
+- **THEN** the runner SHALL run the same graceful shutdown SIGTERM runs, within
+  the declared grace, whatever its host language
+
+#### Scenario: A host observes the wire's departure from inside a long activation
+
+- **GIVEN** a runner whose activation body is asleep for far longer than the
+  shutdown budget
+- **WHEN** the wire departs
+- **THEN** the runner SHALL still exit, because the detector does not run on the
+  thread the activation occupies
+

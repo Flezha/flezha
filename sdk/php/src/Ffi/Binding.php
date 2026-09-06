@@ -73,6 +73,7 @@ final class Binding
         int32_t flz_core_complete(uintptr_t ctx, const char *buf, size_t len);
         int32_t flz_core_abandon(uintptr_t ctx, uint64_t token);
         void flz_core_shutdown(uintptr_t ctx);
+        void flz_core_watch_stdin_eof(uint32_t grace_ms);
         int32_t flz_core_workflow_emit(uintptr_t ctx, const char *instance_id, const char *buf, size_t len);
         int32_t flz_core_workflow_recv(uintptr_t ctx, const char *instance_id, uint64_t timeout_ms, char **buf_out, size_t *len_out);
         int32_t flz_core_workflow_cancelled(uintptr_t ctx, const char *instance_id);
