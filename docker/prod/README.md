@@ -38,7 +38,7 @@ running whatever they happened to cache.
 The image's CMD is `/usr/local/bin/controller-entrypoint.sh` (under tini). The
 script starts `bin/flzvm start`, waits for the controller to bind its control
 socket, traps SIGTERM/SIGINT to run `flz controller stop`, then `wait`s. All
-behaviour is configured via env vars — see `docs/operations/deployment.md` for
+behaviour is configured via env vars — see `docs/operations/deployment/variables.md` for
 the contract. The controller recovers its operatives and plugins from
 ProcessHub's durable registry and the per-Entity WAL; the image ships no
 snapshot hook.

@@ -249,7 +249,7 @@ skipped as a block.
 |---|---|---|
 | `FLEZHA_PROCESS_HUB_PATH` | `mix.exs` | build a release against a local `process_hub` checkout instead of the published hex release |
 | `RUSTLER_SKIP_COMPILATION` | Rustler, via `mix compile` | `true` makes the build pick up a pre-built `priv/native/flz_nif.so` instead of invoking cargo (prod image Stage 2) |
-| `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; it bounds the wait for the controller's control socket. See [`operations/deployment.md`](operations/deployment.md) |
+| `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | `docker/prod/controller-entrypoint.sh` | the image entrypoint's own contract; it bounds the wait for the controller's control socket. See [`operations/deployment/images.md`](operations/deployment/images.md) |
 | `FLEZHA_TESTNET_WS_PORT` | `config/runtime.exs` and `docker/prod/controller-entrypoint.sh` | the port the WS testnet daemon binds. `:test` derives it from the run (`4500` outside `:test`); the entrypoint starts the daemon only when it is set explicitly |
 | `FLEZHA_NODE_NAME` | `config/runtime.exs` and `rel/env.sh.eex` | the base of the node name `<name>@<host>`. `:test` derives it from the run (`flezha_test_<pid>`; `flezha` outside `:test`) and starts distribution under it; the release script builds `RELEASE_NODE` from it |
 
@@ -314,8 +314,8 @@ operator named. It is not *prepared* unconditionally, though — a controller
 probes the directory it resolved before clearing it, and refuses to start when
 a live peer answers there, naming the path and this variable. A socket nobody
 answers is a controller that died hard and is cleared as normal. See
-[`operations/deployment.md` § Several controllers on one
-machine](operations/deployment.md). A **runner** takes
+[`operations/deployment/bare_metal.md` § Several controllers on one
+machine](operations/deployment/bare_metal.md). A **runner** takes
 the first holding a live control socket, and when two candidates hold one and
 no variable says which is meant, it **refuses to connect and names both** rather
 than attaching to a controller the operator did not choose. Every path is
@@ -334,7 +334,7 @@ is another reason to prefer a short runtime directory over a deep checkout.
 
 `flz runner check` runs this resolution and its probe from a shell, with no
 runner code and no running controller; see
-[`operations/deployment.md`](operations/deployment.md).
+[`operations/deployment/bare_metal.md`](operations/deployment/bare_metal.md).
 
 ### `FLEZHA_DROP_NOTHING_NONPARKING` — read this before you set it
 
@@ -659,7 +659,7 @@ capability the provider does not offer fails loudly.
 
 ## See also
 
-- [`operations/deployment.md`](operations/deployment.md) — the variables a deploy cannot omit, and how to run a node
+- [`operations/deployment/README.md`](operations/deployment/README.md) — the variables a deploy cannot omit, and how to run a node
 - [`resilience/data_durability.md`](resilience/data_durability.md) — what the durability knobs mean for correctness
 - [`architecture/kernel.md`](architecture/kernel.md) — where the WAL, outbox and fsync knobs sit in the data path
 - [`operations/authn_authz.md`](operations/authn_authz.md) — the posture behind the authz keys

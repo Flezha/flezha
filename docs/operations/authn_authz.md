@@ -62,7 +62,7 @@ setting makes it world-readable or world-writable.
 This is a real loosening and it is on purpose: the alternative on offer is
 running the runner as the controller's account, which is a broader grant than
 the group, granted invisibly. See
-[`deployment.md` § Two users on one machine](deployment.md).
+[`deployment/bare_metal.md` § Two users on one machine](deployment/bare_metal.md).
 
 For QUIC the server requires a client certificate chaining to the trust anchor
 at `FLEZHA_QUIC_CLIENT_CA`. On first boot the Controller generates a complete
@@ -425,4 +425,4 @@ switches, not per-namespace.
 - [../sdk/protocol_spec.md](../sdk/protocol_spec.md) — the QUIC client-auth table on the wire
 - [../internals/state_persistence.md](../internals/state_persistence.md) — namespaced state layout
 - [../configuration.md](../configuration.md) — every env var in one place
-- [deployment.md](deployment.md) — Kubernetes manifests
+- [deployment/kubernetes.md](deployment/kubernetes.md) — Kubernetes manifests

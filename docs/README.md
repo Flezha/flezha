@@ -61,7 +61,7 @@ reproduces it and the output that command gave.
 
 | Doc | Covers |
 | --- | --- |
-| [`deployment.md`](operations/deployment.md) | Docker dev loop, production image, Kubernetes |
+| [`deployment/README.md`](operations/deployment/README.md) | Docker dev loop, production image, Kubernetes |
 | [`authn_authz.md`](operations/authn_authz.md) | Cookie and certificates, bootstrap, tokens, roles, namespaces, recovery |
 | [`audit_log.md`](operations/audit_log.md) | The durable JSONL audit log: layout, fsync, rotation, CLI |
 | [`observability.md`](operations/observability.md) | Signals, sources, sinks, `flz observe`, Prometheus and OTLP export |

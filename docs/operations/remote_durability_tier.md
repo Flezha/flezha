@@ -27,7 +27,7 @@ peer shadows another's Operatives. And when a peer does adopt them,
 `Flezha.State.WalTransfer` pulls destination-driven over `:erpc` against the source node, so a
 controller that died with its disk answers nothing and the adopting controller starts cold.
 This tier is the mechanism that survives that loss. Co-locating controllers on one host is
-documented in [`deployment.md` § Several controllers on one machine](deployment.md), which
+documented in [`deployment/bare_metal.md` § Several controllers on one machine](deployment/bare_metal.md), which
 carries the same statement.
 
 ## A production controller must choose
