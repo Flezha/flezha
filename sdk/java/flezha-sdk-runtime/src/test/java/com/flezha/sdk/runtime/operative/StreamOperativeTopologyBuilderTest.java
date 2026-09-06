@@ -550,6 +550,15 @@ class StreamOperativeTopologyBuilderTest {
     }
 
     /**
+     * The verdict a build was refused with, or {@code null} if the build was accepted. Package
+     * private: {@link ReferenceTopologyRowsTest} reads the same verdict off the same builder.
+     */
+    static StreamOperativeConfigurationException catchConfigException(Runnable build) {
+        return org.assertj.core.api.Assertions.catchThrowableOfType(
+                StreamOperativeConfigurationException.class, build::run);
+    }
+
+    /**
      * The refusals Java reports by NAME only because the core holds them: the
      * six shapes this SDK refused in its own words, or accepted, before the
      * builder started submitting its record. A verdict lists every refusal it
@@ -608,11 +617,6 @@ class StreamOperativeTopologyBuilderTest {
                     .isInstanceOf(StreamOperativeConfigurationException.class)
                     .hasMessageContaining("UnkeyedChannelUnderEffectivelyOnce")
                     .hasMessageContaining("must opt in with .keyed()");
-        }
-
-        private StreamOperativeConfigurationException catchConfigException(Runnable build) {
-            return (StreamOperativeConfigurationException) org.assertj.core.api.Assertions.catchThrowableOfType(
-                    StreamOperativeConfigurationException.class, build::run);
         }
     }
 

@@ -156,6 +156,7 @@ class PollHostTest {
 
     @Test
     @DisplayName("activations blocked in user code do not consume the fetchers")
+    @SuppressWarnings("try")
     void blockedActivationsDoNotConsumeFetchers() throws Exception {
         FakeCore core = new FakeCore();
         CountDownLatch gate = new CountDownLatch(1);
@@ -176,7 +177,7 @@ class PollHostTest {
         // As many blocked activations as there are fetchers: with dispatch
         // running on the fetcher itself, nothing below would ever be picked
         // up.
-        try (PollHost host = start(core, dispatch, 2)) {
+        try (PollHost ignored = start(core, dispatch, 2)) {
             core.handOut(activation(1, "blocked-a"));
             core.handOut(activation(2, "blocked-b"));
             for (long token = 3; token <= 6; token++) {
@@ -201,6 +202,7 @@ class PollHostTest {
      */
     @Test
     @DisplayName("per-entity order holds across successive activations")
+    @SuppressWarnings("try")
     void perEntityOrderHoldsAcrossSuccessiveActivations() throws Exception {
         FakeCore core = new FakeCore();
         List<String> trace = new CopyOnWriteArrayList<>();
@@ -226,7 +228,7 @@ class PollHostTest {
             return ok(activation);
         };
 
-        try (PollHost host = start(core, dispatch, 2)) {
+        try (PollHost ignored = start(core, dispatch, 2)) {
             core.handOut(activation(1, "same-entity"));
             assertThat(insideFirst.await(10, TimeUnit.SECONDS))
                     .as("the first activation is held inside the dispatch")
@@ -250,6 +252,7 @@ class PollHostTest {
      */
     @Test
     @DisplayName("a throwing dispatch abandons rather than dropping the activation")
+    @SuppressWarnings("try")
     void aThrowingDispatchAbandons() throws Exception {
         FakeCore core = new FakeCore();
         CountDownLatch dispatched = new CountDownLatch(1);
@@ -258,7 +261,7 @@ class PollHostTest {
             throw new IllegalStateException("dispatcher blew up");
         };
 
-        try (PollHost host = start(core, dispatch, 1)) {
+        try (PollHost ignored = start(core, dispatch, 1)) {
             core.handOut(activation(7, "unlucky"));
             assertThat(dispatched.await(10, TimeUnit.SECONDS)).isTrue();
             awaitTrue(() -> core.abandoned.contains(7L), "the activation was abandoned");
@@ -268,11 +271,12 @@ class PollHostTest {
 
     @Test
     @DisplayName("a throwing complete abandons rather than dropping the activation")
+    @SuppressWarnings("try")
     void aThrowingCompleteAbandons() throws Exception {
         FakeCore core = new FakeCore();
         core.completeThrows = true;
 
-        try (PollHost host = start(core, PollHostTest::ok, 1)) {
+        try (PollHost ignored = start(core, PollHostTest::ok, 1)) {
             core.handOut(activation(8, "unlucky"));
             awaitTrue(() -> core.abandoned.contains(8L), "the activation was abandoned");
         }

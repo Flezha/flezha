@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.runtime.RepositoryFixture;
 import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
 import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
@@ -19,8 +20,6 @@ import com.flezha.sdk.workflow.WorkflowOperative;
 import com.flezha.sdk.workflow.WorkflowOperativeCtx;
 import com.flezha.sdk.workflow.WorkflowOperativeException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -240,14 +239,8 @@ class HostClassDeclarationTest {
     private static final String KEY_FIXTURE = "test/fixtures/host_class_decl_keys.txt";
 
     private static List<String> pinnedKeys(String section) throws Exception {
-        // The test runs from the module directory; the fixture is repo-relative.
-        Path fixture = Path.of("..", "..", "..").resolve(KEY_FIXTURE).normalize();
-        if (!Files.exists(fixture)) {
-            fixture = Path.of(KEY_FIXTURE);
-        }
         String prefix = section + ".";
-        return Files.readAllLines(fixture).stream()
-                .filter(line -> !line.startsWith("#") && !line.isBlank())
+        return RepositoryFixture.lines(KEY_FIXTURE).stream()
                 .filter(line -> line.startsWith(prefix))
                 .map(line -> line.substring(prefix.length()))
                 .collect(Collectors.toCollection(java.util.ArrayList::new));
