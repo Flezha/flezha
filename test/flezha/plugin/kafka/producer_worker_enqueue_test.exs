@@ -31,7 +31,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
 
     attach(:produce_ok)
     assert :ok = ProducerWorker.enqueue(pid, "hello", %{})
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], measurements, metadata}
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :shipped], measurements, metadata}
     assert measurements.batch_size == 1
     assert metadata.topic == @topic
   end
@@ -81,7 +81,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
         :ok = ProducerWorker.cast_enqueue(pid, "msg-#{i}", %{})
       end
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :overflowed], %{count: 1},
                       %{overflow_strategy: :drop_oldest}},
                      500
 
@@ -114,7 +114,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
       assert queued?(pid, 1)
       :ok = ProducerWorker.cast_enqueue(pid, "rejected", %{})
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :overflowed], %{count: 1},
                       %{overflow_strategy: :drop_newest}}
 
       assert Process.alive?(pid)
@@ -137,7 +137,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
 
       assert :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :failed], _,
                       %{last_reason: :record_list_too_large, caller: :async}},
                      1_000
 
@@ -155,7 +155,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
 
       assert :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :failed], _,
                       %{last_reason: :no_broker, caller: :async}},
                      1_000
 
@@ -193,7 +193,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
 
   defp collect_failed_events(n, timeout) do
     receive do
-      {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _} = ev ->
+      {:telemetry, [:flezha, :plugin, :kafka, :failed], _, _} = ev ->
         [ev | collect_failed_events(n - 1, timeout)]
     after
       timeout -> []
@@ -218,7 +218,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
     # Every cast has been admitted (or evicted) once a call queued behind them
     # answers; a drop would have emitted before that.
     _ = ProducerWorker.stats(pid)
-    refute_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}
+    refute_received {:telemetry, [:flezha, :plugin, :kafka, :overflowed], _, _}
 
     sent =
       for _ <- 1..4, into: MapSet.new() do
@@ -278,7 +278,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
       attach(:produce_ok)
       assert :ok = ProducerWorker.enqueue(pid, "m3", %{})
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], _, _}
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :shipped], _, _}
       assert :sys.get_state(pid).consecutive_failures == 0
     end
 
@@ -409,7 +409,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
       attach(:worker_swapped)
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], measurements,
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :worker_swapped], measurements,
                       metadata},
                      500
 
@@ -425,7 +425,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
       assert is_pid(metadata.old_worker_pid)
       assert is_integer(metadata.producer_id_after) or is_nil(metadata.producer_id_after)
 
-      refute_received {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :kafka, :worker_swapped], _, _}
     end
 
     test "no :produce :failed events fire for queued records during the swap window" do
@@ -448,7 +448,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerEnqueueTest do
 
       # The swap is handled ahead of this call; a failure would have fired inside it.
       _ = :sys.get_state(pid)
-      refute_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :kafka, :failed], _, _}
     end
 
     test "defensive :EXIT from unrelated pid does not crash the producer" do

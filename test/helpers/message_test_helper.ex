@@ -42,20 +42,10 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
   """
   def forward_telemetry(event, tag, filter \\ fn _metadata -> true end)
       when is_function(filter, 1) do
-    test_pid = self()
-    handler_id = {__MODULE__, tag, System.unique_integer([:positive])}
-
-    :ok =
-      :telemetry.attach(
-        handler_id,
-        event,
-        fn _event, measurements, metadata, _ ->
-          if filter.(metadata), do: send(test_pid, {tag, measurements, metadata})
-        end,
-        nil
-      )
-
-    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler_id) end)
+    FlezhaTest.Helper.Telemetry.capture(event,
+      filter: filter,
+      as: fn _event, measurements, metadata -> {tag, measurements, metadata} end
+    )
   end
 
   def recv_num(msg, count) do

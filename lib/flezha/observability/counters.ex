@@ -11,18 +11,22 @@ defmodule Flezha.Observability.Counters do
   @key {__MODULE__, :ref}
   @error_classes :flezha_observability_error_classes
 
-  @slot :dispatcher_failure_count
-  @slot_logger :logger_bridge_failures
-  @slot_telemetry :telemetry_bridge_failures
+  use Flezha.Process.Counters,
+    table: :counter,
+    slots: [
+      [name: :dispatcher_failure_count, kind: :count],
+      [name: :logger_bridge_failures, kind: :count],
+      [name: :telemetry_bridge_failures, kind: :count]
+    ]
 
-  @slots [:dispatcher_failure_count, :logger_bridge_failures, :telemetry_bridge_failures]
+  @slots Enum.map(@counter_rows, &Keyword.fetch!(&1, :name))
 
   @doc false
   @spec init() :: :ok
   def init() do
     case :persistent_term.get(@key, nil) do
       nil ->
-        ref = :counters.new(length(@slots), [:atomics])
+        ref = counter_new()
         :persistent_term.put(@key, ref)
 
       _ref ->
@@ -71,7 +75,7 @@ defmodule Flezha.Observability.Counters do
   def bump(slot) when slot in @slots do
     case :persistent_term.get(@key, nil) do
       nil -> :ok
-      ref -> :counters.add(ref, slot_index(slot), 1)
+      ref -> counter_bump(ref, slot)
     end
   end
 
@@ -79,7 +83,7 @@ defmodule Flezha.Observability.Counters do
   def get(slot) when slot in @slots do
     case :persistent_term.get(@key, nil) do
       nil -> 0
-      ref -> :counters.get(ref, slot_index(slot))
+      ref -> counter_get(ref, slot)
     end
   end
 
@@ -91,8 +95,8 @@ defmodule Flezha.Observability.Counters do
 
       ref ->
         Enum.each(@slots, fn slot ->
-          current = :counters.get(ref, slot_index(slot))
-          if current > 0, do: :counters.sub(ref, slot_index(slot), current)
+          current = counter_get(ref, slot)
+          if current > 0, do: counter_sub(ref, slot, current)
         end)
     end
 
@@ -103,8 +107,4 @@ defmodule Flezha.Observability.Counters do
 
     :ok
   end
-
-  defp slot_index(@slot), do: 1
-  defp slot_index(@slot_logger), do: 2
-  defp slot_index(@slot_telemetry), do: 3
 end

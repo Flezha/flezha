@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed — a counted fact is declared once, and every surface derives
+
+Every data-plane liveness counter is now one row that says what it is, how it
+reduces, which heartbeat key it mirrors and which surface reads it. The metrics
+this exports, the controller's heartbeat mirror, the Elixir SDK's heartbeat and
+the two documents describing the key set are all derived from that one list
+instead of repeating it, so adding a liveness metric is one row rather than
+seven edits. Five counter stores that numbered their own slots by hand now share
+one table.
+
+Provider telemetry gained one vocabulary: an event is the family root, the
+provider's own id and a verb, with `shipped`, `retried`, `failed` and
+`overflowed` meaning the same thing everywhere. The websocket provider's events
+move from `[:flezha, :ws, …]` under the plugin family with the rest, and the
+kafka producer's events reach a sink for the first time. Exported metric names
+and sources are unchanged.
+
 ### Changed — one layout, one store, one identifier rule
 
 Where this product puts its files is now one declaration. Ten subtrees are

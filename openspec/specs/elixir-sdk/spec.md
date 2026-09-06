@@ -216,7 +216,14 @@ The SDK SHALL decode `AddOperative`'s `partition_index`/`partition_count`/`key_g
 - **THEN** it produces `"BTC-USD"→129`, `"ETH-USD"→213`, `"SOL-USD"→60`, `""→141`, `"a"→100`
 
 ### Requirement: Liveness self-reporting matches the cross-SDK contract
-The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `PingResponse` carrying the nonce, and emit `data_heartbeat` frames (empty body) every `FLEZHA_DATA_HEARTBEAT_MS` (default 10 s), jittered into `[base/2, base]`, on each bound secondary stream, with metadata carrying at least `dispatches` (incremented only on completed dispatches — the key the `runner_pool_wedged` verdict requires), `blocked_parks`, `credit_parked` — the count of credit-park wait iterations, so a runner parked on an exhausted window reads as parked rather than wedged beside a frozen `dispatches` — `timers_armed` (the processing-time timers the runner's Entities hold armed on the BEAM's timer service) and `timers_fired` (firings completed, monotonic): the two timer keys every other SDK's heartbeat carries. The contract SHALL hold identically in both deployment modes.
+The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `PingResponse` carrying the nonce, and emit `data_heartbeat` frames (empty body) every `FLEZHA_DATA_HEARTBEAT_MS` (default 10 s), jittered into `[base/2, base]`, on each bound secondary stream, with metadata carrying **exactly the key set the shared core's heartbeat builds** — not a subset of it. The keys are `dispatches` (incremented only on completed dispatches — the key the `runner_pool_wedged` verdict requires), `blocked_parks`, `credit_parked` — the count of credit-park wait iterations, so a runner parked on an exhausted window reads as parked rather than wedged beside a frozen `dispatches` — `drops_newest` and `drops_oldest`, `inflight` and `inflight_oldest_ms`, `pending_pushes` and `pending_push_oldest_ms`, `restore_discarded_inputs` (inputs a rebind threw away, the operator's only handle on the size of that loss), and `timers_armed` (the processing-time timers the runner's Entities hold armed on the BEAM's timer service) and `timers_fired` (firings completed, monotonic): the two timer keys every other SDK's heartbeat carries. The contract SHALL hold identically in both deployment modes.
+
+This SDK's core is its own and inherits nothing from `flz_core`, so the key set
+is a thing it can drift on and the other runtimes cannot. The metadata map SHALL
+therefore be built by walking the controller's declared heartbeat key list rather
+than written as a literal, and a key it cannot yet report SHALL be given a
+counter rather than a literal zero — a reader cannot tell an absent key from a
+genuinely zero one.
 
 #### Scenario: Heartbeats keep idle channels live
 - **WHEN** the runner is connected with zero traffic for several minutes
@@ -233,6 +240,14 @@ The SDK SHALL echo `control_ping` on the control channel, answer `Ping` with a `
 #### Scenario: Timer occupancy and firings ride the heartbeat
 - **WHEN** an Entity registers two processing-time timers and later one of them fires
 - **THEN** a heartbeat after the registrations carries `timers_armed` = 2, and one after the firing carries `timers_armed` = 1 and `timers_fired` = 1
+
+#### Scenario: Discarded inputs ride the heartbeat
+- **WHEN** a rebind discards inputs the runner had not yet consumed
+- **THEN** the next heartbeat carries `restore_discarded_inputs` advanced by the number discarded
+
+#### Scenario: The key set equals the shared core's
+- **WHEN** this SDK's heartbeat metadata keys are compared with the key set `flz_core`'s heartbeat builds
+- **THEN** the two sets SHALL be equal, and a key present in one and not the other SHALL fail the cross-SDK gate
 
 ### Requirement: Declarations and deferred commands follow the scope matrix
 `AddOperativeResponse.metadata` SHALL be empty for a class declaring nothing (the legal "declared nothing" encoding), except that a keyless topology SHALL declare `keyed: "false"` so the controller's partitioned-start preflight works, a class whose smallest `compact_after_bytes/0` differs from the 8 MiB default SHALL declare `compact_after_bytes` with that value, a class declaring `effectively_once/1` SHALL declare `effectively_once: "true"`, and one declaring checkpoint acknowledgement SHALL declare `ack_granularity: "checkpoint"` — and a class declaring `correction_window/2` SHALL declare `correction_window_ms` with the declared milliseconds and `beyond_window_policy` with `process_as_arrival` or `drop` — both keys whenever a window is declared, as the reference ships them, so an undeclared policy reaches the controller as the default rather than as an absence — the four keys the reference ships and the goldens `tier_store.json`, `checkpoint_batched_store.json` and `candle.json` pin; the cadence, the held outputs and the delay stay SDK-side and reach no metadata. The persistence-family commands — `RestoreInitState`, `CompactEntity`, `EntityState`, `EntityApplyState`, `MigrationSerialization` / `MigrationDeserialization`, `CreditWindowInit`, `CreditGrant` — SHALL be answered for real, by the SDK's own re-expression of the kernel's rules (the `state_persistence` requirement below); `EntityMailboxStatus` SHALL be tolerated with a debug log, as the reference tolerates a pre-credit controller. `WorkflowStop` SHALL be tolerated with a warn (no workflow factory is ever advertised). `RunnerDisconnect` SHALL terminate the connection cleanly: a terminal one runs the graceful shutdown and ends the VM with the terminal status; a non-terminal one SHALL stop the runner in place — the reference's `Stopped` — leaving the controller to take the session down, reconnecting into nothing and keeping the process, so a `:permanent` supervisor has nothing to restart into a second registration.

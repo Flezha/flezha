@@ -13,6 +13,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   which subscribes with its `post_connect` payload and never polls anything.
   """
 
+  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Process.Timer
@@ -359,8 +360,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
         |> delta_frame(:add, added, state.subscription.subscribe_template)
         |> delta_frame(:remove, removed, state.subscription.unsubscribe_template)
 
-      :telemetry.execute(
-        [:flezha, :ws, :reconcile],
+      emit(
+        :reconcile,
         %{added: MapSet.size(added), removed: MapSet.size(removed)},
         %{plugin_id: state.plugin_id}
       )
@@ -522,4 +523,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   end
 
   def schedule_subscription_poll(state), do: state
+  # The prefix is derived from the provider's id; nothing here names a root.
+  @provider "websocket"
+
+  defp emit(verb, measurements, metadata),
+    do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 end

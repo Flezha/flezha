@@ -14,7 +14,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Process.Timer
 
-  @telemetry_event [:flezha, :ws, :idle_reconnect]
+  @telemetry_event [:flezha, :plugin, :websocket, :idle_reconnect]
 
   setup do
     parent = self()

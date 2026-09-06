@@ -168,29 +168,16 @@ defmodule FlezhaTest.Kafka.ProducerFakes do
   def attach(tag) do
     event =
       case tag do
-        :produce_ok -> [:flezha, :plugin, :kafka, :produce, :ok]
-        :produce_retry -> [:flezha, :plugin, :kafka, :produce, :retry]
-        :produce_failed -> [:flezha, :plugin, :kafka, :produce, :failed]
-        :dropped -> [:flezha, :plugin, :kafka, :produce, :dropped]
-        :metadata_refresh -> [:flezha, :plugin, :kafka, :metadata, :refresh]
-        :topic_created -> [:flezha, :plugin, :kafka, :topic, :created]
-        :worker_swapped -> [:flezha, :plugin, :kafka, :worker, :swapped]
+        :produce_ok -> [:flezha, :plugin, :kafka, :shipped]
+        :produce_retry -> [:flezha, :plugin, :kafka, :retried]
+        :produce_failed -> [:flezha, :plugin, :kafka, :failed]
+        :dropped -> [:flezha, :plugin, :kafka, :overflowed]
+        :metadata_refresh -> [:flezha, :plugin, :kafka, :metadata_refresh]
+        :topic_created -> [:flezha, :plugin, :kafka, :topic_created]
+        :worker_swapped -> [:flezha, :plugin, :kafka, :worker_swapped]
       end
 
-    handler_id = "test-#{System.unique_integer([:positive])}"
-    test_pid = self()
-
-    :ok =
-      :telemetry.attach(
-        handler_id,
-        event,
-        fn name, measurements, metadata, _ ->
-          send(test_pid, {:telemetry, name, measurements, metadata})
-        end,
-        nil
-      )
-
-    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler_id) end)
+    FlezhaTest.Helper.Telemetry.capture(event)
   end
 
   def script_send_fn(test_pid, script_pid) do

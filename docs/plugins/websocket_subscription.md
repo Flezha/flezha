@@ -108,8 +108,8 @@ The plugin runs a two-tier watchdog whether or not a source is configured:
 
 | Tier | Knob | Trigger | Action |
 |---|---|---|---|
-| connection liveness | `idle_timeout_ms` (default `30000`; `0` disables) | no frame of any kind — data, heartbeat, ping/pong — for the window | the connection process exits `{:shutdown, :idle_timeout}` and the host restarts the plugin through its retry path; emits `[:flezha, :ws, :idle_reconnect]` |
-| data liveness | `resubscribe_after_ms` (default `0` = off) | socket alive but no non-`ignore_pattern` data frame for the window | re-sends the subscription on the existing connection, at most once per window; emits `[:flezha, :ws, :resubscribe]` |
+| connection liveness | `idle_timeout_ms` (default `30000`; `0` disables) | no frame of any kind — data, heartbeat, ping/pong — for the window | the connection process exits `{:shutdown, :idle_timeout}` and the host restarts the plugin through its retry path; emits `[:flezha, :plugin, :websocket, :idle_reconnect]` |
+| data liveness | `resubscribe_after_ms` (default `0` = off) | socket alive but no non-`ignore_pattern` data frame for the window | re-sends the subscription on the existing connection, at most once per window; emits `[:flezha, :plugin, :websocket, :resubscribe]` |
 
 Connect and the data-liveness re-subscribe send the same thing: the rendered
 `subscribe_template` over the current **applied** set when a source is
@@ -232,9 +232,9 @@ two watchdog tiers alone.
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `[:flezha, :ws, :reconcile]` | `%{added: integer(), removed: integer()}` | `%{plugin_id: binary()}` |
-| `[:flezha, :ws, :idle_reconnect]` | `%{silence_ms: integer()}` | `%{plugin_id: binary()}` |
-| `[:flezha, :ws, :resubscribe]` | `%{data_silence_ms: integer()}` | `%{plugin_id: binary()}` |
+| `[:flezha, :plugin, :websocket, :reconcile]` | `%{added: integer(), removed: integer()}` | `%{plugin_id: binary()}` |
+| `[:flezha, :plugin, :websocket, :idle_reconnect]` | `%{silence_ms: integer()}` | `%{plugin_id: binary()}` |
+| `[:flezha, :plugin, :websocket, :resubscribe]` | `%{data_silence_ms: integer()}` | `%{plugin_id: binary()}` |
 
 `:reconcile` fires only on a cycle that sent at least one frame, so a steady
 source is silent and a flapping one is loud — a source that flaps is a defect

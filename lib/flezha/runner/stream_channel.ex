@@ -72,44 +72,22 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
-  # The runner's self-report, mirrored whole: every key the heartbeat carries
-  # holds an `hb_<key>` liveness slot here.
-  # `dispatches` frozen while the runner is alive is a wedged pool;
-  # `credit_parked` advancing while it freezes is fed-but-parked rather than
-  # frozen; `blocked_parks` says the same for the receive side (a producer held
-  # on a full entity mailbox); `inflight` and its oldest age are what make ONE
-  # wedged Entity visible while the rest keeps completing; the two drop counters
-  # are what a shedding operative loses, which nothing outside the runner could
-  # see before; `pending_pushes` and its oldest age are the producers a full
-  # consumer is withholding work from — they hold no handout, so `inflight` is
-  # blind to them and backpressure would otherwise look like a runner doing
-  # nothing; `restore_discarded_inputs` is how much a rebind threw away, which
-  # is correct only where the controller re-forwards from a durable log; and
-  # `timers_fired` frozen while `timers_armed` climbs is promotion wedged
-  # rather than an idle Operative. A key the runner pays for on the wire and
-  # this list omits reaches no operator surface at all, which the cross-SDK
-  # gate refuses.
-  @heartbeat_keys ~w(dispatches credit_parked blocked_parks inflight inflight_oldest_ms
-                     drops_newest drops_oldest pending_pushes pending_push_oldest_ms
-                     restore_discarded_inputs timers_armed timers_fired)
-  @heartbeat_slots for key <- @heartbeat_keys, do: {key, :"hb_#{key}"}
-
-  # The mirror can only name a slot the layout has: without this, a key added
-  # above with no `hb_<key>` slot compiles and then kills the channel on the
-  # first heartbeat that carries it.
-  for {key, slot} <- @heartbeat_slots, slot not in LivenessCounters.channel_slots() do
-    raise "heartbeat key #{key} mirrors into #{slot}, which is not a " <>
-            "Flezha.Transport.LivenessCounters channel slot"
-  end
+  # The runner's self-report, mirrored whole. The key list is DERIVED from the
+  # liveness layout — every row that declares a `heartbeat:` — so a key with no
+  # slot is unconstructible rather than caught by a compile-time check, and the
+  # slot a key mirrors into is read from the same row. A key the runner pays
+  # for on the wire and the layout omits reaches no operator surface at all,
+  # which the cross-SDK gate refuses.
+  @heartbeat_slots LivenessCounters.heartbeat_pairs()
 
   @doc """
   The heartbeat keys this controller mirrors. Read by the cross-SDK gate,
-  which compares them with the key set the shared core's heartbeat builds —
-  a key the runner pays for on the wire and nothing here holds a slot for is
-  invisible to every operator surface.
+  which compares them with the key sets the shared core's heartbeat and the
+  Elixir SDK build — a key the runner pays for on the wire and nothing here
+  holds a slot for is invisible to every operator surface.
   """
   @spec heartbeat_keys() :: [String.t()]
-  def heartbeat_keys(), do: @heartbeat_keys
+  defdelegate heartbeat_keys(), to: LivenessCounters
 
   @impl true
   def init({runner_id, type, name}) do

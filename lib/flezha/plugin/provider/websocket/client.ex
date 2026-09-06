@@ -9,6 +9,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   `Websocket`.
   """
 
+  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Plugin.Host
@@ -343,8 +344,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
         "#{inspect(state.plugin_id)} silence_ms=#{silence_ms} reason=idle_timeout"
     )
 
-    :telemetry.execute(
-      [:flezha, :ws, :idle_reconnect],
+    emit(
+      :idle_reconnect,
       %{silence_ms: silence_ms},
       %{plugin_id: state.plugin_id}
     )
@@ -364,8 +365,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
     with true <- Subscription.established(state, "re-subscribe"),
          [_ | _] = frames <- Subscription.subscription_frames(state) do
-      :telemetry.execute(
-        [:flezha, :ws, :resubscribe],
+      emit(
+        :resubscribe,
         %{data_silence_ms: data_silence_ms},
         %{plugin_id: state.plugin_id}
       )
@@ -411,4 +412,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   # reconnect while a poll chain from the previous connection is still armed.
   # Without the cancel each reconnect would leave another chain running and the
   # source would be polled twice, then four times, then eight.
+  # The prefix is derived from the provider's id; nothing here names a root.
+  @provider "websocket"
+
+  defp emit(verb, measurements, metadata),
+    do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 end

@@ -261,17 +261,21 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   # This family's telemetry vocabulary. Every event carries the source
   # operative, the target operative and the plugin id, so a saturating cycle
   # between two operatives is visible to an operator without parsing log lines.
-  @prefix [:flezha, :plugin, :operative_forward]
+  # The prefix is derived from the provider's id; nothing here names a root.
+  @provider "operative_forward"
+
+  defp emit(verb, measurements, metadata),
+    do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 
   # One payload reached the target; `outcome` is the verdict's terminal tag.
   defp emit_delivered(outcome, labels) do
-    :telemetry.execute(@prefix ++ [:delivered], %{count: 1}, Map.put(labels, :outcome, outcome))
+    emit(:shipped, %{count: 1}, Map.put(labels, :outcome, outcome))
   end
 
   # A delivery attempt failed and the payload is retained for retry.
   defp emit_retry(attempt, backoff_ms, reason, labels) do
-    :telemetry.execute(
-      @prefix ++ [:retry],
+    emit(
+      :retried,
       %{attempt: attempt, backoff_ms: backoff_ms},
       Map.put(labels, :reason, reason)
     )
@@ -279,11 +283,11 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
 
   # Current queue depth, emitted on every enqueue.
   defp emit_queue_depth(depth, labels) do
-    :telemetry.execute(@prefix ++ [:queue_depth], %{depth: depth}, labels)
+    emit(:queue_depth, %{depth: depth}, labels)
   end
 
   # The queue reached `:queue_max` and the enqueueing caller is parked.
   defp emit_saturated(depth, labels) do
-    :telemetry.execute(@prefix ++ [:saturated], %{depth: depth}, labels)
+    emit(:overflowed, %{depth: depth}, labels)
   end
 end

@@ -164,7 +164,7 @@ costs one frame whether or not the content moved.
 
 | Event | Measurements | Metadata |
 | --- | --- | --- |
-| `[:flezha, :plugin, :http_poll, :injected]` | `bytes`, `latency_ms` | `plugin_id`, `channel`, `seed` |
+| `[:flezha, :plugin, :http_poll, :shipped]` | `bytes`, `latency_ms` | `plugin_id`, `channel`, `seed` |
 | `[:flezha, :plugin, :http_poll, :unchanged]` | `latency_ms` | `plugin_id`, `channel` |
 | `[:flezha, :plugin, :http_poll, :failed]` | `consecutive_failures`, `latency_ms` | `plugin_id`, `channel`, `reason` |
 

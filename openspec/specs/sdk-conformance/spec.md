@@ -592,3 +592,39 @@ connection on the way out.
 - **THEN** the runner SHALL still exit, because the detector does not run on the
   thread the activation occupies
 
+### Requirement: Every producer of the data heartbeat SHALL build one declared key set
+
+The data heartbeat's metadata keys SHALL be one contract, and the static drift gate SHALL compare every producer of that contract against it on every default-suite run.
+
+There are two producers: `flz_core`'s heartbeat builder, which serves the Rust,
+Java, node, python, ruby and php runtimes through one function, and the Elixir
+SDK, whose core is separate and inherits nothing from `flz_core`. The gate
+SHALL read the key set from each producer's own sources and compare both with
+the controller's mirror, so that a key one producer carries and another omits is
+a build failure rather than a silent gap on one runtime.
+
+A key that a producer omits SHALL NOT be substituted with a literal zero. A
+reader cannot tell an absent key from a genuinely zero one, so an omission is
+reported as an omission and the producer is given the counter.
+
+The gate SHALL read the shared core's builder by a scrape that tolerates the
+formatter's line wrapping. A scrape anchored to the opening parenthesis and the
+string on one line reads fewer keys than the builder writes, and would pass with
+the gap intact.
+
+#### Scenario: A key one producer omits fails the gate
+
+- **GIVEN** the key set the shared core's heartbeat builds
+- **WHEN** the Elixir SDK's heartbeat builds a strictly smaller set
+- **THEN** the gate SHALL fail and name the missing keys
+
+#### Scenario: A key with no slot fails the gate
+
+- **WHEN** a producer adds a heartbeat key for which the controller declares no liveness slot
+- **THEN** the gate SHALL fail and name the key
+
+#### Scenario: The scrape survives a wrapped tuple
+
+- **WHEN** the shared core's builder is reformatted so a key's tuple wraps across lines
+- **THEN** the gate SHALL still read that key, and a scrape that reads fewer keys than the builder writes SHALL be treated as a gate defect
+

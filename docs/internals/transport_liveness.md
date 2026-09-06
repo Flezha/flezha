@@ -89,18 +89,26 @@ BEAM counters alone. `StreamAcceptor` registers each per-runner data-stream serv
 
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on `:atomics`-backed `:counters`, one
 array per channel (`{runner_id, name}`) and per operative, registered in a public ETS table and pruned
-of dead owners on `snapshot_all/0`. Channel slots: `io_in_received`, `send_frame_calls`, `nil_drops`,
-`flz_data_received`, `last_send_ms`, `hb_count`, `hb_dispatches`, `hb_credit_parked`, `hb_inflight`,
-`hb_inflight_oldest_ms`, `hb_blocked_parks`, `hb_drops_newest`, `hb_drops_oldest`, `hb_pending_pushes`,
-`hb_pending_push_oldest_ms`, `hb_restore_discarded_inputs`, `hb_timers_armed`, `hb_timers_fired`,
-`credit_active`, `credit_ledger_level`, `credit_overrun_total`, `stale_writer_refused`,
-`send_gate_held`. Operative slots: `io_in_received`, `forwarded`, `filtered_nil`, `parked_drops`.
+of dead owners on `snapshot_all/0`.
+
+The slots are **one declaration**, and this page does not repeat it:
+`LivenessCounters.channel_rows/0` and `operative_rows/0` are the layout, and
+`channel_slots/0` / `operative_slots/0` name them in index order. Each row carries the
+slot's `kind:` (a monotonic `:count`, a `:set` gauge written whole, or an `:instant`
+stamp), its `scope:` (`:channel`, `:runner` or `:operative`), the `aggregate:` a reader
+uses across runners, the `heartbeat:` key it mirrors, and the `surface:` that reads it —
+a metric, a convergence verdict, a bridged telemetry event, or a stated internal reason.
+
+Everything downstream derives from those rows: the `:counters` index of each slot, the
+per-runner collapse in `by_runner/1`, `heartbeat_keys/0`, and the metric rows the
+`:flezha_transport` source emits. A new liveness metric is one row plus the line that
+bumps it — there is no exporter list, no mirror key list and no document to edit
+beside it.
 
 **Runner dispatch self-report** (all three SDKs): every `data_heartbeat` frame on a secondary stream
-carries `dispatches` (process-global payloads dispatched through the poll engine), `blocked_parks`,
-`drops_newest`, `drops_oldest`, `inflight`, `inflight_oldest_ms`, `pending_pushes`,
-`pending_push_oldest_ms`, `credit_parked`, `timers_armed`, `timers_fired` and, from `flz_core`,
-`restore_discarded_inputs`. The heartbeat thread
+carries the key set `LivenessCounters.heartbeat_keys/0` declares — every row with a
+`heartbeat:` — headed by `dispatches` (process-global payloads dispatched through the poll
+engine). The heartbeat thread
 outlives a wedged dispatch pool, so without the counter a runner can look alive while processing
 nothing. The secondary `StreamChannel` mirrors each into its `hb_*` slot and bumps `hb_count`; the
 per-stream `output_stall` heartbeat check runs only on secondary channels — primary streams are

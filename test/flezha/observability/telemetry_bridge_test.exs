@@ -63,7 +63,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     drain_mailbox()
 
     :telemetry.execute(
-      [:flezha, :ws, :resubscribe],
+      [:flezha, :plugin, :websocket, :resubscribe],
       %{data_silence_ms: 120_000},
       %{plugin_id: "wss://ws.kraken.com"}
     )

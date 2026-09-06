@@ -571,7 +571,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       :ok =
         :telemetry.attach(
           handler_id,
-          [:flezha, :plugin, :kafka, :produce, :failed],
+          [:flezha, :plugin, :kafka, :failed],
           fn name, measurements, metadata, _ ->
             send(test_pid, {:telemetry, name, measurements, metadata})
           end,
@@ -583,7 +583,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
       ctx = %Ctx.IO{operative_id: "p", namespace: "n", message: "x", metadata: %{}}
       assert {:ok, ^ctx} = Kafka.Producer.on_output(ctx, opts)
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :failed], _,
                       %{last_reason: :network_exception, caller: :async}},
                      2_000
 

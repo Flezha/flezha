@@ -36,19 +36,19 @@ Non-retriable errors: `:invalid_topic_exception`, `:record_list_too_large`, `:of
 - **AND** every Produce returns `:no_broker` or `:not_leader_for_partition` during that window
 - **THEN** within `:delivery_timeout_ms` of recovery, every message SHALL be delivered (subject to bounded-queue drops)
 - **AND** the chain caller SHALL NOT receive a single `{:error, _}` for messages that ultimately succeeded
-- **AND** a `[:flezha, :plugin, :kafka, :produce, :retry]` telemetry event SHALL be emitted for each retry attempt
+- **AND** a `[:flezha, :plugin, :kafka, :retried]` telemetry event SHALL be emitted for each retry attempt
 
 #### Scenario: Permanent error returns immediately
 - **GIVEN** a producer
 - **WHEN** `KafkaEx.produce` returns `{:error, :record_list_too_large}`
 - **THEN** the plugin SHALL return `{:error, {:permanent, :record_list_too_large}}` without retrying
-- **AND** SHALL emit a `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry event with `last_reason: :record_list_too_large`
+- **AND** SHALL emit a `[:flezha, :plugin, :kafka, :failed]` telemetry event with `last_reason: :record_list_too_large`
 
 #### Scenario: Delivery timeout exhausts all retries
 - **GIVEN** a producer with `:delivery_timeout_ms = 5000`
 - **WHEN** every attempt in 5 seconds fails with `:no_broker`
 - **THEN** the plugin SHALL return `{:error, {:delivery_failed, :no_broker}}` to the chain
-- **AND** SHALL emit a `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry event with `attempts: <n>` and `total_ms: ~5000`
+- **AND** SHALL emit a `[:flezha, :plugin, :kafka, :failed]` telemetry event with `attempts: <n>` and `total_ms: ~5000`
 
 ### Requirement: Producer auto-creates the topic on first publish when configured
 
@@ -66,7 +66,7 @@ The CreateTopics call SHALL be idempotent — if the topic was created concurren
 - **AND** SHALL issue a `CreateTopics` request with `partitions: 1, replication_factor: 2`
 - **AND** within 5 seconds the topic SHALL exist on the cluster with the configured shape
 - **AND** the original message SHALL be successfully delivered
-- **AND** a `[:flezha, :plugin, :kafka, :topic, :created]` telemetry event SHALL be emitted
+- **AND** a `[:flezha, :plugin, :kafka, :topic_created]` telemetry event SHALL be emitted
 
 #### Scenario: Concurrent topic creation does not error
 - **GIVEN** two producer plugin instances both publishing to the same non-existent topic at the same instant
@@ -106,7 +106,7 @@ When `:idempotent` is `false` the producer SHALL fall back to `api_version: 3` P
 - **WHEN** the worker process crashes and is restarted by its supervisor
 - **THEN** the new worker SHALL request a new producer-id via `InitProducerId`
 - **AND** the in-flight messages, if redelivered from a recovered queue, SHALL produce duplicates bounded by the in-flight window (≤10 in this scenario)
-- **AND** the duplicate count SHALL be observable via the `[:flezha, :plugin, :kafka, :produce, :ok]` telemetry stream's `attempt: 1` count vs delivered count
+- **AND** the duplicate count SHALL be observable via the `[:flezha, :plugin, :kafka, :shipped]` telemetry stream's `attempt: 1` count vs delivered count
 
 #### Scenario: Non-idempotent mode skips InitProducerId
 - **GIVEN** a producer with `:idempotent = false`
@@ -129,7 +129,7 @@ When either condition is exceeded and a slot of the in-flight window is free, th
 - **WHEN** the linger window closes
 - **THEN** exactly one Produce request SHALL be issued containing all 50 messages
 - **AND** all 50 messages SHALL share the same producer-id and consecutive sequence numbers
-- **AND** a single `[:flezha, :plugin, :kafka, :produce, :ok]` telemetry event SHALL be emitted with `batch_size: 50`
+- **AND** a single `[:flezha, :plugin, :kafka, :shipped]` telemetry event SHALL be emitted with `batch_size: 50`
 
 #### Scenario: 1 MiB batch flushes mid-window
 - **GIVEN** a producer with `:max_batch_bytes = 1048576` and `:linger_ms = 1000`
@@ -154,7 +154,7 @@ The default SHALL be `:drop_nothing` for every record, whether or not it serves 
 
 The `dropped_total` counter SHALL be exposed via:
 
-- `:telemetry` event `[:flezha, :plugin, :kafka, :produce, :dropped]` per drop event.
+- `:telemetry` event `[:flezha, :plugin, :kafka, :overflowed]` per drop event.
 - A function `Flezha.Plugin.Provider.Kafka.Producer.stats(plugin_id) :: %{dropped_total: integer, queue_depth: integer, ...}` for synchronous read.
 
 Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous surface a runner polls, and a drop that is invisible there is indistinguishable from no drop at all.
@@ -235,7 +235,7 @@ The `release/2` token returned by `acquire/2` SHALL be opaque to callers — the
 
 ### Requirement: Producer survives upstream Kafka worker crashes with zero queued-record loss
 
-When the `KafkaEx.New.Client` worker pid referenced by `state.worker_pid` terminates for any reason (including upstream `Kayrock` parse errors, broker connection loss returning `:einval`, OS-suspend/wake leaving the socket half-dead, or an explicit `KafkaEx.stop_worker/1`), the producer SHALL continue to drain `state.queue`, the in-flight window, and `state.blocked` against a freshly-acquired worker for the same canonical connection identity, **without losing any record that was already admitted to those structures** and **without emitting any `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry for records the new worker has not yet positively rejected**.
+When the `KafkaEx.New.Client` worker pid referenced by `state.worker_pid` terminates for any reason (including upstream `Kayrock` parse errors, broker connection loss returning `:einval`, OS-suspend/wake leaving the socket half-dead, or an explicit `KafkaEx.stop_worker/1`), the producer SHALL continue to drain `state.queue`, the in-flight window, and `state.blocked` against a freshly-acquired worker for the same canonical connection identity, **without losing any record that was already admitted to those structures** and **without emitting any `[:flezha, :plugin, :kafka, :failed]` telemetry for records the new worker has not yet positively rejected**.
 
 The producer SHALL learn of the worker's death through a typed `{:kafka_worker_dead, ref, reason}` message delivered by `Flezha.Plugin.Provider.Kafka.WorkerRegistry` to every caller pid that holds a live token against the dying entry (see the `Modified` requirement on the registry below). The producer SHALL NOT rely on the linked-process `:EXIT` signal to drive recovery, although it SHALL match a defensive `handle_info({:EXIT, _pid, _reason}, state)` clause that logs at `:debug` and returns `{:noreply, state}` so any future linked-process addition cannot regress the producer with `FunctionClauseError`.
 
@@ -245,7 +245,7 @@ On receiving `{:kafka_worker_dead, registry_ref, reason}` whose `registry_ref` m
 2. Move every in-flight batch back to the head of `state.queue`, oldest first and in order, each with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
 3. Call `WorkerRegistry.swap(state.registry_ref)` to obtain a fresh `{:ok, new_pid, new_ref}` for the same identity. On `{:error, reason}` (the broker is genuinely unreachable), schedule a retry of the swap using the existing `retry_backoff_ms(state, attempt)` curve and leave the queue untouched.
 4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, `state.producer_id = nil`, `state.producer_epoch = nil`, `state.sequence = 0`, empty the in-flight window, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
-5. Emit exactly one `[:flezha, :plugin, :kafka, :worker, :swapped]` telemetry event with measurements `%{queue_depth: state.queue_size, in_flight_records: prior_in_flight_size, queue_bytes: state.queue_bytes}` — `prior_in_flight_size` counting the records of every batch that was in the window — and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`.
+5. Emit exactly one `[:flezha, :plugin, :kafka, :worker_swapped]` telemetry event with measurements `%{queue_depth: state.queue_size, in_flight_records: prior_in_flight_size, queue_bytes: state.queue_bytes}` — `prior_in_flight_size` counting the records of every batch that was in the window — and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`.
 
 `state.blocked` callers SHALL remain blocked across the swap. Their existing `:block_timeout` timers continue to fire normally; a swap is not a `:queue_full` condition.
 
@@ -258,8 +258,8 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 - **WHEN** `WorkerRegistry` observes the worker's DOWN
 - **THEN** within 1 second the producer SHALL receive `{:kafka_worker_dead, registry_ref, _reason}`, acquire a new worker via `swap/2`, re-run `InitProducerId`, and resume sending
 - **AND** the topic end-offset of `btc_demo.ohlc.v1` (read via `docker compose ... exec kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic btc_demo.ohlc.v1`) SHALL advance by at least 200 records within the next 10 seconds
-- **AND** zero `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry events SHALL fire for those records (verified via a `:telemetry` handler attached for the duration of the test)
-- **AND** exactly one `[:flezha, :plugin, :kafka, :worker, :swapped]` event SHALL fire with `queue_depth ≥ 200` and `in_flight_records: 50`
+- **AND** zero `[:flezha, :plugin, :kafka, :failed]` telemetry events SHALL fire for those records (verified via a `:telemetry` handler attached for the duration of the test)
+- **AND** exactly one `[:flezha, :plugin, :kafka, :worker_swapped]` event SHALL fire with `queue_depth ≥ 200` and `in_flight_records: 50`
 
 #### Scenario: Upstream Kayrock parse error does not crash the producer
 - **GIVEN** the same producer setup as above
@@ -290,7 +290,7 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 
 ### Requirement: Active metadata refresh on error classes
 
-When a Produce returns `:not_leader_for_partition`, `:no_broker`, or `:unknown_topic_or_partition`, the producer SHALL force a metadata refresh BEFORE the next retry attempt. The refresh SHALL be bounded by `:metadata_refresh_timeout_ms` (default 5000) and SHALL emit `[:flezha, :plugin, :kafka, :metadata, :refresh]` with `trigger: :error_recovery, error: <reason>`.
+When a Produce returns `:not_leader_for_partition`, `:no_broker`, or `:unknown_topic_or_partition`, the producer SHALL force a metadata refresh BEFORE the next retry attempt. The refresh SHALL be bounded by `:metadata_refresh_timeout_ms` (default 5000) and SHALL emit `[:flezha, :plugin, :kafka, :metadata_refresh]` with `trigger: :error_recovery, error: <reason>`.
 
 The default kafka_ex `metadata_update_interval` (passive timer-based refresh) SHALL remain active as a fallback. Active refresh on error is in addition to, not in place of, the timer.
 
@@ -298,14 +298,14 @@ The default kafka_ex `metadata_update_interval` (passive timer-based refresh) SH
 - **GIVEN** a producer that just received `:not_leader_for_partition`
 - **WHEN** the retry logic kicks in
 - **THEN** before sleeping the backoff, the producer SHALL call `KafkaEx.metadata` (or equivalent) to force a refresh
-- **AND** SHALL emit `[:flezha, :plugin, :kafka, :metadata, :refresh]` with `trigger: :error_recovery, error: :not_leader_for_partition`
+- **AND** SHALL emit `[:flezha, :plugin, :kafka, :metadata_refresh]` with `trigger: :error_recovery, error: :not_leader_for_partition`
 - **AND** the next Produce attempt SHALL use the freshly-refreshed metadata to target the new leader
 
 #### Scenario: Refresh failure does not block retry
 - **GIVEN** the metadata refresh itself times out after 5 seconds
 - **WHEN** the producer's retry logic continues
 - **THEN** the retry SHALL still proceed using the stale metadata
-- **AND** SHALL emit `[:flezha, :plugin, :kafka, :metadata, :refresh]` with `error: :timeout`
+- **AND** SHALL emit `[:flezha, :plugin, :kafka, :metadata_refresh]` with `error: :timeout`
 
 ### Requirement: Telemetry events for every state transition
 
@@ -313,23 +313,23 @@ The producer SHALL emit `:telemetry.execute/3` events on every produce attempt, 
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `[:flezha, :plugin, :kafka, :produce, :ok]` | `%{batch_size, latency_ms}` | `%{topic, partition, plugin_id}` |
-| `[:flezha, :plugin, :kafka, :produce, :retry]` | `%{attempt, backoff_ms}` | `%{topic, partition, plugin_id, reason}` |
-| `[:flezha, :plugin, :kafka, :produce, :dropped]` | `%{count}` | `%{topic, partition, plugin_id, queue_depth, overflow_strategy}` |
-| `[:flezha, :plugin, :kafka, :produce, :failed]` | `%{attempts, total_ms}` | `%{topic, partition, plugin_id, last_reason}` |
-| `[:flezha, :plugin, :kafka, :metadata, :refresh]` | `%{latency_ms}` | `%{trigger, error}` |
-| `[:flezha, :plugin, :kafka, :topic, :created]` | `%{partitions, replication_factor}` | `%{topic, plugin_id}` |
+| `[:flezha, :plugin, :kafka, :shipped]` | `%{batch_size, latency_ms}` | `%{topic, partition, plugin_id}` |
+| `[:flezha, :plugin, :kafka, :retried]` | `%{attempt, backoff_ms}` | `%{topic, partition, plugin_id, reason}` |
+| `[:flezha, :plugin, :kafka, :overflowed]` | `%{count}` | `%{topic, partition, plugin_id, queue_depth, overflow_strategy}` |
+| `[:flezha, :plugin, :kafka, :failed]` | `%{attempts, total_ms}` | `%{topic, partition, plugin_id, last_reason}` |
+| `[:flezha, :plugin, :kafka, :metadata_refresh]` | `%{latency_ms}` | `%{trigger, error}` |
+| `[:flezha, :plugin, :kafka, :topic_created]` | `%{partitions, replication_factor}` | `%{topic, plugin_id}` |
 
 Events SHALL be emitted via `:telemetry.execute` (asynchronous fire-and-forget) so attached handlers cannot back-pressure the producer.
 
 #### Scenario: Runner attaches a Prometheus counter
-- **GIVEN** a Prometheus telemetry handler attached to `[:flezha, :plugin, :kafka, :produce, :dropped]`
+- **GIVEN** a Prometheus telemetry handler attached to `[:flezha, :plugin, :kafka, :overflowed]`
 - **WHEN** the producer drops a message via the bounded queue
 - **THEN** the Prometheus counter SHALL increment by `count: 1`
 - **AND** the counter SHALL include labels `topic, partition, overflow_strategy`
 
 #### Scenario: Slow telemetry handler does not slow produce
-- **GIVEN** a deliberately-slow handler attached to `[:flezha, :plugin, :kafka, :produce, :ok]` that sleeps 1 second
+- **GIVEN** a deliberately-slow handler attached to `[:flezha, :plugin, :kafka, :shipped]` that sleeps 1 second
 - **WHEN** a produce succeeds
 - **THEN** the produce-completion latency observed by the chain caller SHALL NOT include the handler's 1-second sleep
 - **AND** the slow handler runs asynchronously without blocking the producer
@@ -354,7 +354,7 @@ Under `:drop_nothing` — the default — a cast-admitted record that finds the 
 - **AND** `:queue_max = 10_000`, `:queue_overflow = :drop_oldest`
 - **WHEN** the chain runs for 10 minutes
 - **THEN** the host process running the chain (the Overwatch GenServer) SHALL have a `:message_queue_len` no greater than 100 at any sample point
-- **AND** the worker's queue depth SHALL trend toward `:queue_max` and trigger `[:flezha, :plugin, :kafka, :produce, :dropped]` events under the configured overflow strategy
+- **AND** the worker's queue depth SHALL trend toward `:queue_max` and trigger `[:flezha, :plugin, :kafka, :overflowed]` events under the configured overflow strategy
 - **AND** zero `OOM` events SHALL occur
 - **AND** the protobuf `timestamp_ms` (or any caller-provided event timestamp) SHALL NOT diverge from the host process's wall-clock by more than the worker's `:linger_ms + :request_timeout_ms` window
 
@@ -363,14 +363,14 @@ Under `:drop_nothing` — the default — a cast-admitted record that finds the 
 - **AND** the worker's queue is at `:queue_max`
 - **WHEN** `on_output/2` admits a new message via cast
 - **THEN** the chain caller SHALL still observe `{:ok, ctx}` immediately
-- **AND** the record SHALL wait in the worker and be produced once a batch drains, with no `[:flezha, :plugin, :kafka, :produce, :dropped]` event and `dropped_total` unchanged
+- **AND** the record SHALL wait in the worker and be produced once a batch drains, with no `[:flezha, :plugin, :kafka, :overflowed]` event and `dropped_total` unchanged
 - **AND** the synchronous `enqueue/4` call from a test-mode caller SHALL still apply the documented drop-nothing semantics (block until space or `:queue_block_timeout_ms`)
 
 ### Requirement: Failure surfacing for async-admitted records
 
 Records admitted via `cast_enqueue/3` (the chain dispatch path) SHALL NOT receive a synchronous reply — there is no caller to reply to. The worker SHALL track the record's caller as `:async` in its internal envelope. On permanent failure of a batch containing async-admitted records, the worker SHALL:
 
-- Emit `[:flezha, :plugin, :kafka, :produce, :failed]` for each affected record, with metadata including `caller: :async`, `last_reason`, `attempt_count`, `delivery_elapsed_ms`, `topic`, `partition`, `plugin_id`.
+- Emit `[:flezha, :plugin, :kafka, :failed]` for each affected record, with metadata including `caller: :async`, `last_reason`, `attempt_count`, `delivery_elapsed_ms`, `topic`, `partition`, `plugin_id`.
 - Drop the records from the queue without invoking `GenServer.reply/2`.
 - Continue draining subsequent batches.
 
@@ -381,7 +381,7 @@ Sync-admitted records (`enqueue/4`) continue to receive `{:error, {:permanent, r
 #### Scenario: Async-admitted record permanently fails
 - **GIVEN** a chain has admitted a message via `on_output/2` (cast path)
 - **WHEN** `KafkaEx.produce` returns `{:error, :record_list_too_large}` (a permanent error)
-- **THEN** the worker SHALL emit one `[:flezha, :plugin, :kafka, :produce, :failed]` event with `caller: :async, last_reason: :record_list_too_large`
+- **THEN** the worker SHALL emit one `[:flezha, :plugin, :kafka, :failed]` event with `caller: :async, last_reason: :record_list_too_large`
 - **AND** SHALL NOT call `GenServer.reply/2` (there is no `from`)
 - **AND** the chain caller SHALL have ALREADY observed `{:ok, ctx}` (synchronously, at admission time)
 - **AND** the worker SHALL continue draining subsequent batches

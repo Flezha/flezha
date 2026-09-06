@@ -19,7 +19,17 @@
 #                                 and truncates files and is not the SDK's to
 #                                 call.)
 #   Flezha.Partition             (key-group hash seam)
+#   Flezha.Process.Counters      (the counter-table macro. COMPILE-TIME ONLY:
+#                                 `use` generates the slot accessors into the
+#                                 SDK's own module, which afterwards calls
+#                                 `:atomics` and nothing else, so this adds no
+#                                 runtime edge to the controller at all. The
+#                                 extraction vendors one self-contained module
+#                                 rather than restoring two hand-numbered
+#                                 slot tables.)
 #   Flezha.Runner.CommandsProto / RunnerCommands  (protobuf — only inside Codec)
+#   Flezha.Transport.LivenessCounters  (the declared heartbeat key set — only
+#                                 inside Knob, for the reason below)
 #   Flezha.Config.*              (the declared tables — only inside Knob, which
 #                                 is the SDK's own reader of them. A runner is a
 #                                 different process and never reads the
@@ -55,6 +65,7 @@ ALLOWED = {
     "Flezha.State.Wire",
     "Flezha.State.RecordFrame",
     "Flezha.Partition",
+    "Flezha.Process.Counters",
 }
 
 # Seams allowed in ONE file only, each in its code and in the moduledoc that
@@ -64,7 +75,9 @@ ALLOWED = {
 # controller, and the extraction swaps one file instead of six.
 PER_FILE_ALLOWED = {
     CODEC: {"Flezha.Runner.CommandsProto"},
-    KNOB: {"Flezha.Config"},
+    # The heartbeat key set is a declared table like the configuration rows, and
+    # it is read in the same one file for the same reason.
+    KNOB: {"Flezha.Config", "Flezha.Transport.LivenessCounters"},
 }
 
 # Any `Flezha.<Something>` reference (module path), captured with its full dotted head.

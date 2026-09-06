@@ -21,6 +21,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
+  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker.Wire
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
   alias Flezha.Process.Cspec
@@ -101,7 +102,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   which is what back-pressures the outbox flush that produced it.
 
   Permanent delivery failures of cast-admitted records surface through
-  `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry tagged with
+  `[:flezha, :plugin, :kafka, :failed]` telemetry tagged with
   `caller: :async`, and — for a delivery-guaranteed record — through the
   outbox park path; there is no caller to reply to.
   """
@@ -1278,52 +1279,48 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   def terminate(_reason, _state), do: :ok
 
-  # This family's telemetry vocabulary. `:telemetry.execute/3` runs handlers
-  # synchronously in the caller's process, so a handler attached to these
-  # events must itself be cheap.
-  @prefix [:flezha, :plugin, :kafka]
+  # This family's telemetry vocabulary. The prefix is derived from the
+  # provider's own id by `ProviderBehaviour.emit/4`, so there is no prefix
+  # attribute here to drift. `:telemetry.execute/3` runs handlers synchronously
+  # in the caller's process, so a handler attached to these events must itself
+  # be cheap.
+  @provider "kafka"
+
+  defp emit(verb, measurements, metadata),
+    do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 
   defp emit_produce_ok(batch_size, latency_ms, metadata) do
-    :telemetry.execute(
-      @prefix ++ [:produce, :ok],
-      %{batch_size: batch_size, latency_ms: latency_ms},
-      metadata
-    )
+    emit(:shipped, %{batch_size: batch_size, latency_ms: latency_ms}, metadata)
   end
 
   defp emit_produce_retry(attempt, backoff_ms, metadata) do
-    :telemetry.execute(
-      @prefix ++ [:produce, :retry],
-      %{attempt: attempt, backoff_ms: backoff_ms},
-      metadata
-    )
+    emit(:retried, %{attempt: attempt, backoff_ms: backoff_ms}, metadata)
   end
 
   defp emit_produce_dropped(count, metadata) do
-    :telemetry.execute(@prefix ++ [:produce, :dropped], %{count: count}, metadata)
+    emit(:overflowed, %{count: count}, metadata)
   end
 
   defp emit_produce_failed(attempts, total_ms, metadata) do
-    :telemetry.execute(
-      @prefix ++ [:produce, :failed],
-      %{attempts: attempts, total_ms: total_ms},
-      metadata
-    )
+    emit(:failed, %{attempts: attempts, total_ms: total_ms}, metadata)
   end
 
+  # Kafka-only facts: no other provider has a broker metadata refresh, a topic
+  # to create or a worker to swap, so these stay this provider's own verbs
+  # beside the four shared ones.
   defp emit_metadata_refresh(latency_ms, metadata) do
-    :telemetry.execute(@prefix ++ [:metadata, :refresh], %{latency_ms: latency_ms}, metadata)
+    emit(:metadata_refresh, %{latency_ms: latency_ms}, metadata)
   end
 
   defp emit_topic_created(partitions, replication_factor, metadata) do
-    :telemetry.execute(
-      @prefix ++ [:topic, :created],
+    emit(
+      :topic_created,
       %{partitions: partitions, replication_factor: replication_factor},
       metadata
     )
   end
 
   defp emit_worker_swapped(measurements, metadata) do
-    :telemetry.execute(@prefix ++ [:worker, :swapped], measurements, metadata)
+    emit(:worker_swapped, measurements, metadata)
   end
 end

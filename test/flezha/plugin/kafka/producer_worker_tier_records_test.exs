@@ -162,7 +162,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
     [%{data: [%{record_set: rb2}]}] = req2.topic_data
     assert rb1.base_sequence == rb2.base_sequence
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :retry], _,
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :retried], _,
                     %{reason: :not_leader_for_partition}}
   end
 
@@ -173,7 +173,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
     attach(:produce_failed)
     assert {:error, {:permanent, :record_list_too_large}} = ProducerWorker.enqueue(pid, "x", %{})
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _,
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :failed], _,
                     %{last_reason: :record_list_too_large}}
   end
 
@@ -208,7 +208,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
     # This one will trigger drop_oldest
     spawn(fn -> ProducerWorker.enqueue(pid, "filler-3", %{}) end)
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :overflowed], %{count: 1},
                     %{overflow_strategy: :drop_oldest}},
                    1000
 
@@ -256,7 +256,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
     attach(:topic_created)
     assert :ok = ProducerWorker.enqueue(pid, "hi", %{})
     assert_receive {:create_called, @topic}
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :topic, :created], _, _}
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :topic_created], _, _}
   end
 
   test "auto_create_topic = false drops :unknown_topic_or_partition immediately" do
@@ -293,7 +293,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
 
     assert_receive :refresh_called
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata, :refresh], _,
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata_refresh], _,
                     %{trigger: :error_recovery, error: nil}}
   end
 
@@ -397,7 +397,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
 
     assert_receive :refresh_called
 
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata, :refresh], _,
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :metadata_refresh], _,
                     %{trigger: :error_recovery}}
   end
 
@@ -434,7 +434,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
 
     attach(:produce_ok)
     assert :ok = ProducerWorker.enqueue(pid, "x", %{})
-    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], _, _}
+    assert_receive {:telemetry, [:flezha, :plugin, :kafka, :shipped], _, _}
 
     # Exactly one send (the original) — a duplicate must not re-init or resend.
     assert_received {:send_called, _, _}
@@ -485,7 +485,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
       assert rb2.base_sequence == 0
 
       # Delivered on the resend — never a fake ack on the fence itself.
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], _, _}
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :shipped], _, _}
     end
   end
 
@@ -537,7 +537,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTierRecordsTest do
                ProducerWorker.enqueue(pid, "x", %{})
     end
 
-    assert_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :failed], _, _}
+    assert_received {:telemetry, [:flezha, :plugin, :kafka, :failed], _, _}
 
     # The producer now reports :produce_stalled on its health surface; the
     # in-process maybe_refresh_broker/2 path drives recovery on batch failure.

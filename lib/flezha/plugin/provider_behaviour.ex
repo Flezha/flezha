@@ -545,11 +545,47 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     end
   end
 
+  # ---------- telemetry vocabulary ----------
+
+  @verbs [:shipped, :retried, :failed, :overflowed]
+
+  @doc "The verbs that mean the same thing for every provider."
+  @spec verbs() :: [atom()]
+  def verbs(), do: @verbs
+
+  @doc """
+  Emit one provider event. The prefix is DERIVED from the provider's own
+  identifier, so a provider carries no prefix attribute and cannot invent a
+  root of its own — a provider under its own root is unreachable by anything
+  that subscribes to the family, and the divergence is invisible until someone
+  greps for it.
+
+      emit("kafka", :shipped, %{count: 1}, labels)
+      #=> [:flezha, :plugin, :kafka, :shipped]
+
+  `shipped | retried | failed | overflowed` are the four facts every provider
+  reports, declared once here so one dashboard reads them all. A fact that
+  belongs to one provider alone — a broker metadata refresh, a topic creation —
+  is that provider's own verb under the same derived prefix.
+  """
+  @spec emit(atom() | binary(), atom(), map(), map()) :: :ok
+  def emit(provider, verb, measurements, metadata \\ %{}) when is_atom(verb) do
+    :telemetry.execute(event(provider, verb), measurements, metadata)
+  end
+
+  @doc "The event name `emit/4` would use."
+  @spec event(atom() | binary(), atom()) :: [atom()]
+  def event(provider, verb) when is_binary(provider),
+    do: event(String.to_existing_atom(provider), verb)
+
+  def event(provider, verb) when is_atom(provider), do: [:flezha, :plugin, provider, verb]
+
   @doc """
   Declare a provider: its option rows, its worker, and the defaults for every
   callback it does not override. See
   `Flezha.Plugin.ProviderBehaviour.Declaration`, which generates all of it.
   """
+
   defmacro __using__(opts) do
     quote do
       use Flezha.Plugin.ProviderBehaviour.Declaration, unquote(opts)

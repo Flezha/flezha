@@ -281,7 +281,7 @@ Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Fil
 
 ### Requirement: Websocket connection-liveness watchdog reconnects only on a dead socket
 
-`Plugin.Provider.Websocket` SHALL maintain a connection-liveness timestamp `last_frame_at` that is refreshed by **every** inbound frame regardless of kind: data frames delivered to `handle_in/2`, frames matching `ignore_pattern` (e.g. heartbeats), and control frames delivered to `handle_control/2` (ping/pong). The idle watchdog SHALL compare `now - last_frame_at` against `idle_timeout_ms`; when the threshold is met or exceeded the connection SHALL be treated as dead and the provider process SHALL exit with `{:shutdown, :idle_timeout}`, driving the existing `Extension.Table.handle_down/5` reconnect path and emitting `[:flezha, :ws, :idle_reconnect]`.
+`Plugin.Provider.Websocket` SHALL maintain a connection-liveness timestamp `last_frame_at` that is refreshed by **every** inbound frame regardless of kind: data frames delivered to `handle_in/2`, frames matching `ignore_pattern` (e.g. heartbeats), and control frames delivered to `handle_control/2` (ping/pong). The idle watchdog SHALL compare `now - last_frame_at` against `idle_timeout_ms`; when the threshold is met or exceeded the connection SHALL be treated as dead and the provider process SHALL exit with `{:shutdown, :idle_timeout}`, driving the existing `Extension.Table.handle_down/5` reconnect path and emitting `[:flezha, :plugin, :websocket, :idle_reconnect]`.
 
 `idle_timeout_ms` SHALL retain its name, its `30_000` default, and its `0`-disables-the-watchdog semantics. Because any inbound frame refreshes `last_frame_at`, a connection that carries a periodic heartbeat (or any control traffic) SHALL NOT be reconnected merely because no market-data frame has arrived.
 
@@ -295,7 +295,7 @@ The socket-level reconnect — the path a refused upgrade or a dropped connectio
 
 #### Scenario: A truly silent socket still reconnects
 - **WHEN** no inbound frame of any kind (data, heartbeat, or control) arrives for `idle_timeout_ms`
-- **THEN** the watchdog SHALL exit the process with `{:shutdown, :idle_timeout}` and emit `[:flezha, :ws, :idle_reconnect]` with `silence_ms` measured from `last_frame_at`
+- **THEN** the watchdog SHALL exit the process with `{:shutdown, :idle_timeout}` and emit `[:flezha, :plugin, :websocket, :idle_reconnect]` with `silence_ms` measured from `last_frame_at`
 
 #### Scenario: Control frames count as liveness
 - **WHEN** the only inbound traffic for a period is websocket control frames (ping/pong) handled by `handle_control/2`
@@ -309,7 +309,7 @@ The socket-level reconnect — the path a refused upgrade or a dropped connectio
 
 ### Requirement: Websocket data-liveness watchdog re-subscribes in place on a live socket
 
-`Plugin.Provider.Websocket` SHALL maintain a data-liveness timestamp `last_data_frame_at` refreshed only by data frames that do NOT match `ignore_pattern` (the existing classification). The provider SHALL accept an optional `resubscribe_after_ms` opt (default `0`, meaning disabled), normalised from string or integer identically to `idle_timeout_ms`. When `resubscribe_after_ms > 0`, the connection is alive (the connection-liveness watchdog has not fired), and `now - last_data_frame_at >= resubscribe_after_ms`, the provider SHALL resend its subscription on the **existing** connection — without exiting the process, tearing down the socket, or reconnecting — and SHALL emit `[:flezha, :ws, :resubscribe]` with measurements `%{data_silence_ms: integer()}` and metadata `%{plugin_id: binary()}`.
+`Plugin.Provider.Websocket` SHALL maintain a data-liveness timestamp `last_data_frame_at` refreshed only by data frames that do NOT match `ignore_pattern` (the existing classification). The provider SHALL accept an optional `resubscribe_after_ms` opt (default `0`, meaning disabled), normalised from string or integer identically to `idle_timeout_ms`. When `resubscribe_after_ms > 0`, the connection is alive (the connection-liveness watchdog has not fired), and `now - last_data_frame_at >= resubscribe_after_ms`, the provider SHALL resend its subscription on the **existing** connection — without exiting the process, tearing down the socket, or reconnecting — and SHALL emit `[:flezha, :plugin, :websocket, :resubscribe]` with measurements `%{data_silence_ms: integer()}` and metadata `%{plugin_id: binary()}`.
 
 What is resent SHALL be the `post_connect` payload when no subscription source is configured, and the rendered `subscribe_template` over the **current applied set** when one is (see `websocket-subscription-source`). The watchdog SHALL NOT resend a boot-time payload that a runtime subscription change has since superseded.
 
@@ -320,7 +320,7 @@ The re-subscribe SHALL be rate-limited by a `last_resubscribe_at` guard so that 
 - **WHEN** heartbeats keep arriving (connection alive) but no non-heartbeat data frame arrives for 120 s
 - **THEN** the provider SHALL resend the `post_connect` payload on the existing connection
 - **AND** the provider process SHALL NOT exit and the socket SHALL NOT be reconnected
-- **AND** a `[:flezha, :ws, :resubscribe]` event SHALL be emitted
+- **AND** a `[:flezha, :plugin, :websocket, :resubscribe]` event SHALL be emitted
 
 #### Scenario: Re-subscribe is rate-limited while data stays stale
 - **GIVEN** the conditions above with `resubscribe_after_ms: 120_000`
@@ -330,7 +330,7 @@ The re-subscribe SHALL be rate-limited by a `last_resubscribe_at` guard so that 
 #### Scenario: Re-subscribe disabled by default
 - **GIVEN** a websocket plugin started without `resubscribe_after_ms` (or with `resubscribe_after_ms: 0`)
 - **WHEN** data goes stale on an otherwise-alive connection
-- **THEN** the provider SHALL NOT resend the subscribe and SHALL NOT emit `[:flezha, :ws, :resubscribe]`
+- **THEN** the provider SHALL NOT resend the subscribe and SHALL NOT emit `[:flezha, :plugin, :websocket, :resubscribe]`
 - **AND** only the connection-liveness watchdog SHALL govern reconnect
 
 #### Scenario: Re-subscribe with a subscription source resends the current applied set
@@ -863,4 +863,34 @@ between the two each fail the suite.
 - **THEN** the refusal SHALL be `{:error, sentence}` naming the option, in the
   same sentence shape every provider answers, on both the CLI and the
   `init_provider/1` path
+
+### Requirement: A provider's telemetry names SHALL come from one declared vocabulary
+
+A provider SHALL emit telemetry through one function on the provider behaviour, and its event prefix SHALL be derived from the provider's own identifier rather than written as a module attribute.
+
+The vocabulary SHALL declare the verbs that mean the same thing for every
+provider — a record shipped, a delivery retried, a delivery failed, and an
+overflow shed — so that one dashboard reads every provider and a new provider
+cannot invent a third spelling for a fact two providers already report. Facts
+that belong to one provider alone, such as a broker metadata refresh or a topic
+creation, SHALL remain that provider's own verbs beside the declared ones.
+
+Every provider's events SHALL sit under one root. A provider that emits under a
+root of its own is unreachable by any consumer that subscribes to the family,
+and the divergence is invisible until someone greps for it.
+
+#### Scenario: The prefix is derived from the provider id
+
+- **WHEN** a provider emits a declared verb
+- **THEN** the event name SHALL be the family root, the provider's identifier and the verb, with no prefix attribute in the provider's module
+
+#### Scenario: A second spelling of a shared fact is refused
+
+- **WHEN** a provider emits an event meaning "a record was shipped" under a name outside the declared vocabulary
+- **THEN** the vocabulary test SHALL fail and name the event
+
+#### Scenario: A provider-specific fact keeps its own verb
+
+- **WHEN** a provider reports a fact no other provider has
+- **THEN** it SHALL emit that verb under the same derived prefix, and the vocabulary test SHALL accept it
 

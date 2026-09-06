@@ -132,7 +132,7 @@ naming the offered value — so a misspelled policy is a plugin that does not en
 than one that serves until its queue fills.
 
 Every drop is counted in `stats/1`'s `dropped_total` and emits
-`[:flezha, :plugin, :kafka, :produce, :dropped]`. Dropping a delivery-guaranteed record is
+`[:flezha, :plugin, :kafka, :overflowed]`. Dropping a delivery-guaranteed record is
 alarm-grade: it logs at `error`, tags the event `guaranteed: true`, and leaves the record's
 outbox cursor where it is, so the loss shows as an outbox that stops draining until the
 entry is re-driven.
@@ -159,14 +159,14 @@ bounded queue, not the host's mailbox, is the back-pressure boundary.
 | `ProducerWorker.enqueue/4` | tests, tooling, explicit-flush sites | `:ok` after the broker ack, or `{:error, _}` | return value (default `timeout: 35_000`) |
 
 A chain-admitted record that ultimately fails emits one
-`[:flezha, :plugin, :kafka, :produce, :failed]` per record with `caller: :async`. Telemetry
+`[:flezha, :plugin, :kafka, :failed]` per record with `caller: :async`. Telemetry
 is the channel by which operators observe permanent failures of chain-admitted records —
 not logs, not the chain return value:
 
 ```elixir
 :telemetry.attach(
   "my-app-kafka-failures",
-  [:flezha, :plugin, :kafka, :produce, :failed],
+  [:flezha, :plugin, :kafka, :failed],
   fn
     _name, measurements, %{caller: :async} = metadata, _ ->
       MyApp.Alerts.kafka_delivery_failed(metadata.topic, metadata.last_reason, measurements)
@@ -196,13 +196,13 @@ end
 
 | Event | Measurements | Metadata |
 | --- | --- | --- |
-| `[:flezha, :plugin, :kafka, :produce, :ok]` | `%{batch_size, latency_ms}` | `%{plugin_id, topic, partition, base_offset, attempt}` |
-| `[:flezha, :plugin, :kafka, :produce, :retry]` | `%{attempt, backoff_ms}` | `%{plugin_id, topic, partition, reason}` |
-| `[:flezha, :plugin, :kafka, :produce, :dropped]` | `%{count}` | `%{plugin_id, topic, partition, queue_depth, overflow_strategy, guaranteed, reason}` |
-| `[:flezha, :plugin, :kafka, :produce, :failed]` | `%{attempts, total_ms}` | `%{plugin_id, topic, partition, last_reason, caller}` |
-| `[:flezha, :plugin, :kafka, :metadata, :refresh]` | `%{latency_ms}` | `%{plugin_id, topic, partition, trigger, error}` |
-| `[:flezha, :plugin, :kafka, :topic, :created]` | `%{partitions, replication_factor}` | `%{plugin_id, topic}` |
-| `[:flezha, :plugin, :kafka, :worker, :swapped]` | `%{queue_depth, in_flight_records, queue_bytes}` | `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after}` |
+| `[:flezha, :plugin, :kafka, :shipped]` | `%{batch_size, latency_ms}` | `%{plugin_id, topic, partition, base_offset, attempt}` |
+| `[:flezha, :plugin, :kafka, :retried]` | `%{attempt, backoff_ms}` | `%{plugin_id, topic, partition, reason}` |
+| `[:flezha, :plugin, :kafka, :overflowed]` | `%{count}` | `%{plugin_id, topic, partition, queue_depth, overflow_strategy, guaranteed, reason}` |
+| `[:flezha, :plugin, :kafka, :failed]` | `%{attempts, total_ms}` | `%{plugin_id, topic, partition, last_reason, caller}` |
+| `[:flezha, :plugin, :kafka, :metadata_refresh]` | `%{latency_ms}` | `%{plugin_id, topic, partition, trigger, error}` |
+| `[:flezha, :plugin, :kafka, :topic_created]` | `%{partitions, replication_factor}` | `%{plugin_id, topic}` |
+| `[:flezha, :plugin, :kafka, :worker_swapped]` | `%{queue_depth, in_flight_records, queue_bytes}` | `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after}` |
 
 A quick Logger handler for installations without a metrics stack:
 

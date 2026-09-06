@@ -231,19 +231,23 @@ to inter-procedure consumers.
 `data_heartbeat` (empty message) is written on **every** secondary stream every
 `FLEZHA_DATA_HEARTBEAT_MS` (default 10 s, jittered into `[base/2, base]`)
 while connected, so an idle-but-healthy Operative keeps the controller's
-per-channel liveness clock fresh. Its metadata is the runner's self-report:
-`dispatches` (completed dispatches — what the `runner_pool_wedged` classifier
-reads), `blocked_parks`, `drops_newest`, `drops_oldest`, `inflight`,
-`inflight_oldest_ms`, `pending_pushes`, `pending_push_oldest_ms` (Entities
-withheld work because a consumer will not take their output, and the age of the
-oldest such push — a gated producer holds no handout, so `inflight` cannot see
-it), `credit_parked`, `restore_discarded_inputs`, `timers_armed`,
-`timers_fired`. The controller mirrors every one of them into an `hb_<key>`
-liveness slot, bumps `hb_count`, and treats any inbound frame as liveness; a
-bound channel silent past `:io_stream_liveness_threshold_ms` (default 30 s) is
-flagged as a stall. A key added here owes a slot and a metric in the same
-change, or the runner pays for it on the wire and no operator surface reads
-it.
+per-channel liveness clock fresh. Its metadata is the runner's self-report, and
+the key set is **one declaration**: every row of
+`Flezha.Transport.LivenessCounters` that names a `heartbeat:`, answered by
+`LivenessCounters.heartbeat_keys/0`. It is headed by `dispatches` (completed
+dispatches — what the `runner_pool_wedged` classifier reads) and covers the
+overflow outcomes, the handout and deferred-push reports, the credit park, the
+rebind discard and the two timer counters; read the rows for the current list
+rather than a copy of it here.
+
+The controller mirrors each key into its `hb_<key>` liveness slot, bumps
+`hb_count`, and treats any inbound frame as liveness; a bound channel silent
+past `:io_stream_liveness_threshold_ms` (default 30 s) is flagged as a stall.
+Because the mirror and the exporter are both derived from those rows, a key
+added to the layout arrives with its slot and its surface already in place, and
+a key with no row cannot be mirrored at all — the cross-SDK gate compares the
+declared set against `flz_core`'s builder and the Elixir SDK's map on every
+default-suite run.
 
 ### Per-Entity mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 

@@ -56,11 +56,19 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   `restore_discarded_inputs` (inputs a rebind threw away, correct only where the controller
   re-forwards from a durable log, so a climbing value sizes that loss), `timers_armed` and
   `timers_fired` (the wake list's occupancy and its firings: armed climbing while fired stays
-  flat is promotion wedged rather than an idle Operative);
-  gauge `credit_ledger_level`. No bytes in/out. A counter the runner reports in its heartbeat
-  (`credit_parked`, the four `mailbox_*`, `restore_discarded_inputs`, `timers_armed`, `timers_fired`)
-  is counted once per runner however many secondary streams mirror it, then summed across runners;
-  a per-channel counter sums across channels. Reading them:
+  flat is promotion wedged rather than an idle Operative), `heartbeat_frames` and `dispatches`
+  (heartbeats arriving while dispatches stand still is a wedged pool with a live runner);
+  gauges `credit_ledger_level`, `inflight`, `inflight_oldest_ms` and `pending_push_oldest_ms`
+  (activations underway and the age of the oldest, and the age of the oldest push a full
+  consumer is withholding — what makes ONE wedged Entity visible while the runner as a whole
+  keeps completing work). No bytes in/out.
+
+  **This list is derived, not maintained.** Every metric here is a row of
+  `Flezha.Transport.LivenessCounters` whose `surface:` names it, and the source emits one
+  signal per such row; the authoritative list is the rows themselves. A counter the runner
+  reports in its heartbeat is counted once per runner however many secondary streams mirror
+  it, and then reduced across runners the way its row declares — counts add up, an age gauge
+  takes the larger. A per-channel counter sums across channels. Reading them:
   [../internals/transport_liveness.md](../internals/transport_liveness.md).
   **The self-report needs a NIF driver.** The `:native` in-node transport has none, so a
   native-only controller emits no `driver_*` metric — including `driver_write_buffer_dropped`, the
@@ -397,6 +405,15 @@ source (declarative, default budget) on start; measurements and metadata pass th
 a bridged event is one `@mapping` entry. Events are under `[:flezha, ...]`; the signal name is the last
 event segment unless shown as `→ name`.
 
+A **provider**'s events are not written by hand: the prefix is derived from the provider's own
+identifier and the verb comes from one declared vocabulary — `shipped`, `retried`, `failed`,
+`overflowed` — so `[:flezha, :plugin, <provider>, <verb>]` reads the same for every provider
+(`Flezha.Plugin.ProviderBehaviour.emit/3`). Facts that belong to one provider alone — a broker
+metadata refresh, a topic creation, a websocket re-subscribe — keep their own verb under the same
+prefix. The websocket provider's old `[:flezha, :ws, …]` root is gone; its events now sit with
+every other provider's, and the source atom `:flezha_ws` is unchanged so the exposed series are
+too.
+
 | Source                      | Events (kind)                                                                                                                                                                                                                                             |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `:flezha_state`             | metric: `[:state, :wal, :backpressure]` → `:wal_backpressure`. event: `[:state, :fsync, :tick]` → `:fsync_tick`; `[:state, :seq_gap \| :credit_anomaly \| :output_stall \| :compaction_timeout \| :compaction_trigger \| :baseline_seed \| :wal_realign \| :stale_writer_refused]` |
@@ -404,15 +421,16 @@ event segment unless shown as `→ name`.
 | `:flezha_boot`              | event: `[:boot, :recovery_complete \| :reconcile_duplicate]`                                                                                                                                                                                              |
 | `:flezha_shutdown`          | event: `[:shutdown, :requested \| :phase_started \| :phase_completed \| :drain_progress \| :timeout \| :complete]`                                                                                                                                        |
 | `:flezha_plugin_installer`  | event: `[:plugin_installer, :load_failed \| :store_opened \| :unsigned_install]`                                                                                                                                                                          |
-| `:flezha_ws`                | event: `[:ws, :idle_reconnect \| :resubscribe]`                                                                                                                                                                                                           |
+| `:flezha_ws`                | event: `[:plugin, :websocket, :idle_reconnect \| :resubscribe \| :reconcile]`                                                                                                                                                                             |
 | `:flezha_leadership`        | event: `[:leadership, :transition]`                                                                                                                                                                                                                       |
 | `:flezha_reconcile`         | event: `[:reconcile, :action \| :health]`                                                                                                                                                                                                                 |
 | `:flezha_stream`            | metric: `[:stream, :drop]`                                                                                                                                                                                                                                |
 | `:flezha_data_plane`        | event: `[:data_plane, :stall_localized]`                                                                                                                                                                                                                  |
 | `:flezha_convergence`       | event: `[:convergence, :operative_stuck \| :intent_mismatch]`                                                                                                                                                                                             |
 | `:flezha_dlq`               | metric: `[:dlq, :parked]` → `:dlq_parked_total`; `[:dlq, :retention_dropped]` → `:dlq_dropped_by_retention_total`; `[:dlq, :usage]` → `:dlq_usage`                                                   |
-| `:flezha_operative_forward` | metric: `[:plugin, :operative_forward, :delivered \| :retry \| :queue_depth]`. event: `[:plugin, :operative_forward, :saturated]`                                                                                                                         |
-| `:flezha_http_poll`         | metric: `[:plugin, :http_poll, :injected \| :unchanged]`. event: `[:plugin, :http_poll, :failed]`                                                                                                                                                         |
+| `:flezha_operative_forward` | metric: `[:plugin, :operative_forward, :shipped]` → `:delivered`; `[:plugin, :operative_forward, :retried]` → `:retry`; `[:plugin, :operative_forward, :queue_depth]`. event: `[:plugin, :operative_forward, :overflowed]` → `:saturated`                  |
+| `:flezha_http_poll`         | metric: `[:plugin, :http_poll, :shipped]` → `:injected`; `[:plugin, :http_poll, :unchanged]`. event: `[:plugin, :http_poll, :failed]`                                                                                                                     |
+| `:flezha_kafka`             | metric: `[:plugin, :kafka, :shipped \| :retried \| :overflowed \| :metadata_refresh]`. event: `[:plugin, :kafka, :failed \| :topic_created \| :worker_swapped]`                                                                                          |
 | `:flezha_operative`         | metric: `[:operative, :parked]` → `:operative_parked_total`. Metadata `namespace`, `operative_id`, `reason`, and `plugin_id` — the plugin that caused the park, or `nil` when no plugin did.                                                               |
 
 ### Service API

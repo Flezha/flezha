@@ -41,7 +41,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
     end
 
     test "the data-liveness re-subscribe resends the current applied set" do
-      attach_telemetry([:flezha, :ws, :resubscribe])
+      attach_telemetry([:flezha, :plugin, :websocket, :resubscribe])
       now = :erlang.monotonic_time(:millisecond)
 
       s =
@@ -56,7 +56,7 @@ defmodule Flezha.Plugin.Provider.WebsocketAppliedSetTest do
 
       assert {:reply, [frame], _ns} = Websocket.Client.handle_info(:idle_check, s)
       assert items_of(frame) == ["a", "b"]
-      assert_receive {:telemetry, [:flezha, :ws, :resubscribe], _, _}, 500
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :resubscribe], _, _}, 500
     end
 
     test "a re-assertion carries the reserved req_id so its ack cannot commit a delta" do

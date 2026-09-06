@@ -194,21 +194,21 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
     end
 
     test "a reconcile that sent frames emits telemetry carrying the counts" do
-      attach_telemetry([:flezha, :ws, :reconcile])
+      attach_telemetry([:flezha, :plugin, :websocket, :reconcile])
       s = state(applied: MapSet.new(["a", "b"]))
 
       assert {:reply, _, _} = poll(s, source(["a", "c", "d"]))
 
-      assert_receive {:telemetry, [:flezha, :ws, :reconcile], %{added: 2, removed: 1}, meta}, 500
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :reconcile], %{added: 2, removed: 1}, meta}, 500
       assert meta.plugin_id == "test_ws"
     end
 
     test "an unchanged source emits no reconcile telemetry" do
-      attach_telemetry([:flezha, :ws, :reconcile])
+      attach_telemetry([:flezha, :plugin, :websocket, :reconcile])
       s = state(applied: MapSet.new(["a"]))
 
       assert {:ok, _} = poll(s, source(["a"]))
-      refute_received {:telemetry, [:flezha, :ws, :reconcile], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :websocket, :reconcile], _, _}
     end
 
     test "a send against a transiently unestablished socket is skipped, not fatal" do

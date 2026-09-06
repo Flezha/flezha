@@ -86,6 +86,9 @@ defmodule Flezha.Observability.OtpBackend.Poller do
       @impl Flezha.Observability.Source
       def config_schema(), do: %{}
 
+      @doc "The cardinality budget this source declares, readable without starting it."
+      def cardinality_budget(), do: @cardinality_budget
+
       defp poll_interval_ms() do
         Flezha.Config.get(:observability_poll_intervals)
         |> Map.get(@source, @default_poll_ms)

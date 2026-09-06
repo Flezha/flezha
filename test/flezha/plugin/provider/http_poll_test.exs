@@ -34,7 +34,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = start_poller(origin)
 
       assert {"cfg-v1", %{"channel" => @channel}} = take_ingest()
-      assert_receive {:poll_event, :injected, _, %{seed: true}}
+      assert_receive {:poll_event, :shipped, _, %{seed: true}}
 
       for _ <- 1..3 do
         send(poller, :poll)
@@ -53,7 +53,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       send(poller, :poll)
 
       assert {"cfg-v2", %{"channel" => @channel}} = take_ingest()
-      assert_receive {:poll_event, :injected, _, %{seed: false}}
+      assert_receive {:poll_event, :shipped, _, %{seed: false}}
 
       send(poller, :poll)
       assert_receive {:poll_event, :unchanged, _, _}, 2_000
@@ -78,7 +78,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       _second = start_poller(origin)
 
       assert {"cfg-v1", %{"channel" => @channel}} = take_ingest()
-      assert_receive {:poll_event, :injected, _, %{seed: true}}
+      assert_receive {:poll_event, :shipped, _, %{seed: true}}
     end
 
     test "an ETag 304 is a successful unchanged poll" do
@@ -110,7 +110,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       # delivered and go silent forever.
       send(poller, :poll)
       assert {"cfg-v1", _} = take_ingest()
-      assert_receive {:poll_event, :injected, _, %{seed: true}}
+      assert_receive {:poll_event, :shipped, _, %{seed: true}}
     end
 
     test "an absorbed or suspended verdict counts as delivered" do
@@ -118,7 +118,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       poller = start_poller(origin)
 
       assert {"cfg-v1", _} = take_ingest({:ok, :absorbed})
-      assert_receive {:poll_event, :injected, _, _}, 2_000
+      assert_receive {:poll_event, :shipped, _, _}, 2_000
 
       send(poller, :poll)
       assert_receive {:poll_event, :unchanged, _, _}, 2_000

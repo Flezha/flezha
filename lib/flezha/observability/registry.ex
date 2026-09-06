@@ -17,6 +17,23 @@ defmodule Flezha.Observability.Registry do
   use GenServer
 
   alias Flezha.Config
+
+  # The two counter tables this registry keeps per entry: one per source, one
+  # per sink. Declared rather than numbered by hand in function clauses.
+  use Flezha.Process.Counters,
+    table: :source_counter,
+    slots: [
+      [name: :budget_exceeded, kind: :count],
+      [name: :violations, kind: :count]
+    ]
+
+  use Flezha.Process.Counters,
+    table: :sink_counter,
+    slots: [
+      [name: :dropped, kind: :count],
+      [name: :crashes, kind: :count]
+    ]
+
   alias Flezha.Observability.Signal
   alias Flezha.Process.Cspec
 
@@ -107,7 +124,7 @@ defmodule Flezha.Observability.Registry do
   @spec source_counter(atom(), :budget_exceeded | :violations) :: non_neg_integer()
   def source_counter(name, kind) do
     with {:ok, entry} <- lookup_source(name) do
-      :counters.get(entry.counters, counter_slot(kind))
+      source_counter_get(entry.counters, kind)
     else
       _ -> 0
     end
@@ -167,7 +184,7 @@ defmodule Flezha.Observability.Registry do
   @spec sink_counter(atom(), :dropped | :crashes) :: non_neg_integer()
   def sink_counter(name, kind) do
     with {:ok, entry} <- lookup_sink(name) do
-      :counters.get(entry.counters, sink_counter_slot(kind))
+      sink_counter_get(entry.counters, kind)
     else
       _ -> 0
     end
@@ -179,7 +196,7 @@ defmodule Flezha.Observability.Registry do
   @spec bump_sink_counter(atom(), :dropped | :crashes) :: :ok
   def bump_sink_counter(name, kind) do
     case lookup_sink(name) do
-      {:ok, entry} -> :counters.add(entry.counters, sink_counter_slot(kind), 1)
+      {:ok, entry} -> sink_counter_bump(entry.counters, kind)
       :error -> :ok
     end
   end
@@ -299,7 +316,7 @@ defmodule Flezha.Observability.Registry do
 
         [{^source, entry}] ->
           if MapSet.size(entry.metadata_shapes) >= entry.cardinality_budget do
-            :counters.add(entry.counters, counter_slot(:budget_exceeded), 1)
+            source_counter_bump(entry.counters, :budget_exceeded)
             breach = if entry.budget_exceeded_emitted?, do: :repeat, else: :first
             :ets.insert(@sources, {source, %{entry | budget_exceeded_emitted?: true}})
             {:dropped, :cardinality_budget_exceeded, breach}
@@ -318,7 +335,7 @@ defmodule Flezha.Observability.Registry do
   end
 
   def handle_call({:register_external_sink, entry}, _from, state) do
-    counters_ref = :counters.new(sink_counter_slots(), [:atomics])
+    counters_ref = sink_counter_new()
 
     row = %{
       name: entry.name,
@@ -355,7 +372,7 @@ defmodule Flezha.Observability.Registry do
     case validate_source(entry) do
       :ok ->
         budget = Map.get(entry, :cardinality_budget, default_budget())
-        counters_ref = :counters.new(counter_slots(), [:atomics])
+        counters_ref = source_counter_new()
 
         row = %{
           name: entry.name,
@@ -427,7 +444,7 @@ defmodule Flezha.Observability.Registry do
           mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
           block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
           pid: pid,
-          counters: :counters.new(sink_counter_slots(), [:atomics])
+          counters: sink_counter_new()
         }
 
         :ets.insert(@sinks, {entry.name, row})
@@ -495,14 +512,4 @@ defmodule Flezha.Observability.Registry do
   defp default_budget() do
     Config.get(:observability_cardinality_budget_per_source)
   end
-
-  # Counter slot mapping ---------------------------------------------------
-
-  defp counter_slots(), do: 2
-  defp counter_slot(:budget_exceeded), do: 1
-  defp counter_slot(:violations), do: 2
-
-  defp sink_counter_slots(), do: 2
-  defp sink_counter_slot(:dropped), do: 1
-  defp sink_counter_slot(:crashes), do: 2
 end

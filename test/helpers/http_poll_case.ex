@@ -31,23 +31,14 @@ defmodule FlezhaTest.HttpPollCase do
   end
 
   setup do
-    ref = make_ref()
-    test_pid = self()
+    events = for verb <- [:shipped, :unchanged, :failed], do: [:flezha, :plugin, :http_poll, verb]
 
-    :telemetry.attach_many(
-      ref,
-      [
-        [:flezha, :plugin, :http_poll, :injected],
-        [:flezha, :plugin, :http_poll, :unchanged],
-        [:flezha, :plugin, :http_poll, :failed]
-      ],
-      fn event, measurements, metadata, _ ->
-        send(test_pid, {:poll_event, List.last(event), measurements, metadata})
-      end,
-      nil
+    FlezhaTest.Helper.Telemetry.capture(events,
+      as: fn event, measurements, metadata ->
+        {:poll_event, List.last(event), measurements, metadata}
+      end
     )
 
-    on_exit(fn -> :telemetry.detach(ref) end)
     :ok
   end
 

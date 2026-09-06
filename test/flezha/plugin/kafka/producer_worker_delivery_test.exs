@@ -107,7 +107,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
                  2_000
                )
 
-      refute_received {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :kafka, :overflowed], _, _}
     end
 
     test "an explicitly configured drop of a guaranteed record is alarm-grade", %{
@@ -131,7 +131,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
               )
           end
 
-          assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+          assert_receive {:telemetry, [:flezha, :plugin, :kafka, :overflowed], %{count: 1},
                           %{overflow_strategy: :drop_oldest, guaranteed: true}},
                          1_000
         end)
@@ -183,7 +183,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
       end
 
       for _ <- 1..5 do
-        assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], m, _}, 1_000
+        assert_receive {:telemetry, [:flezha, :plugin, :kafka, :shipped], m, _}, 1_000
         assert m.batch_size == 1
       end
 
@@ -288,7 +288,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerDeliveryTest do
 
       send(pid, {:kafka_worker_dead, registry_ref, :killed})
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], m, _}, 1_000
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :worker_swapped], m, _}, 1_000
       assert m.in_flight_records == 3
 
       # The rewound records are back at the head of the queue in admission

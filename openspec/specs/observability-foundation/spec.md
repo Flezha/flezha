@@ -166,7 +166,7 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 
 ### Requirement: Telemetry bridge lifts existing `:telemetry` events onto the bus
 
-The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL be two halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :ws, :idle_reconnect]`, `[:flezha, :ws, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares — including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason` — so a detector's event is bridged by its declaration and never by a bridge edit. Existing call-sites SHALL NOT be modified.
+The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL be two halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :plugin, :websocket, :idle_reconnect]`, `[:flezha, :plugin, :websocket, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares — including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason` — so a detector's event is bridged by its declaration and never by a bridge edit. Existing call-sites SHALL NOT be modified.
 
 Every `[:flezha, ...]` event executed anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit exemption list inside the bridge module, each exemption naming the change that owes it a sink. The exemption list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an executed event that is neither mapped nor exempted SHALL fail the suite naming the file, the line and the event.
 
@@ -175,7 +175,7 @@ Every `[:flezha, ...]` event executed anywhere in the controller SHALL be a key 
 - **THEN** a signal with `kind: :event`, `source: :flezha_state`, `name: :wal_backpressure`, `measurements.bytes: 1024`, `metadata.operative: "r1"` SHALL appear on the bus
 
 #### Scenario: Websocket re-subscribe event is bridged
-- **WHEN** code calls `:telemetry.execute([:flezha, :ws, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://ws.kraken.com"})`
+- **WHEN** code calls `:telemetry.execute([:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: 120_000}, %{plugin_id: "wss://ws.kraken.com"})`
 - **THEN** a signal sourced from the websocket provider carrying `measurements.data_silence_ms: 120_000` and `metadata.plugin_id: "wss://ws.kraken.com"` SHALL appear on the bus
 
 #### Scenario: Persistence stall/gap events are bridged
@@ -342,4 +342,43 @@ dimension with nothing in the output to say so.
 
 - **WHEN** a metric signal carries a metadata key outside the grammar, such as `"http.status_code"`
 - **THEN** the emit SHALL succeed and the exporter SHALL render a sanitized label name, exactly as before
+
+### Requirement: A counted fact SHALL be declared once and every store derived from the declaration
+
+A process-local counter table SHALL be declared as a list of named slots, and its indices, accessors, snapshot and collapse rules SHALL be generated from that list rather than written beside it.
+
+Hand-numbering a slot is forbidden: a module SHALL NOT carry an attribute or a
+function clause that assigns an integer position to a slot name, because the
+number and the name then have to be kept in step by hand and the compiler cannot
+see the drift. A slot list that already derives its indices satisfies this
+requirement; what changes is that one mechanism serves every store instead of
+each store carrying its own copy.
+
+A row SHALL carry the slot's kind — a monotonic count, a set gauge, or an instant
+— because the kind is what decides how the slot is reduced across the processes
+that hold it, and a reduction inferred from a slot's spelling is a guess. A
+counter that is a durable ledger read by policy, rather than instrumentation
+that changes no behaviour, is not a counter table under this requirement and
+SHALL NOT be folded into one.
+
+A single-cell reference — a sequence, an index, an occupancy flag — has no layout
+to declare and is exempt; the exemption SHALL be written down beside the
+reference rather than left to be inferred.
+
+#### Scenario: A store declares slots, not indices
+
+- **GIVEN** a module owning a process-local counter table
+- **WHEN** it declares its slots
+- **THEN** its indices, `bump`, `set`, `get` and `snapshot` SHALL be generated from the declaration
+- **AND** the module SHALL carry no integer position for any slot name
+
+#### Scenario: A new slot costs one row
+
+- **WHEN** a slot is appended to a declared table
+- **THEN** it SHALL be readable through the table's snapshot with no other edit to the module
+
+#### Scenario: A durable ledger is not folded
+
+- **WHEN** a counter's values are read as an authorization input and persisted per mutation
+- **THEN** it SHALL remain its own module and SHALL NOT be expressed as an instrumentation table
 

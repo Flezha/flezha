@@ -184,10 +184,10 @@ restart of either end. See [`message_handlers.md`](message_handlers.md).
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `[:flezha, :plugin, :operative_forward, :delivered]` | `%{count: 1}` | `+ :outcome` (`:delivered`, `:absorbed`, `:suspended`) |
-| `[:flezha, :plugin, :operative_forward, :retry]` | `%{attempt:, backoff_ms:}` | `+ :reason` |
+| `[:flezha, :plugin, :operative_forward, :shipped]` | `%{count: 1}` | `+ :outcome` (`:delivered`, `:absorbed`, `:suspended`) |
+| `[:flezha, :plugin, :operative_forward, :retried]` | `%{attempt:, backoff_ms:}` | `+ :reason` |
 | `[:flezha, :plugin, :operative_forward, :queue_depth]` | `%{depth:}` | on every enqueue |
-| `[:flezha, :plugin, :operative_forward, :saturated]` | `%{depth:}` | the queue reached `:queue_max` |
+| `[:flezha, :plugin, :operative_forward, :overflowed]` | `%{depth:}` | the queue reached `:queue_max` |
 
 Every event carries `:plugin_id`, `:namespace`, `:source_operative_id` and
 `:target_operative_id`. All four are bridged onto the observability bus as the

@@ -18,21 +18,26 @@ defmodule Flezha.State.Metrics do
 
   @table __MODULE__
 
-  @counters [
-    :persisted_changes_total,
-    :persisted_bytes_total,
-    :wal_size_bytes,
-    :snapshot_seq,
-    :flush_latency_ms_p99,
-    :fsync_durability_lag_ms,
-    :dedup_drops_total,
-    :wal_seq,
-    :wal_shed_total,
-    :stale_writer_refused_total,
-    :fsync_total
-  ]
+  # `:write_concurrency` rather than `:atomics`: a per-Entity table written by
+  # the writer and read by the exporter, not a hot single-process counter.
+  use Flezha.Process.Counters,
+    table: :counter,
+    new_opts: [:write_concurrency],
+    slots: [
+      [name: :persisted_changes_total, kind: :count],
+      [name: :persisted_bytes_total, kind: :count],
+      [name: :wal_size_bytes, kind: :set],
+      [name: :snapshot_seq, kind: :set],
+      [name: :flush_latency_ms_p99, kind: :set],
+      [name: :fsync_durability_lag_ms, kind: :set],
+      [name: :dedup_drops_total, kind: :count],
+      [name: :wal_seq, kind: :set],
+      [name: :wal_shed_total, kind: :count],
+      [name: :stale_writer_refused_total, kind: :count],
+      [name: :fsync_total, kind: :count]
+    ]
 
-  @counter_indices @counters |> Enum.with_index(1) |> Enum.into(%{})
+  @counters Enum.map(@counter_rows, &Keyword.fetch!(&1, :name))
 
   @spec counters() :: [atom()]
   def counters(), do: @counters
@@ -46,7 +51,7 @@ defmodule Flezha.State.Metrics do
         ref
 
       [] ->
-        ref = :counters.new(length(@counters), [:write_concurrency])
+        ref = counter_new()
         # `:ets.insert_new/2` keeps the first writer's ref under races.
         case :ets.insert_new(@table, {entity_id, ref}) do
           true -> ref
@@ -57,22 +62,22 @@ defmodule Flezha.State.Metrics do
 
   @spec add(:counters.counters_ref(), atom(), integer()) :: :ok
   def add(ref, name, delta) when is_atom(name) do
-    :counters.add(ref, index!(name), delta)
+    counter_add(ref, name, delta)
   end
 
   @spec put(:counters.counters_ref(), atom(), integer()) :: :ok
   def put(ref, name, value) when is_atom(name) do
-    :counters.put(ref, index!(name), value)
+    counter_set(ref, name, value)
   end
 
   @spec get(:counters.counters_ref(), atom()) :: integer()
   def get(ref, name) when is_atom(name) do
-    :counters.get(ref, index!(name))
+    counter_get(ref, name)
   end
 
   @spec to_map(:counters.counters_ref()) :: %{atom() => integer()}
   def to_map(ref) do
-    Map.new(@counters, fn name -> {name, :counters.get(ref, index!(name))} end)
+    counter_snapshot(ref)
   end
 
   @spec drop_entity(Paths.entity_id()) :: :ok
@@ -112,10 +117,6 @@ defmodule Flezha.State.Metrics do
   """
   @spec by_entity() :: [{Paths.entity_id(), %{atom() => integer()}}]
   def by_entity(), do: snapshot_all()
-
-  defp index!(name) do
-    Map.fetch!(@counter_indices, name)
-  end
 
   defp ensure_table() do
     case :ets.whereis(@table) do

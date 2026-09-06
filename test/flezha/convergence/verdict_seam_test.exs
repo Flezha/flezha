@@ -55,7 +55,10 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     "lib/flezha/convergence/loop.ex" =>
       "`{:parked, id}` is a backoff key; `:unknown` is the unreadable-roster sentinel",
     "lib/flezha/convergence/facts.ex" =>
-      "`:parked` is a declared fact kind; `:unknown` is the unreadable-read sentinel"
+      "`:parked` is a declared fact kind; `:unknown` is the unreadable-read sentinel",
+    "lib/flezha/plugin/provider_behaviour.ex" =>
+      "`:failed` is a declared PROVIDER TELEMETRY verb (shipped/retried/failed/overflowed), " <>
+        "not a health state; `:healthy` is the provider probe's own verdict type"
   }
 
   describe "clause 1 — one vocabulary" do
@@ -98,7 +101,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     end
 
     test "the exemption list is a ratchet, and every entry is really executed" do
-      assert length(TelemetryBridge.exempt()) <= 46,
+      assert length(TelemetryBridge.exempt()) <= 38,
              "the exemption list may only shrink"
 
       executed = MapSet.new(executed_events(), fn {_f, _l, e} -> e end)

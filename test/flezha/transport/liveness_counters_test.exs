@@ -138,4 +138,73 @@ defmodule Flezha.Transport.LivenessCountersTest do
     LivenessCounters.snapshot_all().operatives
     |> Enum.find(fn r -> r.operative_id == operative end)
   end
+
+  # The declaration is the seam, so the test that keeps it honest asks the
+  # table about itself: a row that reaches nothing, a metric nobody emits, a
+  # heartbeat key with no slot and a layout that outgrows the source's
+  # cardinality budget are all failures here rather than silences in
+  # production.
+  describe "the declaration is complete" do
+    test "every slot declares the surface that reads it" do
+      undeclared =
+        for row <- LivenessCounters.channel_rows() ++ LivenessCounters.operative_rows(),
+            Keyword.get(row, :surface, []) == [],
+            do: Keyword.fetch!(row, :name)
+
+      assert undeclared == [],
+             "liveness slots reaching no surface: #{inspect(undeclared)} — a slot must name " <>
+               "a metric, a verdict, a bridged event, or an internal reason in words"
+    end
+
+    test "every declared surface is one the readers understand" do
+      for row <- LivenessCounters.channel_rows() ++ LivenessCounters.operative_rows(),
+          surface <- Keyword.fetch!(row, :surface) do
+        assert match?({kind, _} when kind in [:metric, :verdict, :telemetry, :internal], surface),
+               "#{inspect(Keyword.fetch!(row, :name))} declares #{inspect(surface)}, which no " <>
+                 "reader knows how to consume"
+      end
+    end
+
+    test "every heartbeat key holds a slot, and the mirror is that list" do
+      pairs = Map.new(LivenessCounters.heartbeat_pairs())
+
+      for row <- LivenessCounters.channel_rows(),
+          key = Keyword.get(row, :heartbeat),
+          key != nil do
+        assert Map.fetch!(pairs, key) == Keyword.fetch!(row, :name)
+        assert key in LivenessCounters.heartbeat_keys()
+      end
+
+      assert Enum.sort(LivenessCounters.heartbeat_keys()) ==
+               Enum.sort(Flezha.Runner.StreamChannel.heartbeat_keys()),
+             "the mirror keeps a key list of its own again"
+    end
+
+    # Every `{:verdict, _}` row names a reader that must actually exist: the
+    # classifier or the probe row that consumes it. A verdict nothing reads is
+    # the same silence as a metric nobody emits.
+    test "every declared verdict surface has a reader in the tree" do
+      readers =
+        File.read!("lib/flezha/convergence/stall_classifier.ex") <>
+          File.read!("lib/flezha/convergence/probe/table.ex") <>
+          File.read!("lib/flezha/convergence/probe/readers.ex")
+
+      for {_group, row, verdict} <- LivenessCounters.surfaces(:verdict) do
+        assert readers =~ Atom.to_string(verdict),
+               "#{inspect(Keyword.fetch!(row, :name))} declares the verdict " <>
+                 "#{inspect(verdict)}, which no convergence reader names"
+      end
+    end
+
+    # The source declares `cardinality_budget: 40`; the rows must fit inside it
+    # with the driver stats and the connection count that share the source, so
+    # a layout that would blow the budget fails here rather than at runtime.
+    test "the derived metric rows stay inside the source's declared budget" do
+      budget = Flezha.Observability.OtpBackend.TransportSource.cardinality_budget()
+
+      assert length(LivenessCounters.surfaces(:metric)) <= budget,
+             "the layout declares #{length(LivenessCounters.surfaces(:metric))} metric rows " <>
+               "against a budget of #{budget}"
+    end
+  end
 end

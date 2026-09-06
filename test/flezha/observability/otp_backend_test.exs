@@ -142,43 +142,31 @@ defmodule Flezha.Observability.OtpBackendTest do
       :ok = GenServer.stop(pid)
     end
 
-    test "an operative's parked-drop count is summed into the data-plane aggregates" do
+    # Nothing here names a metric. The layout declares which slots reach this
+    # source, so the test walks the DECLARATION and asserts each row arrived —
+    # a slot that stops being emitted fails here without anyone remembering to
+    # write a test for it, which is the failure `report-parked-operative-
+    # visibility` and `surface-the-runner-self-report` both landed as one-off
+    # fixes.
+    test "every metric the layout declares reaches a signal, under its declared measurement" do
       arm(:flezha_transport)
 
-      operative = "obs_parked_#{System.unique_integer([:positive])}"
-      ref = LivenessCounters.register_operative(operative)
-      LivenessCounters.bump_operative(ref, :parked_drops)
-      LivenessCounters.bump_operative(ref, :parked_drops)
+      runner = "obs_decl_#{System.unique_integer([:positive])}"
+      operative = "obs_decl_rel_#{System.unique_integer([:positive])}"
+      channel_ref = LivenessCounters.register_channel(runner, :secondary_1)
+      operative_ref = LivenessCounters.register_operative(operative)
 
-      {:ok, pid} = TransportSource.start_link([])
-      poll(pid, 1)
-      :ok = GenServer.stop(pid)
+      # A distinct value per slot, so a row reading another row's value is a
+      # failure rather than a coincidence.
+      values =
+        LivenessCounters.channel_rows()
+        |> Enum.with_index(1)
+        |> Map.new(fn {row, i} -> {Keyword.fetch!(row, :name), 1_000 + i} end)
 
-      signals = RingBufferSink.query(:flezha_transport, 0)
-      drops = Enum.find(signals, fn s -> s.name == :operative_parked_drops end)
+      for {slot, value} <- values, do: LivenessCounters.set_channel(channel_ref, slot, value)
 
-      assert drops, "the new slot never reached a signal"
-      assert drops.measurements[:count] >= 2
-      assert drops.metadata[:scope] == :data_plane
-    end
-
-    # A liveness slot does not surface by itself: `poll_beam_counters/0` walks
-    # a table with one row per metric and nothing iterates the layout, so a
-    # heartbeat counter with no row there is readable only by a caller of
-    # `snapshot_all/0` and reaches no signal, no sink and no exporter.
-    test "the heartbeat's rebind-discard and timer counters reach the data-plane aggregates" do
-      arm(:flezha_transport)
-
-      runner = "obs_hb_#{System.unique_integer([:positive])}"
-      ref = LivenessCounters.register_channel(runner, :secondary_1)
-
-      for {slot, value} <- [
-            hb_restore_discarded_inputs: 7,
-            hb_timers_armed: 3,
-            hb_timers_fired: 11
-          ] do
-        LivenessCounters.set_channel(ref, slot, value)
-      end
+      for slot <- LivenessCounters.operative_slots(),
+          do: LivenessCounters.bump_operative(operative_ref, slot)
 
       {:ok, pid} = TransportSource.start_link([])
       poll(pid, 1)
@@ -186,11 +174,23 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       signals = RingBufferSink.query(:flezha_transport, 0)
 
-      for {name, value} <- [restore_discarded_inputs: 7, timers_armed: 3, timers_fired: 11] do
+      for {group, row, name} <- LivenessCounters.surfaces(:metric) do
         signal = Enum.find(signals, fn s -> s.name == name end)
-        assert signal, "#{name} never reached a signal"
-        assert signal.measurements[:count] >= value
+        assert signal, "#{name} is declared a metric of this source and reached no signal"
         assert signal.metadata[:scope] == :data_plane
+
+        key = Flezha.Process.Counters.measurement(row)
+
+        assert is_integer(signal.measurements[key]),
+               "#{name} was emitted under #{inspect(Map.keys(signal.measurements))}, " <>
+                 "not the #{inspect(key)} its row declares"
+
+        if group == :channels do
+          slot = Keyword.fetch!(row, :name)
+
+          assert signal.measurements[key] >= Map.fetch!(values, slot),
+                 "#{name} read #{signal.measurements[key]} for a slot set to #{values[slot]}"
+        end
       end
     end
 
@@ -295,6 +295,29 @@ defmodule Flezha.Observability.OtpBackendTest do
         # `:timers` is the poll tick the template arms for every source.
         assert Enum.sort(Map.keys(state)) == Enum.sort([:interval, :timers | extra])
       end
+    end
+  end
+
+  describe "the declared source list" do
+    # `@sources` is read by the supervisor and, before this, by nothing that
+    # checked it against the tree: a module could be started without declaring
+    # the contract, and the gap was invisible until a poll crashed.
+    test "every declared source implements the source contract" do
+      modules = Flezha.Observability.OtpBackend.Supervisor.source_modules()
+
+      for mod <- modules do
+        assert Flezha.Observability.Source in declared_behaviours(mod),
+               "#{inspect(mod)} is started by the supervisor and declares no source contract"
+
+        assert function_exported?(mod, :config_schema, 0),
+               "#{inspect(mod)} declares the source contract and exports no config_schema/0"
+      end
+    end
+
+    test "the lifecycle table names exactly the declared sources" do
+      assert Enum.sort(for({mod, _, _, _, _, _} <- @lifecycle, do: mod)) ==
+               Enum.sort(Flezha.Observability.OtpBackend.Supervisor.source_modules()),
+             "the lifecycle table and the supervisor's source list have drifted apart"
     end
   end
 

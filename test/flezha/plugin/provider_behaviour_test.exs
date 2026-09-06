@@ -368,4 +368,62 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
                Kafka.Producer.build(%{"hosts" => "h:1", "topic" => "t", "linger_ms" => "25"})
     end
   end
+
+  # One vocabulary, one root. A provider that invents a second spelling for a
+  # fact two others already report is unreachable by anything subscribing to
+  # the family, and the divergence is invisible until someone greps for it —
+  # which is what the retired `[:flezha, :ws, …]` root was.
+  describe "the provider event vocabulary" do
+    test "the prefix is derived from the provider id, and the verb is appended" do
+      assert ProviderBehaviour.event(:kafka, :shipped) == [:flezha, :plugin, :kafka, :shipped]
+
+      # A provider id is carried as a string by the declaration, and names the
+      # same event either way.
+      assert ProviderBehaviour.event("kafka", :shipped) ==
+               ProviderBehaviour.event(:kafka, :shipped)
+    end
+
+    test "the four shared verbs are declared once" do
+      assert Enum.sort(ProviderBehaviour.verbs()) ==
+               Enum.sort([:shipped, :retried, :failed, :overflowed])
+    end
+
+    test "a provider-specific fact keeps its own verb under the same prefix" do
+      assert ProviderBehaviour.event(:kafka, :topic_created) ==
+               [:flezha, :plugin, :kafka, :topic_created]
+    end
+
+    test "no provider builds an event name of its own" do
+      offenders =
+        for file <- Path.wildcard("lib/flezha/plugin/provider/**/*.ex"),
+            body = File.read!(file),
+            body =~
+              ~r/:telemetry\.execute\(\s*\[:flezha, :plugin|@prefix \[:flezha|@telemetry \[:flezha|\[:flezha, :ws,/,
+            do: file
+
+      assert offenders == [],
+             "providers naming their own telemetry events: #{inspect(offenders)} — " <>
+               "every provider event goes through ProviderBehaviour.emit/3"
+    end
+
+    test "every emitted verb reaches the bridge or is a declared provider-specific one" do
+      emitted =
+        for file <- Path.wildcard("lib/flezha/plugin/provider/**/*.ex"),
+            [_, verb] <- Regex.scan(~r/emit\(\s*:([a-z_]+),/, File.read!(file)),
+            do: String.to_atom(verb)
+
+      refute emitted == [], "no provider emit was found, so this test asserts nothing"
+
+      mapped =
+        Flezha.Observability.TelemetryBridge.mapping()
+        |> Map.keys()
+        |> Enum.filter(&match?([:flezha, :plugin | _], &1))
+        |> MapSet.new(&List.last/1)
+
+      unbridged = emitted |> Enum.uniq() |> Enum.reject(&MapSet.member?(mapped, &1))
+
+      assert unbridged == [],
+             "provider verbs that reach no sink: #{inspect(unbridged)}"
+    end
+  end
 end

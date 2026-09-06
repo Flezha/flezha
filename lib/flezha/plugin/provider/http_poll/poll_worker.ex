@@ -24,7 +24,11 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
   require Logger
 
-  @telemetry [:flezha, :plugin, :http_poll]
+  # The prefix is derived from the provider's id; nothing here names a root.
+  @provider "http_poll"
+
+  defp emit(verb, measurements, metadata),
+    do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 
   @doc """
   Start a poller from the provider's declared worker spec. Performs no I/O.
@@ -163,8 +167,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
     case confirm(state, body) do
       :ok ->
-        :telemetry.execute(
-          @telemetry ++ [:injected],
+        emit(
+          :shipped,
           %{bytes: byte_size(body), latency_ms: latency_ms},
           Map.put(labels(state), :seed, seed?)
         )
@@ -200,7 +204,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   defp unchanged(state, latency_ms) do
-    :telemetry.execute(@telemetry ++ [:unchanged], %{latency_ms: latency_ms}, labels(state))
+    emit(:unchanged, %{latency_ms: latency_ms}, labels(state))
     recovered(state)
   end
 
@@ -216,8 +220,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         "consecutive=#{failures} reason=#{inspect(reason)}"
     )
 
-    :telemetry.execute(
-      @telemetry ++ [:failed],
+    emit(
+      :failed,
       %{consecutive_failures: failures, latency_ms: latency_ms},
       Map.put(labels(state), :reason, reason)
     )

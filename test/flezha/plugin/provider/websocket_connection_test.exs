@@ -91,7 +91,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   describe "total silence still reconnects" do
     test "no frames for idle_timeout_ms exits with {:shutdown, :idle_timeout} and telemetry" do
-      attach_telemetry([:flezha, :ws, :idle_reconnect])
+      attach_telemetry([:flezha, :plugin, :websocket, :idle_reconnect])
       Process.flag(:trap_exit, true)
       stale = :erlang.monotonic_time(:millisecond) - 500
 
@@ -103,7 +103,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
         end)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 1_000
-      assert_receive {:telemetry, [:flezha, :ws, :idle_reconnect], %{silence_ms: ms}, meta}, 500
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :idle_reconnect], %{silence_ms: ms}, meta}, 500
       assert ms >= 100
       assert meta.plugin_id == "test_ws"
     end
@@ -127,7 +127,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   describe "data-liveness re-subscribe on a live socket" do
     test "stale data with resubscribe_after_ms > 0 replies with post_connect and emits telemetry" do
-      attach_telemetry([:flezha, :ws, :resubscribe])
+      attach_telemetry([:flezha, :plugin, :websocket, :resubscribe])
       now = :erlang.monotonic_time(:millisecond)
 
       s =
@@ -144,7 +144,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
                Websocket.Client.handle_info(:idle_check, s)
 
       assert ns.last_resubscribe_at >= now
-      assert_receive {:telemetry, [:flezha, :ws, :resubscribe], %{data_silence_ms: ms}, meta}, 500
+      assert_receive {:telemetry, [:flezha, :plugin, :websocket, :resubscribe], %{data_silence_ms: ms}, meta}, 500
       assert ms >= 100
       assert meta.plugin_id == "test_ws"
     end
@@ -173,7 +173,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   describe "re-subscribe disabled by default" do
     test "resubscribe_after_ms: 0 never re-subscribes" do
-      attach_telemetry([:flezha, :ws, :resubscribe])
+      attach_telemetry([:flezha, :plugin, :websocket, :resubscribe])
       now = :erlang.monotonic_time(:millisecond)
 
       s =
@@ -186,7 +186,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
         )
 
       assert {:ok, _} = Websocket.Client.handle_info(:idle_check, s)
-      refute_received {:telemetry, [:flezha, :ws, :resubscribe], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :websocket, :resubscribe], _, _}
     end
   end
 
@@ -209,7 +209,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
   describe "re-subscribe against an unestablished socket is non-fatal" do
     test "skips the send and stays alive when websocket_established? is false" do
-      attach_telemetry([:flezha, :ws, :resubscribe])
+      attach_telemetry([:flezha, :plugin, :websocket, :resubscribe])
       now = :erlang.monotonic_time(:millisecond)
 
       s =
@@ -228,7 +228,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
       # do not retry every tick. No re-subscribe telemetry is emitted.
       assert {:ok, ns} = Websocket.Client.handle_info(:idle_check, s)
       assert ns.last_resubscribe_at >= now
-      refute_received {:telemetry, [:flezha, :ws, :resubscribe], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :websocket, :resubscribe], _, _}
     end
   end
 
@@ -238,7 +238,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
     # {:shutdown, :idle_timeout} — the daily false "data stops" that only
     # heals minutes later via attempt_restart.
     test "a stale last_frame_at during reconnect does not exit with :idle_timeout" do
-      attach_telemetry([:flezha, :ws, :idle_reconnect])
+      attach_telemetry([:flezha, :plugin, :websocket, :idle_reconnect])
       stale = :erlang.monotonic_time(:millisecond) - 500
       parent = self()
 
@@ -260,7 +260,7 @@ defmodule Flezha.Plugin.Provider.WebsocketWatchdogTest do
 
       assert_receive :checked, 1_000
       refute_received {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}
-      refute_received {:telemetry, [:flezha, :ws, :idle_reconnect], _, _}
+      refute_received {:telemetry, [:flezha, :plugin, :websocket, :idle_reconnect], _, _}
       Process.exit(pid, :kill)
     end
   end
@@ -592,7 +592,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
 
   alias Flezha.Plugin.Provider.Websocket
 
-  @telemetry_event [:flezha, :ws, :idle_reconnect]
+  @telemetry_event [:flezha, :plugin, :websocket, :idle_reconnect]
 
   setup do
     parent = self()

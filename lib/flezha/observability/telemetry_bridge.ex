@@ -47,8 +47,9 @@ defmodule Flezha.Observability.TelemetryBridge do
       {:flezha_plugin_installer, :store_opened, :event},
     [:flezha, :plugin_installer, :unsigned_install] =>
       {:flezha_plugin_installer, :unsigned_install, :event},
-    [:flezha, :ws, :idle_reconnect] => {:flezha_ws, :idle_reconnect, :event},
-    [:flezha, :ws, :resubscribe] => {:flezha_ws, :resubscribe, :event},
+    [:flezha, :plugin, :websocket, :idle_reconnect] => {:flezha_ws, :idle_reconnect, :event},
+    [:flezha, :plugin, :websocket, :resubscribe] => {:flezha_ws, :resubscribe, :event},
+    [:flezha, :plugin, :websocket, :reconcile] => {:flezha_ws, :reconcile, :event},
     [:flezha, :state, :seq_gap] => {:flezha_state, :seq_gap, :event},
     [:flezha, :state, :credit_anomaly] => {:flezha_state, :credit_anomaly, :event},
     [:flezha, :state, :output_stall] => {:flezha_state, :output_stall, :event},
@@ -77,17 +78,27 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :dlq, :retention_dropped] =>
       {:flezha_dlq, :dlq_dropped_by_retention_total, :metric},
     [:flezha, :dlq, :usage] => {:flezha_dlq, :dlq_usage, :metric},
-    [:flezha, :plugin, :operative_forward, :delivered] =>
+    [:flezha, :plugin, :operative_forward, :shipped] =>
       {:flezha_operative_forward, :delivered, :metric},
-    [:flezha, :plugin, :operative_forward, :retry] =>
+    [:flezha, :plugin, :operative_forward, :retried] =>
       {:flezha_operative_forward, :retry, :metric},
     [:flezha, :plugin, :operative_forward, :queue_depth] =>
       {:flezha_operative_forward, :queue_depth, :metric},
-    [:flezha, :plugin, :operative_forward, :saturated] =>
+    [:flezha, :plugin, :operative_forward, :overflowed] =>
       {:flezha_operative_forward, :saturated, :event},
-    [:flezha, :plugin, :http_poll, :injected] => {:flezha_http_poll, :injected, :metric},
+    [:flezha, :plugin, :http_poll, :shipped] => {:flezha_http_poll, :injected, :metric},
     [:flezha, :plugin, :http_poll, :unchanged] => {:flezha_http_poll, :unchanged, :metric},
     [:flezha, :plugin, :http_poll, :failed] => {:flezha_http_poll, :failed, :event},
+    # The kafka producer's family, under the same derived prefix as every other
+    # provider. Counts are metrics; a failure, a topic creation and a worker
+    # swap are events an operator reads one at a time.
+    [:flezha, :plugin, :kafka, :shipped] => {:flezha_kafka, :shipped, :metric},
+    [:flezha, :plugin, :kafka, :retried] => {:flezha_kafka, :retried, :metric},
+    [:flezha, :plugin, :kafka, :overflowed] => {:flezha_kafka, :overflowed, :metric},
+    [:flezha, :plugin, :kafka, :failed] => {:flezha_kafka, :failed, :event},
+    [:flezha, :plugin, :kafka, :metadata_refresh] => {:flezha_kafka, :metadata_refresh, :metric},
+    [:flezha, :plugin, :kafka, :topic_created] => {:flezha_kafka, :topic_created, :event},
+    [:flezha, :plugin, :kafka, :worker_swapped] => {:flezha_kafka, :worker_swapped, :event},
     # The plugin lifecycle's one event: every phase a plugin enters or leaves,
     # from the table's one transition function.
     [:flezha, :plugin, :phase] => {:flezha_plugin, :phase, :event},
@@ -114,13 +125,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :correction, :retention_derived],
     [:flezha, :hub, :pid_removed],
     [:flezha, :operative, :requested_spawn],
-    [:flezha, :plugin, :kafka, :metadata, :refresh],
-    [:flezha, :plugin, :kafka, :produce, :dropped],
-    [:flezha, :plugin, :kafka, :produce, :failed],
-    [:flezha, :plugin, :kafka, :produce, :ok],
-    [:flezha, :plugin, :kafka, :produce, :retry],
-    [:flezha, :plugin, :kafka, :topic, :created],
-    [:flezha, :plugin, :kafka, :worker, :swapped],
     [:flezha, :runner, :factory_language_conflict],
     [:flezha, :runner, :quota_refused],
     [:flezha, :schedule, :dormant],
@@ -150,8 +154,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :stream, :fanout_warning],
     [:flezha, :workflow, :completed],
     [:flezha, :workflow, :rehydrating],
-    [:flezha, :workflow, :rewind],
-    [:flezha, :ws, :reconcile]
+    [:flezha, :workflow, :rewind]
   ]
 
   # Derived at COMPILE time from the detector table, so adding a detector

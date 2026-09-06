@@ -9,7 +9,6 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
   lets a test assert on the exact frames a given source transition produces.
   """
 
-  import ExUnit.Callbacks, only: [on_exit: 1]
 
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.Websocket.Subscription
@@ -113,17 +112,5 @@ defmodule FlezhaTest.Helper.WebsocketSourceFixtures do
     {:text, Jason.encode!(Map.merge(%{"req_id" => req_id, "success" => true}, extra))}
   end
 
-  def attach_telemetry(event) do
-    parent = self()
-    handler_id = {__MODULE__, event, :erlang.unique_integer([:positive])}
-
-    :telemetry.attach(
-      handler_id,
-      event,
-      fn ^event, meas, meta, _ -> send(parent, {:telemetry, event, meas, meta}) end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
-  end
+  def attach_telemetry(event), do: FlezhaTest.Helper.Telemetry.capture(event)
 end

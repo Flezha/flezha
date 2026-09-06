@@ -61,17 +61,21 @@ in, and lifetime bytes out. The source SHALL produce one signal per active
 transport per poll.
 
 Every counter a runner's data heartbeat carries SHALL be mirrored into a
-liveness slot, and every mirrored slot SHALL reach an operator surface — this
-source's metrics, or the convergence stall classifier's per-runner verdicts.
-A counter the runner pays for on the wire and the controller discards is
-invisible to every operator surface, and no reader can tell a key that is
-absent from one whose value is genuinely zero. The heartbeat's key set is a
-cross-SDK contract, so a key added to it SHALL be given a slot and a surface in
-the same change that adds it.
+liveness slot, and every liveness slot SHALL declare the surface that reads it —
+a metric this source emits, a convergence verdict that consumes it, a bridged
+telemetry event, or an explicit internal-only marker carrying its reason. A
+counter the runner pays for on the wire and the controller discards is invisible
+to every operator surface, and no reader can tell a key that is absent from one
+whose value is genuinely zero. The heartbeat's key set is a cross-SDK contract,
+so a key added to it SHALL be given a slot and a surface in the same change that
+adds it.
 
-A liveness slot does not surface by itself: this source emits one hard-coded
-metric per name and nothing iterates the slot layout, so a slot with no line of
-its own is readable only by a caller of `snapshot_all/0`.
+The slot layout SHALL be the single declaration from which this source's metric
+rows are derived. A liveness slot SHALL NOT require a hand-written emit line of
+its own: this source SHALL iterate the layout and emit one signal per slot whose
+declared surface is a metric, so a slot cannot reach an exporter in one release
+and not the next because a line was forgotten. Emitting a metric outside that
+iteration SHALL be a defect, whether or not the metric is correct.
 
 A heartbeat counter is global to the runner that sends it, and the runner sends
 the same heartbeat on every secondary stream it holds, so the controller mirrors
@@ -80,7 +84,10 @@ slot once per runner, never once per channel: the collapse SHALL live with the
 slot layout and every reader SHALL use it, so that a metric's value does not
 change with the size of a runner's stream pool. A slot that is genuinely per
 channel — a frame count, a credit session, a send-gate hold — is summed across
-channels as before.
+channels as before. Whether a slot is summed, collapsed or reduced by maximum
+SHALL be read from the slot's own declaration rather than inferred from its
+name, and a slot holding an instant or a gauge SHALL declare the reduction that
+makes its cross-runner value meaningful.
 
 #### Scenario: Per-transport open-connection count
 - **WHEN** a UDS transport has `4` open runner connections
@@ -102,17 +109,29 @@ channels as before.
 - **WHEN** the controller's mirrored key set is compared with the key set the shared core's heartbeat builds
 - **THEN** the two SHALL name the same keys
 
-#### Scenario: A slot with no metric line reaches no exporter
-- **WHEN** a heartbeat counter is given a liveness slot and this source is left unchanged
-- **THEN** the counter SHALL reach no signal, no sink and no exporter
+#### Scenario: A slot declared without a surface is refused
+- **WHEN** a liveness slot is added to the layout and declares no surface
+- **THEN** the declaration test SHALL fail and name the slot, rather than the slot compiling and reaching nothing
+
+#### Scenario: A metric row is derived, not written
+- **WHEN** a liveness slot declaring a metric surface is added to the layout and this source is left unedited
+- **THEN** the metric SHALL be emitted on the next poll, and no hand-written emit line SHALL exist for it
 
 #### Scenario: A runner-global counter is counted once per runner
 - **WHEN** one runner holds three secondary streams and its heartbeat carries `timers_fired: 1` on each
 - **THEN** this source SHALL emit `timers_fired` with count 1, and the same value whether the runner holds one stream or eight
 
+#### Scenario: A gauge is reduced as its row declares
+- **WHEN** two runners report `inflight_oldest_ms` of `900` and `4_100` on the same poll
+- **THEN** the emitted value SHALL be `4_100`, the reduction the row declares, and SHALL NOT be their sum
+
 #### Scenario: Both readers collapse the same way
 - **WHEN** the stall classifier and this source read one runner's channel rows
 - **THEN** both SHALL reach the same per-runner value through one shared function, so a slot cannot be collapsed in one reader and summed in the other
+
+#### Scenario: The derived rows stay inside the declared cardinality budget
+- **WHEN** the metric rows are derived from the slot layout
+- **THEN** their count SHALL be within this source's declared `cardinality_budget`, and a layout that would exceed it SHALL fail the declaration test rather than the budget check at runtime
 
 ### Requirement: Built-in bounded-mailbox source
 
@@ -184,6 +203,10 @@ Every built-in process-backed source SHALL be built with `Flezha.Observability.O
 
 The template SHALL be named for what it is. It is poll plumbing, not a source: the modules it builds are the sources, and naming the template `Source` too leaves the subsystem with two different contracts under one name, which is what left the foundation's own `Source` behaviour with no declared implementers.
 
+The list of built-in sources SHALL be one declaration, read by the supervisor that starts them and by the test that checks them against the tree, so a module cannot be started without declaring the contract and a module cannot declare the contract without being started.
+
+The template's periodic half SHALL be a separate extension point from its polling half. A process that needs only a repeating tick — a ring-buffer sweep, an export flush, a log rotation, a retention pass — SHALL declare `tick_interval_ms/1` and `handle_tick/1` against that extension point rather than arming its own timer and writing its own re-arm clause. A deadline armed per event rather than on a period, such as an fsync deadline armed by the write that made data undurable, is not a tick and SHALL keep its own timer.
+
 #### Scenario: Every built-in source declares the foundation's source contract
 - **WHEN** each module in `Flezha.Observability.OtpBackend.Supervisor.source_modules/0` is loaded
 - **THEN** its declared behaviours SHALL include `Flezha.Observability.Source`
@@ -192,4 +215,12 @@ The template SHALL be named for what it is. It is poll plumbing, not a source: t
 #### Scenario: A source overrides only what varies
 - **WHEN** a source is built with the template and defines neither `init_state/1` nor `poll/1`
 - **THEN** it SHALL still compile, register at `init/1`, arm its tick at its configured interval, and answer each `:poll` without emitting
+
+#### Scenario: A source in the list that declares nothing is refused
+- **WHEN** a module that implements neither the source contract nor the template is added to the declared source list
+- **THEN** the conformance test SHALL fail and name the module
+
+#### Scenario: A periodic process re-arms through the declared tick
+- **WHEN** a process declares `tick_interval_ms/1` and `handle_tick/1` and its tick fires
+- **THEN** the next tick SHALL be armed by the extension point, with no `handle_info` clause or re-arm helper of the process's own
 
