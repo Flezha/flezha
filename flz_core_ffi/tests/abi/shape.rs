@@ -239,6 +239,61 @@ fn the_recording_pair_round_trips_every_primitive() {
     primitives_round_trip(&Recorder);
 }
 
+/// The released-output writer, both arms. `local_next_output` is the only
+/// caller and the core only ever queues a plugin release, so the edge arm is
+/// unreachable in production — which is exactly why it is proved here, and
+/// against the same hand-written expectation the result direction uses.
+#[test]
+fn a_released_output_is_written_the_way_a_recorded_one_reads() {
+    let plugin = schema::Output {
+        target: schema::OutputTarget::Plugin {
+            channel: "totals".into(),
+        },
+        key: Some("the".into()),
+        event_time: Some(7),
+        metadata: vec![("flz.key".into(), "the".into())],
+        payload: b"the 1".to_vec(),
+    };
+    let edge = schema::Output {
+        target: schema::OutputTarget::Edge {
+            channel: 2,
+            consumer: 1,
+        },
+        ..plugin.clone()
+    };
+    for output in [plugin, edge] {
+        assert_eq!(
+            shape::sink_output(&Recorder, output.clone()).expect("a written output"),
+            record_output(&output),
+        );
+    }
+}
+
+/// An absent optional is an absent key, not a null one: a host reads the key
+/// as missing, which is what every binding's `Source` half expects.
+#[test]
+fn a_released_output_omits_the_optionals_it_has_not_got() {
+    let written = shape::sink_output(
+        &Recorder,
+        schema::Output {
+            target: schema::OutputTarget::Plugin {
+                channel: "totals".into(),
+            },
+            key: None,
+            event_time: None,
+            metadata: vec![],
+            payload: vec![],
+        },
+    )
+    .expect("a written output");
+    let map = obj(&written);
+    assert!(
+        !map.contains_key("key") && !map.contains_key("event_time"),
+        "{map:?}"
+    );
+    assert_eq!(text(map, "plugin_channel"), "totals");
+}
+
 fn raw(bytes: &[u8]) -> Value {
     Value::Array(bytes.iter().map(|b| json!(b)).collect())
 }

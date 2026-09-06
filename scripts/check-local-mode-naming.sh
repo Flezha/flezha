@@ -52,6 +52,16 @@ SURFACE = (
     "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/LocalImpl.java",
     "sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E13_LocalMode.java",
     "lib/flezha/sdk/local.ex",
+    "flz_core_ffi/src/local.rs",
+    "sdk/node/src/local.ts",
+    "examples/node/local_word_count.mjs",
+    "sdk/python/src/flezha/local.py",
+    "examples/python/local_word_count.py",
+    "sdk/ruby/lib/flezha/local.rb",
+    "examples/ruby/local_word_count.rb",
+    "sdk/php/src/LocalOperative.php",
+    "sdk/php/src/SinkOutput.php",
+    "sdk/php/examples/E07_LocalMode.php",
     "docs/quickstart.md",
 )
 

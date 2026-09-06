@@ -36,8 +36,7 @@ suppressible. Durability, effectively-once delivery, plugins, placement and
 migration, the dead-letter queue, observability export, authz and multi-runner
 scale need a controller; a declaration asking for one of those is refused at
 startup, naming it. This SDK expresses local mode in its own core, as it does
-everything else. Local mode also ships in the Rust and Java SDKs; Node, Python,
-Ruby and PHP do not carry it yet. Walk-through:
+everything else. Local mode ships in every other SDK too. Walk-through:
 [`../quickstart.md`](../quickstart.md).
 
 ## Choosing a mode

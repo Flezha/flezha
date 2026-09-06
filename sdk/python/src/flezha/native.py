@@ -70,6 +70,12 @@ class Core:
         "declare_class",
         "check_class",
         "start",
+        "local_start",
+        "local_on_sink",
+        "local_feed",
+        "local_next_output",
+        "local_run_until_idle",
+        "local_stop",
         "poll",
         "wait_starvation",
         "complete",
@@ -140,6 +146,33 @@ class Core:
     def start(self, namespace: str) -> None:
         """Connect to the controller and start the runner loop."""
         self._call("start", namespace)
+
+    # -- local mode: the declared graph here, with no controller -----------
+
+    def local_start(self, factory_id: str, operative_id: str) -> None:
+        """Start the declared class as a local run. The alternative to
+        :meth:`start`, never an addition."""
+        self._call("local_start", factory_id, operative_id)
+
+    def local_on_sink(self, channel: str) -> None:
+        """Queue a declared sink for :meth:`local_next_output`."""
+        self._call("local_on_sink", channel)
+
+    def local_feed(self, channel: str, payload: bytes) -> None:
+        """Feed one value's wire bytes to a declared entry channel."""
+        self._call("local_feed", channel, payload)
+
+    def local_next_output(self, timeout_ms: int) -> Any:
+        """The next value a sink released, or ``None`` on timeout."""
+        return self._call("local_next_output", timeout_ms)
+
+    def local_run_until_idle(self, timeout_ms: int) -> None:
+        """Park until the graph is idle; a timeout is a refusal."""
+        self._call("local_run_until_idle", timeout_ms)
+
+    def local_stop(self) -> None:
+        """End the local run and release its Entities."""
+        self._call("local_stop")
 
     def shutdown(self) -> None:
         """Ship every Entity's state to the controller, then wake every blocked

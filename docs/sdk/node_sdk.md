@@ -194,6 +194,38 @@ codec.
 Durable records are stamped `sdk_lang = 4`. A record another SDK wrote is
 refused by name rather than decoded, and the reverse holds too.
 
+## Local mode: run a graph with no controller
+
+`LocalOperative.start` takes the operative definition you deploy and runs its
+declared graph in this process — no controller, no socket, no local-mode member
+on the definition:
+
+```ts
+import { LocalOperative } from '@flezha/sdk';
+
+const run = LocalOperative.start(WordCount);
+try {
+  run.onSink('totals', (out) => console.log(out.payload.toString('utf8')));
+  await run.feed('lines', 'the quick brown fox');
+  await run.runUntilIdle(10_000);
+} finally {
+  await run.close();
+}
+```
+
+`onSink` registers against the sink's **channel** name, which is the producing
+procedure's name unless the declaration `named` it. `feed`, `runUntilIdle` and
+the sink drain are promises because each parks in the core, and the fetchers
+that run the procedures need this event loop free. Worked example:
+[`examples/node/local_word_count.mjs`](../../examples/node/local_word_count.mjs).
+
+**State is held in memory and nothing is durable** — no write-ahead log, no
+snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
+placement and migration, the dead-letter queue, observability export, authz and
+multi-runner scale need a controller; a declaration asking for one of those is
+refused at startup, naming it. Walk-through:
+[`../quickstart.md`](../quickstart.md).
+
 ## Testing a procedure
 
 ```ts

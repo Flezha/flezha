@@ -183,6 +183,13 @@ export interface Native {
   /** Judge a declaration without registering it; answers the derived one. */
   checkClass(json: Buffer): Buffer;
   start(namespace: string): Promise<void>;
+  /** The alternative to `start`: the declared graph runs here, no controller. */
+  localStart(factoryId: string, operativeId: string): void;
+  localOnSink(channel: string): void;
+  localFeed(channel: string, payload: Buffer): Promise<void>;
+  localNextOutput(timeoutMs: number): Promise<NativeOutput | null>;
+  localRunUntilIdle(timeoutMs: number): Promise<void>;
+  localStop(): void;
   complete(result: NativeActivationResult): Promise<void>;
   abandon(token: bigint): void;
   shutdown(): void;
@@ -208,6 +215,8 @@ export interface Native {
   unregisterDispatch(id: number): void;
   dispatchLoopCount(): number;
   startHost(fetchers?: number): void;
+  /** Raise the fetchers' own flag, so they leave without the core's word. */
+  stopFetching(): void;
   stopHost(): Promise<void>;
   hostStats(): NativeHostStats;
   nativeSurface(): NativeExport[];

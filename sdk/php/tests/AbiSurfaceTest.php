@@ -34,7 +34,13 @@ final class AbiSurfaceTest extends RepositoryTestCase
     /** @return list<string> the entry points `flz_core_ffi/src/lib.rs` exports */
     private function exported(): array
     {
-        $source = (string) file_get_contents($this->repositoryFile('flz_core_ffi/src/lib.rs'));
+        // Two files, because the C ABI is two: the general entry points and
+        // the local-mode ones. Reading only the first reports a name the
+        // crate does export as one it does not.
+        $source = '';
+        foreach (['flz_core_ffi/src/lib.rs', 'flz_core_ffi/src/local.rs'] as $file) {
+            $source .= (string) file_get_contents($this->repositoryFile($file));
+        }
         preg_match_all('/extern "C" fn (flz_core_\w+)/', $source, $matches);
         $names = array_values(array_unique($matches[1]));
         sort($names);

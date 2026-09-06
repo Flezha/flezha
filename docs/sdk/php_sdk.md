@@ -166,6 +166,42 @@ controller's placement already spreads operatives across, and it keeps this
 layer agnostic between Kubernetes, systemd and a supervisor's own process
 management.
 
+## Local mode: run a graph with no controller
+
+`LocalOperative::start` takes the operative class you deploy and runs its
+declared graph in this process — no controller, no socket, no local-mode member
+on the class:
+
+```php
+$run = LocalOperative::start(WordCountOperative::class);
+
+try {
+    $run->onSink('totals', static fn (SinkOutput $out) => print($out->payload . PHP_EOL));
+    $run->feed('lines', 'the quick brown fox');
+    $run->runUntilIdle(10_000);
+} finally {
+    $run->close();
+}
+```
+
+`onSink` registers against the sink's **channel** name, which is the producing
+procedure's name unless the declaration named it.
+
+**This host has one thread, so `runUntilIdle` drives the loop rather than
+parking in the core.** Under the default `sync` executor the caller *is* the
+poll loop: one turn takes an activation if the core has one, answers it, and
+hands on whatever the sinks released; a turn that hands nothing back asks the
+core whether the graph has settled. A thread parked inside the core's own idle
+wait would be waiting on work it had stopped doing. Worked example:
+[`../../sdk/php/examples/E07_LocalMode.php`](../../sdk/php/examples/E07_LocalMode.php).
+
+**State is held in memory and nothing is durable** — no write-ahead log, no
+snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
+placement and migration, the dead-letter queue, observability export, authz and
+multi-runner scale need a controller; a declaration asking for one of those is
+refused at startup, naming it. Walk-through:
+[`../quickstart.md`](../quickstart.md).
+
 ## Sizing, as arithmetic
 
 One loop processes one activation at a time, so a deployment is described by

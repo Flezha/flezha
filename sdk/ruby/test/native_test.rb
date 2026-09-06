@@ -47,7 +47,8 @@ class NativeTest < Minitest::Test
       assert_includes [true, false], blocking
     end
     blocking = surface.select { |row| row[2] }.map(&:first)
-    assert_equal %w[start poll wait_starvation complete workflow_recv spawn_workflow], blocking
+    assert_equal %w[start local_feed local_next_output local_run_until_idle poll
+                    wait_starvation complete workflow_recv spawn_workflow], blocking
   end
 
   # The idle latch lives in the core; the veneer only advances it. A watch over

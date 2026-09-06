@@ -164,6 +164,63 @@ final class Core implements SpawnBridge, EntryIdleBridge
     }
 
     /**
+     * Start the declared class as a local run: no controller, no socket. The
+     * alternative to {@see start()}, never an addition.
+     */
+    public function localStart(string $factoryId, string $operativeId): void
+    {
+        $this->check($this->ffi->flz_core_local_start($this->live(), $factoryId, $operativeId));
+    }
+
+    /** Queue a declared sink for {@see localNextOutput()}. */
+    public function localOnSink(string $channel): void
+    {
+        $this->check($this->ffi->flz_core_local_on_sink($this->live(), $channel));
+    }
+
+    /** Feed one value's wire bytes to a declared entry channel. */
+    public function localFeed(string $channel, string $payload): void
+    {
+        $this->check($this->ffi->flz_core_local_feed($this->live(), $channel, $payload, strlen($payload)));
+    }
+
+    /**
+     * The next value a sink released, in `poll`'s three-way shape: the encoded
+     * `Output` lands in `$bytes` on {@see Binding::POLL_ACTIVATION}.
+     */
+    public function localNextOutput(int $timeoutMs, ?string &$bytes): int
+    {
+        $released = null;
+        $status = $this->outBuffer(
+            fn (CData $out, CData $len): int => $this->ffi->flz_core_local_next_output(
+                $this->live(),
+                $timeoutMs,
+                FFI::addr($out),
+                FFI::addr($len),
+            ),
+            $released,
+        );
+        $bytes = $released;
+        if ($status === Binding::ERR) {
+            $this->check($status);
+        }
+
+        return $status;
+    }
+
+    /** Park until the graph is idle; a timeout is a refusal. */
+    public function localRunUntilIdle(int $timeoutMs): void
+    {
+        $this->check($this->ffi->flz_core_local_run_until_idle($this->live(), $timeoutMs));
+    }
+
+    /** End the local run and release its Entities. */
+    public function localStop(): void
+    {
+        $this->check($this->ffi->flz_core_local_stop($this->live()));
+    }
+
+    /**
      * Block for up to `$timeoutMs` for one activation.
      *
      * Answers the ABI's own three-way status; the encoded activation lands in

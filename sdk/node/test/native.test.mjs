@@ -39,7 +39,12 @@ test('the addon exports exactly what its surface table names', () => {
 test('every export names a C ABI entry point or is host bookkeeping', () => {
   // The veneer adds no ABI surface: each entry either corresponds to an
   // existing C entry point, or reaches none at all.
-  const abi = readFileSync(resolve(here, '../../../flz_core_ffi/src/lib.rs'), 'utf8');
+  // Two files, because the C ABI is two: the general entry points and the
+  // local-mode ones. Reading only the first passes a name the crate exports
+  // and fails one it exports from the other module.
+  const abi = ['lib.rs', 'local.rs']
+    .map((file) => readFileSync(resolve(here, `../../../flz_core_ffi/src/${file}`), 'utf8'))
+    .join('\n');
   for (const entry of native.nativeSurface()) {
     if (!entry.abi) continue;
     assert.ok(
@@ -63,6 +68,9 @@ test('every blocking entry point is asynchronous', () => {
   const blocking = native.nativeSurface().filter((entry) => entry.blocking);
   assert.deepEqual(blocking.map((entry) => entry.name).sort(), [
     'complete',
+    'localFeed',
+    'localNextOutput',
+    'localRunUntilIdle',
     'spawnWorkflow',
     'start',
     'stopHost',

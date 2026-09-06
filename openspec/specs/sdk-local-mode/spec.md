@@ -178,23 +178,24 @@ which is the one place the word is correct.
 - **WHEN** a test file exercising local mode is named
 - **THEN** the gate SHALL NOT flag it, because the rule governs the public surface and its documentation, not the tests that cover them
 
-### Requirement: Local mode SHALL be available on Rust, Java and Elixir
+### Requirement: Local mode SHALL be available in every SDK
 
-The capability SHALL ship in the Rust SDK, the Java SDK and the Elixir SDK in the
-change that introduces it, and the behaviour observed through each SHALL be
-equivalent for an equivalent declaration. The Elixir SDK SHALL express the
-capability in its own core, which inherits nothing from the shared Rust kernel.
+The capability SHALL ship in every SDK this repository publishes — Rust, Java,
+Elixir, Node, Python, Ruby and PHP — and the behaviour observed through each
+SHALL be equivalent for an equivalent declaration. The Elixir SDK SHALL express
+the capability in its own core, which inherits nothing from the shared Rust
+kernel; the remaining SDKs reach one implementation through `flz_core`.
 
-The Node, Python, Ruby and PHP SDKs are deferred to a named follow-up change and
-SHALL NOT be assumed to carry local mode until it lands.
+No SDK is deferred once this change lands, so no documentation may name one as
+deferred.
 
 #### Scenario: Equivalent behaviour across the in-scope SDKs
 
-- **WHEN** an equivalent two-procedure declaration is run in local mode on Rust, Java and Elixir with the same inputs
-- **THEN** each SHALL execute both procedures, perform the inter-procedure hop in the runtime, and deliver the same sink output in the same order
+- **WHEN** an equivalent two-procedure declaration is run in local mode on each SDK with the same inputs
+- **THEN** each SHALL execute both procedures, perform the inter-procedure hop in the runtime, and deliver the same sink output
 
-#### Scenario: A deferred SDK does not claim the capability
+#### Scenario: No SDK claims a deferral
 
-- **WHEN** the Node, Python, Ruby or PHP SDK is inspected before the follow-up lands
-- **THEN** it SHALL NOT expose a local-mode entry point, and the documentation SHALL name it as deferred rather than implying availability
+- **WHEN** any SDK's documentation is read
+- **THEN** it SHALL NOT name local mode as deferred, because every SDK carries it
 

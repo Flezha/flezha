@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node run.mjs",
     "start:workers": "FLEZHA_NODE_WORKERS=4 node run.mjs",
+    "local": "node local_word_count.mjs",
     "test": "node --test session.test.mjs"
   },
   "dependencies": {

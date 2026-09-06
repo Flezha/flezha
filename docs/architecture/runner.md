@@ -372,10 +372,10 @@ and rescale, partitioning (a member's key-group range arrives with
 construction), the dead-letter queue, observability export, authz and
 multi-runner scale.
 
-Local mode ships in the Rust SDK, the Java SDK and the Elixir SDK. Node, Python,
-Ruby and PHP do not carry it yet — they reach the kernel through the C ABI
-rather than the JNI glue, and their entry points are owed by
-`carry-local-mode-in-veneers`. User-facing walk-through:
+Local mode ships in every SDK. The four that reach the kernel through the C ABI
+rather than the JNI glue bind the same six entry points and drive their own poll
+loop, which is what runs the procedures; a host with one thread drives that loop
+from `runUntilIdle` rather than parking in the core. User-facing walk-through:
 [`../quickstart.md`](../quickstart.md).
 
 ## One change, every SDK

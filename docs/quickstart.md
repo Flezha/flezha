@@ -30,13 +30,18 @@ keying (`key_by`), one Entity per resolved key with its own mailbox and
 overflow policy, the retry ladder, and inter-procedure delivery performed by
 the runtime.
 
-## Available on Rust, Java and Elixir
+## Available in every SDK
 
-Local mode ships in the Rust, Java and Elixir SDKs. **Node, Python, Ruby and
-PHP do not carry it yet** — they reach the kernel through the C ABI rather than
-the JNI glue, and their local-mode entry points land in the follow-up change
-`carry-local-mode-in-veneers`. Every SDK does carry a single-procedure test
-harness in the meantime.
+Local mode ships in all seven SDKs. Three are walked through below; the other
+four take the same shape over the same kernel, and each has a worked example
+and a section in its own SDK page:
+
+| SDK | Entry point | Worked example |
+| --- | --- | --- |
+| Node | `LocalOperative.start` | [`examples/node/local_word_count.mjs`](../examples/node/local_word_count.mjs) |
+| Python | `LocalOperative.start` | [`examples/python/local_word_count.py`](../examples/python/local_word_count.py) |
+| Ruby | `Flezha::LocalOperative.start` | [`examples/ruby/local_word_count.rb`](../examples/ruby/local_word_count.rb) |
+| PHP | `LocalOperative::start` | [`sdk/php/examples/E07_LocalMode.php`](../sdk/php/examples/E07_LocalMode.php) |
 
 ## Rust
 
@@ -174,8 +179,9 @@ end
 
 [`docs/sdk/elixir_sdk.md`](sdk/elixir_sdk.md) covers the SDK around it. The
 Elixir SDK expresses local mode in its own core, which inherits nothing from
-the shared Rust kernel — the three cores are held to one recorded expectation
-by `test/fixtures/local_mode_word_count.txt`, which all three suites read.
+the shared Rust kernel — the two cores are held to one recorded expectation by
+`test/fixtures/local_mode_word_count.txt`, which every SDK's local-mode suite
+reads.
 
 ## What you registered is what you deploy
 

@@ -71,6 +71,7 @@ module Flezha
     # than a method that quietly does not exist.
     ENTRY_POINTS = %i[
       declare_class check_class start poll wait_starvation complete abandon shutdown
+      local_start local_on_sink local_feed local_next_output local_run_until_idle local_stop
       watch_stdin_eof workflow_emit workflow_recv workflow_cancelled spawn_workflow
       monotonic_nanos entry_last_delivery_nanos idle_watch_new idle_watch_poll
       idle_watch_free last_error

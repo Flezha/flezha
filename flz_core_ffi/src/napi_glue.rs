@@ -14,6 +14,7 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+use flz_core::schema;
 use napi::bindgen_prelude::*;
 use napi::ValueType;
 use napi_derive::napi;
@@ -58,12 +59,30 @@ pub(crate) fn context() -> Result<CtxPtr> {
 /// parked completion from exhausting it.
 fn off_loop<'a, T, F>(env: &'a Env, ctx: CtxPtr, work: F) -> Result<Object<'a>>
 where
-    T: ToNapiValue + 'static,
+    T: ToNapiValue + Send + 'static,
     F: FnOnce(CtxPtr) -> Result<T> + Send + 'static,
+{
+    off_loop_building(env, ctx, work, |_, value| Ok(value))
+}
+
+/// [`off_loop`] where the answer is a JavaScript value the pool cannot make:
+/// the blocking call runs on the pool and `build` runs back on the loop,
+/// which is the only thread holding an `Env`.
+fn off_loop_building<'a, R, T, F, B>(
+    env: &'a Env,
+    ctx: CtxPtr,
+    work: F,
+    build: B,
+) -> Result<Object<'a>>
+where
+    R: Send + 'static,
+    T: ToNapiValue + 'static,
+    F: FnOnce(CtxPtr) -> Result<R> + Send + 'static,
+    B: FnOnce(Env, R) -> Result<T> + Send + 'static,
 {
     let (deferred, promise) = env.create_deferred::<T, _>()?;
     crate::napi_host::blocking_pool().submit(move || match work(ctx) {
-        Ok(value) => deferred.resolve(move |_| Ok(value)),
+        Ok(value) => deferred.resolve(move |env| build(env, value)),
         Err(failure) => deferred.reject(failure),
     });
     Ok(promise)
@@ -345,6 +364,78 @@ pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
     })
 }
 
+/// Start the declared class as a local run: no controller, no socket. The
+/// alternative to [`start`], never an addition. The host keeps driving its
+/// own fetchers, which is what runs the procedures.
+#[napi]
+pub fn local_start(factory_id: String, operative_id: String) -> Result<()> {
+    let ctx = context()?;
+    let factory = veneer::c_string("factory id", &factory_id)?;
+    let operative = veneer::c_string("operative id", &operative_id)?;
+    Ok(veneer::local_start(ctx, &factory, &operative)?)
+}
+
+/// Queue the declared sink `channel` for [`local_next_output`]. A channel the
+/// declaration does not carry is refused here, by name.
+#[napi]
+pub fn local_on_sink(channel: String) -> Result<()> {
+    let ctx = context()?;
+    let channel = veneer::c_string("sink channel", &channel)?;
+    Ok(veneer::local_on_sink(ctx, &channel)?)
+}
+
+/// Feed one value's wire bytes to a declared entry channel. Asynchronous: the
+/// entry path parks while the consumer's mailbox is full, and the mailbox
+/// drains only when a handler runs on an event loop.
+#[napi(ts_return_type = "Promise<void>")]
+pub fn local_feed<'a>(env: &'a Env, channel: String, payload: Buffer) -> Result<Object<'a>> {
+    let channel = veneer::c_string("entry channel", &channel)?;
+    let payload = payload.to_vec();
+    off_loop(env, context()?, move |ctx| {
+        Ok(veneer::local_feed(ctx, &channel, &payload)?)
+    })
+}
+
+/// The next value a sink released, or `null` on timeout. Asynchronous: it
+/// parks for the whole timeout when nothing has been released.
+#[napi(ts_return_type = "Promise<NativeOutput | null>")]
+pub fn local_next_output<'a>(env: &'a Env, timeout_ms: u32) -> Result<Object<'a>> {
+    off_loop_building(
+        env,
+        context()?,
+        move |ctx| Ok(veneer::local_next_output(ctx, u64::from(timeout_ms))?),
+        |env, encoded| match encoded {
+            Some(bytes) => {
+                let output = schema::decode_output(&bytes).map_err(|e| {
+                    Error::new(
+                        Status::GenericFailure,
+                        format!("output failed to decode: {e}"),
+                    )
+                })?;
+                shape::sink_output(&Values::of(env), output).map(Some)
+            }
+            None => Ok(None),
+        },
+    )
+}
+
+/// Park until the graph has nothing left to do. Asynchronous, and a timeout
+/// is a rejection rather than a silent success.
+#[napi(ts_return_type = "Promise<void>")]
+pub fn local_run_until_idle<'a>(env: &'a Env, timeout_ms: u32) -> Result<Object<'a>> {
+    off_loop(env, context()?, move |ctx| {
+        Ok(veneer::local_run_until_idle(ctx, u64::from(timeout_ms))?)
+    })
+}
+
+/// End the local run and release its Entities. A context holding none is a
+/// no-op, so a host's close path needs no test of its own.
+#[napi]
+pub fn local_stop() -> Result<()> {
+    veneer::local_stop(context()?);
+    Ok(())
+}
+
 /// Answer one activation. Asynchronous, and this is the entry point the rule
 /// exists for: under the default `DropNothing` overflow policy the routing
 /// push parks until the consumer's mailbox drains, and the consumer drains
@@ -519,7 +610,11 @@ pub struct JsNativeExport {
 pub fn native_surface() -> Vec<JsNativeExport> {
     // The veneer: one export, one C entry point, blocking as the ABI says.
     fn veneer(name: &str, abi: &str) -> JsNativeExport {
-        host(name, Some(abi), crate::BLOCKING_ENTRY_POINTS.contains(&abi))
+        host(
+            name,
+            Some(abi),
+            crate::veneer::BLOCKING_ENTRY_POINTS.contains(&abi),
+        )
     }
     fn host(name: &str, abi: Option<&str>, blocking: bool) -> JsNativeExport {
         JsNativeExport {
@@ -535,6 +630,12 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         veneer("declareClass", "flz_core_declare_class"),
         veneer("checkClass", "flz_core_check_class"),
         veneer("start", "flz_core_start"),
+        veneer("localStart", "flz_core_local_start"),
+        veneer("localOnSink", "flz_core_local_on_sink"),
+        veneer("localFeed", "flz_core_local_feed"),
+        veneer("localNextOutput", "flz_core_local_next_output"),
+        veneer("localRunUntilIdle", "flz_core_local_run_until_idle"),
+        veneer("localStop", "flz_core_local_stop"),
         veneer("complete", "flz_core_complete"),
         veneer("abandon", "flz_core_abandon"),
         veneer("shutdown", "flz_core_shutdown"),
@@ -557,6 +658,7 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         // an event loop inside a blocking poll is an event loop running
         // nothing else.
         host("startHost", Some("flz_core_poll"), false),
+        host("stopFetching", Some("flz_core_poll"), false),
         host("stopHost", Some("flz_core_poll"), true),
         host("registerDispatch", None, false),
         host("unregisterDispatch", None, false),

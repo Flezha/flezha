@@ -13,6 +13,7 @@ operative profiles and the runner model. Everything else is grouped by who reads
 | [`resilience/`](#resilience) | everyone | What survives what — the guarantee-level docs |
 | [`internals/`](#internals) | controller contributors | How the controller is built |
 | [`runbooks/`](#runbooks) | operators, contributors | Step-by-step procedures for one-off operations |
+| [`publishing/`](#publishing) | the maintainer, before the first public release | The decisions publishing makes irreversible, and which of them block a release |
 
 Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) and
 [`configuration.md`](configuration.md) (every knob, by layer).
@@ -97,6 +98,12 @@ reproduces it and the output that command gave.
 | Doc | Covers |
 | --- | --- |
 | [`purge-build-artifacts.md`](runbooks/purge-build-artifacts.md) | One-time removal of build output from git history: what it removes, the rewrite, verifying by measurement, publishing |
+
+## publishing
+
+| Doc | Covers |
+| --- | --- |
+| [`readiness.md`](publishing/readiness.md) | Every decision the first public release makes irreversible: the blocking/owed test, the record, and the decisions the owner owes |
 
 ## dev notes
 

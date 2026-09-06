@@ -1300,3 +1300,129 @@ ended the run and said nothing about the six languages behind it.
 - **WHEN** the runner's self-test runs
 - **THEN** the self-test fails naming that gate
 
+### Requirement: A decision that publication makes irreversible SHALL be recorded before the first public release
+
+The repository SHALL carry a publication-readiness record naming every decision that the
+first public release makes irreversible, and each entry SHALL be classified `blocking` or
+`owed` by one test.
+
+An entry is **blocking** when settling it differently after the first public release would
+need at least one of: an action outside the project's control, such as a registry
+operator's or another person's consent; an act that cannot be undone, such as recalling a
+clone or un-disclosing a vulnerability; or a compatibility break for someone who already
+depends on the current answer. Every other entry is **owed**: it should be done, and a
+later fix costs no more than an early one. An entry that is merely a good idea is not an
+entry at all, and belongs wherever ordinary work is tracked.
+
+Each entry SHALL state its door — which of those three costs it incurs, and in one
+sentence why — and SHALL state a check whose answer is yes or no without a debate. A check
+is a command, or a named observation someone can make once. An entry whose check needs a
+judgement is not an entry: it is an opinion, and a record of opinions is not gated.
+
+An entry that is a decision rather than a task SHALL name who decides and what each option
+costs, because the reader of a decision entry is choosing, not being told what to do.
+
+The record is published with the repository, so an entry SHALL be a rule with a check and
+SHALL NOT be a list of the instances that trip it. An entry that enumerates its own
+violations publishes them, ages the moment one is fixed, and cites paths the tree may not
+carry. For the same reason the record SHALL cite only what the published tree carries, and
+SHALL NOT cite the defect ledger or any other working document kept out of the repository.
+
+An entry whose decision is settled SHALL name where it was settled — a commit, a
+requirement, or a file in the tree. A record whose entries say `settled` and point nowhere
+cannot be checked by anyone but its author, which is the failure the defect record already
+learned.
+
+#### Scenario: An entry with no door is refused
+
+- **GIVEN** a proposed entry that names no cost incurred by settling it after publication
+- **WHEN** the record is reviewed
+- **THEN** the entry SHALL be reclassified as ordinary work and SHALL NOT be carried in the record
+
+#### Scenario: A blocking entry's check has one answer
+
+- **WHEN** a blocking entry is read
+- **THEN** it SHALL name a command, or a named observation, whose answer is yes or no, and SHALL NOT ask the reader to weigh anything
+
+#### Scenario: A decision entry names its owner and the cost of each option
+
+- **GIVEN** an entry that records a choice rather than a task
+- **WHEN** it is read
+- **THEN** it SHALL name who decides and what each option costs
+
+#### Scenario: The record states rules, not the instances that trip them
+
+- **WHEN** the record is read
+- **THEN** no entry SHALL enumerate the files, paths or commits that currently violate it, and no entry SHALL cite a document the published tree does not carry
+
+#### Scenario: A settled entry names its evidence
+
+- **GIVEN** an entry marked settled
+- **WHEN** it is read
+- **THEN** it SHALL name the commit, requirement or file that settles it
+
+### Requirement: The publication-readiness record SHALL be gated on its shape now and on its blocking entries at release
+
+A gate SHALL check the record's shape on every pull request, and SHALL refuse a release
+tag while any blocking entry is unsettled.
+
+The split is the point. Every blocking entry is open on the day the record lands, so a
+gate that judged content on a pull request would be red from its first commit — and a gate
+that lands red stops being read, which this project has already paid for once. The
+pull-request arm therefore judges shape alone and is green from the first commit: every
+entry parses, carries a class, a door, a check and an owner, ids are unique, and a settled
+entry names its evidence.
+
+The release arm judges content and has nothing to say until a version tag exists. It SHALL
+run before any release artefact is produced, on the job the tag already triggers, so an
+unsettled blocking entry stops the release rather than being noticed after the artefact is
+published. An owed entry SHALL NOT stop a release: that is the whole difference between
+the two classes, and a gate that ignored it would push every entry into `owed` to get a
+release out.
+
+The gate SHALL report how many entries it read beside its verdict, so a green that means
+"the parser matched nothing" is distinguishable from a green that means the record is
+sound. It SHALL be demonstrated to fail — on a malformed entry, on a settled entry with no
+evidence, and on a release tag with an open blocking entry — and to pass once each is
+repaired, before it is trusted.
+
+#### Scenario: The shape check passes while every blocking entry is open
+
+- **GIVEN** a record in which no entry is yet settled
+- **WHEN** the pull-request arm runs
+- **THEN** it SHALL exit zero
+
+#### Scenario: An entry missing a required field fails the shape check
+
+- **GIVEN** an entry with no class, no door, no check or no owner
+- **WHEN** the pull-request arm runs
+- **THEN** it SHALL exit non-zero naming the entry and the missing field
+
+#### Scenario: A settled entry that names no evidence fails
+
+- **GIVEN** an entry marked settled whose evidence column is empty
+- **WHEN** the pull-request arm runs
+- **THEN** it SHALL exit non-zero naming that entry
+
+#### Scenario: A release tag with an open blocking entry produces no artefact
+
+- **GIVEN** a version tag pushed while one blocking entry is unsettled
+- **WHEN** the release job runs
+- **THEN** the gate step SHALL exit non-zero naming that entry, and no release artefact SHALL be produced
+
+#### Scenario: An owed entry does not stop a release
+
+- **GIVEN** a version tag pushed while every blocking entry is settled and some owed entries are open
+- **WHEN** the release job runs
+- **THEN** the gate step SHALL exit zero
+
+#### Scenario: The gate says how much it read
+
+- **WHEN** the gate passes
+- **THEN** it SHALL print the number of entries it read and how many are blocking, so a fall in that count is visible without the gate failing
+
+#### Scenario: The gate is proved able to fail before it is trusted
+
+- **WHEN** the gate is added
+- **THEN** a malformed entry, a settled entry with no evidence, and an open blocking entry under a release tag SHALL each be introduced, the gate SHALL be shown to exit non-zero naming each, and it SHALL be shown to exit zero once they are repaired
+

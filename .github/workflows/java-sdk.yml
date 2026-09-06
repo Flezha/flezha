@@ -196,6 +196,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # First, before anything is built. Every entry in the publication
+      # readiness record is a decision this release makes permanent, and on a
+      # registry it is too late by definition: a name cannot be reclaimed, a
+      # clone cannot be recalled, a published SDK cannot be withdrawn. An OWED
+      # entry does not stop the release; an open BLOCKING one does.
+      - name: Publication readiness
+        run: python3 scripts/naming_gate.py --run @release
+
       - name: Set up Java
         uses: ./.github/actions/setup-java
         with:

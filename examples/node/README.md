@@ -10,6 +10,7 @@ npm install
 npm test          # the handler, with no runner and no controller
 npm start         # dispatch on the main event loop
 npm run start:workers   # dispatch on four worker threads
+npm run local     # a second operative, run with no controller at all
 ```
 
 Running it needs a Flezha controller on the configured transport. The test does

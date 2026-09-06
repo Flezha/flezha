@@ -406,6 +406,17 @@ pub fn start_host(fetchers: Option<u32>) -> Result<()> {
     Ok(())
 }
 
+/// Stop fetching without the core's word.
+///
+/// A local run ends while the process-wide poll core keeps running — there is
+/// no controller session to shut down, and shutting the core would stop every
+/// later run in the process — so the flag is raised first and the fetchers
+/// leave on their next poll timeout instead of on `stop_host`'s deadline.
+#[napi]
+pub fn stop_fetching() {
+    CLOSING.store(true, Ordering::Release);
+}
+
 /// Stop fetching, release every dispatch target and drain the blocking pool.
 ///
 /// Asynchronous, because it waits: a fetcher leaves when its poll reports the

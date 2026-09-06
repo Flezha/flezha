@@ -19,6 +19,8 @@ export {
 export type { Codec } from './codec.js';
 export { FORMAT_ID_MSGPACK, SDK_LANG_NODE, toHostClassDecl, validate } from './graph.js';
 export type { DerivedChannel, DerivedDecl, DerivedEdge } from './graph.js';
+export { LocalOperative } from './local.js';
+export type { SinkOutput } from './local.js';
 export { consoleLogger, setLogger } from './logger.js';
 export type { Logger, LogLevel } from './logger.js';
 export { loadNative, nativePackageName } from './native.js';

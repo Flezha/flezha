@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Added — a publication-readiness record and its gate
+
+`docs/publishing/readiness.md` records every decision the first public release makes
+irreversible: 32 entries, 23 of them blocking. An entry is blocking when settling it
+differently afterwards would need an action outside the project's control, an act that
+cannot be undone, or a compatibility break for someone already depending on the answer.
+Everything else is owed. The record states rules with checks, never the instances that
+currently trip them.
+
+`scripts/check-publish-readiness.sh` gates it in two arms. The shape arm runs on every
+pull request and judges that each entry parses and carries a class, a door, a rule, a
+check and an owner, that ids are unique, and that a settled entry names its evidence. The
+release arm runs on a version tag, before any release artefact is built, and refuses the
+release while a blocking entry is open. An owed entry never stops a release.
+
+### Added — local mode in the Node, Python, Ruby and PHP SDKs
+
+Every SDK can now run a declared operative graph in its own process with no
+controller. `LocalOperative` takes the operative class you deploy, runs the graph
+it already declares, hands sink output to a callback and blocks until the graph
+is idle. State is held in memory and nothing is durable; every run says so.
+
+Each SDK gains a worked example and a test that reads the same recorded scenario
+the Rust, Java and Elixir suites read, so the cores are compared against one
+expectation rather than by inspection. The PHP host has one thread, so its
+`runUntilIdle` drives the poll loop rather than parking in the core.
+
+Ending a local run no longer waits out the executor's drain deadline: the host
+stops fetching on its own flag instead of on the core's word, which local mode
+never gives. Node, Python and Ruby each gained the `stopFetching` seam the Java
+SDK already had.
+
 ### Changed — a test fixture, a CI toolchain step, a gate and a test tier are each declared
 
 A test declares the fixtures it needs (`use FlezhaTest.Case, fixtures: [...]`)

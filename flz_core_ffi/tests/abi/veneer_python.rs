@@ -37,13 +37,16 @@ fn every_primitive_round_trips() {
 fn the_native_surface_is_the_declared_one() {
     let blocking: Vec<&str> = NATIVE_SURFACE
         .iter()
-        .filter(|(_, abi)| flz_core_ffi::BLOCKING_ENTRY_POINTS.contains(abi))
+        .filter(|(_, abi)| flz_core_ffi::veneer::BLOCKING_ENTRY_POINTS.contains(abi))
         .map(|(name, _)| *name)
         .collect();
     assert_eq!(
         blocking,
         [
             "Core.start",
+            "Core.local_feed",
+            "Core.local_next_output",
+            "Core.local_run_until_idle",
             "Core.poll",
             "Core.wait_starvation",
             "Core.complete",

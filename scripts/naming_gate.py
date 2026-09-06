@@ -275,6 +275,16 @@ GATES = (
      "argv": ["python3", "scripts/naming_gate.py", "--self-test"]},
     {"id": "layer-direction-self-test", "group": "naming",
      "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
+    # The publication-readiness record's SHAPE. Its content arm is the row
+    # below, in its own group, because every blocking entry is open until the
+    # day of the release and a gate that lands red stops being read.
+    {"id": "publish-readiness", "group": "naming",
+     "argv": ["scripts/check-publish-readiness.sh"]},
+    # Content: every blocking entry settled. Selected only by `@release`, which
+    # the tag-triggered release job runs before it builds any artefact - after
+    # an artefact is on a registry it is too late by definition.
+    {"id": "publish-readiness-release", "group": "release",
+     "argv": ["scripts/check-publish-readiness.sh", "--release"]},
     # Its `size` arm reads the packed repository, so it needs the whole history
     # and runs in a job that checks out with fetch-depth 0.
     {"id": "build-artifacts-size", "group": "history",
@@ -544,7 +554,7 @@ def _registry_self_test():
         elif target and head != "python3" and not os.access(target, os.X_OK):
             problems.append(f"  {gate_id}: {target} is not executable")
 
-    for spec in ("all", "@naming", "@format", "@history", "@java"):
+    for spec in ("all", "@naming", "@format", "@history", "@java", "@release"):
         try:
             if not select(spec):
                 problems.append(f"  {spec}: selects no gate")

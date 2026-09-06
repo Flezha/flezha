@@ -307,6 +307,34 @@ No OpenTelemetry: no SDK ships spans, and adding them to one binding is the
 exact asymmetry the lockstep rule exists to prevent. When they land, they land
 everywhere in one change.
 
+## Local mode: run a graph with no controller
+
+`LocalOperative.start` takes the operative you deploy and runs its declared
+graph in this process — no controller, no socket, no local-mode member on the
+class:
+
+```python
+from flezha import LocalOperative
+
+with LocalOperative.start(word_count) as run:
+    run.on_sink("totals", lambda out: print(out.payload.decode()))
+    run.feed("lines", "the quick brown fox")
+    run.run_until_idle(10_000)
+```
+
+`on_sink` registers against the sink's **channel** name, which is the producing
+procedure's name unless the declaration named it. The run brings the same
+executor a started runner brings, so the procedures run on its worker threads
+while the caller waits in `run_until_idle`. Worked example:
+[`examples/python/local_word_count.py`](../../examples/python/local_word_count.py).
+
+**State is held in memory and nothing is durable** — no write-ahead log, no
+snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
+placement and migration, the dead-letter queue, observability export, authz and
+multi-runner scale need a controller; a declaration asking for one of those is
+refused at startup, naming it. Walk-through:
+[`../quickstart.md`](../quickstart.md).
+
 ## Testing your handlers
 
 ```python

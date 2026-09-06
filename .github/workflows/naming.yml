@@ -45,6 +45,17 @@ name: Naming
 # `test/helpers/mimic_global.ex` defines the releasing wrapper and is the one
 # exemption, declared by path.
 #
+# check-publish-readiness is the publication gate, and it is the one gate here
+# that is split in two. Its SHAPE arm is the row below: it judges that every
+# entry in docs/publishing/readiness.md parses and carries a class, a door, a
+# rule, a check and an owner, that ids are unique, and that a settled entry
+# names its evidence. It is green from the first commit. Its CONTENT arm judges
+# that every BLOCKING entry is settled, and is deliberately NOT in this group:
+# every blocking entry is open until the day of the release, so a content check
+# on a pull request would be red from its first commit, and a gate that lands
+# red stops being read. That arm is group `release`, run by the tag-triggered
+# release job before it builds anything.
+#
 # Every gate here is a ROW in scripts/naming_gate.py, and `--run @naming` is the
 # one reader. This file lists no gate by name, so a gate cannot be added to the
 # repository and left uncalled by CI, which is what nine hand-written steps

@@ -91,6 +91,31 @@ final class ActivationCodec
     }
 
     /**
+     * One released `Output`, in the array shape {@see \Flezha\Ctx} builds and
+     * this codec already encodes. The exact inverse of `encodeOutput`, and
+     * what local mode hands a host for a value its graph released on a sink.
+     *
+     * @return array<string, mixed>
+     */
+    public static function decodeOutput(string $bytes): array
+    {
+        $c = new PostcardCursor($bytes);
+        $output = $c->variant('output target') === 1
+            ? ['target' => 'plugin', 'channel' => null, 'consumer' => null,
+                'plugin_channel' => $c->bytes('plugin channel')]
+            : ['target' => 'edge', 'channel' => $c->varint('edge channel'),
+                'consumer' => $c->varint('edge consumer'), 'plugin_channel' => null];
+
+        $output['key'] = $c->some('output key') ? $c->bytes('output key') : null;
+        $output['event_time'] = $c->optionalVarint('output event time');
+        $output['metadata'] = $c->metadata('output metadata');
+        $output['payload'] = $c->bytes('output payload');
+        $c->finish('the output');
+
+        return $output;
+    }
+
+    /**
      * Just the correlation token, without decoding the rest.
      *
      * The one place that needs it is the activation budget: a loop that has

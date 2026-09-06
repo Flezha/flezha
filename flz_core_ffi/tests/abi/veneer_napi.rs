@@ -20,6 +20,9 @@ fn the_native_surface_is_the_declared_one() {
         blocking,
         [
             "start",
+            "localFeed",
+            "localNextOutput",
+            "localRunUntilIdle",
             "complete",
             "workflowRecv",
             "spawnWorkflow",

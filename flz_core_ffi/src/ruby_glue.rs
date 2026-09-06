@@ -381,6 +381,72 @@ fn start(namespace: String) -> Result<(), Error> {
     without_gvl(move || veneer::start(ctx, &namespace)).map_err(refused)
 }
 
+/// Start the declared class as a local run: no controller, no socket. The
+/// alternative to [`start`], never an addition. The host keeps driving its own
+/// poll loop, which is what runs the procedures.
+fn local_start(factory_id: String, operative_id: String) -> Result<(), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
+    let operative = veneer::c_string("operative id", &operative_id).map_err(refused)?;
+    veneer::local_start(ctx, &factory, &operative).map_err(refused)
+}
+
+/// Queue the declared sink `channel` for [`local_next_output`]. A channel the
+/// declaration does not carry is refused here, by name.
+fn local_on_sink(channel: String) -> Result<(), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let channel = veneer::c_string("sink channel", &channel).map_err(refused)?;
+    veneer::local_on_sink(ctx, &channel).map_err(refused)
+}
+
+/// Feed one value's wire bytes to a declared entry channel. Blocking: the
+/// entry path parks while the consumer's mailbox is full.
+fn local_feed(channel: String, payload: RString) -> Result<(), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let refused = |r| raise(&ruby, r);
+    let channel = veneer::c_string("entry channel", &channel).map_err(refused)?;
+    let payload = read_bytes(&ruby, "payload", payload.as_value())?;
+    without_gvl(move || veneer::local_feed(ctx, &channel, &payload)).map_err(refused)
+}
+
+/// The next value a sink released as the output Hash this SDK already builds,
+/// or `nil` on timeout. Blocking for the whole timeout.
+fn local_next_output(timeout_ms: u64) -> Result<Value, Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    let released = without_gvl(move || veneer::local_next_output(ctx, timeout_ms))
+        .map_err(|r| raise(&ruby, r))?;
+    match released {
+        Some(encoded) => {
+            let output = flz_core::schema::decode_output(&encoded)
+                .map_err(|e| native_error(&ruby, format!("output failed to decode: {e}")))?;
+            shape::sink_output(&Values(&ruby), output)
+        }
+        None => Ok(ruby.qnil().as_value()),
+    }
+}
+
+/// Park until the graph has nothing left to do. A timeout is a refusal, never
+/// a silent success.
+fn local_run_until_idle(timeout_ms: u64) -> Result<(), Error> {
+    let ruby = ruby();
+    let ctx = context(&ruby)?;
+    without_gvl(move || veneer::local_run_until_idle(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))
+}
+
+/// End the local run and release its Entities. A context holding none is a
+/// no-op, so a host's close path needs no test of its own.
+fn local_stop() -> Result<(), Error> {
+    let ruby = ruby();
+    veneer::local_stop(context(&ruby)?);
+    Ok(())
+}
+
 /// Block up to `timeout_ms` for one activation. Returns the activation Hash,
 /// `nil` on timeout, or `:shutting_down` once every poller has been released.
 fn poll(timeout_ms: u64) -> Result<Value, Error> {
@@ -546,7 +612,7 @@ fn native_surface() -> Result<RArray, Error> {
         let row = ruby.ary_new_capa(3);
         row.push(*name)?;
         row.push(*abi)?;
-        row.push(crate::BLOCKING_ENTRY_POINTS.contains(abi))?;
+        row.push(crate::veneer::BLOCKING_ENTRY_POINTS.contains(abi))?;
         out.push(row)?;
     }
     Ok(out)
@@ -554,7 +620,7 @@ fn native_surface() -> Result<RArray, Error> {
 
 /// The table `native_surface` renders and the Rust-side test asserts against:
 /// `(name, abi_entry_point)`, blocking derived from
-/// [`crate::BLOCKING_ENTRY_POINTS`].
+/// [`crate::veneer::BLOCKING_ENTRY_POINTS`].
 pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("schema_version", "flz_core_schema_version"),
     ("context_new", "flz_core_context_new"),
@@ -562,6 +628,12 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("declare_class", "flz_core_declare_class"),
     ("check_class", "flz_core_check_class"),
     ("start", "flz_core_start"),
+    ("local_start", "flz_core_local_start"),
+    ("local_on_sink", "flz_core_local_on_sink"),
+    ("local_feed", "flz_core_local_feed"),
+    ("local_next_output", "flz_core_local_next_output"),
+    ("local_run_until_idle", "flz_core_local_run_until_idle"),
+    ("local_stop", "flz_core_local_stop"),
     ("poll", "flz_core_poll"),
     ("wait_starvation", "flz_core_wait_starvation"),
     ("complete", "flz_core_complete"),
@@ -607,6 +679,12 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("declare_class", function!(declare_class, 1))?;
     native.define_module_function("check_class", function!(check_class, 1))?;
     native.define_module_function("start", function!(start, 1))?;
+    native.define_module_function("local_start", function!(local_start, 2))?;
+    native.define_module_function("local_on_sink", function!(local_on_sink, 1))?;
+    native.define_module_function("local_feed", function!(local_feed, 2))?;
+    native.define_module_function("local_next_output", function!(local_next_output, 1))?;
+    native.define_module_function("local_run_until_idle", function!(local_run_until_idle, 1))?;
+    native.define_module_function("local_stop", function!(local_stop, 0))?;
     native.define_module_function("poll", function!(poll, 1))?;
     native.define_module_function("wait_starvation", function!(wait_starvation, 1))?;
     native.define_module_function("complete", function!(complete, 1))?;

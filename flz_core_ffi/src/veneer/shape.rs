@@ -369,6 +369,42 @@ fn restore_fold_out<S: Sink>(
     s.set(out, CHANGES, changes)
 }
 
+/// One released output as the language spells it — the exact inverse of the
+/// [`output`] a host answers with, over the same [`record::OUTPUT`] keys. A
+/// local run reaches it through `local_next_output`, so a binding hands back
+/// the record its own emit path already produces rather than growing a
+/// second decoder per language.
+pub fn sink_output<S: Sink>(s: &S, out: schema::Output) -> Result<S::Value, S::Error> {
+    let mut map = s.map()?;
+    match out.target {
+        schema::OutputTarget::Edge { channel, consumer } => {
+            set_word(s, &mut map, TARGET, word::EDGE)?;
+            let channel = s.u32(channel)?;
+            s.set(&mut map, CHANNEL, channel)?;
+            let consumer = s.u32(consumer)?;
+            s.set(&mut map, CONSUMER, consumer)?;
+        }
+        schema::OutputTarget::Plugin { channel } => {
+            set_word(s, &mut map, TARGET, word::PLUGIN)?;
+            let channel = s.text(channel)?;
+            s.set(&mut map, PLUGIN_CHANNEL, channel)?;
+        }
+    }
+    if let Some(key) = out.key {
+        let key = s.text(key)?;
+        s.set(&mut map, KEY, key)?;
+    }
+    if let Some(event_time) = out.event_time {
+        let event_time = s.u64(event_time)?;
+        s.set(&mut map, EVENT_TIME, event_time)?;
+    }
+    let metadata = metadata_out(s, out.metadata)?;
+    s.set(&mut map, METADATA, metadata)?;
+    let payload = s.bytes(out.payload)?;
+    s.set(&mut map, PAYLOAD, payload)?;
+    s.finish_map(map)
+}
+
 fn set_word<S: Sink>(s: &S, map: &mut S::Map, key: Key, w: &'static str) -> Result<(), S::Error> {
     let w = s.word(w)?;
     s.set(map, key, w)

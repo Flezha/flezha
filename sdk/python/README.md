@@ -25,6 +25,10 @@ def echo_operative(c: flezha.Channels) -> None:
 flezha.create_runner("default").define_stream(echo_operative).run()
 ```
 
+- **Run a graph with no controller.** `LocalOperative.start` takes the same
+  operative and runs its declared graph in this process — for trying Flezha out
+  and for developing an operative. State is held in memory and nothing is
+  durable; every run says so.
 - **Python 3.11+**, CPython only. Two wheel tiers from one source: an `abi3`
   compatibility wheel per platform, and per-version free-threaded wheels.
 - **The GIL bounds only handler bodies.** Every blocking core call releases it,

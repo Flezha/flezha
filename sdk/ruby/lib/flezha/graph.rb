@@ -37,6 +37,18 @@ module Flezha
     # channel names, kinds, consumers, sink names and acknowledgement
     # granularity it read off the record.
     #
+    # Judge, register and declare one class, in the one order that works.
+    #
+    # `validate` writes the derived channel names and consumer edges back into
+    # the spec, so a caller that skipped it would register a spec whose edges
+    # route nowhere. Both the runner and local mode reach the core through
+    # here, so there is one such order rather than two that agree.
+    def declare(spec, core, registry)
+      validate(spec, core)
+      registry.add(spec)
+      core.declare_class(JSON.generate(to_host_class_decl(spec)))
+    end
+
     # The defects this SDK can see that the record cannot carry are refused
     # first, so an author reads "no event_time method" rather than a topology
     # verdict about a clock the class does declare.

@@ -142,6 +142,15 @@ module Flezha
       self
     end
 
+    # Stop fetching without the core's word. A local run ends while the
+    # process-wide poll core keeps running — there is no controller session to
+    # shut down, and shutting the core would stop every later run in the
+    # process — so the flag is raised first and the workers leave on their next
+    # poll timeout instead of on the drain deadline.
+    def stop_fetching
+      @stopping = true
+    end
+
     # Stop fetching and drain. The core says when: a worker leaves on the poll
     # that reports the core shutting down, which the core reports only once
     # the shutdown sequence has shipped every Entity's state through these
@@ -260,6 +269,11 @@ module Flezha
         @threads << thread
       end
       self
+    end
+
+    # Stop fetching without the core's word; see the thread executor's.
+    def stop_fetching
+      @stopping = true
     end
 
     # The fetchers leave on the core's word, as the thread executor's workers

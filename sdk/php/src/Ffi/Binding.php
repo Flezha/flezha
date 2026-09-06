@@ -68,6 +68,12 @@ final class Binding
         int32_t flz_core_declare_class(uintptr_t ctx, const char *json, size_t json_len);
         int32_t flz_core_check_class(uintptr_t ctx, const char *json, size_t json_len, char **buf_out, size_t *len_out);
         int32_t flz_core_start(uintptr_t ctx, const char *ns);
+        int32_t flz_core_local_start(uintptr_t ctx, const char *factory_id, const char *operative_id);
+        int32_t flz_core_local_on_sink(uintptr_t ctx, const char *channel);
+        int32_t flz_core_local_feed(uintptr_t ctx, const char *channel, const char *payload, size_t len);
+        int32_t flz_core_local_next_output(uintptr_t ctx, uint64_t timeout_ms, char **buf_out, size_t *len_out);
+        int32_t flz_core_local_run_until_idle(uintptr_t ctx, uint64_t timeout_ms);
+        int32_t flz_core_local_stop(uintptr_t ctx);
         int32_t flz_core_poll(uintptr_t ctx, uint64_t timeout_ms, char **buf_out, size_t *len_out);
         int32_t flz_core_wait_starvation(uintptr_t ctx, uint64_t timeout_ms);
         int32_t flz_core_complete(uintptr_t ctx, const char *buf, size_t len);

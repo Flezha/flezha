@@ -22,15 +22,29 @@ from .errors import CoreError, DeclarationError
 from .version import __version__
 
 if TYPE_CHECKING:
+    from .dispatch import Registry
     from .native import Core
 
-__all__ = ["validate", "to_host_class_decl", "SDK_LANG_PYTHON", "FORMAT_ID_MSGPACK"]
+__all__ = ["declare", "validate", "to_host_class_decl", "SDK_LANG_PYTHON", "FORMAT_ID_MSGPACK"]
 
 # The Python SDK's byte in the core's `sdk_lang` allocation table.
 SDK_LANG_PYTHON = 7
 
 # MessagePack, shared with every SDK whose codec is MessagePack.
 FORMAT_ID_MSGPACK = 5
+
+
+def declare(spec: ClassSpec, core: Core, registry: Registry) -> None:
+    """Judge, register and declare one class, in the one order that works.
+
+    :func:`validate` writes the derived channel names and consumer edges back
+    into the spec, so a caller that skipped it would register a spec whose
+    edges route nowhere. Both the runner and local mode reach the core through
+    here, so there is one such order rather than two that agree.
+    """
+    validate(spec, core)
+    registry.add(spec)
+    core.declare_class(json.dumps(to_host_class_decl(spec)).encode())
 
 
 def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:

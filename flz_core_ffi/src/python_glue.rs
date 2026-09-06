@@ -440,6 +440,65 @@ impl Core {
         Ok(py.detach(move || veneer::start(ctx, &namespace))?)
     }
 
+    /// Start the declared class as a local run: no controller, no socket.
+    /// The alternative to `start`, never an addition. The host keeps driving
+    /// its own poll loop, which is what runs the procedures.
+    fn local_start(&self, factory_id: &str, operative_id: &str) -> PyResult<()> {
+        let ctx = self.ptr()?;
+        let factory = veneer::c_string("factory id", factory_id)?;
+        let operative = veneer::c_string("operative id", operative_id)?;
+        Ok(veneer::local_start(ctx, &factory, &operative)?)
+    }
+
+    /// Queue the declared sink `channel` for `local_next_output`. A channel
+    /// the declaration does not carry is refused here, by name.
+    fn local_on_sink(&self, channel: &str) -> PyResult<()> {
+        let ctx = self.ptr()?;
+        let channel = veneer::c_string("sink channel", channel)?;
+        Ok(veneer::local_on_sink(ctx, &channel)?)
+    }
+
+    /// Feed one value's wire bytes to a declared entry channel. Blocking: the
+    /// entry path parks while the consumer's mailbox is full.
+    fn local_feed(&self, py: Python<'_>, channel: &str, payload: &[u8]) -> PyResult<()> {
+        let ctx = self.ptr()?;
+        let channel = veneer::c_string("entry channel", channel)?;
+        let payload = payload.to_vec();
+        Ok(py.detach(move || veneer::local_feed(ctx, &channel, &payload))?)
+    }
+
+    /// The next value a sink released as the output dict this SDK already
+    /// reads, or `None` on timeout. Blocking for the whole timeout.
+    fn local_next_output<'py>(
+        &self,
+        py: Python<'py>,
+        timeout_ms: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ctx = self.ptr()?;
+        match py.detach(move || veneer::local_next_output(ctx, timeout_ms))? {
+            Some(encoded) => {
+                let output = flz_core::schema::decode_output(&encoded)
+                    .map_err(|e| native_error(format!("output failed to decode: {e}")))?;
+                shape::sink_output(&Values(py), output)
+            }
+            None => Ok(py.None().into_bound(py)),
+        }
+    }
+
+    /// Park until the graph has nothing left to do. A timeout is a refusal,
+    /// never a silent success.
+    fn local_run_until_idle(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<()> {
+        let ctx = self.ptr()?;
+        Ok(py.detach(move || veneer::local_run_until_idle(ctx, timeout_ms))?)
+    }
+
+    /// End the local run and release its Entities. A context holding none is
+    /// a no-op, so a host's close path needs no test of its own.
+    fn local_stop(&self) -> PyResult<()> {
+        veneer::local_stop(self.ptr()?);
+        Ok(())
+    }
+
     /// Block up to `timeout_ms` for one activation. Returns the activation
     /// dict, `None` on timeout, or the string `"shutting_down"` once every
     /// poller has been released.
@@ -618,7 +677,7 @@ fn free_threaded() -> bool {
 fn native_surface<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
     let out = PyList::empty(py);
     for (name, abi) in NATIVE_SURFACE {
-        let blocking = crate::BLOCKING_ENTRY_POINTS.contains(abi);
+        let blocking = crate::veneer::BLOCKING_ENTRY_POINTS.contains(abi);
         out.append((*name, *abi, blocking).into_bound_py_any(py)?)?;
     }
     Ok(out)
@@ -626,7 +685,7 @@ fn native_surface<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
 
 /// The table `native_surface` renders and the Rust-side test asserts against:
 /// `(name, abi_entry_point)`, blocking derived from
-/// [`crate::BLOCKING_ENTRY_POINTS`].
+/// [`crate::veneer::BLOCKING_ENTRY_POINTS`].
 pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("schema_version", "flz_core_schema_version"),
     ("Core", "flz_core_context_new"),
@@ -634,6 +693,12 @@ pub const NATIVE_SURFACE: &[(&str, &str)] = &[
     ("Core.declare_class", "flz_core_declare_class"),
     ("Core.check_class", "flz_core_check_class"),
     ("Core.start", "flz_core_start"),
+    ("Core.local_start", "flz_core_local_start"),
+    ("Core.local_on_sink", "flz_core_local_on_sink"),
+    ("Core.local_feed", "flz_core_local_feed"),
+    ("Core.local_next_output", "flz_core_local_next_output"),
+    ("Core.local_run_until_idle", "flz_core_local_run_until_idle"),
+    ("Core.local_stop", "flz_core_local_stop"),
     ("Core.poll", "flz_core_poll"),
     ("Core.wait_starvation", "flz_core_wait_starvation"),
     ("Core.complete", "flz_core_complete"),

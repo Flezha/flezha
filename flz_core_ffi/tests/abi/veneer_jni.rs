@@ -109,7 +109,7 @@ fn every_java_export_reaches_one_c_entry_point() {
 fn the_blocking_entry_points_are_the_declared_ones() {
     let blocking: Vec<&str> = NATIVE_SURFACE
         .iter()
-        .filter(|(_, abi)| flz_core_ffi::BLOCKING_ENTRY_POINTS.contains(abi))
+        .filter(|(_, abi)| flz_core_ffi::veneer::BLOCKING_ENTRY_POINTS.contains(abi))
         .map(|(name, _)| *name)
         .collect();
 
@@ -117,6 +117,9 @@ fn the_blocking_entry_points_are_the_declared_ones() {
         blocking,
         [
             "start",
+            "localFeed",
+            "localNextOutput",
+            "localRunUntilIdle",
             "poll",
             "complete",
             "waitStarvation",

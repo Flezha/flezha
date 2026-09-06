@@ -45,14 +45,20 @@ final class ExamplesTest extends TestCase
     /** @dataProvider examples */
     public function testAnExampleDeclaresATopologyTheCoreWouldAccept(string $path): void
     {
-        $before = get_declared_classes();
         require_once $path;
-        $declared = array_diff(get_declared_classes(), $before);
-
+        // The classes this FILE declares, not the ones this require added: an
+        // example another test loaded first adds none, and a diff would then
+        // report the example as declaring nothing.
+        $real = realpath($path);
         $operatives = array_values(array_filter(
-            $declared,
-            static fn (string $class): bool => is_subclass_of($class, Operative::class)
-                && !(new ReflectionClass($class))->isAbstract(),
+            get_declared_classes(),
+            static function (string $class) use ($real): bool {
+                $reflected = new ReflectionClass($class);
+
+                return is_subclass_of($class, Operative::class)
+                    && !$reflected->isAbstract()
+                    && $reflected->getFileName() === $real;
+            },
         ));
 
         self::assertNotEmpty($operatives, "$path declares no operative");

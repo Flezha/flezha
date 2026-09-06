@@ -39,6 +39,7 @@ from .errors import (
     SchemaMismatchError,
     UnrepresentableValueError,
 )
+from .local import LocalOperative, SinkOutput
 from .logger import configure as configure_logging
 from .operative import Operative, stream_operative, workflow_operative
 from .procedure import Procedure, procedure
@@ -61,6 +62,8 @@ __all__ = [
     # runner
     "create_runner",
     "Runner",
+    "LocalOperative",
+    "SinkOutput",
     "IdleObserver",
     "configure_logging",
     # codec

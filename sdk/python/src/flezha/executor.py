@@ -98,6 +98,8 @@ class Executor(Protocol):
 
     def start(self) -> Executor: ...
 
+    def stop_fetching(self) -> None: ...
+
     def stop(self) -> int: ...
 
 
@@ -386,6 +388,17 @@ class _Host:
 
     def _spawn_rescue_worker(self) -> None:
         self._spawn_worker(f"flezha-rescue-{self._supervisor.grown}", retire_when_idle=True)
+
+    def stop_fetching(self) -> None:
+        """Stop fetching without the core's word.
+
+        A local run ends while the process-wide poll core keeps running —
+        there is no controller session to shut down, and shutting the core
+        would stop every later run in the process — so the flag is raised
+        first and the workers leave on their next poll timeout instead of on
+        the drain deadline.
+        """
+        self._stopping = True
 
     def stop(self) -> int:
         """Stop fetching and drain.

@@ -17,7 +17,6 @@ raises naming that rule rather than letting a child serve nothing.
 from __future__ import annotations
 
 import importlib
-import json
 import os
 import sys
 import threading
@@ -333,11 +332,8 @@ class Runner:
         return self
 
     def _declare(self, operative: Operative) -> None:
-        spec = operative.spec
         assert self._core is not None
-        graph.validate(spec, self._core)
-        self._registry.add(spec)
-        self._core.declare_class(json.dumps(graph.to_host_class_decl(spec)).encode())
+        graph.declare(operative.spec, self._core, self._registry)
 
     def _observe_shutdown(self) -> None:
         """Shutdown is observed three ways, because the harness, an operator and

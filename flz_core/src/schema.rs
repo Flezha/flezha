@@ -265,6 +265,10 @@ pub fn encode_output(o: &Output) -> Vec<u8> {
     postcard::to_stdvec(o).expect("output encoding is infallible")
 }
 
+pub fn decode_output(bytes: &[u8]) -> Result<Output, postcard::Error> {
+    postcard::from_bytes(bytes)
+}
+
 pub fn encode_result(r: &ActivationResult) -> Vec<u8> {
     postcard::to_stdvec(r).expect("activation-result encoding is infallible")
 }

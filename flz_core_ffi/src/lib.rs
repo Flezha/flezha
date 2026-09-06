@@ -81,17 +81,6 @@ pub const FLZ_IDLE_IDLE: i32 = 1;
 /// A frame ended the episode and re-armed the latch.
 pub const FLZ_IDLE_RESUMED: i32 = 2;
 
-/// The entry points that can park the calling thread. A host whose unit of
-/// concurrency is bound to one thread keeps every one of these off it.
-pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
-    "flz_core_start",
-    "flz_core_poll",
-    "flz_core_wait_starvation",
-    "flz_core_complete",
-    "flz_core_workflow_recv",
-    "flz_core_spawn_workflow",
-];
-
 /// Opaque context handle.
 pub struct FlzContext {
     outstanding: DashMap<u64, EngineActivation>,

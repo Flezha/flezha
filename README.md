@@ -27,8 +27,7 @@ runs the deployed machinery (entry decode, edge transforms and keying, one
 Entity per key with its own mailbox, the retry ladder, inter-procedure
 delivery); durability, plugins, placement and migration, the dead-letter queue,
 observability export, authz and multi-runner scale need a controller. It ships
-in the Rust, Java and Elixir SDKs; Node, Python, Ruby and PHP do not carry it
-yet.
+in every SDK.
 
 **[`docs/quickstart.md`](docs/quickstart.md)** walks through it in five
 minutes.

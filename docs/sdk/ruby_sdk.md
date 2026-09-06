@@ -122,6 +122,38 @@ who forks starts one in each child.
 The SDK spawns no processes. Process count is the orchestrator's decision, and
 each process is one runner — which is what HRW placement spreads across.
 
+## Local mode: run a graph with no controller
+
+`Flezha::LocalOperative.start` takes the operative class you deploy and runs
+its declared graph in this process — no controller, no socket, no local-mode
+member on the class:
+
+```ruby
+run = Flezha::LocalOperative.start(WordCount)
+begin
+  run.on_sink("totals") { |output| puts output.payload }
+  run.feed("lines", "the quick brown fox")
+  run.run_until_idle(10_000)
+ensure
+  run.close
+end
+```
+
+`on_sink` registers against the sink's **channel** name, which is the producing
+procedure's name unless the declaration named it. The run brings the same
+thread executor a booted runner brings, so the procedures run on its workers
+while the caller waits in `run_until_idle`; `close` stops those workers on the
+executor's own flag rather than by shutting the core, so a process may start
+another local run afterwards. Worked example:
+[`examples/ruby/local_word_count.rb`](../../examples/ruby/local_word_count.rb).
+
+**State is held in memory and nothing is durable** — no write-ahead log, no
+snapshots, no dead-letter queue. Durability, effectively-once delivery, plugins,
+placement and migration, the dead-letter queue, observability export, authz and
+multi-runner scale need a controller; a declaration asking for one of those is
+refused at startup, naming it. Walk-through:
+[`../quickstart.md`](../quickstart.md).
+
 ## Parallelism, as arithmetic
 
 - **Ruby-level handler execution is bounded to one core per process.** That is

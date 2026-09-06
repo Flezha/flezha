@@ -21,6 +21,24 @@ use crate::{
     FLZ_STARVATION_OBSERVED,
 };
 
+/// The entry points that can park the calling thread. A host whose unit of
+/// concurrency is bound to one thread keeps every one of these off it.
+pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
+    "flz_core_start",
+    "flz_core_poll",
+    "flz_core_wait_starvation",
+    "flz_core_complete",
+    "flz_core_workflow_recv",
+    "flz_core_spawn_workflow",
+    // A local run parks the caller in all three: `feed` while the consumer's
+    // mailbox is full, and the other two by their own budget. The host's poll
+    // loop is what drains them, so a host that parked its only dispatch thread
+    // in one of these would wait on work it has stopped doing.
+    "flz_core_local_feed",
+    "flz_core_local_next_output",
+    "flz_core_local_run_until_idle",
+];
+
 /// What a binding can raise: the context's last error, a creation-time
 /// schema mismatch, or a value the binding could not map.
 #[derive(Debug, Clone, PartialEq, Eq)]
