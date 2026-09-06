@@ -285,6 +285,10 @@ Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Fil
 
 `idle_timeout_ms` SHALL retain its name, its `30_000` default, and its `0`-disables-the-watchdog semantics. Because any inbound frame refreshes `last_frame_at`, a connection that carries a periodic heartbeat (or any control traffic) SHALL NOT be reconnected merely because no market-data frame has arrived.
 
+The effective idle window SHALL be no shorter than the interval of the keepalive ping that refreshes it. On a socket carrying no inbound data the only refresh is the pong answering the connection library's own ping, so an idle window equal to or shorter than that ping interval reaches its threshold at the moment the next pong is due and tears down a healthy connection on timer jitter. A configured `idle_timeout_ms` at or below the effective ping interval SHALL be raised to a multiple of it, and the applied value SHALL be reported to the operator rather than silently substituted. A plugin bound as an output makes a socket with no inbound data an ordinary configuration, so this floor SHALL apply to every websocket plugin and not only to those bound in both directions.
+
+Outbound activity SHALL NOT refresh `last_frame_at`. A write proves only that the local socket accepted bytes, so counting it as connection liveness would let a send-only socket to a dead peer refresh itself for ever and never reconnect.
+
 The socket-level reconnect — the path a refused upgrade or a dropped connection takes without the process exiting — SHALL ride the `:ws_reconnect` row of the backoff table: the connection library's initial and maximum backoff SHALL be set from that row (an operator's explicit `ws_opts` still winning), and every reconnect wait SHALL be emitted on `[:flezha, :backoff, :wait]` for ladder `:ws_reconnect`, so an upstream that answers `429` is retried on a declared, observable schedule rather than on one the tree neither configures nor sees.
 
 #### Scenario: Heartbeat-only traffic keeps the connection open past the data-silence window
@@ -306,6 +310,19 @@ The socket-level reconnect — the path a refused upgrade or a dropped connectio
 - **GIVEN** a websocket plugin whose upstream answers every upgrade with `429`
 - **WHEN** the socket reconnects for 20 seconds
 - **THEN** each reconnect SHALL be preceded by one `[:flezha, :backoff, :wait]` for ladder `:ws_reconnect` carrying the row's delay for that attempt, and the connect timestamps SHALL follow those delays rather than a library default
+
+#### Scenario: An idle window at the ping interval is raised
+- **GIVEN** a websocket plugin whose only inbound traffic is the pong answering the keepalive ping
+- **WHEN** `idle_timeout_ms` is configured equal to or below the effective ping interval
+- **THEN** the effective idle window SHALL be raised above that interval
+- **AND** the applied value SHALL be reported to the operator
+- **AND** the connection SHALL NOT be torn down while the pongs keep arriving
+
+#### Scenario: A send-only socket to a dead peer still reconnects
+- **GIVEN** a websocket plugin bound as an output whose peer has stopped answering
+- **WHEN** outputs continue to be written to the socket and no inbound frame arrives for the effective idle window
+- **THEN** the watchdog SHALL treat the connection as dead and reconnect
+- **AND** the outbound writes SHALL NOT have refreshed `last_frame_at`
 
 ### Requirement: Websocket data-liveness watchdog re-subscribes in place on a live socket
 

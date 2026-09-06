@@ -126,6 +126,7 @@ defmodule Flezha.Config.DurationRows do
     {:ws_idle_timeout_ms, :ms, 30_000, []},
     {:ws_min_tick_interval_ms, :ms, 1_000, []},
     {:ws_resubscribe_after_ms, :ms, 0, []},
+    {:ws_sink_handoff_timeout_ms, :ms, 5_000, []},
     {:ws_subscription_interval_ms, :ms, 30_000, []},
     {:ws_subscription_min_interval_ms, :ms, 1_000, []},
     {:ws_subscription_timeout_ms, :ms, 10_000, []},

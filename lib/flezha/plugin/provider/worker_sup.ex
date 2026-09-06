@@ -77,6 +77,18 @@ defmodule Flezha.Plugin.Provider.WorkerSup do
   def worker(provider, key), do: via(family(provider), key)
 
   @doc """
+  The same worker as a pid, or `nil` when none is registered.
+
+  For a dispatch path that must `send/2` rather than call: a bare message is how
+  a provider hands work to a worker it must not block on, and resolving the name
+  belongs beside the rule that assigns it.
+  """
+  @spec worker_pid(module(), term()) :: pid() | nil
+  # `via/2` rather than `worker/2`: `use Supervisor` imports `Supervisor.Spec`,
+  # whose own `worker/2` a local call here would be ambiguous with.
+  def worker_pid(provider, key), do: provider |> family() |> via(key) |> GenServer.whereis()
+
+  @doc """
   Start (or look up) the worker registered under `key`, naming the child
   `via(family, key)`. A registered worker is shared while `reusable?.(pid)`
   holds, else it is reaped first so the caller gets a fresh, healthy one.

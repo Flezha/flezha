@@ -10,6 +10,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
 
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Process.Timer
@@ -256,6 +258,58 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
 
     # The idle_timeout_ms: 0 counterpart lives in
     # WebsocketIdleTimeoutDisabledTest, which owns the disabled case.
+  end
+
+  describe "the idle window is never shorter than the ping that refreshes it" do
+    setup do
+      :ok = :logger.set_module_level(Websocket.Client, :all)
+      on_exit(fn -> :logger.unset_module_level(Websocket.Client) end)
+      :ok
+    end
+
+    defp window(idle_timeout_ms, ws_opts \\ []) do
+      Websocket.Client.idle_window(%{
+        idle_timeout_ms: idle_timeout_ms,
+        ws_opts: ws_opts,
+        plugin_id: "ws_floor_test"
+      })
+    end
+
+    test "a window at the default ping interval is raised, and the applied value reported" do
+      ping = Fresh.Option.ping_interval([])
+
+      log = capture_log(fn -> assert window(ping) > ping end)
+
+      assert log =~ "idle_timeout_ms=#{ping}"
+      assert log =~ "applying #{ping * 2} ms"
+    end
+
+    test "the default idle window is exactly the default ping interval, so it is raised" do
+      # The finding this floor closes: the two defaults were equal, so the
+      # threshold was reached at the moment the next pong was due.
+      ping = Fresh.Option.ping_interval([])
+      assert Websocket.Client.default_idle_timeout_ms() == ping
+
+      log =
+        capture_log(fn -> assert window(Websocket.Client.default_idle_timeout_ms()) > ping end)
+
+      assert log =~ "keepalive ping interval"
+    end
+
+    test "the floor follows the interval an operator actually configured" do
+      assert capture_log(fn -> assert window(20_000, ping_interval: 60_000) == 120_000 end) =~
+               "keepalive ping interval 60000"
+    end
+
+    test "a window comfortably above the ping interval is left alone" do
+      # `async: true` means the capture also sees other tests' output, so the
+      # assertion is the absence of this sentence, never an empty capture.
+      refute capture_log(fn -> assert window(90_000) == 90_000 end) =~ "keepalive ping interval"
+    end
+
+    test "zero still disables the watchdog — a decision, not a small window" do
+      refute capture_log(fn -> assert window(0) == 0 end) =~ "keepalive ping interval"
+    end
   end
 
   defp spawn_dummy_overwatcher do

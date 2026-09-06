@@ -64,6 +64,17 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   @spec items_placeholder() :: binary()
   def items_placeholder(), do: @items_placeholder
 
+  @doc """
+  The placeholder a template carries its correlation id in.
+
+  Published because the correlation contract is one contract: the outbound sink
+  renders through the same placeholder and reads its answer through
+  `acknowledgement/1`, so an upstream acknowledges a subscription delta and a
+  shipped output exactly the same way.
+  """
+  @spec req_id_placeholder() :: binary()
+  def req_id_placeholder(), do: @req_id_placeholder
+
   @doc "The polling cadence a subscription source takes when none is written."
   @spec default_interval_ms() :: pos_integer()
   def default_interval_ms(), do: Durations.get(:ws_subscription_interval_ms)
@@ -250,6 +261,23 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
     do: items |> Enum.filter(&Flezha.Partition.owns?(range, &1)) |> MapSet.new()
 
   @doc """
+  What this inbound frame acknowledges: the `req_id` it echoes and whether it
+  accepted the request, or `:error` when it acknowledges nothing.
+
+  The correlation contract, read once. Both directions send an id in a template
+  and both read the answer here; the id SPACES are disjoint (a delta's is an
+  integer, a shipped output's a string), so neither side can commit the other's
+  work through one reply.
+  """
+  @spec acknowledgement(binary()) :: {:ok, term(), boolean()} | :error
+  def acknowledgement(message) when is_binary(message) do
+    case Jason.decode(message) do
+      {:ok, %{"req_id" => req_id} = decoded} -> {:ok, req_id, acknowledged?(decoded)}
+      _other -> :error
+    end
+  end
+
+  @doc """
   Does this decoded inbound frame accept the request it names? An
   acknowledgement reports success unless it says otherwise.
   """
@@ -301,8 +329,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   # A failed poll is "no information", never an empty desired set: the applied
   # set stands and nothing is unsubscribed. Only a decoded response moves it.
   #
-  # Delta frames leave through Fresh's reply form, the same mechanism the
-  # data-liveness tier uses, so nothing is ever sent re-entrantly.
+  # Answers the state and the frames it owes, never a connection-library return
+  # shape: the Client turns frames into a reply, which is what keeps this module
+  # ignorant of the callbacks it runs under. Nothing is ever sent re-entrantly.
   def settle_poll(state, result) do
     {state, frames} =
       case result do
@@ -311,12 +340,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
         {:error, reason} -> {poll_failed(state, reason), []}
       end
 
-    state = schedule_subscription_poll(state)
-
-    case frames do
-      [] -> {:ok, state}
-      frames -> {:reply, frames, state}
-    end
+    {schedule_subscription_poll(state), frames}
   end
 
   defp decoded_source(state, body) do
@@ -425,11 +449,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   # The correlation contract: the upstream echoes the `{{req_id}}` the template
   # carried. An object naming an outstanding one is that request's answer, and
   # reports success unless it says otherwise.
-  def commit_acknowledged(state, message) do
-    with {:ok, %{"req_id" => req_id} = decoded} <- Jason.decode(message),
+  def commit_acknowledged(%{inflight: inflight} = state, message) when inflight != %{} do
+    with {:ok, req_id, accepted?} <- acknowledgement(message),
          true <- is_integer(req_id),
          {:ok, _entry} <- Map.fetch(state.inflight, req_id) do
-      if acknowledged?(decoded) do
+      if accepted? do
         commit(state, req_id)
       else
         # Not committed: the next cycle re-derives an identical delta.
@@ -444,6 +468,12 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
       _ -> state
     end
   end
+
+  # A plugin with no subscription source carries no in-flight map, and a
+  # configured one with nothing outstanding has nothing to commit. The guard
+  # lives here rather than in the caller's clause head so both directions settle
+  # an inbound frame the same way.
+  def commit_acknowledged(state, _message), do: state
 
   defp commit(state, req_id) do
     case Map.fetch(state.inflight, req_id) do

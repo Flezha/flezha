@@ -14,6 +14,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   alias Flezha.Config.Backoff
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpFetch
+  alias Flezha.Plugin.Provider.Websocket.Sink
   alias Flezha.Plugin.Provider.Websocket.Subscription
 
   require Logger
@@ -44,9 +45,10 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       post_connect: opts.post_connect,
       overwatcher_pid: opts.overwatcher_pid,
       payload_metadata: opts.payload_metadata,
-      idle_timeout_ms: opts.idle_timeout_ms,
+      idle_timeout_ms: idle_window(opts),
       resubscribe_after_ms: opts.resubscribe_after_ms,
       ignore_pattern: compile_ignore_pattern(opts.ignore_pattern),
+      sink: opts.sink,
       # Effectively-once tier (from the activation env): ingest via a
       # blocking call so a zero-credit park stops the socket read.
       sync_ingest?: opts.sync_ingest?,
@@ -64,6 +66,49 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
       with_subscription_state(state, opts),
       Keyword.put(reconnect_opts(opts.ws_opts), :name, opts.name)
     )
+  end
+
+  # Two pings, so one lost pong is a hiccup and two in a row is a dead socket.
+  @idle_window_ping_multiple 2
+
+  @doc """
+  The idle window actually applied, which is never shorter than the keepalive
+  ping that refreshes it.
+
+  `last_frame_at` moves on inbound frames only, and on a socket carrying no
+  inbound data the only refresh is the pong answering the connection library's
+  own ping. A window equal to or below that interval reaches its threshold at
+  the moment the next pong is due, so which of the two lands first is timer
+  jitter and a healthy connection is torn down. A plugin bound as an output
+  makes a socket with no inbound data an ordinary configuration, so the floor
+  applies to every websocket plugin.
+
+  The interval is read from the plugin's own `ws_opts` where an operator set
+  one, so the floor follows the interval actually in force.
+  """
+  @spec idle_window(map()) :: non_neg_integer()
+  def idle_window(opts) do
+    configured = opts.idle_timeout_ms
+    ping = Fresh.Option.ping_interval(opts.ws_opts || [])
+
+    cond do
+      # 0 disables the watchdog, which is a decision, not a too-small window.
+      configured == 0 -> 0
+      configured > ping -> configured
+      true -> raise_to_floor(configured, ping, opts.plugin_id)
+    end
+  end
+
+  defp raise_to_floor(configured, ping, plugin_id) do
+    applied = ping * @idle_window_ping_multiple
+
+    Logger.warning(
+      "[Plugin.Provider.Websocket] idle_timeout_ms=#{configured} is at or below the " <>
+        "keepalive ping interval #{ping} that refreshes it, so it can only fire on jitter; " <>
+        "applying #{applied} ms for plugin_id=#{inspect(plugin_id)}"
+    )
+
+    applied
   end
 
   # The socket-level reconnect is the `:ws_reconnect` row: the library walks
@@ -153,11 +198,18 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     # set yet on a first connect, so the reconcile is a no-op there.
     {state, deltas} = Subscription.reconcile(state)
 
-    case Subscription.subscription_frames(state) ++ deltas do
-      [] -> {:ok, state}
-      frames -> {:reply, frames, state}
-    end
+    # Subscription first: a server that requires a subscribe before it accepts
+    # anything else must see it first, and no output can be more urgent than the
+    # handshake that makes the connection usable.
+    {state, queued} = Sink.drain(state, now)
+
+    answer(state, Subscription.subscription_frames(state) ++ deltas ++ queued)
   end
+
+  # Fresh's two return shapes, built in ONE place. The policy halves answer the
+  # frames they owe and know nothing about the callbacks they run under.
+  defp answer(state, []), do: {:ok, state}
+  defp answer(state, frames), do: {:reply, frames, state}
 
   # Fresh owns the reconnect timer; the row owns the schedule it walks, and
   # this is where the wait becomes visible — the delay announced here is the
@@ -210,9 +262,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   # affects `last_data_frame_at` only through the existing `ignore_pattern`
   # classification.
   @impl Fresh
-  def handle_in({:text, message} = frame, %{inflight: inflight} = state)
-      when inflight != %{} do
-    ingest(frame, Subscription.commit_acknowledged(state, message))
+  def handle_in({:text, message} = frame, state) do
+    ingest(
+      frame,
+      state |> Subscription.commit_acknowledged(message) |> Sink.commit_acknowledged(message)
+    )
   end
 
   @impl Fresh
@@ -286,8 +340,19 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
         resubscribe_stale_data(state, now, now - state.last_data_frame_at)
 
       true ->
-        {:ok, schedule_idle_check(state)}
+        resend_unacknowledged(schedule_idle_check(state), now)
     end
+  end
+
+  # An output leaves the dispatch chain as an ordinary message, never through
+  # the connection library's public send: that send is a cast whose disconnected
+  # clause discards the frame with no error, no callback and no log. Read here,
+  # a frame reaches the library only while the socket is established and is
+  # queued otherwise.
+  def handle_info({{:sink_frame, message, metadata}, from, ref}, %{sink: %Sink{}} = state) do
+    state
+    |> Sink.enqueue(message, metadata, {from, ref})
+    |> flush_outbound()
   end
 
   # Liveness probe for the health contract (Phase 7.1): report the two-tier
@@ -326,16 +391,47 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
   def handle_info({:subscription_fetched, pid, result}, %{poll: {pid, ref}} = state) do
     Process.demonitor(ref, [:flush])
-    Subscription.settle_poll(%{state | poll: nil}, result)
+    settled(state, result)
   end
 
   def handle_info({:DOWN, ref, :process, _dead, reason}, %{poll: {_pid, ref}} = state) do
-    Subscription.settle_poll(%{state | poll: nil}, {:error, {:fetch_crashed, reason}})
+    settled(state, {:error, {:fetch_crashed, reason}})
   end
 
   def handle_info(any, state) do
     Logger.warning("Received unexpected info at websocket process: #{inspect(any)}")
     {:ok, state}
+  end
+
+  # The third thing the tick does, on the tick the watchdog already owns: an
+  # outbound frame the upstream has not acknowledged is re-sent, and one whose
+  # retry budget is spent is parked. A sink awaiting no acknowledgement holds
+  # nothing in flight and this is a no-op.
+  # A disconnected socket sweeps nothing: the sweep spends a frame's retry
+  # budget and re-stamps its clock, so running it with nowhere to send would
+  # park a frame that was never actually re-sent.
+  # The queue holds until there is a socket to hand it to; `handle_connect/3`
+  # flushes whatever accumulated.
+  defp flush_outbound(%{websocket_established?: false} = state), do: {:ok, state}
+
+  defp flush_outbound(state) do
+    {state, frames} = Sink.drain(state, :erlang.monotonic_time(:millisecond))
+    answer(state, frames)
+  end
+
+  defp settled(state, result) do
+    {state, frames} = Subscription.settle_poll(%{state | poll: nil}, result)
+    answer(state, frames)
+  end
+
+  # A disconnected socket sweeps nothing: the sweep spends a frame's retry
+  # budget and re-stamps its clock, so running it with nowhere to send would
+  # park a frame that was never actually re-sent.
+  defp resend_unacknowledged(%{websocket_established?: false} = state, _now), do: {:ok, state}
+
+  defp resend_unacknowledged(state, now) do
+    {state, frames} = Sink.sweep(state, now)
+    answer(state, frames)
   end
 
   defp reconnect_dead_connection(state, silence_ms) do
@@ -371,7 +467,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
         %{plugin_id: state.plugin_id}
       )
 
-      {:reply, frames, state}
+      answer(state, frames)
     else
       _ -> {:ok, state}
     end
@@ -385,7 +481,13 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
   """
   @spec idle_tick_interval(map()) :: pos_integer() | nil
   def idle_tick_interval(state) do
-    case Enum.filter([state.idle_timeout_ms, state.resubscribe_after_ms], &(&1 > 0)) do
+    deadlines = [
+      state.idle_timeout_ms,
+      state.resubscribe_after_ms,
+      Sink.ack_window_ms(state)
+    ]
+
+    case Enum.filter(deadlines, &(is_integer(&1) and &1 > 0)) do
       [] -> nil
       enabled -> max(Durations.get(:ws_min_tick_interval_ms), div(Enum.min(enabled), 2))
     end

@@ -207,6 +207,21 @@ guarantee.
   records become plain inserts. The **Kafka** producer (`operative_kafka_producer`) uses
   `flz.key` as the message key and carries the durable identity in the `flezha.dedup_key`
   header; see [`../plugins/kafka_producer.md`](../plugins/kafka_producer.md).
+- **The websocket sink is not a conforming sink, and does not claim to be.** A plugin bound as
+  an output (`operative_websocket`, `Flezha.Plugin.Provider.Websocket`) ships each dispatched
+  payload as a frame on the connection it already holds, and answers the hold by its declared
+  `sink_ack_mode`: `"none"` (default) confirms when the frame reaches the established socket,
+  which is **at-most-once** past that point; `"required"` confirms only when an inbound frame
+  echoes the correlation id, which is **at-least-once**. Neither is effectively-once and no
+  mode that claims to be is offered — a websocket exposes no transaction to enlist and no key
+  to overwrite, so the destination cannot participate. What the sink can do is carry
+  `flz.entity` and `flz.seq` in the frame template, and the consumer that tracks the last
+  sequence it has applied per entity is the only place the dedup can work. Frames are queued
+  while the socket is down (`sink_queue_max`, 10 000; callers park at the bound) and a frame
+  whose retry budget is spent parks in the dead-letter store. An enable on a tier operative
+  warns rather than refusing: the operative's internal guarantee is unchanged and only its
+  websocket hop is best-effort. See
+  [`../plugins/websocket_subscription.md`](../plugins/websocket_subscription.md).
 - **Source back-pressure.** Ingestion debits a per-operative source credit window
   (`:source_credit_window_bytes`, default = `:wal_high_watermark_bytes`); the min-watermark
   advance mints it back. At zero credit the source adapter's ingest call parks (a websocket

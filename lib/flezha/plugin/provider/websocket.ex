@@ -15,10 +15,14 @@ defmodule Flezha.Plugin.Provider.Websocket do
   telemetry events: `docs/plugins/websocket_subscription.md`.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Websocket.Client
+  alias Flezha.Plugin.Provider.Websocket.Sink
   alias Flezha.Plugin.Provider.Websocket.Subscription
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.State.Outbox
 
   require Logger
 
@@ -77,11 +81,38 @@ defmodule Flezha.Plugin.Provider.Websocket do
         default: "required",
         doc: "`\"none\"` commits a delta on successful send instead of on the server's ack"
       ],
+      channel: [type: :string, doc: "Send only outputs whose metadata channel matches"],
+      sink_frame_type: [
+        type: :enum,
+        values: ["text", "binary"],
+        default: "text",
+        doc: "Websocket frame type an output is sent as"
+      ],
+      sink_template: [
+        type: :string,
+        doc:
+          "Frame template carrying the output; {{payload}} required, {{req_id}}/{{entity}}/{{seq}} available"
+      ],
+      sink_queue_max: [
+        type: :int,
+        default: 10_000,
+        min: 1,
+        doc: "Outbound frames held while the socket is down before the caller blocks"
+      ],
+      sink_ack_mode: [
+        type: :enum,
+        values: ["none", "required"],
+        default: "none",
+        doc: "`\"required\"` answers the outbox hold on the upstream's ack instead of at handoff"
+      ],
       # The set this plugin last committed, read back from the cspec on a
       # restart rather than an option an operator writes.
       applied_subscriptions: [type: :any, internal: true],
       # The reconcile plan `init_provider/1` derives from the rows above.
-      subscription: [type: :any, internal: true]
+      subscription: [type: :any, internal: true],
+      # The outbound half, derived from the sink rows and the directions this
+      # plugin was actually subscribed to.
+      sink: [type: :any, internal: true]
     ],
     worker: [module: Client, restart: :temporary]
 
@@ -141,22 +172,94 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # "Two-phase plugin lifecycle gated on SDK readiness".
   @impl true
   def init_provider(opts) do
-    with {:ok, subscription} <- Subscription.from_opts(opts) do
+    with {:ok, subscription} <- Subscription.from_opts(opts),
+         {:ok, sink} <- Sink.from_opts(opts) do
       plugin_id = opts.plugin_id || opts.uri
+      warn_best_effort_hop(opts, sink, plugin_id)
 
       Logger.info(
         "[Plugin.Provider.Websocket] init_provider prepared uri=#{inspect(opts.uri)} " <>
-          "plugin_id=#{inspect(plugin_id)} subscription_source=#{subscription != nil}"
+          "plugin_id=#{inspect(plugin_id)} subscription_source=#{subscription != nil} " <>
+          "sink=#{sink != nil}"
       )
 
       {:ok,
        Map.merge(opts, %{
          plugin_id: plugin_id,
          subscription: subscription,
+         sink: sink,
          applied_subscriptions: Subscription.applied_set(opts.applied_subscriptions)
        })}
     end
   end
+
+  # Warn, never refuse. A durable sink alongside a live websocket view is the
+  # standard topology, and refusing it would push operators into a worse one.
+  # Refusing would also claim more than this change can honour: the operative's
+  # internal guarantee is untouched and only the websocket hop is best-effort.
+  defp warn_best_effort_hop(opts, %Sink{} = sink, plugin_id) do
+    if opts[:effectively_once] do
+      Logger.warning(
+        "[Plugin.Provider.Websocket] plugin_id=#{inspect(plugin_id)} ships output from an " <>
+          "effectively-once operative with sink_ack_mode=#{inspect(sink.ack_mode)}; the " <>
+          "operative's internal guarantee is unchanged, its websocket output hop is not " <>
+          "effectively-once"
+      )
+    end
+
+    :ok
+  end
+
+  defp warn_best_effort_hop(_opts, _sink, _plugin_id), do: :ok
+
+  @doc """
+  Ship one dispatched payload upstream on the socket this plugin already holds.
+
+  The handoff is a correlated ASYNCHRONOUS ask, never a call. On the
+  effectively-once tier the socket process confirms an injected input by calling
+  the Overwatch without a deadline, and the Overwatch is the process running
+  this chain: a synchronous send in this direction closes that cycle and hangs
+  the operative permanently. The bounded wait is what keeps the cycle open, and
+  a frame that outlives it is still safely in the socket's hands.
+  """
+  @impl true
+  def on_input(%Ctx.IO{} = ctx, opts), do: ship(ctx, opts)
+
+  @impl true
+  def on_output(%Ctx.IO{} = ctx, opts), do: ship(ctx, opts)
+
+  defp ship(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
+    with true <- ProviderBehaviour.in_channel?(md, opts.channel),
+         pid when is_pid(pid) <- WorkerSup.worker_pid(__MODULE__, opts.plugin_id) do
+      # Take ownership of a delivery-guaranteed output before handing it over:
+      # the socket answers the hold at handoff or on the upstream's ack, by
+      # `sink_ack_mode`. A plain output holds nothing and this is a no-op.
+      Outbox.hold(md)
+      handed_off(ctx, opts, ProviderBehaviour.ask(pid, {:sink_frame, msg, md}, handoff_budget()))
+    else
+      # Another channel's output passes through untouched; no socket means no
+      # hold was taken, so refusing the caller — one of the three answers the
+      # spec allows for a frame that is not sent — leaves nothing owing.
+      false -> {:ok, ctx}
+      nil -> {:error, {:no_connection, opts.plugin_id}}
+    end
+  end
+
+  defp handed_off(ctx, _opts, {:ok, :ok}), do: {:ok, ctx}
+
+  defp handed_off(ctx, opts, :timeout) do
+    # The frame is in the socket's mailbox and is queued when it is read; what
+    # ran out is this chain's willingness to wait, which is what keeps the
+    # confirming-ingest cycle from closing.
+    Logger.warning(
+      "[Plugin.Provider.Websocket] outbound handoff budget spent for plugin_id=" <>
+        "#{inspect(opts.plugin_id)}; the socket is saturated or busy confirming an input"
+    )
+
+    {:ok, ctx}
+  end
+
+  defp handoff_budget(), do: Durations.get(:ws_sink_handoff_timeout_ms)
 
   @impl true
   def worker_specs(opts) do
@@ -174,6 +277,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
          :resubscribe_after_ms,
          :ignore_pattern,
          :subscription,
+         :sink,
          :applied_subscriptions,
          :source_plugin_id,
          :source_namespace,

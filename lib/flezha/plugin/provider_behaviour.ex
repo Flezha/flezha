@@ -213,6 +213,13 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @spec extension_callbacks() :: [atom()]
   def extension_callbacks(), do: @extension_callbacks
 
+  # The two that carry a payload through the chain, both taking a `Ctx.IO`.
+  @io_callbacks [:on_input, :on_output]
+
+  @doc "The dispatch callbacks that carry a payload, in either direction."
+  @spec io_callbacks() :: [atom()]
+  def io_callbacks(), do: @io_callbacks
+
   @doc """
   Shared `convert_value/2` result helpers: CLI plugin opts arrive as
   strings, direct (test/Elixir) opts as native types — accept both.
@@ -285,6 +292,31 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     do: {:error, "Invalid value for #{field}: #{value}"}
 
   def refuse_value(field, value), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
+
+  @doc """
+  Is this plugin subscribed to a direction that carries a payload — `on_input`
+  or `on_output`?
+
+  Read from the host-injected `:subscribed_extensions`, so a provider that
+  allocates only for the directions it is bound in asks one question instead of
+  inferring an answer from a configured option, every one of which has a default.
+  """
+  @spec io_bound?(map()) :: boolean()
+  def io_bound?(opts) do
+    Enum.any?(Map.get(opts, :subscribed_extensions) || [], &(&1 in @io_callbacks))
+  end
+
+  @doc """
+  Does this record belong to the channel a sink is restricted to? `nil` is no
+  restriction.
+
+  The ONE reading of the `channel` option row. A provider that offered the row
+  and re-derived its meaning would let two sinks on one operative disagree about
+  which records a channel names.
+  """
+  @spec in_channel?(map(), binary() | nil) :: boolean()
+  def in_channel?(_metadata, nil), do: true
+  def in_channel?(metadata, channel), do: Map.get(metadata, "channel") == channel
 
   @doc "Has the worker's queue reached its bound?"
   @spec saturated?(struct()) :: boolean()
@@ -483,8 +515,12 @@ defmodule Flezha.Plugin.ProviderBehaviour do
 
   The worker replies `{ref, payload}`. A worker that does not answer in time is
   reported `:timeout`, which callers read as uncertainty — see `worker_health/3`.
+
+  `tag` is any term, so the same correlated exchange carries a request with a
+  body — the shape a dispatch callback hands work to a worker it must not call
+  synchronously, because the worker can be inside a call back to the caller.
   """
-  @spec ask(pid(), atom(), timeout()) :: {:ok, term()} | :timeout
+  @spec ask(pid(), term(), timeout()) :: {:ok, term()} | :timeout
   def ask(pid, tag, timeout \\ probe_budget_ms()) do
     ref = make_ref()
     send(pid, {tag, self(), ref})
@@ -503,6 +539,10 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     :source_plugin_id,
     :effectively_once,
     :owned_pid,
+    # Which of its provider's callbacks this plugin is actually subscribed to.
+    # A provider that costs nothing until it is bound needs it: the declaration
+    # says what it CAN do and this says what it was asked to do.
+    :subscribed_extensions,
     # A partition group's fan-out merges these into EVERY plugin of every
     # member (`Plugin.for_partition/3` over `Partition.provider_opts/1`), so a
     # provider that does not allow them refuses every enable on a partitioned

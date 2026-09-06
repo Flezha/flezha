@@ -317,15 +317,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
     def on_output(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)
 
     defp produce(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
-      case opts.channel do
-        nil ->
-          do_produce(ctx, opts, msg, md)
-
-        group ->
-          if Map.get(md, "channel") == group,
-            do: do_produce(ctx, opts, msg, md),
-            else: {:ok, ctx}
-      end
+      if ProviderBehaviour.in_channel?(md, opts.channel),
+        do: do_produce(ctx, opts, msg, md),
+        else: {:ok, ctx}
     end
 
     defp do_produce(%Ctx.IO{} = ctx, opts, msg, md) do

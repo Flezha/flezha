@@ -694,12 +694,17 @@ defmodule Flezha.Plugin.Extension.Table do
   # whose destination is another operative needs it to refuse a self-target or a
   # cross-namespace target at enable time; a provider that persists its own
   # committed state needs `:source_plugin_id` to name the cspec row to write.
-  defp with_host_identity(table, opts, %Plugin{id: id, namespace: ns, operative_id: operative_id}) do
+  #
+  # `:subscribed_extensions` is the canonicalised list of callbacks this plugin
+  # was enabled for. A provider that allocates only for the directions it is
+  # bound in reads it here rather than inferring one from a configured option.
+  defp with_host_identity(table, opts, %Plugin{} = plugin) do
     Map.merge(opts, %{
-      source_namespace: ns,
-      source_operative_id: operative_id,
-      source_plugin_id: id,
-      overwatcher_pid: table.host_pid
+      source_namespace: plugin.namespace,
+      source_operative_id: plugin.operative_id,
+      source_plugin_id: plugin.id,
+      overwatcher_pid: table.host_pid,
+      subscribed_extensions: Enum.map(plugin.subscriptions, &elem(&1, 0))
     })
   end
 

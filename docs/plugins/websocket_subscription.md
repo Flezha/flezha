@@ -1,4 +1,4 @@
-# Websocket subscription source
+# Websocket subscription source and output binding
 
 For operators running `Flezha.Plugin.Provider.Websocket` (provider id
 `operative_websocket`) who need to change what a live socket is subscribed to
@@ -13,8 +13,15 @@ the source contract, the templates, the reconcile and commit rules, both
 watchdog tiers, durability, parameters, the partitioned-member share,
 observability and limits.
 
+The same plugin can also SEND. Subscribed to `on_output` (or `on_input`) it
+ships each dispatched payload upstream as a frame on the connection it already
+holds — one socket, both directions, no second connection. That half is
+["Sending output on the same socket"](#sending-output-on-the-same-socket).
+
 A plugin with no source configured is the plain static provider: no poll
-timer, no applied set, and no subscription state on the per-frame path.
+timer, no applied set, and no subscription state on the per-frame path. A
+plugin subscribed to neither `on_input` nor `on_output` allocates no outbound
+queue and awaits no acknowledgement.
 
 ## Contract
 
@@ -141,6 +148,76 @@ remembers. The cspec write runs in a task, off the Overwatch loop. A failed
 poll writes nothing and never unsubscribes; an **explicitly empty** `items`
 array is a real instruction and unsubscribes everything.
 
+## Sending output on the same socket
+
+Subscribe the plugin to `on_output` (or `on_input`) and every dispatched
+payload it sees is sent as one frame on the connection it already holds:
+
+```
+flz plugin enable prices operative_websocket \
+  --Xuri wss://feed.example/stream \
+  --Xchannel prices \
+  --extension on_output
+```
+
+`channel` restricts the plugin to outputs whose metadata names that channel,
+with the same meaning the Kafka producer gives it; with no `channel` every
+output is sent. `sink_frame_type` chooses `text` or `binary`. With no
+`sink_template` the payload is the frame body, verbatim. A template wraps it,
+substituting four placeholders:
+
+| Placeholder | Replaced by |
+|---|---|
+| `{{payload}}` | the dispatched payload — **required** in any template |
+| `{{req_id}}` | the correlation id, under `sink_ack_mode: "required"` |
+| `{{entity}}` | the output's `flz.entity` stamp |
+| `{{seq}}` | the output's `flz.seq` stamp |
+
+### Delivery semantics
+
+`sink_ack_mode` says when the outbox hold is answered, and the two modes carry
+different guarantees. **Neither is effectively-once**, and no mode that claims
+to be is offered: a websocket exposes no transaction to enlist and no key to
+overwrite, so the destination cannot participate in the guarantee.
+
+| Mode | The hold is answered | Guarantee |
+|---|---|---|
+| `"none"` (default) | when the frame is handed to the established socket | **at-most-once** past that point: a frame the local socket accepted and a reconnect lost is not retried |
+| `"required"` | when an inbound frame echoes the correlation id | **at-least-once**: an unanswered frame is re-sent rather than assumed delivered |
+
+**Deduplication is the consumer's.** Under `"required"` a repeat is a normal
+event, so that mode requires a `sink_template` carrying `{{req_id}}` — the
+correlation the upstream echoes, exactly as it acknowledges a subscription
+delta. Put `{{entity}}` and `{{seq}}` in the same template and a consumer that
+tracks the last sequence it has applied per entity discards what it already
+has. That is the only place the dedup can work.
+
+An enable on an **effectively-once** operative warns, naming the plugin and the
+mode, and proceeds. The operative's internal guarantee is unchanged; its
+websocket output hop is not effectively-once. A durable sink alongside a live
+websocket view is the standard topology, so this is a warning and not a refusal.
+
+### While the socket is down
+
+Outbound frames are held in a queue bounded by `sink_queue_max` (default
+`10000`) and flushed on connect, after the subscription frames — a server that
+requires a subscribe handshake sees it first. Nothing is dropped:
+
+- at the bound, the enqueueing caller is **parked** until the queue drains, so
+  back-pressure reaches the operative rather than a frame reaching the floor;
+- a `"required"` frame whose retry budget is spent is **parked in the
+  dead-letter store**, attributed to the output's own entity and channel, and
+  its hold is then answered so the cursor advances past exactly that range;
+- nothing is ever handed to the connection library's public send, whose
+  disconnected path discards a frame with no error, no callback and no log.
+
+The handoff from the output chain to the socket is a correlated asynchronous
+exchange with a bounded budget (`ws_sink_handoff_timeout_ms`), never a
+synchronous call. On the effectively-once tier the socket process confirms an
+injected input by calling the Overwatch without a deadline, and the Overwatch
+is the process that runs the output chain: a synchronous send in the other
+direction would close that cycle and hang the operative permanently.
+
 ## Parameters
 
 <!-- provider-options:begin -->
@@ -161,6 +238,11 @@ array is a real instruction and unsubscribes everything.
 | `subscribe_template` | string | &mdash; | no | Frame template carrying the items to subscribe |
 | `unsubscribe_template` | string | &mdash; | no | Frame template carrying the items to drop |
 | `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
+| `channel` | string | &mdash; | no | Send only outputs whose metadata channel matches |
+| `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
+| `sink_template` | string | &mdash; | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{entity}}/{{seq}} available |
+| `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |
+| `sink_ack_mode` | enum | `"none"` | no | `"required"` answers the outbox hold on the upstream's ack instead of at handoff |
 <!-- provider-options:end -->
 
 ### Refusals at enable time
@@ -178,6 +260,10 @@ Each of these fails the enable and opens no connection:
 - an unrecognised `subscription_ack_mode`
 - both `subscription_url` and `subscription_items` — a source is polled or literal
 - a `subscription_items` value that is not a list of non-empty strings
+- a `sink_template` with no `{{payload}}` placeholder
+- `sink_ack_mode: "required"` without a `sink_template` carrying `{{req_id}}` —
+  a frame the upstream cannot correlate cannot be acknowledged
+- an unrecognised `sink_frame_type` or `sink_ack_mode`
 - any unrecognised option
 
 ## A partitioned member subscribes to its share only
@@ -235,6 +321,13 @@ two watchdog tiers alone.
 | `[:flezha, :plugin, :websocket, :reconcile]` | `%{added: integer(), removed: integer()}` | `%{plugin_id: binary()}` |
 | `[:flezha, :plugin, :websocket, :idle_reconnect]` | `%{silence_ms: integer()}` | `%{plugin_id: binary()}` |
 | `[:flezha, :plugin, :websocket, :resubscribe]` | `%{data_silence_ms: integer()}` | `%{plugin_id: binary()}` |
+| `[:flezha, :plugin, :websocket, :shipped]` | `%{count: integer()}` | `%{plugin_id: binary()}` |
+| `[:flezha, :plugin, :websocket, :retried]` | `%{attempt: integer()}` | `%{plugin_id: binary()}` |
+| `[:flezha, :plugin, :websocket, :failed]` | `%{rejected: integer()}` or `%{parked: integer()}` | `%{plugin_id: binary()}` |
+
+`:shipped` counts frames handed to the connection, in either acknowledgement
+mode; the acks that follow show as the absence of `:retried` and `:failed`.
+| `[:flezha, :plugin, :websocket, :overflowed]` | `%{queued: integer()}` | `%{plugin_id: binary()}` |
 
 `:reconcile` fires only on a cycle that sent at least one frame, so a steady
 source is silent and a flapping one is loud — a source that flaps is a defect
@@ -249,6 +342,16 @@ in the source.
   subscriptions across plugins or operatives.
 - **A source outage freezes the applied set.** The socket keeps streaming, and
   reconcile resumes when the source returns.
+- **The output hop is never effectively-once**, in either mode. See the
+  delivery-semantics table above and
+  [`../resilience/data_durability.md`](../resilience/data_durability.md).
+- **The plugin sends; it does not serve.** It ships on the connection it opened
+  outbound. Accepting inbound websocket connections and fanning outputs to
+  subscribers is a different capability and is not offered.
+- **The idle window is never shorter than the keepalive ping** that refreshes
+  it. `last_frame_at` moves on inbound frames only, so a window at or below the
+  ping interval reaches its threshold as the next pong falls due; a configured
+  one is raised to twice the interval and the applied value is logged.
 
 ## See also
 
