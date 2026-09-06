@@ -12,19 +12,11 @@
 import { Generator } from '../generator/generator_contract';
 import { ackFrames, parseSubscriptionRequest } from './kraken_subscription';
 import { generatorConfigFor, intervalFor, TestnetConfig } from './testnet_config';
+import { REAL_TIMERS, Timers } from '../util/timers';
 
 export type Send = (message: string) => void;
 
-/** Timer surface, injected so tests drive generation without wall-clock waits. */
-export interface Timers {
-  set(fn: () => void, ms: number): unknown;
-  clear(handle: unknown): void;
-}
-
-const REAL_TIMERS: Timers = {
-  set: (fn, ms) => setInterval(fn, ms),
-  clear: (handle) => clearInterval(handle as NodeJS.Timeout),
-};
+export type { Timers };
 
 export class SubscriptionRouter {
   /** `channel -> symbol -> timer handle`. Presence is the subscription. */

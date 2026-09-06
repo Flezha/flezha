@@ -2,28 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { Generator } from '../generator/generator_contract';
-import { SubscriptionRouter, Timers } from './subscription_router';
+import { SubscriptionRouter } from './subscription_router';
 import { TestnetConfig } from './testnet_config';
-
-/** Timer stub: records every scheduled tick so a test can fire it by hand. */
-class FakeTimers implements Timers {
-  readonly ticks = new Map<number, { fn: () => void; ms: number }>();
-  private next = 1;
-
-  set(fn: () => void, ms: number): unknown {
-    const handle = this.next++;
-    this.ticks.set(handle, { fn, ms });
-    return handle;
-  }
-
-  clear(handle: unknown): void {
-    this.ticks.delete(handle as number);
-  }
-
-  fireAll(): void {
-    [...this.ticks.values()].forEach((t) => t.fn());
-  }
-}
+import { FakeTimers } from '../util/fake_timers.test-support';
 
 const tradeGenerator: Generator = {
   name: 'trade',
@@ -118,7 +99,7 @@ test('a per-symbol interval overrides the channel cadence', () => {
     '{"method":"subscribe","params":{"channel":"trade","symbol":["BTC/DEMO1","BENCH/USD"]},"req_id":1}'
   );
   assert.deepEqual(
-    [...timers.ticks.values()].map((t) => t.ms),
+    [...timers.active.values()].map((t) => t.ms),
     [1500, 25]
   );
 });
@@ -133,7 +114,7 @@ test('unsubscribe stops that symbol and leaves the others streaming', () => {
   r.handle('{"method":"unsubscribe","params":{"channel":"trade","symbol":["BTC/DEMO1"]},"req_id":2}');
 
   assert.deepEqual(r.activeSymbols('trade'), ['ETH/DEMO1']);
-  assert.equal(timers.ticks.size, 1);
+  assert.equal(timers.active.size, 1);
 });
 
 // fails when: a re-assert doubles the timer — the connect-time re-subscribe
@@ -144,7 +125,7 @@ test('re-subscribing a live symbol does not double its rate', () => {
   r.handle(frame);
   r.handle(frame.replace('"req_id":1', '"req_id":0'));
 
-  assert.equal(timers.ticks.size, 1);
+  assert.equal(timers.active.size, 1);
 });
 
 // fails when: acks stop being sent — the source never commits its delta and
@@ -171,7 +152,7 @@ test('closing a connection stops all of its generators', () => {
   );
   r.close();
 
-  assert.equal(timers.ticks.size, 0);
+  assert.equal(timers.active.size, 0);
   assert.deepEqual(r.activeSymbols('trade'), []);
 });
 
@@ -191,6 +172,6 @@ test('an unknown channel starts nothing and is not acked', () => {
     r.handle('{"method":"subscribe","params":{"channel":"ohlc","symbol":["BTC/DEMO1"]},"req_id":1}'),
     true
   );
-  assert.equal(timers.ticks.size, 0);
+  assert.equal(timers.active.size, 0);
   assert.equal(sent.length, 0);
 });

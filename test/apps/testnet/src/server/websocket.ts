@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
-import ServerContract from './server_contract';
+import ServerContract, { ConnectedSocket, InputSockets } from './server_contract';
+import { ConnectionRole, requestPath, roleFor } from './connection_paths';
 import { Generator, GeneratorSubscription } from '../generator/generator_contract';
 import { loadGenerators } from '../generator/generator_loader';
 import { loadTestnetConfig, TestnetConfig } from './testnet_config';
@@ -19,13 +20,15 @@ type SubscriptionEvent = {
   generators?: GeneratorSubscription[];
 };
 
-export default class ServerImpl implements ServerContract {
+export default class ServerImpl implements ServerContract, InputSockets {
   private port: number;
   private generators: Map<string, Generator>;
   private config: TestnetConfig;
   /** Per-connection state, so a disconnect stops exactly that socket's timers. */
-  private connections: Map<WebSocket, { router: SubscriptionRouter; legacy: NodeJS.Timeout[] }> =
-    new Map();
+  private connections: Map<
+    WebSocket,
+    { router: SubscriptionRouter; legacy: NodeJS.Timeout[]; path: string; role: ConnectionRole }
+  > = new Map();
 
   constructor(port: number, generatorsPath: string, configPath?: string) {
     this.port = port;
@@ -38,11 +41,14 @@ export default class ServerImpl implements ServerContract {
       port: this.port,
     });
 
-    server.on('connection', (ws) => {
-      console.log('Testnet client connected');
+    server.on('connection', (ws, request) => {
+      const path = requestPath(request.url);
+      console.log(`Testnet client connected on ${path}`);
       this.connections.set(ws, {
         router: new SubscriptionRouter(this.generators, this.config, (message) => ws.send(message)),
         legacy: [],
+        path,
+        role: roleFor(path),
       });
 
       ws.on('message', (message: string) => this.handle_message(ws, message));
@@ -52,6 +58,23 @@ export default class ServerImpl implements ServerContract {
     console.log(
       `Testnet webSocket server is listening on ws://localhost:${this.port}`
     );
+  }
+
+  /** @see InputSockets.broadcast */
+  public broadcast(message: string): number {
+    let recipients = 0;
+    this.connections.forEach((connection, ws) => {
+      if (connection.role === 'output') return;
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(message);
+      recipients += 1;
+    });
+    return recipients;
+  }
+
+  /** @see InputSockets.connected */
+  public connected(): ConnectedSocket[] {
+    return [...this.connections.values()].map(({ path, role }) => ({ path, role }));
   }
 
   handle_close(ws: WebSocket) {
