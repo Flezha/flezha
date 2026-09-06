@@ -29,13 +29,19 @@ defmodule Flezha.Boot.Readiness do
 
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Service.HubManager
+  alias Flezha.Service.HubManager.Starter
 
   @flag {__MODULE__, :boot_sequence_complete}
 
   @preconditions [
     %{key: :boot_sequence_complete, blocks: :booting, check: &__MODULE__.sequence_complete?/0},
     %{key: :hubs_recovered, blocks: :recovering, check: &__MODULE__.hubs_recovered?/0},
-    %{key: :durable_registry_loaded, blocks: :recovering, check: &__MODULE__.registry_loaded?/0}
+    %{key: :durable_registry_loaded, blocks: :recovering, check: &__MODULE__.registry_loaded?/0},
+    %{
+      key: :declared_hubs_started,
+      blocks: :recovering,
+      check: &__MODULE__.declared_hubs_started?/0
+    }
   ]
 
   @type row :: %{key: atom(), met: boolean()}
@@ -86,6 +92,13 @@ defmodule Flezha.Boot.Readiness do
   @doc false
   @spec registry_loaded?() :: boolean()
   def registry_loaded?(), do: not HubManager.durable_registry_pending?()
+
+  # Has boot-time hub creation finished? Unmet while a namespace this node
+  # holds evidence for is still waiting for its hub — including before the
+  # starter has run at all, which is the vacuous-ready window this row closes.
+  @doc false
+  @spec declared_hubs_started?() :: boolean()
+  def declared_hubs_started?(), do: Starter.pending() == []
 
   # Anything but an affirmative `true` — a raise, an exit from a manager that
   # is not up, a nil — is unmet. There is no path on which missing information

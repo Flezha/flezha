@@ -168,7 +168,7 @@ running their schedules.
 | `[:flezha, :schedule, :fired]`          | `schedule`, `instance_id`          | An instance started                                    |
 | `[:flezha, :schedule, :spawn_failed]`   | `schedule`, `instance_id`, `attempt` | A slot attempt produced no instance (also logged)    |
 | `[:flezha, :schedule, :dormant]`        | `schedule`                         | Unparsable cron or no future slot (also logged)        |
-| `[:flezha, :schedule, :hub_start_failed]` | `reason`                         | The `:flz_schedules` hub failed to start; retried every 5 s |
+| `[:flezha, :hub, :start_failed]`     | `target`, `reason`               | A hub failed to start; `target` names it (`flz_schedules` for this one), retried every 5 s |
 
 A persistently failing schedule is also visible in `flz schedule list`'s
 `LAST RESULT` column.

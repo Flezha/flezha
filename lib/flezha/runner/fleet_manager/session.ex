@@ -17,7 +17,6 @@ defmodule Flezha.Runner.FleetManager.Session do
   alias Flezha.AuthZ.Quotas
   alias Flezha.AuthZ.Verb
   alias Flezha.Cluster.Directory
-  alias Flezha.Cluster.Orchestrator
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
@@ -289,13 +288,12 @@ defmodule Flezha.Runner.FleetManager.Session do
     {:ok, namespace, runner_id}
   end
 
-  # Gate on-demand hub creation on cluster formation: a runner connecting
-  # during the boot window must not create a singleton hub before the node has
-  # joined the cluster. Bounded by the degrade-to-solo timeout, so a genuinely
-  # single-node deployment still proceeds.
+  # On-demand hub creation takes the same cluster gate every hub-creating path
+  # takes: a runner connecting during the boot window must not create a
+  # singleton hub before the node has joined the cluster.
   defp ensure_hub(namespace) do
     if !HubManager.hub_alive?(namespace) do
-      _ = Orchestrator.await_cluster_ready()
+      _ = HubManager.await_cluster_gate()
       HubManager.start_hub(namespace)
     end
   end

@@ -83,6 +83,30 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
       ])
 
   @doc """
+  Start `operative_id` durably in `namespace`, through the same declared-set
+  precommit every real start rides — so the hub's declared set holds it,
+  whether or not anything is running it. The recorded runner keeps the
+  `child_data_alter` hook on its log-and-continue path.
+  """
+  def start_durable(namespace, operative_id, factory_id \\ "market") do
+    spec = %{
+      id: operative_id,
+      start:
+        {StubChild, :start_link,
+         [{namespace, @recorded_runner, %{id: operative_id, factory_id: factory_id}}]},
+      restart: :transient
+    }
+
+    %ProcessHub.StartResult{status: :ok} =
+      namespace
+      |> Identificator.hub()
+      |> ProcessHub.start_child(spec, awaitable: true, durable: true, timeout: 5_000)
+      |> ProcessHub.Future.await()
+
+    :ok
+  end
+
+  @doc """
   Seed a synthetic active runner — its fleet entry, factory advertisement, and
   control-unit registration — so placement hands out its id without a live
   SDK. The caller owns FleetManager state restoration (snapshot +

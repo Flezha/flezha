@@ -165,20 +165,27 @@ defmodule Flezha.Identificator do
 
   @doc """
   Inverse of `hub/1`. `nil` for anything that is not a hub id.
+
+  Reads a binary as well as an atom, so a caller holding a hub id it read off
+  disk answers the question without minting an atom for it.
   """
   @spec namespace_from_hub(term()) :: binary() | nil
-  def namespace_from_hub(hub_id) when is_atom(hub_id) do
-    hub_id |> Atom.to_string() |> String.replace_suffix("_hub", "")
-  end
+  def namespace_from_hub(hub_id) when is_atom(hub_id),
+    do: namespace_from_hub(Atom.to_string(hub_id))
+
+  def namespace_from_hub(hub_id) when is_binary(hub_id),
+    do: String.replace_suffix(hub_id, "_hub", "")
 
   def namespace_from_hub(_), do: nil
 
   @doc """
   Whether `id` has the shape `hub/1` produces. Sifts hub children
-  out of a supervisor's child list.
+  out of a supervisor's child list, and hub directories out of a registry
+  root's listing.
   """
   @spec hub_id?(term()) :: boolean()
-  def hub_id?(id) when is_atom(id), do: String.ends_with?(Atom.to_string(id), "_hub")
+  def hub_id?(id) when is_atom(id), do: hub_id?(Atom.to_string(id))
+  def hub_id?(id) when is_binary(id), do: String.ends_with?(id, "_hub")
   def hub_id?(_), do: false
 
   def stream_sup_primary(runner_id) do

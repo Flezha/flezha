@@ -26,6 +26,7 @@ defmodule Flezha.Healthz.ServerTest do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Healthz.Server
   alias Flezha.Service.HubManager
+  alias Flezha.Service.HubManager.Starter
 
   setup do
     Application.put_env(:flezha, :healthz_port, 0)
@@ -558,6 +559,9 @@ defmodule Flezha.Healthz.ServerTest do
       # The application's own boot published the flag; each case decides for
       # itself, and the node is left as it was found.
       Readiness.reset()
+      # `declared_hubs_started` reads the starter's published set, which is
+      # node-global: another file's starter must not answer for these cases.
+      Starter.reset()
       on_exit(&Readiness.publish_sequence_complete/0)
       :ok
     end
@@ -614,7 +618,8 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["preconditions"] == %{
                "boot_sequence_complete" => true,
                "hubs_recovered" => true,
-               "durable_registry_loaded" => true
+               "durable_registry_loaded" => true,
+               "declared_hubs_started" => true
              }
     end
 
@@ -685,7 +690,9 @@ defmodule Flezha.Healthz.ServerTest do
       assert ready_status == 503
       decoded = Jason.decode!(ready_body)
       assert decoded["status"] == "recovering"
-      assert decoded["unmet"] == ["durable_registry_loaded"]
+      # The same directory answers both rows: it is durable state that has not
+      # been reloaded, AND a namespace this node has evidence for with no hub.
+      assert decoded["unmet"] == ["durable_registry_loaded", "declared_hubs_started"]
       assert decoded["preconditions"]["boot_sequence_complete"] == true
       assert decoded["preconditions"]["hubs_recovered"] == true
 

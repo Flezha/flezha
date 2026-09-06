@@ -5,6 +5,7 @@ defmodule Flezha.Service.HubManager do
   here is what names this module's own supervisor identity.
   """
 
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Config.Durations
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Convergence.Snapshot
@@ -20,7 +21,9 @@ defmodule Flezha.Service.HubManager do
   use Supervisor
 
   defdelegate alter_child_data(arg1, arg2), to: Placement
+  defdelegate attempt_start(arg1, arg2), to: Lifecycle
   defdelegate auto_recovery_config(), to: Rows
+  defdelegate await_cluster_gate(), to: Lifecycle
   defdelegate consent_settings(), to: Lifecycle
   defdelegate cspec_partition(arg1), to: Rows
   defdelegate declared_operatives(arg1), to: Rows
@@ -163,20 +166,58 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Reclaim a namespace hub on THIS node, but only when this node holds none of
-  its operatives. Tearing down a hub that still holds durably-suspended
-  operatives would kill their Overwatches and wipe the durable registry,
-  stranding a parked fleet across a runner restart — so runner cleanup and the
-  loop's vacancy reclaim go through this guard. A peer's operatives are that
-  peer's business: the reclaim is node-local, which is what lets a controller
-  whose fleet does not serve a namespace leave that namespace's cluster
-  while the operatives it re-placed keep running elsewhere. The explicit
-  `stop_hub/1` teardown (operator `stop_namespace`) is intentionally
-  unguarded.
+  Reclaim a namespace hub on THIS node, but only when the namespace is neither
+  declared here nor holding any of this node's operatives.
+
+  Tearing down a hub that still holds durably-suspended operatives would kill
+  their Overwatches and wipe the durable registry, stranding a parked fleet
+  across a runner restart — so runner cleanup and the loop's vacancy reclaim go
+  through this guard. A peer's operatives are that peer's business: the reclaim
+  is node-local, which is what lets a controller whose fleet does not serve a
+  namespace leave that namespace's cluster while the operatives it re-placed
+  keep running elsewhere.
+
+  **What it was declared to hold counts too, and so does a recovery that has
+  not settled.** The reclaim runs on every convergence tick over each hub with
+  no active runners, and `stop_hub/1` wipes the registry directory. Boot-time
+  creation is what makes that reachable: it puts hubs exactly where runners are
+  not.
+
+  Two windows, and a live-placement read is blind in both. A hub does not load
+  its durable registry into the live one at start — the rows sit on disk until
+  the reconcile runs a whole `reconcile_grace_ms` later, and every live read
+  answers "empty" until then, so an unsettled recovery is what says "wait".
+  After the reconcile the rows are back but nothing has placed them, because
+  placing an operative needs a runner and there is none; the declared set is
+  what says "this node was told to hold these", whether or not anything
+  currently runs them.
+
+  A settled hub declared to hold nothing IS vacant and is still reclaimed, so
+  the rule does not pin every hub the moment auto-restore writes it a registry
+  directory, and a node whose fleet does not serve a namespace still leaves
+  that namespace's cluster.
+
+  The explicit `stop_hub/1` teardown (operator `stop_namespace`, the shutdown
+  plan's namespace step) is intentionally unguarded.
   """
   def stop_hub_if_vacant(namespace) do
-    unless Rows.local_operatives?(namespace), do: stop_hub(namespace)
+    unless holds_anything?(namespace), do: stop_hub(namespace)
     :ok
+  end
+
+  defp holds_anything?(namespace) do
+    Rows.local_operatives?(namespace) or
+      Rows.declared_operatives(namespace) != [] or
+      unsettled?(namespace)
+  end
+
+  # `:timeout` counts as unsettled: a hub that gave up may still hold rows
+  # nothing has replayed.
+  defp unsettled?(namespace) do
+    case Lifecycle.recovery_state(Identificator.hub(namespace)) do
+      {:ok, state} -> RecoveryGate.recovering?(state)
+      {:error, :unknown_hub} -> false
+    end
   end
 
   def get_running_namespaces() do
@@ -316,21 +357,55 @@ defmodule Flezha.Service.HubManager do
     |> MapSet.new()
   end
 
-  # On-disk registry.dets for a hub that has not started yet.
-  defp unstarted_hub_has_registry?() do
-    running = MapSet.new(list_running_hub_ids())
+  @doc """
+  Every namespace this node already holds evidence for, from two sources and
+  no namespace name written into the derivation: a registry directory under
+  the process-hub root, which is durable state it must recover, and an entry
+  in the durable namespace catalog, which is operator intent.
 
+  The auto-restore kill-switch governs it. A node told not to bring things
+  back by itself has an empty declared set, which is what makes both readers —
+  the boot-time starter and the readiness row — agree without either of them
+  reading the switch again.
+
+  The catalog read is soft by construction: `NamespaceStore.list/0` answers
+  `[]` when its cache table is absent, which is the deployment running with
+  the authz supervisor out of the application tree.
+  """
+  @spec declared_namespaces() :: [binary()]
+  def declared_namespaces() do
+    if Rows.durable_starts?() do
+      registry_hub_dirs()
+      |> Enum.map(&Identificator.namespace_from_hub/1)
+      |> Enum.concat(Enum.map(NamespaceStore.list(), & &1.name))
+      |> Enum.uniq()
+    else
+      []
+    end
+  end
+
+  # On-disk registry for a hub that has not started yet.
+  defp unstarted_hub_has_registry?() do
+    running = MapSet.new(list_running_hub_ids(), &Atom.to_string/1)
+
+    Enum.any?(registry_hub_dirs(), &(not MapSet.member?(running, &1)))
+  end
+
+  # Every hub directory under the process-hub root that holds a registry file.
+  # The one walk of that root: the declared set and the unstarted-hub
+  # predicate are two readings of this list. Directory names, never atoms — a
+  # directory nobody created through `Identificator.hub/1` must not reach the
+  # atom table just by existing there.
+  defp registry_hub_dirs() do
     case File.ls(Layout.dir(:process_hub)) do
       {:ok, entries} ->
-        Enum.any?(entries, fn entry ->
-          hub_id = String.to_atom(entry)
-
-          not MapSet.member?(running, hub_id) and
+        Enum.filter(entries, fn entry ->
+          Identificator.hub_id?(entry) and
             File.regular?(Layout.file(:process_hub, [entry, Layout.hub_registry_file()]))
         end)
 
       _ ->
-        false
+        []
     end
   end
 end

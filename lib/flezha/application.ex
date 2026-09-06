@@ -114,6 +114,7 @@ defmodule Flezha.Application do
         DurabilityTier.children() ++
         service_children() ++
         authz_children() ++
+        hub_starter_children() ++
         installer_children() ++
         transport_children() ++
         plugin_children() ++
@@ -217,6 +218,19 @@ defmodule Flezha.Application do
   defp authz_children do
     if Config.get(:authz_application_managed) do
       [Flezha.AuthZ.Supervisor]
+    else
+      []
+    end
+  end
+
+  # The declared set's hubs, given an owner off the boot path. After
+  # `authz_children()` because the namespace catalog is one of the two sources
+  # the declared set is derived from. Rides the auto-restore kill-switch: a
+  # node told not to bring things back by itself creates no hub at boot, and
+  # the readiness row reads the same switch.
+  defp hub_starter_children do
+    if Config.get(:auto_restore_enabled) do
+      [Flezha.Service.HubManager.Starter]
     else
       []
     end

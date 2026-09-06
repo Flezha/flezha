@@ -106,7 +106,10 @@ defmodule Flezha.Observability.TelemetryBridge do
     # The backoff table's two events: every wait a ladder takes and every reset
     # a success records, whichever site walks the row.
     [:flezha, :backoff, :wait] => {:flezha_convergence, :backoff_wait, :metric},
-    [:flezha, :backoff, :reset] => {:flezha_convergence, :backoff_reset, :metric}
+    [:flezha, :backoff, :reset] => {:flezha_convergence, :backoff_reset, :metric},
+    # Every hub owner's start failure, from the one `attempt_start/2` that
+    # reports it; `target` names the hub that would not come up.
+    [:flezha, :hub, :start_failed] => {:flezha_boot, :hub_start_failed, :event}
   }
 
   # Executed `[:flezha, …]` events with no bridge line yet. Every one is
@@ -129,7 +132,6 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :runner, :quota_refused],
     [:flezha, :schedule, :dormant],
     [:flezha, :schedule, :fired],
-    [:flezha, :schedule, :hub_start_failed],
     [:flezha, :schedule, :spawn_failed],
     [:flezha, :sdk, :dynamic],
     [:flezha, :sdk, :mailbox],

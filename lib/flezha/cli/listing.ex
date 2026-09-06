@@ -1,11 +1,14 @@
 defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
-  `flz list namespaces | runners | operatives` and `flz cluster status`.
+  `flz namespace list`, `flz list runners | operatives` and `flz cluster
+  status`. The first answers the durable catalog; the rest read live state.
   """
 
   alias Flezha.AuthZ.Namespace
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Convergence.Verdict
   alias Flezha.Partition
+  alias Flezha.Service.Cli.Authz
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Controller
   alias Flezha.Service.HubManager
@@ -13,58 +16,95 @@ defmodule Flezha.Service.Cli.Listing do
   # A group is exactly as healthy as its sickest member: an aggregate that
   # rounded up would hide the one partition that stopped serving its keys.
 
-  @doc "Lists all running namespaces."
-  def list_namespaces(output_format, _call) do
-    namespaces = Flezha.list_namespaces()
-    handle_list_output(namespaces, "running namespaces", output_format)
+  @doc """
+  Lists the namespaces in the durable catalog, each with whether this
+  controller runs a hub for it. Reading the running hub set alone left a
+  namespace created a moment earlier invisible until something connected to
+  it, and reported one that had been torn down as gone from the catalog.
+  """
+  def list_namespaces(output_format, call) do
+    running = MapSet.new(HubManager.get_running_namespaces())
+
+    call
+    |> visible_namespaces()
+    |> Enum.sort()
+    |> Enum.map(&%{namespace: &1, running: MapSet.member?(running, &1)})
+    |> render_list(output_format, %{
+      json: fn rows -> %{namespaces: rows} end,
+      empty: "No namespaces found.",
+      header: "Namespaces:",
+      columns: [
+        {"NAMESPACE", 35, & &1.namespace},
+        {"RUNNING", 0, &if(&1.running, do: "yes", else: "no")}
+      ]
+    })
   end
 
-  defp handle_list_output(items, item_name, output_format, context \\ nil) do
-    case {items, output_format} do
-      {items, "json"} ->
-        result =
-          case context do
-            nil -> %{String.to_atom(item_name) => items}
-            %{key: key, value: value} -> %{String.to_atom(item_name) => items, key => value}
-          end
+  # A bound caller sees the namespace it is bound to, an admin in `_system`
+  # sees them all, through the filter the other catalog-reading verbs apply.
+  # An unbound caller reaches this body only with enforcement off, where the
+  # whole surface is ungated and narrowing it to `_system` would hide the
+  # operator's own namespaces.
+  defp visible_namespaces(call) do
+    names = Enum.map(NamespaceStore.list(), & &1.name)
 
-        IO.puts(Jason.encode!(result))
-
-      {[], _} ->
-        message =
-          case context do
-            nil ->
-              "No #{item_name} found."
-
-            %{display: display, value: value} ->
-              "No #{item_name} found for #{display} '#{value}'."
-          end
-
-        IO.puts(message)
-
-      {items, _} ->
-        header =
-          case context do
-            nil ->
-              "#{String.capitalize(item_name)}:"
-
-            %{display: display, value: value} ->
-              "#{String.capitalize(item_name)} in #{display} '#{value}':"
-          end
-
-        IO.puts(header)
-        Enum.each(items, &IO.puts("  - #{&1}"))
+    case caller_filter(call) do
+      :all -> names
+      namespace -> Enum.filter(names, &(&1 == namespace))
     end
   end
 
-  @doc "Lists runners for a specific namespace."
+  defp caller_filter(%{context: %{namespace: _} = context}),
+    do: Authz.filter_namespace_for_list(context)
+
+  defp caller_filter(_unbound), do: :all
+
+  # Every `flz` listing answers three ways: a JSON document, one line saying
+  # there is nothing, or a padded table. Only the two texts and the columns
+  # differ, so the shape is written once and each listing declares its own.
+  # JSON first, so an empty list still renders a document rather than prose.
+  defp render_list(rows, "json", %{json: json}), do: IO.puts(Jason.encode!(json.(rows)))
+  defp render_list([], _format, %{empty: empty}), do: IO.puts(empty)
+
+  defp render_list(rows, _format, %{header: header, columns: columns}) do
+    IO.puts(header)
+    IO.puts("")
+    IO.puts(line(columns, fn {title, _width, _cell} -> title end))
+
+    Enum.each(rows, fn row ->
+      IO.puts(line(columns, fn {_title, _width, cell} -> cell.(row) end))
+    end)
+  end
+
+  # A column pads to its declared width. The last one declares 0, which
+  # `pad_trailing/2` leaves alone, so no line ends in trailing whitespace.
+  defp line(columns, text) do
+    [
+      "  "
+      | Enum.map(columns, fn {_title, width, _cell} = column ->
+          String.pad_trailing(text.(column), width)
+        end)
+    ]
+  end
+
+  @doc """
+  Lists runners for a specific namespace. Bulleted rather than tabular: a
+  runner id is the whole row, so there is no second column to line up.
+  """
   def list_runners(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
+    {:ok, runners} = Flezha.list_runners(namespace_display)
 
-    case Flezha.list_runners(namespace_display) do
-      {:ok, runners} when is_list(runners) ->
-        context = %{key: :namespace, value: namespace_display, display: "namespace"}
-        handle_list_output(runners, "runners", output_format, context)
+    case {runners, output_format} do
+      {_, "json"} ->
+        IO.puts(Jason.encode!(%{runners: runners, namespace: namespace_display}))
+
+      {[], _} ->
+        IO.puts("No runners found for namespace '#{namespace_display}'.")
+
+      _ ->
+        IO.puts("Runners in namespace '#{namespace_display}':")
+        Enum.each(runners, &IO.puts("  - #{&1}"))
     end
   end
 
@@ -77,12 +117,23 @@ defmodule Flezha.Service.Cli.Listing do
   def list_operatives(namespace, output_format, _call) do
     namespace_display = Namespace.or_default(namespace)
 
-    rows =
-      namespace_display
-      |> HubManager.operative_rows()
-      |> group_partition_rows()
-
-    render_operative_list(rows, namespace_display, output_format)
+    namespace_display
+    |> HubManager.operative_rows()
+    |> group_partition_rows()
+    |> render_list(output_format, %{
+      json: fn rows ->
+        %{namespace: namespace_display, operatives: Enum.map(rows, &operative_json/1)}
+      end,
+      empty: "No operatives found for namespace '#{namespace_display}'.",
+      header: "Operatives in namespace '#{namespace_display}':",
+      columns: [
+        {"OPERATIVE", 34, &to_string(&1.id)},
+        {"HEALTH", 10, &to_string(&1.health)},
+        {"PARTS", 8, &Context.label_or(&1[:partitions], "-")},
+        {"NODE", 22, &Context.label_or(&1.node, "(unplaced)")},
+        {"RUNNER", 0, &Context.label_or(&1.runner, "(none)")}
+      ]
+    })
   end
 
   @doc """
@@ -126,51 +177,14 @@ defmodule Flezha.Service.Cli.Listing do
     rows |> Enum.map(& &1.health) |> Enum.max_by(&Verdict.rank/1)
   end
 
-  defp render_operative_list(rows, namespace, "json") do
-    result = %{
-      namespace: namespace,
-      operatives:
-        Enum.map(rows, fn r ->
-          %{
-            id: r.id,
-            health: r.health,
-            runner: r.runner,
-            node: r.node && to_string(r.node)
-          }
-          |> Context.put_unless_nil(:partitions, r[:partitions])
-        end)
+  defp operative_json(row) do
+    %{
+      id: row.id,
+      health: row.health,
+      runner: row.runner,
+      node: row.node && to_string(row.node)
     }
-
-    IO.puts(Jason.encode!(result))
-  end
-
-  defp render_operative_list([], namespace, _) do
-    IO.puts("No operatives found for namespace '#{namespace}'.")
-  end
-
-  defp render_operative_list(rows, namespace, _) do
-    IO.puts("Operatives in namespace '#{namespace}':")
-    IO.puts("")
-
-    IO.puts([
-      "  ",
-      String.pad_trailing("OPERATIVE", 34),
-      String.pad_trailing("HEALTH", 10),
-      String.pad_trailing("PARTS", 8),
-      String.pad_trailing("NODE", 22),
-      "RUNNER"
-    ])
-
-    Enum.each(rows, fn r ->
-      IO.puts([
-        "  ",
-        String.pad_trailing(to_string(r.id), 34),
-        String.pad_trailing(to_string(r.health), 10),
-        String.pad_trailing(Context.label_or(r[:partitions], "-"), 8),
-        String.pad_trailing(Context.label_or(r.node, "(unplaced)"), 22),
-        Context.label_or(r.runner, "(none)")
-      ])
-    end)
+    |> Context.put_unless_nil(:partitions, row[:partitions])
   end
 
   @doc """

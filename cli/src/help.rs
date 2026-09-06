@@ -235,7 +235,7 @@ USAGE:
     flz namespace <COMMAND>
 
 COMMANDS:
-    list                                 List running namespaces
+    list                                 List the auth catalog, with a running-hub column
     create <name> [--X<quota>=<value>]   Create a namespace in the auth catalog
     delete <name>                        Delete a namespace from the auth catalog
     show <name>                          Show a namespace's quotas

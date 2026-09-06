@@ -441,22 +441,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     |> Enum.each(&File.rm/1)
   end
 
-  # A durable start of the inert stub child, through the same declared-set
-  # precommit every real start rides. The recorded runner keeps the alter hook
-  # on its log-and-continue path.
-  defp start_durable_stub(hub_id, operative_id) do
-    spec = %{
-      id: operative_id,
-      start:
-        {HubRegistryTestHelper.StubChild, :start_link,
-         [{@namespace, @recorded_runner, %{id: operative_id, factory_id: "market"}}]},
-      restart: :transient
-    }
-
-    assert %ProcessHub.StartResult{status: :ok} =
-             hub_id
-             |> ProcessHub.start_child(spec, awaitable: true, durable: true, timeout: 5_000)
-             |> ProcessHub.Future.await()
+  # The durable start every real start rides, from the fixture helper.
+  defp start_durable_stub(_hub_id, operative_id) do
+    :ok = HubRegistryTestHelper.start_durable(@namespace, operative_id)
   end
 
   # Through flezha's own declared reader — the seam Convergence.Intent uses.

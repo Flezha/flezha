@@ -9,6 +9,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Orchestrator
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Snapshot
   alias Flezha.Layout.Table, as: Layout
@@ -26,6 +27,53 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   # A force pass fires AT the drain deadline and its handover is async, so this
   # window is carved out of the drain timeout to let it land.
+
+  @start_failed [:flezha, :hub, :start_failed]
+
+  @doc """
+  The one wait every hub-creating path takes before it creates a hub: a
+  singleton hub started on a not-yet-clustered node diverges from its peers.
+  Bounded by the degrade-to-solo window, so a genuinely single-node deployment
+  still proceeds.
+
+  A plain function and not a process, because the on-demand path runs inside
+  the fleet manager's own call and has to answer that caller rather than defer
+  it. The boot-time starter waits once for its whole batch: cluster formation
+  is a property of the node, not of a namespace.
+  """
+  @spec await_cluster_gate() :: :ok | :timeout
+  def await_cluster_gate(), do: Orchestrator.await_cluster_ready()
+
+  @doc """
+  One attempt at starting a hub, for the owners that keep retrying one. `:ok`
+  once it is up; on any other answer `@start_failed` is emitted naming the
+  target and the reason, the failure is logged, and `:error` comes back.
+
+  The owner decides what to do with the verdict, because the retry timer is
+  the only part of that loop the owners do not share. The event is named here
+  rather than passed in: one failure, one event, whichever hub it was, with
+  `target` saying which — and an event resolved at the site that emits it is
+  one the bridge seam can find.
+  """
+  @spec attempt_start(term(), (-> term())) :: :ok | :error
+  def attempt_start(target, start) when is_function(start, 0) do
+    case start.() do
+      {:ok, _pid} -> :ok
+      {:ok, _pid, _info} -> :ok
+      {:error, reason} -> start_failed(target, reason)
+      other -> start_failed(target, other)
+    end
+  end
+
+  defp start_failed(target, reason) do
+    :telemetry.execute(@start_failed, %{count: 1}, %{
+      target: to_string(target),
+      reason: inspect(reason)
+    })
+
+    Logger.error("[hub] #{target} failed to start: #{inspect(reason)}; retrying")
+    :error
+  end
 
   def on_hub_started(hub_id, pid, namespace) do
     wait_until_hub_alive(hub_id)

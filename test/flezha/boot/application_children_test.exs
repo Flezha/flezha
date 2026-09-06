@@ -18,6 +18,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     authn_authz: [application_managed: true],
     convergence_health_enabled: true,
     schedules: [application_managed: true],
+    auto_restore_enabled: true,
     healthz_enabled: true,
     testnet_enabled: false
   ]
@@ -36,6 +37,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Runner.FleetManager,
     Flezha.Cluster.Orchestrator,
     Flezha.AuthZ.Supervisor,
+    Flezha.Service.HubManager.Starter,
     {Flezha.Transport.Server, :uds},
     Flezha.Service.PluginManager,
     Flezha.Plugin.Provider.Kafka.WorkerRegistry,
@@ -96,6 +98,18 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
 
     assert Enum.find_index(order, &(&1 == Flezha.Convergence.Snapshot)) <
              Enum.find_index(order, &(&1 == Flezha.Service.HubManager))
+  end
+
+  test "the hub starter follows AuthZ, because the catalog is one of its two sources" do
+    order = ids()
+
+    assert Enum.find_index(order, &(&1 == Flezha.AuthZ.Supervisor)) <
+             Enum.find_index(order, &(&1 == Flezha.Service.HubManager.Starter))
+  end
+
+  test "the hub starter is absent when auto-restore is off" do
+    Application.put_env(:flezha, :auto_restore_enabled, false)
+    refute Flezha.Service.HubManager.Starter in ids()
   end
 
   test "the testnet child is prepended, never appended" do

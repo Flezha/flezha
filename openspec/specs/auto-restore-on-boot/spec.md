@@ -269,10 +269,17 @@ not-yet-clustered node and then diverge from its peers. After the gate, the reco
 owns post-replay convergence (re-place, rebind, reissue) so a operative that replay started
 but did not bring to production is still healed.
 
+The gate SHALL be one seam that every hub-creating path waits on, and no path SHALL write its own wait: boot-time creation of the declared set, on-demand creation for a connecting runner, and the schedule hub's own creation SHALL all reach the cluster through it. Boot-time creation SHALL wait on the gate once for the whole declared set rather than once per namespace, because cluster formation is a property of the node and not of a namespace. The wait SHALL stay synchronous for the on-demand path, which runs inside the fleet manager's own call and must answer that caller rather than defer it.
+
 #### Scenario: Replay on a freshly-clustered node converges
 - **GIVEN** a controller that has just joined the cluster and replayed its registry
 - **WHEN** the reconciler runs after `post_recovery_replay`
 - **THEN** every replayed operative SHALL be driven to a producing state on a live runner, or marked `FAILED` if no runner can serve it
+
+#### Scenario: No hub is created before the gate clears
+- **GIVEN** a node whose cluster has not formed and whose degrade-to-solo window has not elapsed
+- **WHEN** boot-time creation of the declared set runs and a runner connects for a namespace
+- **THEN** neither path SHALL have created a hub until the gate clears, and both SHALL create theirs once it does
 
 ### Requirement: Boot ordering is gated on recovery completion, not on the replay hook
 
@@ -402,4 +409,117 @@ The controller entrypoint SHALL wait for the control socket, and SHALL then wait
 
 - **WHEN** the image `HEALTHCHECK` command runs against a controller whose hubs are still replaying
 - **THEN** it SHALL exit non-zero, and SHALL exit zero only once the readiness verdict is `:ready`
+
+### Requirement: A hub SHALL exist for every namespace this node has evidence for
+
+The controller SHALL create a hub at boot for every namespace it already holds evidence for, so that on-demand creation by a connecting runner is the exception rather than the only rule. The evidence SHALL be derived from exactly two sources, and no namespace name SHALL be written into that derivation:
+
+- every directory under the configured process-hub registry root that holds a hub registry file, mapped back to its namespace, which is durable state the node must recover;
+- every entry of the durable namespace catalog, which is operator intent.
+
+The union of the two is the node's **declared set**. A namespace in neither source SHALL still receive a hub when a runner connects for it, through the unchanged on-demand path.
+
+Boot-time creation SHALL go through the same start authority as every other hub, so a hub created at boot is indistinguishable from one created on connect in its registry backend, its recovery configuration, its hooks and its recovery-state seeding. It SHALL NOT be performed on the controller's boot sequence: the sequence SHALL complete without waiting for it, and the application SHALL start whether or not the declared set has been created.
+
+A declared hub that fails to start SHALL be retried on the shared backoff ladder, SHALL emit telemetry naming the namespace and the reason, and SHALL NOT crash the node or the creating process. The auto-restore kill-switch SHALL govern boot-time creation: when it is disabled the declared set SHALL be empty and no hub SHALL be created at boot.
+
+The registry-root walk that produces the first source SHALL be the same walk that decides whether an unstarted hub holds a registry, so the two readers of that root share one derivation rather than keeping two.
+
+#### Scenario: A restarted controller recovers before any runner attaches
+
+- **GIVEN** a controller whose disk holds a durable registry for a namespace with operatives, and no runner connected
+- **WHEN** the controller starts
+- **THEN** that namespace SHALL have a live hub, and its durable registry SHALL replay, without waiting for a runner to connect
+
+#### Scenario: A namespace in the catalog alone gets a hub
+
+- **GIVEN** a controller with an empty registry root and a catalog holding a namespace
+- **WHEN** the controller starts
+- **THEN** that namespace SHALL have a live hub
+
+#### Scenario: A clean state root has a non-empty declared set
+
+- **GIVEN** a controller booting against a clean state root, where the catalog seeds only the system namespace
+- **WHEN** the controller starts
+- **THEN** the declared set SHALL be non-empty and that namespace SHALL be given a hub, so readiness is answered over something rather than vacuously
+
+#### Scenario: A namespace nobody declared is still served on connect
+
+- **GIVEN** a namespace present in neither the registry root nor the catalog
+- **WHEN** a runner connects for it
+- **THEN** its hub SHALL be created on that connect, as before
+
+#### Scenario: A failed hub start does not take the node down
+
+- **GIVEN** a declared namespace whose hub start fails
+- **WHEN** the failure occurs
+- **THEN** the application SHALL remain started, the failure SHALL be retried on the shared backoff ladder with telemetry naming the namespace and the reason, and no process SHALL crash on it
+
+#### Scenario: The kill-switch turns off boot-time creation
+
+- **GIVEN** a controller with the auto-restore kill-switch disabled
+- **WHEN** it starts
+- **THEN** it SHALL create no hub at boot, and its readiness SHALL NOT be held for one
+
+### Requirement: A vacancy reclaim SHALL NOT destroy an unreplayed registry
+
+A hub SHALL be reclaimed as vacant only when this node holds none of its operatives, its declared set is empty, AND its recovery has reached a terminal state. Reclaiming a hub deletes its registry directory, so each of those three is a reason not to.
+
+This is what boot-time creation makes reachable, because it puts hubs exactly where runners are not, and a live-placement read is blind in both of the windows that follow. A hub does not load its durable registry into the live registry when it starts: the rows stay on disk until the reconcile runs, a whole reconcile grace later, and every live read answers "empty" until then. After the reconcile the rows are back but nothing has placed them, because placing an operative needs a runner and there is none. A reclaim keyed on live placement alone would therefore delete, seconds or a grace after boot, the durable state boot-time creation exists to recover.
+
+A hub whose recovery has settled and whose declared set is empty SHALL still be reclaimed, so a node whose fleet does not serve a namespace still leaves that namespace's cluster.
+
+#### Scenario: A replayed registry survives the reclaim
+
+- **GIVEN** a controller that created a hub at boot for a namespace whose registry is on disk, with no runner attached and the reconcile not yet run
+- **WHEN** the vacancy reclaim runs for that namespace
+- **THEN** the hub SHALL still be running and its registry directory SHALL still be on disk
+
+#### Scenario: A declared operative keeps its hub after recovery settles
+
+- **GIVEN** a controller whose hub was declared to hold an operative, with recovery settled, no runner to place it on and nothing running it
+- **WHEN** the vacancy reclaim runs for that namespace
+- **THEN** the hub SHALL still be running and its registry directory SHALL still be on disk
+
+#### Scenario: A settled empty hub is still reclaimed
+
+- **GIVEN** a hub whose recovery has reached a terminal state, declared to hold nothing, holding no operatives of this node and serving no runners
+- **WHEN** the vacancy reclaim runs for it
+- **THEN** the hub SHALL be stopped, as before
+
+### Requirement: Readiness SHALL hold until every declared namespace has a hub
+
+The readiness precondition table SHALL carry a row that is unmet while boot-time creation of the declared set has not completed, so a controller that has not yet created its hubs is not reported as ready. It SHALL be unmet before that creation has run at all, which is the window in which readiness would otherwise be answered over an empty hub set. The row SHALL hold the verdict at `:recovering`.
+
+The row SHALL be decided live on every read, so a hub that starts on a later retry SHALL flip the node to ready with no restart and no second boot. It SHALL fail closed with the rest of the table: a fact that cannot be read counts as unmet, never as met. It SHALL be answerable while the supervision tree is still coming up, so reading it SHALL NOT wait on the creating process, whose own first act is to wait on the cluster gate for up to the formation window.
+
+What the row answers SHALL be whether the declared set has been created, not whether every hub is still running. A hub the node later reclaims because it serves none of that namespace's operatives is a deliberate teardown: nothing brings such a hub back, so a row that refused for it would hold a healthy controller out of rotation for the rest of its life.
+
+The row SHALL read the same kill-switch that governs boot-time creation, so a node that creates no hubs at boot is not held unready waiting for hubs it will never create.
+
+The health verdict SHALL NOT be derived from this row. A node holding readiness for a missing hub SHALL keep answering its health endpoint as before, so a controller that is retrying is not restarted out from under itself.
+
+#### Scenario: A declared namespace with no hub is not ready
+
+- **GIVEN** a controller whose boot sequence has completed and whose declared set holds a namespace it has not created a hub for
+- **WHEN** the readiness verdict is read
+- **THEN** it SHALL be `:recovering`, and the rows SHALL name the declared-hub precondition as unmet
+
+#### Scenario: A late hub flips the node to ready with no restart
+
+- **GIVEN** a controller held unready by a declared namespace whose hub start failed
+- **WHEN** a retry starts that hub
+- **THEN** the readiness verdict SHALL become `:ready` on the next read, with no restart and no further boot step
+
+#### Scenario: Readiness refuses while health succeeds
+
+- **GIVEN** a controller whose declared hub has not started
+- **WHEN** the health endpoint and the readiness endpoint are queried on the same tick
+- **THEN** the health endpoint SHALL answer success and the readiness endpoint SHALL answer failure naming the unmet declared-hub precondition
+
+#### Scenario: A hub reclaimed as vacant does not hold the node unready
+
+- **GIVEN** a controller that created its declared set at boot, and one of those namespaces whose hub it has since reclaimed because it serves none of that namespace's operatives
+- **WHEN** the readiness verdict is read
+- **THEN** that namespace SHALL NOT hold it, and the node SHALL stay ready
 

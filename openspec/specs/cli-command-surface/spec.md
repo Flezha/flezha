@@ -406,3 +406,35 @@ A refused verb SHALL exit with a reason that halts the calling process non-zero 
 - **THEN** the caller's stderr SHALL carry the rendered sentence and no language-level
   exit banner, and the exit code SHALL be unchanged
 
+### Requirement: `flz namespace list` SHALL answer from the namespace catalog
+
+`flz namespace list` SHALL answer from the durable namespace catalog, the same store `flz namespace create`, `delete`, `show` and `set-quota` write, and SHALL report for each namespace whether a hub for it is running on this controller. A namespace created a moment earlier SHALL therefore appear, whether or not anything is running in it.
+
+The verb's declared row SHALL be unchanged: the same verb name, the same action and the same scope it binds today. Only the data the body reads changes, so no operator gains or loses the ability to run it.
+
+A caller that is not an admin in the system namespace SHALL see only the namespace it is bound to, through the same filter the other catalog-reading verbs use.
+
+The command's help text SHALL describe what it now answers, rather than naming running namespaces only.
+
+#### Scenario: A created namespace is listed
+
+- **WHEN** an operator runs `flz namespace create billing` and then `flz namespace list`
+- **THEN** `billing` SHALL appear in the output
+
+#### Scenario: The output says what is running
+
+- **GIVEN** a catalog holding two namespaces, one of which has a live hub on this controller
+- **WHEN** an operator runs `flz namespace list`
+- **THEN** both SHALL appear, and the output SHALL distinguish the one with a live hub from the one without
+
+#### Scenario: A namespace-scoped caller sees its own namespace only
+
+- **GIVEN** a caller bound to `team-orders` and a catalog holding several namespaces
+- **WHEN** it runs `flz namespace list`
+- **THEN** the output SHALL name `team-orders` and no other namespace
+
+#### Scenario: The verb's authorization is unchanged
+
+- **WHEN** the declared verb row for `flz namespace list` is read after this change
+- **THEN** its verb name, action and scope SHALL be the ones it bound before, so a caller authorized for it before is authorized for it after
+

@@ -26,10 +26,15 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
 2. With a remote backend, `Flezha.State.DurabilityTier.Hydrator.hydrate_on_boot/0` runs as a
    one-shot child **ahead of `HubManager`** (control-plane stores, then every registry cspec):
    a hub opens `registry.dets` at start, so a cspec landing later is invisible to the reconcile.
-3. `Flezha.Service.HubManager` starts each namespace hub with
+3. `Flezha.Service.HubManager.Starter` gives a hub to every namespace this node already has
+   evidence for — a registry directory under the registry root, or an entry in the namespace
+   catalog — so a restarted controller replays its durable registry without waiting for a
+   runner to connect. It runs beside the boot sequence rather than inside it, because it waits
+   for cluster formation first. Each hub starts through `Flezha.Service.HubManager` with
    `registry_backend: {:durable_ets, [path: …]}` (reads from ETS, writes mirrored to disk
    synchronously) and `auto_recovery: [reconcile_grace_ms:, reconcile_interval_ms:,
    remote_manifest:]`, then `Flezha.Boot.RecoveryHooks.register/1` forwards the recovery hooks.
+   A namespace in neither source still gets its hub when a runner connects for it.
 4. `reconcile_grace_ms` after coordinator start ProcessHub runs the first reconcile round, then
    at most one per `reconcile_interval_ms`. A round takes the hub's **declared list** as the
    candidate set: it starts declared children observed running nowhere, stops running durable
@@ -46,7 +51,22 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
    folds the verdict live from its precondition table, so `/healthz` reports
    `recovering` / `restoring_registry` until the registry is loaded and its Operatives bound,
    and `/readyz`, `flz boot await` and the image `HEALTHCHECK` all answer not-ready for that
-   whole window — then flip on their own once the hub reaches `:normal`, with no restart.
+   whole window — then flip on their own once the hub reaches `:normal`, with no restart. The
+   `declared_hubs_started` row holds the same window open until step 3 has finished, so a node
+   whose hubs do not exist yet is never reported ready over an empty hub set.
+
+## A stopped namespace comes back
+
+The catalog is operator intent, so a namespace whose hub was torn down is given one again on
+the next controller start while its catalog entry stands. `flz namespace delete <name>` is what
+makes a stop permanent. A clean state root therefore holds one `_system` hub and its registry
+directory after the first boot.
+
+The reverse does not happen mid-life: a hub this controller reclaims because it serves none of
+that namespace's operatives stays down until the next start, and does not hold readiness. The
+reclaim will not take a hub that is still recovering or that was declared to hold operatives —
+it deletes the registry directory, and boot-time creation puts hubs exactly where no runner has
+placed anything yet.
 
 ## Safety by scenario
 

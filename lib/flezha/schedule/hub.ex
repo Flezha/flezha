@@ -21,7 +21,6 @@ defmodule Flezha.Schedule.Hub do
 
   require Logger
 
-  alias Flezha.Cluster.Orchestrator
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.SafeCall
@@ -126,10 +125,10 @@ defmodule Flezha.Schedule.Hub do
 
   @impl true
   def handle_continue(:bootstrap, state) do
-    # Off the boot path on purpose: `await_cluster_ready/0` blocks for up to
-    # the formation timeout, and creating the hub on a not-yet-clustered node
+    # Off the boot path on purpose: the cluster gate blocks for up to the
+    # formation timeout, and creating the hub on a not-yet-clustered node
     # would diverge it from its peers.
-    _ = Orchestrator.await_cluster_ready()
+    _ = HubManager.await_cluster_gate()
     {:noreply, start_hub(state)}
   end
 
@@ -145,20 +144,19 @@ defmodule Flezha.Schedule.Hub do
 
   ## ----- private -----
 
+  # Never crashes: this owner sits under the application's one_for_one
+  # supervisor, so a restart loop would take the controller down. The failure
+  # telemetry and the log line are the body every hub owner shares.
   defp start_hub(state) do
-    case HubManager.start_schedule_hub() do
-      {:ok, _pid} ->
+    case HubManager.attempt_start(
+           HubManager.schedule_hub_id(),
+           &HubManager.start_schedule_hub/0
+         ) do
+      :ok ->
         assert_all()
         arm_reassert(state)
 
-      {:error, reason} ->
-        :telemetry.execute([:flezha, :schedule, :hub_start_failed], %{count: 1}, %{
-          reason: inspect(reason)
-        })
-
-        # Never crash: this owner sits under the application's one_for_one
-        # supervisor, so a restart loop would take the controller down.
-        Logger.error("[schedule] schedule hub failed to start: #{inspect(reason)}; retrying")
+      :error ->
         arm_timer(state, :retry_hub, Backoff.arm(:hub_retry, 1, :schedule_hub), :retry_hub)
     end
   end

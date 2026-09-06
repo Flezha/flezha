@@ -51,6 +51,41 @@ namespace B form independent clusters; "peer controllers" always means *peers se
 namespace*, and a namespace dies when its last controller leaves. The cron-schedule hub
 `:flz_schedules` is separate: `ColdSwap`, `:ets` registry, no auto-recovery, no hooks.
 
+### When a hub is created
+
+Two paths, and both wait on `HubManager.await_cluster_gate/0` first — a singleton
+hub started on a not-yet-clustered node diverges from its peers.
+
+At boot, `HubManager.Starter` gives a hub to every namespace in the **declared
+set**, which is `HubManager.declared_namespaces/0` and is derived from exactly
+two sources, with no namespace name written into the derivation:
+
+- every directory under `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` holding a
+  `registry.dets`, mapped back through `Identificator.namespace_from_hub/1` —
+  durable state this node must recover. It is the same walk that decides
+  whether an unstarted hub holds a registry, so the two readers of that root
+  share one derivation;
+- every entry of the namespace catalog (`AuthZ.NamespaceStore`) — operator
+  intent. A fresh catalog seeds `_system`, so the set is never empty and no
+  surface answers a question about hubs over nothing.
+
+The starter waits on the gate once for the whole batch, retries a failure on
+the `:hub_retry` ladder, emits `[:flezha, :hub, :start_failed]` per failure and
+never crashes. `FLEZHA_AUTO_RESTORE_ENABLED=false` empties the declared set, so
+the node creates no hub at boot.
+
+On connect, `FleetManager.Session.ensure_hub/1` still creates a hub for a
+namespace in neither source — the fallback for a namespace nobody declared,
+rather than the only rule.
+
+The convergence loop's vacancy reclaim (`HubManager.stop_hub_if_vacant/1`)
+wipes the registry directory, so it refuses a hub that is still recovering or
+whose declared set is non-empty. Both windows are ones a live-placement read is
+blind in: before the reconcile the rows are on disk and the live registry is
+empty, and after it the rows are back with nothing placed, because placing an
+operative needs a runner. A settled hub declared to hold nothing is still
+reclaimed.
+
 `HubManager.process_hub/1` builds the spec:
 
 ```elixir
