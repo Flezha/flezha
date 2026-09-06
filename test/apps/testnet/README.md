@@ -62,6 +62,35 @@ controller starts the testnet as an Erlang Port in `:dev` and `:test` and
 stdin is the shutdown channel there, not a keyboard. Force it either way with
 `FLEZHA_TESTNET_MANUAL=1` or `=0`.
 
+## Output
+
+A socket connecting on `/out` is treated as a Flezha sink reporting what an
+operative emitted. Its frames are printed and nothing is sent back: no acks, no
+generators, and none of the manual input above. That is what lets one testnet
+process be both ends of a hand-driven run.
+
+```
+Testnet client connected on /out
+out < {"total":3}  [channel=sums flz.entity=order-7 flz.seq=41]
+out < {"bare":true}
+```
+
+Both wire shapes a sink might use are read. An envelope carries the payload and
+its metadata:
+
+```json
+{"message": "{\"total\":3}", "encoding": "utf8", "metadata": {"channel": "sums"}}
+```
+
+`encoding` is `utf8` when absent; `base64` is decoded, and printed as
+`<N bytes>` when the bytes are not text. Anything that is not an envelope, a
+bare payload included, is printed as it arrived.
+
+The metadata matters more than it looks: a websocket text frame has no header
+slot, so an envelope is the only place the `channel` tag and the `flz.entity` /
+`flz.seq` / `flz.key` identity stamps can survive the hop. A bare frame is
+readable but carries no way to dedupe or order what arrived.
+
 ## Subscriptions
 
 The server speaks two subscription dialects on the same socket.

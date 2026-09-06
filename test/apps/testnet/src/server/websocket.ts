@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import ServerContract, { ConnectedSocket, InputSockets } from './server_contract';
 import { ConnectionRole, requestPath, roleFor } from './connection_paths';
+import { formatOutputFrame } from './output_frame';
 import { Generator, GeneratorSubscription } from '../generator/generator_contract';
 import { loadGenerators } from '../generator/generator_loader';
 import { loadTestnetConfig, TestnetConfig } from './testnet_config';
@@ -90,6 +91,14 @@ export default class ServerImpl implements ServerContract, InputSockets {
   handle_message(ws: WebSocket, message: string) {
     const raw = message.toString();
     const connection = this.connections.get(ws);
+
+    // An output socket is a sink reporting what an operative emitted: print it
+    // and stop. Before the router, so a payload that happens to look like a
+    // subscription frame cannot start generators on the sink's own socket.
+    if (connection?.role === 'output') {
+      console.log(formatOutputFrame(raw));
+      return;
+    }
 
     // Kraken-v2 subscriptions first: they are what the reconciling WS source
     // sends, and a partitioned member's applied set is exactly these frames.
