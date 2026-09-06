@@ -59,6 +59,9 @@ requirement is a gate rather than an intention.
 
 ## Reporting
 
-- After every finished item, unprompted: what landed, net production lines,
-  gates, what is next.
-- Hourly while work is in flight: the open work table.
+`INVARIANTS.md` sets the cadence: five lines when a row closes, one line every
+thirty minutes while a row is in flight, and an escalation the moment something
+is the maintainer's call. Every number is derived from `wip/status.py` or git,
+never retyped.
+
+Name here anything this campaign wants on top of that, and who reads it.

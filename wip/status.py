@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Derive the campaign's numbers from the boards. Never retype a count.
 
-    python3 wip/status.py            counts, net lines, what is next
+    python3 wip/status.py            counts, what is in flight, what closed
     python3 wip/status.py --check    also exit non-zero if a board is malformed
+    python3 wip/status.py --report   the same, as a block to paste to a human
 
-Reads WORK.md, DONE.md and NEW-ISSUES.md as they are, so the boards stay
-human-written: a table row is a row, and a heading is a heading.
+    watch -n 60 python3 wip/status.py    live, from another terminal
+
+Reads WORK.md, DONE.md, NEW-ISSUES.md and STATE.md as they are, so the boards
+stay human-written: a table row is a row, and a heading is a heading. Every
+number a report carries comes from here, so a report is derived rather than
+remembered and cannot drift from the files the next session reads.
 """
 import re
 import sys
@@ -47,8 +52,51 @@ def outside_fences(path):
     return "\n".join(keep)
 
 
+def state_now():
+    """The live row, phase and worker, from STATE.md's Now block."""
+    path = WIP / "STATE.md"
+    if not path.exists():
+        return {}
+    out = {}
+    for line in path.read_text().splitlines():
+        m = re.match(r"- \*\*(Current item|Phase|Worker|Critic)\*\*: *(.*)", line)
+        if m:
+            out[m.group(1).lower().replace(" ", "_")] = m.group(2).strip()
+        m2 = re.match(r"\*\*Campaign\*\*: *`?([^`·]+)`? *·.*\*\*Updated\*\*: *(.*)", line)
+        if m2:
+            out["campaign"] = m2.group(1).strip()
+            out["updated"] = m2.group(2).strip()
+    return out
+
+
+def first_sentence(text, limit=72):
+    text = re.sub(r"`", "", text)
+    cut = text.split(". ")[0]
+    return cut if len(cut) <= limit else cut[: limit - 1] + "…"
+
+
+def render_report(now, work, done, net, open_issues, nxt):
+    """The same numbers as a block a human can read, for pasting into a chat."""
+    left = sum(1 for r in work if r[3].strip("`").lower() != "done")
+    lines = [
+        f"**{now.get('campaign', 'campaign')}** · {len(done)} closed · {left} left"
+        f" · net production {net:+d} lines · {open_issues} found and not fixed",
+        "",
+        f"In flight: {first_sentence(now.get('current_item', 'none'))}"
+        f" ({first_sentence(now.get('phase', '?'), 40)})",
+    ]
+    if done:
+        lines += ["", "| Closed | Row | Verdict | Commit | Prod lines |", "|---|---|---|---|---|"]
+        for r in done[:5]:
+            lines.append(f"| {r[0]} | {r[1]} | {r[3]} | {r[4]} | {r[5]} |")
+    if nxt:
+        lines += ["", f"Next: {first_sentence(nxt[1] + ' ' + nxt[2])}"]
+    return "\n".join(lines)
+
+
 def main():
     check = "--check" in sys.argv
+    report = "--report" in sys.argv
     problems = []
 
     work = rows(WIP / "WORK.md", 6)
@@ -83,7 +131,27 @@ def main():
     print(f"found     {open_issues} open, {fixed_issues} fixed during the campaign")
 
     nxt = next((r for r in work if r[3].strip("`").lower() == "todo"), None)
-    print(f"next      {nxt[1] + ' ' + nxt[2] if nxt else 'nothing queued'}")
+    print(f"next      {first_sentence(nxt[1] + ' ' + nxt[2]) if nxt else 'nothing queued'}")
+
+    now = state_now()
+    if now:
+        print()
+        print(f"campaign  {now.get('campaign', '?')}  ·  board updated {now.get('updated', '?')}")
+        print(f"in flight {first_sentence(now.get('current_item', 'none'))}")
+        print(f"          phase {first_sentence(now.get('phase', '?'), 60)}")
+        if now.get("worker", "none").lower() != "none":
+            print(f"          worker {first_sentence(now['worker'], 60)}")
+
+    if done:
+        print()
+        print("closed, newest first")
+        for r in done[:5]:
+            print(f"  {r[0][:10]:<10} {r[1][:18]:<18} {r[3][:16]:<16} "
+                  f"{r[4].strip('`')[:10]:<10} {r[5][:14]:>14}")
+
+    if report:
+        print()
+        print(render_report(now, work, done, net, open_issues, nxt))
 
     if problems:
         print("\nmalformed:")

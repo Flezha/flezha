@@ -46,6 +46,35 @@ after it learns to scroll past the noise.
   add to a noisy run: clean it, or make the noise fail the build, before the
   work that needed the run.
 
+## Say what happened, from the files
+
+The work is not done in private. A session reports as it goes, and the reporting
+costs almost nothing next to the verification it is reporting on.
+
+- **After every row closes**, unprompted, at most five lines: the row and its
+  verdict, the one command that proved it, the commit, net production lines,
+  and what is next.
+- **Every thirty minutes while a row is in flight**, one line: row, phase,
+  elapsed, and what the worker last wrote. Silence for an hour is a defect in
+  the reporting, not a sign of progress.
+- **Immediately** when something is blocked or a decision is the maintainer's,
+  with the options, the cost of each and a recommendation. Then take the next
+  row: waiting is not a state this work has.
+
+**A report is derived, never composed.** Every number in it comes from
+`python3 wip/status.py` or from git, and every verdict comes from the row
+already written into `DONE.md`. Nothing is retyped from memory, because a
+remembered count is how a report starts disagreeing with the files the next
+session reads.
+
+The same view is on disk for anyone who wants it without asking, and it costs a
+running session nothing at all:
+
+```
+watch -n 60 python3 wip/status.py     # counts, what is in flight, what closed
+tail -f wip/LOG.md                    # the running narrative
+```
+
 ## Less code, not more
 
 The goal is a smaller and simpler system. Every item reports production lines
