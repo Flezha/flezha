@@ -89,6 +89,10 @@ defmodule Flezha.MixProject do
       # a hex requirement, unless FLEZHA_PROCESS_HUB_PATH names a local
       # checkout — see process_hub_dep/0.
       {:process_hub, process_hub_dep()},
+      # process_hub declares elector `runtime: false`, which keeps it out of
+      # every release. Declared here so the namespace hubs' leader election
+      # reaches the assembled release.
+      {:elector, "~> 0.3.4"},
       {:blockade, "~> 0.2.2"},
       # fresh 0.4.4's released mix.exs declares charlist elixirc_paths,
       # which Mix >= 1.20 rejects; upstream is unresponsive. Pinned to the
