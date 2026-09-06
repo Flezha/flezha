@@ -149,6 +149,23 @@ argument they do not recognise, because one blocks for as long as its option
 says and the other deletes state. Every other verb passes an unrecognised word
 on and answers with its defaults.
 
+### When a token expires
+
+Nothing stops except the CLI. A runner's identity is its connection handshake,
+not a token, so operatives and runner connections carry on; an expired operator
+credential means gated verbs refuse, and that is all.
+
+There is no automatic renewal. Issue a replacement before the current one
+lapses:
+
+```sh
+flz token issue admin _system admin --ttl 2592000
+```
+
+If your only admin token does lapse, `flz token issue` is itself gated. Recover
+with `flz auth rebootstrap` under [Recovery](#recovery), which needs a stopped
+Controller.
+
 ## Namespaces and quotas
 
 Namespaces are the tenancy boundary: every Operative, state file, audit record

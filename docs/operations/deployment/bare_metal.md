@@ -16,22 +16,23 @@ make build-release
 That produces `_build/prod/rel/flezha/`, holding `bin/flzvm` (the controller)
 and `bin/flz` (the CLI). Every command below runs from the project root.
 
-[`variables.md`](variables.md) lists what a deploy cannot omit. Four of them
-matter on a single machine, and the controller will not work without them:
+[`variables.md`](variables.md) lists what a deploy cannot omit. On one machine
+exactly two of them have no usable default:
 
 | Variable | Why it is not optional here |
 |---|---|
 | `FLEZHA_DURABILITY_BACKEND` | A prod release refuses to boot with it unset. `none` is the local-only value. |
-| `RELEASE_COOKIE` | Without it the release starts with distribution off, and every `flz` verb fails. |
-| `FLEZHA_NODE_NAME`, `FLEZHA_NODE_HOST` | Together they form the node name the CLI reaches. |
+| `RELEASE_COOKIE` | Without it the release starts with distribution off, and every `flz` verb fails. There is deliberately no committed fallback. |
+
+Everything else has a default that works here. The node name and host, which
+together form the node the CLI reaches, default to the release name and
+`127.0.0.1` in `rel/env.sh.eex`; set `FLEZHA_NODE_NAME` and `FLEZHA_NODE_HOST`
+when you want something else. The socket directory resolves itself, as below.
 
 ## Start the controller
 
 ```bash
-FLEZHA_DURABILITY_BACKEND=none \
-RELEASE_COOKIE=flezha_local \
-FLEZHA_NODE_NAME=flezha \
-FLEZHA_NODE_HOST=127.0.0.1 \
+FLEZHA_DURABILITY_BACKEND=none RELEASE_COOKIE=flezha_local \
   _build/prod/rel/flezha/bin/flzvm start
 ```
 
@@ -44,12 +45,11 @@ to attach is in there:
 
 ## Point the CLI at it
 
-`flz` reaches the controller over Erlang distribution, so it needs the same
-cookie and node name the controller was started with. Export them once in the
-shell you operate from:
+`flz` runs the controller's own `flzvm` underneath, so it resolves the node the
+same way the controller did and needs only the cookie:
 
 ```bash
-export RELEASE_COOKIE=flezha_local FLEZHA_NODE_NAME=flezha FLEZHA_NODE_HOST=127.0.0.1
+export RELEASE_COOKIE=flezha_local
 ```
 
 Without the cookie every verb stops before it starts, and says so:
