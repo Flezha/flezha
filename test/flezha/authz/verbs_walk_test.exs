@@ -93,7 +93,28 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
   test "a public verb is served with no token" do
     assert capture_io(fn -> CliManager.boot_status([]) end) =~ "recovery_state"
-    assert capture_io(fn -> CliManager.boot_await(10, []) end) =~ "boot await"
+
+    # `boot await` answers the readiness verdict, so on a node a neighbouring
+    # suite left mid-recovery it exits `:cli_error` naming the unmet row. That
+    # is the verb being SERVED; what a missing credential would produce is a
+    # refusal, and this asserts which of the two happened rather than pinning a
+    # verdict this test is not about.
+    {{_result, out}, err} =
+      with_io(:stderr, fn ->
+        with_io(fn ->
+          try do
+            CliManager.boot_await(10, [])
+          catch
+            # `catch_exit/1` raises when the call returns normally, and either
+            # outcome is legitimate here.
+            :exit, reason -> reason
+          end
+        end)
+      end)
+
+    served = out <> err
+    assert served =~ "boot await"
+    refute served =~ "refused"
   end
 
   test "an authorized act leaves exactly one durable record with the row's declared source",

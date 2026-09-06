@@ -13,7 +13,7 @@ run from the project root.
 |---|---|
 | `FLEZHA_DURABILITY_BACKEND` | A prod release refuses to boot with it unset (`Flezha.State.DurabilityTier.children/0`). `none` is the explicit local-only opt-out — byte-identical to a build without the remote tier, reported as `durability: local_only` on `/healthz`. `postgres`, `s3` and `local_path` enable the tier and need their `FLEZHA_DURABILITY_PG_*`, `FLEZHA_DURABILITY_S3_*` or `FLEZHA_DURABILITY_PATH` family. Any other spelling resolves to `none`. See [`remote_durability_tier.md`](remote_durability_tier.md). |
 | `RELEASE_COOKIE` | Without it `rel/env.sh.eex` starts the release with `RELEASE_DISTRIBUTION=none`: the node cannot cluster and every `flz` verb fails, because the CLI reaches the BEAM over distribution. There is no source-committed fallback. |
-| `FLEZHA_SOCKET_FILES_PATH` | The directory runners attach through; share it with every runner container on the node. The image's readiness check and the entrypoint both key off `<path>/runner_control_channel.sock`. |
+| `FLEZHA_SOCKET_FILES_PATH` | The directory runners attach through; share it with every runner container on the node. The entrypoint waits for `<path>/runner_control_channel.sock` as the transport being bound, before it can ask for the readiness verdict. |
 | `FLEZHA_NODE_NAME`, `FLEZHA_NODE_HOST` | Form the release node name `RELEASE_NODE=<name>@<host>` (`rel/env.sh.eex`); in Kubernetes the host is the pod IP. |
 | `FLEZHA_STATE_DIR`, `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_DLQ_DIR`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_SCHEDULE_DIR`, `FLEZHA_AUDIT_DIR`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_LOG_PATH` | Every durable path defaults to `app_data/*` under the release root — ephemeral in a container and unwritable under a read-only root filesystem. Point each at a mounted volume owned by uid 1000. |
 | `FLEZHA_HEALTHZ_ENABLED` | `/healthz` is off by default; an orchestrator probe needs it on (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `0.0.0.0`). |
@@ -193,14 +193,17 @@ Stage 2 never runs cargo. `bin/flzvm` is the release binary (renamed from
 `ENTRYPOINT` is `tini`; `CMD` is `/usr/local/bin/controller-entrypoint.sh`,
 which removes a stale control socket left on a reused volume, starts
 `bin/flzvm start`, waits up to `FLEZHA_RESTORE_WAIT_TIMEOUT_S` (60) for
-`runner_control_channel.sock` to appear, then waits on the BEAM. It exits 1 if
-the BEAM dies first or the socket never appears — which is how a boot refusal,
-such as an unset `FLEZHA_DURABILITY_BACKEND`, surfaces to the orchestrator. On
+`runner_control_channel.sock` to appear — the transport being bound, and the
+precondition for issuing any control RPC — then spends what is left of the same
+budget on `flz boot await`, which returns only when the readiness verdict is
+`:ready`. It exits 1 if the BEAM dies first, if the socket never appears, or if
+the controller never reports ready — which is how a boot refusal, such as an
+unset `FLEZHA_DURABILITY_BACKEND`, surfaces to the orchestrator. On
 SIGTERM or SIGINT it runs
 `flz controller stop --timeout-ms $FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`
 (quiesce, drain, finalise); when `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` is
 `false`/`0`/`no`/`off` it instead SIGTERMs the BEAM directly, bypassing the
-coordinator. A `HEALTHCHECK` probes the control socket every 10 s after a 120 s
+coordinator. A `HEALTHCHECK` runs `flz boot await --timeout 0` every 10 s after a 120 s
 start period.
 
 The entrypoint writes and reads no cluster-wide snapshot file. Restart survival

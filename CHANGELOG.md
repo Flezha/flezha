@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Changed — the controller says "ready" once, and not through the health endpoint
+
+Readiness is one verdict folded from a declared table of preconditions, and three
+surfaces read it rather than each deciding for itself: `flz boot status` prints the
+verdict and every precondition behind it, `flz boot await` blocks on the verdict
+instead of iterating hubs, and `GET /readyz` serves it. `flz boot await` no longer
+reports success when no namespace hub exists yet, and a `--timeout 0` evaluates once.
+
+The container layer follows. The image `HEALTHCHECK` runs `flz boot await --timeout 0`
+instead of testing for the control socket, and the entrypoint waits for the socket as
+the transport being bound before waiting on the readiness verdict. `/healthz` is
+unchanged in every verdict, status code and body field.
+
+The boot sequence no longer blocks on hub recovery, and readiness is no longer latched
+at boot: a controller whose bounded replay wait elapsed becomes ready when its hubs
+reach `:normal`, with no restart. `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` now bounds only the
+cluster-formation wait for a connecting runner.
+
+`Flezha.Convergence.RecoveryGate` is the one module that decides whether a hub is still
+recovering, as its specification already required.
+
 ### Changed — a counted fact is declared once, and every surface derives
 
 Every data-plane liveness counter is now one row that says what it is, how it

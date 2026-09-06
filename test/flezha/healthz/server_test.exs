@@ -31,8 +31,8 @@ defmodule Flezha.Healthz.ServerTest do
     previous_port = Application.get_env(:flezha, :healthz_port)
     Application.put_env(:flezha, :healthz_port, 0)
 
-    # Clear recovery states from prior tests so `collect_recovery_states/0`
-    # starts with a clean slate. The healthz reader now uses Snapshot directly.
+    # Clear recovery states from prior tests so the recovery summary starts with
+    # a clean slate. The reader samples it through `RecoveryGate`.
     Snapshot.reset_recovery_states()
 
     # A fresh sensor mark, so the sensor-freshness reader is neutral for every
@@ -662,6 +662,18 @@ defmodule Flezha.Healthz.ServerTest do
       {status, _headers, body} = get(port, "/readyz")
       assert status == 200
       assert Jason.decode!(body)["status"] == "ready"
+    end
+
+    # A row added without a reader, or a reader inventing a key, fails here; the
+    # `flz boot status` half of the same pair is `CliManagerBootTest`.
+    test "the body's preconditions are exactly the rows the table declares", %{port: port} do
+      Readiness.publish_sequence_complete()
+
+      {_status, _headers, body} = get(port, "/readyz")
+      {_verdict, rows} = Readiness.verdict()
+
+      assert Jason.decode!(body)["preconditions"] |> Map.keys() |> Enum.sort() ==
+               rows |> Enum.map(&to_string(&1.key)) |> Enum.sort()
     end
 
     test "an unreloaded durable registry → 503 naming it, /healthz 200 restoring",

@@ -105,13 +105,13 @@ ensure_image() {
   pass "prod image $IMAGE"
 }
 
-# The control socket is the release's own readiness signal — the same one the
-# image HEALTHCHECK and the entrypoint's restore-wait key on.
+# The controller's own readiness verdict — the same one the image HEALTHCHECK
+# and the entrypoint wait on. A bound control socket is NOT it: it appears
+# before any hub has replayed anything.
 await_ready() { # await_ready <container>
   local deadline=$(($(date +%s) + READY_TIMEOUT_S))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if docker exec "$1" test -S /flezha/app_data/sockets/runner_control_channel.sock \
-      >/dev/null 2>&1; then
+    if docker exec "$1" /flezha/bin/flz boot await --timeout 0 >/dev/null 2>&1; then
       return 0
     fi
     if [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" != "true" ]; then

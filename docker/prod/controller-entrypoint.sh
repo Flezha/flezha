@@ -6,8 +6,8 @@
 #
 # Responsibilities:
 #   1. Optionally launch the testnet WS server.
-#   2. Start the controller (bin/flzvm start) in the background and wait
-#      for it to bind its control socket.
+#   2. Start the controller (bin/flzvm start) in the background, wait for it
+#      to bind its control socket, then wait for it to report ready.
 #   3. Trap SIGTERM/SIGINT and delegate to `flz controller stop`, which
 #      drives the BEAM's shutdown coordinator.
 #
@@ -37,7 +37,7 @@ fi
 CONTROL_SOCKET="$SOCKET_DIR/runner_control_channel.sock"
 
 # Remove the controller's stale control socket from any previous container that
-# wrote to this same named volume. Without this, the readiness wait below
+# wrote to this same named volume. Without this, the transport wait below
 # matches the leftover file before the new BEAM has bound to it. Only the
 # controller's own sockets are touched — SDK-owned sockets (e.g.
 # primary_stream_*) are held open by external processes and must not be removed.
@@ -49,10 +49,11 @@ fi
 /flezha/bin/flzvm start &
 AGENT_PID=$!
 
-# Wait for the BEAM to open its control socket. This is the "controller is
-# ready" signal, and the same one the HEALTHCHECK keys on. Cap the wait at
-# FLEZHA_RESTORE_WAIT_TIMEOUT_S so a wedged or refusing BEAM doesn't hang the
-# boot indefinitely.
+# Wait for the BEAM to bind its control socket. This is the transport being
+# bound, not the controller being ready: it appears before any hub has replayed
+# anything. It is the precondition for issuing the readiness RPC below. Cap the
+# wait at FLEZHA_RESTORE_WAIT_TIMEOUT_S so a wedged or refusing BEAM doesn't
+# hang the boot indefinitely.
 log "waiting up to ${READY_WAIT_TIMEOUT_S}s for controller control socket at $CONTROL_SOCKET"
 ready_deadline=$(( $(date +%s) + READY_WAIT_TIMEOUT_S ))
 while [ "$(date +%s)" -lt "$ready_deadline" ]; do
@@ -69,6 +70,19 @@ if [ ! -S "$CONTROL_SOCKET" ]; then
   log "ERROR controller control socket did not appear within ${READY_WAIT_TIMEOUT_S}s"
   exit 1
 fi
+
+# Now the real readiness wait: the boot sequence complete, every namespace hub
+# out of the recovery state machine, the durable registry reloaded. `flz boot
+# await` blocks on that verdict and names the precondition still unmet when it
+# gives up.
+remaining=$(( ready_deadline - $(date +%s) ))
+[ "$remaining" -lt 1 ] && remaining=1
+log "waiting up to ${remaining}s for the controller to report ready"
+if ! "$FLZ" boot await --timeout "$remaining"; then
+  log "ERROR controller did not report ready within ${remaining}s"
+  exit 1
+fi
+log "controller ready"
 
 # 3) SIGTERM/SIGINT trap.
 #

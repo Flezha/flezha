@@ -223,7 +223,8 @@ build_step() {
 # service just keeps the container alive (see `pgrep -f 'beam.smp\|tail'`
 # healthcheck in docker-compose.yml). We start the BEAM ourselves here
 # in detached mode and poll on the host filesystem for the controller's
-# UDS control socket to confirm the BEAM is ready and listening.
+# UDS control socket. That is the transport being bound — the precondition for
+# every `flz` call below — and not the controller being ready.
 start_beam() {
   # `flz` is a release artifact at `_build/dev/rel/flezha/bin/flz`.
   # `mix release` does NOT build it — see `copy_cli_commands` in

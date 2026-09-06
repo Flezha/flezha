@@ -141,11 +141,12 @@ RUN mkdir -p /flezha/app_data/sockets \
 
 USER flezha
 
-# Readiness = the BEAM has opened its control socket. The controller does not
-# bind a TCP port we can probe, so we key off the UDS instead. Matches
-# the path used by the entrypoint's restore-wait loop.
+# Readiness = the controller's own verdict, evaluated once. A bound control
+# socket is not it: the socket appears before any hub has replayed anything.
+# `--timeout 0` is a single evaluation, which exits 0 only on `:ready` and
+# names the unmet precondition otherwise.
 HEALTHCHECK --interval=10s --timeout=5s --retries=10 --start-period=120s \
-    CMD test -S "${FLEZHA_SOCKET_FILES_PATH:-/flezha/app_data/sockets}/runner_control_channel.sock" || exit 1
+    CMD /flezha/bin/flz boot await --timeout 0 || exit 1
 
 # tini handles zombie reaping and signal forwarding for the BEAM.
 ENTRYPOINT ["/usr/bin/tini", "--"]

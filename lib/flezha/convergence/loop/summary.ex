@@ -14,7 +14,7 @@ defmodule Flezha.Convergence.Loop.Summary do
   clock runs only while that holds and nothing is recovering.
   """
 
-  alias Flezha.Convergence.{Intent, Snapshot, StallClassifier, Verdict}
+  alias Flezha.Convergence.{Intent, RecoveryGate, Snapshot, StallClassifier, Verdict}
   alias Flezha.Convergence.Loop.State
   alias Flezha.Service.HubManager
 
@@ -32,10 +32,11 @@ defmodule Flezha.Convergence.Loop.Summary do
 
     # Unmet-intent clock: runs while `bound < intended` and not recovering.
     now = System.monotonic_time(:millisecond)
+    recovering? = RecoveryGate.any_recovering?(Map.get(reality, :recovery, %{}))
 
     unmet_intent_since =
       cond do
-        counts.bound >= counts.intended or any_recovering?(reality) -> nil
+        counts.bound >= counts.intended or recovering? -> nil
         is_integer(state.unmet_intent_since) -> state.unmet_intent_since
         true -> now
       end
@@ -52,12 +53,5 @@ defmodule Flezha.Convergence.Loop.Summary do
     })
 
     %{state | unmet_intent_since: unmet_intent_since}
-  end
-
-  defp any_recovering?(reality) do
-    reality
-    |> Map.get(:recovery, %{})
-    |> Map.values()
-    |> Enum.any?(&Snapshot.recovering?/1)
   end
 end

@@ -27,6 +27,7 @@ defmodule Flezha.Boot.Readiness do
   read, counts as unmet, and `:ready` needs every row affirmatively met.
   """
 
+  alias Flezha.Convergence.RecoveryGate
   alias Flezha.Service.HubManager
 
   @flag {__MODULE__, :boot_sequence_complete}
@@ -80,7 +81,7 @@ defmodule Flezha.Boot.Readiness do
 
   @doc false
   @spec hubs_recovered?() :: boolean()
-  def hubs_recovered?(), do: HubManager.await_recovery_complete(0) == :ok
+  def hubs_recovered?(), do: not RecoveryGate.any_recovering?()
 
   @doc false
   @spec registry_loaded?() :: boolean()

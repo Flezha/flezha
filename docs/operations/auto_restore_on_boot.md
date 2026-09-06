@@ -41,11 +41,12 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
    On bind, `Flezha.Operative.Replay.restore_on_bind/2` enumerates the Entities on disk
    (hydrating from the remote tier first when local state is absent) and ships a
    `RestoreInitState` for each — unless the Operative arrived via HotSwap with in-band state.
-6. `Flezha.Boot.Loader` waits on `HubManager.await_recovery_complete/1` (every hub `:normal`,
-   bounded by `boot_replay_timeout_ms`) before flipping `boot_ready?`. `/healthz` reports
+6. `Flezha.Boot.Loader` finishes its sequence and the application records that fact; it does
+   not wait for recovery, because readiness is not latched at boot. `Flezha.Boot.Readiness`
+   folds the verdict live from its precondition table, so `/healthz` reports
    `recovering` / `restoring_registry` until the registry is loaded and its Operatives bound,
-   and `/readyz` answers 503 for that whole window — including the case where the bounded
-   wait elapses, which lets boot continue but is not readiness.
+   and `/readyz`, `flz boot await` and the image `HEALTHCHECK` all answer not-ready for that
+   whole window — then flip on their own once the hub reaches `:normal`, with no restart.
 
 ## Safety by scenario
 
@@ -66,8 +67,9 @@ persisted state. Recovery is an **orphan reconcile**: no marker file, no boot mo
 ## Operator surface
 
 ```bash
-flz boot status                # per-namespace recovery_state + registry row count
-flz boot await --timeout 60    # block until every hub reports :normal (exit 1 otherwise)
+flz boot status                # readiness verdict + preconditions, then per-namespace detail
+flz boot await --timeout 60    # block until the verdict is :ready (exit 1 otherwise)
+flz boot await --timeout 0     # evaluate once — what the image HEALTHCHECK runs
 flz cluster status             # recovery_state per node
 ```
 
@@ -107,7 +109,7 @@ a round reporting `started > 0` triggers one convergence tick that adopts what i
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `:flezha, :auto_restore_enabled` | `true` | Disable flag; only `true` / `1` enable (see below) |
 | `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | `:flezha, :process_hub_reconcile_grace_ms` | `45000` | Delay before the first round, and how long a hub stays `:recovering`; keep above the runner handshake window |
 | `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `:flezha, :process_hub_reconcile_interval_ms` | `30000` | Rate limit on later rounds |
-| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60000` | How long `Boot.Loader` waits for every hub to reach `:normal`, and a connecting runner during cluster formation |
+| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60000` | How long a connecting runner is given during cluster formation |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `:flezha, :process_hub_registry_root` | `app_data/process_hub` | Parent of each `<hub_id>/registry.dets`; must be persistent storage. Not read in the test environment, where `config/test.exs` wins |
 
 ## Disable flag and rollback

@@ -148,17 +148,16 @@ defmodule Flezha.Plugin.Installer.ReleaseCliSystemTest do
       else: flunk("daemon did not become ready within #{deadline_ms}ms")
   end
 
-  # The daemon answers `pid`, and its Boot.Loader reports ready over rpc.
+  # The daemon answers `pid`, and the readiness verdict is `:ready`. The verb is
+  # how every other surface asks, so this test asks the same way.
   defp ready?(env) do
     with {_, 0} <- System.cmd(@flzvm, ["pid"], env: env, stderr_to_stdout: true),
          {out, 0} <-
-           System.cmd(
-             @flzvm,
-             ["rpc", "GenServer.call(Flezha.Boot.Loader, :boot_ready?, 5000) |> IO.puts()"],
+           System.cmd(@flz, ["boot", "await", "--timeout", "0"],
              env: env,
              stderr_to_stdout: true
            ) do
-      out =~ "true"
+      out =~ "ready"
     else
       _ -> false
     end

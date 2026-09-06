@@ -3,9 +3,7 @@
 ## Purpose
 
 The convergence-recovery-gate capability defines a single, authoritative query API for hub recovery state within the convergence subsystem. It isolates the "is this namespace ready for healing?" decision behind `Flezha.Convergence.RecoveryGate`, keeping `Probe` and `Loop` free of inline recovery-state logic and ensuring that a hub stuck in `:recovery_timeout` does not permanently block healing for its namespace.
-
 ## Requirements
-
 ### Requirement: `RecoveryGate` is the single query API for hub recovery state
 
 `Flezha.Convergence.RecoveryGate` SHALL be a pure query module (no GenServer, no ETS ownership) that reads `Flezha.Convergence.Snapshot`'s existing ETS table. It SHALL expose three functions:
@@ -44,3 +42,23 @@ No other module other than `RecoveryGate` SHALL compute "is this namespace ready
 - **WHEN** `RecoveryGate.await_recovery_complete([:hub_a], 500)` is called
 - **AND** `:hub_a` remains in `:recovering` for the full 500 ms
 - **THEN** the function returns `{:error, {:recovery_timeout, [:hub_a]}}`
+
+### Requirement: `RecoveryGate` SHALL own the "is any hub recovering" predicate
+
+`Flezha.Convergence.RecoveryGate` SHALL expose the predicate that answers whether any hub is in ProcessHub's recovery state machine, and SHALL be the only module that decides it. The predicate SHALL be public — `any_recovering?/0,1` over the recovery-state cache, and a companion `recovery_summary/0` that names the state a reader should report — so the health endpoint, the convergence tick summary and the boot readiness table read one fact rather than each carrying its own copy of the member list.
+
+The member list that defines "recovering" SHALL be written in exactly one place. No other module SHALL restate it.
+
+This predicate SHALL remain distinct from `ready_namespaces/1`. `ready_namespaces/1` answers whether the convergence loop may heal a namespace and deliberately admits a `:timeout` hub; `any_recovering?/0,1` answers whether recovery is still in progress and counts a `:timeout` hub as recovering. A hub that timed out is healable and is not recovered.
+
+#### Scenario: One member list, one module
+
+- **WHEN** the tree is searched for the recovery-state member list that defines "recovering"
+- **THEN** it SHALL appear once, inside `RecoveryGate`, and no other module SHALL carry a private predicate over the same states
+
+#### Scenario: A timed-out hub is recovering but healable
+
+- **GIVEN** a hub whose recovery has reached `:timeout`
+- **WHEN** `ready_namespaces/1` and `any_recovering?/0` are each called
+- **THEN** `ready_namespaces/1` SHALL include the namespace and `any_recovering?/0` SHALL answer true
+

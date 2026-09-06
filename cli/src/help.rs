@@ -68,8 +68,8 @@ USAGE:
     flz boot <COMMAND>
 
 COMMANDS:
-    status                    Print per-namespace recovery state and registry counts
-    await [--timeout SECS]    Block until every namespace hub reports :normal
+    status                    Print the readiness verdict, its preconditions and per-hub detail
+    await [--timeout SECS]    Block until the readiness verdict is ready (0 evaluates once)
     help                      Show this help message"#;
 
 pub(crate) const CLUSTER: Help = r#"flz cluster - Controller cluster status

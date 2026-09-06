@@ -206,20 +206,40 @@ Ungraceful kill (SIGKILL of a controller without orchestration giving it time to
 
 The CLI SHALL provide:
 
-- `flz boot status` — for each namespace hub, print: hub_id, ProcessHub `recovery_state` (queried via `ProcessHub.recovery_state/1`), persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers.
-- `flz boot await [--timeout=N]` — block until every namespace hub reports `:normal` (calls `ProcessHub.await_normal/2` per hub).
+- `flz boot status` — for each namespace hub, print: hub_id, ProcessHub `recovery_state`, persistent-registry row count, last replay outcome (telemetry-aggregated), pending pull-on-attach transfers. It SHALL additionally print the readiness verdict and one line per unmet readiness precondition, so an operator can see which precondition is holding the node.
+- `flz boot await [--timeout=N]` — block until the readiness verdict is `:ready`, or the timeout elapses. It SHALL read the verdict rather than iterating hubs itself, and SHALL exit non-zero when the timeout elapses with the verdict below `:ready`, naming the unmet preconditions. A timeout of zero SHALL evaluate the verdict once and return, so the same verb serves a container healthcheck.
+
+`flz boot await` SHALL NOT report success on the grounds that the set of things to wait for is empty. A controller that has not yet created its namespace hubs SHALL be reported as not ready.
 
 `flz boot` SHALL expose no import path for the `.flz` ETF format written by the deleted `flz cluster snapshot`. Nothing has written that format since `9235bcde` (2026-05-09), which deleted the producing verb and introduced the durable registry in the same commit, so no reachable node holds a file it could read.
+
+The option reader SHALL be unchanged: `--timeout`, `--timeout=`, `-t` and `-t=` are all read, and a flag written with no value is refused by name rather than silently taking the default.
 
 #### Scenario: flz boot status reports per-hub state
 
 - **WHEN** the runner runs `flz boot status` while one namespace hub is `:normal` and another is still `:recovery_pending`
 - **THEN** the CLI prints both hubs with their respective states and metrics
 
-#### Scenario: flz boot await blocks until all hubs are :normal
+#### Scenario: flz boot status names the unmet precondition
+
+- **WHEN** the runner runs `flz boot status` while the durable registry is still loading
+- **THEN** the CLI prints the readiness verdict and names the durable-registry precondition as unmet
+
+#### Scenario: flz boot await blocks until the verdict is ready
 
 - **WHEN** the runner runs `flz boot await --timeout=30000` while one hub is still in `:recovery_pending`
-- **THEN** the CLI blocks; once all hubs reach `:normal` (or the timeout), it returns; on timeout, exits non-zero with which hubs are still pending
+- **THEN** the CLI blocks; once the readiness verdict reaches `:ready` (or the timeout elapses), it returns; on timeout, exits non-zero naming the preconditions still unmet
+
+#### Scenario: flz boot await refuses to report success on an empty hub set
+
+- **GIVEN** a controller that has not yet created any namespace hub
+- **WHEN** the runner runs `flz boot await`
+- **THEN** the CLI SHALL NOT report that all namespaces reached `:normal`, and SHALL block or exit non-zero according to its timeout
+
+#### Scenario: A zero timeout evaluates the verdict once
+
+- **WHEN** the runner runs `flz boot await --timeout=0`
+- **THEN** the CLI evaluates the readiness verdict once and exits zero only if it is `:ready`
 
 #### Scenario: The legacy snapshot import is refused as an unknown verb
 
@@ -308,7 +328,7 @@ Once this node's fleet no longer advertises the namespace AND this node hosts no
 
 The controller SHALL answer "is this node ready to serve?" from exactly one place, `Flezha.Boot.Readiness`, which SHALL hold a declared table of readiness preconditions and SHALL fold them into a single verdict of `:booting`, `:recovering` or `:ready` together with the per-precondition rows that produced it.
 
-Each precondition SHALL be one row of that table carrying a key, the verdict it holds the node at while unmet, and the predicate that decides it. Adding a readiness precondition SHALL be the addition of one row; no reader SHALL re-derive a precondition of its own. The table SHALL carry at least the boot sequence having completed, every namespace hub having left ProcessHub's recovery state machine, and the durable registry having finished loading.
+Each precondition SHALL be one row of that table carrying a key, the verdict it holds the node at while unmet, and the predicate that decides it. Adding a readiness precondition SHALL be the addition of one row; no reader SHALL re-derive a precondition of its own. The table SHALL carry at least: the boot sequence having completed, every namespace hub having left ProcessHub's recovery state machine, and the durable registry having finished loading.
 
 The readiness verdict SHALL be readable without passing through the boot process's mailbox, so a probe issued while the boot sequence is still running is answered rather than queued.
 
@@ -318,11 +338,13 @@ A precondition that is met SHALL be decided live rather than latched at boot, so
 
 The controller SHALL serve the verdict over an HTTP readiness endpoint distinct from its health endpoint, returning success only when the verdict is `:ready` and failure otherwise, with a body naming the verdict and the unmet precondition keys. The readiness endpoint SHALL share the health endpoint's listener, port and enable switch, and SHALL introduce no configuration key of its own. The health endpoint's own verdicts, status codes and bodies SHALL be unchanged by it: the health endpoint answers whether the node should be restarted and the readiness endpoint answers whether the node should be routed to, and neither SHALL be derived from the other.
 
-#### Scenario: The verdict is answerable during the boot sequence
+Exactly three surfaces SHALL read the verdict — the `flz boot` verbs, the HTTP readiness endpoint, and the container layer through `flz boot await` — and no other module SHALL compute readiness from hub recovery state, from a boot latch, or from the existence of a socket file.
 
-- **GIVEN** a controller whose boot sequence is still running
+#### Scenario: A precondition that is unmet holds the verdict below ready
+
+- **GIVEN** a controller whose namespace hubs are still in `:recovery_pending`
 - **WHEN** the readiness verdict is read
-- **THEN** it SHALL be answered as `:booting` rather than blocking until the boot sequence completes
+- **THEN** it SHALL be `:recovering`, and the rows SHALL name the hub-recovery precondition as the unmet one
 
 #### Scenario: A bounded recovery wait that times out does not report ready
 
@@ -336,10 +358,22 @@ The controller SHALL serve the verdict over an HTTP readiness endpoint distinct 
 - **WHEN** the health endpoint and the readiness endpoint are queried on the same tick
 - **THEN** the health endpoint SHALL report that a restore is pending and the readiness endpoint SHALL answer failure naming the unmet durable-registry precondition, so the readiness answer is never less informed than the health answer
 
+#### Scenario: A node with no hubs yet is not ready
+
+- **GIVEN** a controller in its first tick, before any namespace hub has been created
+- **WHEN** the readiness verdict is read
+- **THEN** it SHALL be `:booting`, and SHALL NOT be `:ready` on the grounds that the set of hubs to wait for is empty
+
 #### Scenario: A readiness precondition is added as one row
 
 - **WHEN** a new readiness precondition is introduced
 - **THEN** it SHALL appear as one row of the precondition table with its own predicate, and no reader of the verdict SHALL be edited
+
+#### Scenario: The verdict is answerable during the boot sequence
+
+- **GIVEN** a controller whose boot sequence is still running
+- **WHEN** the readiness verdict is read
+- **THEN** it SHALL be answered as `:booting` rather than blocking until the boot sequence completes
 
 #### Scenario: The readiness endpoint refuses while the health endpoint succeeds
 
@@ -351,4 +385,21 @@ The controller SHALL serve the verdict over an HTTP readiness endpoint distinct 
 
 - **WHEN** the readiness endpoint is added to the controller's listener
 - **THEN** the health endpoint SHALL keep every verdict, status code and body field it had, and SHALL NOT gain a readiness verdict or read the readiness table
+
+### Requirement: A bound control socket SHALL NOT be reported as readiness
+
+The container layer SHALL NOT treat the existence of the controller's control socket as the controller being ready. The socket SHALL be named as what it is — the transport being bound, and the precondition for issuing any control RPC at all — and readiness SHALL be established afterwards by reading the readiness verdict.
+
+The controller entrypoint SHALL wait for the control socket, and SHALL then wait on the readiness verdict before reporting the controller up. The image `HEALTHCHECK` SHALL evaluate the readiness verdict rather than test for the socket file.
+
+#### Scenario: The entrypoint waits for readiness, not for the socket alone
+
+- **GIVEN** a controller container whose control socket has appeared while its hubs are still replaying
+- **WHEN** the entrypoint's readiness wait runs
+- **THEN** it SHALL NOT report the controller up until the readiness verdict is `:ready`
+
+#### Scenario: The image healthcheck reads the verdict
+
+- **WHEN** the image `HEALTHCHECK` command runs against a controller whose hubs are still replaying
+- **THEN** it SHALL exit non-zero, and SHALL exit zero only once the readiness verdict is `:ready`
 

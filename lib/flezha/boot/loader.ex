@@ -2,13 +2,13 @@ defmodule Flezha.Boot.Loader do
   @moduledoc """
   The controller's boot sequence, in one process: pre-hooks, the prerequisites
   each enabled transport needs (the UDS socket directory, the QUIC certificates),
-  post-hooks, then a bounded wait for every namespace hub to leave ProcessHub's
-  recovery state machine. Answers `:boot_ready?` once that is done.
+  post-hooks, then the attach line.
 
-  Recovery is waited for, never depended on: a hub that does not reach `:normal`
-  within `:boot_replay_timeout_ms` is logged and boot continues, because the
-  marker-gated recovery has its own continuation and the convergence loop
-  corrects the drift.
+  Readiness is not answered here. `Flezha.Boot.Readiness` folds it from a
+  precondition table evaluated on every read, so a probe is never queued behind
+  this process's mailbox and a hub that recovers late needs no restart. What
+  the loader owns is the *sequence*, and `await_sequence/0` is the one call
+  that says it has run.
   """
 
   require Logger
@@ -16,9 +16,6 @@ defmodule Flezha.Boot.Loader do
   use GenServer
 
   alias Flezha.Config
-
-  alias Flezha.Config.Durations
-  alias Flezha.Service.HubManager
   alias Flezha.Socket.Support
   alias Flezha.Transport.CertGenerator
 
@@ -40,16 +37,30 @@ defmodule Flezha.Boot.Loader do
       CertGenerator.ensure_certs()
     end
 
-    {:ok, %{boot_ready: false}, {:continue, :boot}}
+    {:ok, %{}, {:continue, :boot}}
   end
+
+  @doc """
+  Block until the boot continuation has run. The call queues behind that
+  continuation in this process's mailbox, and that ordering is the whole
+  guarantee: it is the only fact that says the sequence finished, and the
+  30 s allowance is what turns a wedged hook into a named exit rather than a
+  hang.
+  """
+  @spec await_sequence() :: :ok
+  def await_sequence(), do: GenServer.call(__MODULE__, :await_sequence, 30_000)
 
   @impl true
   def handle_continue(:boot, state) do
     run_post_hooks()
-    await_namespace_hubs()
     log_attach_line()
 
-    {:noreply, Map.put(state, :boot_ready, true)}
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:await_sequence, _from, state) do
+    {:reply, :ok, state}
   end
 
   defp log_attach_line() do
@@ -62,8 +73,8 @@ defmodule Flezha.Boot.Loader do
   @doc """
   How a runner reaches this controller: the absolute socket directory and the
   assignment that attaches to it, plus the QUIC listen address when QUIC is
-  enabled. Logged on reaching ready so an operator never has to find the
-  documentation. `nil` when this node listens on no runner transport.
+  enabled. Logged once the sequence completes so an operator never has to
+  find the documentation. `nil` when this node listens on no runner transport.
   """
   @spec attach_line() :: String.t() | nil
   def attach_line() do
@@ -84,33 +95,6 @@ defmodule Flezha.Boot.Loader do
       ])
 
     if parts != [], do: "[flezha] " <> Enum.join(parts, "; ")
-  end
-
-  # Wait for every namespace hub to leave the ProcessHub recovery state
-  # machine (`:recovery_pending` → `:recovering` | `:normal`). Bounded by
-  # `:flezha, :boot_replay_timeout_ms`. Failures are logged but do not
-  # block boot — the marker-gated recovery has its own background
-  # continuation and the convergence watcher (phase 4) corrects drift.
-  defp await_namespace_hubs() do
-    timeout_ms = Durations.get(:boot_replay_timeout_ms)
-
-    try do
-      case HubManager.await_recovery_complete(timeout_ms) do
-        :ok ->
-          :ok
-
-        {:error, {:recovery_timeout, hubs}} ->
-          Logger.warning("[boot] recovery timeout for hubs=#{inspect(hubs)}")
-      end
-    catch
-      kind, reason ->
-        Logger.warning("[boot] await_recovery_complete raised #{kind}: #{inspect(reason)}")
-    end
-  end
-
-  @impl true
-  def handle_call(:boot_ready?, _from, state) do
-    {:reply, Map.get(state, :boot_ready, false), state}
   end
 
   @impl true

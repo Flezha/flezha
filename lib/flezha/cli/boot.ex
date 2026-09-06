@@ -1,91 +1,93 @@
 defmodule Flezha.Service.Cli.Boot do
   @moduledoc """
-  `flz boot` — boot status and the bounded await.
+  `flz boot` — the readiness verdict, the preconditions behind it, and the
+  bounded wait for it.
+
+  Both verbs read `Flezha.Boot.Readiness` and neither re-derives readiness from
+  hub state, so the CLI, `GET /readyz` and the container layer cannot disagree.
+  `boot_status/1` keeps the per-hub recovery table, which is the detail an
+  operator needs once a precondition has been named as unmet.
   """
 
+  alias Flezha.Boot.Readiness
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Service.Cli.Context
   alias Flezha.Service.HubManager
   alias ProcessHub.Service.Recovery
 
   @doc """
-  `flz boot status` — per-namespace recovery state and persistent-registry
-  row count. Returns immediately; for blocking semantics use `boot_await/1`.
+  `flz boot status` — the readiness verdict and every precondition behind it,
+  then per-namespace recovery state and persistent-registry row count. Returns
+  immediately; for blocking semantics use `boot_await/2`.
   """
   def boot_status(_call) do
-    rows =
-      HubManager.get_running_namespaces()
-      |> Enum.map(fn namespace ->
-        hub_id = Identificator.hub(namespace)
-        recovery_state = safe_recovery_state(hub_id)
-        registry_count = safe_registry_count(hub_id)
+    {verdict, rows} = Readiness.verdict()
 
-        %{namespace: namespace, recovery_state: recovery_state, registry_rows: registry_count}
-      end)
+    IO.puts("readiness: #{verdict}")
 
+    Enum.each(rows, fn %{key: key, met: met} ->
+      IO.puts("  #{if met, do: "met  ", else: "unmet"}  #{key}")
+    end)
+
+    IO.puts("")
     IO.puts("namespace                          recovery_state    registry_rows")
     IO.puts("----------------------------------------------------------------")
 
-    Enum.each(rows, fn row ->
+    Enum.each(HubManager.get_running_namespaces(), fn namespace ->
+      hub_id = Identificator.hub(namespace)
+      state = safe(fn -> Recovery.recovery_state(hub_id) end, :unknown)
+      rows = safe(fn -> hub_id |> ProcessHub.registry_dump() |> Enum.count() end, 0)
+
       IO.puts(
-        String.pad_trailing(row.namespace, 35) <>
-          String.pad_trailing(Atom.to_string(row.recovery_state), 17) <>
-          Integer.to_string(row.registry_rows)
+        String.pad_trailing(namespace, 35) <>
+          String.pad_trailing(Atom.to_string(state), 17) <> Integer.to_string(rows)
       )
     end)
 
     :ok
   end
 
-  defp safe_recovery_state(hub_id) do
-    try do
-      Recovery.recovery_state(hub_id)
-    catch
-      _, _ -> :unknown
-    end
-  end
-
-  defp safe_registry_count(hub_id) do
-    try do
-      hub_id |> ProcessHub.registry_dump() |> Enum.count()
-    catch
-      _, _ -> 0
-    end
-  end
-
   @doc """
-  `flz boot await --timeout SECS` — block until every namespace hub
-  reports `:normal`, or the per-hub timeout elapses.
+  `flz boot await --timeout SECS` — block until the readiness verdict is
+  `:ready`, or the timeout elapses. A timeout of zero evaluates the verdict
+  once, which is what the image `HEALTHCHECK` runs.
   """
   def boot_await(timeout_ms, _call) when is_integer(timeout_ms) do
-    namespaces = HubManager.get_running_namespaces()
-
-    failures =
-      Enum.flat_map(namespaces, fn namespace ->
-        hub_id = Identificator.hub(namespace)
-
-        try do
-          case Recovery.await_normal(hub_id, timeout_ms) do
-            :ok -> []
-            {:error, reason} -> [{namespace, reason}]
-            other -> [{namespace, other}]
-          end
-        catch
-          kind, reason -> [{namespace, {kind, reason}}]
-        end
-      end)
-
-    case failures do
-      [] ->
-        IO.puts("boot await: all namespaces reached :normal")
+    case poll(System.monotonic_time(:millisecond) + timeout_ms) do
+      {:ready, _rows} ->
+        IO.puts("boot await: ready")
         :ok
 
-      _ ->
-        Enum.each(failures, fn {ns, reason} ->
-          IO.puts(:stderr, "boot await: #{ns}: #{Context.format_reason(reason)}")
-        end)
+      {verdict, rows} ->
+        unmet = for %{key: key, met: false} <- rows, do: key
+        IO.puts(:stderr, "boot await: #{verdict}; unmet: #{Enum.join(unmet, ", ")}")
 
         exit(:cli_error)
     end
+  end
+
+  defp poll(deadline) do
+    case Readiness.verdict() do
+      {:ready, _rows} = ready ->
+        ready
+
+      unready ->
+        poll_ms = Durations.get(:boot_await_poll_ms)
+
+        if System.monotonic_time(:millisecond) + poll_ms > deadline do
+          unready
+        else
+          Process.sleep(poll_ms)
+          poll(deadline)
+        end
+    end
+  end
+
+  # A hub can be torn down between the listing and the read; a status table
+  # reports what it could not read rather than exiting the CLI.
+  defp safe(read, fallback) do
+    read.()
+  catch
+    _, _ -> fallback
   end
 end

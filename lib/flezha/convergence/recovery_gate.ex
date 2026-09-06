@@ -3,7 +3,7 @@ defmodule Flezha.Convergence.RecoveryGate do
   Single query API for hub recovery state. Reads the ETS table owned
   by `Flezha.Convergence.Snapshot` — no GenServer, no state of its own.
 
-  Three entry points:
+  Entry points:
 
     * `ready_namespaces/1` — given an `Intent`, returns the `MapSet` of
       namespace identifiers whose hubs are ready for healing
@@ -13,6 +13,9 @@ defmodule Flezha.Convergence.RecoveryGate do
       `:normal | :skipped`, or the timeout elapses.
     * `observe_state/2` — thin delegation to `Snapshot.observe_recovery/2`
       for callers that import this module for recovery-gate queries.
+    * `recovering?/1`, `any_recovering?/0,1` and `recovery_summary/0` — is a
+      planned recovery still running? The member list that decides it is
+      written here and nowhere else.
   """
 
   alias Flezha.Convergence.{Intent, Snapshot}
@@ -89,6 +92,38 @@ defmodule Flezha.Convergence.RecoveryGate do
   @doc "Thin delegation to `Snapshot.observe_recovery/2`."
   @spec observe_state(atom(), atom()) :: :ok
   defdelegate observe_state(hub_id, state), to: Snapshot, as: :observe_recovery
+
+  @doc """
+  Whether a hub recovery state means a planned recovery is still running.
+
+  Distinct from `ready_namespaces/1` on purpose: that answers whether the
+  convergence loop may heal a namespace and admits a `:timeout` hub, while a
+  `:timeout` hub has not recovered and is reported here as still recovering.
+  """
+  @spec recovering?(atom()) :: boolean()
+  def recovering?(state), do: state in [:recovery_pending, :recovering, :timeout]
+
+  @doc """
+  Whether any hub is still recovering. With no argument, over every observed
+  hub; with one, over states the caller already sampled — the convergence
+  tick passes its own `reality` so the tick is never re-read.
+  """
+  @spec any_recovering?(%{atom() => atom()} | [atom()]) :: boolean()
+  def any_recovering?(states \\ Snapshot.recovery_states())
+  def any_recovering?(states) when is_map(states), do: any_recovering?(Map.values(states))
+  def any_recovering?(states) when is_list(states), do: Enum.any?(states, &recovering?/1)
+
+  @doc """
+  The recovery facts a status surface reports: every observed state, and
+  whether any of them is recovering. Sampled once, so no two arms of one
+  answer can disagree about the same moment.
+  """
+  @spec recovery_summary() :: %{states: [atom()], recovering?: boolean()}
+  def recovery_summary() do
+    states = Map.values(Snapshot.recovery_states())
+
+    %{states: states, recovering?: any_recovering?(states)}
+  end
 
   # ---------- private ----------
 

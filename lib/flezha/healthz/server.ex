@@ -68,7 +68,7 @@ defmodule Flezha.Healthz.Server do
   alias Flezha.Boot.Readiness
   alias Flezha.Config
   alias Flezha.Config.Durations
-  alias Flezha.Convergence.{Snapshot, StallClassifier, Verdict}
+  alias Flezha.Convergence.{RecoveryGate, Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
   alias Flezha.SafeCall
   alias Flezha.State.DurabilityTier
@@ -200,12 +200,12 @@ defmodule Flezha.Healthz.Server do
   # node rather than about a subject. Sampled once so no two arms can disagree
   # about the same tick.
   defp facts(current) do
-    recovery_states = collect_recovery_states()
+    recovery = RecoveryGate.recovery_summary()
     last_tick_at = Map.get(current, :last_tick_at)
 
     %{
-      recovery_states: recovery_states,
-      recovering?: any_recovering?(recovery_states),
+      recovery_states: recovery.states,
+      recovering?: recovery.recovering?,
       tick_stale?: loop_hard_wedged?(last_tick_at),
       tick_gapped?: loop_tick_gapped?(last_tick_at),
       tick_age_ms: tick_age(last_tick_at),
@@ -233,12 +233,6 @@ defmodule Flezha.Healthz.Server do
         now - at > period * 3,
         do: to_string(name)
   end
-
-  defp collect_recovery_states() do
-    Snapshot.recovery_states() |> Map.values()
-  end
-
-  defp any_recovering?(states), do: Enum.any?(states, &Snapshot.recovering?/1)
 
   # 503 only when the Loop has genuinely STOPPED ticking far longer than any
   # pause/wake could explain. Tick age is the only authoritative liveness

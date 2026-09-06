@@ -476,7 +476,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 |---|---|---|
 | `:runner_keepalive` | `"30000"` (string or integer accepted) | `lib/flezha/runner/fleet_manager.ex` |
 | `:auto_restore_enabled` | `true` | `lib/flezha/boot/recovery_hooks.ex`, `lib/flezha/service/hub_manager.ex` |
-| `:boot_replay_timeout_ms` | `60_000` | `lib/flezha/boot/loader.ex`, `lib/flezha/runner/fleet_manager.ex` |
+| `:boot_replay_timeout_ms` | `60_000` | `lib/flezha/runner/fleet_manager.ex` |
 | `:process_hub_registry_root` | `"app_data/process_hub"` | `lib/flezha/service/hub_manager.ex`, `lib/flezha/state/durability_tier/artifact.ex` |
 | `:process_hub_reconcile_grace_ms` / `:process_hub_reconcile_interval_ms` | `45_000` / `30_000` | `lib/flezha/service/hub_manager.ex` |
 | `:hub_runner_assign_wait_ms` | `2_000` | `lib/flezha/service/hub_manager.ex` |

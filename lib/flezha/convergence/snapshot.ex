@@ -117,14 +117,6 @@ defmodule Flezha.Convergence.Snapshot do
   def recovery_states(), do: tagged_rows(:recovery)
 
   @doc """
-  Whether a hub recovery state means a planned recovery is still running. The
-  one place the recovery vocabulary is read, so `/healthz` and the convergence
-  loop cannot disagree about which states count as recovering.
-  """
-  @spec recovering?(atom()) :: boolean()
-  def recovering?(state), do: state in [:recovery_pending, :recovering, :timeout]
-
-  @doc """
   Record an observed recovery transition from a non-telemetry source —
   used by `HubManager.start_hub/1` so a hub booting straight into
   `:normal` (marker present, no replay, no telemetry) is still seen.

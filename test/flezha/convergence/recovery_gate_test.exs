@@ -4,8 +4,9 @@ defmodule Flezha.Convergence.RecoveryGateTest do
 
   Tests the `ready_namespaces/1` classification (`:normal` and `:skipped`
   → included; `:recovering` and `:unknown` → excluded; `:timeout` →
-  included with a Logger.warning) and the `await_recovery_complete/2`
-  timeout contract.
+  included with a Logger.warning), the `await_recovery_complete/2` timeout
+  contract, and the recovery predicate this module owns for every reader —
+  including the one case where the two answers deliberately differ.
   """
 
   # async: false: the primary Logger; registered runner channels; node-global tables.
@@ -73,6 +74,54 @@ defmodule Flezha.Convergence.RecoveryGateTest do
       ready = RecoveryGate.ready_namespaces(intent_for([ns_ok, ns_busy]))
       assert MapSet.member?(ready, ns_ok)
       refute MapSet.member?(ready, ns_busy)
+    end
+  end
+
+  describe "recovering?/1 and any_recovering?/0,1" do
+    test "the member list is this module's, and a terminal state is not in it" do
+      for state <- [:recovery_pending, :recovering, :timeout] do
+        assert RecoveryGate.recovering?(state), "#{state} must count as recovering"
+      end
+
+      for state <- [:normal, :skipped, :unknown] do
+        refute RecoveryGate.recovering?(state), "#{state} must not count as recovering"
+      end
+    end
+
+    test "a :timeout hub is recovering AND healable — the two predicates differ" do
+      ns = "rg_to_ready_#{System.unique_integer([:positive])}"
+      Snapshot.reset_recovery_states()
+      Snapshot.observe_recovery(Identificator.hub(ns), :timeout)
+
+      assert MapSet.member?(RecoveryGate.ready_namespaces(intent_for([ns])), ns)
+      assert RecoveryGate.any_recovering?()
+    end
+
+    test "with no argument it reads the whole observed cache" do
+      Snapshot.reset_recovery_states()
+      refute RecoveryGate.any_recovering?()
+
+      hub = :"rg_any_#{System.unique_integer([:positive])}"
+      Snapshot.observe_recovery(hub, :recovery_pending)
+      assert RecoveryGate.any_recovering?()
+
+      Snapshot.observe_recovery(hub, :normal)
+      refute RecoveryGate.any_recovering?()
+    end
+
+    test "with an argument it reads what the caller already sampled" do
+      assert RecoveryGate.any_recovering?(%{a: :normal, b: :recovering})
+      refute RecoveryGate.any_recovering?(%{a: :normal, b: :skipped})
+      assert RecoveryGate.any_recovering?([:normal, :timeout])
+      refute RecoveryGate.any_recovering?([])
+    end
+
+    test "recovery_summary/0 samples the states and the verdict once" do
+      Snapshot.reset_recovery_states()
+      hub = :"rg_sum_#{System.unique_integer([:positive])}"
+      Snapshot.observe_recovery(hub, :recovering)
+
+      assert %{states: [:recovering], recovering?: true} = RecoveryGate.recovery_summary()
     end
   end
 

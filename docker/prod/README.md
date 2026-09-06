@@ -43,8 +43,13 @@ the contract. The controller recovers its operatives and plugins from
 ProcessHub's durable registry and the per-Entity WAL; the image ships no
 snapshot hook.
 
-A HEALTHCHECK is declared on the control socket
-(`${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`).
+A HEALTHCHECK is declared on the controller's own readiness verdict:
+`flz boot await --timeout 0`, one evaluation that exits zero only when the
+boot sequence has completed, every namespace hub has left the recovery state
+machine and the durable registry has been reloaded. The entrypoint waits for
+`${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` first, but only as
+the transport being bound: it is what makes the readiness RPC possible, not
+readiness itself.
 
 Attach a shell against a running container via the release's dist-node
 entry points:

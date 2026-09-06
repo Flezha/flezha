@@ -384,7 +384,7 @@ defmodule Flezha.Service.HubManager.Rows do
     # declared set — starting declared children observed running nowhere,
     # stopping running durable children whose entry was removed. The grace is
     # also what holds the hub in `:recovering`, so it gates `RecoveryGate` and
-    # `Boot.Loader.await_namespace_hubs` — it is set long enough for runners to
+    # through it the readiness verdict — it is set long enough for runners to
     # finish their handshake, since an orphan start needs one to place against.
     if durable_starts?() do
       [
