@@ -1,20 +1,26 @@
-//! A QUIC client and server exchanging datagrams in memory, for tests that
-//! need a real `quinn_proto` connection and no socket, thread or clock.
+//! The QUIC peers tests drive against: [`Pair`], a client and server
+//! exchanging datagrams in memory with no socket, thread or clock, and
+//! [`SocketPeer`], the least controller a real [`super::quic::QuicClient`]
+//! can dial.
 //!
-//! Both send buffers in the tree sit behind such a connection — the client's
-//! in [`super::quic`] and the server driver's in `flz_nif` — and both exist
+//! Both send buffers in the tree sit behind an in-memory pair, the client's
+//! in [`super::quic`] and the server driver's in `flz_nif`, and both exist
 //! for the same condition: a peer that completes the handshake and stops
-//! reading, so its flow-control window is never re-opened. One harness serves
-//! both; it is compiled only under `cfg(test)` or the `test-support` feature.
+//! reading, so its flow-control window is never re-opened. `SocketPeer` is
+//! for the other half: a caller that holds a whole `QuicClient` and needs its
+//! peer to go away, or to refuse the next stream. One harness serves them
+//! all; it is compiled only under `cfg(test)` or the `test-support` feature.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use quinn_proto::{
-    ClientConfig, ConnectionHandle, DatagramEvent, Dir, Endpoint, EndpointConfig, Event,
-    ServerConfig, StreamId,
+    ClientConfig, Connection, ConnectionHandle, DatagramEvent, Dir, Endpoint, EndpointConfig,
+    Event, ServerConfig, StreamId, VarInt,
 };
 
 use super::quic::{expire_timer, transport_config};
@@ -221,4 +227,139 @@ fn drain(conn: &mut quinn_proto::Connection, stream_id: StreamId) -> usize {
     }
     let _ = chunks.finalize();
     total
+}
+
+/// A QUIC peer on a real UDP socket: the least server that completes a
+/// handshake, so a test can hold the [`super::quic::QuicClient`] a runner
+/// dials instead of the driver's internals. It never reads a stream and never
+/// answers one; what it exists to control is whether the client can open the
+/// next one, and whether the connection is still there at all.
+pub struct SocketPeer {
+    addr: SocketAddr,
+    gone: Arc<AtomicBool>,
+    serving: Option<JoinHandle<()>>,
+}
+
+impl SocketPeer {
+    /// Listen on the loopback, advertising `max_bidi_streams` to whoever
+    /// dials. The count is the lever: a client that asks for one more than
+    /// this is refused its next open, in the middle of a pair set.
+    pub fn listening(max_bidi_streams: u32) -> SocketPeer {
+        // `app_data/` is runtime data, so no checkout carries the development
+        // certificates and the failure would otherwise be an open() on a path.
+        for name in ["ca.pem", "server.pem", "server.key"] {
+            assert!(
+                std::path::Path::new(&cert_path(name)).exists(),
+                "{name} is missing; write the development set with \
+                 `mix run --no-start -e 'Flezha.Transport.CertGenerator.ensure_certs()'`"
+            );
+        }
+
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind the peer socket");
+        socket
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .expect("arm the peer's read deadline");
+        let addr = socket.local_addr().expect("the peer's address");
+
+        let mut config = server_config();
+        let mut transport = transport_config();
+        transport.max_concurrent_bidi_streams(max_bidi_streams.into());
+        config.transport_config(Arc::new(transport));
+
+        let gone = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&gone);
+        let serving = thread::spawn(move || serve(socket, config, flag));
+        SocketPeer {
+            addr,
+            gone,
+            serving: Some(serving),
+        }
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Close every connection and stop listening: the controller dying between
+    /// one command and the next. Returns once the close has gone out, so the
+    /// client's driver thread is on its way to exiting.
+    pub fn vanish(&mut self) {
+        self.gone.store(true, Ordering::Relaxed);
+        if let Some(serving) = self.serving.take() {
+            let _ = serving.join();
+        }
+    }
+}
+
+impl Drop for SocketPeer {
+    fn drop(&mut self) {
+        self.vanish();
+    }
+}
+
+/// The peer's loop: accept whoever dials, keep the connection alive, and on
+/// the vanish flag close it and flush the close before returning.
+fn serve(socket: UdpSocket, config: ServerConfig, gone: Arc<AtomicBool>) {
+    let mut endpoint = Endpoint::new(
+        Arc::new(EndpointConfig::default()),
+        Some(Arc::new(config)),
+        true,
+        None,
+    );
+    let mut conns: Vec<(ConnectionHandle, Connection)> = Vec::new();
+    let mut closing: Option<Instant> = None;
+    let mut buf = vec![0u8; 65536];
+
+    loop {
+        let now = Instant::now();
+        if closing.is_none() && gone.load(Ordering::Relaxed) {
+            for (_, conn) in conns.iter_mut() {
+                conn.close(now, VarInt::from_u32(0), b"peer gone".to_vec().into());
+            }
+            closing = Some(now);
+        }
+
+        if let Ok((n, from)) = socket.recv_from(&mut buf) {
+            let data = BytesMut::from(&buf[..n]);
+            let mut resp = Vec::new();
+            match endpoint.handle(now, from, None, None, data, &mut resp) {
+                Some(DatagramEvent::NewConnection(incoming)) => {
+                    let mut accept_buf = Vec::new();
+                    if let Ok(accepted) = endpoint.accept(incoming, now, &mut accept_buf, None) {
+                        conns.push(accepted);
+                    }
+                }
+                Some(DatagramEvent::ConnectionEvent(ch, event)) => {
+                    if let Some((_, conn)) = conns.iter_mut().find(|(handle, _)| *handle == ch) {
+                        conn.handle_event(event);
+                    }
+                }
+                Some(DatagramEvent::Response(transmit)) => {
+                    let _ = socket.send_to(&resp[..transmit.size], transmit.destination);
+                }
+                None => {}
+            }
+        }
+
+        let mut out = Vec::new();
+        for (handle, conn) in conns.iter_mut() {
+            expire_timer(conn, now);
+            while let Some(event) = conn.poll_endpoint_events() {
+                if let Some(event) = endpoint.handle_event(*handle, event) {
+                    conn.handle_event(event);
+                }
+            }
+            while conn.poll().is_some() {}
+            while let Some(transmit) = conn.poll_transmit(now, 1, &mut out) {
+                let _ = socket.send_to(&out[..transmit.size], transmit.destination);
+                out.clear();
+            }
+        }
+
+        // A close is one datagram; give the loop a few more turns so a
+        // retransmit still has a socket to go out on.
+        if closing.is_some_and(|at| at.elapsed() > Duration::from_millis(200)) {
+            return;
+        }
+    }
 }

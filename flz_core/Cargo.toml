@@ -20,6 +20,12 @@ crossbeam.workspace = true
 crossbeam-deque.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+# The same path dependency the crate already has, with the QUIC test peers
+# turned on: `flz_nif` reaches them the same way, so the connect tests drive
+# one definition of a vanished controller rather than a second copy.
+flz_transport = { path = "../flz_transport", features = ["test-support"] }
+
 [features]
 # The bench scaffolding `flz_core_ffi`'s `host_loop` and the `sdk/rust`
 # benches share. NOT a stable public API.

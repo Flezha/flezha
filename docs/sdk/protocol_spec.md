@@ -440,6 +440,19 @@ the default, means `System.schedulers_online()`). For each index the runner
 connects one primary stream (set non-blocking, registered for read polling) and
 one secondary stream (kept for output), then replies `success`.
 
+A step the runner cannot take is a failed connect, not a failed runner. Over
+QUIC an absent client, a stream the connection will not open and a stream-type
+byte that will not write each reply `status: "error"`: the four stream
+refusals name the half and the step (`"secondary stream open failed: ..."`),
+the absent client is `"QUIC client not available"`.
+
+**The pair set is all or nothing.** A connect that refuses at any step
+installs no stream and leaves the runner's stream map as it found it. A
+partly installed set would be worse than none: its secondaries answer the
+data heartbeat, so the runner reports a live data plane while the primaries
+beside them have no reader and every input on them is lost. The Elixir SDK
+answers the same way, through `establish_sockets/2`.
+
 ### Step 9: steady state
 
 The controller issues a `Ping` round-trip (default timeout
