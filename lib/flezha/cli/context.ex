@@ -1,12 +1,20 @@
 defmodule Flezha.Service.Cli.Context do
   @moduledoc """
-  The identity a `flz` verb's trailing options carry, and the rendering of a
-  refusal and an error on the stream the verb's family prints to. Every other
-  `Cli.*` module calls this one; it calls none of them. The authorization
-  itself is `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`.
+  The identity a `flz` verb's trailing options carry, the rendering of a refusal
+  and an error, and the one device they are written to. Every other `Cli.*`
+  module calls this one; it calls none of them. The authorization itself is
+  `Flezha.AuthZ.Verb`'s, bound in `Flezha.Service.CliManager`.
   """
 
+  alias Flezha.AuthZ.Config
   alias Flezha.AuthZ.TokenStore
+  alias Flezha.Config.Durations
+
+  # `Kernel.CLI.exec_fun/2` halts `{:shutdown, int}` with that int and prints
+  # nothing, and prints an `** (exit)` banner with erl_eval frames for every
+  # other reason before halting 1. Both halt 1, so this moves no `flz` exit
+  # code and leaves the operator reading the sentence alone.
+  @cli_exit {:shutdown, 1}
 
   @doc """
   A reason as text: the one `inspect/1` on this surface. A binary reason is
@@ -97,7 +105,8 @@ defmodule Flezha.Service.Cli.Context do
 
   def render_forbidden(:bootstrap_pending) do
     "refused: authorization is enforced but the bootstrap has not been claimed — " <>
-      "run `flz auth bootstrap <token>` (token path is logged at controller boot)"
+      "run `flz auth bootstrap <token>` with the token in " <>
+      Config.bootstrap_token_path()
   end
 
   def render_forbidden(:principal_not_bound) do
@@ -121,22 +130,82 @@ defmodule Flezha.Service.Cli.Context do
     cli_error!("error: " <> (vocabulary.(reason) || format_reason(reason)))
   end
 
-  # The one printer. Private, so a `Cli.*` module contributes what it says and
-  # never how it is said: every failure reaches the operator through `fail!`.
+  @doc """
+  Halt the verb with `message` exactly as written. `fail!/2` is what a family
+  reaches for; this is the one whose whole text is a verdict an operator's
+  script reads, so it carries no `error: ` prefix and still exits the same way.
+  """
+  @spec halt!(String.t()) :: no_return()
+  def halt!(message), do: cli_error!(message)
+
+  @doc """
+  A way to tell the operator one line, bound now and called later from any
+  process.
+
+  `flz controller stop`'s progress lines are emitted by the shutdown
+  coordinator, not by the rpc process, so the device has to be resolved on the
+  way in: a lookup made inside the telemetry handler would run in the emitting
+  process and answer the controller.
+  """
+  @spec notifier() :: (String.t() -> :ok)
+  def notifier() do
+    device = operator_stderr()
+
+    &puts(device, &1)
+  end
+
+  # The device a verb writes something that is not its answer to: the
+  # operator's stderr, on whichever node the verb is running.
   #
-  # Fail the surrounding `flzvm rpc` evaluation: print the message on stderr,
-  # then exit only this rpc process. Never System.halt here — every CliManager
-  # call runs ON the controller node via rpc, so halting would stop the
-  # controller itself; :rpc turns the exit into {:badrpc, ...}, which the
-  # release script converts into a non-zero local exit code for the calling
-  # script.
+  # `flzvm rpc` is `elixir --rpc-eval`, which is `:erpc.call/4`, so a verb body
+  # runs on the controller with the *caller's* group leader, and stdout already
+  # travels back over distribution. `:stderr` does not: it is `:standard_error`,
+  # a process registered per node, and the controller's is the controller's log.
+  # The caller's is resolved instead, so no verb names a stream of its own.
+  @spec operator_stderr() :: :stderr | pid()
+  defp operator_stderr() do
+    caller_node = node(Process.group_leader())
+
+    if caller_node == node(), do: :stderr, else: remote_standard_error(caller_node)
+  end
+
+  # A node that just called us is connected, so this answers quickly or not at
+  # all; either way the controller's own stderr is the honest fallback.
+  defp remote_standard_error(caller_node) do
+    budget = Durations.get(:cli_operator_device_ms)
+
+    case :erpc.call(caller_node, :erlang, :whereis, [:standard_error], budget) do
+      device when is_pid(device) -> device
+      _ -> :stderr
+    end
+  catch
+    _, _ -> :stderr
+  end
+
+  # The device may have died with the caller that owned it. A refusal must
+  # still exit the way it says it does, so a device that will not take the line
+  # loses the line rather than replacing the exit with a raise.
+  @spec puts(:stderr | pid(), String.t()) :: :ok
+  defp puts(device, message) do
+    IO.puts(device, message)
+  catch
+    _, _ -> :ok
+  end
+
+  # The one printer. Private, and so are the device and the exit it uses, so a
+  # `Cli.*` module contributes what it says and never how it is said: every
+  # failure reaches the operator through `fail!/2` or `halt!/1`.
+  #
+  # Fail the surrounding `flzvm rpc` evaluation, then exit only this rpc
+  # process. Never System.halt here: every CliManager call runs ON the
+  # controller node, so halting would stop the controller itself.
   #
   # One stream, for every family: an operator who pipes a verb's output is
   # collecting the answer, not the failure, so a failure never joins the data.
   @spec cli_error!(String.t()) :: no_return()
   defp cli_error!(message) do
-    IO.puts(:stderr, message)
-    exit(:cli_error)
+    puts(operator_stderr(), message)
+    exit(@cli_exit)
   end
 
   @doc """

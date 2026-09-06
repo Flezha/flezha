@@ -203,6 +203,11 @@ execution, runner reconnects over the authenticated transport) SHALL continue.
 Disabling enforcement SHALL require the explicit `FLEZHA_AUTHZ_ENABLED=false`
 opt-out, which SHALL emit a `warn` on every boot for as long as it is set.
 
+The bootstrap refusal SHALL name the bootstrap token's path in the message itself. It
+SHALL NOT direct the operator to a log line, because the path is logged only on the
+boot that writes the file: a controller that boots again with the token still unclaimed
+writes nothing, and the operator is sent to a line that is not there.
+
 #### Scenario: Bootstrap-pending refuses gated verbs without stopping dataflow
 
 - **WHEN** a controller boots with default configuration and no `admin@_system`
@@ -210,11 +215,17 @@ opt-out, which SHALL emit a `warn` on every boot for as long as it is set.
 - **THEN** a destructive verb is refused naming the bootstrap procedure, AND
   running operatives continue to process input
 
+#### Scenario: The refusal names the token file
+
+- **WHEN** a gated verb is refused while the bootstrap is unclaimed
+- **THEN** the message SHALL carry the configured bootstrap token path, and SHALL NOT
+  promise that the path was logged at controller boot
+
 #### Scenario: Open mode is explicit and warned
 
 - **WHEN** an operator sets `FLEZHA_AUTHZ_ENABLED=false`
-- **THEN** `AuthZ.authorize/3` returns `:ok` unconditionally and a warning is
-  emitted on every boot while the opt-out remains set
+- **THEN** the controller SHALL boot with authorization disabled and SHALL emit a
+  `warn` log line on every boot for as long as the opt-out is set
 
 ### Requirement: Destructive and mutating service verbs require authorization
 

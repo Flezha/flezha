@@ -373,13 +373,13 @@ except where the verb's row declares that it refuses unrecognised words.
 
 ### Requirement: A refusal or a rendered error SHALL be written to stderr
 
-Every refusal and every error a `flz` verb renders SHALL be written to stderr, whatever
-the verb's family, and the stream SHALL NOT be a per-call argument. An operator who pipes
-a verb's output into a file or another program is collecting the answer, not the failure;
-a failure written to stdout is a failure inside the data.
+Every refusal and every error a `flz` verb renders SHALL be written to the stderr of the process the operator ran, whatever the verb's family, and the stream SHALL NOT be a per-call argument. An operator who pipes a verb's output into a file or another program is collecting the answer, not the failure; a failure written to stdout is a failure inside the data, and a failure written to the controller's own stderr is a failure the operator never sees at all.
 
-The verb's success output stays on stdout and its exit code does not change: what changes
-is the stream a failure is written to.
+A verb body evaluated on the controller SHALL resolve the device it writes to from its caller, and SHALL NOT name a local stream. A named stream selects the device registered under that name on the node the body is running on, which for every controller-side verb is the controller's log rather than the operator's terminal.
+
+The verb's success output stays on stdout and its exit code does not change: what changes is the stream a failure is written to, and the node that stream belongs to.
+
+A refused verb SHALL exit with a reason that halts the calling process non-zero without printing a language-level exit trace over the sentence the verb has just rendered. The exit code SHALL be the one this surface already uses.
 
 #### Scenario: An operative failure is not in the data
 
@@ -392,4 +392,17 @@ is the stream a failure is written to.
 - **WHEN** the controller-side verb bodies are enumerated
 - **THEN** none SHALL name the stream it prints its failure to, and the exit SHALL remain
   the one this surface already uses
+
+#### Scenario: A verb evaluated on the controller renders on the caller's stderr
+
+- **WHEN** a `flz` verb is evaluated on the controller node through `flzvm rpc` and
+  refuses
+- **THEN** the refusal text SHALL appear on the stderr of the process that ran `flz`,
+  and SHALL NOT appear only in the controller's own log
+
+#### Scenario: The sentence is not buried under an exit trace
+
+- **WHEN** a `flz` verb refuses
+- **THEN** the caller's stderr SHALL carry the rendered sentence and no language-level
+  exit banner, and the exit code SHALL be unchanged
 

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Fixed — a `flz` failure reaches the operator instead of the Controller's log
+
+Every refusal and every error a `flz` verb rendered was written to the
+Controller's log. The operator saw an exit trace and an exit code, and nothing
+that said what was wrong or what to do about it.
+
+A verb runs on the Controller, over rpc. Its standard output already travelled
+back to the caller, because a remotely spawned process inherits the caller's
+group leader. Standard error did not: it is a process registered per node, and
+the one a verb reached was the Controller's. The failure is now written to the
+caller's, and a refused verb exits in a way that no longer prints a
+language-level trace over the sentence it just rendered. No exit code changes.
+
+Three surfaces were losing text this way: every refusal and rendered error,
+`flz boot await`'s verdict line, and `flz controller stop`'s drain progress.
+
+### Fixed — the bootstrap refusal names the token file
+
+A gated verb refused while the bootstrap is unclaimed said the token path was
+logged at Controller boot. It is logged only on the boot that writes the file,
+so an operator on any later boot was sent to a line that was not there. The
+refusal now carries the path.
+
 ### Added — a publication-readiness record and its gate
 
 `docs/publishing/readiness.md` records every decision the first public release makes

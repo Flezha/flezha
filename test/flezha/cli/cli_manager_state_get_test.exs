@@ -31,7 +31,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
     end)
   end
 
-  # A refusal exits `:cli_error` (the CLI's non-zero exit) after printing on
+  # A refusal exits `{:shutdown, 1}` (the CLI's non-zero exit) after printing on
   # stderr; a successful read prints on stdout and returns. Capture both and
   # swallow the exit, so every verdict stays assertable as one string.
   defp get(path, format \\ "text") do

@@ -12,7 +12,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ
-  alias Flezha.AuthZ.{AuthState, RoleStore, Scope, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Config, RoleStore, Scope, TokenStore}
   alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CliManager
@@ -29,6 +29,22 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       assert {:error, {:forbidden, :bootstrap_pending}} =
                AuthZ.authorize(%{source: :cli}, :"state.delete", Scope.build("_system"))
+    end
+
+    test "the bootstrap refusal names the token file, not a log line it may not have written" do
+      assert AuthZ.enforcement_posture() == :bootstrap_pending
+
+      output =
+        capture_io(:stderr, fn ->
+          assert catch_exit(CliManager.state_delete("op/proc/key", [])) == {:shutdown, 1}
+        end)
+
+      # The path is logged only on the boot that WRITES the file; on every later
+      # boot with an unclaimed token the writer short-circuits and logs nothing,
+      # so the refusal carries the path rather than promising a log line.
+      assert output =~ "the bootstrap has not been claimed"
+      assert output =~ Config.bootstrap_token_path()
+      refute output =~ "logged at controller boot"
     end
 
     test "bootstrap-pending keeps dataflow alive: internal and runner callers pass" do
@@ -81,7 +97,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
             fn -> CliManager.authz_render_whoami(forged) end,
             fn -> CliManager.authz_render_namespace_create("forged-ns", "{}", forged) end
           ] do
-        output = capture_io(:stderr, fn -> assert catch_exit(verb.()) == :cli_error end)
+        output = capture_io(:stderr, fn -> assert catch_exit(verb.()) == {:shutdown, 1} end)
         assert output =~ "refused: no verifiable identity"
       end
     end
@@ -92,7 +108,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       output =
         capture_io(:stderr, fn ->
           assert catch_exit(CliManager.authz_render_whoami(token: "flzt_not_a_real_token")) ==
-                   :cli_error
+                   {:shutdown, 1}
         end)
 
       assert output =~ "authz.whoami: refused"
@@ -121,7 +137,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert catch_exit(CliManager.state_delete("op/proc/key", [])) == :cli_error
+          assert catch_exit(CliManager.state_delete("op/proc/key", [])) == {:shutdown, 1}
         end)
 
       assert output =~ "flz auth bootstrap"
@@ -134,7 +150,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       output =
         capture_io(:stderr, fn ->
           assert catch_exit(CliManager.installer_enable_plugin("some_plugin", token: raw)) ==
-                   :cli_error
+                   {:shutdown, 1}
         end)
 
       assert output =~ "refused"

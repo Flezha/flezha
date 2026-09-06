@@ -205,7 +205,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
     scope = %{"namespace" => ctx.namespace, "operative_id" => ctx.operative_id}
 
-    # The verb prints and answers `:ok`; a refusal exits `:cli_error`, which is
+    # The verb prints and answers `:ok`; a refusal exits `{:shutdown, 1}`, which is
     # what makes an unasserted return safe to ignore here.
     assert :ok =
              CliManager.enable_plugin(plugin_id, id, Jason.encode!(flags), Jason.encode!(scope)),

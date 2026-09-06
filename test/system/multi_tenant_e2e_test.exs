@@ -91,7 +91,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         assert catch_exit(
                  CliManager.operative_stop(@ns_a, "alpha_op_stop_target", token: token_b)
-               ) == :cli_error
+               ) == {:shutdown, 1}
       end)
 
     assert output =~ "refused"
@@ -108,7 +108,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
     output =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         assert catch_exit(CliManager.list_operatives(@ns_a, "text", token: token_b)) ==
-                 :cli_error
+                 {:shutdown, 1}
       end)
 
     assert output =~ "refused"

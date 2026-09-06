@@ -143,7 +143,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
       out =
         capture_io(:stderr, fn ->
           assert catch_exit(CliManager.operative_start("default", "demo", "candles", "{}", "{}")) ==
-                   :cli_error
+                   {:shutdown, 1}
         end)
 
       assert out =~ "starting operative"

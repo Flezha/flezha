@@ -72,7 +72,7 @@ defmodule Flezha.Service.CliManagerSendTest do
   the confirming verdict from `OperativeManager.send_io_confirming/5` is reported
   and an optional channel is threaded into the `:io_in` metadata. The verdict
   logic itself is covered in `overwatch_confirming_ingest_test`. The error
-  verdicts additionally `exit(:cli_error)` for a non-zero CLI exit, so only the
+  verdicts additionally `exit({:shutdown, 1})` for a non-zero CLI exit, so only the
   success verdicts are asserted in-process; an error exit is exercised by a live
   CLI run in the change's verification.
   """
@@ -167,7 +167,7 @@ defmodule Flezha.Service.CliManagerRewindTest do
     end
   end
 
-  # A rewind that refuses exits `:cli_error` and renders on stderr; one that
+  # A rewind that refuses exits non-zero and renders on stderr; one that
   # succeeds returns normally and reports on stdout. Both streams are captured
   # so a test can assert on whichever this rewind produced.
   defp rewind(inst, to_iter) do
@@ -553,7 +553,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
       capture_io(:stderr, fn ->
         assert catch_exit(
                  CliManager.authz_render_role_bind("dave", "superuser", "render-ns", token: admin)
-               ) == :cli_error
+               ) == {:shutdown, 1}
       end)
 
     assert out =~ "unknown_role"

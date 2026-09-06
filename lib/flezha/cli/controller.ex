@@ -55,7 +55,9 @@ defmodule Flezha.Service.Cli.Controller do
 
   # The phase lines the operator watches come from an attached handler, so the
   # detach must survive every exit from the drive — including a coordinator
-  # that is already gone.
+  # that is already gone — and the way to reach the operator is bound here
+  # rather than in the handler, which runs in whichever process emitted the
+  # event.
   defp with_progress_handler(drive) do
     handler_id = {__MODULE__, :controller_stop_progress, make_ref()}
 
@@ -69,7 +71,7 @@ defmodule Flezha.Service.Cli.Controller do
           [:flezha, :shutdown, :timeout]
         ],
         &__MODULE__.controller_stop_progress_handler/4,
-        %{caller: self()}
+        %{caller: self(), notify: Context.notifier()}
       )
 
     try do
@@ -119,26 +121,25 @@ defmodule Flezha.Service.Cli.Controller do
   end
 
   @doc false
-  def controller_stop_progress_handler(event, measurements, metadata, _config) do
+  def controller_stop_progress_handler(event, measurements, metadata, config) do
+    notify = Map.fetch!(config, :notify)
+
     case event do
       [:flezha, :shutdown, :phase_started] ->
-        IO.puts(:stderr, "[shutdown] phase=#{metadata.phase} started")
+        notify.("[shutdown] phase=#{metadata.phase} started")
 
       [:flezha, :shutdown, :phase_completed] ->
-        IO.puts(
-          :stderr,
+        notify.(
           "[shutdown] phase=#{metadata.phase} completed duration_ms=#{measurements[:duration_ms] || 0}"
         )
 
       [:flezha, :shutdown, :drain_progress] ->
-        IO.puts(
-          :stderr,
+        notify.(
           "drain: migrated=#{measurements.migrated} remaining=#{measurements.remaining} elapsed_ms=#{measurements.elapsed_ms}"
         )
 
       [:flezha, :shutdown, :timeout] ->
-        IO.puts(
-          :stderr,
+        notify.(
           "[shutdown] timeout phase=#{metadata.phase} still_local=#{length(metadata.still_local)}"
         )
 

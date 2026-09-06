@@ -62,6 +62,10 @@ defmodule Flezha.Config.DurationRows do
     # ---- runners: lookup, marks, replay ------------------------------------
     {:boot_replay_timeout_ms, :ms, 60_000, key: true, env: "FLEZHA_BOOT_REPLAY_TIMEOUT_MS"},
     {:boot_await_poll_ms, :ms, 200, []},
+    # How long a controller-side `flz` verb waits for the caller's node to
+    # name its `:standard_error`, before it writes to the controller's own.
+    # The caller has just called us, so this is a liveness bound, not a wait.
+    {:cli_operator_device_ms, :ms, 5_000, []},
     {:runner_lookup_ms, :ms, 5_000, []},
     {:runner_cleanup_slack_ms, :ms, 10_000, []},
     {:runner_min_call_ms, :ms, 25, []},

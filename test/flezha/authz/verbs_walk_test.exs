@@ -89,7 +89,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     assert capture_io(fn -> CliManager.boot_status([]) end) =~ "recovery_state"
 
     # `boot await` answers the readiness verdict, so on a node a neighbouring
-    # suite left mid-recovery it exits `:cli_error` naming the unmet row. That
+    # suite left mid-recovery it exits non-zero naming the unmet row. That
     # is the verb being SERVED; what a missing credential would produce is a
     # refusal, and this asserts which of the two happened rather than pinning a
     # verdict this test is not about.
@@ -243,7 +243,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
   # Both streams of a verb that refuses, the exit swallowed.
   defp refusal(fun) do
-    {{:cli_error, out}, err} =
+    {{{:shutdown, 1}, out}, err} =
       with_io(:stderr, fn ->
         with_io(fn -> catch_exit(fun.()) end)
       end)

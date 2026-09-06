@@ -83,7 +83,7 @@ defmodule Flezha.Plugin.Installer.CliIntegrationTest do
     assert_received {:stdout, enable_stdout}
 
     # Either succeeds (if the PluginManager path is tolerant) and says so on
-    # stdout, or reports a structured error on stderr and exits :cli_error —
+    # stdout, or reports a structured error on stderr and exits non-zero —
     # both are acceptable CLI behaviours as long as we don't crash.
     assert enable_stdout =~ "Plugin" or enable_stderr =~ "error: "
 

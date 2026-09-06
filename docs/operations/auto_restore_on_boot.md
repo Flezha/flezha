@@ -73,6 +73,15 @@ flz boot await --timeout 0     # evaluate once — what the image HEALTHCHECK ru
 flz cluster status             # recovery_state per node
 ```
 
+A verb that refuses writes its reason to the stderr of the shell you ran it in,
+not to the Controller's log, so `flz boot await` names the precondition that is
+still unmet:
+
+```
+$ flz boot await --timeout 0
+boot await: recovering; unmet: durable_registry_loaded
+```
+
 Telemetry under `[:flezha, :boot, …]`, each with `%{hub_id, namespace}` metadata:
 
 | Event | Fires | Measurements |

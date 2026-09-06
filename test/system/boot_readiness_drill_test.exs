@@ -127,7 +127,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
           {"flz boot await --timeout 0", &verb_await/0},
           {"HEALTHCHECK", &healthcheck/0}
         ] do
-      assert {:cli_error, out} = run.(), "#{name} reported ready while #{unmet} is unmet"
+      assert {{:shutdown, 1}, out} = run.(), "#{name} reported ready while #{unmet} is unmet"
       assert out =~ verdict
       assert out =~ unmet
     end
