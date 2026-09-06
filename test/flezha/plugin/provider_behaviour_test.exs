@@ -8,6 +8,10 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
 
   use ExUnit.Case, async: true
 
+  # A refused declaration is driven on purpose and the table reports the halt
+  # at error level; the refusal is asserted as a return value.
+  @moduletag :capture_log
+
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table

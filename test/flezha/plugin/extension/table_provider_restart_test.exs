@@ -15,6 +15,10 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
 
   use ExUnit.Case, async: false
 
+  # Killing a provider worker is the point of these cases, and its supervisor
+  # reports every abnormal child exit at error level.
+  @moduletag :capture_log
+
   import ExUnit.CaptureLog
 
   alias Flezha.Plugin

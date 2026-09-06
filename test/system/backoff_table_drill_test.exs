@@ -37,6 +37,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
   alias Flezha.SDK.Operative.Inbox
   alias Flezha.Service.OperativeManager.Init
   alias Flezha.State.Watchdog
+  alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.SdkOperativeHarness
   alias FlezhaTest.Kafka.ProducerFakes
 
@@ -280,18 +281,14 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       answer_http(listener, "HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\n\r\n")
     end)
 
-    {:ok, client} =
-      Websocket.Client.start_link("ws://127.0.0.1:#{port}/",
-        plugin_id: "ws_drill",
-        overwatcher_pid: self(),
-        post_connect: %{},
-        ws_opts: []
-      )
+    {:ok, _opts, client} =
+      ProviderPrepare.prepare_and_activate(Websocket, %{
+        uri: "ws://127.0.0.1:#{port}/",
+        plugin_id: "ws_drill"
+      })
 
-    on_exit(fn ->
-      if Process.alive?(client), do: Process.exit(client, :kill)
-      :gen_tcp.close(listener)
-    end)
+    ProviderPrepare.stop_on_exit(Websocket, client)
+    on_exit(fn -> :gen_tcp.close(listener) end)
 
     :ok
   end

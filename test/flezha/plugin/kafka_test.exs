@@ -16,7 +16,6 @@ defmodule FlezhaTest.Plugin.KafkaTest do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
   alias Flezha.Plugin.Provider.WorkerSup
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -86,6 +85,13 @@ defmodule FlezhaTest.Plugin.KafkaTest do
          do: {:ok, prepared, pid}
   end
 
+  defp registered(plugin_id, partition) do
+    Registry.lookup(
+      WorkerSup.registry_name(WorkerSup.family(Kafka.Producer)),
+      {plugin_id, @topic, partition}
+    )
+  end
+
   defp build_opts(plugin_id, partition, extras \\ %{}) do
     Map.merge(
       %{
@@ -141,6 +147,35 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     assert stats.partition == 3
 
     WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, @topic, 3})
+
+    # The Registry clears the entry from the worker's exit, which lands after
+    # `stop_worker/2` returns; settle it so this asserts the no-entry answer
+    # rather than whichever answer won the race.
+    assert NodeTestHelper.wait_until(fn -> registered(plugin_id, 3) == [] end, 1_000)
+    assert {:error, :no_producer} = Kafka.Producer.stats(plugin_id)
+  end
+
+  test "stats/1 refuses a registry entry the stopped worker has not yet cleared" do
+    plugin_id = "stale-stats-#{System.unique_integer([:positive])}"
+    family = WorkerSup.family(Kafka.Producer)
+
+    {:ok, _opts, producer_pid} = prepare_and_activate(build_opts(plugin_id, 0))
+
+    # The Registry partition clears an entry from the exit it is linked by, and
+    # a suspended process handles none: the entry provably still names the
+    # worker after it is stopped, which is the window this reads in. A `:noproc`
+    # never surfaces as an exit here because `ProducerWorker.stats/1` declares
+    # the empty map as its refusal.
+    partition =
+      Process.whereis(Module.concat(WorkerSup.registry_name(family), "PIDPartition0"))
+
+    :sys.suspend(partition)
+    on_exit(fn -> :sys.resume(partition) end)
+
+    ref = Process.monitor(producer_pid)
+    :ok = WorkerSup.stop_worker(family, {plugin_id, @topic, 0})
+    assert_receive {:DOWN, ^ref, :process, ^producer_pid, _}, 1_000
+    assert [{^producer_pid, _}] = registered(plugin_id, 0)
 
     assert {:error, :no_producer} = Kafka.Producer.stats(plugin_id)
   end

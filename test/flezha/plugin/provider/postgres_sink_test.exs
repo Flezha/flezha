@@ -21,10 +21,12 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Postgres
-  alias Flezha.Plugin.Provider.Postgres.{SinkSup, SinkWorker}
+  alias Flezha.Plugin.Provider.Postgres.SinkWorker
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.State.Outbox
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.ProviderPrepare
 
   @moduletag :postgres_integration
 
@@ -55,8 +57,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   defp start_provider(extra \\ %{}) do
     opts = base_opts(extra)
-    {:ok, opts, pid} = Postgres.init_provider(opts)
-    on_exit(fn -> SinkSup.stop_worker(opts.plugin_id) end)
+    {:ok, opts, pid} = ProviderPrepare.prepare_and_activate(Postgres, opts)
+    on_exit(fn -> WorkerSup.stop_worker(WorkerSup.family(Postgres), opts.plugin_id) end)
     {opts, pid}
   end
 

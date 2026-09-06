@@ -19,6 +19,7 @@ defmodule FlezhaTest.HttpPollCase do
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.ProviderPrepare
 
   @channel "config_in"
 
@@ -65,7 +66,7 @@ defmodule FlezhaTest.HttpPollCase do
   def start_poller(origin, extra \\ %{}) do
     {:ok, opts} = prepare(origin, extra)
     {:ok, poller} = start_worker(opts)
-    kill_on_exit(poller)
+    stop_on_exit(poller)
     poller
   end
 
@@ -81,16 +82,7 @@ defmodule FlezhaTest.HttpPollCase do
   end
 
   @doc "Stop a poller the way the table does on disable, through its supervisor."
-  def stop_worker(poller) do
-    family = WorkerSup.family(HttpPoll)
-
-    [{key, _}] =
-      Enum.filter(Enum.map(WorkerSup.keys(family), &{&1, &1}), fn {key, _} ->
-        match?([{^poller, _}], Registry.lookup(WorkerSup.registry_name(family), key))
-      end)
-
-    WorkerSup.stop_worker(family, key)
-  end
+  def stop_worker(poller), do: ProviderPrepare.stop(HttpPoll, poller)
 
   @doc "Start the declared worker for `opts`, the way the table does at activation."
   def start_worker(opts) do
@@ -106,9 +98,8 @@ defmodule FlezhaTest.HttpPollCase do
 
   def probe(poller), do: PollWorker.probe(poller)
 
-  def kill_on_exit(pid) do
-    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
-  end
+  @doc "Settle the poller's own exit when the test ends; it stops with its host."
+  def stop_on_exit(poller), do: ProviderPrepare.await_stop_on_exit(poller)
 
   # The test process IS the host, so it answers the confirming ingest call the
   # way an Overwatch would — including the refusals.

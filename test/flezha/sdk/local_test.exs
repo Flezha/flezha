@@ -8,6 +8,8 @@ defmodule Flezha.SDK.LocalTest do
   # async: false: the process-wide notice and unhandled-sink counters.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureIO, only: [with_io: 2]
+
   alias Flezha.SDK.{Channels, Local, Operative}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.SdkPersistenceFixtures.CounterOp
@@ -126,7 +128,12 @@ defmodule Flezha.SDK.LocalTest do
   # --- helpers ---
 
   defp start_run(module) do
-    {:ok, run} = Local.start(module)
+    # Every start writes the non-durability notice to stderr, by design and
+    # unconditionally: an operator running without a controller has to be told,
+    # whatever the log level. It is captured here rather than silenced, so the
+    # write still happens; the case that asserts it reads `Local.notice/0` and
+    # the emit counter, neither of which reads this device.
+    {{:ok, run}, _notice} = with_io(:stderr, fn -> Local.start(module) end)
     on_exit(fn -> Local.stop(run) end)
     run
   end

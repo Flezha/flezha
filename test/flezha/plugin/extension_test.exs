@@ -7,6 +7,11 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
   use ExUnit.Case, async: true
 
+  # Most cases here drive a prepare refusal on purpose, and the table reports
+  # every halt at error level. The refusal each case asserts is the return
+  # value; capture the report so a green run stays quiet.
+  @moduletag :capture_log
+
   import ExUnit.CaptureLog, only: [with_log: 1]
 
   @catalog Host.build_catalog(

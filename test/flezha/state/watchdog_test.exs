@@ -22,6 +22,7 @@ defmodule Flezha.State.WatchdogTest do
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
   alias Flezha.State.{Supervisor, TestHelpers, WalWriter, Watchdog}
+  alias Flezha.State.WriterRegistry
   alias FlezhaTest.Helper.DurabilityBackendStub
 
   @stall_ms 20
@@ -103,6 +104,30 @@ defmodule Flezha.State.WatchdogTest do
     :ok = WalWriter.append(w, 1, header, "a")
     :ok = WalWriter.append(w, 2, header, "b")
     {pid, w}
+  end
+
+  test "a writer that refuses its status read does not take the Watchdog down",
+       %{header: header} do
+    {entity_id, writer} = live_writer("refused_", header)
+
+    # The Registry clears an entry from the exit it is linked by, and a suspended
+    # partition handles none, so the sweep provably still finds this writer after
+    # it is gone. `WalWriter.stall_status/1` then answers its declared refusal:
+    # a value where a status map belongs, and no exit for anyone to catch.
+    partition = Process.whereis(Module.concat(WriterRegistry.name(), "PIDPartition0"))
+    :sys.suspend(partition)
+    on_exit(fn -> :sys.resume(partition) end)
+
+    ref = Process.monitor(writer)
+    :ok = WalWriter.close(writer)
+    assert_receive {:DOWN, ^ref, :process, ^writer, _}, 1_000
+    assert {:ok, ^writer} = WriterRegistry.lookup(entity_id)
+
+    watchdog = Process.whereis(Watchdog)
+    :ok = Watchdog.sweep_now()
+
+    assert Process.whereis(Watchdog) == watchdog,
+           "the sweep killed the node's Watchdog on one refused status read"
   end
 
   test "a live entity whose seq froze is flagged, and the sensor heals nothing",

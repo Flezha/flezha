@@ -109,9 +109,14 @@ jobs:
         # but it does run the SDK conformance gate, which is untagged. The
         # runner-backed smoke tier runs in `java-sdk.yml` and the full
         # `:system` suite in the nightly matrix.
+        #
+        # `--warnings-as-errors` is the half the compile step above cannot
+        # reach: the project's elixirc_paths carry lib/, test/fixtures/ and
+        # test/helpers/, so until this flag landed nothing judged a warning in
+        # a test file and they accumulated unseen.
         run: |
           set -o pipefail
-          mix test 2>&1 | tee /tmp/mix-test.log
+          mix test --warnings-as-errors 2>&1 | tee /tmp/mix-test.log
 
       - name: Fail on uncaptured error logs
         # `config/test.exs` pins the logger to :error, so nothing below that

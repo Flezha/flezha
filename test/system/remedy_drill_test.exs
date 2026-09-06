@@ -32,7 +32,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       unique_id_path: 1
     ]
 
-  alias Flezha.Convergence.{Backoff, Heal, Loop}
+  alias Flezha.Config.Backoff
+  alias Flezha.Convergence.{Heal, Loop}
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Identificator
   alias Flezha.Operative.{Builder, Overwatch}

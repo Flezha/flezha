@@ -321,7 +321,6 @@ defmodule FlezhaTest.Operative.BindReforwardTest do
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.State.InputLog
   alias Flezha.State.TestHelpers

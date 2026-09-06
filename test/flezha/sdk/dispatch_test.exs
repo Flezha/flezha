@@ -233,6 +233,12 @@ defmodule Flezha.SDK.DispatchTest do
     :ok = close_secondary(sdk)
     for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
 
+    # An input reaches the hold only once its Entity reports the dispatch back,
+    # which is a round trip the five casts do not wait for. Three sheds is the
+    # signal that all five are in: a rebind before that replays a short ring and
+    # then delivers the rest live, which is the opposite of what this asserts.
+    assert NodeTestHelper.wait_until(fn -> Counters.drops_oldest(counters) == 3 end, 2_000)
+
     rebind_secondary(op)
 
     # Drop-oldest: the last two survive, and the three shed are counted rather

@@ -19,6 +19,7 @@ defmodule Flezha.Process.SeamTest do
   alias Flezha.Operative.Lookup
   alias Flezha.Process.Cspec
   alias Flezha.Process.Timer
+  alias FlezhaTest.Helper.SourceWalk
 
   # `lib/flezha/sdk/` is out of scope by the packaging gate
   # (`scripts/check-sdk-boundary.sh`): a module there may not name
@@ -39,18 +40,17 @@ defmodule Flezha.Process.SeamTest do
   ]
 
   defp sources do
-    Path.wildcard("lib/flezha/**/*.ex")
+    ["lib/flezha"]
+    |> SourceWalk.files([".ex"])
     |> Enum.reject(fn p -> Enum.any?(@roots_excluded, &String.starts_with?(p, &1)) end)
     |> Enum.reject(&(&1 in @seam_files))
   end
 
-  # A comment that names a primitive does not use it; prose is stripped the way
-  # `scripts/check-layer-direction.sh` strips it, for the same reason.
+  # `SourceWalk` holds the walk and the comment strip for the run: six clauses
+  # asking six questions of one tree is one read, not six.
   defp hits(pattern, allow \\ []) do
-    for path <- sources(),
+    for {path, line, n} <- SourceWalk.code_lines(sources()),
         path not in allow,
-        {line, n} <- Enum.with_index(String.split(File.read!(path), "\n"), 1),
-        not Regex.match?(~r/^\s*#/, line),
         Regex.match?(pattern, line),
         do: "#{path}:#{n}"
   end
@@ -97,7 +97,7 @@ defmodule Flezha.Process.SeamTest do
     undeclared =
       for path <-
             hits(~r/Process\.send_after\(/, timer_allow()) |> Enum.map(&file_of/1) |> Enum.uniq(),
-          not String.contains?(File.read!(path), "use Flezha.Process.Timer"),
+          not String.contains?(SourceWalk.read(path), "use Flezha.Process.Timer"),
           do: path
 
     assert undeclared == [], "a timer armed outside `Flezha.Process.Timer`"

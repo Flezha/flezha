@@ -30,6 +30,13 @@ config :flezha,
 config :logger,
   level: :error
 
+# The console shows errors and nothing else. The primary level above is not
+# enough on its own: a test that asserts on a warning has to lower the primary
+# level for a capture handler to see the event at all, and that window is
+# global, so every concurrently running test's warnings would reach the console
+# with it. The handler's own level is what the console is actually judged by.
+config :logger, :default_handler, level: :error
+
 config :kafka_ex,
   brokers: [
     {"kafka", 9092}

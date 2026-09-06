@@ -18,6 +18,10 @@ defmodule Flezha.Process.BoundedCallDrillTest do
 
   use ExUnit.Case, async: true
 
+  # A wedged callee is killed on purpose, and its supervisor reports the
+  # abnormal exit at error level.
+  @moduletag :capture_log
+
   alias Flezha.Process.Timer
   alias Flezha.Process.Watch
   alias Flezha.SafeCall

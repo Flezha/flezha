@@ -13,7 +13,6 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketLifecycleTest do
   """
 
   alias Flezha.Plugin.Provider.Websocket
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   use ExUnit.Case, async: true

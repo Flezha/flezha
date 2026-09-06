@@ -17,6 +17,7 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
 
   use ExUnit.Case, async: true
 
+  alias FlezhaTest.Helper.SourceWalk
   alias FlezhaTest.Tiers
 
   @system_dir "test/system"
@@ -29,6 +30,11 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
 
   # This file spells the shapes it looks for, as data.
   @tier_self "test/sdk_conformance/tier_gate_test.exs"
+
+  # Directory names the walk never enters. Every one holds build output, and a
+  # tier is selected in source: of the 129 MB under the four roots, 126 MB is
+  # jars, bundles and beam files beneath `test/apps/`, which this read whole.
+  @build_output ~w(node_modules target dist _build deps cover)
 
   describe "test tiers" do
     test "every selector names a declared tier" do
@@ -189,22 +195,22 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
       assert ExUnit.Filters.eval([:flezha_no_such_tier], exclude, undeclared, []) == :ok
     end
 
-    # The transport half of the row, measured rather than asserted: three of the
-    # `test/system` modules fan out over `NodeTestHelper.transports/0` while
-    # every manifest declares both, so the ratio is a number this suite prints
-    # instead of a claim nobody checks.
-    test "the system tier's declared transports are reported against what it drives" do
+    test "the system tier's declared transports are driven by at least one module" do
       modules = Path.wildcard(Path.join(@system_dir, "*_test.exs"))
 
       fanned =
-        Enum.count(modules, &String.contains?(File.read!(&1), "NodeTestHelper.transports"))
+        Enum.count(modules, &String.contains?(SourceWalk.read(&1), "NodeTestHelper.transports"))
 
       assert Tiers.fetch(:system).transports == [:uds, :quic]
 
-      IO.puts(
-        "[tiers] :system covers #{inspect(Tiers.fetch(:system).transports)}; " <>
-          "#{fanned} of #{length(modules)} modules fan out over both, the rest run UDS only"
-      )
+      # The ratio is measured, never pinned: it moves whenever a scenario is
+      # added, and a number asserted here would be edited rather than read. What
+      # has to hold is that the declared pair is driven at all, because a tier
+      # declaring two transports nothing fans out over is a claim nobody checks.
+      # The census rides the failure, which is where a reader needs it.
+      assert fanned > 0,
+             "#{length(modules)} system modules, and not one fans out over " <>
+               "`NodeTestHelper.transports/0`: the declared transport pair drives nothing"
     end
   end
 
@@ -253,11 +259,16 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
           root
           |> Path.join("**/*")
           |> Path.wildcard()
-          |> Enum.filter(&(File.regular?(&1) and &1 != @tier_self))
+          |> Enum.filter(&source_file?/1)
 
         true ->
           []
       end
     end)
+  end
+
+  defp source_file?(path) do
+    File.regular?(path) and path != @tier_self and
+      not Enum.any?(Path.split(path), &(&1 in @build_output))
   end
 end

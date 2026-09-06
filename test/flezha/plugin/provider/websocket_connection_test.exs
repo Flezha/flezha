@@ -316,6 +316,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
 
   alias Flezha.Plugin.Provider.Websocket
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.ProviderPrepare
 
   @moduletag :capture_log
 
@@ -340,7 +341,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
       })
 
     {:ok, conn} = activate(Websocket, opts)
-    on_exit(fn -> if Process.alive?(conn), do: Process.exit(conn, :kill) end)
+    ProviderPrepare.stop_on_exit(Websocket, conn)
 
     # ---- the seed: nothing applied yet, so the first poll subscribes the set
     seed = await_frame()
@@ -595,8 +596,6 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
   # async: false: global telemetry handlers.
 
   use ExUnit.Case, async: false
-
-  import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2, activate: 2]
 
   alias Flezha.Plugin.Provider.Websocket
 

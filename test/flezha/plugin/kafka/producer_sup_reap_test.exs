@@ -11,10 +11,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerSupReapTest do
   # async: false: registered singletons.
   use ExUnit.Case, async: false
 
+  # Reaping is what these cases drive, and the family's supervisor reports
+  # every abnormal child exit at error level.
+  @moduletag :capture_log
+
   alias Flezha.Plugin.Provider.Kafka.Producer
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.WorkerSup
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 

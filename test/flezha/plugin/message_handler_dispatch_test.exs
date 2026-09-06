@@ -14,6 +14,10 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
 
   use ExUnit.Case
 
+  # A key conflict is driven on purpose and the table reports the halt at
+  # error level; the refusal itself is asserted as a return value.
+  @moduletag :capture_log
+
   @namespace "default"
   @factory "store_input"
 

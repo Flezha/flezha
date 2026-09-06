@@ -36,8 +36,6 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   @test_operative_factory "do_nothing"
   @test_filter_factory "compare_filter"
 
-  @golden_dir "test/fixtures/declarations"
-
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.
   # A fresh fleet per test: the runner's connect is what most scenarios prove.

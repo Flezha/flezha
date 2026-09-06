@@ -138,7 +138,7 @@ defmodule Flezha.State.FsyncBatcher do
     still_dirty =
       Enum.filter(state.dirty_set, fn entity_id ->
         case WriterRegistry.lookup(entity_id) do
-          {:ok, pid} -> fsync(pid, mode) == :error
+          {:ok, pid} -> fsync(pid, mode) == :unreachable
           :error -> false
         end
       end)
@@ -157,13 +157,36 @@ defmodule Flezha.State.FsyncBatcher do
     %{state | dirty_set: MapSet.new(still_dirty)}
   end
 
-  defp fsync(pid, :cast), do: WalWriter.fsync_async(pid)
+  # A cast reports nothing, so a tick can never observe a failed sync; a
+  # call-mode drain is what re-marks one.
+  defp fsync(pid, :cast) do
+    :ok = WalWriter.fsync_async(pid)
+    :synced
+  end
 
-  # `try` because a writer can exit between `mark_dirty/1` and the drain.
+  # `WalWriter.fsync/1` declares its refusal rather than exiting, so there is no
+  # exit to catch and the answer says which of two things happened.
   defp fsync(pid, :call) do
-    WalWriter.fsync(pid)
-  catch
-    :exit, _ -> :error
+    case WalWriter.fsync(pid) do
+      :ok ->
+        :synced
+
+      # The writer could not be reached: gone, wedged or mid-restart, all of
+      # which the next drain may find healthy.
+      {:error, {:wal_writer_unavailable, _reason}} ->
+        :unreachable
+
+      # The writer refused its own file, and answers every write with that
+      # refusal for the rest of its life. Re-marking it is a sync that can never
+      # happen; the refusal is what leaves its operative unbound.
+      {:error, {_reason, _last_seq, _offset}} ->
+        :refused
+
+      # A shape neither of the two above: keep the entity rather than drop a
+      # sync on an answer nobody has read yet.
+      _other ->
+        :unreachable
+    end
   end
 
   defp configured_interval_ms() do

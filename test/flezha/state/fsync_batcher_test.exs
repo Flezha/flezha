@@ -4,7 +4,7 @@ defmodule Flezha.State.FsyncBatcherTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.State.{FsyncBatcher, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalWriter}
 
   setup do
     case start_supervised({Elixir.Registry, keys: :unique, name: Supervisor.registry_name()}) do
@@ -57,9 +57,12 @@ defmodule Flezha.State.FsyncBatcherTest do
       # into the mark loop and split the batch into two fsyncs (flaky); it also
       # stays idle here, so the global handler only sees this instance's tick.
       {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
-      # A fresh batcher starts with every registered writer dirty; drain that
-      # seed so the count below is the marks' alone.
+      # A fresh batcher starts with every writer registered on the NODE dirty.
+      # The drain clears the ones that sync; a neighbouring module's writer whose
+      # state root is already gone cannot sync and stays dirty by design, so what
+      # the drain leaves is counted rather than assumed to be nothing.
       :ok = FsyncBatcher.flush_now(batcher)
+      residue = MapSet.size(FsyncBatcher.dirty_set(batcher))
 
       {:ok, fakelog} = Agent.start_link(fn -> 0 end)
 
@@ -76,7 +79,7 @@ defmodule Flezha.State.FsyncBatcherTest do
       :ok = FsyncBatcher.flush_now(batcher)
 
       :telemetry.detach("fsync-tick-counter")
-      assert Agent.get(fakelog, & &1) == 1
+      assert Agent.get(fakelog, & &1) == 1 + residue
     end
 
     test "tick coalesces dirty set" do
@@ -91,15 +94,17 @@ defmodule Flezha.State.FsyncBatcherTest do
       # module's live writers as well as these two.
       {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
       :ok = FsyncBatcher.flush_now(batcher)
+      residue = FsyncBatcher.dirty_set(batcher)
 
       FsyncBatcher.mark_dirty(a, batcher)
       FsyncBatcher.mark_dirty(b, batcher)
       FsyncBatcher.mark_dirty(a, batcher)
 
-      assert MapSet.new([a, b]) == FsyncBatcher.dirty_set(batcher)
+      assert MapSet.new([a, b]) ==
+               MapSet.difference(FsyncBatcher.dirty_set(batcher), residue)
 
       :ok = FsyncBatcher.flush_now(batcher)
-      assert MapSet.size(FsyncBatcher.dirty_set(batcher)) == 0
+      assert FsyncBatcher.dirty_set(batcher) == residue
     end
 
     test "actual fsync runs against live writer" do
@@ -113,6 +118,62 @@ defmodule Flezha.State.FsyncBatcherTest do
 
       # No exception means the fsync path executed cleanly.
       assert WalWriter.last_persisted_seq(srv) == 0
+    end
+
+    test "a writer that refused its own file is not re-marked dirty" do
+      pid = TestHelpers.sample_entity_id("refuser")
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      header = TestHelpers.stub_header()
+      for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+
+      path = Paths.wal_path(pid)
+      [_first, second | _] = TestHelpers.record_offsets(path)
+      TestHelpers.corrupt_record_body(path, second)
+
+      # A writer that refused its own file stays alive answering every write
+      # with that refusal for the rest of its life, `:fsync` included.
+      capture_log(fn ->
+        assert {:error, {:crc_mismatch, 0, ^second}} = WalWriter.truncate_up_to(srv, 3)
+      end)
+
+      {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+      FsyncBatcher.mark_dirty(pid, batcher)
+      :ok = FsyncBatcher.flush_now(batcher)
+
+      refute MapSet.member?(FsyncBatcher.dirty_set(batcher), pid),
+             "a sync that can never happen was kept for the next drain"
+    end
+
+    test "a writer that refuses its fsync stays dirty for the next drain" do
+      pid = TestHelpers.sample_entity_id("refused")
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid)
+      :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")
+
+      # Its own batcher, as the two tests above: the application's singleton
+      # seeds itself from every writer on the node.
+      {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+      :ok = FsyncBatcher.flush_now(batcher)
+      FsyncBatcher.mark_dirty(pid, batcher)
+
+      # The Registry clears an entry from the exit it is linked by, and a
+      # suspended partition handles none, so the drain provably still finds this
+      # writer after it is gone. `WalWriter.fsync/1` then answers its declared
+      # refusal: a value, and no exit for anyone to catch.
+      partition =
+        Process.whereis(Module.concat(Supervisor.registry_name(), "PIDPartition0"))
+
+      :sys.suspend(partition)
+      on_exit(fn -> :sys.resume(partition) end)
+
+      ref = Process.monitor(srv)
+      :ok = WalWriter.close(srv)
+      assert_receive {:DOWN, ^ref, :process, ^srv, _}, 1_000
+
+      :ok = FsyncBatcher.flush_now(batcher)
+
+      assert MapSet.member?(FsyncBatcher.dirty_set(batcher), pid),
+             "a sync that never happened was dropped from the dirty set"
     end
   end
 

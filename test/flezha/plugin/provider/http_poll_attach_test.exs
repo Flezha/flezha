@@ -10,7 +10,6 @@ defmodule Flezha.Plugin.Provider.HttpPollAttachTest do
   use FlezhaTest.HttpPollCase, async: false
 
   alias Flezha.Plugin.Provider.HttpPoll
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   # Preparation as the extension table performs it: the declaration normalises

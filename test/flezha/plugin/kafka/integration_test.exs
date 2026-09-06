@@ -18,8 +18,11 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
   during the pause and succeed after unpause.
   """
 
-  alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
+  alias Flezha.Plugin.Provider.Kafka
+  alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias Flezha.Plugin.Provider.WorkerSup
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.ProviderPrepare
 
   # async: false: a shared Kafka broker in Docker.
 
@@ -47,9 +50,9 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
     plugin_id = "integ-#{System.unique_integer([:positive])}"
     topic = "flezha_integ_#{System.unique_integer([:positive])}"
 
-    {:ok, pid} =
-      ProducerSup.ensure_worker(
-        connection_identity: %{hosts: [{@broker_host, @broker_port}]},
+    {:ok, _opts, pid} =
+      ProviderPrepare.prepare_and_activate(Kafka.Producer, %{
+        hosts: [{@broker_host, @broker_port}],
         topic: topic,
         partition: 0,
         plugin_id: plugin_id,
@@ -62,7 +65,7 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
         auto_create_topic: true,
         auto_create_partitions: 1,
         auto_create_replication_factor: 1
-      )
+      })
 
     # Send 50 messages, pause Kafka, send 50 more during the pause,
     # then unpause and verify all 100 succeed.
@@ -103,7 +106,7 @@ defmodule FlezhaTest.Plugin.Kafka.IntegrationTest do
     assert stats.dropped_total == 0
     assert stats.queue_depth == 0
 
-    ProducerSup.stop_worker(plugin_id, topic, 0)
+    WorkerSup.stop_worker(WorkerSup.family(Kafka.Producer), {plugin_id, topic, 0})
   end
 
   defp produce_in_parallel(pid, range) do

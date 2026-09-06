@@ -9,8 +9,12 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
   system never produces, so both live here rather than in each test file.
   """
 
+  import ExUnit.Assertions, only: [assert_receive: 2]
+  import ExUnit.Callbacks, only: [on_exit: 1]
+
   alias Flezha.Plugin.Extension.Table.Entry
   alias Flezha.Plugin.Extension.Table.Workers
+  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   @doc """
@@ -60,5 +64,53 @@ defmodule FlezhaTest.Helper.ProviderPrepare do
     with {:ok, prepared} <- prepare(provider, opts),
          {:ok, pid} <- activate(provider, prepared),
          do: {:ok, prepared, pid}
+  end
+
+  @doc """
+  Stop `provider`'s `worker` the way a disable does: through its own supervisor.
+  A worker that is no longer registered answers `:ok`.
+  """
+  @spec stop(module(), pid()) :: :ok
+  def stop(provider, worker) do
+    family = WorkerSup.family(provider)
+    registry = WorkerSup.registry_name(family)
+
+    case Enum.find(WorkerSup.keys(family), fn key ->
+           match?([{^worker, _}], Registry.lookup(registry, key))
+         end) do
+      nil -> :ok
+      key -> WorkerSup.stop_worker(family, key)
+    end
+  end
+
+  @doc """
+  Stop `worker` through its supervisor when the test ends, for a provider whose
+  worker outlives its host.
+
+  A kill may not be used, and neither may a wait: a supervisor reports an
+  abnormally exiting child at error level, `on_exit` runs outside the test's log
+  capture, and a live socket worker spends any wait here reconnecting to a
+  listener the test has already closed. A worker that stops itself takes
+  `await_stop_on_exit/1` instead, which is the other half of this pair.
+  """
+  @spec stop_on_exit(module(), pid()) :: :ok
+  def stop_on_exit(provider, worker) do
+    on_exit(fn -> stop(provider, worker) end)
+  end
+
+  @doc """
+  Settle the exit `worker` takes on its own when the test ends, for a provider
+  whose worker monitors its host: the host is the test process, so the exit is
+  already in flight by the time `on_exit` runs.
+
+  Stopping such a worker a second time is a race, not a teardown, and the losing
+  side is a supervisor reporting a child that is already gone at error level.
+  """
+  @spec await_stop_on_exit(pid()) :: :ok
+  def await_stop_on_exit(worker) do
+    on_exit(fn ->
+      ref = Process.monitor(worker)
+      assert_receive {:DOWN, ^ref, :process, ^worker, _}, 2_000
+    end)
   end
 end

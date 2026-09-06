@@ -13,7 +13,6 @@ defmodule FlezhaTest.Plugin.Provider.MonitoredIOForwardTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.MonitoredIOForward
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
 
   defp opts(extra) do

@@ -358,25 +358,8 @@ defmodule Flezha.Plugin.Provider.Kafka do
       pattern = {{plugin_id, :"$1", :"$2"}, :"$3", :_}
 
       case Registry.select(registry(), [{pattern, [], [:"$$"]}]) do
-        [[topic, partition, pid] | _] ->
-          # The Registry entry is unregistered asynchronously when the worker
-          # exits, so we may see a stale pid here for a brief window after the
-          # table stopped it.
-          try do
-            stats =
-              pid
-              |> ProducerWorker.stats()
-              |> Map.put(:topic, topic)
-              |> Map.put(:partition, partition)
-
-            {:ok, stats}
-          catch
-            :exit, {:noproc, _} -> {:error, :no_producer}
-            :exit, {:normal, _} -> {:error, :no_producer}
-          end
-
-        [] ->
-          {:error, :no_producer}
+        [[topic, partition, pid] | _] -> counters(pid, topic, partition)
+        [] -> {:error, :no_producer}
       end
     end
 
@@ -388,20 +371,22 @@ defmodule Flezha.Plugin.Provider.Kafka do
             {:ok, map()} | {:error, :no_producer}
     def stats(plugin_id, topic, partition) do
       case Registry.lookup(registry(), {plugin_id, topic, partition}) do
-        [{pid, _}] ->
-          try do
-            {:ok,
-             pid
-             |> ProducerWorker.stats()
-             |> Map.put(:topic, topic)
-             |> Map.put(:partition, partition)}
-          catch
-            :exit, {:noproc, _} -> {:error, :no_producer}
-            :exit, {:normal, _} -> {:error, :no_producer}
-          end
+        [{pid, _}] -> counters(pid, topic, partition)
+        [] -> {:error, :no_producer}
+      end
+    end
 
-        [] ->
+    # The Registry unregisters a worker asynchronously when it exits, so both
+    # lookups can hand back a pid that is already gone. `ProducerWorker.stats/1`
+    # declares the empty map as its refusal, which is the only way that window
+    # shows: the call itself never exits.
+    defp counters(pid, topic, partition) do
+      case ProducerWorker.stats(pid) do
+        counters when map_size(counters) == 0 ->
           {:error, :no_producer}
+
+        counters ->
+          {:ok, counters |> Map.put(:topic, topic) |> Map.put(:partition, partition)}
       end
     end
 

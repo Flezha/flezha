@@ -27,6 +27,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   alias Flezha.Convergence.Probe
   alias Flezha.Convergence.Probe.{Fact, Judge, Table}
   alias Flezha.Observability.TelemetryBridge
+  alias FlezhaTest.Helper.SourceWalk
 
   # The seam itself, plus the files whose two-or-more states are a FACT in
   # another sense. Every entry states the difference that forbids the fold —
@@ -381,14 +382,13 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
   # ---------- the walk ----------
 
-  defp source_files(), do: Path.wildcard("lib/flezha/**/*.ex")
+  defp source_files(), do: SourceWalk.files(["lib/flezha"], [".ex"])
 
   # Every file that hands `Snapshot.publish/1` a map carrying `operative_health`.
   # Read from the AST, so a render key of the same name elsewhere is not a write.
   defp snapshot_health_writers() do
     for file <- source_files(),
-        {:ok, ast} = Code.string_to_quoted(File.read!(file)),
-        publishes_health?(ast),
+        publishes_health?(SourceWalk.ast(file)),
         do: file
   end
 
@@ -415,7 +415,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
   defp atoms(file) do
     ~r/:(healthy|degraded|failed|unbound|parked|suspended|unknown)\b/
-    |> Regex.scan(File.read!(file))
+    |> Regex.scan(SourceWalk.read(file))
     |> MapSet.new(fn [_, atom] -> String.to_existing_atom(atom) end)
   end
 
@@ -424,7 +424,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   # the literals its own call sites pass — the walk part 03 #8 described.
   defp executed_events() do
     Enum.flat_map(source_files(), fn file ->
-      {:ok, ast} = Code.string_to_quoted(File.read!(file))
+      ast = SourceWalk.ast(file)
       attrs = attributes(ast)
       calls = call_sites(ast)
 

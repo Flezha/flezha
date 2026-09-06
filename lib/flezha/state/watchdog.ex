@@ -514,9 +514,15 @@ defmodule Flezha.State.Watchdog do
   end
 
   # A writer mid-rewrite or terminating must not crash the sweep.
+  # `WalWriter.stall_status/1` declares its refusal instead of exiting, so a
+  # writer that is gone, wedged or mid-restart answers a value, and nothing here
+  # has an exit to catch. Reading that value as a status map is what put an
+  # error tuple into `stalled?/3` and `input_dead?/3` and took this node-wide
+  # sensor down on a sweep.
   defp safe_stall_status(writer) do
-    {:ok, WalWriter.stall_status(writer)}
-  catch
-    :exit, _ -> :error
+    case WalWriter.stall_status(writer) do
+      %{} = status -> {:ok, status}
+      {:error, _refused} -> :error
+    end
   end
 end

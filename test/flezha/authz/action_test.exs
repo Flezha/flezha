@@ -6,7 +6,7 @@ defmodule Flezha.AuthZ.ActionTest do
   test "all/0 returns a non-empty enumeration of atoms" do
     actions = Action.all()
     assert is_list(actions)
-    assert actions != []
+    refute Enum.empty?(actions)
     assert Enum.all?(actions, &is_atom/1)
   end
 

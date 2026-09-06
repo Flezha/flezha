@@ -11,8 +11,8 @@
 #
 # Sections (each runs the verbatim sequence of commands from the YAML):
 #   elixir  mix deps.get, mix compile --warnings-as-errors, cargo test for
-#           the flezha_runner crate, mix test, and the uncaptured-error-log
-#           gate (matches elixir.yml)
+#           the flezha_runner crate, mix test --warnings-as-errors, and the
+#           uncaptured-error-log gate (matches elixir.yml)
 #   java    mvn verify with -P coverage,native-verify on the SDK reactor,
 #           then the shared smoke tier under FLEZHA_E2E_RUNTIME=java
 #           (matches java-sdk.yml's two jobs)
@@ -82,10 +82,13 @@ run_elixir() {
     -p flezha_runner --features bench-internals \
     --lib --tests
 
-  bold ">>> mix test"
+  # `--warnings-as-errors` is the half `mix compile` above cannot reach: the
+  # project's elixirc_paths carry lib/, test/fixtures/ and test/helpers/, so
+  # nothing else ever judged a warning in a test file.
+  bold ">>> mix test --warnings-as-errors"
   local log
   log="$(mktemp)"
-  mix test 2>&1 | tee "${log}"
+  mix test --warnings-as-errors 2>&1 | tee "${log}"
 
   bold ">>> uncaptured error logs"
   if grep -nE '\[(error|critical)\]' "${log}"; then

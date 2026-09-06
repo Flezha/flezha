@@ -13,6 +13,10 @@ defmodule FlezhaTest.Service.CliManagerSubscriptionTest do
   """
   use ExUnit.Case, async: true
 
+  # An unconvertible subscription option is driven on purpose and the table
+  # reports the halt at error level; the refusal is asserted as a return value.
+  @moduletag :capture_log
+
   alias Flezha.Operative.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension

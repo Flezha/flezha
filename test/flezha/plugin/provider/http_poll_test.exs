@@ -19,7 +19,6 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpPoll
-  alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -241,7 +240,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
         |> then(fn {:ok, o} -> HttpPoll.init_provider(o) end)
 
       {:ok, poller} = start_worker(opts)
-      kill_on_exit(poller)
+      stop_on_exit(poller)
 
       assert_receive {:poll_event, :failed, _, %{reason: reason}}, 5_000
       refute match?({:no_ca_store, _}, reason)
@@ -277,7 +276,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       {:ok, opts} = prepare(origin)
 
       {elapsed_us, {:ok, poller}} = :timer.tc(fn -> start_worker(opts) end)
-      kill_on_exit(poller)
+      stop_on_exit(poller)
 
       assert elapsed_us < 100_000
 

@@ -150,7 +150,6 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
 
   alias Flezha.Identificator
   alias Flezha.Operative.Builder
-  alias Flezha.Operative.Lifecycle
   alias Flezha.Operative.Migration
   alias Flezha.Partition
   alias Flezha.Runner.ControlChannel
