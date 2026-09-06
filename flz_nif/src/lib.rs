@@ -1,14 +1,13 @@
 mod atoms;
 mod client;
+mod driver;
 mod driver_msg;
 mod driver_stats;
 mod frame_buffer;
 mod instance_claim;
-mod quic_driver;
 mod resources;
 mod server;
 mod stream;
-mod uds_driver;
 
 #[allow(non_local_definitions)]
 fn load(env: rustler::Env, _info: rustler::Term) -> bool {

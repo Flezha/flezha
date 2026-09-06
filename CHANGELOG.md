@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Fixed — a QUIC peer ending a stream is now reported, and reported the same way
+
+The controller's transport server ran two separate drivers, one for Unix
+sockets and one for QUIC, and they disagreed about what had happened to a
+stream. Over Unix sockets a runner that ended a stream cleanly was reported as
+`connection_closed`; over QUIC it was reported as nothing at all, because the
+driver could not tell "the peer finished" from "no more data right now". A
+controller's log therefore said different things about the same event depending
+on which transport it was configured with, and one of the two said nothing.
+
+The two drivers are now one loop with one implementation per transport, so a
+close reason is one word for both and a capability added for one reaches the
+other by construction. Nothing an operator configures changes.
+
+The Java SDK's native surface is also declared and asserted now, the last of
+the five language bindings to have that: an entry point added on one side and
+not the other fails the build instead of surfacing as a missing method at the
+first call.
+
 ### Changed — every frame declares what the wire owes it
 
 An SDK that cannot write a frame no longer decides what to do about it at the

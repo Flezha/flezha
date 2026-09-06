@@ -140,7 +140,7 @@ Two windows this does **not** close, both named so nobody reads more into the gu
   the producer's own floor skips it. Closing it needs `OutputTarget::Edge` in the transactional
   outbox.
 - **The controller's send buffer**, which still discards the newest frame when a runner stops
-  reading (`flz_nif/src/uds_driver.rs`). The backpressure chain is complete inside the runner
+  reading (`flz_nif/src/driver/mod.rs`, `StreamState::offer`). The backpressure chain is complete inside the runner
   and breaks at its last hop.
 
 ### Effectively-once tier (opt-in, `effectively_once()` on the channel builder)

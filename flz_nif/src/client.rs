@@ -9,7 +9,7 @@
 //! a writer thread draining the handle's command channel. No new protocol logic
 //! lives here; framing, QUIC and TLS stay in Rust where they are already tested.
 
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -30,10 +30,10 @@ use flz_transport::utility::socket_probe;
 use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
 use crate::atoms;
+use crate::driver::{CloseReason, ServerCommand};
 use crate::driver_msg::{send_closed_msg, send_data_msg};
 use crate::frame_buffer::ParsedFrame;
 use crate::resources::{StreamHandle, StreamHandleArc, StreamWaker};
-use crate::uds_driver::ServerCommand;
 
 // Client stream ids share nothing with server ids — a client owner never mixes
 // the two, so a private monotonic counter is enough.
@@ -270,14 +270,10 @@ fn spawn_reader(mut read_stream: FlezhaStream, stream_id: u64, owner: Arc<Mutex<
             }
 
             Err(e) => {
-                let reason = match e.kind() {
-                    ErrorKind::UnexpectedEof => "connection_closed",
-                    ErrorKind::InvalidData => "frame_too_large",
-                    _ => "read_error",
-                };
+                let reason = CloseReason::from(e.kind());
 
                 let who = *owner.lock().unwrap();
-                send_closed_msg(who, stream_id, reason);
+                send_closed_msg(who, stream_id, &reason);
                 break;
             }
         }

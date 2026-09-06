@@ -19,8 +19,8 @@ compiles the module to `:not_loaded` stubs). `lib.rs` registers three resource t
 ```text
 Elixir                                          flz_nif (cdylib)
 Transport.Server  <- {:flz_connection, handle}  NIF fns --crossbeam channel--> driver thread
-                  <- {:flz_stream, ...} (QUIC)    server.rs / stream.rs        uds_driver.rs
-                  <- {:flz_refused, reason}                                    quic_driver.rs
+                  <- {:flz_stream, ...} (QUIC)    server.rs / stream.rs        driver/mod.rs
+                  <- {:flz_refused, reason}                              driver/uds.rs, driver/quic.rs
 ControlChannel    <- {:flz_data, ...}           per stream: bytes -> FrameBuffer -> ParsedFrame
                   <- {:flz_closed, id, reason}  client.rs: reader + writer threads per stream
 ```
@@ -32,9 +32,10 @@ ControlChannel    <- {:flz_data, ...}           per stream: bytes -> FrameBuffer
 | `frame_buffer.rs` | stateful frame parser, limit-checked before allocation |
 | `server.rs` | `start_uds_server`, `start_quic_server`, `stop_server`, `driver_stats` |
 | `stream.rs` | per-stream NIFs (`send_frame`, `set_active`, `close`, `stream_id`, ...) |
-| `driver_msg.rs` | the `{:flz_*, ...}` tuple builders shared by every driver |
-| `driver_stats.rs` | the UDS driver's self-reported liveness |
-| `uds_driver.rs`, `quic_driver.rs` | one mio event-loop thread per server |
+| `driver_msg.rs` | the `{:flz_*, ...}` tuple builders the loop and the client send through |
+| `driver_stats.rs` | the driver loop's self-reported liveness |
+| `driver/mod.rs` | the one `DriverLoop<T: Transport>`, the `Transport` contract and the `CloseReason` vocabulary |
+| `driver/uds.rs`, `driver/quic.rs` | one `impl Transport` per wire; one mio event-loop thread per server |
 | `client.rs` | standalone-SDK client connects returning the same `StreamHandle` |
 | `instance_claim.rs` | what one controller instance owns alone on a host: the socket directory it listens in, the state root it writes |
 
@@ -48,7 +49,7 @@ pub struct TransportServer {            // one per running server
     cmd_tx: Sender<ServerCommand>,      // NIF -> driver commands
     waker: Arc<mio::Waker>,             // wakes the driver's poll
     driver_handle: Mutex<Option<JoinHandle<()>>>,
-    stats: Option<Arc<DriverStats>>,    // Some for UDS, None for QUIC
+    stats: Arc<DriverStats>,            // the one self-report, whichever wire ran
 }
 pub struct StreamHandle {               // one per UDS connection / QUIC stream / client stream
     stream_id: u64,
@@ -80,44 +81,81 @@ every later feed repeats the error, there is no resync, and the driver closes th
 reason `"frame_too_large"`. `ParsedFrame` is `{payload_id: String, message: Vec<u8>,
 metadata: HashMap<String, String>}`.
 
-## UDS driver (`uds_driver.rs`)
+## The driver loop (`driver/mod.rs`)
 
-One thread (`flz-uds-driver`) per server, started by `start_uds_server/2`. mio tokens: 0 the
-`UnixListener`, 1 the waker, 2+ one per accepted stream. Each loop iteration polls with a 50 ms
-timeout, then: accepts connections (registers READABLE, builds a `StreamHandle`, sends
-`{:flz_connection, handle}` to the acceptor pid), flushes streams that became writable, reads
-readable streams into their `FrameBuffer`, drains the command channel, and flushes pending
-writes. Streams start **passive**: frames queue in `passive_queue` until `SetActive`, which
-flushes the queue in order. EOF closes with `"connection_closed"`, a read error with
-`"read_error"`.
+One thread per server — `flz-uds-driver` or `flz-quic-driver` — running one
+`DriverLoop<T: Transport>`. The loop owns every job that is the same whichever wire is under
+it, and a transport is one `impl Transport` supplying wire operations only. A capability added
+to the loop reaches every transport at once; a capability one transport has and another lacks
+is a defect of the loop, not a backlog item for the transport that lacks it.
 
-Write backpressure is per stream: data is appended to `write_buffer` and flushed immediately;
-`WouldBlock` registers `READABLE | WRITABLE` and the buffer drains on the next writable event;
-once empty the interest reverts to `READABLE`. The buffer is capped by
-`FLEZHA_MAX_WRITE_BUFFER_BYTES` (default 8 MiB): an enqueue that would exceed the cap on a
-non-empty buffer drops the newest frame and increments `write_buffer_dropped` (an empty buffer
-always accepts, so a single oversized frame is never dropped).
+Each iteration: wait on the wire, stamp the liveness heartbeat, take the pass the wire found
+(streams to read, to flush, and ones it ended), flush and read those, drain the NIF command
+channel, flush whatever is still buffered, and publish the per-stream snapshot. The loop owns
+the iteration clock, so no wire operation takes a timestamp of its own.
 
-`DriverStats` is the driver's self-report: lock-free `loop_iterations`, `last_loop_ms`,
+The six `ServerCommand` arms are the loop's; only `SendFrame` and `Shutdown` reach `T` at all.
+Streams start **passive**: frames queue in `passive_queue` until `SetActive`, which flushes the
+queue in order.
+
+Write backpressure is per stream and lives in `StreamState::offer` / `StreamState::observe`:
+the frame's reservation is released, the buffer is offered the bytes, and only a frame the
+ceiling took counts as written. The buffer is capped by `FLEZHA_MAX_WRITE_BUFFER_BYTES`
+(default 8 MiB): an offer that would exceed the cap on a non-empty buffer is refused and
+increments `write_buffer_dropped` (an empty buffer always accepts, so a single oversized frame
+is never dropped). Crossing a watermark sends `{:flz_send_gate, stream_id, raised?}` to the
+owner.
+
+A stream close is one `CloseReason`, spelled once and rendered once, so the same wire event
+reads the same whichever transport observed it:
+
+| reason | what it means | produced by |
+|---|---|---|
+| `connection_closed` | the peer ended the stream cleanly | every transport, and `client.rs` |
+| `read_error` | a read failed | every transport, and `client.rs` |
+| `write_error` | a write failed | every transport |
+| `frame_too_large` | a header declared a payload over the limit | every transport, and `client.rs` |
+| `stream_reset` | the peer reset the stream | QUIC only — a UDS peer cannot say it |
+| `connection_lost: <e>` | the whole connection died | QUIC only — a UDS connection IS its stream |
+
+`DriverStats` is the loop's self-report: lock-free `loop_iterations`, `last_loop_ms`,
 `cmd_queue_depth`, plus a per-stream snapshot (`write_buffer_len`, `write_buffer_dropped`,
 `frames_written`, `frames_read`, `last_write_ms`, `last_read_ms`) rebuilt once per iteration.
-`driver_stats/1` returns it as a map with `now_ms` so Elixir can age the timestamps. The
-`:flezha_transport` observability source reads it about once a second; the stall classifier
+`driver_stats/1` returns it as a map with `now_ms` so Elixir can age the timestamps. One
+producer means a field is present for one transport exactly when it is present for the other.
+The `:flezha_transport` observability source reads it about once a second; the stall classifier
 derives `:driver_loop_frozen` and `:nif_queue_backing_up` from it
 (see [transport liveness](transport_liveness.md)).
 
-## QUIC driver (`quic_driver.rs`)
+`driver/conformance_tests.rs` runs one table of cases over both `impl Transport`s, so a
+difference between the wires is a failing build. `test/flezha/transport/driver_parity_test.exs`
+drives the same parity through the real NIF over a real socket.
 
-One thread (`flz-quic-driver`) per server, started by `start_quic_server/5`, driving a
-`quinn_proto::Endpoint` over one UDP socket (token 0; waker token 1). Per connection:
-`ConnectionState { connection, streams: HashMap<StreamId, QuicStreamState>, stream_count,
-control_nif_id }`; per stream: `nif_stream_id`, owner, `FrameBuffer`, active flag,
-`passive_queue`, `write_buffer`, `TypeByteState`. The poll timeout is the nearest connection
-timer, capped at 50 ms. The loop handles timers, routes datagrams through the endpoint
-(`NewConnection` creates a `ConnectionState`), pumps connection events (`Opened{Bi}` accepts
-streams, `Readable` drains into the frame buffer, `Writable` flushes, `Finished` closes with
-`"stream_finished"`, `ConnectionLost` closes every stream with `"connection_lost: <reason>"`),
-drains NIF commands, then flushes writes and outgoing packets.
+## The UDS wire (`driver/uds.rs`)
+
+Started by `start_uds_server/2`. mio tokens: 0 the `UnixListener`, 1 the waker, 2+ one per
+accepted stream; the poll timeout is a flat 50 ms. Accepting registers the socket READABLE,
+builds a `StreamHandle` and sends `{:flz_connection, handle}` to the acceptor pid. `WouldBlock`
+on a write registers `READABLE | WRITABLE` and the buffer drains on the next writable event;
+once empty the interest reverts to `READABLE`. A read of zero bytes is the peer's clean end.
+
+The listening socket's parent directory is created 0700 and the socket itself 0600, because
+directory traversal is the UDS authentication boundary: a local same-uid peer IS the node
+owner.
+
+## The QUIC wire (`driver/quic.rs`)
+
+Started by `start_quic_server/5`, driving a `quinn_proto::Endpoint` over one UDP socket
+(token 0; waker token 1). Per connection: `ConnectionState { connection, streams:
+HashMap<StreamId, u64>, stream_count, control_nif_id }` — the stream map is a routing table
+only, because a stream's state belongs to the loop. Per stream the wire keeps its connection
+handle, its `StreamId` and its `TypeByteState`. The poll timeout is the nearest connection
+timer, capped at 50 ms. One pass handles timers, routes datagrams through the endpoint
+(`NewConnection` creates a `ConnectionState`) and pumps connection events: `Opened{Bi}` accepts
+streams, `Readable` marks them readable, `Writable` marks them writable, and `ConnectionLost`
+ends every stream on the connection with `connection_lost: <reason>`. Reading answers the
+peer's clean end from `Chunks::next` — `Ok(None)` is the FIN with every byte read, and
+`Err(Blocked)` is only "nothing more right now".
 
 TLS (`build_quic_server_config/3`): server cert/key from PEM; a non-empty `client_ca_path`
 installs a `WebPkiClientVerifier`, so every peer must present a certificate chaining to that
@@ -135,8 +173,7 @@ Stream typing: the **first** bidi stream of a connection is the control channel 
 `{:flz_stream, handle, type, index, conn_id}` where `conn_id` is the control stream's id, and
 the rest of the bytes go to the frame buffer. Writes go through quinn's flow control: on
 `WriteError::Blocked` the data is buffered and retried on `Writable`. The QUIC write buffer is
-bounded by the same send gate the UDS one is, and the driver keeps the same per-stream liveness
-counters, so `driver_stats/1` answers the one self-report map for either server.
+bounded by the same send gate the UDS one is, because both go through the loop's one ledger.
 
 ## Client entry points (`client.rs`)
 

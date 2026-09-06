@@ -99,6 +99,12 @@ re-express dispatch, ordering, overflow, the retry ladder, durability or the wor
 NOT reach a kernel capability the C ABI does not expose, and SHALL NOT alter the artifacts the other
 bindings consume when its feature is enabled.
 
+Every host binding SHALL declare its exported surface as a table pairing each export with the ABI
+entry point it reaches, and a test SHALL assert that the binding's actual exports are exactly that
+table. The assertion SHALL hold for every binding without exception, including a binding whose host
+reaches the core through a language-specific native interface rather than the C ABI directly. A
+binding whose surface is compared by review rather than by a test does not satisfy this requirement.
+
 #### Scenario: FFI parity is tested, not assumed
 - **WHEN** the SDK test suite runs in CI
 - **THEN** it SHALL include a scenario that connects, processes input activations, fires a timer, and shuts down entirely through the C ABI, failing if any required entry point is missing
@@ -110,6 +116,14 @@ bindings consume when its feature is enabled.
 #### Scenario: A binding's feature is additive
 - **WHEN** the crate is built with and without a binding's feature
 - **THEN** the existing artifacts SHALL be unchanged and the other bindings' exports SHALL be unaffected
+
+#### Scenario: Every binding declares its surface, the JNI one included
+- **WHEN** the bindings are audited for a declared surface table and its assertion
+- **THEN** each of them SHALL have both, and removing one export from a binding's host-side declaration SHALL fail that binding's surface test
+
+#### Scenario: An entry point added to one binding and not its declaration is a red build
+- **WHEN** a host-side declaration and the binding's exports disagree in either direction
+- **THEN** the surface test SHALL fail naming the export and the direction of the disagreement, rather than the disagreement surfacing as a missing method at the first call
 
 ### Requirement: The declaration surface covers the full host layer
 

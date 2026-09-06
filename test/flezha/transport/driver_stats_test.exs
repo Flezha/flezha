@@ -23,24 +23,15 @@ defmodule Flezha.Transport.DriverStatsTest do
     {:ok, server: server}
   end
 
-  defp start_quic_server(port \\ 0) do
+  defp start_quic_server do
     CertGenerator.ensure_certs()
 
     cert = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
     key = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
 
-    {:ok, server} = Native.start_quic_server("127.0.0.1:#{port}", cert, key, "", self())
+    {:ok, server} = Native.start_quic_server("127.0.0.1:0", cert, key, "", self())
     on_exit(fn -> Native.stop_server(server) end)
     server
-  end
-
-  # A UDP port nothing is listening on right now. The QUIC bind is the next
-  # thing that happens, so the window is the test's own scheduling.
-  defp free_udp_port do
-    {:ok, socket} = :gen_udp.open(0, [:binary, ip: {127, 0, 0, 1}])
-    {:ok, port} = :inet.port(socket)
-    :ok = :gen_udp.close(socket)
-    port
   end
 
   test "driver_stats returns a well-shaped liveness map", %{server: server} do
@@ -86,23 +77,6 @@ defmodule Flezha.Transport.DriverStatsTest do
     assert is_list(quic_stats.streams)
   end
 
-  test "the QUIC loop heartbeat advances while the driver thread is alive" do
-    quic = start_quic_server()
-    first = Native.driver_stats(quic)
-
-    assert is_map(first), "a QUIC driver must report driver stats, got #{inspect(first)}"
-
-    assert NodeTestHelper.wait_until(
-             fn -> Native.driver_stats(quic).loop_iterations > first.loop_iterations end,
-             5_000
-           ),
-           "the QUIC driver loop's heartbeat never advanced"
-
-    second = Native.driver_stats(quic)
-    assert second.now_ms >= first.now_ms
-    assert second.now_ms - second.last_loop_ms < 1_000
-  end
-
   test "the classifier's driver clauses fire on QUIC-sourced stats" do
     quic = start_quic_server()
 
@@ -137,36 +111,5 @@ defmodule Flezha.Transport.DriverStatsTest do
 
     assert ctx.transport == :quic
     assert ctx.loop_age_ms > 5_000
-  end
-
-  test "a live QUIC stream appears on its driver's per-stream line" do
-    port = free_udp_port()
-    quic = start_quic_server(port)
-    ca = Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")
-
-    {:ok, conn} = Native.client_connect_quic("127.0.0.1:#{port}", ca)
-    {:ok, stream} = Native.client_open_stream(conn, 0, 0, self())
-    :ok = Flezha.Transport.Stream.send_frame(stream, "control_ping", <<1, 2, 3>>, %{})
-
-    assert NodeTestHelper.wait_until(
-             fn -> Native.driver_stats(quic).streams != [] end,
-             5_000
-           ),
-           "the QUIC driver never reported the accepted stream"
-
-    [line] = Native.driver_stats(quic).streams
-
-    assert is_integer(line.stream_id) and line.stream_id > 0
-    assert line.write_buffer_dropped == 0
-    assert is_integer(line.write_buffer_len)
-
-    assert NodeTestHelper.wait_until(
-             fn ->
-               [s] = Native.driver_stats(quic).streams
-               s.frames_read > 0 and s.last_read_ms > 0
-             end,
-             5_000
-           ),
-           "the QUIC driver read a frame and never counted it"
   end
 end

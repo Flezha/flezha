@@ -75,6 +75,13 @@ jobs:
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
 
+      - name: Assert the Java native surface against the declared table
+        # The other four host bindings declare their exported surface and a
+        # test asserts it; this is Java's. It reads FlzCore.java, so it runs
+        # here rather than in a Rust-only job, and it must run somewhere: a
+        # declaration nothing reads stops nothing.
+        run: cargo test -p flz_core_ffi --features jni --test abi_scenario veneer_jni
+
       - name: Verify (compile + unit + JaCoCo + fat jar) against the host triple
         # `verify` runs through `package`, so the shaded jar uploaded below is
         # this run's. Shading an already-shaded jar duplicates resources, so

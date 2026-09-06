@@ -1,4 +1,4 @@
-//! Erlang-term message builders shared by the UDS and QUIC drivers.
+//! Erlang-term message builders shared by the driver loop and the client.
 //! Each sends a `{:flz_*, ...}` tuple to the owning Elixir process.
 
 use std::sync::{Arc, Mutex};
@@ -7,6 +7,7 @@ use flz_transport::transport::send_gate::{GateChange, Transition};
 use rustler::{Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
 
 use crate::atoms;
+use crate::driver::CloseReason;
 use crate::frame_buffer::ParsedFrame;
 use crate::resources::StreamHandle;
 
@@ -43,7 +44,10 @@ pub(crate) fn send_data_msg(owner: LocalPid, stream_id: u64, frame: ParsedFrame)
     });
 }
 
-pub(crate) fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &str) {
+/// Tell a stream's owner it has ended, as `{:flz_closed, stream_id, reason}`.
+/// The reason is rendered from the one declared set, so the same wire event
+/// reads the same whichever transport observed it.
+pub(crate) fn send_closed_msg(owner: LocalPid, stream_id: u64, reason: &CloseReason) {
     let reason_owned = reason.to_string();
     send_tuple(owner, |env| {
         vec![
@@ -102,7 +106,7 @@ pub(crate) fn send_stream_msg(
 /// Tell a stream's owner that its send gate crossed a watermark, as
 /// `{:flz_send_gate, stream_id, raised?}` — `true` means senders must hold,
 /// `false` wakes them. It rides the same driver -> owner route as
-/// `{:flz_data, ...}` rather than opening a second one. Both drivers report
+/// `{:flz_data, ...}` rather than opening a second one. The loop reports
 /// here; a depth that moved without crossing says nothing and sends nothing.
 pub(crate) fn report_gate(owner: &Arc<Mutex<LocalPid>>, stream_id: u64, change: Transition) {
     let Some(change) = change else {

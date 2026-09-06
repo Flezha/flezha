@@ -520,3 +520,44 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_contextFree(
 ) {
     veneer::context_free(ctx_of(ctx));
 }
+
+/// The table `FlzCore.java`'s `static native` declarations are asserted
+/// against: `(java_name, abi_entry_point)`, in declaration order.
+///
+/// Every other host binding carries one — `napi_glue::native_surface`,
+/// `python_glue::NATIVE_SURFACE`, `ruby_glue::NATIVE_SURFACE`, and PHP's
+/// `cdef` block, which `AbiSurfaceTest.php` compares against `lib.rs` in both
+/// directions. Java was the one host whose sixteen-and-then-some hand-written
+/// declarations were compared with the JNI exports by nobody, so an export
+/// added on one side and not the other surfaced as a missing method at the
+/// first call rather than as a red build.
+///
+/// The assertion lives in `tests/abi/veneer_jni.rs`.
+pub const NATIVE_SURFACE: &[(&str, &str)] = &[
+    ("schemaVersion", "flz_core_schema_version"),
+    ("contextNew", "flz_core_context_new"),
+    ("declareClass", "flz_core_declare_class"),
+    ("checkClass", "flz_core_check_class"),
+    ("start", "flz_core_start"),
+    ("localStart", "flz_core_local_start"),
+    ("localOnSink", "flz_core_local_on_sink"),
+    ("localFeed", "flz_core_local_feed"),
+    ("localNextOutput", "flz_core_local_next_output"),
+    ("localRunUntilIdle", "flz_core_local_run_until_idle"),
+    ("localStop", "flz_core_local_stop"),
+    ("poll", "flz_core_poll"),
+    ("complete", "flz_core_complete"),
+    ("waitStarvation", "flz_core_wait_starvation"),
+    ("abandon", "flz_core_abandon"),
+    ("workflowEmit", "flz_core_workflow_emit"),
+    ("workflowRecv", "flz_core_workflow_recv"),
+    ("workflowCancelled", "flz_core_workflow_cancelled"),
+    ("spawnWorkflow", "flz_core_spawn_workflow"),
+    ("monotonicNanos", "flz_core_monotonic_nanos"),
+    (
+        "entryLastDeliveryNanos",
+        "flz_core_entry_last_delivery_nanos",
+    ),
+    ("shutdown", "flz_core_shutdown"),
+    ("contextFree", "flz_core_context_free"),
+];

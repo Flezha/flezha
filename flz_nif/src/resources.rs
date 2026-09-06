@@ -6,8 +6,8 @@ use flz_transport::transport::send_gate::SendGate;
 use mio::Waker;
 use rustler::{LocalPid, ResourceArc};
 
+use crate::driver::ServerCommand;
 use crate::driver_stats::DriverStats;
-use crate::uds_driver::ServerCommand;
 
 /// How a stream nudges its driver after a command is queued. Server streams
 /// wake a `mio` poll; client streams' writer threads block on the command

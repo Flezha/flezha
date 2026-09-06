@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use rustler::{Encoder, Env, LocalPid, NifResult, Term};
 
 use crate::atoms;
+use crate::driver::ServerCommand;
 use crate::resources::StreamHandleArc;
-use crate::uds_driver::ServerCommand;
 
 /// Build a binary frame in Rust and send it on the stream.
 #[rustler::nif]

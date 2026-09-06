@@ -26,7 +26,7 @@ routes through the same `handle_connection_closed/1` → `:runner_disconnected` 
 close uses. There is no parallel eviction path.
 
 QUIC declares death in the same window by construction: both `flz_transport/src/transport/quic.rs` and
-`flz_nif/src/quic_driver.rs` set `keep_alive_interval` to 5 s and `max_idle_timeout` to
+`flz_nif/src/driver/quic.rs` set `keep_alive_interval` to 5 s and `max_idle_timeout` to
 `liveness::control_idle_timeout()` instead of the quinn default. When tuning, pair
 `FLEZHA_CONTROL_LIVENESS_WINDOW_MS` (the controller watchdog) with `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (the
 QUIC idle and the Rust/Java SDK idle watchdog in `flz_transport/src/transport/liveness.rs`; the Elixir
@@ -64,7 +64,7 @@ source plugin
   → StreamChannel.io_in/3                 [io_in_received, send_frame_calls, nil_drops, last_send_ms]
   → Transport.Stream.send_frame
   → [command channel]                     [cmd_queue_depth]
-  → driver loop (uds/quic_driver.rs)      [loop_iterations, last_loop_ms]
+  → driver loop (driver/mod.rs)           [loop_iterations, last_loop_ms]
   → per-stream write buffer → socket      [write_buffer_len, write_buffer_dropped, frames_written, last_write_ms]
 Inbound mirror: driver read → StreamChannel({:flz_data}) [flz_data_received] + [frames_read, last_read_ms]
 ```

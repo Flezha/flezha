@@ -61,6 +61,8 @@ The `:native` `Transport.Server` instance SHALL accept connections via a local f
 ### Requirement: Native transport integrates with stats and liveness without exemptions
 `Transport.Server.get_stats(:native)` SHALL return the standard stats map with the `:driver` key absent, because the native transport runs no driver thread — the key is absent, never `:undefined`. Native streams SHALL participate in `LivenessCounters` and the secondary-channel heartbeat liveness check (`:io_liveness_check`, 30 s threshold) identically to other transports. The stall classifier SHALL require no native-specific branch: a native-only snapshot carries no driver stats, so the driver clauses simply find nothing to judge, while a UDS or QUIC snapshot carries the one driver self-report shape both server drivers produce.
 
+That one shape SHALL be one shape in the code as well as in the report: every server transport SHALL produce its self-report from the single driver loop, so a field is present for one transport exactly when it is present for the other, and the classifier SHALL need no branch on which transport a snapshot came from.
+
 #### Scenario: Stats shape
 - **WHEN** `Transport.Server.get_stats(:native)` is called on a running native transport
 - **THEN** it returns `{:ok, %{transport: :native, status: :up, pending_streams: n}}` with no `:driver` key
@@ -68,6 +70,10 @@ The `:native` `Transport.Server` instance SHALL accept connections via a local f
 #### Scenario: Idle native runner does not trigger output_stall
 - **WHEN** a native runner with a bound secondary stream is idle but emitting `data_heartbeat` frames
 - **THEN** no `[:flezha, :state, :output_stall]` telemetry fires across at least three liveness threshold windows
+
+#### Scenario: The driver self-report has one producer
+- **WHEN** the driver stats of a UDS server and of a QUIC server are compared field by field
+- **THEN** the same fields SHALL be present in both, because both are produced by the one driver loop, and a field missing from one SHALL be a failing test rather than a documented difference
 
 ### Requirement: Native transport is same-node only and opt-in
 The native connect path SHALL reject callers from a different BEAM node, SHALL never open a listener of any kind, and SHALL only start when explicitly configured (`:native` in `:transports`) or when an SDK runner start requests it. Transport parsing in `config/runtime.exs` SHALL validate `FLEZHA_TRANSPORT`/`FLEZHA_TRANSPORTS` values against the whitelist `[:uds, :quic, :native]` and refuse boot on an unknown value, replacing the current unvalidated `String.to_atom/1`.
@@ -83,4 +89,70 @@ The native connect path SHALL reject callers from a different BEAM node, SHALL n
 #### Scenario: Unknown transport value refused at boot
 - **WHEN** `FLEZHA_TRANSPORTS=uds,bogus` is set
 - **THEN** boot fails with an error naming `bogus` and the accepted values
+
+### Requirement: One driver loop serves every server transport
+
+The transport server driver SHALL be one loop implemented once, and a transport SHALL
+be one implementation of the loop's transport contract. `flz_nif` SHALL hold exactly
+one generic driver loop (`DriverLoop<T: Transport>`) owning the iteration clock, the
+liveness heartbeat, the command drain and every `ServerCommand` arm, send-side framing,
+the send-gate ledger, the gate observation and the per-iteration stats snapshot. A
+transport implementation SHALL supply only wire operations — bind and accept, read,
+write and flush, close, shutdown, and its own poll timeout — and SHALL NOT restate any
+job the loop owns. A transport SHALL NOT carry its own copy of a stat, a command arm
+or a clock.
+
+A capability the loop provides SHALL be provided to every transport at once. A
+capability one transport has and another lacks is a defect of the loop, not a backlog
+item for the transport that lacks it.
+
+#### Scenario: A transport is one implementation
+
+- **WHEN** the `flz_nif` source is audited for driver loops
+- **THEN** exactly one loop exists, and each supported server transport appears as one
+  implementation of the transport contract with no loop of its own
+
+#### Scenario: One conformance table covers both transports
+
+- **WHEN** the driver conformance test runs
+- **THEN** the same table of cases SHALL run against every transport implementation,
+  asserting for each case that the command is handled, the send-gate ledger balances,
+  the stats snapshot carries the field the case moves, and the close reason is the
+  same word
+
+#### Scenario: A capability added to the loop reaches every transport
+
+- **WHEN** a job is added to the driver loop
+- **THEN** it SHALL be reachable by every transport implementation without editing
+  any of them, and no implementation SHALL be able to opt out by omission
+
+### Requirement: A stream close is reported with one word for every transport
+
+The driver SHALL report a stream close with one vocabulary shared by every transport.
+The close reason carried in `{:flz_closed, stream_id, reason}` SHALL come from a single
+declared set of reasons, and the same wire event SHALL produce the same reason word
+regardless of which transport observed it. A reason SHALL be declared once and rendered
+once; a transport SHALL NOT spell a shared event with a word of its own.
+
+A reason that only one transport can produce, because the wire only offers it there,
+SHALL still be declared in the one set rather than written as a literal at the site
+that produces it.
+
+#### Scenario: A peer ending the stream reads the same over every transport
+
+- **WHEN** a connected peer ends a stream cleanly over UDS and, separately, over QUIC
+- **THEN** both closes SHALL deliver the same reason word to the owning process
+
+#### Scenario: A transport-specific reason is still declared
+
+- **WHEN** a transport reports an event only its wire can produce, such as a stream
+  reset or a lost connection
+- **THEN** the reason SHALL be a member of the one declared set, and the set SHALL name
+  which transports can produce it
+
+#### Scenario: The client agrees with the server drivers
+
+- **WHEN** the NIF's client read path reports a close
+- **THEN** it SHALL use the same declared reason set as the server drivers, so a reason
+  read from a log does not depend on which side of the connection produced it
 

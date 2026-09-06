@@ -29,7 +29,7 @@
 
 mod error;
 #[cfg(feature = "jni")]
-mod jni_glue;
+pub mod jni_glue;
 mod local;
 // `napi-derive` emits the module-registration constructor only outside
 // `cfg(test)`, so under the test harness every exported entry point looks

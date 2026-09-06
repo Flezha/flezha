@@ -3,44 +3,47 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crossbeam::channel;
+use crossbeam::channel::{self, Receiver, Sender};
 use flz_transport::transport::tls;
 use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
+use crate::atoms;
+use crate::driver::{quic, uds, DriverReady, ServerCommand};
 use crate::driver_stats::{DriverStats, DriverStatsOut, StreamStatsOut};
 use crate::resources::{TransportServer, TransportServerArc};
-use crate::uds_driver::{self, ServerCommand};
-use crate::{atoms, quic_driver};
 
-/// Start a UDS server listening on `socket_path`.
-/// Returns `{:ok, server_ref}` or `{:error, reason}`.
+/// What a driver thread is handed: the commands the NIF queues for it, a sender
+/// of its own so an accepted stream can queue one, the readiness the caller is
+/// waiting on, and the self-report it publishes into.
+type Wiring = (
+    Receiver<ServerCommand>,
+    Sender<ServerCommand>,
+    Sender<std::io::Result<DriverReady>>,
+    Arc<DriverStats>,
+);
+
+/// Start one server transport and wait for its driver to report ready.
 ///
-/// The acceptor_pid receives `{:flz_connection, stream_ref}` for each new connection.
-#[rustler::nif]
-fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> NifResult<Term> {
-    let path = PathBuf::from(&socket_path);
+/// Every transport is started this way: the command channel, the driver thread,
+/// the readiness handshake and the handle Elixir holds are the same whichever
+/// wire runs underneath, so a transport supplies only its thread name and what
+/// it does with the wiring it is handed.
+fn start<'a, F>(env: Env<'a>, thread_name: &str, run: F) -> NifResult<Term<'a>>
+where
+    F: FnOnce(Wiring) + Send + 'static,
+{
     let (cmd_tx, cmd_rx) = channel::unbounded::<ServerCommand>();
     let (ready_tx, ready_rx) = channel::bounded(1);
-
-    let cmd_tx_clone = cmd_tx.clone();
     let stats = Arc::new(DriverStats::new());
-    let stats_clone = Arc::clone(&stats);
 
+    let wiring = (cmd_rx, cmd_tx.clone(), ready_tx, Arc::clone(&stats));
     let driver_handle = thread::Builder::new()
-        .name("flz-uds-driver".into())
-        .spawn(move || {
-            uds_driver::run_uds_driver(
-                path,
-                acceptor_pid,
-                cmd_rx,
-                cmd_tx_clone,
-                ready_tx,
-                stats_clone,
-            );
-        })
+        .name(thread_name.into())
+        .spawn(move || run(wiring))
         .map_err(|e| rustler::Error::Term(Box::new(format!("spawn error: {}", e))))?;
 
-    // Wait for driver to be ready
+    // A driver that could not bind never answers, and dropping its sender is
+    // how the caller hears about it.
     let ready = ready_rx
         .recv()
         .map_err(|_| rustler::Error::Term(Box::new("driver init failed".to_string())))?
@@ -54,6 +57,22 @@ fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> Ni
     });
 
     Ok((atoms::ok(), server).encode(env))
+}
+
+/// Start a UDS server listening on `socket_path`.
+/// Returns `{:ok, server_ref}` or `{:error, reason}`.
+///
+/// The acceptor_pid receives `{:flz_connection, stream_ref}` for each new connection.
+#[rustler::nif]
+fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> NifResult<Term> {
+    let path = PathBuf::from(&socket_path);
+    start(
+        env,
+        "flz-uds-driver",
+        move |(cmd_rx, cmd_tx, ready_tx, stats)| {
+            uds::run(path, acceptor_pid, cmd_rx, cmd_tx, ready_tx, stats)
+        },
+    )
 }
 
 /// Start a QUIC server listening on `bind_address`.
@@ -80,41 +99,21 @@ fn start_quic_server(
     let server_config = tls::build_quic_server_config(&cert_path, &key_path, &client_ca_path)
         .map_err(|e| rustler::Error::Term(Box::new(format!("TLS config error: {}", e))))?;
 
-    let (cmd_tx, cmd_rx) = channel::unbounded::<ServerCommand>();
-    let (ready_tx, ready_rx) = channel::bounded(1);
-
-    let cmd_tx_clone = cmd_tx.clone();
-    let stats = Arc::new(DriverStats::new());
-    let stats_clone = Arc::clone(&stats);
-
-    let driver_handle = thread::Builder::new()
-        .name("flz-quic-driver".into())
-        .spawn(move || {
-            quic_driver::run_quic_driver(
+    start(
+        env,
+        "flz-quic-driver",
+        move |(cmd_rx, cmd_tx, ready_tx, stats)| {
+            quic::run(
                 addr,
                 server_config,
                 acceptor_pid,
                 cmd_rx,
-                cmd_tx_clone,
+                cmd_tx,
                 ready_tx,
-                stats_clone,
-            );
-        })
-        .map_err(|e| rustler::Error::Term(Box::new(format!("spawn error: {}", e))))?;
-
-    let ready = ready_rx
-        .recv()
-        .map_err(|_| rustler::Error::Term(Box::new("driver init failed".to_string())))?
-        .map_err(|e| rustler::Error::Term(Box::new(format!("driver init: {}", e))))?;
-
-    let server = ResourceArc::new(TransportServer {
-        cmd_tx,
-        waker: ready.waker,
-        driver_handle: Mutex::new(Some(driver_handle)),
-        stats,
-    });
-
-    Ok((atoms::ok(), server).encode(env))
+                stats,
+            )
+        },
+    )
 }
 
 /// Stop a running transport server.
