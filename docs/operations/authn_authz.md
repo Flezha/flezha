@@ -101,6 +101,18 @@ umask-inherited `0775` `app_data/`). A sticky shared parent such as `/tmp`, or
 one it cannot chmod, is refused: the Controller does not boot and logs the
 recovery options (restore `roles.dets`, place a `bootstrap.token`, or set `FLEZHA_AUTHZ_ENABLED=false`).
 
+That log line is written only on the boot that creates the file. A Controller
+booting again with the token still unclaimed writes nothing, so the path is not
+in the log an operator is most likely to read. Any gated verb refused in that
+state names the path itself:
+
+```
+$ flz controller status
+controller.status: refused: authorization is enforced but the bootstrap has not
+been claimed — run `flz auth bootstrap <token>` with the token in
+/var/lib/flezha/app_data/auth/bootstrap.token
+```
+
 ```sh
 sudo cat /var/lib/flezha/app_data/auth/bootstrap.token
 flz auth bootstrap <token>
