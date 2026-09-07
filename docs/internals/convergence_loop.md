@@ -356,6 +356,11 @@ are never 503.
 | `[:flezha, :convergence, :intent_mismatch]` | `%{count}` | `%{operatives}` — when the list changes to a non-empty value |
 | `[:flezha, :data_plane, :stall_localized]` | `%{count: 1}` | verdict context + `%{layer}` — on verdict change |
 
+`[:flezha, :convergence, :safe_call]` is the seam's own event, not the loop's: every caller of
+`Flezha.SafeCall` emits it, and since the Elixir SDK reaches the same seam a runner's refused
+call arrives under this name too. The name is a published surface and is deliberately not
+derived from the module's.
+
 `TelemetryBridge` puts `operative_stuck` and `intent_mismatch` on the observability bus as
 `:flezha_convergence` signals and `stall_localized` as `:flezha_data_plane`. A healthy cluster
 emits `actions_issued: 0` on most ticks; sustained non-zero `actions_issued` in steady state is a

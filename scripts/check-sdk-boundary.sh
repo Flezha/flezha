@@ -19,6 +19,18 @@
 #                                 and truncates files and is not the SDK's to
 #                                 call.)
 #   Flezha.Partition             (key-group hash seam)
+#   Flezha.SafeCall              (the bounded-call wrapper — only inside
+#                                 `Flezha.SDK.Call`, which is the SDK's own
+#                                 caller of it, for the reason the codec and the
+#                                 knob module are single files too. It is one
+#                                 `GenServer.call` inside one `catch` with the
+#                                 refusal declared by the caller: it owns no
+#                                 process, no Controller state and no
+#                                 application env, and names nothing but
+#                                 `Logger`, `:telemetry` and OTP, all of which
+#                                 the SDK already depends on. The extraction
+#                                 vendors one self-contained module rather than
+#                                 letting the SDK grow a second copy of it.)
 #   Flezha.Process.Counters      (the counter-table macro. COMPILE-TIME ONLY:
 #                                 `use` generates the slot accessors into the
 #                                 SDK's own module, which afterwards calls
@@ -55,6 +67,8 @@ SDK_DIR = "lib/flezha/sdk"
 CODEC = "lib/flezha/sdk/codec.ex"
 # The knob module is the ONLY place the controller's declared tables may appear.
 KNOB = "lib/flezha/sdk/knob.ex"
+# The call module is the ONLY place the bounded-call wrapper may appear.
+CALL = "lib/flezha/sdk/call.ex"
 
 ALLOWED = {
     "Flezha.SDK",
@@ -75,6 +89,9 @@ ALLOWED = {
 # controller, and the extraction swaps one file instead of six.
 PER_FILE_ALLOWED = {
     CODEC: {"Flezha.Runner.CommandsProto"},
+    # The bounded-call wrapper is reached in the same one file for the same
+    # reason: the SDK asks `Call`, and the extraction swaps one module.
+    CALL: {"Flezha.SafeCall"},
     # The heartbeat key set is a declared table like the configuration rows, and
     # it is read in the same one file for the same reason.
     KNOB: {"Flezha.Config", "Flezha.Transport.LivenessCounters"},

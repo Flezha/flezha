@@ -291,6 +291,35 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 - **WHEN** the packaging-boundary audit runs over the SDK source
 - **THEN** every controller-application reference resolves to one of the named seams, and any new stray reference fails the audit
 
+### Requirement: The SDK refuses rather than exiting a caller its own process will not answer
+
+Every call the Elixir SDK makes into one of its own processes SHALL wait a bound named by a row of the one configuration table and SHALL answer a target that does not reply with a refusal the caller can act on, never by exiting that caller. A runner runs inside a host application, so a wedged Entity, Operative, RunnerServer, local run or entry-idle watcher must not take a process the host supervises with it.
+
+Three calls SHALL wait with no bound at all, because there the wait is the protocol and the caller is one of the runner's own processes: the `:drop_nothing` enqueue, whose guarantee is that an input is never dropped and never refused; the credit window's acquire, which parks a sender until a grant covers its frame; and the Entity rebind, whose caller replays that Entity's outputs after it returns and so must not proceed before its records reach the wire. None SHALL be given a bound, because a caller that abandoned one would lose an input, ship past a window the Controller is metering, or release outputs ahead of their own records.
+
+A refusal SHALL be phrased in the words the surface it reaches already uses: the live-read and restore commands SHALL answer the `entity_busy` token the Controller matches as a prefix.
+
+A refusal is not a cancellation — the request stays in the target's mailbox and the work still runs — so a call whose duration grows with the state or the payload SHALL take a bound derived from the Controller surface that awaits its response, never the flat control bound. The Entity fold, the snapshot and the state apply SHALL each sit strictly inside the restore await, the compaction bound and the control reply bound respectively, so that the SDK never reports a failure while the Controller is still waiting for the answer.
+
+The SDK SHALL reach the bounded-call seam through the packaging-boundary allow-list rather than holding a wrapper of its own, on the ground the allow-list already states for the counter-table macro: the module owns no process, no Controller state and no application env, it names nothing the SDK does not already depend on, and the hex extraction vendors it. Exactly one SDK file SHALL name it, as one file names the protobuf and one the configuration tables, so the extraction swaps a single module and the rest of the SDK asks that one.
+
+#### Scenario: A suspended target refuses its caller
+
+- **GIVEN** one of the runner's own processes suspended so that it holds a call and never replies
+- **WHEN** the SDK calls into it
+- **THEN** the caller SHALL read a refusal and stay alive, rather than exiting or waiting for ever
+
+#### Scenario: The protocol waits still wait
+
+- **GIVEN** a suspended Entity and a suspended credit window
+- **WHEN** an input is enqueued under `:drop_nothing`, a record acquires credit, and the Entity is rebound
+- **THEN** all three callers SHALL still be waiting, and no other call the SDK makes SHALL be written without a bound
+
+#### Scenario: The bounded-call seam is a named seam
+
+- **WHEN** the packaging-boundary gate runs over the Elixir SDK
+- **THEN** it SHALL pass, and the bounded-call wrapper SHALL be one of the named seams rather than an unlisted Controller reference
+
 ### Requirement: Bench harness covers the elixir runtime on all three transports
 `mix bench --runtime elixir` SHALL run the `regression`, `entity`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `entity_stress`, and `dynamic_entity` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`, at durability `state` registering `bench_keyed`, the persistent twin, at durability `on` registering `tier_store` (the same upsert under `effectively_once/1` with the reference's 300 ms retry backoff) and at durability `checkpoint` registering `bench_checkpoint` (the upsert acknowledging every `FLEZHA_BENCH_CHECKPOINT_EVERY` inputs, holding its outputs when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` is `at_checkpoint` for `FLEZHA_BENCH_CHECKPOINT_DELAY_MS`, read in `channels/1` as the reference reads them); a round-trip run combining a `--runtime` with a durability posture whose capability that runtime's manifest defers SHALL be refused at the task with an error naming that capability, before any runner starts.
 

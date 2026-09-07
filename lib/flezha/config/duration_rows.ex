@@ -215,6 +215,25 @@ defmodule Flezha.Config.DurationRows do
     {:entry_idle_tick_min_ms, :ms, 250, []},
     {:sdk_commit_ack_ms, :ms, 30_000,
      env: "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS", runtimes: [:controller, :elixir_sdk, :rust]},
+    # A call into one of the runner's own control processes: the RunnerServer,
+    # an Operative, a local run, the entry-idle watcher. None of them runs
+    # author code on the answering clause, so a wait here is a wedged process
+    # rather than a busy one.
+    {:sdk_control_call_ms, :ms, 5_000, []},
+    # A call into an Entity that answers from its queue rather than from its
+    # state — the same question the serialise wait asks, kept as a row of its
+    # own because a state read and a lifecycle call move apart the moment either
+    # is tuned.
+    {:sdk_entity_call_ms, :ms, 5_000, []},
+    # The three calls whose duration grows with the state, not with the queue in
+    # front of them. A refused call is not a cancelled one — the Entity finishes
+    # the work either way — so each waits inside the Controller surface that
+    # asked, and never the flat control bound. An inner bound equal to the outer
+    # is no bound at all.
+    {:sdk_entity_restore_ms, :ms, nil, derived: {:headroom, :restore_await_timeout_ms, -5_000}},
+    {:sdk_entity_snapshot_ms, :ms, nil, derived: {:headroom, :compaction_timeout_ms, -5_000}},
+    {:sdk_entity_apply_ms, :ms, nil,
+     derived: {:headroom, :control_unit_reply_timeout_ms, -1_000}},
     {:sdk_idle_probe_ms, :ms, 50, []},
     {:sdk_max_reap_interval_ms, :ms, 30_000, []},
     {:sdk_serialize_wait_ms, :ms, 5_000, []},

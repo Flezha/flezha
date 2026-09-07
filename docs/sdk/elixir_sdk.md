@@ -530,9 +530,36 @@ SDK modules (`lib/flezha/sdk/`) touch the controller application only through na
 `Flezha.SDK.Knob` (the only module that may reference `Flezha.Config` and the tables under
 it — a runner is a different process and reads the environment, never the controller's
 application env, so every other SDK module asks `Knob.get/1` for a value and
-`Knob.arm/4`/`Knob.wait/4` for a wait).
+`Knob.arm/4`/`Knob.wait/4` for a wait), and `Flezha.SafeCall` (only inside `Flezha.SDK.Call`,
+which is the SDK's own caller of the bounded-call wrapper, for the same reason).
 `scripts/check-sdk-boundary.sh` enforces it, so the hex extraction (`package-elixir-sdk`) is a
 swap of seam internals, not a rewrite.
+
+## Calls into the runner's own processes
+
+A runner lives inside your application, so a wedged Entity or Operative must not take one of
+your processes with it. Every call the SDK makes into one of its own processes goes through
+`Flezha.SDK.Call`, waits a bound the configuration table names, and answers a target that
+does not reply with a refusal instead of exiting the caller: `{:error, :operative_busy}` from
+`Flezha.SDK.Operative.lookup/4` and `entities/1`, `{:error, :runner_busy}` from the
+`Flezha.SDK.RunnerServer` mutations, `{:error, "entity_busy: …"}` from the Entity commands,
+`nil` where the answer is a value the caller already reads as absent.
+
+A refusal is not a cancellation: the request is already in the target's mailbox and the work
+still runs. So the bound follows what the call does. A call that answers from the queue in
+front of it takes a flat bound — `sdk_control_call_ms` for the RunnerServer, an Operative, a
+local run and the entry-idle watcher, `sdk_entity_call_ms` for an Entity. A call whose
+duration grows with your state takes one derived from the controller bound that awaits it:
+`sdk_entity_restore_ms` inside `restore_await_timeout_ms`, `sdk_entity_snapshot_ms` inside
+`compaction_timeout_ms`, `sdk_entity_apply_ms` inside `control_unit_reply_timeout_ms`. The
+SDK never reports a failure while the controller is still waiting for the answer.
+
+Three calls wait with no bound, because there the wait is the protocol and the caller is one
+of the runner's own processes, never one of yours: `Flezha.SDK.Entity.enqueue_block/2` under
+`:drop_nothing`, whose guarantee is that an input is never dropped and never refused;
+`Flezha.SDK.Credit.acquire/2`, which parks a sender until a grant covers its frame; and
+`Flezha.SDK.Entity.rebind/2`, whose caller replays that Entity's outputs after it returns and
+so must not proceed before its records have reached the wire.
 
 ## See also
 
