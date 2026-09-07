@@ -52,9 +52,11 @@ defmodule Flezha.State.Wire do
   @doc """
   Payload-id for the dynamic-mode hard-delete RPC (SDK → controller). The
   frame body is the bare structured `entity_id` (`decode_entity_id/1`);
-  there is no seq / header / crc. The SDK ships it fire-and-forget when it
-  evicts a persistence-enabled dynamic Entity, so the controller drops
-  the WAL/snapshot/outbox files and a later recreate cold-starts fresh.
+  there is no seq / header / crc. The SDK ships it under the durable
+  guarantee class when it evicts a persistence-enabled dynamic Entity, so a
+  stream that is down holds the frame for the rebind rather than losing it,
+  and the controller drops the WAL/snapshot/outbox files so a later recreate
+  cold-starts fresh.
 
   The response (`{entity_id, status}`) is returned synchronously to the
   CLI delete path (`flz state delete`); the reaper path does not read a

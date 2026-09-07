@@ -164,8 +164,8 @@ impl SinkState {
 
 static STATE: Mutex<SinkState> = Mutex::new(SinkState::new());
 
-/// The live secondary stream, for fire-and-forget sends: no ring, no flood
-/// detection.
+/// The live secondary stream an install wires before the sink, so the replay
+/// can put an already-framed entry back on the wire unchanged.
 static SECONDARY_STREAM: Mutex<Option<Arc<FlezhaStream>>> = Mutex::new(None);
 
 pub fn set_secondary_stream(stream: Option<Arc<FlezhaStream>>) {
@@ -184,7 +184,10 @@ pub fn secondary_stream() -> Option<Arc<FlezhaStream>> {
 }
 
 /// One best-effort write to the secondary stream; `false` when it failed.
-pub fn send_oneshot(frame: &[u8]) -> bool {
+/// The replay's own door and nobody else's: a writer that reaches the wire
+/// this way chooses its own answer to a refusal, which is the one thing
+/// [`write`] and [`send`] exist to stop.
+fn send_oneshot(frame: &[u8]) -> bool {
     match SECONDARY_STREAM
         .lock()
         .expect("secondary stream lock poisoned")

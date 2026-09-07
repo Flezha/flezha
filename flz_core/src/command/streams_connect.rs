@@ -146,7 +146,9 @@ fn install_state_sink(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
     // `CreditWindowInit` for the fresh attach.
     crate::credit::global().disarm();
     if let Some((_, secondary)) = pairs.first() {
-        // Mirror the secondary stream for the reaper's one-shot delete send.
+        // Mirror the secondary stream: the ring's replay puts an
+        // already-framed entry back on it, and a `CloseInterval` and a
+        // restored timer ride it when they have no connection of their own.
         state_sink::set_secondary_stream(Some(Arc::clone(secondary)));
         let sink_stream = Arc::clone(secondary);
         // The Mutex serializes writes from the single flusher thread —

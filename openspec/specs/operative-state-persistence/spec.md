@@ -889,7 +889,7 @@ dispatches is asserting a coincidence of scheduling, not this requirement.
 
 ### Requirement: Per-Entity state is deleted on dynamic-mode eviction
 
-When the SDK evicts an Entity due to dynamic-mode idle-TTL eviction (see `operative-procedure-entity-model` "Per-Procedure idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_entity_state{entity_id}` frame so the agent removes the per-Entity WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{procedure}/`). A subsequent input for the same key SHALL cold-start a fresh Entity (new WAL from seq 0); the SDK SHALL NOT restore the evicted Entity's state from disk.
+When the SDK evicts an Entity due to dynamic-mode idle-TTL eviction (see `operative-procedure-entity-model` "Per-Procedure idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a `delete_entity_state{entity_id}` frame under the durable guarantee class, held for the next bound stream when none is bound, so the agent removes the per-Entity WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{procedure}/`). A subsequent input for the same key SHALL cold-start a fresh Entity (new WAL from seq 0); the SDK SHALL NOT restore the evicted Entity's state from disk.
 
 #### Scenario: Eviction deletes on-disk state
 - **WHEN** a persistence-enabled dynamic-mode Entity is evicted
@@ -905,7 +905,7 @@ The agent SHALL accept a `delete_entity_state` data-stream frame whose body is t
 
 The delete is reachable via two paths:
 
-- The SDK reaper, for evicted persistence-enabled Entities (fire-and-forget; the agent writes no response frame back on the data stream).
+- The SDK reaper, for evicted persistence-enabled Entities. The reaper waits for nothing and the agent writes no response frame back on the data stream; a refused write is answered by the frame's durable guarantee class, never at the reaper's write site.
 - The CLI command `flz state delete <operative/procedure/key>`, which calls `Flezha.State.Supervisor.delete_entity/1` directly and returns an `{entity_id, status}` confirmation synchronously.
 
 #### Scenario: Delete removes existing files

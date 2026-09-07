@@ -468,8 +468,10 @@ the runner with `Recovery.resolve_runner/1` and calls `Commands.dispatch_compact
 
 A dynamic-mode Procedure that opts into an idle TTL (`entity_idle_ttl()` returning a duration;
 default none) has its idle, persistence-enabled Entities evicted by the SDK reaper, which ships a
-fire-and-forget `delete_entity_state` frame (payload-id `Wire.payload_id_delete_entity_state/0`,
-body the bare `entity_id`) on the secondary stream. `StreamChannel` honours it only for a class
+`delete_entity_state` frame (payload-id `Wire.payload_id_delete_entity_state/0`, body the bare
+`entity_id`) on the secondary stream under the durable guarantee class, so an eviction with no
+stream bound holds the frame for the rebind instead of losing it. The reaper waits for no reply
+and the controller writes none. `StreamChannel` honours it only for a class
 with the `:dynamic_entities?` capability — any other kind gets a warning and is ignored, so a
 durable workflow's state is never dropped out from under it — and routes it to
 `Flezha.State.Supervisor.delete_entity/1`, which closes the writer, drops the `FsyncBatcher` dirty

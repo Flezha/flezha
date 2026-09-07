@@ -3,14 +3,13 @@
 //! invariant: an eviction takes the drain gate and re-checks the mailbox, so
 //! it never drops an item a producer pushed after the idle check.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use flz_transport::service::payloader;
 
 use crate::channel::{BuildEntityArgs, ProcedureId};
 use crate::entity::EntitySlot;
@@ -137,7 +136,15 @@ impl DynamicEntityRegistry {
         }
         crate::poll_core::global().discard_entity_timers(&slot.entity_identity);
         if slot.persistence_enabled {
-            send_delete_entity_state(&slot.entity_identity);
+            // The delete is a durable frame: the class holds it for the next
+            // bound stream, behind this Entity's own records, so an eviction
+            // in a reconnect window cannot leave the controller holding state
+            // for an Entity that no longer exists. The body is the bare
+            // identity the controller's `decode_entity_id` reads.
+            state_sink::send(
+                state_sink::DELETE_ENTITY_STATE_PAYLOAD_ID,
+                slot.entity_identity.to_vec(),
+            );
         }
         self.counters
             .entities_evicted_total
@@ -219,14 +226,4 @@ fn sleep_responsive(total: Duration, stop: &AtomicBool) {
         thread::sleep(chunk);
         slept += chunk;
     }
-}
-
-/// Fire-and-forget `delete_entity_state` for an evicted Entity.
-fn send_delete_entity_state(entity_id: &[u8]) {
-    let frame = payloader::build_from_binary(
-        state_sink::DELETE_ENTITY_STATE_PAYLOAD_ID,
-        entity_id,
-        HashMap::new(),
-    );
-    let _ = state_sink::send_oneshot(&frame);
 }

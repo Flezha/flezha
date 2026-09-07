@@ -765,7 +765,7 @@ The Elixir SDK carries the same rule in its own core under its own spelling: `en
 - **THEN** the reaper SHALL NOT evict it on this sweep
 
 ### Requirement: Eviction is destructive; recreate is a cold start
-Eviction of a dynamic-mode Entity SHALL be destructive. When an Entity is evicted AND persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_entity_state{entity_id}` frame to the controller so its on-disk WAL/snapshot/outbox files are removed. The SDK SHALL NOT block the reaper on a response.
+Eviction of a dynamic-mode Entity SHALL be destructive. When an Entity is evicted AND persistence is enabled for the Operative class, the SDK SHALL ship a `delete_entity_state{entity_id}` frame to the controller so its on-disk WAL/snapshot/outbox files are removed. The frame SHALL carry the durable guarantee class, so an eviction that falls inside a reconnect window holds the delete for the next bound stream rather than losing it, and a rebind replays it in write order behind that Entity's own records. The SDK SHALL NOT block the reaper on a response, and the controller writes none.
 
 When a dynamic-mode Entity has been evicted and a subsequent input arrives for the same key, the runtime SHALL recreate the `EntitySlot` synchronously (per "Dynamic-mode lazy entity creation") and SHALL call `Procedure::init_state(Some(key), None)` — a fresh cold start. The runtime SHALL NOT restore the evicted Entity's state from disk on recreate. (This is a deliberate decision: it keeps the recreate path off any blocking controller round-trip, so a recreate can never stall a work-stealing pool worker.)
 
@@ -776,6 +776,10 @@ When a dynamic-mode Entity has been evicted and a subsequent input arrives for t
 #### Scenario: Eviction deletes persisted state
 - **WHEN** a persistence-enabled dynamic-mode Entity is evicted
 - **THEN** the SDK SHALL ship `delete_entity_state{entity_id}` to the controller, which SHALL remove the Entity's `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
+
+#### Scenario: An eviction with no stream bound holds its delete
+- **WHEN** a persistence-enabled dynamic-mode Entity is evicted while no data stream is bound
+- **THEN** the SDK SHALL hold the `delete_entity_state{entity_id}` frame in the class's ring and SHALL deliver it on the next bound stream, framed exactly as the live path would have framed it
 
 #### Scenario: Recreate without persistence is a cold start
 - **WHEN** a dynamic-mode Procedure with persistence disabled is reaped and a subsequent input arrives for the same key

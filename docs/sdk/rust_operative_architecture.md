@@ -314,9 +314,12 @@ a Procedure with a non-empty `entity_keys()` is refused
   Entity's drain gate and confirms an empty mailbox first, so it never
   interrupts a running `run`. **Eviction is destructive**: the slot, its
   pending timers and (when persistent) its on-disk WAL/snapshot go — a
-  fire-and-forget `delete_entity_state` to the controller — and a later input
-  cold-starts fresh. The registry keeps the last 1024 evicted keys so a live
-  read can say "idle-evicted" rather than "never existed".
+  `delete_entity_state` to the controller, durable-class like every other
+  record, so an eviction inside a reconnect window holds the frame for the
+  rebind rather than losing it — and a later input cold-starts fresh. The
+  reaper waits for no reply and the controller writes none. The registry
+  keeps the last 1024 evicted keys so a live read can say "idle-evicted"
+  rather than "never existed".
 - `max_entities() -> usize` — default `100_000`, a soft cap: at the cap
   new-key inputs are dropped (`inputs_dropped_capped_total`), existing keys
   are unaffected. It bounds memory against a runaway `.key_by`, not

@@ -1025,11 +1025,14 @@ the controller hands them back as the `has_compensation_*` flags of
 ### Data-stream payload-id `delete_entity_state`
 
 Runner → controller, dynamic-mode hard delete. The message is the bare
-structured `entity_id_bytes` — no seq, header or crc. Sent fire-and-forget
-when the runner evicts a persistence-enabled dynamic Entity; the controller
-drops the Entity's WAL, snapshot and outbox files so a later recreate
-cold-starts, ignores the frame for a non-dynamic class, and writes no
-response frame.
+structured `entity_id_bytes` — no seq, header or crc, so it is **not** the
+`entity_state_change` frame the saga markers reuse. Sent when the runner
+evicts a persistence-enabled dynamic Entity, under the **durable** class (§7):
+a refused write is held and replayed in write order behind that Entity's own
+records, never dropped at the write site. The controller drops the Entity's
+WAL, snapshot and outbox files so a later recreate cold-starts, ignores the
+frame for a non-dynamic class, and writes no response frame. The reaper waits
+for none.
 
 ### Data-stream payload-id `park_payload`
 
