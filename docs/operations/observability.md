@@ -414,24 +414,46 @@ prefix. The websocket provider's old `[:flezha, :ws, …]` root is gone; its eve
 every other provider's, and the source atom `:flezha_ws` is unchanged so the exposed series are
 too.
 
-| Source                      | Events (kind)                                                                                                                                                                                                                                             |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `:flezha_state`             | metric: `[:state, :wal, :backpressure]` → `:wal_backpressure`. event: `[:state, :fsync, :tick]` → `:fsync_tick`; `[:state, :seq_gap \| :credit_anomaly \| :output_stall \| :compaction_timeout \| :compaction_trigger \| :baseline_seed \| :wal_realign \| :stale_writer_refused]` |
-| `:flezha_durability`        | metric: `[:state, :artifact_shipped \| :durability_gc]`. event: `[:state, :rpo_exceeded \| :ship_fenced \| :ship_failed \| :hydrated \| :hydration_failed \| :artifact_missing]`                                                                          |
-| `:flezha_boot`              | event: `[:boot, :recovery_complete \| :reconcile_duplicate]`                                                                                                                                                                                              |
-| `:flezha_shutdown`          | event: `[:shutdown, :requested \| :phase_started \| :phase_completed \| :drain_progress \| :timeout \| :complete]`                                                                                                                                        |
-| `:flezha_plugin_installer`  | event: `[:plugin_installer, :load_failed \| :store_opened \| :unsigned_install]`                                                                                                                                                                          |
-| `:flezha_ws`                | event: `[:plugin, :websocket, :idle_reconnect \| :resubscribe \| :reconcile]`                                                                                                                                                                             |
-| `:flezha_leadership`        | event: `[:leadership, :transition]`                                                                                                                                                                                                                       |
-| `:flezha_reconcile`         | event: `[:reconcile, :action \| :health]`                                                                                                                                                                                                                 |
-| `:flezha_stream`            | metric: `[:stream, :drop]`                                                                                                                                                                                                                                |
-| `:flezha_data_plane`        | event: `[:data_plane, :stall_localized]`                                                                                                                                                                                                                  |
-| `:flezha_convergence`       | event: `[:convergence, :operative_stuck \| :intent_mismatch]`                                                                                                                                                                                             |
-| `:flezha_dlq`               | metric: `[:dlq, :parked]` → `:dlq_parked_total`; `[:dlq, :retention_dropped]` → `:dlq_dropped_by_retention_total`; `[:dlq, :usage]` → `:dlq_usage`                                                   |
-| `:flezha_operative_forward` | metric: `[:plugin, :operative_forward, :shipped]` → `:delivered`; `[:plugin, :operative_forward, :retried]` → `:retry`; `[:plugin, :operative_forward, :queue_depth]`. event: `[:plugin, :operative_forward, :overflowed]` → `:saturated`                  |
-| `:flezha_http_poll`         | metric: `[:plugin, :http_poll, :shipped]` → `:injected`; `[:plugin, :http_poll, :unchanged]`. event: `[:plugin, :http_poll, :failed]`                                                                                                                     |
-| `:flezha_kafka`             | metric: `[:plugin, :kafka, :shipped \| :retried \| :overflowed \| :metadata_refresh]`. event: `[:plugin, :kafka, :failed \| :topic_created \| :worker_swapped]`                                                                                          |
-| `:flezha_operative`         | metric: `[:operative, :parked]` → `:operative_parked_total`. Metadata `namespace`, `operative_id`, `reason`, and `plugin_id` — the plugin that caused the park, or `nil` when no plugin did.                                                               |
+An event the tree writes and the bridge does not map reaches no exporter at all, so
+`TelemetryBridge.unexported/0` names every one, grouped under the reason it has none:
+`commit_path` (one signal per durable workflow commit, at the data plane's rate),
+`counted_elsewhere` (the same fact is already an exported `LivenessCounters` slot:
+`[:flezha, :sdk, :mailbox]` is `hb_drops_newest`/`hb_drops_oldest` and
+`[:flezha, :sdk, :timers]` is `hb_timers_armed`/`hb_timers_fired`), `control_input`
+(the convergence loop attaches to it itself, so it is a control input rather than a sink) and
+`lifecycle` (an action the controller took, never a fault it detected, and already answered by
+an operator surface that reports the resulting state). Every reason is a PROPERTY of the event:
+a reason that named the change owing it a sink expired the moment that change landed, which is
+how the previous list came to state nothing while still passing. The suite pins the total, so an
+event can leave the list and none may join. It judges the event NAME wherever the tree writes it
+rather than only at the `:telemetry.execute` call, because three names are assembled into a term
+in one module and executed in another. `unwritten/0` is the other direction: mapped events
+nothing writes any more, marked `(dead: nothing emits it)` in the table below, each kept for the
+reason `unwritten/0` records.
+
+| Source | Events (kind) |
+| --- | --- |
+| `:flezha_boot` | event: `[:boot, :pre_recovery_replay]`; `[:boot, :reconcile_duplicate]`; `[:boot, :recovery_complete]`; `[:hub, :start_failed]` → `:hub_start_failed`. |
+| `:flezha_convergence` | metric: `[:backoff, :reset]` → `:backoff_reset`; `[:backoff, :wait]` → `:backoff_wait`. event: `[:convergence, :intent_mismatch]`. |
+| `:flezha_correction` | event: `[:correction, :refused]`. |
+| `:flezha_dlq` | metric: `[:dlq, :parked]` → `:dlq_parked_total`; `[:dlq, :retention_dropped]` → `:dlq_dropped_by_retention_total`; `[:dlq, :usage]` → `:dlq_usage`. |
+| `:flezha_durability` | metric: `[:state, :artifact_shipped]`; `[:state, :durability_gc]`. event: `[:state, :artifact_missing]`; `[:state, :claim_superseded]`; `[:state, :hydrated]`; `[:state, :hydration_failed]`; `[:state, :rpo_exceeded]`; `[:state, :ship_failed]`; `[:state, :ship_fenced]` (dead: nothing emits it). |
+| `:flezha_health` | event: `[:convergence, :heal]`; `[:convergence, :operative_stuck]`; `[:convergence, :safe_call]`; `[:data_plane, :stall_localized]`; `[:health, :verdict]`; `[:hub, :unavailable]`; `[:plugin, :health, :fail_open]`; `[:runner, :evicted]`; `[:runner, :liveness_timeout]`; `[:runner, :reconnected]`; `[:runner, :reconnected_reassigned]`; `[:runner, :restarted]`; `[:sdk, :parked]`; `[:state, :catastrophic_dataflow_stop]`; `[:transport, :connect_rejected]`; `[:workflow, :failed]`; `[:workflow, :parked]`; `[:workflow, :suspended]`. |
+| `:flezha_http_poll` | metric: `[:plugin, :http_poll, :shipped]` → `:injected`; `[:plugin, :http_poll, :unchanged]`. event: `[:plugin, :http_poll, :failed]`. |
+| `:flezha_kafka` | metric: `[:plugin, :kafka, :metadata_refresh]`; `[:plugin, :kafka, :overflowed]`; `[:plugin, :kafka, :retried]`; `[:plugin, :kafka, :shipped]`. event: `[:plugin, :kafka, :failed]`; `[:plugin, :kafka, :topic_created]`; `[:plugin, :kafka, :worker_swapped]`. |
+| `:flezha_leadership` | event: `[:leadership, :transition]` (dead: nothing emits it). |
+| `:flezha_operative` | metric: `[:operative, :parked]` → `:operative_parked_total`. Metadata `namespace`, `operative_id`, `reason`, and `plugin_id` — the plugin that caused the park, or `nil` when no plugin did. |
+| `:flezha_operative_forward` | metric: `[:plugin, :operative_forward, :queue_depth]`; `[:plugin, :operative_forward, :retried]` → `:retry`; `[:plugin, :operative_forward, :shipped]` → `:delivered`. event: `[:plugin, :operative_forward, :overflowed]` → `:saturated`. |
+| `:flezha_plugin` | event: `[:plugin, :phase]`. |
+| `:flezha_plugin_installer` | event: `[:plugin_installer, :load_failed]`; `[:plugin_installer, :store_opened]`; `[:plugin_installer, :unsigned_install]`. |
+| `:flezha_reconcile` | event: `[:reconcile, :action]` (dead: nothing emits it); `[:reconcile, :health]` (dead: nothing emits it). |
+| `:flezha_runner` | event: `[:runner, :factory_language_conflict]`; `[:runner, :quota_refused]`. |
+| `:flezha_schedule` | event: `[:schedule, :spawn_failed]`. |
+| `:flezha_sdk` | event: `[:sdk, :dynamic]`; `[:sdk, :retry]`. |
+| `:flezha_shutdown` | event: `[:shutdown, :complete]`; `[:shutdown, :drain_progress]`; `[:shutdown, :phase_completed]`; `[:shutdown, :phase_started]`; `[:shutdown, :requested]`; `[:shutdown, :timeout]`. |
+| `:flezha_state` | metric: `[:state, :wal, :backpressure]` → `:wal_backpressure`. event: `[:state, :baseline_seed]`; `[:state, :compaction_failed]`; `[:state, :compaction_gave_up]`; `[:state, :compaction_timeout]`; `[:state, :compaction_trigger]`; `[:state, :credit_anomaly]`; `[:state, :disk_quota_breach]`; `[:state, :fsync, :tick]` → `:fsync_tick`; `[:state, :inbox_duplicate]`; `[:state, :input_log_frozen_watermark]`; `[:state, :input_log_syncer_died]`; `[:state, :output_stall]`; `[:state, :record_frame, :refused]` → `:record_frame_refused`; `[:state, :record_frame, :repaired]` → `:record_frame_repaired`; `[:state, :restore_refused]`; `[:state, :seq_gap]`; `[:state, :stale_writer_refused]`; `[:state, :wal_pull_failed]`; `[:state, :wal_realign]`; `[:state, :wal_rewind]`. |
+| `:flezha_stream` | metric: `[:stream, :drop]`. event: `[:stream, :fanout_warning]`. |
+| `:flezha_ws` | metric: `[:plugin, :websocket, :shipped]`. event: `[:plugin, :websocket, :failed]`; `[:plugin, :websocket, :idle_reconnect]`; `[:plugin, :websocket, :overflowed]`; `[:plugin, :websocket, :reconcile]`; `[:plugin, :websocket, :resubscribe]`; `[:plugin, :websocket, :retried]`. |
 
 ### Service API
 

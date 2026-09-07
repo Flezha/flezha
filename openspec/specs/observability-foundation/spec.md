@@ -168,7 +168,9 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 
 The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL be two halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_installer, :load_failed]`, `[:flezha, :plugin_installer, :store_opened]`, `[:flezha, :plugin_installer, :unsigned_install]`, `[:flezha, :plugin, :websocket, :idle_reconnect]`, `[:flezha, :plugin, :websocket, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, `[:flezha, :reconcile, :action]`, `[:flezha, :reconcile, :health]`, `[:flezha, :leadership, :transition]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares — including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason` — so a detector's event is bridged by its declaration and never by a bridge edit. Existing call-sites SHALL NOT be modified.
 
-Every `[:flezha, ...]` event executed anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit exemption list inside the bridge module, each exemption naming the change that owes it a sink. The exemption list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an executed event that is neither mapped nor exempted SHALL fail the suite naming the file, the line and the event.
+Every `[:flezha, ...]` event NAME written anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit unexported list inside the bridge module. The judged unit SHALL be the name wherever it is written, not only the `:telemetry.execute` call, because an event name may be assembled into a term in one module and executed in another, or assembled from a provider's own identifier. Each unexported entry SHALL name a reason that is a PROPERTY of the event rather than the change that owes it a sink: a reason naming a change expires when that change lands, and the list then passes while stating nothing. The unexported list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an event name that is neither mapped nor unexported SHALL fail the suite naming where it is written and the event. A `:telemetry.execute` whose event argument the walk cannot resolve SHALL be a named entry in a pinned relay list, so a name the walk cannot read is refused rather than silently omitted.
+
+The mapping SHALL also name, in the other direction, every mapped event nothing in the controller writes any more, each with the reason its line stays, and the suite SHALL assert that set exactly so a dead key can neither appear nor be resurrected unnoticed.
 
 #### Scenario: Bridged event becomes a signal
 - **WHEN** code calls `:telemetry.execute([:flezha, :state, :wal, :backpressure], %{bytes: 1024}, %{operative: "r1"})`
@@ -196,8 +198,20 @@ Every `[:flezha, ...]` event executed anywhere in the controller SHALL be a key 
 - **THEN** a signal named `verdict` sourced from the health seam SHALL appear on the bus with metadata `kind: :operative`, the operative id, `state: :parked` and the park reason, and no signal SHALL appear while the state holds
 
 #### Scenario: An event nobody bridges fails the suite
-- **WHEN** a `:telemetry.execute` of a `[:flezha, ...]` event is added to the controller and the event is neither a key of the merged mapping nor a member of the exemption list
-- **THEN** the suite SHALL fail naming the file, the line and the event, and adding the event to the exemption list past its pinned length SHALL fail the suite too
+- **WHEN** a `:telemetry.execute` of a `[:flezha, ...]` event is added to the controller and the event is neither a key of the merged mapping nor a member of the unexported list
+- **THEN** the suite SHALL fail naming the file, the line and the event, and adding the event to the unexported list past its pinned length SHALL fail the suite too
+
+#### Scenario: An event name assembled away from its execute call is still judged
+- **WHEN** an event name is written as a literal in one module, carried in a term, and executed by a `:telemetry.execute` in another, or is assembled from a provider's identifier and a declared verb
+- **THEN** the suite SHALL judge that name against the merged mapping and the unexported list exactly as if it were written at the execute call, and a segment the walk cannot resolve to a literal SHALL fail by name rather than being dropped from the set
+
+#### Scenario: An unexported entry naming a change instead of a property
+- **WHEN** an event is added to the unexported list whose reason is the change that owes it a sink, rather than a property of the event
+- **THEN** the reason SHALL be rejected: an entry SHALL carry one of the bridge's declared reason classes, and the suite SHALL fail for an entry carrying none
+
+#### Scenario: A mapped event nothing writes any more
+- **WHEN** the last producer of a mapped event is deleted, leaving its mapping line in place
+- **THEN** the suite SHALL fail unless that event is named in the bridge's unwritten list with the reason its line stays, and SHALL fail again if a producer for a listed event reappears
 
 ### Requirement: Service-API surface
 

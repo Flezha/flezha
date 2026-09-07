@@ -2,19 +2,18 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   @moduledoc """
   The health seam, made impossible to bypass, plus the judge's rule order.
 
-  Four clauses walk `lib/flezha` and fail naming what they found:
+  Three clauses walk `lib/flezha` and fail naming what they found:
 
     1. **Vocabulary** — a file outside the seam carrying two or more of the
        seven verdict states is a second vocabulary.
-    2. **Events** — every `[:flezha, …]` event executed anywhere must be a key
-       of the bridge's merged mapping or a member of its exemption list, whose
-       length is pinned as a ceiling.
-    3. **One writer** — `operative_health` is put into the published snapshot
+    2. **One writer** — `operative_health` is put into the published snapshot
        from exactly one site.
-    4. **Conformance** — every detector entry reads facts of one shape for its
-       declared kind, names thresholds something answers, declares events the
-       bridge maps, and yields `unknown` without stopping the tick when it
-       raises.
+    3. **Conformance** — every detector entry reads facts of one shape for its
+       declared kind, names thresholds something answers, and yields `unknown`
+       without stopping the tick when it raises.
+
+  Whether a detector's declared event reaches an exporter is the export seam's
+  question, not this one: `Flezha.Observability.TelemetryEventSeamTest`.
 
   The rule tests below drive `Probe.judge/2` itself: they are the judge's clause
   order, asserted where the rule lives rather than against whichever surface
@@ -26,7 +25,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   alias Flezha.Convergence.{Diff, Intent, StallClassifier, Verdict}
   alias Flezha.Convergence.Probe
   alias Flezha.Convergence.Probe.{Fact, Judge, Table}
-  alias Flezha.Observability.TelemetryBridge
   alias FlezhaTest.Helper.SourceWalk
 
   # The seam itself, plus the files whose two-or-more states are a FACT in
@@ -86,42 +84,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     end
   end
 
-  describe "clause 2 — every event reaches a sink" do
-    test "every executed [:flezha, …] event is mapped or exempted" do
-      mapped = MapSet.new(Map.keys(TelemetryBridge.mapping()))
-      exempt = MapSet.new(TelemetryBridge.exempt())
-
-      offenders =
-        for {file, line, event} <- executed_events(),
-            not MapSet.member?(mapped, event),
-            not MapSet.member?(exempt, event),
-            do: "#{file}:#{line} #{inspect(event)}"
-
-      assert offenders == [],
-             "executed events reaching no sink: " <> Enum.join(offenders, "; ")
-    end
-
-    test "the exemption list is a ratchet, and every entry is really executed" do
-      assert length(TelemetryBridge.exempt()) <= 38,
-             "the exemption list may only shrink"
-
-      executed = MapSet.new(executed_events(), fn {_f, _l, e} -> e end)
-
-      stale = Enum.reject(TelemetryBridge.exempt(), &MapSet.member?(executed, &1))
-      assert stale == [], "exempted events nothing executes: #{inspect(stale)}"
-      assert TelemetryBridge.exempt_owner() == :count_once_export_by_declaration
-    end
-
-    test "every event a detector declares is bridged by derivation" do
-      derived = TelemetryBridge.derived()
-
-      for event <- Table.events() do
-        assert Map.has_key?(derived, event), "undeclared in the derived half: #{inspect(event)}"
-      end
-    end
-  end
-
-  describe "clause 3 — one writer of the published health map" do
+  describe "clause 2 — one writer of the published health map" do
     test "operative_health is put into the snapshot from exactly one site" do
       assert snapshot_health_writers() == ["lib/flezha/convergence/loop/summary.ex"],
              "operative_health reaches the published snapshot from more than one site: " <>
@@ -129,7 +92,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     end
   end
 
-  describe "clause 4 — every detector conforms" do
+  describe "clause 3 — every detector conforms" do
     test "each entry's reader returns facts of its declared kind" do
       context = fixture_context()
 
@@ -418,124 +381,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     |> Regex.scan(SourceWalk.read(file))
     |> MapSet.new(fn [_, atom] -> String.to_existing_atom(atom) end)
   end
-
-  # Every `:telemetry.execute/2,3` first argument in `lib/flezha`, with module
-  # attributes resolved and a local emit helper's event parameter expanded from
-  # the literals its own call sites pass — the walk part 03 #8 described.
-  defp executed_events() do
-    Enum.flat_map(source_files(), fn file ->
-      ast = SourceWalk.ast(file)
-      attrs = attributes(ast)
-      calls = call_sites(ast)
-
-      for {name, arity, params, body} <- definitions(ast),
-          {line, raw} <- executes(body),
-          event <- resolve(raw, attrs, param_index(params), {name, arity}, calls),
-          List.first(event) == :flezha,
-          do: {file, line, event}
-    end)
-  end
-
-  defp attributes(ast) do
-    {_, acc} =
-      Macro.prewalk(ast, %{}, fn
-        {:@, _, [{name, _, [value]}]} = node, acc when is_atom(name) ->
-          {node, Map.put(acc, name, value)}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    acc
-  end
-
-  defp definitions(ast) do
-    {_, acc} =
-      Macro.prewalk(ast, [], fn
-        {kind, _, [{name, _, params} | rest]} = node, acc
-        when kind in [:def, :defp] and is_atom(name) and is_list(params) ->
-          {node, [{name, length(params), params, rest} | acc]}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    acc
-  end
-
-  defp call_sites(ast) do
-    {_, acc} =
-      Macro.prewalk(ast, %{}, fn
-        {name, _, args} = node, acc when is_atom(name) and is_list(args) ->
-          {node, Map.update(acc, {name, length(args)}, [args], &[args | &1])}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    acc
-  end
-
-  defp executes(body) do
-    {_, acc} =
-      Macro.prewalk(body, [], fn
-        {{:., _, [:telemetry, :execute]}, meta, [event | _]} = node, acc ->
-          {node, [{Keyword.get(meta, :line), event} | acc]}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    acc
-  end
-
-  defp param_index(params) do
-    params
-    |> Enum.with_index()
-    |> Enum.flat_map(fn
-      {{var, _, nil}, index} when is_atom(var) -> [{var, index}]
-      _ -> []
-    end)
-    |> Map.new()
-  end
-
-  defp resolve({:@, _, [{name, _, nil}]}, attrs, params, fa, calls),
-    do: resolve(Map.get(attrs, name), attrs, params, fa, calls)
-
-  defp resolve({:++, _, [left, right]}, attrs, params, fa, calls) do
-    for l <- resolve(left, attrs, params, fa, calls),
-        r <- resolve(right, attrs, params, fa, calls),
-        do: l ++ r
-  end
-
-  defp resolve(list, attrs, params, fa, calls) when is_list(list) do
-    list
-    |> Enum.map(&segment(&1, attrs, params, fa, calls))
-    |> Enum.reduce([[]], fn choices, acc ->
-      for prefix <- acc, choice <- choices, do: prefix ++ [choice]
-    end)
-  end
-
-  defp resolve(_other, _attrs, _params, _fa, _calls), do: []
-
-  defp segment(atom, _a, _p, _fa, _c) when is_atom(atom), do: [atom]
-  defp segment({:@, _, [{name, _, nil}]}, attrs, _p, _fa, _c), do: [Map.get(attrs, name)]
-
-  defp segment({var, _, nil}, _a, params, {name, arity}, calls) when is_atom(var) do
-    with {:ok, index} <- Map.fetch(params, var),
-         [_ | _] = atoms <-
-           calls
-           |> Map.get({name, arity}, [])
-           |> Enum.map(&Enum.at(&1, index))
-           |> Enum.filter(&is_atom/1)
-           |> Enum.uniq() do
-      atoms
-    else
-      _ -> [:__dynamic__]
-    end
-  end
-
-  defp segment(_other, _a, _p, _fa, _c), do: [:__dynamic__]
 
   # ---------- fixtures ----------
 

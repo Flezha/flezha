@@ -126,6 +126,47 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert refused.metadata[:session] == "sess_old"
   end
 
+  test "a newly bridged detection verdict and a provider verb both reach the bus" do
+    sink = :"obs_tbridge_verdict_sink_#{:erlang.unique_integer([:positive])}"
+    ref = :counters.new(1, [:atomics])
+
+    {:ok, _pid} =
+      Registry.register_sink(%{
+        name: sink,
+        module: Counting,
+        config: %{counter_ref: ref, parent: self(), sources: [:flezha_state, :flezha_ws]}
+      })
+
+    on_exit(fn -> Registry.unregister_sink(sink) end)
+    drain_mailbox()
+
+    :telemetry.execute(
+      [:flezha, :state, :input_log_syncer_died],
+      %{count: 1},
+      %{operative: "btc_kraken", reason: :killed}
+    )
+
+    died =
+      receive_until(
+        fn s -> s.source == :flezha_state and s.name == :input_log_syncer_died end,
+        500
+      )
+
+    assert died
+    assert died.kind == :event
+    assert died.metadata[:reason] == :killed
+
+    :telemetry.execute([:flezha, :plugin, :websocket, :shipped], %{count: 3}, %{
+      plugin_id: "wss://ws.kraken.com"
+    })
+
+    shipped = receive_until(fn s -> s.source == :flezha_ws and s.name == :shipped end, 500)
+
+    assert shipped
+    assert shipped.kind == :metric
+    assert shipped.measurements[:count] == 3
+  end
+
   test "all bridged events have a mapping" do
     # Sanity check — every event in mapping/0 maps to {source, name, kind}.
     Enum.each(TelemetryBridge.mapping(), fn {event, {source, name, kind}} ->

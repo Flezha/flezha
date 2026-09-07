@@ -10,10 +10,14 @@ defmodule Flezha.Observability.TelemetryBridge do
   event the hand-kept line wins, because its source, name and kind are a
   deliberate choice a derivation cannot know.
 
-  Every `[:flezha, …]` event executed in the controller must be a key of the
-  merged mapping or a member of `exempt/0`, which names the change that owes it
-  a sink. The suite fails on any other, naming the file, the line and the
-  event, and pins `exempt/0`'s length so the list can only shrink.
+  Every `[:flezha, …]` event NAME the tree writes must be a key of the merged
+  mapping or a member of `unexported/0`, which carries the reason it reaches no
+  exporter. The suite judges the name where it is written rather than at the
+  `:telemetry.execute` call, because three names are assembled into a tuple in one
+  module and executed in another, and a provider's path is assembled from its
+  own identifier, so an emitter cannot be added without an answer. It pins
+  `unexported/0`'s length so the list can only shrink, and `unwritten/0` names
+  the mapped events nothing writes any more.
 
   A broken bridge must never crash a producer: handler bodies are
   wrapped in `try`. On error the `:telemetry_bridge_failures` counter
@@ -109,55 +113,118 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :backoff, :reset] => {:flezha_convergence, :backoff_reset, :metric},
     # Every hub owner's start failure, from the one `attempt_start/2` that
     # reports it; `target` names the hub that would not come up.
-    [:flezha, :hub, :start_failed] => {:flezha_boot, :hub_start_failed, :event}
+    [:flezha, :hub, :start_failed] => {:flezha_boot, :hub_start_failed, :event},
+    # The recovery replay's opening marker, beside the two hooks that report its
+    # outcome; one per hub per boot.
+    [:flezha, :boot, :pre_recovery_replay] => {:flezha_boot, :pre_recovery_replay, :event},
+    # The websocket sink's four provider verbs, on the source its three
+    # watchdog events already publish under. `shipped` counts, so it is the one
+    # new exposed series; the other three are read one at a time.
+    [:flezha, :plugin, :websocket, :shipped] => {:flezha_ws, :shipped, :metric},
+    [:flezha, :plugin, :websocket, :retried] => {:flezha_ws, :retried, :event},
+    [:flezha, :plugin, :websocket, :failed] => {:flezha_ws, :failed, :event},
+    [:flezha, :plugin, :websocket, :overflowed] => {:flezha_ws, :overflowed, :event},
+    # Detection verdicts outside the detector table: a refusal, a failure, a
+    # loss, a breach or a death the controller observed. Every one was a
+    # `Logger` line and an unexported event until these entries existed.
+    [:flezha, :correction, :refused] => {:flezha_correction, :refused, :event},
+    [:flezha, :runner, :factory_language_conflict] =>
+      {:flezha_runner, :factory_language_conflict, :event},
+    [:flezha, :runner, :quota_refused] => {:flezha_runner, :quota_refused, :event},
+    [:flezha, :schedule, :spawn_failed] => {:flezha_schedule, :spawn_failed, :event},
+    [:flezha, :stream, :fanout_warning] => {:flezha_stream, :fanout_warning, :event},
+    [:flezha, :state, :claim_superseded] => {:flezha_durability, :claim_superseded, :event},
+    [:flezha, :state, :compaction_failed] => {:flezha_state, :compaction_failed, :event},
+    [:flezha, :state, :compaction_gave_up] => {:flezha_state, :compaction_gave_up, :event},
+    [:flezha, :state, :disk_quota_breach] => {:flezha_state, :disk_quota_breach, :event},
+    [:flezha, :state, :inbox_duplicate] => {:flezha_state, :inbox_duplicate, :event},
+    [:flezha, :state, :input_log_frozen_watermark] =>
+      {:flezha_state, :input_log_frozen_watermark, :event},
+    [:flezha, :state, :input_log_syncer_died] => {:flezha_state, :input_log_syncer_died, :event},
+    [:flezha, :state, :record_frame, :refused] => {:flezha_state, :record_frame_refused, :event},
+    [:flezha, :state, :restore_refused] => {:flezha_state, :restore_refused, :event},
+    [:flezha, :state, :wal_pull_failed] => {:flezha_state, :wal_pull_failed, :event},
+    # A torn tail discarded from a durable log, and a WAL rewound from one seq
+    # to another. Neither is a step completing: both report bytes the system
+    # gave up on, and `record_frame :refused` above is the same event's other
+    # outcome.
+    [:flezha, :state, :record_frame, :repaired] =>
+      {:flezha_state, :record_frame_repaired, :event},
+    [:flezha, :state, :wal_rewind] => {:flezha_state, :wal_rewind, :event},
+    # The two Elixir SDK facts no counter mirrors. `[:flezha, :sdk, :parked]`
+    # is bridged by the detector table from the same module, so "an SDK event
+    # cannot reach this bridge" is not true of any of them.
+    [:flezha, :sdk, :retry] => {:flezha_sdk, :retry, :event},
+    [:flezha, :sdk, :dynamic] => {:flezha_sdk, :dynamic, :event}
   }
 
-  # Executed `[:flezha, …]` events with no bridge line yet. Every one is
-  # lifecycle telemetry whose sink is `count-once-export-by-declaration`'s to
-  # declare: that change owns the counters and the export table these feed. The
-  # list is a RATCHET — the suite pins its length, so an event may leave it and
-  # none may join.
-  @exempt_owner :count_once_export_by_declaration
+  # Every `[:flezha, …]` event name the tree writes that reaches no exporter,
+  # grouped under the reason it has none. A ratchet: the suite pins the total,
+  # so an event may leave a group and none may join.
+  @unexported %{
+    # One signal per durable workflow commit, at the data plane's rate, with
+    # `proc_idx` and `iter` unique to each. The commit's outcome rides the ack
+    # the SDK observes and the durability counters, not a per-commit event.
+    commit_path: [
+      [:flezha, :state, :iter_commit],
+      [:flezha, :state, :proc_commit],
+      [:flezha, :state, :proc_outbox_flush]
+    ],
+    # The same fact is already a counted slot that IS exported, so a
+    # per-occurrence signal would be a second, weaker account of it.
+    # `[:flezha, :sdk, :mailbox]` is `hb_drops_newest`/`hb_drops_oldest` and
+    # says so at its own emit site; `[:flezha, :sdk, :timers]` is
+    # `hb_timers_armed`/`hb_timers_fired`. Both in
+    # `Flezha.Transport.LivenessCounters`.
+    counted_elsewhere: [
+      [:flezha, :sdk, :mailbox],
+      [:flezha, :sdk, :timers]
+    ],
+    # The convergence Loop attaches to this itself: it is a control input, and
+    # the Loop must not read what an exporter publishes.
+    control_input: [
+      [:flezha, :convergence, :tick]
+    ],
+    # An action the controller took, or a step it completed, and never a fault
+    # it detected, which is the line the mapping draws. Each is already
+    # answered by an operator surface that reports the resulting state: the
+    # convergence snapshot, `/healthz`, `flz boot await`, the schedule listing.
+    # Where one of these has a failing sibling, the sibling IS mapped
+    # (`wal_pull_failed`, `spawn_failed`, `compaction_failed`).
+    lifecycle: [
+      [:flezha, :boot, :reconcile_round],
+      [:flezha, :cluster, :ready],
+      [:flezha, :correction, :completed],
+      [:flezha, :correction, :retention_derived],
+      [:flezha, :hub, :pid_removed],
+      [:flezha, :operative, :requested_spawn],
+      [:flezha, :schedule, :dormant],
+      [:flezha, :schedule, :fired],
+      [:flezha, :state, :compaction_completed],
+      [:flezha, :state, :schema_migration],
+      [:flezha, :state, :wal_moved],
+      [:flezha, :state, :wal_pulled],
+      [:flezha, :workflow, :completed],
+      [:flezha, :workflow, :rehydrating],
+      [:flezha, :workflow, :rewind]
+    ]
+  }
 
-  @exempt [
-    [:flezha, :boot, :reconcile_round],
-    [:flezha, :cluster, :ready],
-    [:flezha, :convergence, :tick],
-    [:flezha, :correction, :completed],
-    [:flezha, :correction, :refused],
-    [:flezha, :correction, :retention_derived],
-    [:flezha, :hub, :pid_removed],
-    [:flezha, :operative, :requested_spawn],
-    [:flezha, :runner, :factory_language_conflict],
-    [:flezha, :runner, :quota_refused],
-    [:flezha, :schedule, :dormant],
-    [:flezha, :schedule, :fired],
-    [:flezha, :schedule, :spawn_failed],
-    [:flezha, :sdk, :dynamic],
-    [:flezha, :sdk, :mailbox],
-    [:flezha, :sdk, :retry],
-    [:flezha, :sdk, :timers],
-    [:flezha, :state, :claim_superseded],
-    [:flezha, :state, :compaction_completed],
-    [:flezha, :state, :compaction_failed],
-    [:flezha, :state, :compaction_gave_up],
-    [:flezha, :state, :disk_quota_breach],
-    [:flezha, :state, :inbox_duplicate],
-    [:flezha, :state, :input_log_frozen_watermark],
-    [:flezha, :state, :input_log_syncer_died],
-    [:flezha, :state, :record_frame, :refused],
-    [:flezha, :state, :record_frame, :repaired],
-    [:flezha, :state, :restore_refused],
-    [:flezha, :state, :schema_migration],
-    [:flezha, :state, :wal_moved],
-    [:flezha, :state, :wal_pull_failed],
-    [:flezha, :state, :wal_pulled],
-    [:flezha, :state, :wal_rewind],
-    [:flezha, :stream, :fanout_warning],
-    [:flezha, :workflow, :completed],
-    [:flezha, :workflow, :rehydrating],
-    [:flezha, :workflow, :rewind]
-  ]
+  # Mapped events nothing in `lib/flezha` writes any more, each with the reason
+  # the line stays. A dead line costs nothing at run time and removing one is a
+  # published-surface decision, so the suite pins the set rather than the count.
+  @unwritten %{
+    [:flezha, :leadership, :transition] =>
+      "named in the observability-foundation at-minimum list; the reconciler that " <>
+        "emitted it was replaced by the convergence loop",
+    [:flezha, :reconcile, :action] =>
+      "named in the observability-foundation at-minimum list; same reconciler",
+    [:flezha, :reconcile, :health] =>
+      "named in the observability-foundation at-minimum list; same reconciler",
+    [:flezha, :state, :ship_fenced] =>
+      "documented as an event of `:flezha_durability`; the shipper reports a lost " <>
+        "claim as `claim_superseded` instead"
+  }
 
   # Derived at COMPILE time from the detector table, so adding a detector
   # recompiles this module and its event is bridged with no edit here.
@@ -202,16 +269,25 @@ defmodule Flezha.Observability.TelemetryBridge do
   def derived(), do: @derived
 
   @doc """
-  Executed `[:flezha, …]` events that reach no sink yet, each naming the change
-  that owes it one. A ratchet: the suite pins this list's length, so an event
-  can leave it and none may join.
+  Event names the tree writes that reach no exporter. A ratchet: the suite pins
+  the total, so an event can leave this list and none may join.
   """
-  @spec exempt() :: [[atom()]]
-  def exempt(), do: @exempt
+  @spec unexported() :: [[atom()]]
+  def unexported(), do: Enum.concat(Map.values(@unexported))
 
-  @doc "The change that owes every exempt event a sink."
-  @spec exempt_owner() :: atom()
-  def exempt_owner(), do: @exempt_owner
+  @doc "Why `event` reaches no exporter, or `nil` when it does."
+  @spec unexported_reason([atom()]) :: atom() | nil
+  def unexported_reason(event) do
+    Enum.find_value(@unexported, fn {reason, events} -> if event in events, do: reason end)
+  end
+
+  @doc "The reasons an event may carry no bridge line."
+  @spec reasons() :: [atom()]
+  def reasons(), do: Map.keys(@unexported)
+
+  @doc "Mapped events nothing writes any more, each with the reason its line stays."
+  @spec unwritten() :: %{[atom()] => binary()}
+  def unwritten(), do: @unwritten
 
   # ---------- :telemetry handler entry point ----------
 

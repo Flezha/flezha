@@ -409,25 +409,5 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
              "providers naming their own telemetry events: #{inspect(offenders)} — " <>
                "every provider event goes through ProviderBehaviour.emit/3"
     end
-
-    test "every emitted verb reaches the bridge or is a declared provider-specific one" do
-      emitted =
-        for file <- Path.wildcard("lib/flezha/plugin/provider/**/*.ex"),
-            [_, verb] <- Regex.scan(~r/emit\(\s*:([a-z_]+),/, File.read!(file)),
-            do: String.to_atom(verb)
-
-      refute emitted == [], "no provider emit was found, so this test asserts nothing"
-
-      mapped =
-        Flezha.Observability.TelemetryBridge.mapping()
-        |> Map.keys()
-        |> Enum.filter(&match?([:flezha, :plugin | _], &1))
-        |> MapSet.new(&List.last/1)
-
-      unbridged = emitted |> Enum.uniq() |> Enum.reject(&MapSet.member?(mapped, &1))
-
-      assert unbridged == [],
-             "provider verbs that reach no sink: #{inspect(unbridged)}"
-    end
   end
 end

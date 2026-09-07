@@ -60,8 +60,9 @@ the Watchdog's `[:flezha, :state, :catastrophic_dataflow_stop]`, the bounded cal
 :reconnected_reassigned|:evicted` events and the loop's own `[:flezha, :convergence, :heal]` are
 all on the bus. `[:flezha, :health, :verdict]` joins them: it fires on every verdict-state
 transition with `kind`, the subject id, the new `state` and its reason, and on nothing else — a
-state that holds is what `/healthz` is for. Any executed event that is neither mapped nor on the
-bridge's ratcheted exemption list fails the suite by file, line and name. A source
+state that holds is what `/healthz` is for. Any `[:flezha, …]` event NAME the tree writes that is
+neither mapped nor on the bridge's ratcheted unexported list, which carries a reason per event,
+fails the suite by file, line and name. A source
 provider that has stopped completing work self-reports: `http_poll` is unhealthy once its last
 SETTLED poll ages past its idle window, mirroring `websocket`'s data-liveness watchdog.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
