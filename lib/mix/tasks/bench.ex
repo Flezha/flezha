@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Bench do
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
+  alias Flezha.State.Paths
   alias Mix.Tasks.Bench.Fleet
   alias Mix.Tasks.Bench.Report
 
@@ -151,7 +152,7 @@ defmodule Mix.Tasks.Bench do
 
   defp reset_bench_namespace do
     for dir <- [
-          Layout.file(:state, @bench_namespace),
+          Paths.namespace_dir(@bench_namespace),
           Layout.file(:process_hub, "#{@bench_namespace}_hub")
         ] do
       File.rm_rf!(dir)

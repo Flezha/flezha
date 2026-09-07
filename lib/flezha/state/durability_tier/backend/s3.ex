@@ -29,6 +29,11 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
   @impl true
   def child_spec(_opts), do: :ignore
 
+  # Signing and addressing reach for these three on the first request, so a
+  # boot without them selects a store that can never answer.
+  @impl true
+  def required_opts(), do: [:endpoint, :bucket, :access_key_id]
+
   @impl true
   def put(key, blob, opts), do: put_object(key, blob, [], opts)
 

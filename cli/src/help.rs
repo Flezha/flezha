@@ -142,7 +142,8 @@ OUTPUT FIELDS:
     durability_backend         none | postgres | s3 | local_path
     durability_posture         local_only | remote_tier
     durability_rpo_breaches    References past the remote RPO target
-    durability_superseded      References another controller now ships"#;
+    durability_superseded      References another controller now ships
+    state_root                 Absolute directory holding this node's durable state"#;
 
 pub(crate) const CONTROLLER_STOP: Help = r#"flz controller stop - Stop the flezha controller gracefully
 

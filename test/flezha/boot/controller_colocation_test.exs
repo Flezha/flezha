@@ -8,13 +8,19 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
   clearing would strip of its control socket and every attached runner's
   stream socket, and a state root another controller is writing, which is two
   unsynchronised writers over one entity WAL tree.
+
+  The third way is quieter and has no guard, only a report: the same
+  controller restarted from a different working directory opens a different
+  relative root and comes up cold. The boot report is what makes that visible.
   """
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use ExUnit.Case, async: false
 
+  alias Flezha.Boot.Loader
   alias Flezha.Boot.StateRootLock
   alias Flezha.Runner.FleetManager
   alias Flezha.Socket.Support
+  alias Flezha.State.Paths
   alias Flezha.State.TestHelpers
   alias Flezha.Transport.Native
   alias FlezhaTest.Helper.NodeTestHelper
@@ -184,6 +190,36 @@ defmodule FlezhaTest.Boot.ControllerColocationTest do
 
     NodeTestHelper.stop_runner_remote(peer, namespace, runner_id)
     NodeTestHelper.stop_peer_node(peer_pid, peer)
+  end
+
+  # ---------- the boot report ----------
+
+  describe "the boot report" do
+    test "names the resolved absolute state root and the variable that moves it" do
+      root = Paths.state_root()
+      assert Path.type(root) == :absolute
+
+      line = Enum.find(Loader.boot_report(), &String.contains?(&1, "durable state under"))
+
+      assert line =~ root
+      assert line =~ "FLEZHA_STATE_DIR"
+    end
+
+    test "says the root is empty on a cold start, and stops once it holds a class" do
+      previous = Application.get_env(:flezha, :state_root)
+      root = tmp_dir("boot_report_root")
+
+      try do
+        Application.put_env(:flezha, :state_root, root)
+        assert Enum.any?(Loader.boot_report(), &(&1 =~ "starting cold"))
+
+        File.mkdir_p!(Path.join([root, "_system", "some_class"]))
+        refute Enum.any?(Loader.boot_report(), &(&1 =~ "starting cold"))
+      after
+        Application.put_env(:flezha, :state_root, previous)
+        File.rm_rf(root)
+      end
+    end
   end
 
   # ---------- helpers ----------

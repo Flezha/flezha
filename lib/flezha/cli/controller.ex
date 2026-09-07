@@ -10,6 +10,7 @@ defmodule Flezha.Service.Cli.Controller do
   alias Flezha.Config.Durations
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
+  alias Flezha.State.Paths
 
   @doc """
   `flz controller stop` RPC. Drives `Flezha.Shutdown.Coordinator.shutdown/2`
@@ -164,9 +165,16 @@ defmodule Flezha.Service.Cli.Controller do
   @doc """
   `flz controller status` RPC. Prints a human-readable status block
   including graceful-shutdown state and configuration knobs.
+
+  The resolved state root is one of them: it is where this controller's durable
+  state actually is, and reading it here is what stops the answer depending on
+  someone having watched the boot that announced it.
   """
   def controller_status(output_format, _call) do
-    status = Map.merge(safe_shutdown_status(), durability_status())
+    status =
+      safe_shutdown_status()
+      |> Map.merge(durability_status())
+      |> Map.put(:state_root, Paths.state_root())
 
     case output_format do
       "json" ->
@@ -189,6 +197,7 @@ defmodule Flezha.Service.Cli.Controller do
         IO.puts("durability_posture:            #{status.durability_posture}")
         IO.puts("durability_rpo_breaches:       #{status.durability_rpo_breaches}")
         IO.puts("durability_superseded:         #{status.durability_superseded}")
+        IO.puts("state_root:                    #{status.state_root}")
     end
 
     :ok

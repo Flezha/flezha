@@ -24,14 +24,12 @@ defmodule Flezha.Boot.StateRootLock do
   lock file taken; claiming a root this process already holds is a no-op, which
   is what a controller restarting inside one OS process does.
 
-  The root is resolved to an absolute path here, once: a relative one names a
-  different tree from every working directory, so the claim, the refusal and
-  `held/0` would each be talking about something else.
+  `root` is already absolute: `Flezha.State.Paths.state_root/0` resolves it,
+  and it is the same string the WAL, snapshot and outbox paths are built from,
+  so the claim, the refusal and `held/0` name one directory.
   """
   @spec claim!(binary()) :: String.t()
   def claim!(root \\ Paths.state_root()) do
-    root = Path.expand(root)
-
     case Native.lock_state_root(root) do
       {:ok, lock_file} ->
         lock_file

@@ -66,7 +66,7 @@ defmodule FlezhaTest.Layout.TableTest do
       # take a live controller's control socket with it.
       refute String.starts_with?(
                Flezha.Socket.Support.socket_dir(),
-               Path.expand(Layout.dir(:state))
+               Flezha.State.Paths.state_root()
              )
     end
   end

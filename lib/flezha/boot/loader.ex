@@ -2,7 +2,8 @@ defmodule Flezha.Boot.Loader do
   @moduledoc """
   The controller's boot sequence, in one process: pre-hooks, the prerequisites
   each enabled transport needs (the UDS socket directory, the QUIC certificates),
-  post-hooks, then the attach line.
+  post-hooks, then the boot report: where the durable state lives, whether that
+  directory is empty, and how a runner attaches.
 
   Readiness is not answered here. `Flezha.Boot.Readiness` folds it from a
   precondition table evaluated on every read, so a probe is never queued behind
@@ -17,6 +18,7 @@ defmodule Flezha.Boot.Loader do
 
   alias Flezha.Config
   alias Flezha.Socket.Support
+  alias Flezha.State.Paths
   alias Flezha.Transport.CertGenerator
 
   def start_link(_) do
@@ -53,7 +55,7 @@ defmodule Flezha.Boot.Loader do
   @impl true
   def handle_continue(:boot, state) do
     run_post_hooks()
-    log_attach_line()
+    Enum.each(boot_report(), &Logger.info/1)
 
     {:noreply, state}
   end
@@ -63,10 +65,33 @@ defmodule Flezha.Boot.Loader do
     {:reply, :ok, state}
   end
 
-  defp log_attach_line() do
-    case attach_line() do
-      nil -> :ok
-      line -> Logger.info(line)
+  @doc """
+  What this boot chose that nothing outside the node can see: the state root it
+  opened, whether that directory holds anything, and how a runner attaches.
+
+  Every line on every boot, not only the boot that establishes it. The operator
+  who ran the first boot already knows; the population these lines are for is
+  whoever inherits the node afterwards, and a once-only line is invisible to
+  them. `flz controller status` answers the same questions later, so neither
+  depends on having watched a boot.
+  """
+  @spec boot_report() :: [String.t()]
+  def boot_report() do
+    Enum.reject([state_root_line(), cold_start_line(), attach_line()], &is_nil/1)
+  end
+
+  defp state_root_line() do
+    "[flezha] durable state under #{Paths.state_root()} " <>
+      "(set with #{Config.env_name(:state_root)})"
+  end
+
+  # A relocated working directory under the default relative root opens an
+  # empty tree, which is correct behaviour that reads as data loss. The data is
+  # in the directory the previous run was started from, and this line plus the
+  # one above it is what says so.
+  defp cold_start_line() do
+    if Paths.operative_classes() == [] do
+      "[flezha] that directory holds no durable state: this controller is starting cold"
     end
   end
 

@@ -91,8 +91,19 @@ defmodule Flezha.State.Paths do
   def inbox_path(instance_id) when is_binary(instance_id),
     do: wal_path(inbox_id(instance_id))
 
+  @doc """
+  This controller's state root, absolute.
+
+  Resolved to an absolute path here, once, and nowhere else: a relative root
+  names a different tree from every working directory, so the advisory lock,
+  the refusal it raises, `Flezha.Boot.StateRootLock.held/0` and every WAL,
+  snapshot and outbox path built from it would each be talking about something
+  else. Expanding is not relocating: `app_data/state` still resolves against the
+  working directory the controller was started from, which is why the boot says
+  which directory that turned out to be.
+  """
   @spec state_root() :: binary()
-  def state_root(), do: Layout.dir(:state)
+  def state_root(), do: Path.expand(Layout.dir(:state))
 
   # ----- namespace resolution (finish-platform-authn-authz) -----
   #

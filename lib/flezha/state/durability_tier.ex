@@ -13,9 +13,13 @@ defmodule Flezha.State.DurabilityTier do
   invisible to recovery.
 
   Every trigger, recovery and status function is a no-op while `backend: :none`,
-  under which `children/0` starts nothing; a production boot must choose, and
-  `children/0` refuses an unset `FLEZHA_DURABILITY_BACKEND`.
+  under which `children/0` starts nothing. An unset or unrecognised
+  `FLEZHA_DURABILITY_BACKEND` takes that default and `children/0` says so;
+  a backend the operator did select and that lacks an option it cannot work
+  without refuses the boot instead.
   """
+
+  require Logger
 
   alias Flezha.Config
   alias Flezha.Config.Durations
@@ -53,7 +57,9 @@ defmodule Flezha.State.DurabilityTier do
 
   `config/runtime.exs` resolves an unset `FLEZHA_DURABILITY_BACKEND` to
   `:unset` in production only; every other environment keeps defaulting to
-  `:none`, so the development loop is untouched.
+  `:none`, so the development loop is untouched. The posture is the same
+  either way, because `BackendConfig.resolve/0` answers `:none` for both, and
+  this is what separates a decision nobody made from one somebody made.
   """
   @spec unconfigured?() :: boolean()
   def unconfigured?(), do: configured_backend() == :unset
@@ -62,7 +68,7 @@ defmodule Flezha.State.DurabilityTier do
   The backend as an operator named it, rather than as `Backend.resolve/0`
   resolves it — what `flz controller status` reports.
   """
-  @spec configured_backend() :: atom() | {module(), keyword()}
+  @spec configured_backend() :: atom() | binary() | {module(), keyword()}
   def configured_backend(),
     do: Config.get(:durability_backend)
 
@@ -173,13 +179,16 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec children() :: [Supervisor.child_spec() | module() | {module(), term()}]
   def children() do
-    if unconfigured?(), do: refuse_unconfigured_backend!()
+    resolved = BackendConfig.resolve()
+    announce_selection(resolved)
 
-    case BackendConfig.resolve() do
+    case resolved do
       :none ->
         []
 
       {module, opts} ->
+        refuse_unusable_backend!(module, opts)
+
         backend_children(module, opts) ++
           [
             Cspec.build(
@@ -192,12 +201,26 @@ defmodule Flezha.State.DurabilityTier do
     end
   end
 
-  # Fail closed, not warn. The audit finding this closes is that every real
-  # deployment ships the default, so a warning would be ignored by exactly the
-  # deployments that need it. Both moves are one env line, and the opt-out is
-  # lossless.
-  defp refuse_unconfigured_backend!() do
-    message = """
+  # What the boot chose, said out loud, on every boot rather than only the one
+  # that establishes it: the population these lines are for is whoever inherits
+  # the node, not the operator who ran the first boot.
+  #
+  # A warning and not a refusal. The refusal this replaces was written when the
+  # boot was the only place the posture could be noticed; `/healthz` and
+  # `flz controller status` both carry it now, and what the refusal actually
+  # blocked was the first local run of a release, where there is no durability
+  # decision to make yet.
+  defp announce_selection(resolved) do
+    case {configured_backend(), resolved} do
+      {:unset, _} -> Logger.warning(unconfigured_message())
+      {:none, _} -> :ok
+      {name, :none} -> Logger.warning(unrecognised_message(name))
+      _ -> :ok
+    end
+  end
+
+  defp unconfigured_message() do
+    """
     FLEZHA_DURABILITY_BACKEND is not set, and a production controller must make \
     an explicit durability decision.
 
@@ -212,15 +235,49 @@ defmodule Flezha.State.DurabilityTier do
       FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out: the local disk is
                                            # the only copy, and that is accepted
 
-    See docs/operations/remote_durability_tier.md for backend provisioning.
+    Defaulting to none. See docs/operations/remote_durability_tier.md for backend
+    provisioning.
     """
+  end
 
-    # Printed as well as raised. The refusal reaches the operator as an
-    # application-start failure, which the BEAM formats as an Erlang term and
-    # can truncate — and a refusal whose guidance is unreadable is just a
-    # container that will not come up.
-    IO.puts(:stderr, message)
-    raise message
+  # A typo must not crash-loop the controller, so the name resolves to `none`
+  # like an unset variable does. Saying which name was not understood is what
+  # stops the operator believing a tier is running.
+  defp unrecognised_message(name) do
+    "FLEZHA_DURABILITY_BACKEND=#{inspect(name)} is not a backend this release " <>
+      "knows. Valid values: none, postgres, s3, local_path. Defaulting to none: " <>
+      "this node's disk holds the only copy of its durable state."
+  end
+
+  # The one refusal this tier keeps, and it is not the one above. An unmade
+  # decision has a safe answer and takes it; an impossible one does not. A
+  # backend selected without the options it needs boots clean today, reports a
+  # remote posture and raises at the first ship, having shipped nothing.
+  defp refuse_unusable_backend!(module, opts) do
+    missing = for key <- required_opts(module), Keyword.get(opts, key) in [nil, ""], do: key
+
+    if missing != [] do
+      raise "FLEZHA_DURABILITY_BACKEND selects #{inspect(module)}, which cannot " <>
+              "work without #{Enum.map_join(missing, ", ", &naming/1)}. Set what is " <>
+              "missing, or set FLEZHA_DURABILITY_BACKEND=none to accept local-only " <>
+              "durability. See docs/operations/remote_durability_tier.md."
+    end
+  end
+
+  defp required_opts(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :required_opts, 0),
+      do: module.required_opts(),
+      else: []
+  end
+
+  # The variable an operator sets the option with, asked of the knob reader
+  # rather than restated here: a backend option is a row like any other, and
+  # the key it fills is the only name this module holds for it.
+  defp naming(key) do
+    case Config.env_name({:durability_tier, :backend_opts, key}) do
+      nil -> to_string(key)
+      variable -> "#{key} (#{variable})"
+    end
   end
 
   defp backend_children(module, opts) do

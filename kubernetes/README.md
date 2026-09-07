@@ -15,9 +15,11 @@ kubectl -n flezha create secret generic flezha-secrets \
   --from-literal=RELEASE_COOKIE="$(openssl rand -base64 48)"
 ```
 
-Without it the controller starts with Erlang distribution off. It looks alive,
-but no `flz` verb can reach it and the readiness probe, which is a `flz` verb,
-never passes.
+**The Secret is still required here.** A release with no cookie provisioned
+mints a node-local one and runs, so a single pod would come up. But a minted
+cookie is unique to the pod that minted it, and this is a DaemonSet whose pods
+have to form one cluster. Only a value every pod receives can do that, which is
+what the Secret is. Nothing about minting removes the need for it.
 
 ## Image and registry
 

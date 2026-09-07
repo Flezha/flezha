@@ -17,31 +17,58 @@ That produces `_build/prod/rel/flezha/`, holding `bin/flzvm` (the controller)
 and `bin/flz` (the CLI). Every command below runs from the project root.
 
 [`variables.md`](variables.md) lists what a deploy cannot omit. On one machine
-exactly two of them have no usable default:
+nothing does: every variable has a default that works here, and the boot says
+which defaults it took. Three are worth knowing before the first start:
 
-| Variable | Why it is not optional here |
-|---|---|
-| `FLEZHA_DURABILITY_BACKEND` | A prod release refuses to boot with it unset. `none` is the local-only value. |
-| `RELEASE_COOKIE` | Without it the release starts with distribution off, and every `flz` verb fails. There is deliberately no committed fallback. |
+| Variable | Default here | When to set it |
+|---|---|---|
+| `RELEASE_COOKIE` | A random 32-byte value minted on the first boot, kept `0600` in `<state root>/cookie` and reused afterwards. | Whenever two nodes must cluster: they can only do that under one value you gave them both. `FLEZHA_COOKIE_FILE` moves the file. |
+| `FLEZHA_DURABILITY_BACKEND` | `none`: the local disk holds the only copy of durable state. The boot warns, on every boot, until you decide. | When durable state must survive losing this machine's disk. Setting `none` explicitly is the other valid answer and silences the warning. |
+| `FLEZHA_STATE_DIR` | `app_data/state`, **relative to the directory you start from**. The boot prints the absolute path it resolved to. | Whenever the controller may be started from more than one directory: a relative root opens a different tree from each one. An absolute path here ends the question. |
 
-Everything else has a default that works here. The node name and host, which
-together form the node the CLI reaches, default to the release name and
-`127.0.0.1` in `rel/env.sh.eex`; set `FLEZHA_NODE_NAME` and `FLEZHA_NODE_HOST`
-when you want something else. The socket directory resolves itself, as below.
+The node name and host, which together form the node the CLI reaches, default
+to the release name and `127.0.0.1` in `rel/env.sh.eex`; set `FLEZHA_NODE_NAME`
+and `FLEZHA_NODE_HOST` when you want something else. The socket directory
+resolves itself, as below.
 
 ## Start the controller
 
+`flz controller start` is the front door. It runs the release's own boot script
+underneath, so the variables above apply either way, and it takes the mode:
+
 ```bash
-FLEZHA_DURABILITY_BACKEND=none RELEASE_COOKIE=flezha_local \
-  _build/prod/rel/flezha/bin/flzvm start
+export PATH="$PWD/_build/prod/rel/flezha/bin:$PATH"
+
+flz controller start                    # attached, logs to this terminal
+flz controller start --mode daemon      # detached, returns immediately
+flz controller start --mode attached_iex   # attached with an IEx shell
 ```
 
-It runs in the foreground and logs its boot. The line that tells a runner where
-to attach is in there:
+Attached is the one to use the first time: the boot is short and you see it.
+
+A healthy boot is a handful of lines, ending with the transport listening:
 
 ```
+[flezha] no RELEASE_COOKIE provisioned; using the node-local cookie in /home/you/flezha/app_data/state/cookie.
+[flezha] That value is this node's alone. A cluster provisions RELEASE_COOKIE with the same value on every node.
+[shutdown] OS signal handlers installed (SIGTERM)
+[flezha] durable state under /home/you/flezha/app_data/state (set with FLEZHA_STATE_DIR)
+[flezha] that directory holds no durable state: this controller is starting cold
 [flezha] runners attach with FLEZHA_SOCKET_FILES_PATH=/run/user/1000/flezha
+[cluster] formed and ready; members [:"flezha@127.0.0.1"]
+NIF transport server (UDS) started on /run/user/1000/flezha/runner_control_channel.sock
 ```
+
+The first four lines are the boot saying what it chose. They print on every
+boot, not only the first: whoever inherits this node later is who they are for.
+The cold-start line goes away once the directory holds something. If it comes
+back on a controller that had state, read the line above it: you are almost
+certainly starting from a different directory, and the data is still in the old
+one. `flz controller status` answers the same question at any time.
+
+You do not need to copy the socket path out of it. On one machine as one user a
+runner resolves the same directory the controller did, and `flz runner check`
+answers the question on demand whenever you do want it.
 
 ## Point the CLI at it
 
@@ -64,7 +91,7 @@ Two questions, two commands. The first asks whether the transport is there, and
 needs no cookie and no controller:
 
 ```bash
-$ _build/prod/rel/flezha/bin/flz runner check
+$ flz runner check
 controller reachable at /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha); walked
 /run/user/1000/flezha, /run/flezha, ./app_data/sockets. Fix: nothing to fix - the
 controller answered
@@ -75,14 +102,34 @@ question: the socket is bound early in the boot, well before the controller can
 serve anything.
 
 ```bash
-$ _build/prod/rel/flezha/bin/flz boot await
+$ flz boot await
 boot await: ready
 ```
 
 Both exit zero only on success. A controller that is still coming up answers
 `recovering` and names what it is waiting for.
 
+## Where a daemon's output goes
+
+A daemon writes nothing to your terminal. Two places carry it:
+
+| What | Where |
+|---|---|
+| everything the controller logs | `FLEZHA_LOG_PATH`, default `logs/flezha.log` |
+| the boot, and anything printed before the logger is up | `$RELEASE_TMP/log/`, default `<release>/tmp/log/` |
+
+The second is inside the build output, so `make build-release` can take it with
+it. Point `RELEASE_TMP` somewhere durable on a machine you care about.
+
 ## Stop it
+
+```bash
+flz controller stop        # graceful: drains, then exits
+```
+
+That verb is authorization-gated, so it needs a claimed bootstrap and a token
+(see [`../authn_authz.md`](../authn_authz.md)). Before you have one, or if the
+controller is wedged, the release script stops it with the cookie alone:
 
 ```bash
 _build/prod/rel/flezha/bin/flzvm stop

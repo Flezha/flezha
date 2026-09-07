@@ -5,10 +5,11 @@ defmodule FlezhaTest.System.KnobDrillTest do
 
   The runtime drill (`test/flezha/config/runtime_drill_test.exs`) proves the
   variable reaches the key. This one proves the key reaches the world: a state
-  root is where the WAL lands, a socket directory is where the controller
-  listens, `/healthz` answers on the address and port it was given, a parked
-  payload lands under the DLQ directory, an audit record under the audit
-  directory, and the Prometheus exporter serves on the port it was told.
+  root is the absolute directory `flz controller status` names and the WAL
+  lands in, a socket directory is where the controller listens, `/healthz`
+  answers on the address and port it was given, a parked payload lands under
+  the DLQ directory, an audit record under the audit directory, and the
+  Prometheus exporter serves on the port it was told.
 
   The table is `Keys.rows/0` filtered to rows that declare a `surface`, so a
   knob given one is covered here with no test edit — and a knob that claims a
@@ -31,6 +32,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   alias Flezha.Healthz.Server, as: Healthz
   alias Flezha.Observability.AuditLog.Writer, as: AuditWriter
   alias Flezha.Observability.Export.PrometheusHttp
+  alias Flezha.Service.Cli.Controller, as: ControllerCli
   alias Flezha.Socket.Support
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
@@ -78,7 +80,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   # One reading per surface: what an operator looks at, driven for real.
   defp readings() do
     %{
-      {:disk, :state_root} => &state_root_holds/1,
+      {:status, :state_root} => &status_reports_state_root/1,
       {:disk, :socket_dir} => &socket_dir_is/1,
       {:disk, :dlq_dir} => &dlq_writes_under/1,
       {:disk, :audit_dir} => &audit_writes_under/1,
@@ -88,9 +90,20 @@ defmodule FlezhaTest.System.KnobDrillTest do
     }
   end
 
-  defp state_root_holds(root) do
-    Paths.state_root() == root and
-      String.starts_with?(Paths.wal_path({"knob_drill", "proc", "k1"}), root)
+  # Two halves of one claim: `flz controller status` reports the resolved root,
+  # and that is the directory the WAL actually lands in. A status field naming
+  # a tree nothing writes to would pass the first half alone.
+  defp status_reports_state_root(root) do
+    resolved = Path.expand(root)
+
+    printed =
+      ExUnit.CaptureIO.capture_io(fn ->
+        :ok = ControllerCli.controller_status("text", %{})
+      end)
+
+    Paths.state_root() == resolved and
+      printed =~ "state_root:" and printed =~ resolved and
+      String.starts_with?(Paths.wal_path({"knob_drill", "proc", "k1"}), resolved)
   end
 
   defp socket_dir_is(dir), do: Support.socket_dir() == Path.expand(dir)

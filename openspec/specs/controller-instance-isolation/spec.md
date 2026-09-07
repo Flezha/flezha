@@ -50,11 +50,14 @@ a controller that died hard needs no manual cleanup before restarting.
 
 ### Requirement: A controller holds an exclusive lock on its state root
 
-A controller SHALL acquire an exclusive advisory lock on its state root at boot and hold it for
-the process lifetime, so that no two controllers write one entity WAL tree. The lock SHALL be
-released by the operating system when the holding process exits, requiring no stale-lock recovery.
-A controller that cannot acquire the lock SHALL refuse to start, naming the state root and the
-holder.
+A controller SHALL resolve its state root to an absolute path once, at the point the
+root is read, so that the advisory lock, the refusal it raises, `held/0` and every
+durable path built from the root name one directory rather than one per working
+directory. It SHALL acquire an exclusive advisory lock on that resolved root at boot
+and hold it for the process lifetime, so that no two controllers write one entity WAL
+tree. The lock SHALL be released by the operating system when the holding process
+exits, requiring no stale-lock recovery. A controller that cannot acquire the lock
+SHALL refuse to start, naming the resolved state root and the holder.
 
 #### Scenario: A shared state root is refused
 - **WHEN** a second controller is started with the state root of a running controller
@@ -67,6 +70,10 @@ holder.
 #### Scenario: A single controller is unaffected
 - **WHEN** one controller boots, runs and restarts normally
 - **THEN** the lock is acquired on each boot with no operator action
+
+#### Scenario: The lock and the data name one directory
+- **WHEN** a controller boots with a relative state root configured
+- **THEN** the path it locks and the path its WAL, snapshot and outbox files are written to are the same absolute directory
 
 ### Requirement: A peer controller is capacity, not durability
 
@@ -116,4 +123,39 @@ A distribution node name is the same kind of resource: one VM on a host holds it
 
 - **WHEN** two suites run on one host at the same time
 - **THEN** each SHALL start distribution under its own node name, and neither run's output SHALL carry a `:nodistribution` report
+
+### Requirement: A controller names its state root at boot
+
+A controller SHALL report the absolute path of its resolved state root on every boot,
+and SHALL state explicitly when that directory holds no durable state, so that a cold
+start is never silent. The report SHALL name the environment variable that overrides
+the root. The same resolved path SHALL be readable from `flz controller status` while the
+controller runs, so that a controller SHALL NOT depend on the operator having observed a
+boot to know where its durable state lives.
+
+#### Scenario: The state root is named on every boot
+
+- **WHEN** a controller boots
+- **THEN** its output names the absolute state root in use and the environment
+  variable that sets it, whether the root was configured or defaulted
+
+#### Scenario: A cold start says so
+
+- **WHEN** a controller boots against a state root holding no durable state
+- **THEN** its output says the directory is empty and that the controller is
+  starting cold
+
+#### Scenario: The state root is readable without watching a boot
+
+- **WHEN** an operator runs `flz controller status` against a running controller
+- **THEN** the output names the absolute state root in use, alongside the durability
+  posture it already reports
+
+#### Scenario: A relocated working directory is diagnosable
+
+- **WHEN** a controller using the default relative state root is restarted from a
+  different working directory
+- **THEN** the boot names an absolute state root differing from the previous boot's,
+  and reports it as empty, so the operator can see which directory the durable state
+  is in
 

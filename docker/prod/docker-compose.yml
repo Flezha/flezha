@@ -23,10 +23,11 @@ services:
       # A prod release refuses to boot with the durability backend unset;
       # `none` is the local-only value this smoke test wants.
       FLEZHA_DURABILITY_BACKEND: ${FLEZHA_DURABILITY_BACKEND:-none}
-      # No cookie means RELEASE_DISTRIBUTION=none: the controller runs but no
-      # `flz` verb can reach it, and the image's own HEALTHCHECK is a `flz`
-      # verb. Set it in .env; there is deliberately no committed default.
-      RELEASE_COOKIE: "${RELEASE_COOKIE:?set it in .env, generate one with openssl rand -base64 48}"
+      # Optional. With no cookie the release mints a node-local one into the
+      # state volume and the container comes up operable; set it in .env when
+      # this stack has to cluster with anything, because only a value given to
+      # every node forms one. There is deliberately no committed default.
+      RELEASE_COOKIE: "${RELEASE_COOKIE:-}"
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_LOG_PATH: /flezha/app_data/logs/flezha.log

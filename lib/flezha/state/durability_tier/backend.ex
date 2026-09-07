@@ -67,6 +67,18 @@ defmodule Flezha.State.DurabilityTier.Backend do
   @callback child_spec(opts()) :: Supervisor.child_spec() | :ignore
 
   @doc """
+  Option keys this backend cannot work without, checked once at boot.
+
+  A backend that reaches `Keyword.fetch!/2` for an option only at the first
+  ship looks configured for as long as nothing ships: the posture reports a
+  remote tier and the store is empty. Declaring the keys here is what turns
+  that into a refusal naming the option, at the boot that selected the backend.
+  """
+  @callback required_opts() :: [atom()]
+
+  @optional_callbacks required_opts: 0
+
+  @doc """
   Whether `guard` admits a write against the counter the store already holds.
 
   One definition, so two backends cannot drift from the contract they both

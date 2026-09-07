@@ -53,15 +53,41 @@ world-writable.
 ### Requirement: Erlang distribution is not trust-by-constant-cookie
 
 The release SHALL NOT ship a hard-coded default distribution cookie, and the cluster
-SHALL support TLS distribution. A deployment that has not provisioned a cookie
-(and, where enabled, distribution TLS) SHALL refuse to form a cluster rather than
-fall back to a well-known constant.
+SHALL support TLS distribution. A deployment that has not provisioned a cookie SHALL
+NOT fall back to a well-known constant and SHALL NOT accept distribution connections
+under a value any other installation could hold. Where no cookie is provisioned, the
+release MAY mint a node-local cookie from a cryptographically random source, persist
+it readable only by its owner, and reuse it on later boots; such a value SHALL be
+unique to the node that minted it, SHALL NOT appear in the source tree, and SHALL
+leave the node unable to cluster with any node that did not receive it explicitly. A
+release that can neither provision nor mint a cookie SHALL refuse to start
+distribution rather than proceed without one, and SHALL say so.
 
 #### Scenario: Missing cookie refuses to cluster
 
 - **WHEN** a controller boots without a provisioned `RELEASE_COOKIE`
 - **THEN** it does not fall back to a source-committed constant and does not accept
   distribution connections under a default cookie
+
+#### Scenario: A minted cookie is unique to its node
+
+- **WHEN** two controllers each boot with no provisioned `RELEASE_COOKIE` and each mint one
+- **THEN** the two values SHALL differ, and neither node SHALL be able to form a cluster with the other
+
+#### Scenario: A provisioned cookie is never overridden
+
+- **WHEN** a controller boots with `RELEASE_COOKIE` set
+- **THEN** that value SHALL be used, and no cookie SHALL be minted or read from a file
+
+#### Scenario: A minted cookie survives a restart
+
+- **WHEN** a controller that minted a cookie is restarted with its state directory intact
+- **THEN** it SHALL reuse the same value rather than mint a new one
+
+#### Scenario: A cookie that cannot be minted refuses distribution
+
+- **WHEN** no cookie is provisioned and the release cannot generate or persist one
+- **THEN** it SHALL start with distribution disabled, SHALL log the reason, and SHALL NOT fail the boot
 
 ### Requirement: CLI callers present a verifiable identity
 

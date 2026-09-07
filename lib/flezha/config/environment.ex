@@ -167,6 +167,13 @@ defmodule Flezha.Config.Environment do
       :error when row.type in [:positive_int, :bool] ->
         Config.default(row.name)
 
+      # A row whose reader must not turn a typo into a crash loop keeps the
+      # text instead of refusing it, and answers for the value itself: the
+      # durability backend resolves an unrecognised name to `none` and names
+      # it, which it can only do if the name survives this parse.
+      :error when row.on_bad_value == :keep_raw ->
+        raw
+
       :error ->
         raise ArgumentError,
               "#{row.env}=#{inspect(raw)} is not a #{inspect(row.type)}; " <>

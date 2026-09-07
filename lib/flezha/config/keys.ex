@@ -64,7 +64,8 @@ defmodule Flezha.Config.Keys do
           derived: derivation() | nil,
           runtimes: [atom()],
           surface: term() | nil,
-          owner: atom() | nil
+          owner: atom() | nil,
+          on_bad_value: atom() | nil
         }
 
   # {name, type, default, opts}.
@@ -94,7 +95,7 @@ defmodule Flezha.Config.Keys do
     {:run_token, :string, nil,
      key: true, runtimes: [:harness], env_default: [test: {:late, {System, :pid, []}}]},
     {:state_root, :path, "app_data/state",
-     key: true, env: "FLEZHA_STATE_DIR", per_run: :state_root, surface: {:disk, :state_root}},
+     key: true, env: "FLEZHA_STATE_DIR", per_run: :state_root, surface: {:status, :state_root}},
     # The UDS socket directory. Unset by default: `Flezha.Socket.Support`
     # resolves the ladder every SDK shares. A path that is set — an operator's,
     # a per-run derivation, or a test's — is used as it stands.
@@ -302,13 +303,18 @@ defmodule Flezha.Config.Keys do
 
     # ---- remote durability tier ---------------------------------------------
     # `backend: :none` wires nothing into the supervision tree and leaves every
-    # ack path gating on local fsync — but in production it has to be asked for:
-    # an unset variable resolves to `:unset`, which `DurabilityTier.children/0`
-    # refuses to boot on.
+    # ack path gating on local fsync. An unset variable resolves to `:unset` in
+    # production, which is `none` with a warning: `DurabilityTier.children/0`
+    # says the decision was never made and boots anyway.
+    #
+    # `on_bad_value: :keep_raw` is what keeps a typo out of the boot loop. The
+    # tier resolves an unrecognised name to `none` and warns naming it, so the
+    # text has to survive the parse rather than be refused at translation.
     {:durability_backend, {:enum, [:none, :postgres, :s3, :local_path, :unset]}, :none,
      key: {:durability_tier, :backend},
      env: "FLEZHA_DURABILITY_BACKEND",
      env_default: [prod: :unset],
+     on_bad_value: :keep_raw,
      runtimes: [:controller, :bench]},
     # STABLE across restarts of the same controller, and NOT surviving the loss
     # of its disk. `node()` satisfies both under a StatefulSet or a fixed host.
@@ -618,7 +624,8 @@ defmodule Flezha.Config.Keys do
              derived: opts[:derived],
              runtimes: opts[:runtimes] || [:controller],
              surface: opts[:surface],
-             owner: opts[:owner]
+             owner: opts[:owner],
+             on_bad_value: opts[:on_bad_value]
            }}
         end)
 
@@ -647,6 +654,7 @@ defmodule Flezha.Config.Keys do
   end
 
   @by_env Map.new(for r <- Map.values(@rows), r.env, do: {r.env, r})
+  @by_key Map.new(for r <- Map.values(@rows), r.key, do: {r.key, r})
 
   @doc "The whole table, one row per name."
   @spec rows() :: %{name() => row()}
@@ -663,12 +671,31 @@ defmodule Flezha.Config.Keys do
       raise ArgumentError, "no configuration row named #{inspect(name)}"
   end
 
+  @doc """
+  The row filling application-env key `key`, or `nil`.
+
+  A subsystem holds the option keys it takes, not the row names that fill
+  them, so this is how one asks the table about a setting it knows by key.
+  """
+  @spec by_key(key()) :: row() | nil
+  def by_key(key), do: Map.get(@by_key, key)
+
   @doc "The row declaring environment variable `var`, or `nil`."
   @spec by_env(binary()) :: row() | nil
   def by_env(var), do: Map.get(@by_env, var)
 
-  @doc "The variable `name` is set with, or `nil` when it has none."
-  @spec env_name(name()) :: binary() | nil
+  @doc """
+  The variable `name` is set with, or `nil` when it has none. A knob may be
+  addressed by its row name or by the key it fills.
+  """
+  @spec env_name(name() | key()) :: binary() | nil
+  def env_name(key) when is_tuple(key) do
+    case by_key(key) do
+      nil -> nil
+      row -> row.env
+    end
+  end
+
   def env_name(name), do: fetch!(name).env
 
   @doc """

@@ -32,11 +32,30 @@ process: export it in the shell that runs `flz`, not in the Controller's environ
 
 ## Provision the distribution cookie
 
-The release ships no cookie. A node booted without `RELEASE_COOKIE` logs the
-refusal and sets `RELEASE_DISTRIBUTION=none`: it does not cluster, and the `rpc`
-every `flz` verb rides cannot reach it. Generate one with
-`openssl rand -base64 48`, keep it in your secret manager, and on Kubernetes
-inject it from a Secret via `envFrom` on the Controller container.
+The release ships no cookie and never falls back to a constant. A node booted
+without `RELEASE_COOKIE` mints one instead: 32 random bytes from `/dev/urandom`,
+written `0600` to `${FLEZHA_STATE_DIR}/cookie` (`FLEZHA_COOKIE_FILE` moves the
+file), read back on every later boot, and announced on each of them. That is
+enough to run and operate one node, and the value is one no other installation
+holds.
+
+It is not enough for a cluster. Two nodes connect only under one cookie that was
+given to both, so a minted value leaves a node clustering with nobody. That is
+the point, and it is also what a silent failure to form a cluster looks like.
+Generate one with `openssl rand -base64 48`, keep it in your secret manager, and
+on Kubernetes inject it from a Secret via `envFrom` on the Controller container.
+An explicit `RELEASE_COOKIE` wins outright: nothing is minted and no file is
+read.
+
+Where the release can neither read nor mint a cookie (no `/dev/urandom`, an
+unwritable state directory, a read-only filesystem) it logs the reason and sets
+`RELEASE_DISTRIBUTION=none`: the boot continues, but it does not cluster and the
+`rpc` every `flz` verb rides cannot reach it.
+
+A rebuilt release under the default path can lose the file: `mix release` writes
+into `${RELEASE_ROOT}`, so a rebuild can take `app_data/state` with it and the
+next boot mints afresh. Nothing breaks, because the CLI reads the same file, but
+a deployment that pins the cookie is a deployment this cannot happen to.
 
 Optional TLS distribution: point `FLEZHA_DIST_TLS_OPTFILE` at an `inet_tls_dist`
 option file (server/client cert + CA, see the OTP `ssl_dist` docs); the release

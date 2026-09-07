@@ -126,17 +126,18 @@ RUN chmod +x /usr/local/bin/controller-entrypoint.sh
 
 # Named volumes inherit the mount-point's image-time ownership, so each
 # overlaid dir must exist with flezha:flezha or the non-root process
-# hits EACCES on first write. Includes /flezha/state (per-entity WAL
-# state-root, mounted in dev compose) — without pre-creating it here,
-# the named volume is created at mount time owned by root, FsyncBatcher
-# silently fails to write WAL, and warm-restart auto-recovery from per-
-# entity state never works.
-RUN mkdir -p /flezha/app_data/sockets \
+# hits EACCES on first write: a named volume over a path the image does
+# not have is created at mount time owned by root. Every path the shipped
+# compose file mounts is listed, state first, because that one is claimed
+# before any other write happens and the boot refuses when it cannot be.
+RUN mkdir -p /flezha/app_data/state \
+             /flezha/app_data/data \
+             /flezha/app_data/plugins \
+             /flezha/app_data/sockets \
              /flezha/app_data/certs \
              /flezha/app_data/logs \
              /flezha/app_data/snapshots \
              /flezha/app_data/process_hub \
-             /flezha/state \
     && chown -R flezha:flezha /flezha
 
 USER flezha

@@ -5,9 +5,10 @@
 # Three things can only be shown against a real production release, and this
 # script shows them in throwaway containers:
 #
-#   1. A prod boot with FLEZHA_DURABILITY_BACKEND unset refuses to start and
-#      prints both valid moves. The refusal keys off `config_env() == :prod`,
-#      so no `mix test` can reach it.
+#   1. A prod boot with FLEZHA_DURABILITY_BACKEND unset starts, warns naming
+#      both valid moves, and reports the same local-only posture an explicit
+#      `none` does. The warning keys off `config_env() == :prod`, so no
+#      `mix test` can reach it.
 #   2. The explicit opt-out boots inert and reports the local-only posture on
 #      `/healthz` and `flz controller status`.
 #   3. A controller that dies WITH its disk comes back: on a fresh container
@@ -136,20 +137,28 @@ rpc() { # rpc <container> <elixir>
 # ---------- 1. boot posture ----------
 
 boot_posture() {
-  log "boot posture: an unset backend must refuse to start"
-  docker run --rm --name "${PREFIX}_unset" \
-    -e FLEZHA_RESTORE_WAIT_TIMEOUT_S=20 \
+  log "boot posture: an unset backend warns and boots"
+  docker run -d --name "${PREFIX}_unset" \
+    -e FLEZHA_HEALTHZ_ENABLED=true \
     -e RELEASE_COOKIE="$COOKIE" \
-    "$IMAGE" >"$LOGDIR/unset.log" 2>&1
-  local rc=$?
+    "$IMAGE" >/dev/null 2>&1
 
-  if [ "$rc" -ne 0 ]; then pass "container exited non-zero ($rc)"; else
-    fail "container booted with no durability decision"
+  if await_ready "${PREFIX}_unset"; then pass "booted with no durability decision"; else
+    fail "an unset backend did not boot"
   fi
 
+  docker logs "${PREFIX}_unset" >"$LOGDIR/unset.log" 2>&1
   check "names the variable" "$LOGDIR/unset.log" "FLEZHA_DURABILITY_BACKEND is not set"
   check "names the backend move" "$LOGDIR/unset.log" "FLEZHA_DURABILITY_BACKEND=postgres"
   check "names the opt-out move" "$LOGDIR/unset.log" "FLEZHA_DURABILITY_BACKEND=none"
+
+  # The point of turning the refusal into a warning: the node that made no
+  # decision must still be findable by whatever a fleet audit reads.
+  flz "${PREFIX}_unset" controller status >"$LOGDIR/unset-status.log" 2>&1
+  check "a defaulted posture reads local_only" "$LOGDIR/unset-status.log" \
+    "durability_posture:            local_only"
+
+  docker rm -f "${PREFIX}_unset" >/dev/null 2>&1
 
   log "boot posture: the explicit opt-out boots inert and says so"
   docker run -d --name "${PREFIX}_none" \

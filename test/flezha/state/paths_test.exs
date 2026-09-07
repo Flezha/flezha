@@ -26,9 +26,21 @@ defmodule Flezha.State.PathsTest do
       assert Paths.state_root() == "/tmp/app-config-root"
     end
 
-    test "falls back to the declared default when nothing configures one" do
-      assert Paths.state_root() == Flezha.Config.default(:state_root)
-      assert Paths.state_root() == "app_data/state"
+    test "falls back to the declared default, resolved against the working directory" do
+      # The row's default is relative and stays relative; what every site reads
+      # is that default expanded, once, here. A site reading the relative string
+      # would name a different tree from every working directory than the
+      # advisory lock does.
+      assert Flezha.Config.default(:state_root) == "app_data/state"
+      assert Paths.state_root() == Path.expand("app_data/state")
+      assert Path.type(Paths.state_root()) == :absolute
+    end
+
+    test "a relative configured root is resolved too" do
+      Application.put_env(:flezha, :state_root, "app_data/elsewhere")
+
+      assert Paths.state_root() == Path.expand("app_data/elsewhere")
+      assert String.starts_with?(Paths.wal_path({"c", "p", "k"}), Paths.state_root())
     end
   end
 

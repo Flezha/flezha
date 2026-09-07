@@ -15,11 +15,10 @@ defmodule Flezha.State.DurabilityTierTest do
   # async: false: writes Application env; a shared on-disk root; registered singletons.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
 
-  import ExUnit.CaptureIO
-
   alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, RoleStore, TokenStore}
   alias Flezha.Dlq
   alias Flezha.Operative.ClassRegistry
+  alias Flezha.Service.Cli.Controller, as: ControllerCli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
   alias Flezha.State.{Outbox, Paths, TestHelpers}
@@ -56,32 +55,55 @@ defmodule Flezha.State.DurabilityTierTest do
     end
 
     test "an unrecognised backend name is off, not a boot failure", ctx do
-      Application.put_env(:flezha, :durability_tier, backend: :postgress)
+      Application.put_env(:flezha, :durability_tier, backend: "postgress")
       refute DurabilityTier.enabled?()
-      assert DurabilityTier.children() == []
+
+      warning =
+        AuthTestHelper.capture_log_at(:warning, fn -> assert DurabilityTier.children() == [] end)
+
+      # Silence here is the failure this closes: the operator believes a tier
+      # is running and it is not.
+      assert warning =~ "postgress"
+      assert warning =~ "none, postgres, s3, local_path"
       assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
+    end
+
+    test "the config translation keeps an unrecognised name rather than refusing the boot" do
+      row = Flezha.Config.Keys.fetch!(:durability_backend)
+      assert row.on_bad_value == :keep_raw
+
+      # The refusal every other row's parse error raises would take the
+      # controller down before anything could name the typo.
+      assert Flezha.Config.Environment.parse(row, "postgress") == :error
+      assert backend_from_runtime_config(:prod, "postgress") == "postgress"
     end
   end
 
   # ---------- the durability decision ----------
 
   describe "the durability posture" do
-    test "a production boot that made no decision refuses to start" do
+    test "a production boot that made no decision warns, defaults to none and starts" do
       Application.put_env(:flezha, :durability_tier, backend: :unset)
       assert DurabilityTier.unconfigured?()
 
-      {error, printed} =
-        with_io(:stderr, fn -> assert_raise RuntimeError, fn -> DurabilityTier.children() end end)
+      warning =
+        AuthTestHelper.capture_log_at(:warning, fn -> assert DurabilityTier.children() == [] end)
 
-      # Whoever reads this is looking at a container that will not come up, so
-      # the guidance has to be actionable without any other document — and it
-      # has to survive the BEAM's crash-report formatting, which is why it is
-      # printed as well as raised.
-      for text <- [error.message, printed] do
-        assert text =~ "FLEZHA_DURABILITY_BACKEND"
-        assert text =~ "FLEZHA_DURABILITY_BACKEND=postgres"
-        assert text =~ "FLEZHA_DURABILITY_BACKEND=none"
-      end
+      # The boot continues, so this line is the whole of what the operator
+      # gets: it has to name the risk and both valid moves without any other
+      # document.
+      assert warning =~ "FLEZHA_DURABILITY_BACKEND"
+      assert warning =~ "FLEZHA_DURABILITY_BACKEND=postgres"
+      assert warning =~ "FLEZHA_DURABILITY_BACKEND=none"
+
+      # And the posture a fleet audit reads is the one an explicit `none` gives,
+      # on the surface it reads it from.
+      assert DurabilityTier.posture() == :local_only
+
+      printed =
+        ExUnit.CaptureIO.capture_io(fn -> :ok = ControllerCli.controller_status("text", %{}) end)
+
+      assert printed =~ "durability_posture:            local_only"
     end
 
     test "config/runtime.exs resolves an unset variable to :unset in prod and :none in dev" do
@@ -103,6 +125,60 @@ defmodule Flezha.State.DurabilityTierTest do
     test "a configured backend reports the remote posture" do
       Stub.install()
       assert DurabilityTier.posture() == :remote_tier
+    end
+  end
+
+  # ---------- a backend that cannot work ----------
+
+  describe "a selected backend missing an option it cannot work without" do
+    test "an object store without its bucket, endpoint or key refuses the boot" do
+      Application.put_env(:flezha, :durability_tier, backend: :s3)
+
+      message = assert_raise(RuntimeError, fn -> DurabilityTier.children() end).message
+
+      assert message =~ "S3"
+      assert message =~ "bucket (FLEZHA_DURABILITY_S3_BUCKET)"
+      assert message =~ "endpoint (FLEZHA_DURABILITY_S3_ENDPOINT)"
+      assert message =~ "FLEZHA_DURABILITY_BACKEND=none"
+    end
+
+    test "a filesystem backend without its path refuses the boot" do
+      Application.put_env(:flezha, :durability_tier, backend: :local_path)
+
+      message = assert_raise(RuntimeError, fn -> DurabilityTier.children() end).message
+
+      assert message =~ "LocalPath"
+      assert message =~ "path (FLEZHA_DURABILITY_PATH)"
+    end
+
+    test "a complete configuration is refused nothing", %{base: base} do
+      root = Path.join(base, "tier_complete")
+
+      Application.put_env(:flezha, :durability_tier,
+        backend: :local_path,
+        backend_opts: [path: root]
+      )
+
+      assert DurabilityTier.children() != []
+      assert DurabilityTier.posture() == :remote_tier
+    end
+
+    # The distinction the whole change turns on: an unmade decision has a safe
+    # answer and takes it, an impossible one does not.
+    test "an unset backend and an unrecognised name default where a broken one refuses" do
+      for value <- [:unset, "local_pathh"] do
+        Application.put_env(:flezha, :durability_tier, backend: value)
+
+        warning =
+          AuthTestHelper.capture_log_at(:warning, fn ->
+            assert DurabilityTier.children() == []
+          end)
+
+        assert warning =~ "FLEZHA_DURABILITY_BACKEND"
+      end
+
+      Application.put_env(:flezha, :durability_tier, backend: :local_path)
+      assert_raise RuntimeError, fn -> DurabilityTier.children() end
     end
   end
 
@@ -701,6 +777,12 @@ defmodule Flezha.State.DurabilityTierTest do
   defp backend_from_runtime_config(env) do
     Config.Reader.read!("config/runtime.exs", env: env, target: :host)
     |> get_in([:flezha, :durability_tier, :backend])
+  end
+
+  defp backend_from_runtime_config(env, raw) do
+    System.put_env("FLEZHA_DURABILITY_BACKEND", raw)
+    on_exit(fn -> System.delete_env("FLEZHA_DURABILITY_BACKEND") end)
+    backend_from_runtime_config(env)
   end
 
   defp local_only_record(), do: TestHelpers.build_wal_record(99, "local-only")

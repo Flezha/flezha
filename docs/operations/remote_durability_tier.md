@@ -30,11 +30,24 @@ This tier is the mechanism that survives that loss. Co-locating controllers on o
 documented in [`deployment/bare_metal.md` § Several controllers on one machine](deployment/bare_metal.md), which
 carries the same statement.
 
-## A production controller must choose
+## What this tier does not protect
 
-`FLEZHA_DURABILITY_BACKEND` has no production default. A prod release with it unset refuses
-to boot — `Flezha.State.DurabilityTier.children/0` prints the message to stderr and raises
-before the supervision tree is built — naming the two valid moves:
+It does not make a restart durable. A controller stopped and started again with its state
+root intact rebuilds every Entity from the local snapshot and tail WAL, with no reference to
+this tier at all (`Flezha.State.Restore.assemble_payload/1`). Local persistence is on by
+default and always has been. What the tier protects against is losing the disk, and only
+that.
+
+Two failures that look like it and are not: a state root that moved (the boot names the
+absolute directory it opened, and says when it is empty; see
+[`deployment/bare_metal.md`](deployment/bare_metal.md)), and a controller that never had the
+state because another one holds it.
+
+## A controller says which durability it has
+
+`FLEZHA_DURABILITY_BACKEND` defaults to `none` in every environment. A production boot that
+takes that default warns on every boot (`Flezha.State.DurabilityTier.children/0`), naming
+the two valid moves, and starts:
 
 ```text
 FLEZHA_DURABILITY_BACKEND=postgres   # or s3, or local_path: durable state leaves this disk
@@ -44,9 +57,16 @@ FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out: the local disk is the o
 With `none` nothing is started, no dependency is loaded and every ack path gates on local
 fsync exactly as without the tier; `/healthz` then carries `"durability":"local_only"` on
 every response and `flz controller status` prints `durability_posture: local_only` — not an
-alarm, but how a fleet audit finds the nodes whose durable state has one copy. Dev and test
-default to `none` with no refusal. Any other value (a misspelling included) also resolves to
-`none` rather than crash-looping the controller, so check the posture after changing it.
+alarm, but how a fleet audit finds the nodes whose durable state has one copy, and it reads
+the same for a defaulted posture as for a declared one. Any other value (a misspelling
+included) also resolves to `none` rather than crash-looping the controller, and warns naming
+the value it did not understand.
+
+One thing does refuse the boot: a backend you selected that cannot work. `s3` without a
+bucket, an endpoint or an access key, or `local_path` without a path, would otherwise come up
+reporting a remote posture and ship nothing until the first `Keyword.fetch!/2` raised. The
+refusal names the backend and every missing option. An unmade decision defaults; an
+impossible one refuses.
 Postgres is the recommended backend (single-statement conditional write, server-side clock
 for collection's grace); S3 suits deployments that already run object storage; `local_path`
 needs a root that outlives the cluster, such as an NFS mount. Rollback is lossless: set
@@ -59,7 +79,7 @@ needs a root that outlives the cluster, such as an NFS mount. Rollback is lossle
 
 | Key                      | Env                                       | Default                            | Meaning                                                                                                         |
 | ------------------------ | ----------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `:backend`               | `FLEZHA_DURABILITY_BACKEND`               | prod: unset (refused); else `none` | `none`, `postgres`, `s3`, `local_path`; or `{Module, opts}` in config for a custom backend                      |
+| `:backend`               | `FLEZHA_DURABILITY_BACKEND`               | `none` (prod warns when defaulted) | `none`, `postgres`, `s3`, `local_path`; or `{Module, opts}` in config for a custom backend                      |
 | `:ship_interval_ms`      | `FLEZHA_DURABILITY_SHIP_INTERVAL_MS`      | `30000`                            | Backstop sweep for references that reach no boundary — the bound on how stale a quiet Entity's remote copy gets |
 | `:rpo_target_ms`         | `FLEZHA_DURABILITY_RPO_TARGET_MS`         | `120000`                           | Unshipped-progress age at which `rpo_exceeded` fires (two sweeps, so one missed sweep is not an alarm)         |
 | `:gc_interval_ms`        | `FLEZHA_DURABILITY_GC_INTERVAL_MS`        | `3600000`                          | Orphan-blob collection period                                                                                    |
@@ -290,9 +310,9 @@ POSTGRES_INTEGRATION=1 mix test --include system --include postgres_integration 
   test/system/remote_durability_e2e_test.exs
 ```
 
-`test/scripts/durability_posture.sh` is the prod-image half: the refusal on an unset backend,
-the inert opt-out and its `local_only` posture, and a fresh container with an empty `app_data`
-coming back with its parks, authz state and schedules. To verify alarming live, pause the
+`test/scripts/durability_posture.sh` is the prod-image half: the warning on an unset backend
+and the boot that follows it, the inert opt-out and its `local_only` posture, and a fresh
+container with an empty `app_data` coming back with its parks, authz state and schedules. To verify alarming live, pause the
 backend and watch `rpo_exceeded` fire and `flz controller status` report the breach.
 
 ## Scope

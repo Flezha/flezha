@@ -159,38 +159,6 @@ Setting the backend to `none` on a controller with intact local state SHALL be a
 - **WHEN** an operator disables the tier and restarts the controller
 - **THEN** all operatives restore from local state exactly as before the tier existed
 
-### Requirement: Backend selection requires an explicit durability decision in production
-
-The controller SHALL select the durability backend from configuration
-(`FLEZHA_DURABILITY_BACKEND`, values `none | postgres | s3`). A production
-release boot with no backend configured SHALL refuse to start, with a message
-naming the two valid moves (configure a backend, or explicitly set `none`).
-With `none` set explicitly the system SHALL behave byte-identically to a build
-without the tier — no new processes on write paths, no new dependencies
-loaded, no latency change on any ack path — and the local-only posture SHALL
-be surfaced on `/healthz` and `flz controller status`. Non-production (dev and
-test) boots SHALL keep defaulting to `none` with no refusal.
-
-#### Scenario: Unset backend refuses a production boot
-
-- **WHEN** a production release boots with `FLEZHA_DURABILITY_BACKEND` unset
-- **THEN** the controller refuses to start and the error names the env
-  variable, the supported backends, and the explicit `none` opt-out
-
-#### Scenario: Explicit opt-out is inert but visible
-
-- **WHEN** a production controller boots with `FLEZHA_DURABILITY_BACKEND=none`
-- **THEN** no tier processes ship artifacts, no backend connection is
-  attempted, every ack path gates only on local fsync, and `/healthz` and
-  `flz controller status` report the local-only durability posture
-
-#### Scenario: Backend selected by configuration
-
-- **WHEN** `FLEZHA_DURABILITY_BACKEND=postgres` is set with valid connection
-  options
-- **THEN** the tier starts, connects, and shipping begins at the next trigger
-  boundary
-
 ### Requirement: Platform durable stores ship with the tier
 
 Beyond the operative's durable identity, the tier SHALL ship the platform
@@ -226,4 +194,83 @@ shipping); an undocumented gap is a spec violation, not an accepted loss.
   ship
 - **THEN** it appears on the accepted-exclusions list with its alternative
   durability story, and tier documentation reflects it
+
+### Requirement: Backend selection defaults to none and announces the posture
+
+The controller SHALL select the durability backend from configuration
+(`FLEZHA_DURABILITY_BACKEND`, values `none | postgres | s3 | local_path`), and
+SHALL default to `none` in every environment when it is unset. A boot that takes
+that default SHALL log a warning naming the risk it accepts and the valid moves
+(configure a backend, or set `none` explicitly), and SHALL NOT refuse to start.
+With `none` in force the system SHALL behave byte-identically to a build without
+the tier (no new processes on write paths, no new dependencies loaded, no
+latency change on any ack path), and the local-only posture SHALL be surfaced on
+`/healthz` and `flz controller status` whether `none` was defaulted or set
+explicitly, so that a fleet audit can find these nodes without having observed a
+boot. An unrecognised value SHALL resolve to `none` rather than fail the boot, and SHALL log a warning naming the value that was not understood and the values that are.
+
+#### Scenario: Unset backend warns and defaults to none
+
+- **WHEN** a production release boots with `FLEZHA_DURABILITY_BACKEND` unset
+- **THEN** the controller starts with the tier off, and logs a warning naming the
+  env variable, the supported backends, the explicit `none` opt-out, and the risk
+  that this node's disk holds the only copy of its durable state
+
+#### Scenario: A defaulted posture is as visible as a declared one
+
+- **WHEN** a controller boots with `FLEZHA_DURABILITY_BACKEND` unset
+- **THEN** `/healthz` and `flz controller status` report the local-only
+  durability posture identically to a controller booted with `none` set
+  explicitly
+
+#### Scenario: Explicit opt-out is inert but visible
+
+- **WHEN** a production controller boots with `FLEZHA_DURABILITY_BACKEND=none`
+- **THEN** no tier processes ship artifacts, no backend connection is
+  attempted, every ack path gates only on local fsync, and `/healthz` and
+  `flz controller status` report the local-only durability posture
+
+#### Scenario: Backend selected by configuration
+
+- **WHEN** `FLEZHA_DURABILITY_BACKEND=postgres` is set with valid connection
+  options
+- **THEN** the tier starts, connects, and shipping begins at the next trigger
+  boundary
+
+#### Scenario: The tier is not what makes a restart durable
+
+- **WHEN** a controller running with the tier off is stopped and restarted with
+  its state root intact
+- **THEN** every Entity resumes from its local snapshot and tail WAL, and no
+  durable state is lost
+
+### Requirement: A selected backend that cannot work refuses the boot
+
+A controller SHALL verify at boot that a selected durability backend holds the options it
+requires, and SHALL refuse to start naming the backend and the missing option when it does
+not. A backend selected but unusable SHALL NOT reach a running state in which it reports a
+remote-tier posture and ships nothing. This refusal SHALL apply only to a backend the
+operator selected: an unset backend defaults to `none` and warns, and an unrecognised name
+resolves to `none` and warns, neither of which is a refusal.
+
+#### Scenario: An object-store backend without a bucket refuses
+
+- **WHEN** a controller boots with `FLEZHA_DURABILITY_BACKEND=s3` and no bucket configured
+- **THEN** it does not start, and the refusal names the backend and the missing option
+
+#### Scenario: A filesystem backend without a path refuses
+
+- **WHEN** a controller boots with `FLEZHA_DURABILITY_BACKEND=local_path` and no path configured
+- **THEN** it does not start, and the refusal names the backend and the missing option
+
+#### Scenario: A misconfigured backend never reports a remote posture
+
+- **WHEN** a selected backend is missing a required option
+- **THEN** the controller does not reach a state where `/healthz` or `flz controller status`
+  reports a remote-tier durability posture
+
+#### Scenario: A complete backend configuration is unaffected
+
+- **WHEN** a controller boots with a selected backend and every required option present
+- **THEN** the check passes, the tier starts, and the boot is identical to today's
 

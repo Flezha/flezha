@@ -314,6 +314,18 @@ defmodule Flezha.Healthz.ServerTest do
     assert decoded["status"] == "healthy"
   end
 
+  test "the durability posture is local_only whether none was defaulted or set", %{port: port} do
+    # A fleet audit finds the nodes running on one disk by reading this field,
+    # and a node that made no decision is exactly the node it is looking for,
+    # so a defaulted posture must be indistinguishable from a declared one.
+    for backend <- [:unset, :none] do
+      Application.put_env(:flezha, :durability_tier, backend: backend)
+
+      {200, _headers, body} = get(port, "/healthz")
+      assert Jason.decode!(body)["durability"] == "local_only"
+    end
+  end
+
   test "tick stale → 503 with reason: tick_stale (when configured for fast staleness)",
        %{port: port} do
     Application.put_env(:flezha, :convergence_tick_ms, 10)

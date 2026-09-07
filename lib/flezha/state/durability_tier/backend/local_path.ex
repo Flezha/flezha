@@ -28,6 +28,10 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
   @impl true
   def child_spec(_opts), do: :ignore
 
+  # Every key is a file under `:path`; without one there is no root to join.
+  @impl true
+  def required_opts(), do: [:path]
+
   @impl true
   def put(key, blob, opts), do: write_atomic(file_path(key, opts), blob)
 

@@ -118,7 +118,11 @@ defmodule Flezha.Config do
     end
   end
 
-  @doc "The environment variable `name` is set with, for a refusal message."
-  @spec env_name(Keys.name()) :: binary() | nil
+  @doc """
+  The environment variable a knob is set with, for a refusal message. The knob
+  is named by its row name, or by the application-env key it fills where the
+  caller holds one of those instead.
+  """
+  @spec env_name(Keys.name() | Keys.key()) :: binary() | nil
   defdelegate env_name(name), to: Keys
 end
