@@ -198,9 +198,10 @@ defmodule Flezha.Convergence.Probe.Readers do
       for d <- Map.get(sample, :drivers, []),
           do: fact(%{wedged_layer: nil}, {:driver, d.transport})
 
-    # The runner's control silence rides along with its membership: the judge
-    # weighs the two together, and a channel row is the only place a runner no
-    # roster holds is seen at all.
+    # The runner's control silence rides along with its membership: a channel
+    # subject is judged by the same rule as its runner and holds no session row
+    # of its own, so copying the one fact that rule reads is what keeps the two
+    # rows from disagreeing.
     channels =
       for c <- sample_channels(ctx) do
         {_ns, membership} = Map.fetch!(roster, c.runner_id)
