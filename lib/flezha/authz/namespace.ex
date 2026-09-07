@@ -53,6 +53,56 @@ defmodule Flezha.AuthZ.Namespace do
   def system?(_), do: false
 
   @doc """
+  The namespace a listing may show `caller_context`, or `:all` for the whole
+  cluster.
+
+  An admin in `_system` sees everything, which is the operator view. Every
+  caller whose context carries a namespace sees that one.
+
+  `unbound` is what a context carrying **no** namespace answers, and it is a
+  required decision rather than a property of the caller. It defaults to
+  `:system`, the closed answer, so a surface that does not think about it
+  cannot inherit an open one. A context reaches a verb body with no namespace
+  in three ways and only one of them is "authorization is off":
+
+    * the posture is `:open`, where nothing was judged at all;
+    * `source: :internal`, which `Flezha.AuthZ` judges as `admin@_system`;
+    * under `:enforced`, a caller whose principal is bound in
+      `Flezha.AuthZ.RoleStore` rather than on the context. A `:caller`-scoped
+      verb then judges it in `_system`, so it passes only when its stored
+      binding IS `_system`; a tenant-bound principal is refused with
+      `:namespace_mismatch` before any body runs.
+
+  So `unbound: :all` is a deliberate fail-open, sound only for a
+  `:caller`-scoped verb, where the third case cannot smuggle a tenant in. A
+  verb judged at `:system` or `{:argument, n}` scope must not pass `:all`:
+  there, an unbound context says nothing about what the caller may read.
+  """
+  @spec listing_scope(map(), :all | :system) :: :all | name()
+  def listing_scope(caller_context, unbound \\ :system)
+  def listing_scope(%{role: :admin, namespace: @system}, _unbound), do: :all
+  def listing_scope(%{namespace: namespace}, _unbound), do: namespace || @system
+  def listing_scope(_no_namespace, :all), do: :all
+  def listing_scope(_no_namespace, :system), do: @system
+
+  @doc """
+  The members of `names` that `caller_context` may be shown, by
+  `listing_scope/2` — whose `unbound` argument this takes and whose warning
+  about it applies here unchanged.
+
+  The one place a namespace listing is narrowed, so the terminal's catalog
+  answer and the console's running-hub answer cannot disagree about which
+  namespaces a tenant-bound caller knows exist.
+  """
+  @spec visible([name()], map(), :all | :system) :: [name()]
+  def visible(names, caller_context, unbound \\ :system) do
+    case listing_scope(caller_context, unbound) do
+      :all -> names
+      namespace -> Enum.filter(names, &(&1 == namespace))
+    end
+  end
+
+  @doc """
   Validate a namespace name.
 
   Returns `:ok` for `_system` and any string matching

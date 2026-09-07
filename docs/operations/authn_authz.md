@@ -208,8 +208,23 @@ flz namespace create team-orders --Xmax_runners=4 --Xmax_state_bytes=1073741824
 flz namespace show team-orders
 flz namespace set-quota team-orders --Xmax_operatives=200
 flz namespace delete team-orders
-flz namespace list                 # running namespaces, not the catalog
+flz namespace list                 # the catalog, with a hub-running column
 ```
+
+A namespace listing shows the caller its own namespace and no other, and
+`admin@_system` sees the whole cluster, which is the operator view. The same
+rule narrows the published `Flezha.Service.Operative.list_namespaces/1` a
+console reads, so a terminal and a console cannot disagree about which
+namespaces a tenant knows exist.
+
+A context that carries no namespace at all sees them all. That is the ungated
+deployment's operator, and narrowing it to `_system` would hide the namespaces
+it just created — but it is not only that caller. Under enforcement a principal
+bound in the role store rather than on its context is judged in `_system`, so
+one bound there passes and gets the open answer too; one bound to a tenant is
+refused `namespace_mismatch` before the listing runs, which is why the open
+answer crosses no tenant boundary. `flz token list` takes the closed answer for
+the same caller and shows `_system` only.
 
 Quota overrides ride the repeatable `--X<field>=<value>` flag; an unknown field
 or a negative value is refused.

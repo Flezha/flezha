@@ -16,6 +16,10 @@ defmodule Flezha do
 
   defdelegate stop_operative(namespace, operative), to: OperativeManager
 
+  # Answers every running namespace, because it carries no caller context to
+  # narrow by. `Flezha.Service.Operative.list_namespaces/1` is the spelling
+  # that takes one and is narrowed to the caller; retiring this delegate is a
+  # published-surface retirement and lands with the consumer that calls it.
   defdelegate list_namespaces(), to: HubManager, as: :get_running_namespaces
 
   defdelegate list_runners(namespace),

@@ -9,13 +9,16 @@ defmodule Flezha.Service.Operative do
   than one because the manager is within a hundred lines of the repository's
   800-line file ceiling, which the charter says wins over collocation.
 
-  One question is asked one way here. `Flezha.list_namespaces/0` and
-  `Flezha.Service.HubManager.get_running_namespaces/0` are the same function
-  under two names; `list_namespaces/1` is the only spelling on this surface.
+  One question is asked one way here. `list_namespaces/1` is the only
+  spelling a consumer has for "which namespaces are running": the reads below
+  it take no caller and answer the whole cluster, which is what the
+  controller's own machinery needs and what a tenant-bound caller must not be
+  handed.
   """
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Operative.Kind
   alias Flezha.Partition
   alias Flezha.Service.CallerContext
@@ -26,10 +29,16 @@ defmodule Flezha.Service.Operative do
 
   # ---------- Reads ----------
 
-  @doc "The namespaces this cluster is running."
+  @doc """
+  The namespaces this cluster is running that the caller may be shown: its
+  own, or all of them for an admin in `_system`.
+  """
   @spec list_namespaces(caller_context()) :: {:ok, [String.t()]} | {:error, term()}
   verb list_namespaces(caller_context) do
-    {:ok, HubManager.get_running_namespaces()}
+    # `unbound: :all` for the reason `Cli.Listing` gives: the row is
+    # `:caller`-scoped, so a context with no namespace is an ungated
+    # deployment's operator rather than a tenant.
+    {:ok, Namespace.visible(HubManager.get_running_namespaces(), caller_context, :all)}
   end
 
   @doc "The operative ids running in `namespace`."

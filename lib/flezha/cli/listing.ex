@@ -8,7 +8,6 @@ defmodule Flezha.Service.Cli.Listing do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Convergence.Verdict
   alias Flezha.Partition
-  alias Flezha.Service.Cli.Authz
   alias Flezha.Service.Cli.Context
   alias Flezha.Service.Controller
   alias Flezha.Service.HubManager
@@ -25,8 +24,12 @@ defmodule Flezha.Service.Cli.Listing do
   def list_namespaces(output_format, call) do
     running = MapSet.new(HubManager.get_running_namespaces())
 
-    call
-    |> visible_namespaces()
+    # `unbound: :all`: the verb is `:caller`-scoped, and a caller with no
+    # namespace here is an ungated deployment's operator. Narrowing it to
+    # `_system` would hide the namespaces that operator just created.
+    NamespaceStore.list()
+    |> Enum.map(& &1.name)
+    |> Namespace.visible(call.context, :all)
     |> Enum.sort()
     |> Enum.map(&%{namespace: &1, running: MapSet.member?(running, &1)})
     |> render_list(output_format, %{
@@ -39,25 +42,6 @@ defmodule Flezha.Service.Cli.Listing do
       ]
     })
   end
-
-  # A bound caller sees the namespace it is bound to, an admin in `_system`
-  # sees them all, through the filter the other catalog-reading verbs apply.
-  # An unbound caller reaches this body only with enforcement off, where the
-  # whole surface is ungated and narrowing it to `_system` would hide the
-  # operator's own namespaces.
-  defp visible_namespaces(call) do
-    names = Enum.map(NamespaceStore.list(), & &1.name)
-
-    case caller_filter(call) do
-      :all -> names
-      namespace -> Enum.filter(names, &(&1 == namespace))
-    end
-  end
-
-  defp caller_filter(%{context: %{namespace: _} = context}),
-    do: Authz.filter_namespace_for_list(context)
-
-  defp caller_filter(_unbound), do: :all
 
   # Every `flz` listing answers three ways: a JSON document, one line saying
   # there is nothing, or a padded table. Only the two texts and the columns

@@ -88,7 +88,7 @@ defmodule Flezha.Service.Cli.Authz do
 
   @doc "CLI entry: `flz token list`."
   def authz_render_token_list(%{context: context}) do
-    case TokenStore.list(filter_namespace_for_list(context)) do
+    case TokenStore.list(Flezha.AuthZ.Namespace.listing_scope(context)) do
       [] ->
         IO.puts("no tokens")
 
@@ -226,16 +226,6 @@ defmodule Flezha.Service.Cli.Authz do
 
   defp parse_quota_value(v) when is_integer(v), do: v
   defp parse_quota_value(v) when is_binary(v), do: Context.integer!(v, "quota value")
-
-  @doc """
-  The namespace a catalog-reading verb may show its caller: `:all` for an
-  admin in `_system`, otherwise the one the caller is bound to. The one filter
-  every such verb applies, so two of them cannot disagree about what a
-  namespace-scoped operator may see.
-  """
-  @spec filter_namespace_for_list(map()) :: :all | binary()
-  def filter_namespace_for_list(%{role: :admin, namespace: "_system"}), do: :all
-  def filter_namespace_for_list(context), do: Map.get(context, :namespace) || "_system"
 
   defp find_token_by_id(id) do
     TokenStore.list(:all)
