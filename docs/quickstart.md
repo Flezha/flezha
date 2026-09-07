@@ -109,14 +109,14 @@ try (LocalOperative run = LocalOperative.start(WordCount.class)) {
 ```
 
 The complete file is
-[`sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E13_LocalMode.java`](../sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E13_LocalMode.java).
+[`sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/local/`](../sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/local).
 Build the host native binary once, install the reactor, then run it:
 
 ```bash
 scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
 mvn -f sdk/java/pom.xml -DskipTests install
 mvn -f sdk/java/flezha-sdk-examples/pom.xml exec:java \
-    -Dexec.mainClass=com.flezha.examples.E13_LocalMode
+    -Dexec.mainClass=com.flezha.examples.local.Main
 ```
 
 It prints the same notice and the same seven lines the Rust example does.

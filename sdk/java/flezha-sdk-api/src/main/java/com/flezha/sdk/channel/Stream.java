@@ -26,6 +26,33 @@ import javax.annotation.Nonnull;
  *       relative to consumer wiring.
  * </ul>
  *
+ * <p>Chaining, which is the common case, reads in flow order:
+ *
+ * <pre>{@code
+ * c.input(String.class, "in")
+ *         .into(Normalize.class)
+ *         .named("normalized")
+ *         .into(Shout.class)
+ *         .named("shouted")
+ *         .sink("my_sink");
+ * }</pre>
+ *
+ * <p>Fan-out is the same handle used twice, so both consumers receive every value:
+ *
+ * <pre>{@code
+ * Stream<Trade> trades = c.input(Trade.class, "trades").into(Parse.class);
+ * trades.into(Risk.class);
+ * trades.into(Audit.class);
+ * }</pre>
+ *
+ * <p>Fan-in is two different streams naming the same consumer class, which unify into one node
+ * receiving both producers' values:
+ *
+ * <pre>{@code
+ * c.input(Trade.class, "eu").into(Parse.class).into(Ledger.class);
+ * c.input(Trade.class, "us").into(Parse.class).into(Ledger.class);
+ * }</pre>
+ *
  * <p>The channel out of a node is created lazily on first use of the handle
  * and named by the node's identity string (the procedure's {@code name()}, or
  * the explicit node name given at wiring time) unless {@link #named(String)}
@@ -49,7 +76,7 @@ public abstract class Stream<T> implements EdgeStream<T> {
      * with a duplicate check at registration.
      */
     @Nonnull
-    public abstract Stream<T> named(@Nonnull String name);
+    public abstract Stream<T> named(String name);
 
     /**
      * Declare that emits on this channel carry a natural key, supplied via
@@ -72,7 +99,7 @@ public abstract class Stream<T> implements EdgeStream<T> {
 
     /** {@link #codec()} with an explicit encoder/decoder pair. */
     @Nonnull
-    public abstract Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder);
+    public abstract Stream<T> codecWith(Function<T, byte[]> encoder, Function<byte[], T> decoder);
 
     /**
      * {@inheritDoc}
@@ -82,7 +109,7 @@ public abstract class Stream<T> implements EdgeStream<T> {
      */
     @Override
     @Nonnull
-    public abstract Stream<T> onFull(@Nonnull OverflowPolicy policy);
+    public abstract Stream<T> onFull(OverflowPolicy policy);
 
     /** {@inheritDoc} Refined to {@link Stream} — see {@link #onFull}. */
     @Override
@@ -110,7 +137,7 @@ public abstract class Stream<T> implements EdgeStream<T> {
      * Declaring a second sink on one channel fails registration.
      */
     @Nonnull
-    public abstract Stream<T> sink(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer);
+    public abstract Stream<T> sink(String pluginName, Function<T, byte[]> serializer);
 
     /**
      * {@link #sink(String, Function)} with the default serialization rules:
@@ -118,7 +145,7 @@ public abstract class Stream<T> implements EdgeStream<T> {
      * otherwise.
      */
     @Nonnull
-    public abstract Stream<T> sink(@Nonnull String pluginName);
+    public abstract Stream<T> sink(String pluginName);
 
     /**
      * State that nothing follows this channel: the returned {@link Channel}
@@ -139,11 +166,11 @@ public abstract class Stream<T> implements EdgeStream<T> {
      */
     @SafeVarargs
     @Nonnull
-    public final Stream<T> branch(@Nonnull Consumer<Stream<T>>... arms) {
+    public final Stream<T> branch(Consumer<Stream<T>>... arms) {
         return branchArms(List.of(arms));
     }
 
     /** Implementation seam for {@link #branch(Consumer[])}. */
     @Nonnull
-    protected abstract Stream<T> branchArms(@Nonnull List<Consumer<Stream<T>>> arms);
+    protected abstract Stream<T> branchArms(List<Consumer<Stream<T>>> arms);
 }

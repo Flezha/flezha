@@ -34,7 +34,7 @@ public interface ChannelBuilder {
      * {@link #input(Class, String, Function)}.
      */
     @Nonnull
-    <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name);
+    <T> EntryChannel<T> input(Class<T> type, String name);
 
     /**
      * Declare the entry channel with a custom {@code bytes → T} parser,
@@ -46,7 +46,7 @@ public interface ChannelBuilder {
      * like a failing invocation and rides this channel's retry→DLQ ladder.
      */
     @Nonnull
-    <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name, @Nonnull Function<byte[], T> parser);
+    <T> EntryChannel<T> input(Class<T> type, String name, Function<byte[], T> parser);
 
     /**
      * Open a <b>merged</b> subscription: one procedure whose {@code Input} is
@@ -54,7 +54,7 @@ public interface ChannelBuilder {
      * supply a mapping into it. See {@link Merge}.
      */
     @Nonnull
-    <I> Merge<I> merge(@Nonnull Class<I> type);
+    <I> Merge<I> merge(Class<I> type);
 
     /**
      * Turn an operative-wide document stream into per-key deliveries: every key
@@ -119,10 +119,7 @@ public interface ChannelBuilder {
      */
     @Nonnull
     <D, T> Stream<RoutedDocument<D>> routeLatest(
-            @Nonnull Class<D> documentType,
-            @Nonnull EdgeStream<D> documents,
-            @Nonnull EdgeStream<T> traffic,
-            @Nonnull Function<T, String> keyFn);
+            Class<D> documentType, EdgeStream<D> documents, EdgeStream<T> traffic, Function<T, String> keyFn);
 
     /**
      * {@link #routeLatest(Class, EdgeStream, EdgeStream, Function)} with an
@@ -131,11 +128,11 @@ public interface ChannelBuilder {
      */
     @Nonnull
     <D, T> Stream<RoutedDocument<D>> routeLatest(
-            @Nonnull Class<D> documentType,
-            @Nonnull EdgeStream<D> documents,
-            @Nonnull EdgeStream<T> traffic,
-            @Nonnull Function<T, String> keyFn,
-            @Nonnull String nodeName);
+            Class<D> documentType,
+            EdgeStream<D> documents,
+            EdgeStream<T> traffic,
+            Function<T, String> keyFn,
+            String nodeName);
 
     /**
      * Opt this Operative into the <b>effectively-once output tier</b>: each
@@ -223,5 +220,5 @@ public interface ChannelBuilder {
      * {@link #correctionWindow(long)}. Defaults to
      * {@link BeyondWindowPolicy#PROCESS_AS_ARRIVAL}.
      */
-    void beyondWindowPolicy(@Nonnull BeyondWindowPolicy policy);
+    void beyondWindowPolicy(BeyondWindowPolicy policy);
 }

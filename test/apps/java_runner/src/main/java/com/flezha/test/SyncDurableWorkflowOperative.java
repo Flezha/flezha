@@ -1,7 +1,7 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperative;
 
 /**
  * Mirror of the Rust test app's {@code sync_durable_workflow}: the

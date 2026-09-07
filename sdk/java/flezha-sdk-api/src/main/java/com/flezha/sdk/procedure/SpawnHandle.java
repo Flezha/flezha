@@ -54,23 +54,20 @@ public final class SpawnHandle {
 
     /** A handle awaiting the controller's {@code SpawnWorkflowResponse}. */
     @Nonnull
-    public static SpawnHandle pending(
-            @Nonnull String instanceId, @Nonnull String factoryId, @Nonnull CompletableFuture<String> reply) {
+    public static SpawnHandle pending(String instanceId, String factoryId, CompletableFuture<String> reply) {
         return new SpawnHandle(
                 instanceId, factoryId, reply.thenApply(outcome -> interpret(instanceId, factoryId, outcome)));
     }
 
     /** A handle that already knows its answer — nothing was sent. */
     @Nonnull
-    public static SpawnHandle resolved(
-            @Nonnull String instanceId, @Nonnull String factoryId, @Nonnull SpawnOutcome outcome) {
+    public static SpawnHandle resolved(String instanceId, String factoryId, SpawnOutcome outcome) {
         return new SpawnHandle(instanceId, factoryId, CompletableFuture.completedFuture(outcome));
     }
 
     /** A handle that already knows it failed — nothing was sent. */
     @Nonnull
-    public static SpawnHandle failed(
-            @Nonnull String instanceId, @Nonnull String factoryId, @Nonnull SpawnException error) {
+    public static SpawnHandle failed(String instanceId, String factoryId, SpawnException error) {
         return new SpawnHandle(instanceId, factoryId, CompletableFuture.failedFuture(error));
     }
 

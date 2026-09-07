@@ -1,7 +1,6 @@
 package com.flezha.sdk;
 
 import java.util.Map;
-import javax.annotation.Nonnull;
 
 /**
  * One value a graph released on a plugin-bound sink, delivered to a local
@@ -11,4 +10,4 @@ import javax.annotation.Nonnull;
  * {@code flz.key}, because local mode takes output where production frames
  * it rather than before.
  */
-public record SinkOutput(@Nonnull String channel, @Nonnull byte[] payload, @Nonnull Map<String, String> metadata) {}
+public record SinkOutput(String channel, byte[] payload, Map<String, String> metadata) {}

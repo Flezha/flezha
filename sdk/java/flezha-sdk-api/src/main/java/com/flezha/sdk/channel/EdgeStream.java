@@ -53,7 +53,7 @@ public interface EdgeStream<T> {
      * fan-out; wiring the same unnamed class from two streams declares fan-in.
      */
     @Nonnull
-    <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure);
+    <O> Stream<O> into(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure);
 
     /**
      * Like {@link #into(Class)}, but the consumer is a distinct <b>named
@@ -65,11 +65,11 @@ public interface EdgeStream<T> {
      * operative; a collision fails registration.
      */
     @Nonnull
-    <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName);
+    <O> Stream<O> into(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure, String nodeName);
 
     /** Reshape every value on the way to the next consumer. */
     @Nonnull
-    <U> EdgeStream<U> map(@Nonnull Class<U> type, @Nonnull Function<T, U> mapper);
+    <U> EdgeStream<U> map(Class<U> type, Function<T, U> mapper);
 
     /**
      * Expand one value into zero or more. Each yielded value is keyed and
@@ -81,7 +81,7 @@ public interface EdgeStream<T> {
      * and drop the rest — the same shape multi-consumer fan-out already has.
      */
     @Nonnull
-    <U> EdgeStream<U> flatMap(@Nonnull Class<U> type, @Nonnull Function<T, ? extends Iterable<U>> mapper);
+    <U> EdgeStream<U> flatMap(Class<U> type, Function<T, ? extends Iterable<U>> mapper);
 
     /**
      * Drop the values the predicate rejects. A surviving value is forwarded by
@@ -89,7 +89,7 @@ public interface EdgeStream<T> {
      * nothing else.
      */
     @Nonnull
-    EdgeStream<T> filter(@Nonnull Predicate<T> predicate);
+    EdgeStream<T> filter(Predicate<T> predicate);
 
     /**
      * Name the Entity each value is routed to, making the consumer a
@@ -105,7 +105,7 @@ public interface EdgeStream<T> {
      * (static mode) fails registration.
      */
     @Nonnull
-    EdgeStream<T> keyBy(@Nonnull Function<T, String> key);
+    EdgeStream<T> keyBy(Function<T, String> key);
 
     /**
      * Override the default {@link OverflowPolicy}, which is
@@ -116,7 +116,7 @@ public interface EdgeStream<T> {
      * for liveness.
      */
     @Nonnull
-    EdgeStream<T> onFull(@Nonnull OverflowPolicy policy);
+    EdgeStream<T> onFull(OverflowPolicy policy);
 
     /**
      * Override the consumer-side retry budget (total attempts, default 3)

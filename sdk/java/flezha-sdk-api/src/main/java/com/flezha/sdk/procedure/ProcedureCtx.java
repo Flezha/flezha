@@ -6,12 +6,31 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * Per-invocation context for a {@link Procedure#run} call. Borrows the runner's
- * per-Entity routing tables; not safe to retain past the call.
+ * The runtime handle passed to every {@link Procedure#run} call: emit output, read the clock, ask
+ * for a replay-stable identifier, register a timer, request a worker.
  *
- * <p>The dispatcher caches the producer-edge {@code outputChannelId} on the
- * {@link ProcedureCtx} instance at operative-build time so {@link #emit} pays no
- * channel-name lookup on the hot path.
+ * <pre>{@code
+ * @Override
+ * public void run(Order order, StateHandle<Cart, Added> state, ProcedureCtx ctx) {
+ *     state.apply(new Added(order.item(), ctx.now()));   // ctx.now(), never System.currentTimeMillis()
+ *     ctx.emit("added " + order.item());                 // where this goes is the operative's business
+ * }
+ * }</pre>
+ *
+ * <p>The three members worth knowing before anything else:
+ *
+ * <ul>
+ *   <li>{@link #emit} sends a value onward. The destination is declared by the operative, not here,
+ *       so a graph can be rewired without touching the procedure.
+ *   <li>{@link #now()} is the invocation's time, computed once by the runtime from the procedure's
+ *       declared clock and served identically on a replay. Reading the system clock instead makes
+ *       the reconstructed state diverge from what was observed.
+ *   <li>{@link #stableId()} is an identifier derived deterministically, so a re-executed invocation
+ *       produces the same one. An external system then sees a retry rather than a second request.
+ * </ul>
+ *
+ * <p>The context belongs to one invocation and borrows the runner's per-entity routing tables. It
+ * must not be retained past the call or handed to another thread.
  */
 public interface ProcedureCtx {
 
@@ -88,11 +107,7 @@ public interface ProcedureCtx {
      * where skipping would rebuild a pending set the live run never had.
      */
     @Nonnull
-    default SpawnHandle spawnWorkflow(
-            @Nonnull String instanceId,
-            @Nonnull String factoryId,
-            @Nonnull byte[] payload,
-            @Nonnull IfRunning ifRunning) {
+    default SpawnHandle spawnWorkflow(String instanceId, String factoryId, byte[] payload, IfRunning ifRunning) {
         return SpawnRequests.request(instanceId, factoryId, payload, ifRunning, replaying());
     }
 
@@ -145,7 +160,7 @@ public interface ProcedureCtx {
      * schedules the same instant a wall clock would, and one replaying history
      * schedules a past instant, which fires at once.
      */
-    default long timerAfter(@Nonnull Duration delay) throws ProcedureException {
+    default long timerAfter(Duration delay) throws ProcedureException {
         throw new ProcedureException.TimersUnavailable();
     }
 
@@ -179,11 +194,10 @@ public interface ProcedureCtx {
      * source. Emitting a key on a channel not declared {@code .keyed()} throws
      * {@link ProcedureException.KeyNotAllowedOnNonKeyedChannel}.
      */
-    <C> void emitKeyed(@Nonnull String key, @Nonnull C value) throws ProcedureException;
+    <C> void emitKeyed(String key, C value) throws ProcedureException;
 
     /** {@link #emitKeyed} with user-attached metadata. */
-    <C> void emitKeyedWithMeta(@Nonnull String key, @Nonnull C value, @Nonnull Map<String, String> meta)
-            throws ProcedureException;
+    <C> void emitKeyedWithMeta(String key, C value, Map<String, String> meta) throws ProcedureException;
 
     /**
      * Emit a typed value on this Procedure's declared output channel. The channel
@@ -205,13 +219,17 @@ public interface ProcedureCtx {
      * throws {@link ProcedureException.KeyRequiredOnKeyedChannel}; an output
      * whose natural key differs from the Entity's uses {@link #emitKeyed}.
      */
-    <C> void emit(@Nonnull C value) throws ProcedureException;
+    <C> void emit(C value) throws ProcedureException;
 
     /**
-     * Same as {@link #emit(Object)} but pinned to a specific channel name —
-     * for Procedures that produce on multiple plugin-bound channels.
+     * Emits on a named channel, for a procedure that produces on more than one.
+     *
+     * @param channel the channel name to release on, as given to {@code named(...)} in the wiring
+     * @param value the value to emit
+     * @throws ProcedureException if the channel is unknown, or the channel is keyed and this entity
+     *     has no key to stamp
      */
-    <C> void emit(@Nonnull String channel, @Nonnull C value) throws ProcedureException;
+    <C> void emit(String channel, C value) throws ProcedureException;
 
     /**
      * Emit with user-attached string-keyed metadata. Valid only on plugin-bound
@@ -224,9 +242,8 @@ public interface ProcedureCtx {
      * {@link #RESERVED_METADATA_PREFIX} namespace are rejected with
      * {@link ProcedureException.ReservedMetadataKey}.
      */
-    <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws ProcedureException;
+    <C> void emitWithMeta(C value, Map<String, String> meta) throws ProcedureException;
 
     /** Same as {@link #emitWithMeta(Object, Map)} but pinned to a specific channel name. */
-    <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value, @Nonnull Map<String, String> meta)
-            throws ProcedureException;
+    <C> void emitWithMeta(String channel, C value, Map<String, String> meta) throws ProcedureException;
 }

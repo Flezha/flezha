@@ -1,8 +1,8 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.workflow.LoopMode;
-import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.operative.LoopMode;
+import com.flezha.sdk.operative.WorkflowOperative;
 import java.time.Duration;
 import java.util.Optional;
 

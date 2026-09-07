@@ -35,7 +35,7 @@ class ApiSurfaceCompilationTest {
                 "com.flezha.sdk.FactoryRegistry",
                 "com.flezha.sdk.RunnerBuilder",
                 "com.flezha.sdk.operative.StreamOperativeRegistry",
-                "com.flezha.sdk.workflow.WorkflowOperativeRegistry",
+                "com.flezha.sdk.operative.WorkflowOperativeRegistry",
             })
     void deletedTypesDoNotResolve(String type) {
         Compilation result = compile(

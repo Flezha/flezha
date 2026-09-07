@@ -3,9 +3,9 @@ package com.flezha.sdk;
 import com.flezha.sdk.internal.RegistryCore;
 import com.flezha.sdk.internal.RunnerHandle;
 import com.flezha.sdk.internal.RuntimeBridge;
-import com.flezha.sdk.operative.Computation;
+import com.flezha.sdk.operative.Operative;
 import com.flezha.sdk.operative.StreamOperative;
-import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperative;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -73,7 +73,7 @@ public final class FlezhaRunner implements AutoCloseable {
      */
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    FlezhaRunner(@Nonnull String namespace) {
+    FlezhaRunner(String namespace) {
         this.namespace = namespace;
     }
 
@@ -95,7 +95,7 @@ public final class FlezhaRunner implements AutoCloseable {
      * @throws IllegalStateException on a closed runner.
      */
     @Nonnull
-    public FlezhaRunner defineStream(@Nonnull Class<? extends StreamOperative> operativeClass) {
+    public FlezhaRunner defineStream(Class<? extends StreamOperative> operativeClass) {
         return define(stream, "defineStream()", operativeClass);
     }
 
@@ -108,7 +108,7 @@ public final class FlezhaRunner implements AutoCloseable {
      * @throws IllegalStateException on a closed runner.
      */
     @Nonnull
-    public FlezhaRunner defineWorkflow(@Nonnull Class<? extends WorkflowOperative> workflowClass) {
+    public FlezhaRunner defineWorkflow(Class<? extends WorkflowOperative> workflowClass) {
         return define(workflow, "defineWorkflow()", workflowClass);
     }
 
@@ -123,24 +123,24 @@ public final class FlezhaRunner implements AutoCloseable {
      * @throws IllegalStateException on a closed runner.
      */
     @Nonnull
-    public FlezhaRunner removeStream(@Nonnull Class<? extends StreamOperative> operativeClass) {
+    public FlezhaRunner removeStream(Class<? extends StreamOperative> operativeClass) {
         return remove(stream, "removeStream()", operativeClass);
     }
 
     /** Remove a declared {@link WorkflowOperative} class. Sibling of {@link #removeStream(Class)}. */
     @Nonnull
-    public FlezhaRunner removeWorkflow(@Nonnull Class<? extends WorkflowOperative> workflowClass) {
+    public FlezhaRunner removeWorkflow(Class<? extends WorkflowOperative> workflowClass) {
         return remove(workflow, "removeWorkflow()", workflowClass);
     }
 
-    private <C extends Computation> FlezhaRunner define(RegistryCore<C> core, String what, Class<? extends C> cls) {
+    private <C extends Operative> FlezhaRunner define(RegistryCore<C> core, String what, Class<? extends C> cls) {
         open(what);
         core.register(cls);
         syncFactoriesIfStarted();
         return this;
     }
 
-    private <C extends Computation> FlezhaRunner remove(RegistryCore<C> core, String what, Class<? extends C> cls) {
+    private <C extends Operative> FlezhaRunner remove(RegistryCore<C> core, String what, Class<? extends C> cls) {
         open(what);
         String factoryId = core.definedFactoryIdOf(cls);
         RunnerHandle h = handle.get();
@@ -231,7 +231,7 @@ public final class FlezhaRunner implements AutoCloseable {
      */
     @Nonnull
     @SuppressWarnings("unchecked")
-    public Optional<Instant> lastEntryDelivery(@Nonnull String channel) {
+    public Optional<Instant> lastEntryDelivery(String channel) {
         return (Optional<Instant>) RuntimeBridge.invoke(
                 WATCHER,
                 "lastEntryDelivery",
@@ -260,8 +260,7 @@ public final class FlezhaRunner implements AutoCloseable {
      * }</pre>
      */
     @Nonnull
-    public FlezhaRunner onEntryIdle(
-            @Nonnull String channel, @Nonnull Duration threshold, @Nonnull IdleObserver observer) {
+    public FlezhaRunner onEntryIdle(String channel, Duration threshold, IdleObserver observer) {
         RuntimeBridge.invoke(
                 WATCHER,
                 "onEntryIdle",

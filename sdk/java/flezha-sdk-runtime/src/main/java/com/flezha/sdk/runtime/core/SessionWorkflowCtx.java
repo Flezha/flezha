@@ -1,8 +1,8 @@
 package com.flezha.sdk.runtime.core;
 
-import com.flezha.sdk.workflow.WorkflowLoopBody;
-import com.flezha.sdk.workflow.WorkflowOperativeCtx;
-import com.flezha.sdk.workflow.WorkflowOperativeException;
+import com.flezha.sdk.operative.WorkflowLoopBody;
+import com.flezha.sdk.operative.WorkflowOperativeCtx;
+import com.flezha.sdk.operative.WorkflowOperativeException;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import javax.annotation.Nonnull;

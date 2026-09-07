@@ -18,11 +18,7 @@ public final class SpawnRequests {
     @FunctionalInterface
     public interface Requester {
         @Nonnull
-        CompletableFuture<String> request(
-                @Nonnull String instanceId,
-                @Nonnull String factoryId,
-                @Nonnull byte[] payload,
-                @Nonnull String ifRunning);
+        CompletableFuture<String> request(String instanceId, String factoryId, byte[] payload, String ifRunning);
     }
 
     private static volatile Requester requester;
@@ -46,11 +42,7 @@ public final class SpawnRequests {
      */
     @Nonnull
     public static SpawnHandle request(
-            @Nonnull String instanceId,
-            @Nonnull String factoryId,
-            @Nonnull byte[] payload,
-            @Nonnull IfRunning ifRunning,
-            boolean replaying) {
+            String instanceId, String factoryId, byte[] payload, IfRunning ifRunning, boolean replaying) {
         if (replaying) {
             return SpawnHandle.resolved(instanceId, factoryId, SpawnOutcome.SKIPPED_ON_REPLAY);
         }

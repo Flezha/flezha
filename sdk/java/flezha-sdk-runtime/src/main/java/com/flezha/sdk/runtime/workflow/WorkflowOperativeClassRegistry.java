@@ -1,7 +1,7 @@
 package com.flezha.sdk.runtime.workflow;
 
+import com.flezha.sdk.operative.WorkflowOperative;
 import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
-import com.flezha.sdk.workflow.WorkflowOperative;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,7 +34,7 @@ public final class WorkflowOperativeClassRegistry {
      * @throws IllegalArgumentException if the WorkflowOperative class lacks a public
      *     no-arg constructor, returns a null/empty factory id, or collides with
      *     an existing operative/workflow.
-     * @throws com.flezha.sdk.workflow.WorkflowOperativeConfigurationException if the
+     * @throws com.flezha.sdk.operative.WorkflowOperativeConfigurationException if the
      *     authoring is invalid (mirrors the Rust SDK's {@code register_workflow}
      *     panic on an invalid workflow operative).
      */

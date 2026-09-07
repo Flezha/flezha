@@ -4,18 +4,41 @@ import java.util.List;
 import java.util.function.BiConsumer;
 
 /**
- * Mutation seam threaded into {@code Procedure.run}. Reads go through
- * {@link #get()}; the recorded, replayable mutation path is {@link #apply(Change)}.
+ * The handle through which a procedure reads and mutates its entity's state.
  *
- * <p><b>Enforcement is by convention, not structure.</b> {@link #get()} returns
- * the live State object, so {@code state.get().field = x} compiles and runs — and
- * is never journaled as a Change, so it is lost on any restore (which rebuilds
- * state from a snapshot plus the change log). Rust forecloses this at compile
- * time by implementing {@code Deref} and deliberately not {@code DerefMut}; Java
- * cannot, because {@code get()} must return a readable object. The detection
- * available in place of enforcement is
- * {@code ProcedureTestHarness.replayEquals()} — an opt-in determinism gate meant
- * to run in CI. See {@code docs/sdk/state_persistence.md}.
+ * <p>Read with {@link #get()}. Mutate only with {@link #apply(Change)}, which records the change so
+ * it can be replayed:
+ *
+ * <pre>{@code
+ * @Override
+ * public void run(String input, StateHandle<Counter, Increment> state, ProcedureCtx ctx) {
+ *     state.apply(new Increment(ctx.now()));      // recorded, survives a restart
+ *     ctx.emit("count=" + state.get().count);     // reads the value just applied
+ * }
+ * }</pre>
+ *
+ * <p>{@link #get()} returns the state after every change applied so far in this invocation, so the
+ * read above already reflects the increment above it.
+ *
+ * <h2>Why not assign the field directly</h2>
+ *
+ * <p>State is persisted as the ordered log of applied changes and rebuilt by replaying that log
+ * over a snapshot. A field written any other way is absent from the log and therefore absent from
+ * the rebuilt object:
+ *
+ * <pre>{@code
+ * state.get().count++;                 // compiles, runs, and is LOST on restart
+ * state.apply(new Increment(...));     // the supported form
+ * }</pre>
+ *
+ * <p><b>This is enforced by convention rather than by the type system.</b> {@link #get()} has to
+ * return a readable object, so the compiler cannot stop the first line. The Rust SDK forecloses it
+ * by implementing {@code Deref} and deliberately not {@code DerefMut}; Java has no equivalent.
+ *
+ * <p>The failure is silent under normal operation, because a direct assignment behaves correctly
+ * for as long as the process survives. What catches it instead is
+ * {@code ProcedureTestHarness.replayEquals()}, which replays the recorded changes and compares the
+ * result against the observed state. It is opt-in and belongs in CI.
  */
 public final class StateHandle<State, ChangeT extends Change> {
 
@@ -41,18 +64,27 @@ public final class StateHandle<State, ChangeT extends Change> {
     }
 
     /**
-     * Read access to the underlying state. Idiomatic Java equivalent of Rust's
-     * {@code Deref}: the user writes {@code state.get().field} rather than
-     * Rust's {@code state.field}.
+     * Reads the state, including every change applied so far in this invocation.
+     *
+     * <p>The object returned is the live state, not a copy, so assigning to one of its fields
+     * compiles and runs. Do not: such a write is not recorded and does not survive a restart.
+     * Mutate through {@link #apply} instead.
+     *
+     * @return this entity's current state
      */
     public State get() {
         return state;
     }
 
     /**
-     * Mutation chokepoint. Invokes {@code Procedure::applyChange} on the
-     * underlying state and pushes the Change onto the per-Entity flush
-     * buffer.
+     * Records a change and applies it to the state. This is the only mutation that survives a
+     * restart.
+     *
+     * <p>The change is handed to the procedure's {@code applyChange} to update the state, and is
+     * also written to this entity's change log, from which the state is rebuilt after a crash. A
+     * read through {@link #get()} immediately afterwards reflects it.
+     *
+     * @param change the mutation to record and apply
      */
     public void apply(ChangeT change) {
         applyChangeFn.accept(state, change);

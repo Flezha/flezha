@@ -11,68 +11,164 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * One Procedure in a StreamOperative topology. Stateless dispatcher; per-Entity
- * {@code State} is held by the runtime and threaded through {@link #run} via
- * a {@link StateHandle}.
+ * The unit of user code: handles one message at a time for one entity.
  *
- * <p>Implementations MUST provide a public no-arg constructor — the runtime
- * instantiates one Procedure per Entity at operative-instance startup.
+ * <p>A procedure is where your logic goes. The runtime holds the per-entity state and threads it
+ * into {@link #run} through a {@link StateHandle}, so the class itself carries no mutable fields of
+ * its own that matter across messages.
  *
- * <p>The topology builder, the Kryo codec and the per-Entity flusher need
- * runtime {@link Class} handles for the type parameters. {@link #inputType()},
- * {@link #outputType()}, {@link #changeType()}, {@link #clockType()} and
- * {@link #configType()} recover them by default from the implementing class's
- * generic supertype chain — a direct {@code implements Procedure<…>} with
- * concrete arguments, or a concrete subclass of a generic intermediate class.
- * An argument still generic at the concrete class is never guessed: the
- * implementation overrides that one method, or registration fails naming the
- * class and the parameter. An explicit override always wins.
+ * <p>A stateless procedure declares {@link NoChange} and is a plain function of its input:
  *
- * @param <Input>  per-entity input value
- * @param <State>  per-entity mutable state (Kryo-serializable)
- * @param <Output> per-entity output value emitted via {@link ProcedureCtx}
- * @param <ChangeT> per-Entity state-change type; default {@link NoChange}
- *     opts out of state persistence
- * @param <ClockT>  clock declaration; v1 fully wires {@link WallClock} only
- * @param <ConfigT> Jackson-deserialized config; {@link Void} for operative-typed
- *     configs
+ * <pre>{@code
+ * public final class EchoProcedure
+ *         implements Procedure<String, EchoProcedure.None, String, NoChange, WallClock, Void> {
+ *
+ *     public record None() {}
+ *
+ *     @Override
+ *     public String name() {
+ *         return "echo";
+ *     }
+ *
+ *     @Override
+ *     public None initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
+ *         return new None();
+ *     }
+ *
+ *     @Override
+ *     public void run(String input, StateHandle<None, NoChange> state, ProcedureCtx ctx) {
+ *         ctx.emit("echo: " + input);
+ *     }
+ * }
+ * }</pre>
+ *
+ * <p>A procedure that remembers something declares a change type instead of {@code NoChange}, and
+ * mutates state only through {@link StateHandle#apply}, never by assigning a field:
+ *
+ * <pre>{@code
+ * public record Increment(long atMs) implements Change {}
+ *
+ * @Override
+ * public void applyChange(Counter state, Increment change) {
+ *     state.count++;              // the ONLY place a field is written
+ * }
+ *
+ * @Override
+ * public void run(String input, StateHandle<Counter, Increment> state, ProcedureCtx ctx) {
+ *     state.apply(new Increment(ctx.now()));
+ *     ctx.emit("count=" + state.get().count);
+ * }
+ * }</pre>
+ *
+ * <p>The reason for that indirection is that state is persisted as the ordered log of applied
+ * changes and reconstructed by replaying it, so a directly assigned field is absent from the log
+ * and absent from the reconstructed object. The failure is silent under normal operation.
+ *
+ * <h2>Ordering and concurrency</h2>
+ *
+ * <p>Invocation is serialised per entity: two messages carrying the same key are never handled
+ * concurrently, so no locking is needed around per-entity state. Messages for distinct keys are
+ * handled concurrently, on this host or another, and the runtime holds one procedure instance per
+ * entity rather than sharing one across them.
+ *
+ * <h2>Determinism</h2>
+ *
+ * <p>Recovery re-executes {@link #run}, so it must be a deterministic function of its declared
+ * inputs. Reading {@code System.currentTimeMillis()} or generating a random identifier yields a
+ * different result on replay and the reconstructed state then diverges from what was observed. Use
+ * {@code ctx.now()} for time and {@link StableId} for identifiers.
+ *
+ * <h2>The six type arguments</h2>
+ *
+ * <p>The runtime needs runtime {@link Class} handles for all six, and recovers them by default from
+ * the implementing class's generic supertype chain: a direct {@code implements Procedure<...>} with
+ * concrete arguments, or a concrete subclass of a generic intermediate class. An argument still
+ * generic at the concrete class is never guessed. Override the single corresponding accessor in
+ * that case ({@link #inputType()}, {@link #outputType()}, {@link #changeType()},
+ * {@link #clockType()}, {@link #configType()}) or registration fails naming the class and the
+ * parameter. An explicit override always wins.
+ *
+ * <p>Implementations must provide a public no-argument constructor.
+ *
+ * @param <Input> the value handed to {@link #run}, decoded from the channel that feeds this
+ *     procedure
+ * @param <State> the per-entity state, held by the runtime and Kryo-serialisable
+ * @param <Output> the value emitted through {@link ProcedureCtx}
+ * @param <ChangeT> how a state mutation is recorded; {@link NoChange} opts out of persistence
+ *     entirely
+ * @param <ClockT> the clock {@code ctx.now()} reads; {@link WallClock} is processing time, and
+ *     {@link com.flezha.sdk.state.EventTimeFrom} takes the time from the message itself
+ * @param <ConfigT> the Jackson-deserialised configuration type; {@link Void} when the procedure
+ *     takes none
  */
 public interface Procedure<
         Input, State, Output, ChangeT extends Change, ClockT extends com.flezha.sdk.state.Clock, ConfigT> {
 
-    /** Stable identifier within the StreamOperative class. Must be unique per StreamOperative. */
+    /**
+     * This procedure's name, unique within its operative.
+     *
+     * <p>The name identifies the procedure in durable state and in the channel labels derived from
+     * it, so changing it means the runtime no longer recognises what it already recorded.
+     *
+     * @return the stable name, unique among the procedures of one operative
+     */
     @Nonnull
     String name();
 
-    /** Compile-time typed Input class. Used at registerStream time for wiring checks. */
+    /**
+     * The input type, recovered from the {@code implements} clause. Override only when the type
+     * argument is still generic at your concrete class, which the runtime will not guess.
+     *
+     * @return the class of values this procedure receives
+     */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<Input> inputType() {
         return (Class<Input>) TypeTokens.require(getClass(), TypeTokens.Token.INPUT);
     }
 
-    /** Compile-time typed Output class. Used at registerStream time for wiring checks. */
+    /**
+     * The output type, recovered from the {@code implements} clause. Override only when the type
+     * argument is still generic at your concrete class.
+     *
+     * @return the class of values this procedure emits
+     */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<Output> outputType() {
         return (Class<Output>) TypeTokens.require(getClass(), TypeTokens.Token.OUTPUT);
     }
 
-    /** Compile-time typed Change class. Drives flusher registration and Kryo dispatch. */
+    /**
+     * The change type, recovered from the {@code implements} clause. {@link NoChange} here means
+     * the procedure persists nothing.
+     *
+     * @return the class of recorded state changes
+     */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<ChangeT> changeType() {
         return (Class<ChangeT>) TypeTokens.require(getClass(), TypeTokens.Token.CHANGE);
     }
 
-    /** Compile-time typed Clock class. Drives v1 StreamOperativeConfigurationException for non-WallClock. */
+    /**
+     * The clock type, recovered from the {@code implements} clause. Determines what
+     * {@code ctx.now()} returns.
+     *
+     * @return the declared clock class
+     */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<ClockT> clockType() {
         return (Class<ClockT>) TypeTokens.require(getClass(), TypeTokens.Token.CLOCK);
     }
 
-    /** Compile-time typed Config class. {@code Void.class} for Procedures without typed config. */
+    /**
+     * The configuration type, recovered from the {@code implements} clause. {@code Void.class} when
+     * the procedure takes no configuration.
+     *
+     * @return the declared configuration class
+     */
     @Nonnull
     @SuppressWarnings("unchecked")
     default Class<ConfigT> configType() {
@@ -80,24 +176,39 @@ public interface Procedure<
     }
 
     /**
-     * Initialize state for a new Entity. Called once per Entity at StreamOperative
-     * startup. {@code entityKey} is empty for single-entity mode; present
-     * for static mode. {@code initPayload} is empty on cold start; present
-     * during a {@code RestoreInitState} round-trip — the user MAY inspect the
-     * byte sizes for instrumentation but the runtime auto-applies the payload
-     * (Kryo-deserialize the snapshot, fold the change log) AFTER {@code initState}
-     * returns, so users typically ignore the parameter.
+     * Builds the starting state for one entity, called once on first sight of that entity.
+     *
+     * <p>On a resume the runtime restores the most recent snapshot and folds the recorded changes
+     * over whatever this returns, so it only has to be correct for a cold start.
+     *
+     * @param entityKey the key this entity is for. Empty when the procedure runs as a single
+     *     entity, present when the stream is keyed or the procedure declares static keys
+     * @param initPayload state handed over when this entity is being relocated from another host
+     *     rather than started cold. Empty on a cold start. The runtime applies the payload itself
+     *     after this method returns, so an implementation normally ignores it; it is exposed for
+     *     instrumentation, such as recording the transferred byte size
+     * @return the initial state for this entity
      */
     @Nonnull
-    State initState(@Nonnull Optional<String> entityKey, @Nonnull Optional<RestoreInitPayload> initPayload);
+    State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload);
 
     /**
-     * Apply a Change to the current state. Default: no-op for {@link NoChange}
-     * (which is uninhabited and never reaches this method anyway), throws
-     * {@link UnsupportedOperationException} for any other Change type to force
-     * an explicit override.
+     * Applies one recorded change to the state. This is the only method permitted to write state
+     * fields.
+     *
+     * <p>The runtime calls it when {@link StateHandle#apply} is invoked, and again for every
+     * recorded change when rebuilding an entity after a restart. It must therefore apply the change
+     * and do nothing else: no emitting, no clock reads, no external calls, since anything done here
+     * happens again on every replay.
+     *
+     * <p>A procedure declaring a change type must override this. The default throws, rather than
+     * silently discarding state, so the omission is found at the first change instead of at the
+     * first restart.
+     *
+     * @param state the entity's current state, mutated in place
+     * @param change the change to apply, as passed to {@link StateHandle#apply}
      */
-    default void applyChange(@Nonnull State state, @Nonnull ChangeT change) {
+    default void applyChange(State state, ChangeT change) {
         if (changeType() == NoChange.class) {
             return;
         }
@@ -131,10 +242,7 @@ public interface Procedure<
      * no build-time check can catch it.
      */
     default void onTimer(
-            long firedAt,
-            @Nonnull com.flezha.sdk.state.TimerKind kind,
-            @Nonnull StateHandle<State, ChangeT> state,
-            @Nonnull ProcedureCtx ctx)
+            long firedAt, com.flezha.sdk.state.TimerKind kind, StateHandle<State, ChangeT> state, ProcedureCtx ctx)
             throws ProcedureException {
         throw new UnsupportedOperationException("Procedure '" + name()
                 + "' registered a timer but does not override onTimer. Override"
@@ -153,7 +261,7 @@ public interface Procedure<
 
     /** Optional coalesce key. Default: dispatches to the Change's own key. */
     @Nonnull
-    default Optional<CoalesceKey> coalesceKey(@Nonnull ChangeT change) {
+    default Optional<CoalesceKey> coalesceKey(ChangeT change) {
         return change.coalesceKey();
     }
 
@@ -208,7 +316,7 @@ public interface Procedure<
      * crash-resume, retry-replay and rewind all re-enter the restore fold.
      */
     @Nonnull
-    default State migrateState(int fromVersion, @Nonnull byte[] bytes) {
+    default State migrateState(int fromVersion, byte[] bytes) {
         throw new IllegalStateException(
                 "procedure `" + name() + "` declares no state migration from schema_version " + fromVersion);
     }
@@ -219,7 +327,7 @@ public interface Procedure<
      * more than one version, so this is invoked per record.
      */
     @Nonnull
-    default ChangeT migrateChange(int fromVersion, @Nonnull byte[] bytes) {
+    default ChangeT migrateChange(int fromVersion, byte[] bytes) {
         throw new IllegalStateException(
                 "procedure `" + name() + "` declares no change migration from schema_version " + fromVersion);
     }
@@ -283,7 +391,7 @@ public interface Procedure<
      * from {@link #entitiesForOverridden()}.
      */
     @Nonnull
-    default List<String> entitiesFor(@Nonnull Input input) {
+    default List<String> entitiesFor(Input input) {
         return List.of();
     }
 
@@ -329,15 +437,31 @@ public interface Procedure<
     }
 
     /**
-     * Per-entity compute. Receives the typed input, the entity's state
-     * via a {@link StateHandle} (read via {@code state.get()}, mutate via
-     * {@code state.apply(change)}), and a context for emitting outputs.
-     * Throwing {@link ProcedureException} (or any other {@link RuntimeException})
-     * is logged against {@code (operativeInstance, procedure, entity)} and discards
-     * any partial emits made during this invocation.
+     * Handles one message. This is where your logic goes.
+     *
+     * <p>Called once per message, for one entity, and never concurrently for the same entity. It is
+     * also re-executed during recovery, so it must produce the same result given the same input:
+     * read time through {@code ctx.now()} and generate identifiers through
+     * {@code ctx.stableId()} rather than reaching for the system clock or a random source.
+     *
+     * <pre>{@code
+     * public void run(String input, StateHandle<Counter, Increment> state, ProcedureCtx ctx) {
+     *     state.apply(new Increment(ctx.now()));
+     *     ctx.emit("count=" + state.get().count);
+     * }
+     * }</pre>
+     *
+     * @param input the message, already decoded from the channel that feeds this procedure
+     * @param state this entity's state. Read it with {@code state.get()}, and mutate it only with
+     *     {@code state.apply(change)}; a field assigned directly is not recorded and does not
+     *     survive a restart
+     * @param ctx the runtime handle for emitting output, reading the clock, obtaining a
+     *     replay-stable identifier, and registering timers
+     * @throws ProcedureException to fail this invocation. The failure is recorded against the
+     *     operative, procedure and entity, and any output emitted earlier in this invocation is
+     *     discarded rather than released. Any other runtime exception is treated the same way
      */
-    void run(@Nonnull Input input, @Nonnull StateHandle<State, ChangeT> state, @Nonnull ProcedureCtx ctx)
-            throws ProcedureException;
+    void run(Input input, StateHandle<State, ChangeT> state, ProcedureCtx ctx) throws ProcedureException;
 
     /**
      * Optional saga <strong>compensation</strong> hook (workflow operatives only).
@@ -354,10 +478,7 @@ public interface Procedure<
      * workflow driver registers it as compensable (hookless procedures are
      * skipped during rollback).
      */
-    default void compensate(
-            @Nonnull List<Output> completedOutput,
-            @Nonnull StateHandle<State, ChangeT> state,
-            @Nonnull ProcedureCtx ctx)
+    default void compensate(List<Output> completedOutput, StateHandle<State, ChangeT> state, ProcedureCtx ctx)
             throws ProcedureException {
         // No-op: a procedure with no reversible effect needs no compensation.
     }
@@ -382,7 +503,7 @@ public interface Procedure<
      * <p>A procedure that overrides this MUST also override
      * {@link #eventTimeOverridden()} to return {@code true}.
      */
-    default long eventTime(@Nonnull Input input) {
+    default long eventTime(Input input) {
         throw new UnsupportedOperationException(
                 "procedure `" + name() + "` declares EventTimeFrom but does not override eventTime(Input)");
     }

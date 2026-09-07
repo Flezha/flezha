@@ -1,6 +1,6 @@
 package com.flezha.sdk.internal;
 
-import com.flezha.sdk.operative.Computation;
+import com.flezha.sdk.operative.Operative;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +18,7 @@ import javax.annotation.Nonnull;
  *
  * @param <C> the authoring interface the registry holds classes of
  */
-public final class RegistryCore<C extends Computation> {
+public final class RegistryCore<C extends Operative> {
 
     private final Object lock = new Object();
     private final Map<String, Class<? extends C>> entries = new LinkedHashMap<>();
@@ -32,7 +32,7 @@ public final class RegistryCore<C extends Computation> {
      * @param kindLabel {@code "operative"} / {@code "workflow"} — used in error
      *     messages
      */
-    public RegistryCore(@Nonnull String runtimeRegistryFqn, @Nonnull String kindLabel) {
+    public RegistryCore(String runtimeRegistryFqn, String kindLabel) {
         this.runtimeRegistryFqn = runtimeRegistryFqn;
         this.kindLabel = kindLabel;
     }
@@ -72,7 +72,7 @@ public final class RegistryCore<C extends Computation> {
      *     is not defined here (never defined, or already removed).
      */
     @Nonnull
-    public String definedFactoryIdOf(@Nonnull Class<? extends C> cls) {
+    public String definedFactoryIdOf(Class<? extends C> cls) {
         synchronized (lock) {
             for (Map.Entry<String, Class<? extends C>> e : entries.entrySet()) {
                 if (e.getValue().equals(cls)) {
@@ -89,7 +89,7 @@ public final class RegistryCore<C extends Computation> {
      * registry and drop the entry here. Pre-start path — no live instance can
      * exist, so no in-use check is needed.
      */
-    public void remove(@Nonnull String factoryId) {
+    public void remove(String factoryId) {
         synchronized (lock) {
             RuntimeBridge.invoke(
                     runtimeRegistryFqn,
@@ -106,7 +106,7 @@ public final class RegistryCore<C extends Computation> {
      * the post-start path, where the runtime's {@code removeType} already
      * unregistered it under the race-free live-instance check.
      */
-    public void dropEntry(@Nonnull String factoryId) {
+    public void dropEntry(String factoryId) {
         synchronized (lock) {
             entries.remove(factoryId);
         }
@@ -133,7 +133,7 @@ public final class RegistryCore<C extends Computation> {
         }
     }
 
-    public boolean contains(@Nonnull String factoryId) {
+    public boolean contains(String factoryId) {
         synchronized (lock) {
             return entries.containsKey(factoryId);
         }

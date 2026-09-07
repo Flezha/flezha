@@ -1,7 +1,6 @@
 package com.flezha.sdk.procedure;
 
 import java.util.Optional;
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /**
@@ -31,8 +30,7 @@ public final class EmitKeys {
      * @throws ProcedureException.KeyNotAllowedOnNonKeyedChannel a key on a non-keyed channel
      */
     @Nullable
-    public static String resolve(
-            @Nonnull String channel, boolean keyed, @Nullable String supplied, @Nonnull Optional<String> entityKey)
+    public static String resolve(String channel, boolean keyed, @Nullable String supplied, Optional<String> entityKey)
             throws ProcedureException {
         if (!keyed) {
             if (supplied != null) {

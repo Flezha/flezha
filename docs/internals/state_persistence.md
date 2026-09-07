@@ -433,7 +433,7 @@ CliManager.state_get("ohlc/candle/BTCUSD@1m", "json")
 point read for operators and low-rate readers, not a serving API and not a subscription — a
 high-rate path is a sink (`.sink(...)` into Kafka or Postgres). Worked examples:
 `sdk/rust/examples/live_state_read.rs`,
-`sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E11_LiveStateRead.java`.
+`sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/state/`.
 
 | | `flz state get` | `flz state at` |
 |---|---|---|

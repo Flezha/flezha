@@ -5,7 +5,7 @@ import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
-import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperative;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 

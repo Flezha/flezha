@@ -63,7 +63,7 @@ public interface Merge<I> {
      * on the source's own payload type.
      */
     @Nonnull
-    <S> Merge<I> from(@Nonnull EdgeStream<S> source, @Nonnull Function<S, I> map);
+    <S> Merge<I> from(EdgeStream<S> source, Function<S, I> map);
 
     /**
      * Declare the Entity key for the merged procedure — once, on the merge,
@@ -72,19 +72,19 @@ public interface Merge<I> {
      * refused: the key would be handed the merged value, not that source's.
      */
     @Nonnull
-    Merge<I> keyBy(@Nonnull Function<I, String> key);
+    Merge<I> keyBy(Function<I, String> key);
 
     /**
      * Close the merge on its consumer and return <b>the consumer's</b> output
      * stream handle, so a merged node chains like any other.
      */
     @Nonnull
-    <O> Stream<O> into(@Nonnull Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure);
+    <O> Stream<O> into(Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure);
 
     /**
      * Like {@link #into(Class)}, but the consumer is a distinct named node —
      * see {@link Stream#into(Class, String)}.
      */
     @Nonnull
-    <O> Stream<O> into(@Nonnull Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName);
+    <O> Stream<O> into(Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure, String nodeName);
 }

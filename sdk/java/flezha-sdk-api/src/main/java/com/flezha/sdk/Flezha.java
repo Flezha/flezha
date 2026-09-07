@@ -48,7 +48,7 @@ public final class Flezha {
      * never connects, claims the JVM singleton slot, or spawns a thread.
      */
     @Nonnull
-    public static FlezhaRunner createRunner(@Nonnull String namespace) {
+    public static FlezhaRunner createRunner(String namespace) {
         if (namespace == null || namespace.isEmpty()) {
             throw new IllegalArgumentException("namespace must not be null or empty");
         }

@@ -1,6 +1,5 @@
 package com.flezha.sdk.internal;
 
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /**
@@ -28,12 +27,7 @@ public final class RuntimeBridge {
      *     {@code failureContext}.
      */
     @Nullable
-    public static Object invoke(
-            @Nonnull String fqn,
-            @Nonnull String method,
-            @Nonnull Class<?>[] sig,
-            @Nonnull String failureContext,
-            Object... args) {
+    public static Object invoke(String fqn, String method, Class<?>[] sig, String failureContext, Object... args) {
         try {
             return Class.forName(fqn).getMethod(method, sig).invoke(null, args);
         } catch (ClassNotFoundException e) {
@@ -53,7 +47,7 @@ public final class RuntimeBridge {
      * nothing when the runtime is not on the classpath or the call fails —
      * the best-effort shape test-reset hooks need.
      */
-    public static void invokeIfPresent(@Nonnull String fqn, @Nonnull String method) {
+    public static void invokeIfPresent(String fqn, String method) {
         try {
             Class.forName(fqn).getMethod(method).invoke(null);
         } catch (ClassNotFoundException ignored) {

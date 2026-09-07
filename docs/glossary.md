@@ -33,7 +33,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 ## Workload model
 
 - **Operative** — the unit you start and stop (`flz operative start|stop|list|info`), registered
-  under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Computation`),
+  under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Operative` base),
   with a **kind** frozen at start: `stream` (default) or `workflow` (`Flezha.Operative.Kind`).
 - **Stream operative** — the always-on kind: an endless input, no barrier, per-entity recovery.
   Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).

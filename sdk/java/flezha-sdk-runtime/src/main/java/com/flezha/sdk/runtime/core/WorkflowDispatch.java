@@ -1,8 +1,8 @@
 package com.flezha.sdk.runtime.core;
 
+import com.flezha.sdk.operative.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperativeException;
 import com.flezha.sdk.runtime.workflow.WorkflowSpec;
-import com.flezha.sdk.workflow.WorkflowOperative;
-import com.flezha.sdk.workflow.WorkflowOperativeException;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
 import javax.annotation.Nullable;

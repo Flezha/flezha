@@ -48,7 +48,7 @@ public final class LocalOperative implements AutoCloseable {
      *     needs a controller
      */
     @Nonnull
-    public static LocalOperative start(@Nonnull Class<? extends StreamOperative> type) {
+    public static LocalOperative start(Class<? extends StreamOperative> type) {
         return new LocalOperative((LocalRunHandle)
                 RuntimeBridge.invoke(IMPL, "start", new Class<?>[] {Class.class}, "Failed to start a local run", type));
     }
@@ -59,21 +59,21 @@ public final class LocalOperative implements AutoCloseable {
      * procedure's name unless the declaration {@code named} it.
      */
     @Nonnull
-    public LocalOperative onSink(@Nonnull String channel, @Nonnull Consumer<SinkOutput> callback) {
+    public LocalOperative onSink(String channel, Consumer<SinkOutput> callback) {
         handle.onSink(channel, callback);
         return this;
     }
 
     /** Feed one value's wire bytes to a declared entry channel. */
     @Nonnull
-    public LocalOperative feed(@Nonnull String channel, @Nonnull byte[] payload) {
+    public LocalOperative feed(String channel, byte[] payload) {
         handle.feed(channel, payload);
         return this;
     }
 
     /** {@link #feed(String, byte[])} with the text's UTF-8 bytes. */
     @Nonnull
-    public LocalOperative feed(@Nonnull String channel, @Nonnull String payload) {
+    public LocalOperative feed(String channel, String payload) {
         return feed(channel, payload.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -83,7 +83,7 @@ public final class LocalOperative implements AutoCloseable {
      * @throws RuntimeException when {@code budget} elapses first — a timeout
      *     is reported, never passed off as done
      */
-    public void runUntilIdle(@Nonnull Duration budget) {
+    public void runUntilIdle(Duration budget) {
         handle.runUntilIdle(budget);
     }
 

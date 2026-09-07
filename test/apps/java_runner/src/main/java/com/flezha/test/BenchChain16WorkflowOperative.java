@@ -1,6 +1,6 @@
 package com.flezha.test;
 
-import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperative;
 import com.flezha.sdk.channel.ChannelBuilder;
 
 /** {@code mix bench.workflow --runtime java --procs 16}: a sixteen-proc durable chain. */

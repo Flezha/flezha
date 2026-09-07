@@ -36,7 +36,7 @@ public interface RunnerHandle {
      * (the transient unregistered window is benign: a failing
      * {@code AddOperative} is re-placed by convergence).
      */
-    void removeType(@Nonnull String factoryId);
+    void removeType(String factoryId);
 
     /**
      * Declare the runner's FULL current factory set to the core after a
@@ -44,5 +44,5 @@ public interface RunnerHandle {
      * connect/reconnect init frame; the ABI has no entry point that pushes it
      * to a live controller.
      */
-    void syncFactories(@Nonnull List<String> factoryIds);
+    void syncFactories(List<String> factoryIds);
 }

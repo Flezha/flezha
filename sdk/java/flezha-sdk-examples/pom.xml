@@ -25,6 +25,10 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.flezha</groupId>
             <artifactId>flezha-sdk-api</artifactId>
             <version>${project.version}</version>

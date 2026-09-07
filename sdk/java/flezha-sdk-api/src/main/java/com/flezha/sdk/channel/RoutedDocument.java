@@ -1,7 +1,5 @@
 package com.flezha.sdk.channel;
 
-import javax.annotation.Nonnull;
-
 /**
  * One delivery made by {@link ChannelBuilder#routeLatest}: the operative-wide
  * document, paired with the key whose own traffic earned it.
@@ -15,4 +13,4 @@ import javax.annotation.Nonnull;
  * @param key the Entity key this delivery is for
  * @param document the retained document, unparsed
  */
-public record RoutedDocument<D>(@Nonnull String key, @Nonnull D document) {}
+public record RoutedDocument<D>(String key, D document) {}

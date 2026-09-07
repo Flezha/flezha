@@ -1,6 +1,6 @@
 package com.flezha.test;
 
-import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperative;
 import com.flezha.sdk.channel.ChannelBuilder;
 
 /** The persistence-off twin of the four-proc chain ({@code --tier optout}). */

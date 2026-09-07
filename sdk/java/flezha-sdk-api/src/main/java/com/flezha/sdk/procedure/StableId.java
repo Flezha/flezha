@@ -36,7 +36,7 @@ public record StableId(long hi, long lo) {
      * @param ordinal the 0-based call ordinal within the invocation
      */
     @Nonnull
-    public static StableId derive(@Nonnull byte[] entityIdentity, long seq, int ordinal) {
+    public static StableId derive(byte[] entityIdentity, long seq, int ordinal) {
         long hi = BASIS_HI;
         long lo = BASIS_LO;
 

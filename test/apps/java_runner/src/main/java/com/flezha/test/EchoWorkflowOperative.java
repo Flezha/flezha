@@ -1,8 +1,8 @@
 package com.flezha.test;
 
-import com.flezha.sdk.workflow.WorkflowOperative;
-import com.flezha.sdk.workflow.WorkflowOperativeCtx;
-import com.flezha.sdk.workflow.WorkflowOperativeException;
+import com.flezha.sdk.operative.WorkflowOperative;
+import com.flezha.sdk.operative.WorkflowOperativeCtx;
+import com.flezha.sdk.operative.WorkflowOperativeException;
 
 /**
  * Run-once workflow operative mirroring {@code rust_runner}'s
