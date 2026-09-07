@@ -13,18 +13,21 @@ use crate::transport::quic_pair::Pair;
 type Reply = channel::Receiver<io::Result<usize>>;
 
 /// The client driver's stream map with one stream in it, driven the way
-/// `handle_command` and `dispatch_stream_events` drive the real one.
-struct Client {
-    pair: Pair,
-    stream_id: StreamId,
-    streams: HashMap<StreamId, StreamSlot>,
-    /// The slot's reader end, held so the chunk channel stays connected for
-    /// the life of the drive, as the real driver's `ChannelReader` does.
-    _read_rx: channel::Receiver<Bytes>,
+/// `handle_command` and `dispatch_stream_events` drive the real one. Shared
+/// with the reader suite next door, which drives the same slot from the other
+/// end.
+pub(super) struct Client {
+    pub(super) pair: Pair,
+    pub(super) stream_id: StreamId,
+    pub(super) streams: HashMap<StreamId, StreamSlot>,
+    /// The slot's reader end, which keeps the chunk channel connected for the
+    /// life of the drive as the real driver's `ChannelReader` does, and is
+    /// what a reader case reads through.
+    pub(super) read_rx: channel::Receiver<Bytes>,
 }
 
 impl Client {
-    fn connected() -> Client {
+    pub(super) fn connected() -> Client {
         let mut pair = Pair::new();
         pair.connect();
         let stream_id = pair.open_stream();
@@ -42,7 +45,7 @@ impl Client {
             pair,
             stream_id,
             streams,
-            _read_rx: read_rx,
+            read_rx,
         }
     }
 

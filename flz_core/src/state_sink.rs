@@ -184,9 +184,7 @@ pub fn secondary_stream() -> Option<Arc<FlezhaStream>> {
 }
 
 /// One best-effort write to the secondary stream; `false` when it failed.
-/// The replay's own door and nobody else's: a writer that reaches the wire
-/// this way chooses its own answer to a refusal, which is the one thing
-/// [`write`] and [`send`] exist to stop.
+/// Private to the replay: every other writer names a class through [`write`] or [`send`].
 fn send_oneshot(frame: &[u8]) -> bool {
     match SECONDARY_STREAM
         .lock()

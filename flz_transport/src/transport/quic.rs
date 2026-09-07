@@ -628,7 +628,16 @@ fn dispatch_stream_events(
     false
 }
 
-/// Drain readable data from a stream and push to the channel.
+/// Drain readable data from a stream and push to the channel, dropping the
+/// slot the moment the stream itself has ended.
+///
+/// `Ok(None)` from `Chunks::next` is the peer's FIN with every byte read and a
+/// reset ends the stream too, while `Err(Blocked)` is only "nothing more right
+/// now": they say different things and only the first two end anything. Ending
+/// it drops the chunk sender with the slot, and that disconnect is the only way
+/// a reader on ONE stream of a live connection hears that its stream is gone.
+/// Left in the map, that reader waits for a frame the peer will never send
+/// until the connection itself dies.
 fn drain_readable(
     connection: &mut quinn_proto::Connection,
     id: StreamId,
@@ -640,6 +649,7 @@ fn drain_readable(
     };
     let read_tx = slot.read_tx.clone();
 
+    let mut ended = false;
     if let Ok(mut chunks) = connection.recv_stream(id).read(true) {
         loop {
             match chunks.next(usize::MAX) {
@@ -648,7 +658,10 @@ fn drain_readable(
                         break; // Consumer dropped
                     }
                 }
-                Ok(None) => break, // No more data
+                Ok(None) => {
+                    ended = true; // The peer's FIN, every byte read
+                    break;
+                }
                 Err(quinn_proto::ReadError::Blocked) => break,
                 Err(e) => {
                     tracing::warn!(
@@ -656,11 +669,15 @@ fn drain_readable(
                         transport = "quic", stream_id = ?id,
                         "QUIC stream read error: {}", e
                     );
+                    ended = true; // A reset ends the stream as surely as a FIN
                     break;
                 }
             }
         }
         let _ = chunks.finalize();
+    }
+    if ended {
+        streams.remove(&id);
     }
 }
 
