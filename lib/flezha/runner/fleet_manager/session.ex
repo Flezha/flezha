@@ -263,7 +263,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   def runner_preserve(state, namespace, runner_id) do
-    runner = {:inactive, DateTime.utc_now() |> DateTime.to_unix(:millisecond)}
+    runner = {:inactive, System.monotonic_time(:millisecond)}
 
     put_in(state.runner_namespaces[namespace], [runner_id], runner)
   end
@@ -420,7 +420,7 @@ defmodule Flezha.Runner.FleetManager.Session do
   end
 
   def finish_runner_connect(state, namespace, session_token, factories, stable_id) do
-    timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+    timestamp = System.monotonic_time(:millisecond)
 
     state =
       case Map.get(state.runner_namespaces, namespace, nil) do

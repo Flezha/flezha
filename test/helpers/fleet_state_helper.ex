@@ -22,7 +22,7 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   advertise a factory establishes it, exactly as a real connect does.
   """
   def seed(namespace, runner_factories) do
-    ts = System.system_time(:millisecond)
+    ts = System.monotonic_time(:millisecond)
 
     :sys.replace_state(FleetManager, fn state ->
       runners = runner_factories |> Map.keys() |> Map.new(&{&1, {:active, ts}})

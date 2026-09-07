@@ -473,7 +473,7 @@ defmodule Flezha.Runner.FleetManager do
   defp runner_cleanup(state) do
     Marks.prune()
 
-    now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+    now = System.monotonic_time(:millisecond)
     keep_alive = get_runner_keepalive()
 
     namespaces = Map.keys(state.runner_namespaces)

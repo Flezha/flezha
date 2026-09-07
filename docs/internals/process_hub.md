@@ -222,8 +222,10 @@ which the declaration triggers at once:
 - *Other runners in this namespace on this controller* — the Diff marks each of the runner's operatives misbound with reason `:runner_disconnected` (not streak-gated: a closed session is not a probe miss) and the Planner plans `rebind_operative`, keyed `{:runner_disconnected, operative_id}`, at most `max_ops` per tick with the plan re-ticking until the set is walked.
 - *No runner here, peers serve the namespace* — the Diff's `replace_operatives` (no local runner for the factory, a peer fleet has one) plans `replace_operative` per child, through `Migration.migrate_child/3` and the migration-consent gate with live handover. Nothing is forced and no drain runs: a child that defers stays put, visible and misbound, for the next tick, and the namespace hub stays addressable so a runner reconnecting seconds later finds its node in the distribution. The dead runner cannot serialize state, so the handover is empty and the destination pulls the Entity files (`Flezha.State.WalTransfer`).
 - *Last runner in the namespace cluster* — `Session.runner_preserve/3` marks it `:inactive` with a
-  timestamp; the cleanup tick (`FLEZHA_RUNNER_KEEPALIVE` + 10 s) reaps it once
-  `FLEZHA_RUNNER_KEEPALIVE` (default 30 000 ms) has elapsed and reclaims the hub if vacant.
+  monotonic timestamp; the cleanup tick (`FLEZHA_RUNNER_KEEPALIVE` + 10 s) reaps it once
+  `FLEZHA_RUNNER_KEEPALIVE` (default 30 000 ms) of elapsed time has passed and reclaims the hub if
+  vacant. Both the stamp and the reap read `System.monotonic_time/1`, so a wall-clock step neither
+  expires a live runner nor hides a dead one.
 
 On reconnect `FleetManager.Session.runner_connect/3` starts the hub if needed (after
 `Orchestrator.await_cluster_ready/0`), registers the runner's `child_registered` handler, starts

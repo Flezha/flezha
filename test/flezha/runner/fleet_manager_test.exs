@@ -32,7 +32,7 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
   end
 
   defp seed_active(runner_ids) do
-    ts = System.system_time(:millisecond)
+    ts = System.monotonic_time(:millisecond)
     entries = Map.new(runner_ids, fn id -> {id, {:active, ts}} end)
 
     :sys.replace_state(FleetManager, fn state ->
@@ -102,7 +102,7 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
     Enum.each(1..8, fn round ->
       :sys.replace_state(FleetManager, fn state ->
         update_in(state, [:runner_namespaces, @namespace], fn ns ->
-          Map.put(ns, "round_#{round}", {:active, System.system_time(:millisecond)})
+          Map.put(ns, "round_#{round}", {:active, System.monotonic_time(:millisecond)})
         end)
       end)
 
@@ -197,7 +197,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   end
 
   defp seed_inactive(ns, runner_id) do
-    entry = {runner_id, {:inactive, System.system_time(:millisecond) - 1}}
+    entry = {runner_id, {:inactive, System.monotonic_time(:millisecond) - 1}}
 
     :sys.replace_state(FleetManager, fn state ->
       put_in(state, [:runner_namespaces, ns], Map.new([entry]))
@@ -594,4 +594,89 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
     refute log =~ "dropped factory"
     assert factory_ids() == ["a"]
   end
+end
+
+defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
+  @moduledoc """
+  The keepalive is measured on one clock, and that clock is monotonic.
+
+  The two halves are pinned separately, and neither depends on how a wall clock
+  happens to be spelled. The writer's stamp must land inside the monotonic
+  window that brackets the write; the reaper must keep a row stamped on that
+  clock a moment ago. Any wall clock puts a reader about 2.4e12 ms ahead of a
+  monotonic stamp, so it reaps every row it is handed, and puts a writer's stamp
+  that far outside the window. A wall-clock step cannot reach a comparison whose
+  two sides are provably on the same monotonic clock.
+  """
+  # async: false: the live controller and its fleet; node-global tables.
+  use ExUnit.Case, async: false
+
+  alias Flezha.Runner.FleetManager
+
+  @namespace "keepalive_clock_#{System.unique_integer([:positive])}"
+  @keepalive_ms 60_000
+
+  setup do
+    original = :sys.get_state(FleetManager)
+    keepalive = Application.get_env(:flezha, :runner_keepalive)
+
+    on_exit(fn ->
+      :sys.replace_state(FleetManager, fn _ -> original end)
+
+      case keepalive do
+        nil -> Application.delete_env(:flezha, :runner_keepalive)
+        value -> Application.put_env(:flezha, :runner_keepalive, value)
+      end
+    end)
+
+    :ok
+  end
+
+  test "the disconnect stamps the roster row on the monotonic clock" do
+    seed_active("lone_runner")
+
+    # The production writer stamps the row: the last runner of a namespace
+    # nobody else serves is held `:inactive` for the keepalive window.
+    before_ms = System.monotonic_time(:millisecond)
+    :ok = GenServer.call(FleetManager, {:runner_disconnected, @namespace, "lone_runner"})
+    after_ms = System.monotonic_time(:millisecond)
+
+    assert {:inactive, stamp} = roster()["lone_runner"]
+
+    assert stamp >= before_ms and stamp <= after_ms,
+           "the stamp must land in the monotonic window #{before_ms}..#{after_ms} " <>
+             "that brackets the write; it is #{stamp}, off by #{stamp - after_ms} ms"
+  end
+
+  test "the reaper keeps a row stamped a moment ago on the monotonic clock" do
+    Application.put_env(:flezha, :runner_keepalive, to_string(@keepalive_ms))
+    seed_inactive("kept_runner", System.monotonic_time(:millisecond))
+
+    :ok = GenServer.call(FleetManager, :runner_cleanup)
+
+    assert Map.has_key?(roster(), "kept_runner"),
+           "a runner inactive for milliseconds was reaped inside its keepalive"
+  end
+
+  test "a runner inactive past the keepalive is still reaped" do
+    Application.put_env(:flezha, :runner_keepalive, "0")
+    seed_inactive("stale_runner", System.monotonic_time(:millisecond) - 1)
+
+    :ok = GenServer.call(FleetManager, :runner_cleanup)
+
+    refute Map.has_key?(roster(), "stale_runner"),
+           "a keepalive of zero must still drop the inactive row"
+  end
+
+  defp seed_active(runner_id), do: seed(runner_id, {:active, System.monotonic_time(:millisecond)})
+
+  defp seed_inactive(runner_id, stamp), do: seed(runner_id, {:inactive, stamp})
+
+  defp seed(runner_id, row) do
+    :sys.replace_state(FleetManager, fn state ->
+      put_in(state, [:runner_namespaces, @namespace], Map.new([{runner_id, row}]))
+    end)
+  end
+
+  defp roster, do: :sys.get_state(FleetManager).runner_namespaces[@namespace] || %{}
 end
