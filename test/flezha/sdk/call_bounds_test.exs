@@ -74,10 +74,10 @@ defmodule Flezha.SDK.CallBoundsTest do
 
   describe "a suspended target refuses its caller" do
     @tag timeout: 60_000
-    test "every bounded call answers, and the caller lives", ctx do
+    test "every call with a deadline answers, and the caller lives", ctx do
       answers =
         capture_answers(fn ->
-          answers(bounded_sites(ctx), @budget)
+          answers(refusing_sites(ctx), @budget)
         end)
 
       assert answers == %{
@@ -115,7 +115,7 @@ defmodule Flezha.SDK.CallBoundsTest do
       # This clause shows the caller is not refused early; the next one is what
       # holds the two sites to `:infinity`, because a caller blocked at 5 000 ms
       # and one blocked for ever look identical after 300 ms.
-      assert answers(unbounded_sites(ctx), 300) == %{
+      assert answers(protocol_waits(ctx), 300) == %{
                credit_acquire: :hung,
                entity_enqueue_block: :hung,
                entity_rebind: :hung
@@ -138,13 +138,13 @@ defmodule Flezha.SDK.CallBoundsTest do
       # And exactly three calls wait with no bound — the two direct ones and the
       # rebind, which takes `:infinity` through the seam so its refusal on a gone
       # Entity is still declared. A fourth is a bound someone removed.
-      unbounded =
+      never_bound =
         for {file, line} <- lines,
             String.contains?(line, "GenServer.call(") or String.contains?(line, "Call.entity("),
             String.contains?(line, ":infinity"),
             do: file
 
-      assert Enum.sort(unbounded) == ["credit.ex", "entity.ex", "entity.ex"]
+      assert Enum.sort(never_bound) == ["credit.ex", "entity.ex", "entity.ex"]
     end
 
     test "a call that grows with the state names its own row, never the flat bound" do
@@ -169,7 +169,7 @@ defmodule Flezha.SDK.CallBoundsTest do
     end
   end
 
-  defp bounded_sites(%{wedged: w, lookup_only: lookup_only}) do
+  defp refusing_sites(%{wedged: w, lookup_only: lookup_only}) do
     [
       {:credit_session, fn -> Credit.session(w) end},
       {:runner_define, fn -> RunnerServer.define(w, __MODULE__, %{}) end},
@@ -192,7 +192,7 @@ defmodule Flezha.SDK.CallBoundsTest do
     ]
   end
 
-  defp unbounded_sites(%{wedged: w}) do
+  defp protocol_waits(%{wedged: w}) do
     [
       {:credit_acquire, fn -> Credit.acquire(w, 1) end},
       {:entity_enqueue_block, fn -> Entity.enqueue_block(w, "v") end},
@@ -226,7 +226,7 @@ defmodule Flezha.SDK.CallBoundsTest do
     end
   end
 
-  # A refusal is logged once per site by the bounded-call seam; the clause is
+  # A refusal is logged once per site by the call seam; the clause is
   # about the answers, so the lines are captured rather than printed.
   defp capture_answers(fun) do
     parent = self()
