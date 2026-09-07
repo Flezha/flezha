@@ -33,6 +33,13 @@ defmodule FlezhaTest.Case do
   do not use this template at all. Wrapping those in a second cleanup here would
   put the same removal in two places.
 
+  `:env` and `:system_env` are the same row over two environments, and they
+  share one restore. Both take a snapshot and put back the DIFF, which is the
+  half a hand-written teardown keeps getting wrong: an unconditional
+  `delete_env` in an `on_exit` removes a value the run started with, and every
+  module after it reads the default instead. A module that declares the row
+  needs no `on_exit` of its own, wherever in the module it writes.
+
   ## What this table deliberately does NOT own
 
   `start_supervised/1` is not a row. ExUnit already owns a supervised child and
@@ -79,8 +86,17 @@ defmodule FlezhaTest.Case do
       # DIFF against it, so a key the test added is deleted, a key it changed is
       # returned to its old value, and a key it never touched is left alone -
       # including one another fixture's own cleanup has already removed.
-      {:env, fn _opts -> %{__env_before__: Application.get_all_env(:flezha)} end,
-       fn %{__env_before__: before} -> restore_env(before) end}
+      {:env, fn _opts -> %{__env_before__: app_env()} end,
+       fn %{__env_before__: before} ->
+         restore(before, app_env(), &put_app_env/2, &drop_app_env/1)
+       end},
+      # The same contract over the OS environment. Every module that writes one
+      # is already `async: false` because that environment is process-global;
+      # the row does not change that, it owns only the putting back.
+      {:system_env, fn _opts -> %{__system_env_before__: System.get_env()} end,
+       fn %{__system_env_before__: before} ->
+         restore(before, System.get_env(), &System.put_env/2, &System.delete_env/1)
+       end}
     ]
   end
 
@@ -132,21 +148,26 @@ defmodule FlezhaTest.Case do
   defp normalise({name, opts}) when is_atom(name) and is_list(opts), do: {name, opts}
   defp normalise(name) when is_atom(name), do: {name, []}
 
-  defp restore_env(before) do
-    for {key, value} <- Application.get_all_env(:flezha) do
-      case Keyword.fetch(before, key) do
+  # The restore `:env` and `:system_env` share: what is set now and differs from
+  # the snapshot goes back, what the snapshot never held is removed, and what
+  # the test removed is put back.
+  defp restore(before, now, put, delete) do
+    for {key, value} <- now do
+      case Map.fetch(before, key) do
         {:ok, ^value} -> :ok
-        {:ok, original} -> Application.put_env(:flezha, key, original)
-        :error -> Application.delete_env(:flezha, key)
+        {:ok, original} -> put.(key, original)
+        :error -> delete.(key)
       end
     end
 
-    for {key, value} <- before, not Keyword.has_key?(Application.get_all_env(:flezha), key) do
-      Application.put_env(:flezha, key, value)
-    end
+    for {key, value} <- before, not Map.has_key?(now, key), do: put.(key, value)
 
     :ok
   end
+
+  defp app_env(), do: Map.new(Application.get_all_env(:flezha))
+  defp put_app_env(key, value), do: Application.put_env(:flezha, key, value)
+  defp drop_app_env(key), do: Application.delete_env(:flezha, key)
 
   using opts do
     names = Keyword.get(opts, :fixtures, [])

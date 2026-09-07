@@ -129,7 +129,7 @@ the value and the type.
 
 | Variable | Default | Sets / notes |
 |---|---|---|
-| `FLEZHA_STATE_DIR` | `app_data/state` (`:test` derives a root per run) | the state root, read at runtime by `Flezha.State.Paths.state_root/0` when `:state_root` is unset, and resolved to an absolute path there. A relative value still resolves against the directory the controller was started from, which the boot and `flz controller status` both name |
+| `FLEZHA_STATE_DIR` | `app_data/state` (`:test` derives a root per run) | the state root. Like every variable here it fills its key once, at boot, in `config/runtime.exs`; `Flezha.State.Paths.state_root/0` then reads `:state_root` and resolves it to an absolute path. Setting the variable in a live BEAM changes nothing. A relative value still resolves against the directory the controller was started from, which the boot and `flz controller status` both name |
 | `FLEZHA_COMPACT_AFTER_BYTES` | `8388608` | `:default_compact_after_bytes` |
 | `FLEZHA_COMPACT_AFTER_AGE_MS` | `300000` (`0` in test) | `:compact_after_age_ms`; `0` disables the age trigger |
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | `0` | `:input_log_hold_window_ms` — a floor; a declared `correction_window` raises its own hold above it |

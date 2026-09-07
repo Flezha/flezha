@@ -59,18 +59,23 @@ defmodule Flezha.State.TestHelpers do
   The directory is one this call created (`NodeTestHelper.claim_tmp_dir/1`):
   sharing a re-minted one would hand a test a WAL a previous run wrote, and
   `WalWriter.append/4` answers `:duplicate` for a seq it has already persisted.
+
+  The root the claim replaces is put back, not deleted. `config/runtime.exs`
+  sets `:state_root` for every test run; deleting the key drops the rest of the
+  run onto the declared default, which is the checkout's `app_data/state`, and
+  a live operative's WAL then lands in the working tree.
   """
   @spec tmp_app_data_dir() :: binary()
   def tmp_app_data_dir() do
     base = NodeTestHelper.claim_tmp_dir("flezha_state_test")
-    Application.put_env(:flezha, :state_root, base)
+    restore = override_env(:state_root, base)
 
     # The claim is also driven from a bare BEAM with no ExUnit running, where
     # there is no test process to register against and the root is the
     # caller's to remove.
     if Process.whereis(ExUnit.Server) do
       ExUnit.Callbacks.on_exit(fn ->
-        Application.delete_env(:flezha, :state_root)
+        restore.()
         File.rm_rf!(base)
       end)
     end
@@ -247,8 +252,27 @@ defmodule Flezha.State.TestHelpers do
 
   The root comes from `Paths.state_root/0` — the one resolver the writers, the
   bind-time restore and the operative teardown all use. Deriving it here from
-  the application env alone empties a different directory the moment a teardown
-  has deleted `:state_root` while `FLEZHA_STATE_DIR` is still set.
+  the application env alone would empty a different directory the moment a
+  teardown deleted `:state_root`, because the resolver's fall-back is the
+  checkout-relative default. (`FLEZHA_STATE_DIR` does not separate the two
+  reads: nothing consults it after boot.)
+
+  **This empties the live run root**, and for three callers that is the point:
+  `flezha_test.exs`, `flezha_handover_test.exs` and `overwatch_test.exs` reset
+  in a `setup` while driving the boot-time controller and fleet, and declare no
+  root of their own. `Environment.per_run/2` derives that root from the OS
+  process, so it is one run's disposable tree and no other suite shares it.
+  What goes with it: `.instance.lock`, whose holder keeps its record lock on
+  the now-unlinked inode while a claimant in another OS process would create a
+  fresh file at the path and not be refused; `.layout`, read at boot only; and
+  `<state_root>/process_hub`, which is where `per_run/2` nests
+  `:process_hub_registry_root` in `:test`. None of that separates two suites —
+  the per-run derivation does — and this helper never runs in `:prod`.
+
+  Giving those three a root of their own is NOT the fix: `tmp_app_data_dir/0`
+  repoints `:state_root` and nothing else, so the hub registry would stay on
+  the boot-time root while the reset emptied a different one. That is a fleet
+  lifecycle change, not a fixture declaration.
   """
   @spec reset_all_entities() :: :ok
   def reset_all_entities() do

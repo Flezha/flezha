@@ -52,28 +52,25 @@ defmodule Flezha.State.TestHelpersTest do
     assert File.ls!(base) == []
   end
 
-  # The state a test run reaches once a teardown has deleted `:state_root` from
-  # the application env while `FLEZHA_STATE_DIR` is still set. Every writer,
-  # the bind-time restore and the operative teardown resolve
+  # Every writer, the bind-time restore and the operative teardown resolve
   # `Paths.state_root/0`, so a reset deriving a root of its own empties a
   # directory nothing wrote to and the previous test's Entity rehydrates on the
   # next bind. The identity is the one the suite really leaked on.
+  #
+  # The root is claimed through the application env because that is the one the
+  # runtime reads. `FLEZHA_STATE_DIR` fills `:state_root` once, in
+  # `config/runtime.exs` at boot; set here it changes nothing, and deleting the
+  # key beside it put this test's WAL under the checkout's `app_data/state`.
   test "the reset empties the root the writers resolve, not one of its own" do
     root = NodeTestHelper.claim_tmp_dir("flezha_reset_root")
-    # Taken for its restore closure, before the drift below removes the key.
     restore_app = TestHelpers.override_env(:state_root, root)
-    previous_var = System.get_env("FLEZHA_STATE_DIR")
-    Application.delete_env(:flezha, :state_root)
-    System.put_env("FLEZHA_STATE_DIR", root)
 
     on_exit(fn ->
-      if previous_var,
-        do: System.put_env("FLEZHA_STATE_DIR", previous_var),
-        else: System.delete_env("FLEZHA_STATE_DIR")
-
       restore_app.()
       File.rm_rf(root)
     end)
+
+    assert Paths.state_root() == root, "the writers resolve #{Paths.state_root()}, not #{root}"
 
     entity_id = {"operative_2", "store_input_procedure", "_"}
     TestHelpers.write_wal_of_lang(entity_id, 0)

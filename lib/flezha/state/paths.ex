@@ -7,9 +7,12 @@ defmodule Flezha.State.Paths do
   All persistence files live under
   `<state_root>/<namespace>/<operative_class>/<procedure_id>/`, where
   `<state_root>` is the `:flezha, :state_root` application env (set by tests
-  for isolation), else the `FLEZHA_STATE_DIR` OS env (the operator-facing
-  deployment knob), else `app_data/state`. `namespace_dir/1` and `class_dir/1`
-  own the first two levels; nothing outside this module assembles them.
+  for isolation), else `app_data/state`. The operator-facing knob is the
+  `FLEZHA_STATE_DIR` OS env, which fills that key once at boot in
+  `config/runtime.exs`; nothing reads the variable afterwards, so a test that
+  sets it in a live BEAM has moved no writer. `namespace_dir/1` and
+  `class_dir/1` own the first two levels; nothing outside this module assembles
+  them.
 
   `entity_key` is URL-safe-base64-encoded when it contains characters
   that would be unsafe on POSIX filesystems (anything outside `[A-Za-z0-9_.-]`).

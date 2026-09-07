@@ -8,17 +8,13 @@ defmodule Flezha.Config.RuntimeDrillTest do
   enters it. A knob added to the table is covered here with no test edit; a
   knob an operator can set and never observe fails.
   """
-  # async: false: the OS environment is process-global.
-  use ExUnit.Case, async: false
+  # async: false: the OS environment is process-global. The drill sets every
+  # documented variable at once, so `:system_env` is what puts the run's own
+  # environment back around it.
+  use FlezhaTest.Case, fixtures: [:system_env], async: false
 
   alias Flezha.Config.Environment
   alias Flezha.Config.Keys
-
-  setup do
-    previous = System.get_env()
-    on_exit(fn -> restore(previous) end)
-    :ok
-  end
 
   test "every variable reaches the key its row names, in prod and in test" do
     {values, keyed_rows} = environment()
@@ -49,7 +45,6 @@ defmodule Flezha.Config.RuntimeDrillTest do
     assert config[:flezha][:socket_files_path] == Environment.per_run(token).socket_files_path
 
     System.put_env("FLEZHA_STATE_DIR", "/tmp/an-operator-said-so")
-    on_exit(fn -> System.delete_env("FLEZHA_STATE_DIR") end)
     assert read!(:test)[:flezha][:state_root] == "/tmp/an-operator-said-so"
   end
 
@@ -128,12 +123,4 @@ defmodule Flezha.Config.RuntimeDrillTest do
 
   defp path(key) when is_atom(key), do: [key]
   defp path(key) when is_tuple(key), do: Tuple.to_list(key)
-
-  defp restore(previous) do
-    for {name, _} <- System.get_env(),
-        not Map.has_key?(previous, name),
-        do: System.delete_env(name)
-
-    System.put_env(previous)
-  end
 end
