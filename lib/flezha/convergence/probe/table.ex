@@ -84,7 +84,10 @@ defmodule Flezha.Convergence.Probe.Table do
       id: :data_plane_population,
       kind: :by_scope,
       facts: &Readers.data_plane_population/1,
-      events: []
+      events: [],
+      # A channel row carries its runner's control silence, and the judge reads
+      # it against this window when no roster the tick read holds that runner.
+      thresholds: [:control_liveness_window_ms]
     },
     %{
       id: :data_plane,

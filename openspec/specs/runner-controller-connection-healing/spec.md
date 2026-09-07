@@ -701,7 +701,7 @@ component SHALL spell the control socket's filename itself.
 
 ### Requirement: The runner's verdict record SHALL carry the control silence and the data silence as two facts
 
-The convergence loop SHALL publish one verdict record per connected runner whose facts carry `control_silent_ms` — the age of the last inbound control frame, which `Flezha.Runner.ControlChannel` SHALL stamp into the shared liveness counters on every inbound control frame beside the `last_seen` it keeps for its own watchdog — `data_silent_ms`, `heartbeats_advancing?`, `dispatches_advancing?` and the runner's roster membership. The record's state SHALL be `failed` when the roster holds the runner as inactive or not at all, `degraded` with the runner-scoped layer as reason when the data-plane classifier proves it wedged, `unknown` when its facts could not be read, and `healthy` otherwise. The session watchdog, its window and its close SHALL be unchanged: the record reports the two silences side by side and decides nothing about the session, so a session that is alive over a data plane that is dead is readable as one row, and the control-plane watchdog's `[:flezha, :runner, :liveness_timeout]` SHALL reach the observability bus through the detector table's declaration of it.
+The convergence loop SHALL publish one verdict record per connected runner whose facts carry `control_silent_ms` — the age of the last inbound control frame, which `Flezha.Runner.ControlChannel` SHALL stamp into the shared liveness counters on every inbound control frame beside the `last_seen` it keeps for its own watchdog — `data_silent_ms`, `heartbeats_advancing?`, `dispatches_advancing?` and the runner's roster membership. The rosters the loop reads cover the running namespaces only, so a runner whose namespace hub is not running is held by none of them while its session is open; the record's state SHALL therefore be `failed` when no roster the tick read holds the runner AND its control session has been silent for at least the liveness window or was never measured, `unknown` when its facts could not be read or when no roster holds it while its control session is still speaking inside that window, `degraded` with the runner-scoped layer as reason when the data-plane classifier proves it wedged, and `healthy` otherwise. Every runner the liveness sample holds a live channel for SHALL have a record, and its channel records SHALL be judged by the same two facts, so the runner row and its channel rows never disagree. The session watchdog, its window and its close SHALL be unchanged: the record reports the two silences side by side and decides nothing about the session, so a session that is alive over a data plane that is dead is readable as one row, and the control-plane watchdog's `[:flezha, :runner, :liveness_timeout]` SHALL reach the observability bus through the detector table's declaration of it.
 
 #### Scenario: a live session over a dead data plane is one row
 
@@ -714,6 +714,12 @@ The convergence loop SHALL publish one verdict record per connected runner whose
 - **GIVEN** a runner whose control session the watchdog closed after the liveness window
 - **WHEN** the convergence loop ticks
 - **THEN** the runner's record SHALL be `failed`, every operative bound to it SHALL be `failed` with reason `dead_runner`, and the loop's remedy SHALL be the existing rebind
+
+#### Scenario: a live runner whose namespace hub is not running is unknown, not dead
+
+- **GIVEN** a runner whose control frames keep arriving inside the liveness window while its namespace's hub is not running, so no roster the tick read holds it
+- **WHEN** the convergence loop ticks
+- **THEN** the runner's record and every one of its channel records SHALL be `unknown` with reason `{:unobserved, :active_runners}`, and `/healthz` SHALL NOT join `dead_runner` into its reason for that runner
 
 #### Scenario: the watchdog is unchanged and its event reaches a sink
 

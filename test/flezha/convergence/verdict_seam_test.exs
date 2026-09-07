@@ -184,6 +184,25 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert state_of(one("dead", bound_runner: "gone"), MapSet.new(["e1"])) == :failed
     end
 
+    test "a live runner whose namespace hub is not running is unknown, not dead" do
+      records = judged(one("live", bound_runner: "e1"), MapSet.new(["e1"]), sampled("nohub", 5))
+
+      assert records[{:channel, {"nohub", :control}}].state == :unknown
+      assert records[{:runner, "nohub"}].state == :unknown
+      assert records[{:runner, "nohub"}].reason == {:unobserved, :active_runners}
+    end
+
+    test "a runner no roster holds whose control session went silent is still dead" do
+      silent = Table.threshold(:control_liveness_window_ms) + 1
+
+      records =
+        judged(one("live", bound_runner: "e1"), MapSet.new(["e1"]), sampled("gone", silent))
+
+      assert records[{:channel, {"gone", :control}}].state == :failed
+      assert records[{:runner, "gone"}].state == :failed
+      assert records[{:runner, "gone"}].reason == :dead_runner
+    end
+
     test "a parked operative is parked, with its reason and its phase" do
       records =
         judged(
@@ -383,6 +402,15 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   # ---------- fixtures ----------
+
+  # One runner with a live control channel that no observed roster holds, and
+  # how long its own control session has been silent.
+  defp sampled(runner_id, silent_ms) do
+    %{
+      liveness: %{drivers: [], channels: [%{runner_id: runner_id, name: :control}]},
+      runner_facts: %{runner_id => %{control_silent_ms: silent_ms}}
+    }
+  end
 
   defp one(id, observed) do
     %{{"ns", id} => Enum.into(observed, %{bound_runner: nil, suspended?: false, parked?: false})}

@@ -296,6 +296,13 @@ is `phase: parked, state: parked` while a suspended one that also carries a park
 control silence, the data silence, whether heartbeats and dispatches are advancing, and its roster
 membership, side by side, so a live session over a dead data plane is two fields of one row.
 
+The rosters cover the running namespaces only, so a runner whose namespace hub is not running is
+held by none of them while its session is open. A runner no roster the tick read holds is `failed`
+only once its control session has been silent for `control_liveness_window_ms`, the window the
+control channel's own watchdog closes on, or was never measured. Still speaking inside that window
+it is `unknown`, which escalates nothing. Its channel records carry the same two facts and are
+judged by the same rule, so the runner row and its channel rows never disagree.
+
 The states a kind can reach are declared and tested: a plugin and a driver reach `healthy`,
 `degraded` and `unknown`; a channel and a runner add `failed`; an operative reaches all seven. Which
 reader a verdict goes to is its subject KIND: a `driver` record is read by `/healthz` alone and the

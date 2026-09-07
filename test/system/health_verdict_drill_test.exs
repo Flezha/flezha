@@ -284,12 +284,12 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   # `/healthz` is a verdict about the FLEET, and this module shares its node
   # with subjects it did not create — the suite's own boot-time runners among
-  # them, whose channels read `dead_runner` whenever their namespace hub is not
-  # running. So the endpoint's WORD is not a benign row's to assert; the word
-  # is proved against published records in `Flezha.Healthz.ServerTest`. What IS
-  # this row's is that the endpoint names a benign subject as no fault — the
-  # mirror of the degrading clause below, which proves the subject reached the
-  # answer by its own reason.
+  # them, which read `unknown` whenever their namespace hub is not running and
+  # whose data plane the other suites can wedge. So the endpoint's WORD is not a
+  # benign row's to assert; the word is proved against published records in
+  # `Flezha.Healthz.ServerTest`. What IS this row's is that the endpoint names a
+  # benign subject as no fault — the mirror of the degrading clause below, which
+  # proves the subject reached the answer by its own reason.
   defp assert_healthz(ctx, id, state, "healthy", refresh, _reason) do
     refresh.()
     body = healthz_body(ctx)

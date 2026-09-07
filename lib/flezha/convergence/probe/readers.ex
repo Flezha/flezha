@@ -172,8 +172,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   `unknown`, instead of reporting no data plane at all.
   """
   @spec data_plane_population(context()) :: [Fact.t()]
-  def data_plane_population(ctx),
-    do: base_subjects(ctx.signals[:liveness], runner_roster(ctx))
+  def data_plane_population(ctx), do: base_subjects(ctx, ctx.signals[:liveness])
 
   @doc """
   The data-plane classifier's single deepest verdict, resolved to the subject
@@ -189,17 +188,28 @@ defmodule Flezha.Convergence.Probe.Readers do
     end
   end
 
-  defp base_subjects(nil, _roster), do: []
+  defp base_subjects(_ctx, nil), do: []
 
-  defp base_subjects(sample, roster) do
+  defp base_subjects(ctx, sample) do
+    roster = runner_roster(ctx)
+    liveness = ctx.signals[:runner_facts] || %{}
+
     drivers =
       for d <- Map.get(sample, :drivers, []),
           do: fact(%{wedged_layer: nil}, {:driver, d.transport})
 
+    # The runner's control silence rides along with its membership: the judge
+    # weighs the two together, and a channel row is the only place a runner no
+    # roster holds is seen at all.
     channels =
-      for c <- Map.get(sample, :channels, []) do
-        {_ns, membership} = Map.get(roster, c.runner_id, {nil, :absent})
-        fact(%{wedged_layer: nil, roster: membership}, {:channel, {c.runner_id, c.name}})
+      for c <- sample_channels(ctx) do
+        {_ns, membership} = Map.fetch!(roster, c.runner_id)
+        silent_ms = get_in(liveness, [c.runner_id, :control_silent_ms])
+
+        fact(
+          %{wedged_layer: nil, roster: membership, control_silent_ms: silent_ms},
+          {:channel, {c.runner_id, c.name}}
+        )
       end
 
     drivers ++ channels
@@ -278,8 +288,10 @@ defmodule Flezha.Convergence.Probe.Readers do
   end
 
   # Every runner the tick knows about: the live roster of each namespace, plus
-  # every runner a declared operative names as its binding. A binding to a
-  # runner no roster holds is exactly what the judge has to be able to see.
+  # every runner a declared operative names as its binding, plus every runner
+  # the liveness sample holds a live channel for. A binding to a runner no
+  # roster holds is exactly what the judge has to be able to see, and so is a
+  # session the rosters say nothing about at all.
   defp runner_roster(ctx) do
     rosters = Map.get(ctx.reality, :active_runners, %{})
 
@@ -294,16 +306,25 @@ defmodule Flezha.Convergence.Probe.Readers do
     # namespace's roster read itself failed, which is `:unknown`: a read that
     # failed proves nothing, and evicting on it is what mass-migrates a healthy
     # fleet on a transient race.
-    Enum.reduce(Map.get(ctx.reality, :operatives, %{}), active, fn {{ns, _rid}, obs}, acc ->
-      case Map.get(obs || %{}, :bound_runner) do
-        runner_id when is_binary(runner_id) ->
-          Map.put_new(acc, runner_id, {ns, off_roster(rosters, ns)})
+    bound =
+      Enum.reduce(Map.get(ctx.reality, :operatives, %{}), active, fn {{ns, _rid}, obs}, acc ->
+        case Map.get(obs || %{}, :bound_runner) do
+          runner_id when is_binary(runner_id) ->
+            Map.put_new(acc, runner_id, {ns, off_roster(rosters, ns)})
 
-        _ ->
-          acc
-      end
-    end)
+          _ ->
+            acc
+        end
+      end)
+
+    # The rosters cover the running namespaces only, so a runner whose namespace
+    # hub is not running is in none of them and no declared operative names it.
+    # It is `:absent` on the same evidence the binding half has, none, and the
+    # judge is what weighs that against the session's own silence.
+    Enum.reduce(sample_channels(ctx), bound, &Map.put_new(&2, &1.runner_id, {nil, :absent}))
   end
+
+  defp sample_channels(ctx), do: Map.get(ctx.signals[:liveness] || %{}, :channels, [])
 
   defp off_roster(rosters, namespace) do
     if Map.get(rosters, namespace) == :unknown, do: :unknown, else: :absent

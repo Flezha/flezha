@@ -187,7 +187,7 @@ defmodule Flezha.Convergence.Probe.Judge do
 
     cond do
       roster == :unknown -> {:unknown, {:unobserved, :active_runners}}
-      not is_nil(roster) and roster != :active -> {:failed, :dead_runner}
+      not is_nil(roster) and roster != :active -> absent_runner(facts)
       layer = Map.get(facts, :wedged_layer) -> {:degraded, {:wedged, layer}}
       true -> {:healthy, :connected}
     end
@@ -198,6 +198,21 @@ defmodule Flezha.Convergence.Probe.Judge do
       nil -> {:healthy, :connected}
       layer -> {:degraded, {:wedged, layer}}
     end
+  end
+
+  # A runner no roster the tick read holds is dead unless its own control
+  # session is still speaking. The rosters cover the running namespaces only,
+  # so a runner whose namespace hub is not running is in none of them while its
+  # session is open. Silence past `control_liveness_window_ms` is what the
+  # connection's own watchdog already treats as a close, and it is the window
+  # this verdict already cites: one window, one answer.
+  defp absent_runner(facts) do
+    window = Table.threshold(:control_liveness_window_ms)
+    silent = Map.get(facts, :control_silent_ms)
+
+    if is_integer(silent) and is_integer(window) and silent < window,
+      do: {:unknown, {:unobserved, :active_runners}},
+      else: {:failed, :dead_runner}
   end
 
   # A plugin the loop has not probed at all is `unknown`; a prepared one is
