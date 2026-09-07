@@ -129,6 +129,39 @@ defmodule Flezha.Transport.LivenessCountersTest do
     assert by_runner[exec_b].hb_timers_fired == 0
   end
 
+  # The two stamps are written by different channels of the same runner: the
+  # control channel writes `last_control_frame_ms` and the data channels write
+  # `last_send_ms`, so every collapse of a live runner mixes a real monotonic
+  # reading with the 0 of a channel that never wrote that slot. A stamp is the
+  # latest reading among the channels that took one, and 0 is absent rather
+  # than a value, so both halves have to hold at once.
+  test "runner_liveness/3 reads a stamp one channel wrote, and only a stamp nobody wrote is nil" do
+    stamped = "exec_stamped_#{System.unique_integer([:positive])}"
+    silent = "exec_silent_#{System.unique_integer([:positive])}"
+
+    control = LivenessCounters.register_channel(stamped, :control)
+    LivenessCounters.register_channel(stamped, :secondary_1)
+    data = LivenessCounters.register_channel(stamped, :secondary_2)
+
+    LivenessCounters.register_channel(silent, :control)
+    LivenessCounters.register_channel(silent, :secondary_1)
+
+    now = System.monotonic_time(:millisecond)
+    LivenessCounters.set_channel(control, :last_control_frame_ms, now - 50)
+    LivenessCounters.set_channel(data, :last_send_ms, now - 10)
+
+    rows =
+      Enum.filter(LivenessCounters.snapshot_all().channels, &(&1.runner_id in [stamped, silent]))
+
+    liveness = LivenessCounters.runner_liveness(rows, nil, now)
+
+    assert liveness[stamped].control_silent_ms == 50
+    assert liveness[stamped].data_silent_ms == 10
+
+    assert liveness[silent].control_silent_ms == nil
+    assert liveness[silent].data_silent_ms == nil
+  end
+
   defp find_channel(exec, name) do
     LivenessCounters.snapshot_all().channels
     |> Enum.find(fn c -> c.runner_id == exec and c.name == name end)

@@ -25,7 +25,15 @@ defmodule Flezha.Process.Counters do
     * `:set` — a gauge written whole. Summing two readings of one fact
       multiplies it, so the reader takes one.
     * `:instant` — a stamp. Summing two clocks means nothing, so the reader
-      keeps the later one.
+      keeps the later one. A stamp's zero is ABSENT, not earliest: a holder
+      that never wrote the slot still holds 0, and a monotonic reading is
+      negative on the BEAM, so a plain maximum hands the answer to the holder
+      with no reading at all. A reader that folds a stamp over holders where
+      only some write it must skip the zeros.
+      `Flezha.Transport.LivenessCounters.by_runner/1` is the worked example:
+      folding with `max/2` there made both of a runner's health silences read
+      "not measured", because only the control channel writes one stamp and
+      only the data channels write the other.
 
   A row may carry any further fields its owner needs; they ride through
   `t_rows/0` untouched, which is what lets one table declare a slot's storage
@@ -58,6 +66,11 @@ defmodule Flezha.Process.Counters do
 
   A count sums. A gauge and a stamp are ONE fact read from many holders, so a
   reader takes the larger rather than adding readings of the same thing.
+
+  This is the reduction across holders that all carry a reading. It is not the
+  rule for folding a slot only some holders write: a stamp's 0 is absent, so a
+  maximum against a holder that never wrote it answers 0. Skip the zeros there,
+  as `Flezha.Transport.LivenessCounters.by_runner/1` does.
   """
   @spec default_aggregate(kind()) :: :sum | :max
   def default_aggregate(:count), do: :sum

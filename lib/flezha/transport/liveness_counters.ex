@@ -108,10 +108,7 @@ defmodule Flezha.Transport.LivenessCounters do
         # The data half of the same row, read as `data_silent_ms`. It is
         # written on the hot send path and this is the only thing that reads
         # it back: a live control session over a silent data plane is exactly
-        # the pair the session row exists to show. The reader gets 0 rather
-        # than the stamp, because a monotonic reading is negative and the
-        # collapse below takes the maximum against a channel that never wrote
-        # it; that is a defect of its own, filed, and not changed here.
+        # the pair the session row exists to show.
         surface: [{:verdict, :session}]
       ],
       [
@@ -529,9 +526,11 @@ defmodule Flezha.Transport.LivenessCounters do
   A `scope: :runner` slot is one fact about the runner that every channel row
   of that runner repeats, so it keeps its value rather than being added up;
   read per channel it would be multiplied by the size of the runner's stream
-  pool. An `:instant` keeps the latest, because summing two clocks means
-  nothing. Every genuinely per-channel counter sums. An SDK that does not send
-  the self-report never advances a mirrored slot, so it reads 0.
+  pool. An `:instant` keeps the latest stamp among the channels that took one,
+  because summing two clocks means nothing and a channel that never wrote the
+  slot has no reading to offer. Every genuinely per-channel counter sums. An
+  SDK that does not send the self-report never advances a mirrored slot, so it
+  reads 0.
   """
   @spec by_runner([map()]) :: %{term() => map()}
   def by_runner(channels) do
@@ -541,17 +540,33 @@ defmodule Flezha.Transport.LivenessCounters do
     end)
   end
 
-  # The within-runner collapse, one clause per row: a mirrored runner fact and
-  # a stamp are read once however many channels carry them, and everything else
-  # is genuinely per channel and sums. Generated from the rows, so a slot
-  # cannot be collapsed one way here and another way in the classifier.
+  # The within-runner collapse, one clause per row, and the row is what says
+  # which rule applies. A mirrored runner fact is read once however many
+  # channels carry it; a stamp keeps the latest of the readings that exist;
+  # everything else is genuinely per channel and sums. Generated from the rows,
+  # so a slot cannot be collapsed one way here and another way in the
+  # classifier.
   for row <- @channel_rows do
     name = Keyword.fetch!(row, :name)
 
-    if Keyword.fetch!(row, :scope) == :runner or Keyword.fetch!(row, :kind) == :instant do
-      defp collapse(unquote(name), a, b), do: max(a, b)
-    else
-      defp collapse(unquote(name), a, b), do: a + b
+    cond do
+      Keyword.fetch!(row, :kind) == :instant ->
+        defp collapse(unquote(name), a, b), do: latest(a, b)
+
+      Keyword.fetch!(row, :scope) == :runner ->
+        defp collapse(unquote(name), a, b), do: max(a, b)
+
+      true ->
+        defp collapse(unquote(name), a, b), do: a + b
     end
   end
+
+  # A stamp is not a quantity to maximise. Only the control channel writes
+  # `last_control_frame_ms` and only the data channels write `last_send_ms`, so
+  # every collapse mixes a real reading with the 0 of a channel that never
+  # took one, and a monotonic reading is negative on the BEAM. 0 is therefore
+  # absent, which is the reading `silence/2` already takes of it.
+  defp latest(0, b), do: b
+  defp latest(a, 0), do: a
+  defp latest(a, b), do: max(a, b)
 end

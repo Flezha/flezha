@@ -105,6 +105,16 @@ per-runner collapse in `by_runner/1`, `heartbeat_keys/0`, and the metric rows th
 bumps it — there is no exporter list, no mirror key list and no document to edit
 beside it.
 
+The row is also what decides how a runner's channels collapse into one. A
+`scope: :runner` slot is one mirrored fact, so it is read once however many
+channels carry it. An `:instant` is a stamp, and it keeps the latest of the
+readings that exist. A stamp is written by one kind of channel only: the
+control channel writes `last_control_frame_ms` and the data channels write
+`last_send_ms`, so a channel that never wrote the slot holds `0`, and `0` is
+absent rather than a reading. Everything else is genuinely per channel and sums.
+A stamp that no channel ever wrote stays `0`, which is what the reader reports
+as "not measured".
+
 **Runner dispatch self-report** (all three SDKs): every `data_heartbeat` frame on a secondary stream
 carries the key set `LivenessCounters.heartbeat_keys/0` declares — every row with a
 `heartbeat:` — headed by `dispatches` (process-global payloads dispatched through the poll

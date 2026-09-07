@@ -162,20 +162,34 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     assert row.hb_count > 0, "no heartbeat reached the controller"
     assert row.io_in_received > 0, "the channel counted no inbound frame"
 
-    # The two stamps are read on the channel that WRITES them, not on the
-    # collapsed row: a monotonic reading is negative on the BEAM, and the
-    # per-runner collapse takes the maximum against a channel that never wrote
-    # the slot, so the collapsed value is 0. That is a defect of its own; this
-    # test preserves the behaviour rather than changing it, and asserts the stamp
-    # at the only place it is honest.
+    # The two stamps are written by different channels of one runner: the
+    # control channel writes one, the data channels the other, and a monotonic
+    # reading is negative on the BEAM. So each is asserted twice — on the
+    # channel that wrote it, and on the collapsed row a reader actually takes
+    # it from — which tells a collapse that dropped a stamp apart from a stamp
+    # nobody took.
     control = Enum.find(channels, &(&1.runner_id == runner_id and &1.name == :control))
     assert control, "the control channel registered no counters"
     assert control.last_control_frame_ms != 0, "the control stamp was never written"
 
     secondary = Enum.filter(channels, &(&1.runner_id == runner_id and &1.name != :control))
+    sends = secondary |> Enum.map(& &1.last_send_ms) |> Enum.reject(&(&1 == 0))
 
-    assert Enum.any?(secondary, &(&1.last_send_ms != 0)),
-           "no data channel stamped its last send"
+    assert sends != [], "no data channel stamped its last send"
+
+    assert row.last_control_frame_ms == control.last_control_frame_ms,
+           "the collapse lost the control stamp"
+
+    assert row.last_send_ms == Enum.max(sends), "the collapse lost the data stamp"
+
+    # And the reader that exists for them: a live runner reports a real silence
+    # on both halves of the session row, never "not measured".
+    liveness =
+      LivenessCounters.runner_liveness(channels, nil, System.monotonic_time(:millisecond))
+
+    assert %{control_silent_ms: control_ms, data_silent_ms: data_ms} = liveness[runner_id]
+    assert is_integer(control_ms), "control_silent_ms read as not measured"
+    assert is_integer(data_ms), "data_silent_ms read as not measured"
 
     # A per-runner fact read once per runner, not once per channel: the defect
     # `count-a-runner-self-report-once` closed, asserted through a real fleet.
