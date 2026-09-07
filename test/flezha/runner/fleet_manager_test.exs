@@ -609,7 +609,12 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
   two sides are provably on the same monotonic clock.
   """
   # async: false: the live controller and its fleet; node-global tables.
-  use ExUnit.Case, async: false
+  # `:env` owns the `:runner_keepalive` two of these tests set. The
+  # FleetManager's own state is not the table's business, so it stays here — and
+  # still goes back FIRST, because `on_exit` unwinds in reverse registration
+  # order and this setup runs after the fixture's. That is the order the one
+  # hand-rolled callback had.
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Runner.FleetManager
 
@@ -618,16 +623,7 @@ defmodule FlezhaTest.Runner.FleetManagerKeepaliveClockTest do
 
   setup do
     original = :sys.get_state(FleetManager)
-    keepalive = Application.get_env(:flezha, :runner_keepalive)
-
-    on_exit(fn ->
-      :sys.replace_state(FleetManager, fn _ -> original end)
-
-      case keepalive do
-        nil -> Application.delete_env(:flezha, :runner_keepalive)
-        value -> Application.put_env(:flezha, :runner_keepalive, value)
-      end
-    end)
+    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> original end) end)
 
     :ok
   end
