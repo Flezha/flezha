@@ -87,15 +87,7 @@ code = naming_gate.walk(
     noun="module(s)",
 )
 
-stale = sorted(baseline - hits)
-if stale:
-    print(f"\n{BASELINE} names modules that no longer build a fixture by hand:\n",
-          file=sys.stderr)
-    for rel in stale:
-        print(f"  {rel}", file=sys.stderr)
-    print(f"\n{len(stale)} stale entr(y|ies). The list may only shrink: remove them.",
-          file=sys.stderr)
-    code = naming_gate.FINDING
-
-sys.exit(code)
+# Both halves report: a run with a new module AND a stale entry says so once.
+stale = naming_gate.stale_baseline(BASELINE, baseline, hits, "build a fixture by hand")
+sys.exit(code or stale)
 PY

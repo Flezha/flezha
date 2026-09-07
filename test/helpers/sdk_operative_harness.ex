@@ -17,7 +17,16 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
   alias Flezha.State.Wire
   alias Flezha.Transport.Local
 
-  @doc "Start `op_module` as operative `op-1` (override with `:operative_id`, `:range`, `:runner`, `:credit`)."
+  @doc """
+  Start `op_module` as operative `op-1` (override with `:operative_id`,
+  `:range`, `:runner`, `:credit`, `:hold_cap`).
+
+  `:hold_cap` bounds the reconnect holds of this Operative and of every Entity
+  it starts. A test that drives shedding states it here rather than writing
+  `FLEZHA_RECONNECT_RING_CAPACITY`: that variable is process-wide and read at
+  every construction, so setting it decides the cap for whatever else in the
+  run happens to build a hold in the window.
+  """
   def start_operative(op_module, opts \\ []) do
     {:ok, topo} = Topology.build(op_module)
     {sdk_sec, ctrl_sec} = own_secondary()
@@ -32,7 +41,8 @@ defmodule FlezhaTest.Helper.SdkOperativeHarness do
         counters: counters,
         runner: Keyword.get(opts, :runner, self()),
         secondaries: [sdk_sec],
-        credit: Keyword.get(opts, :credit)
+        credit: Keyword.get(opts, :credit),
+        hold_cap: Keyword.get(opts, :hold_cap)
       )
 
     %{op: pid, counters: counters, ctrl_secondary: ctrl_sec, sdk_secondary: sdk_sec}

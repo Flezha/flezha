@@ -140,6 +140,25 @@ def disk_files(roots):
     return found
 
 
+def stale_baseline(path, baseline, hits, what):
+    """The other half of `load_baseline`: an entry the tree no longer holds.
+
+    Reported by every gate that reads a baseline: the list may only shrink,
+    because one nobody prunes rots into an exemption. `hits` is everything the
+    walk flagged, baselined or not, and `what` completes "entries that no
+    longer ...". Returns an exit code.
+    """
+    stale = sorted(baseline - hits)
+    if not stale:
+        return 0
+    print(f"\n{path} names entries that no longer {what}:\n", file=sys.stderr)
+    for entry in stale:
+        print(f"  {entry}", file=sys.stderr)
+    print(f"\n{len(stale)} stale entr(y|ies). The list may only shrink: remove them.",
+          file=sys.stderr)
+    return FINDING
+
+
 def pattern_check(patterns, allowlist=()):
     """A `check` that flags any line still matching `patterns` once the
     allowlist rules in scope for the file have been erased from it. The
@@ -267,6 +286,8 @@ GATES = (
      "argv": ["scripts/check-docs-citations.sh"]},
     {"id": "test-fixture", "group": "naming",
      "argv": ["scripts/check-test-fixture.sh"]},
+    {"id": "live-env-in-tests", "group": "naming",
+     "argv": ["scripts/check-live-env-in-tests.sh"]},
     {"id": "ci-toolchain", "group": "naming",
      "argv": ["scripts/check-ci-toolchain.sh"]},
     {"id": "build-artifacts-tracked", "group": "naming",

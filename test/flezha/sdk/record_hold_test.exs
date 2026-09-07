@@ -6,8 +6,12 @@ defmodule Flezha.SDK.RecordHoldTest do
   in the order it was written, still ahead of the outputs of its own dispatch —
   and the credit window is debited by the write rather than by the hold.
   """
-  # async: false: the cap tests write `FLEZHA_RECONNECT_RING_CAPACITY`, which is
-  # VM-global — an async writer of it races every other holder's reading of it.
+  # async: false: the reason WAS `FLEZHA_RECONNECT_RING_CAPACITY`, and the cap
+  # tests now state their bound instead of writing it, so that reason is gone
+  # and no other has been established. The module keeps its own Operatives,
+  # Entities, counters and streams, and its Mimic stub is private to the test
+  # process, so nothing here is known to be shared. Flipping it is a deliberate
+  # change to the async budget and is nobody's side effect.
   use ExUnit.Case, async: false
   use Mimic
 
@@ -81,10 +85,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   end
 
   test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
-    System.put_env("FLEZHA_RECONNECT_RING_CAPACITY", "2")
-    on_exit(fn -> System.delete_env("FLEZHA_RECONNECT_RING_CAPACITY") end)
-
-    %{op: op, counters: counters} = start_operative(CounterOp)
+    %{op: op, counters: counters} = start_operative(CounterOp, hold_cap: 2)
     send(op, {:secondaries, []})
     for n <- 1..5, do: feed(op, n)
     settled(op, "counter", 5)
@@ -225,11 +226,8 @@ defmodule Flezha.SDK.RecordHoldTest do
     end
 
     test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
-      System.put_env("FLEZHA_RECONNECT_RING_CAPACITY", "2")
-      on_exit(fn -> System.delete_env("FLEZHA_RECONNECT_RING_CAPACITY") end)
-
       counters = Counters.new()
-      s = runner_state([], counters)
+      s = runner_state([], counters, 2)
       s = Enum.reduce(1..5, s, &cast(&2, {:record, @saga_marker, <<&1>>}))
 
       bind(s)
@@ -244,7 +242,7 @@ defmodule Flezha.SDK.RecordHoldTest do
   # The runner's own state, built by hand as `commands_test.exs` builds it: no
   # controller, and a control handle whose peer nothing owns, so only the data
   # frames the replay writes reach this process.
-  defp runner_state(secondaries, counters \\ Counters.new()) do
+  defp runner_state(secondaries, counters \\ Counters.new(), cap \\ nil) do
     {control_handle, _peer} = Local.Stream.open()
 
     %ServerState{
@@ -254,8 +252,8 @@ defmodule Flezha.SDK.RecordHoldTest do
       registry: :ets.new(:runner_hold_registry, [:public, :set]),
       control_handle: control_handle,
       secondaries: secondaries,
-      held: Hold.new(counters: counters),
-      control: Hold.new(counters: counters)
+      held: Hold.new(cap: cap, counters: counters),
+      control: Hold.new(cap: cap, counters: counters)
     }
   end
 

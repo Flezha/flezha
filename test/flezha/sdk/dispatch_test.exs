@@ -226,10 +226,7 @@ defmodule Flezha.SDK.DispatchTest do
   end
 
   test "the hold is bounded, and what it sheds is counted where every drop-oldest is" do
-    System.put_env("FLEZHA_RECONNECT_RING_CAPACITY", "2")
-    on_exit(fn -> System.delete_env("FLEZHA_RECONNECT_RING_CAPACITY") end)
-
-    %{op: op, counters: counters, sdk_secondary: sdk} = start_operative(EchoOp)
+    %{op: op, counters: counters, sdk_secondary: sdk} = start_operative(EchoOp, hold_cap: 2)
     :ok = close_secondary(sdk)
     for n <- 1..5, do: Inbox.input(op, "in", "v#{n}", %{})
 
