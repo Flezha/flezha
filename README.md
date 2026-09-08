@@ -210,15 +210,27 @@ _build/dev/rel/flezha/bin/flz controller stop
 
 ### Starting an operative.
 ```bash
+_build/dev/rel/flezha/bin/flz operative start my_operative do_nothing
+```
+
+`--init_values` seeds Procedure state at start. Its top level is a map of
+**Procedure name** to that Procedure's starting state, so one operative seeds
+several Procedures from one document:
+
+```bash
 _build/dev/rel/flezha/bin/flz operative start my_operative compare_filter --init_values='{
-  "comparable": "hello world", 
-  "inverted": false
+  "compare_filter_procedure": {"comparable": "hello world", "inverted": false}
 }'
 ```
 
-```bash
-_build/dev/rel/flezha/bin/flz operative start my_operative do_nothing
-```
+Name only the Procedures you want to seed; one you leave out starts from the
+state its class builds. A Procedure with declared Entity keys takes one state
+per key instead: `{"<procedure>": {"<entity_key>": <state>}}`. A name the class
+does not carry is ignored with a line on the runner's stderr and the start
+still succeeds, so check the spelling. The full rules, including what a
+workflow operative does with the same flag, are in
+[`docs/sdk/protocol_spec.md`](docs/sdk/protocol_spec.md) "Operative state JSON
+shape".
 
 ### Stop an operative.
 ```bash

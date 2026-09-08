@@ -527,7 +527,7 @@ per-Entity scratch buffer, `S::State` is the domain state, `init_state` runs
 once per Entity and later runs mutate in place through the `StateHandle`.
 State migration (`MigrationSerialization` / `EntityState`) walks the Entities
 per Procedure and produces the JSON shape in
-[`protocol_spec.md`](protocol_spec.md) "State migration JSON shape".
+[`protocol_spec.md`](protocol_spec.md) "Operative state JSON shape".
 
 Persistence rides the `Change` trait: `state.apply(change)` is a `Vec::push`
 on the hot path; serialization, coalescing and the wire send happen on one
@@ -572,7 +572,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | `EntitySlot`, `EntityCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/entity.rs`, `mailbox.rs`, `dynamic.rs` |
 | Wire dispatch (`OperativeDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
-| State migration JSON shape | `flz_core/src/command/entity_state.rs` |
+| Operative state JSON shape, `apply_init_values` | `flz_core/src/command/entity_state.rs` |
 | `WorkflowOperative`, `WorkflowCtx`; `ProcedureTestHarness` | `sdk/rust/src/workflow/mod.rs`, `flz_core/src/workflow/mod.rs`; `sdk/rust/src/testing/harness.rs` |
 
 ## See also

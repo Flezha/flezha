@@ -33,7 +33,8 @@ pub(crate) const TABLE: Command = Command {
                 PLUGINS,
                 PARTITIONS,
                 SNAPSHOT_INTERVAL,
-            ]),
+            ])
+            .screen(help::OPERATIVE_START),
         Verb::new("scale", handle_scale)
             .taking(&[
                 Positional::required("<group>"),

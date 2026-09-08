@@ -36,7 +36,7 @@ operative = %Builder{
       Plugin.new(
         id: "defaults",
         provider: MyApp.DefaultOverlay,
-        opts: %{defaults: %{"retries" => 0}},
+        opts: %{defaults: %{"order_aggregator_procedure" => %{"retries" => 0}}},
         subscriptions: [{:on_operative_init, [on_error: "empty"]}]
       )
     ]
@@ -53,7 +53,7 @@ flz operative start orders-42 order_aggregator --plugins '[
   {"id": "db-seed", "provider": "my_db_init_state", "opts": {"table": "orders"},
    "subscriptions": [["on_operative_init", {"timeout_ms": 2000}]]},
   {"id": "defaults", "provider": "my_default_overlay",
-   "opts": {"defaults": {"retries": 0}},
+   "opts": {"defaults": {"order_aggregator_procedure": {"retries": 0}}},
    "subscriptions": [["on_operative_init", {"on_error": "empty"}]]}
 ]'
 ```
@@ -94,9 +94,22 @@ defmodule MyApp.DbInitState do
     end
   end
 
-  defp row_to_map(row), do: %{"inputs" => row.inputs, "cursor" => row.cursor}
+  # The accumulator IS `init_values`, so its top level is Procedure names.
+  defp row_to_map(row) do
+    %{"order_aggregator_procedure" => %{"inputs" => row.inputs, "cursor" => row.cursor}}
+  end
 end
 ```
+
+The map a provider returns is the operative's `init_values`, so it takes the
+procedure-keyed shape every state blob takes: `%{procedure => state}` for a
+single-Entity Procedure and `%{procedure => %{entity_key => state}}` for a
+statically keyed one. A top-level key that is not a Procedure the class carries
+is ignored by the runner and the operative starts with default state, so a
+provider that returns a flat map of domain fields seeds nothing. The shape and
+what the runner does with each entry are in
+[`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) "Operative state JSON
+shape".
 
 `%Flezha.Plugin.Extension.Ctx.Init{}` carries exactly:
 
@@ -120,6 +133,12 @@ The natural pattern is "broad fetch first, specific overlay second"; a later
 provider that wants to replace a key returns a map containing it. The final
 `accumulated` map becomes the operative's `init_values`, which the SDK
 receives in `AddOperative`.
+
+The merge is one level deep and its keys are Procedure names, so two providers
+seeding the same Procedure do not combine: the later one's state replaces the
+earlier one's whole. Providers that each own a different Procedure compose
+cleanly; one that wants to overlay a field on another's state has to read the
+accumulator and rebuild that Procedure's entry itself.
 
 ## Failure semantics
 

@@ -265,10 +265,11 @@ graph. Capacity declaration
 and counters: [`rust_operative_architecture.md`](rust_operative_architecture.md)
 "Backpressure and bounded mailboxes".
 
-### State migration JSON shape
+### Operative state JSON shape
 
-`MigrationSerialization` / `MigrationDeserialization` / `EntityState` carry a
-JSON blob whose shape is:
+`MigrationSerialization` / `MigrationDeserialization` / `EntityState` and a
+stream operative's `AddOperative.init_values` all carry a JSON blob whose shape
+is:
 
 - Single-mode procedures (no Entity keys): `{"<procedure_name>": <state>}`
 - Static-mode procedures (`entity_keys()` non-empty):
@@ -279,6 +280,29 @@ JSON blob whose shape is:
 
 Both SDKs sort object keys, so an equivalent state serializes byte-identically
 on either runtime.
+
+#### Applying the shape
+
+A document need not cover the operative. Every top-level entry is applied to
+the procedure it names and every inner entry to the Entity its key names; a
+procedure the document omits keeps the state its class builds. Within one
+entry there is no partial application: the value is handed to the procedure's
+state deserializer whole, so it must be a complete state unless the class
+declares per-field defaults.
+
+An entry that names nothing live is **ignored, not refused**. The runner writes
+one line to its stderr (`ignoring unknown procedure`, `ignoring unknown
+entity_key`) and the command still succeeds; a value that fails to deserialize
+is ignored the same way. Only the document as a whole can fail `AddOperative`:
+JSON that does not parse, and JSON that parses to anything but an object.
+
+A dynamic-mode procedure cannot be seeded by `init_values`: its Entities are
+minted on first sight of a key and none exists at the bind, so the entry
+reaches nothing. Migration is unaffected, because a dynamic procedure's
+Entities are restored from their own records rather than through this path.
+
+A workflow operative does not use this shape at all. Its `init_values` is
+passed to the run whole as `args` and is never applied as state.
 
 ### Frame buffering
 
@@ -542,7 +566,7 @@ message AddOperative {
 
 | Field | Value |
 |-------|-------|
-| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state. `"workflow"`: a workflow instance whose run is scheduled once on its driver thread with `init_values` as its argument; a durable driver holds its first procedure until `resume_entity_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
+| Behaviour | Create an instance of `factory_id` under `operative_id`. `"stream"`: a stream operative whose non-empty `init_values` JSON is applied as initial state in the procedure-keyed shape of "Operative state JSON shape" above. `"workflow"`: a workflow instance whose run is scheduled once on its driver thread with `init_values` as its argument; a durable driver holds its first procedure until `resume_entity_count` restores have landed, and its park-idle clock starts only once `inbox_tail_count` inbox items have arrived |
 | Idempotency | A duplicate `operative_id` (a reconnect re-issue) is answered `success` without re-registering |
 | Reply | `raw_data` = `AddOperativeResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; unknown `kind`; `PartitionsWithoutKeyedProcedure: ...` |

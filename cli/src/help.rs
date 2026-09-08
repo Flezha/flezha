@@ -283,6 +283,37 @@ COMMANDS:
     disable    Disable a source (transitions to :disabled — Bus drops emits)
     help       Show this help message"#;
 
+pub(crate) const OPERATIVE_START: Help = r#"flz operative start - Start an operative
+
+USAGE:
+    flz operative start <operative_id> <factory_id> [OPTIONS]
+
+OPTIONS:
+    --namespace <ns>            Namespace to start in (default: default)
+    --kind <stream|workflow>    Operative kind (default: stream)
+    --init_values <json>        Seed state at start; -iv is the short form
+    --plugins <json-array>      Plugin specs attached at start
+    --partitions <N>            Start N partition members as one group
+    --snapshot-interval <N>     Changes between snapshots; -si is the short form
+
+INIT VALUES:
+    A stream operative's document is keyed by Procedure name, one entry per
+    Procedure to seed. Name only what you want seeded; a Procedure you leave
+    out keeps the state its class builds.
+
+        -iv '{"compare_filter_procedure": {"comparable": "hi"}}'
+        -iv '{"ohlc": {"1m": {"high": 0}}}'      one state per declared key
+
+    A name the class does not carry is ignored, not refused: the runner logs
+    it and the start still succeeds, so check the spelling. A workflow
+    operative passes the whole document to its run as args instead of
+    applying it as state.
+
+EXAMPLES:
+    flz operative start my_operative do_nothing
+    flz operative start ohlc candles --partitions 3
+    flz operative start orders order_aggregator --namespace prod"#;
+
 pub(crate) const OPERATIVE: Help = r#"flz operative - Operative management commands
 
 USAGE:
