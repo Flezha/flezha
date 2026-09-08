@@ -79,6 +79,43 @@ pass.** A scan whose pattern matches nothing, a walk whose root does not exist,
 a gate whose file list is empty: each reports success, and each is measuring
 nothing at all. Zero sites is a result to report, not a green run.
 
+## How a test waits
+
+A test waits on a condition, never on the clock. `Process.sleep` in front of an
+assertion is not a settle, it is a guess about how fast the machine is, and it
+stops being true the day the machine is busy.
+
+**Poll for the state the assertion needs, with a deadline and a message naming
+what never happened.** There is one polling loop in the suite for this,
+`FlezhaTest.Helper.NodeTestHelper.wait_until/3`. Reuse it rather than writing a
+second one. A sleep inside that loop is the poll interval and is correct; a
+sleep in a test body is the smell.
+
+**A fixed delay in front of a negative assertion can pass without testing
+anything.** "The watermark did not advance in 200 ms" is also satisfied by a
+system that had not started yet, so the test cannot tell the guarantee it claims
+to prove from a slow boot. Either establish the precondition with a positive
+signal first, or sample the claim across the whole window and stop on the event
+that ends it.
+
+**When a claim rests on two reads being ordered, read the value that can change
+first.** Reading the watermark before the store, then treating a still-empty
+store as proof that the sample predates the park, is race-free in the direction
+that matters. The reverse order leaves a window, however small.
+
+**`Process.sleep(:infinity)` in a fixture is not a wait.** A process that must
+never answer is how the wedge and dead-handle paths are tested, and it is the
+subject rather than a delay.
+
+Benchmarks are the one exception. A fixed settle window before a measurement is
+correct in `lib/mix/tasks/bench/`, because a condition-bound wait would measure
+a slightly different system on every run and the numbers would stop being
+comparable.
+
+No gate counts sleeps, and a count would not help: every sleep left in the suite
+is a poll interval or a fixture, and a counter cannot tell either of those from
+a clock-bound wait. This rule is held in review.
+
 ## Less code, not more
 
 The goal is a smaller system. Prefer, in this order: use what exists, extend or

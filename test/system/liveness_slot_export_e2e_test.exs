@@ -21,6 +21,8 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
 
   use FlezhaTest.SystemCase, capability: :liveness
 
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
   import FlezhaTest.Helper.TierE2EHarness,
     only: [boot_runner: 3, produces?: 5, unique_id_path: 1]
 
@@ -145,11 +147,27 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     assert produces?(operative_id, namespace, "one", "ok:one", 60_000),
            "the operative never produced, so nothing counted"
 
-    # Several heartbeat intervals, so the mirrored slots carry a real
-    # self-report rather than the zero a runner starts at.
-    Process.sleep(@heartbeat_ms * 5)
+    # The slots hold the zero a runner starts at until its first heartbeat
+    # lands, so wait for a real self-report rather than for a number of
+    # heartbeat intervals to pass: on a loaded box five intervals of wall clock
+    # do not buy five heartbeats.
+    channels =
+      wait_until(
+        fn ->
+          channels = LivenessCounters.snapshot_all().channels
 
-    channels = LivenessCounters.snapshot_all().channels
+          case channels |> LivenessCounters.by_runner() |> Map.get(runner_id) do
+            %{hb_count: count, hb_dispatches: dispatches} when count > 0 and dispatches >= 1 ->
+              channels
+
+            _ ->
+              nil
+          end
+        end,
+        30_000
+      )
+
+    assert channels, "no heartbeat self-report reached the runner's slots"
     row = channels |> LivenessCounters.by_runner() |> Map.fetch!(runner_id)
 
     # The layout is what the channel registered: every declared slot is

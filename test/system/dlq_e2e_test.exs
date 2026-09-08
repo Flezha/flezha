@@ -22,7 +22,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   use FlezhaTest.SystemCase, capability: :retry_ladder
 
   import ExUnit.CaptureIO
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
   import FlezhaTest.Helper.TierE2EHarness
 
   alias Flezha.Dlq.Store
@@ -159,12 +159,28 @@ defmodule FlezhaTest.System.DlqE2ETest do
     send_inputs(operative_id, namespace, ["kp:poison", "k2:b"])
 
     # Frozen: while the poison payload retries, nothing past offset 0 can
-    # durably consume. A window, not a settle: "the watermark did not move" has
-    # no positive signal to wait on.
-    Process.sleep(200)
+    # durably consume. Sampled across the whole retry window rather than once
+    # after a fixed delay, which a sample taken before the poison was ever
+    # dispatched would satisfy without proving anything. The watermark is read
+    # BEFORE the store, so a store still empty at the later read proves the
+    # sample predates the park.
+    assert wait_until(
+             fn ->
+               watermark = InputLog.watermark(operative_id)
 
-    assert InputLog.watermark(operative_id) == 0,
-           "min-watermark advanced past an unparked poison payload"
+               if Store.list(operative_id) == [] do
+                 assert watermark == 0,
+                        "min-watermark advanced to #{inspect(watermark)} past an unparked poison payload"
+
+                 false
+               else
+                 true
+               end
+             end,
+             30_000,
+             10
+           ),
+           "the poison payload never parked"
 
     # The park advances the entity past the poison payload: k2 processes
     # and the watermark resumes to its offset — input-log retention (and
