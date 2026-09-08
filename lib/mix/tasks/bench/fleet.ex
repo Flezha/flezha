@@ -13,6 +13,8 @@ defmodule Mix.Tasks.Bench.Fleet do
   `bench` profile) — the same line the e2e harness renders for its `test` profile.
   """
 
+  alias Flezha.AuthZ
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Config
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
@@ -20,6 +22,14 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Flezha.Service.PortPilot
   alias Mix.Tasks.Bench.ElixirFactories
   alias Mix.Tasks.Bench.Report
+
+  # Wide enough that no bench dimension meets a quota. Only the counts a bench can
+  # drive are raised; the byte and rate ceilings keep their defaults.
+  @bench_quotas %{
+    max_operatives: 1_000_000,
+    max_entities_per_operative: 1_000_000,
+    max_runners: 1_024
+  }
 
   @doc """
   Resolve a `--runtime` value against the SDK test-app manifests.
@@ -77,6 +87,8 @@ defmodule Mix.Tasks.Bench.Fleet do
     runtime = runtime()
     transport = Config.get(:transport)
 
+    ensure_namespace(namespace)
+
     if runtime in [:rust, :java] and transport == :native do
       raise "runtime=#{runtime} cannot run the :native transport (that mode is the " <>
               "in-process Elixir SDK). Use --runtime elixir, or -t uds|quic."
@@ -94,6 +106,33 @@ defmodule Mix.Tasks.Bench.Fleet do
         runner_ids = start_runners(namespace, count, extra_env)
         IO.puts("Started #{length(runner_ids)} compute engines for performance testing")
         Process.put(:bench_runners, runner_ids)
+    end
+  end
+
+  # The bench runs under `MIX_ENV=prod`, where `authz_enabled` defaults to true,
+  # so on a box whose `flz auth bootstrap` has been claimed every runner connect
+  # is refused `:namespace_unknown` until the catalog carries this namespace. The
+  # harness establishes its own precondition rather than opting out of
+  # enforcement: a bench that turned authz off would measure a configuration that
+  # ships nowhere, and would never exercise the admission path at all.
+  #
+  # Gated on the same predicate `Quotas.check_allocation/3` reads, so a run that
+  # will not be enforced writes no catalog row.
+  #
+  # Quotas are wide enough that the bench never measures a ceiling: the defaults
+  # cap a namespace at 100 operatives, which `-n 100` sits exactly on.
+  defp ensure_namespace(namespace) do
+    if AuthZ.enabled?() do
+      case NamespaceStore.create(namespace, quotas: @bench_quotas, created_by_principal: "bench") do
+        {:ok, _entry} ->
+          IO.puts("Registered namespace #{namespace} in the authz catalog")
+
+        {:error, :already_exists} ->
+          :ok
+
+        {:error, reason} ->
+          Mix.raise("could not register bench namespace #{namespace}: #{inspect(reason)}")
+      end
     end
   end
 
