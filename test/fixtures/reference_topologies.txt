@@ -6,7 +6,7 @@
 # Provenance: TRANSCRIBED BY HAND from the Rust reference and checked in. It is
 # not derived at test time and no runtime computes it — a golden a runtime
 # derives is not a golden, it is a second copy of the thing under test. The two
-# sources, read at `55b8a748`:
+# sources, read at `c6f5dbfa`:
 #
 #   hybrid_channel      test/apps/rust_runner/src/channel.rs, HybridChannelOperative
 #   commit_block_chain  test/apps/rust_runner/src/workflow.rs, TierCommitBlockWorkflow

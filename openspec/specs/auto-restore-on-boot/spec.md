@@ -211,7 +211,7 @@ The CLI SHALL provide:
 
 `flz boot await` SHALL NOT report success on the grounds that the set of things to wait for is empty. A controller that has not yet created its namespace hubs SHALL be reported as not ready.
 
-`flz boot` SHALL expose no import path for the `.flz` ETF format written by the deleted `flz cluster snapshot`. Nothing has written that format since `9235bcde` (2026-05-09), which deleted the producing verb and introduced the durable registry in the same commit, so no reachable node holds a file it could read.
+`flz boot` SHALL expose no import path for the `.flz` ETF format written by the deleted `flz cluster snapshot`. Nothing has written that format since `736ad7a4` (2026-05-09), which deleted the producing verb and introduced the durable registry in the same commit, so no reachable node holds a file it could read.
 
 The option reader SHALL be unchanged: `--timeout`, `--timeout=`, `-t` and `-t=` are all read, and a flag written with no value is refused by name rather than silently taking the default.
 

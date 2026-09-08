@@ -10,7 +10,7 @@
 # that keeps two independent implementations of one on-disk format honest.
 #
 # Provenance: TRANSCRIBED BY HAND from one run of the Elixir encoder at
-# `7f23ed68` and checked in. A golden a runtime derives at test time is not a
+# `66ab2f55` and checked in. A golden a runtime derives at test time is not a
 # golden, it is a second copy of the thing under test.
 #
 # The record frame is `[seq: u64 BE][len: u32 BE][header: 16 B][body][crc32: u32
