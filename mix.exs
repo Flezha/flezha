@@ -148,7 +148,42 @@ defmodule Flezha.MixProject do
 
     File.cp_r!("LICENSES", Path.join(release.path, "LICENSES"))
 
-    release
+    announce_binaries(release)
+  end
+
+  # Mix's own closing message names `bin/<release name>`, which the rename
+  # above has just moved to `bin/flzvm`, so it hands the operator a path that
+  # does not exist. `:quiet` suppresses it (announcing is all Mix has left to
+  # do once the steps return) and this prints the two real binaries instead.
+  defp announce_binaries(release) do
+    path = Path.relative_to_cwd(release.path)
+
+    if !release.options[:quiet] do
+      Mix.shell().info("""
+
+      Release created at #{path}
+
+          # To start the controller
+          #{path}/bin/flzvm start
+
+          # The operator CLI
+          #{path}/bin/flz --help
+
+      Once the controller is running:
+
+          # To connect to it remotely
+          #{path}/bin/flzvm remote
+
+          # To stop it gracefully (you may also send SIGINT/SIGTERM)
+          #{path}/bin/flzvm stop
+
+      To list all controller commands:
+
+          #{path}/bin/flzvm
+      """)
+    end
+
+    %{release | options: Keyword.put(release.options, :quiet, true)}
   end
 
   # Explicit test dirs (not a recursive "test" glob) so a nested mix app under

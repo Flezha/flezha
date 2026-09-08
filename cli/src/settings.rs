@@ -190,8 +190,11 @@ const SHORT_KEYS: &[(&str, &str)] = &[("n", "namespace"), ("o", "output")];
 /// The plain-word keys of a plugin enable's settings document: written like an
 /// option and handed on unread by the walk, because they belong to the
 /// subscription and to the provider rather than to a row. `--X<key>=<value>`
-/// carries the rest. Declared here, where the parser that reads them lives, so
-/// that the screens may teach them without a row claiming the word.
+/// carries the rest. Declared here, where the parser that hands them on lives,
+/// so that the screens may teach them without a row claiming the word. Nothing
+/// in the walk consults it: the readers are the option-row gate, which exempts
+/// these words, and the test below, which proves each still reaches a document.
+#[cfg(test)]
 pub(crate) const SETTING_KEYS: &[&str] = &["--extension", "--trigger"];
 
 /// The plain `--key value` options of a plugin enable, with `namespace`
