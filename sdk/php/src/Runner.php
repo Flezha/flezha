@@ -294,7 +294,7 @@ final class Runner
         $dispatcher = $this->dispatcher ?? throw new FlezhaException('the runner has no dispatcher');
 
         while (!$state->stopping()) {
-                $this->observeIdle();
+            $this->observeIdle();
 
             $bytes = null;
             $status = $core->poll(self::POLL_TIMEOUT_MS, $bytes);
