@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
 require "minitest/autorun"
+# `Object#stub` lives in minitest's `mock`. `minitest/autorun` does not load it
+# in every 5.x, and minitest 6 ships no `mock.rb` at all — mock is extracted to
+# its own gem — so an unpinned resolution fails here, once, by name, instead of
+# as a missing method on whatever a suite happened to stub first.
+require "minitest/mock"
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 require "flezha"
@@ -23,6 +28,14 @@ module Flezha
       end
       @native
     end
+
+    # A block driven as if standard input were not a terminal.
+    #
+    # `Runner#observe_shutdown` asks `$stdin.tty?`, so a suite run by hand and
+    # the same suite under CI, a pipe or a log redirect take different paths
+    # through `boot`. Pinning the answer means both drive the one the harness
+    # uses, where the core is asked to watch for end of file.
+    def self.without_a_terminal(&) = $stdin.stub(:tty?, false, &)
 
     # One declaration's verdict, in a context of its own.
     #
@@ -162,6 +175,27 @@ module Flezha
           @starved.broadcast
         end
         @pending.close
+      end
+
+      # Every remaining call a host can make on a core, answered by recording
+      # it and nothing else. `Core` generates its delegations from the same
+      # list, so an entry point the veneer gains reaches this double as well,
+      # and a host that calls one meets a recorded event rather than a
+      # `NoMethodError`.
+      #
+      # A test that needs a real answer scripts the method ABOVE this loop,
+      # which wins. Above, not below: `instance_methods(false)` does not see a
+      # private method, so an override written after `private` is generated over
+      # AND made private, and the host's call raises `NoMethodError` again.
+      #
+      # `nil`, not `record`'s return: that is the `@events` array itself, so a
+      # caller branching on the answer would take the truthy path and a caller
+      # appending to it would corrupt the log every test here asserts on.
+      (Flezha::Core::ENTRY_POINTS - instance_methods(false)).each do |entry|
+        define_method(entry) do |*|
+          record(entry)
+          nil
+        end
       end
 
       private

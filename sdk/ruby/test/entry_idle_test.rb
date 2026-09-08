@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
-require "minitest/mock"
 
 # The observer's host half — registration, the tick, contained delivery and
 # the accessor's mapping — against a scripted core. The latch itself is the
@@ -161,13 +160,15 @@ class EntryIdleTest < Minitest::Test
   def test_the_runner_frees_its_watches_on_drain
     core = Flezha::TestSupport::FakeCore.new
     runner = Flezha::Runner.new("test-ns").define_stream(EchoOperative)
-    Process.stub(:warmup, -> {}) do
-      runner.boot(core: core)
+    Flezha::TestSupport.without_a_terminal do
+      Process.stub(:warmup, -> {}) do
+        runner.boot(core: core)
 
-      assert_same runner, runner.on_entry_idle("input", 1_000) { nil }
-      assert_nil runner.last_entry_delivery("input")
-      core.polled.pop
-      runner.drain
+        assert_same runner, runner.on_entry_idle("input", 1_000) { nil }
+        assert_nil runner.last_entry_delivery("input")
+        core.polled.pop
+        runner.drain
+      end
     end
 
     assert_includes core.events, :idle_watch_free
