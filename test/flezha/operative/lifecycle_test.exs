@@ -18,7 +18,11 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -35,9 +39,13 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     test_pid = self()
     ets = :ets.new(:overwatch_retry_test, [:public, :set])
 
+    # One test seeds the namespace's fleet; the state is process-global.
+    fleet_state = :sys.get_state(FleetManager)
+    on_exit(fn -> :sys.replace_state(FleetManager, fn _ -> fleet_state end) end)
+
     on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
 
-    {:ok, test_pid: test_pid, ets: ets}
+    {:ok, test_pid: test_pid, ets: ets, fleet: fleet_state}
   end
 
   defmodule QuietProvider do
@@ -144,7 +152,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
     # It parks (init_error set) and never activates the plugin while parked.
     assert NodeTestHelper.wait_until(
-             fn -> GenServer.call(pid, :get_overwatch_state).init_error != nil end,
+             fn -> overwatch_state(pid).init_error != nil end,
              2_000,
              20
            )
@@ -165,19 +173,21 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert_receive :activated, 5_000
 
     assert NodeTestHelper.wait_until(
-             fn -> is_nil(GenServer.call(pid, :get_overwatch_state).init_error) end,
+             fn -> is_nil(overwatch_state(pid).init_error) end,
              2_000,
              20
            )
 
-    state = GenServer.call(pid, :get_overwatch_state)
+    state = overwatch_state(pid)
     assert Table.phase(state.extensions, "unpark_plugin") == :running
   end
 
+  defp overwatch_state(pid), do: GenServer.call(pid, :get_overwatch_state)
+
   # `await_active_runner` pings once to confirm the runner is reachable
   # before the one start attempt. These tests drive the START ping to
-  # fail; the readiness gate must still pass or the operative stops with
-  # `:runner_not_ready` instead of exercising the park behaviour.
+  # fail; the readiness gate must still pass or the operative is held
+  # unbound instead of exercising the park behaviour.
   # First call = readiness gate (pong); the next = the start attempt (run body).
   defp gate_then(ets, start_fn) do
     fn runner_id ->
@@ -267,6 +277,157 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
       assert_receive {:parked, %{count: 1}, meta}
       assert meta.reason == {:restore_refused, :sdk_refused}
       assert meta.plugin_id == nil
+    end
+  end
+
+  describe "a bind that finds no runner holds the operative" do
+    # fails when: the bind stops the Overwatch. `restart: :transient` then runs a
+    # second retry mechanism beside the convergence loop's own rebind ladder, and
+    # a runnerless namespace crash-loops every `overwatch_runner_wait_ms` for as
+    # long as it stays runnerless.
+    test "the operative stays alive past its bind wait, and nothing restarts it" do
+      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 200))
+
+      operative = %Builder{
+        id: "held-unbound-#{System.unique_integer([:positive])}",
+        factory_id: "factory_no_runner_advertises"
+      }
+
+      child = %{
+        id: operative.id,
+        start: {Overwatch, :start_link, [{@namespace, nil, operative}]},
+        restart: :transient
+      }
+
+      sup =
+        start_supervised!(%{
+          id: :held_unbound_sup,
+          type: :supervisor,
+          start: {Supervisor, :start_link, [[child], [strategy: :one_for_one, max_restarts: 0]]}
+        })
+
+      [{_, pid, _, _}] = Supervisor.which_children(sup)
+      ref = Process.monitor(pid)
+
+      # `max_restarts: 0` makes a restart fatal to the supervisor, so one
+      # assertion covers both halves: the operative did not die, and nothing
+      # brought it back.
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 1_500
+      assert Process.alive?(sup)
+      assert [{_, ^pid, _, _}] = Supervisor.which_children(sup)
+
+      # The outcome is recorded where the start caller and the convergence loop
+      # both read it: no binding, and the bind's own reason.
+      state = overwatch_state(pid)
+      assert is_nil(state.runner_id)
+      assert {:runner_not_ready, reason} = state.init_error
+      assert reason in [:timeout, :unavailable]
+    end
+
+    # fails when: the refusal a waiting operator gets depends on the operative
+    # dying. It never did — `bind_started/4` reads `:registry_runner_set`, which
+    # answers `{:error, _}` from the recorded outcome.
+    test "a start whose runner is gone by bind time is still refused" do
+      # A zero bind budget is the runner disappearing between admission (which
+      # sees a runner for the factory) and the bind.
+      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 0))
+
+      id = "refused-unbound-#{System.unique_integer([:positive])}"
+
+      assert {:error, %{reason: {:runner_not_ready, :timeout}}} =
+               OperativeManager.start_operative(@namespace, %Builder{
+                 id: id,
+                 factory_id: @factory
+               })
+
+      # Refused means refused: nothing is left running unbound behind the caller.
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 not match?({:ok, pid} when is_pid(pid), HubManager.get_pid(@namespace, id))
+               end,
+               2_000,
+               20
+             )
+    end
+
+    # fails when: a never-bound operative takes the HotSwap migrate path, which
+    # assumes a previous runner is alive to serialise its state. `init_error`
+    # is what selects the un-park task, and the hold sets it.
+    test "a rebind of a held operative runs the full init, not the HotSwap migrate" do
+      id = "held-migrate-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_runner} end)
+
+      held = %Overwatch{
+        id: id,
+        namespace: @namespace,
+        factory_id: @factory,
+        builder: %Builder{id: id, factory_id: @factory},
+        extensions: Table.new(Overwatch.__extensions_catalog__()),
+        runner_id: nil,
+        init_error: {:runner_not_ready, :timeout}
+      }
+
+      assert {:reply, :ok, %Overwatch{migrate_task: %{mode: :unpark, pid: task}}} =
+               Overwatch.handle_call({:runner_migrate, "late_runner"}, {self(), make_ref()}, held)
+
+      # The un-park task runs `complete_init` — the full init, which pings the
+      # runner. The HotSwap clause spawns nothing and pings from the caller.
+      assert_receive {:migrate_task_result, ^task, {:park, _, {:ping_failed, :no_runner}}}, 2_000
+    end
+
+    # fails when: holding replaces a crash loop with a stall — the operative
+    # stays unbound after a runner arrives because nothing rebinds it.
+    test "the loop's rebind binds a held operative once a runner connects", %{fleet: fleet} do
+      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 200))
+
+      id = "held-then-bound-#{System.unique_integer([:positive])}"
+
+      # The runner side answers throughout; what the operative lacks is a runner
+      # advertising its factory, which is what the bind resolves.
+      Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
+
+      # No runner serves the namespace when the bind runs.
+      FleetStateHelper.seed(@namespace, %{})
+
+      {:ok, pid} = Overwatch.start_link({@namespace, nil, %Builder{id: id, factory_id: @factory}})
+
+      on_exit(fn ->
+        try do
+          NodeTestHelper.ensure_stopped(pid)
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 match?(
+                   {:runner_not_ready, _},
+                   overwatch_state(pid).init_error
+                 )
+               end,
+               3_000,
+               20
+             )
+
+      # A runner advertising the factory connects.
+      :sys.replace_state(FleetManager, fn _ -> fleet end)
+
+      # What the loop plans for an unbound operative, driven the way `Heal`
+      # drives it: resolve a target, then `{:runner_migrate, target}`.
+      target = OperativeManager.assign_runner(@namespace, @factory, id)
+      assert is_binary(target)
+      assert :ok = GenServer.call(pid, {:runner_migrate, target})
+
+      assert NodeTestHelper.wait_until(
+               fn -> is_nil(overwatch_state(pid).init_error) end,
+               5_000,
+               20
+             ),
+             "the held operative never bound: " <>
+               inspect(overwatch_state(pid).init_error)
+
+      assert overwatch_state(pid).runner_id == target
     end
   end
 end

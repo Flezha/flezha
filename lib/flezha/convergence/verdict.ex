@@ -54,7 +54,15 @@ defmodule Flezha.Convergence.Verdict do
   @type state ::
           :healthy | :degraded | :failed | :unbound | :parked | :suspended | :unknown
   @type phase ::
-          :running | :suspended | :parked | :finished | :prepared | :active | :inactive | nil
+          :running
+          | :suspended
+          | :unbound
+          | :parked
+          | :finished
+          | :prepared
+          | :active
+          | :inactive
+          | nil
 
   @type t :: %__MODULE__{
           subject: {kind(), term()},
@@ -141,14 +149,29 @@ defmodule Flezha.Convergence.Verdict do
   """
   @spec phase_of(map()) :: phase()
   def phase_of(observed) do
+    observed? = Map.get(observed, :observed?, true)
+
     cond do
-      Map.get(observed, :suspended?, false) or Map.get(observed, :suspended, false) -> :suspended
-      Map.get(observed, :parked?, false) -> :parked
-      not is_nil(Map.get(observed, :init_error)) -> :parked
-      Map.get(observed, :observed?, true) -> :running
+      suspended?(observed) -> :suspended
+      observed? and unbound?(observed) -> :unbound
+      parked?(observed) -> :parked
+      observed? -> :running
       true -> nil
     end
   end
+
+  # The order `Probe.Judge` derives the state in, so the two answers cannot
+  # describe one operative differently.
+  #
+  # Each fact has two spellings, because two callers reach this: the probe's
+  # merged facts, and an Overwatch's own state as `info` holds it. A caller
+  # carrying neither spelling of the binding is reporting no binding at all,
+  # which is not a claim that there is none.
+  defp suspended?(o), do: Map.get(o, :suspended?, false) or Map.get(o, :suspended, false)
+
+  defp unbound?(o), do: is_nil(Map.get(o, :bound_runner, Map.get(o, :runner_id, :absent)))
+
+  defp parked?(o), do: Map.get(o, :parked?, false) or not is_nil(Map.get(o, :init_error))
 
   @doc """
   Execute `[:flezha, :health, :verdict]` for every subject whose state changed

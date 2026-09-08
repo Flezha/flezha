@@ -131,17 +131,18 @@ start batch (`OperativeManager.await_runner/5`, bounded by `cross_node_request_t
 wait finds nothing the child is started anyway, keeping whatever runner its cspec recorded — which
 for a declared entry is none.
 
-**That is a degradation, not a repair, and it costs a restart loop.** The Overwatch starts, its
-own bind re-resolves the runner (`Lifecycle.bind/3` ignores the recorded one), finds none and
-stops with `:runner_not_ready`, and `restart: :transient` brings it back every
-`:overwatch_runner_wait_ms` (30 s) until a runner returns, binds, and the loop ends. Both
-cspec shapes have always behaved this way — the hook does not distinguish them. It is preferred to
-raising because the hook runs inside the hub's shared `WorkerQueue` under a linking
-`Task.async_stream`: a raise kills the whole start request before `update_registry`, strands every
-row in the batch, takes that worker down with every start queued behind it, and does not start the
-operative either. **Known ceiling**: ProcessHub's `dsup_max_restarts: 100` per `dsup_max_seconds:
-4` are not overridden here, so on the order of 750 declared operatives in one runnerless namespace
-exhaust the dist_sup's restart intensity and it gives up.
+**That is a degradation, not a repair.** The Overwatch starts, its own bind re-resolves the runner
+(`Lifecycle.bind/3` ignores the recorded one), finds none, and holds the operative alive with no
+binding and the bind's reason on its state. It reports `unbound` on every operator surface, and the
+convergence loop binds it when a runner advertising its factory connects, on the backoff ladder the
+loop already keys for an unbound operative. Nothing restarts it: one supervisor retry beside the
+loop's own is what turned a runnerless namespace into a crash loop, and a namespace declaring more
+operatives than ProcessHub's `dsup_max_restarts: 100` per `dsup_max_seconds: 4` — never overridden
+here — into a namespace that lost its supervision tree. Both cspec shapes behave this way; the hook
+does not distinguish them. Holding is preferred to raising because the hook runs inside the hub's
+shared `WorkerQueue` under a linking `Task.async_stream`: a raise kills the whole start request
+before `update_registry`, strands every row in the batch, takes that worker down with every start
+queued behind it, and does not start the operative either.
 
 The caller of a first start still learns, from elsewhere: a named factory with no runner is
 refused by `Admission.validate_factory/2` before the hub is asked (its catch-all clause means that

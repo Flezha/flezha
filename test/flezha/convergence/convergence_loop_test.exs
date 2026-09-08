@@ -45,6 +45,25 @@ defmodule Flezha.Convergence.LoopTest do
     end
   end
 
+  describe "Loop.waiting_keys/1 — what a runner connecting releases" do
+    alias Flezha.Convergence.Loop
+    alias Flezha.Convergence.Planner
+
+    # fails when: the release names a ladder the planner no longer cools on. An
+    # operative held with no binding is judged `unbound` and planned on the
+    # rebind key, not the park key, so releasing only the park ladder would
+    # leave it waiting out its own rung after its runner came back.
+    test "both cooldowns an operative waiting for a runner can be planned on" do
+      parked_op = %{primitive: :rebind_operative, target: "op-1", args: %{reason: :parked}}
+      unbound_op = %{primitive: :rebind_operative, target: "op-1", args: %{}}
+
+      keys = Loop.waiting_keys("op-1")
+
+      assert Planner.key(parked_op) in keys
+      assert Planner.key(unbound_op) in keys
+    end
+  end
+
   describe "Intent.intent_mismatch/2 — durable evidence vs live intent" do
     alias Flezha.Convergence.{Intent, Loop}
     alias Flezha.Service.HubManager

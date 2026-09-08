@@ -23,8 +23,9 @@ ingest entry points. What the convergence loop does *to* an Overwatch is in
    it. It then waits up to `:overwatch_runner_wait_ms` (30 s) for an active
    runner advertising the operative's `factory_id`
    (`OperativeManager.await_runner/5`); the persisted `runner_id` is advisory
-   only. No runner in time exits with `:runner_not_ready` and startup is
-   deferred.
+   only. No runner in time is not a fault: the Overwatch stays alive holding no
+   binding, with the bind's reason on its state, and the convergence loop binds
+   it when a runner advertising the factory connects.
 3. **`complete_init/4`** runs, in order:
    - **prepare** — `Plugins.prepare/2` registers each plugin's GenServer and
      runs `init_provider/1`; plugins enter `:prepared` in

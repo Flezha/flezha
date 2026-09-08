@@ -523,3 +523,31 @@ The health verdict SHALL NOT be derived from this row. A node holding readiness 
 - **WHEN** the readiness verdict is read
 - **THEN** that namespace SHALL NOT hold it, and the node SHALL stay ready
 
+### Requirement: A declared operative with no runner SHALL be held unbound, not crash-restarted
+
+A declared operative whose bind finds no runner advertising its factory SHALL remain alive and unbound, recording the outcome on its own state, and SHALL NOT stop. Its rebind SHALL be owned by the convergence loop alone, on the backoff ladder the loop already keys for an unbound operative, so no supervisor restart runs as a second retry mechanism beside it. The Controller SHALL NOT depend on the operative's death to report a bind that found no runner: a start request whose caller is waiting SHALL still be refused, from the operative's recorded outcome rather than from its exit.
+
+The held operative SHALL bind without operator action once a runner advertising its factory connects, through the full initialisation path a never-bound operative requires, never through the handover path that assumes a previous runner holds its state.
+
+Holding SHALL be bounded by nothing but the arrival of a runner: a namespace whose runners never return holds its operatives indefinitely, reported unbound on every operator surface, and SHALL NOT exhaust its distributed supervisor's restart intensity however many operatives it declares.
+
+#### Scenario: A restored operative in a runnerless namespace stays alive
+
+- **WHEN** a controller restores a declared operative into a namespace no runner serves, and its bind wait expires
+- **THEN** the operative SHALL still be alive after the wait, its supervisor SHALL record no restart for it, and no crash report SHALL be written
+
+#### Scenario: Thousands of held operatives do not take the namespace down
+
+- **WHEN** a namespace declares more operatives than its distributed supervisor's restart intensity permits and no runner serves any of them
+- **THEN** every operative SHALL still be alive after every bind wait has expired, and the namespace's supervision tree SHALL still be running
+
+#### Scenario: A held operative binds when a runner arrives
+
+- **WHEN** a runner advertising the factory of a held operative connects to its namespace
+- **THEN** the convergence loop SHALL bind that operative through the full initialisation path, and the operative SHALL report healthy without operator action
+
+#### Scenario: A waiting start request is still refused
+
+- **WHEN** an operator starts an operative in a namespace whose runner disappears between admission and bind
+- **THEN** the start SHALL be refused with the bind's own reason, and the operative SHALL NOT be left running unbound
+

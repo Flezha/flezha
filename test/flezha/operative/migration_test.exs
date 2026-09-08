@@ -258,9 +258,11 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
 
-    assert {:stop, :runner_not_ready, _} =
+    assert {:noreply, held} =
              Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh),
-           "it takes the normal bind path (which fails here only for lack of a runner)"
+           "it takes the normal bind path (which finds no runner here)"
+
+    assert {:runner_not_ready, _} = held.init_error
   end
 
   # ---------- workflow-loop-rewind ----------
@@ -495,7 +497,7 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   # `await_active_runner` pings once to confirm the runner is reachable
   # before the one start attempt. To reach the PARKED state these tests
   # need, the readiness gate (first ping) must pass while the START pings
-  # fail — otherwise the operative stops with `:runner_not_ready`.
+  # fail — otherwise the operative is held unbound instead of parked.
   defp park_after_gate(ets) do
     fn _runner_id ->
       case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do

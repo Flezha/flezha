@@ -290,9 +290,11 @@ One record per subject per tick, and every state names ONE owner of the next ste
 | `suspended` | nobody until the committed boundary — planned, not a fault |
 | `unknown` | the next tick; an uncertain probe escalates nothing |
 
-`phase` is the subject's own lifecycle word and is never derived from `state`, so a parked operative
-is `phase: parked, state: parked` while a suspended one that also carries a park reason stays
-`phase: suspended, state: suspended`. `facts` carries what the readers read — for a runner the
+`phase` is the subject's own lifecycle word and is never derived from `state`, but the two derive in
+the same order — suspended, then unbound, then parked — so they cannot describe one operative
+differently. A parked operative is `phase: parked, state: parked`; a suspended one that also carries
+a park reason stays `phase: suspended, state: suspended`; and one held after a bind that found no
+runner carries a park reason with no binding, so it is `phase: unbound, state: unbound`. `facts` carries what the readers read — for a runner the
 control silence, the data silence, whether heartbeats and dispatches are advancing, and its roster
 membership, side by side, so a live session over a dead data plane is two fields of one row.
 

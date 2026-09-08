@@ -162,6 +162,45 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     assert text =~ "Phase: parked"
   end
 
+  # A bind that found no runner records its outcome the way a park does, but the
+  # operative holds no binding at all — which is what separates the two words.
+  defp held_state,
+    do:
+      %{workflow_state(0) | runner_id: nil}
+      |> Map.put(:init_error, {:runner_not_ready, :timeout})
+
+  # fails when: the phase derivation tests `init_error` before the binding, so a
+  # held operative reads `parked` on the surface the loop calls `unbound`.
+  test "info and the loop's verdict record agree that a held operative is unbound" do
+    state = held_state()
+    stub_one(state)
+
+    health = judged(state)
+    assert health[{:operative, {@namespace, "op-1"}}].state == :unbound
+
+    Snapshot.publish(Map.put(Snapshot.current(), :operative_health, health))
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["health"] == "unbound"
+    assert proc["phase"] == "unbound"
+
+    text = capture_io(fn -> CliManager.operative_info(@namespace, "text") end)
+    assert text =~ "Health: unbound"
+    assert text =~ "Phase: unbound"
+    refute text =~ "parked"
+  end
+
+  test "a held operative reports unbound before the loop has judged it too" do
+    stub_one(held_state())
+
+    out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
+    %{"operatives" => [proc]} = Jason.decode!(out)
+
+    assert proc["phase"] == "unbound"
+  end
+
   test "a healthy operative carries the loop's own verdict on both surfaces" do
     state = workflow_state(0)
     stub_one(state)

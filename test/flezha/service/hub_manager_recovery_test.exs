@@ -102,8 +102,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
            "recovery replay left #{operative_id} bound to a dead pid — `flz operative list` renders it as (unplaced)"
 
     # The recorded runner is kept rather than the batch dying. It is not a
-    # binding: a real Overwatch re-resolves the runner, finds none, stops with
-    # `:runner_not_ready`, and is restarted on the runner wait until one returns.
+    # binding: a real Overwatch re-resolves the runner, finds none, and is held
+    # unbound until the convergence loop binds it to one that connects.
     assert registry_tag(ProcessRegistry.dump(hub_id), operative_id) == @recorded_runner
   end
 
@@ -193,9 +193,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
            "the replay never placed #{operative_id} — the alter hook took the start request with it"
 
     # The tag is what the hook wrote: nothing owns the operative. A real
-    # Overwatch would then stop with `:runner_not_ready` and be restarted on the
-    # runner wait until one returns; `StubChild` stands still instead, which is
-    # what keeps this test about the hook and the batch.
+    # Overwatch would then be held unbound until the convergence loop binds it;
+    # `StubChild` stands still instead, which is what keeps this test about the
+    # hook and the batch.
     assert registry_tag(ProcessRegistry.dump(hub_id), operative_id) == nil
 
     assert NodeTestHelper.wait_until(
@@ -305,18 +305,15 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   end
 
   # fails when: a FleetManager that never answers within the bind window crashes
-  # the Overwatch with an unmatched `{:error, :unavailable}` instead of stopping
-  # it cleanly, so the operator sees a CaseClauseError rather than the reason the
-  # operative did not come up.
-  test "Overwatch stops cleanly when FleetManager never answers the bind lookup" do
+  # the Overwatch with an unmatched `{:error, :unavailable}`, so the operator
+  # sees a CaseClauseError rather than the reason the operative did not come up.
+  test "Overwatch holds unbound when FleetManager never answers the bind lookup" do
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
     :sys.suspend(FleetManager)
     on_exit(fn -> :sys.resume(FleetManager) end)
 
     Process.flag(:trap_exit, true)
 
-    # The stop is the asserted behaviour, so OTP's crash report for it is
-    # expected output — captured here rather than left on the console.
     log =
       ExUnit.CaptureLog.capture_log(fn ->
         {:ok, pid} =
@@ -325,13 +322,96 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
              %Builder{id: "unanswered_lookup_op", factory_id: "market"}}
           )
 
-        assert_receive {:EXIT, ^pid, reason}, 5_000
-        assert reason == :runner_not_ready
+        on_exit(fn ->
+          try do
+            GenServer.stop(pid)
+          catch
+            :exit, _ -> :ok
+          end
+        end)
+
+        # `:unavailable`, not `:timeout`: the fleet was asked and never answered.
+        assert NodeTestHelper.wait_until(
+                 fn ->
+                   match?(
+                     {:runner_not_ready, :unavailable},
+                     GenServer.call(pid, :get_overwatch_state).init_error
+                   )
+                 end,
+                 5_000,
+                 50
+               )
+
+        refute_received {:EXIT, ^pid, _}
       end)
 
-    # The operator reads the reason, not a CaseClauseError.
-    assert log =~ "runner_not_ready"
+    # The reason is read off the state above. What must not appear is a crash —
+    # a CaseClauseError is an error-level report, which this suite does capture.
     refute log =~ "CaseClauseError"
+  end
+
+  # fails when: a bind that finds no runner stops the Overwatch. The restored
+  # operatives all wait together, so they all stop together, and a namespace
+  # declaring more of them than `dsup_max_restarts: 100` per `dsup_max_seconds:
+  # 4` — ProcessHub's defaults, which this hub does not override — exhausts the
+  # dist_sup's restart intensity and loses its whole supervision tree.
+  @tag timeout: 120_000
+  test "a runnerless namespace holding more operatives than the restart intensity keeps them all" do
+    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
+    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 1_000))
+
+    hub_id = Identificator.hub(@namespace)
+    ids = for i <- 1..101, do: "held_burst_#{i}"
+
+    {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+    assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+    Enum.each(ids, fn id ->
+      HubRegistryTestHelper.inject_operative(@namespace, id, [{node(), dead_pid()}], %{
+        id: id,
+        restart: :transient,
+        start:
+          {Overwatch, :start_link, [{@namespace, nil, %Builder{id: id, factory_id: "market"}}]}
+      })
+    end)
+
+    restart_hub(hub_id, drop_declared: true)
+
+    # The replay binds each child after `await_recovery_complete/2` returns.
+    pids =
+      Enum.map(ids, fn id ->
+        pid =
+          NodeTestHelper.wait_until(
+            fn ->
+              case HubManager.get_pid(@namespace, id) do
+                {:ok, pid} when is_pid(pid) -> pid
+                _ -> nil
+              end
+            end,
+            10_000
+          )
+
+        assert is_pid(pid), "the replay never started #{id}"
+        Process.monitor(pid)
+        pid
+      end)
+
+    # Past every bind wait, with margin: under the old shape the burst of stops
+    # lands inside one `dsup_max_seconds` window.
+    refute_receive {:DOWN, _, :process, _, _}, 3_000
+
+    assert Enum.all?(pids, &Process.alive?/1),
+           "the namespace lost operatives its dist_sup gave up restarting"
+
+    # The supervision tree itself: `is_partitioned?/1` is true once the local
+    # distributed supervisor is gone, which is how the intensity is exhausted.
+    assert ProcessHub.is_alive?(hub_id)
+    refute ProcessHub.is_partitioned?(hub_id)
+
+    # Alive AND held, not alive-and-still-waiting.
+    for pid <- pids do
+      assert {:runner_not_ready, _} = GenServer.call(pid, :get_overwatch_state).init_error
+    end
   end
 
   describe "declared intent" do

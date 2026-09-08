@@ -74,8 +74,10 @@ defmodule Flezha.Process.BoundedCallDrillTest do
     assert answer == {:error, :not_running}
     assert elapsed_us < 2_000_000, "the call outlived its 200 ms bound"
     assert Process.alive?(self())
-    assert_received {:safe_call, ^ref, %{result: :timeout}}
-    refute_received {:safe_call, ^ref, _}
+    # Pinned to this row's callee: the handler is attached to a global event, so
+    # any concurrently running test's bounded call reaches it too.
+    assert_received {:safe_call, ^ref, %{result: :timeout, server: ^pid}}
+    refute_received {:safe_call, ^ref, %{server: ^pid}}
   end
 
   test "a callee killed mid-call answers its refusal, not an exit", %{event: ref} do
@@ -90,7 +92,7 @@ defmodule Flezha.Process.BoundedCallDrillTest do
              SafeCall.bounded(pid, :ask, 5_000, on_error: &{:error, {:gone, &1}}, log: false)
 
     assert Process.alive?(self())
-    assert_received {:safe_call, ^ref, _}
+    assert_received {:safe_call, ^ref, %{server: ^pid}}
   end
 
   test "a callee that never existed answers :noproc's declared value" do

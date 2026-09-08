@@ -175,13 +175,22 @@ defmodule Flezha.Convergence.Loop do
       |> Facts.targets(:operative_parked)
       |> Enum.filter(fn {ns, _id} -> ns == namespace end)
       |> Enum.reduce(state.backoff, fn {_ns, id}, acc ->
-        Backoff.update(acc, {:parked, id}, :ok, now)
+        Enum.reduce(waiting_keys(id), acc, &Backoff.update(&2, &1, :ok, now))
       end)
 
     %{state | backoff: backoff}
   end
 
   defp release(%State{} = state, _kind, _target, _what, _now), do: state
+
+  # The cooldowns an operative waiting for a runner is held on: the un-park
+  # ladder a parked one walks, and the rebind an unbound one is planned on. Both
+  # are keys `Planner.key/1` derives. An operative held with no binding is judged
+  # unbound, so releasing the park ladder alone would leave it on its own rung
+  # after the runner it was waiting for came back.
+  @doc false
+  @spec waiting_keys(term()) :: [Backoff.key()]
+  def waiting_keys(operative_id), do: [{:parked, operative_id}, {:rebind_operative, operative_id}]
 
   # An immediate tick, folded: declarations that land while one is pending
   # ride the tick already on its way, so a burst of facts costs one probe.

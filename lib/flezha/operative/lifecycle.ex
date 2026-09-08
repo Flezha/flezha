@@ -46,8 +46,7 @@ defmodule Flezha.Operative.Lifecycle do
   Resolve a live runner for the operative's factory and bring it up on that
   runner. Returns the `handle_continue/2` reply the bind continue answers with.
   """
-  @spec bind(Overwatch.t(), binary() | nil, map()) ::
-          {:noreply, Overwatch.t()} | {:stop, :runner_not_ready, Overwatch.t()}
+  @spec bind(Overwatch.t(), binary() | nil, map()) :: {:noreply, Overwatch.t()}
   def bind(%Overwatch{} = state, stale_runner_id, operative) do
     # Wait for an active runner in this namespace advertising
     # `operative.factory_id`. The DETS-baked runner_id is usually stale
@@ -79,10 +78,10 @@ defmodule Flezha.Operative.Lifecycle do
       # distinguishable in the log, since only one of the two blames the fleet.
       {:error, reason} ->
         Logger.warning(
-          "[Overwatch] no active runner in namespace #{inspect(state.namespace)} for factory #{inspect(operative.factory_id)} within #{runner_wait_ms()} ms (#{reason}); deferring operative #{operative.id} startup"
+          "[Overwatch] no active runner in namespace #{inspect(state.namespace)} for factory #{inspect(operative.factory_id)} within #{runner_wait_ms()} ms (#{reason}); holding operative #{operative.id} unbound"
         )
 
-        {:stop, :runner_not_ready, state}
+        {:noreply, hold_unbound(state, reason)}
     end
   end
 
@@ -415,6 +414,21 @@ defmodule Flezha.Operative.Lifecycle do
 
     Map.put(state, :init_error, reason)
   end
+
+  # No runner has connected yet, which is not a fault: hold the operative alive
+  # with the outcome on its state. Stopping here would put a supervisor restart
+  # beside the convergence loop's own rebind ladder, and a runnerless namespace
+  # would crash-loop every `overwatch_runner_wait_ms` for ever.
+  #
+  # Not `park/2`: a park declares an `{:operative_parked, …}` fact the Diff never
+  # consumes for an operative it classifies unbound, and would report the
+  # operative parked while every health surface calls it unbound.
+  #
+  # The recorded runner goes with it. A runner id baked into the cspec by a
+  # previous boot is not a binding, and keeping one makes the judge call the
+  # operative failed where the phase calls it unbound.
+  defp hold_unbound(%Overwatch{} = state, reason),
+    do: %{state | runner_id: nil, init_error: {:runner_not_ready, reason}}
 
   # A park a plugin caused names that plugin; every other reason carries `nil`
   # rather than claim a plugin id it does not have.

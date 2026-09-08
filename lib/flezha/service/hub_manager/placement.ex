@@ -256,20 +256,14 @@ defmodule Flezha.Service.HubManager.Placement do
   #
   # What that buys is small and worth stating plainly. The Overwatch starts, its
   # own bind re-resolves the runner (`Lifecycle.bind/3` ignores the recorded one
-  # entirely), finds none, and stops with `:runner_not_ready`; `restart:
-  # :transient` brings it back every `overwatch_runner_wait_ms` until a runner
-  # returns, at which point it binds and the loop ends. The recorded-runner shape
-  # has always degraded exactly like this — the two shapes are not distinguished
-  # here — and it is deliberately preferred to raising, which kills the whole
-  # start request before `update_registry`, strands every row in the batch, and,
-  # because the hook runs in the hub's shared `WorkerQueue` under a linking
-  # `Task.async_stream`, takes that worker down with every start queued behind it
-  # — without starting the operative either.
-  #
-  # Known ceiling, pre-existing: `dsup_max_restarts: 100` per `dsup_max_seconds:
-  # 4` are ProcessHub's defaults and this hub does not override them, so on the
-  # order of 750 declared operatives in one runnerless namespace exhaust the
-  # dist_sup's restart intensity and it gives up.
+  # entirely), finds none, and holds the operative alive with no binding. The
+  # convergence loop binds it when a runner advertising its factory connects. The
+  # recorded-runner shape degrades exactly like this — the two shapes are not
+  # distinguished here — and it is deliberately preferred to raising, which kills
+  # the whole start request before `update_registry`, strands every row in the
+  # batch, and, because the hook runs in the hub's shared `WorkerQueue` under a
+  # linking `Task.async_stream`, takes that worker down with every start queued
+  # behind it — without starting the operative either.
   #
   # The caller still learns, though not from here. A named factory with no runner
   # is refused by `Admission.validate_factory/2` before the hub is asked — its

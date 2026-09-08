@@ -217,6 +217,28 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert record.phase == :parked
     end
 
+    # fails when: phase and state derive in different orders. An operative held
+    # after a bind that found no runner carries an `init_error`, which the probe
+    # reports as `parked?` — so a phase derivation that tests parked before the
+    # binding reports `parked` while the judge reports `unbound`.
+    test "an operative held after a bind that found no runner is unbound in both words" do
+      records =
+        judged(
+          one("held",
+            bound_runner: nil,
+            parked?: true,
+            park_reason: {:runner_not_ready, :timeout}
+          ),
+          MapSet.new(["e1"])
+        )
+
+      record = records[{:operative, {"ns", "held"}}]
+
+      assert record.state == :unbound
+      assert record.reason == :no_binding
+      assert record.phase == :unbound
+    end
+
     test "a suspended instance is suspended, and a park reason does not change that" do
       records =
         judged(
