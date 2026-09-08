@@ -107,6 +107,12 @@ Passwords are redacted in the persisted and returned opts.
 so the window holds up to `:max_in_flight × :max_batch_bytes` beyond the queue — 5 MiB per
 partition at the defaults.
 
+Under the default `:drop_nothing`, `queue_max` bounds the queue and not the worker: a record
+arriving on a full queue waits in a second, uncapped queue until room frees. A synchronous
+caller leaves that queue after `:queue_block_timeout_ms`; a chain-dispatched record has no
+deadline and waits for as long as the broker is unreachable. Pick `:drop_oldest` or
+`:drop_newest` where a hard memory ceiling matters more than the records.
+
 ### `:max_in_flight`
 
 A broker answers one connection's requests in order, and under idempotence it rejects a
@@ -261,6 +267,13 @@ client would serialise every partition's encoding on one core. Partitions are sp
 after its last owner releases it, which bounds connections by the node's cores rather than
 the plugin count. The client pipelines requests, so the lane buys encode parallelism, not
 wire concurrency.
+
+`:partition` defaults to `0`, so instances left on the defaults all resolve to lane 0 and
+share one client however many of them there are: a single connection's encode capacity for
+every producer on that cluster. Spreading them is an explicit choice, one `:partition` per
+instance. A partition group's fan-out does not do it for you; the `#pK` members receive
+`partition_index` and the key-group range, which this provider allows and never reads, so
+every member still produces to the `:partition` its own options name.
 
 Each plugin instance still owns its own `ProducerWorker` per `(topic, partition)` — its own
 queue, producer id and sequence counter. A worker restart rewinds the in-flight window to
