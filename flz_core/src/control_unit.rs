@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use std::{io, thread};
@@ -31,6 +32,18 @@ use crate::util::nonce_suffix;
 
 /// The QUIC address this process last connected through.
 static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
+
+/// Control sessions that failed since the last one the controller admitted.
+///
+/// Held here rather than in [`open_with_retry`] because the rung belongs to
+/// the channel: a counter local to that function restarts at zero on every
+/// reconnect. And it counts a REFUSED session, not only a failed `connect(2)`
+/// — [`try_open`] answers `Ok` as soon as the socket connects and the
+/// handshake is written later, by the thread [`sock_conn`] spawns, so a
+/// refusal reaches the `Err` arm never. Uncounted, a refused runner reconnects
+/// as fast as the kernel allows: 2 600 connects a second against one
+/// controller.
+static FAILED_SESSIONS: AtomicU32 = AtomicU32::new(0);
 
 type ControlConn = (
     thread::JoinHandle<()>,
@@ -63,6 +76,11 @@ pub fn open(
     itx: Arc<Mutex<Sender<ClientResponseMessage>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> ControlConn {
+    // A starting runner is owed no wait for the refusals of the one before it.
+    // The count belongs to the runner, as the Elixir SDK's does by living in
+    // its state; without this a host refused on one namespace waits 12.8 s or
+    // more on its next start, past the 10 s the C ABI allows the handshake.
+    FAILED_SESSIONS.store(0, Ordering::Relaxed);
     open_with_retry(namespace, declared, Some(itx), otx)
 }
 
@@ -81,11 +99,23 @@ fn open_with_retry(
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> ControlConn {
-    let mut attempt = 0u32;
+    // The rung this channel is already on. A first connect, and a reconnect
+    // after a session the controller admitted, both read zero and wait for
+    // nothing.
+    let mut attempt = FAILED_SESSIONS.load(Ordering::Relaxed);
     let mut diagnosis = OnceOnly::pending();
-    let max_backoff = Duration::from_secs(30);
 
     loop {
+        if attempt > 0 {
+            let backoff = reconnect_backoff(attempt);
+            eprintln!(
+                "[flezha] Control channel attempt {} in {:?}...",
+                attempt + 1,
+                backoff
+            );
+            thread::sleep(backoff);
+        }
+
         match try_open(
             namespace.clone(),
             Arc::clone(&declared),
@@ -100,27 +130,48 @@ fn open_with_retry(
             }
             Err(e) => {
                 attempt += 1;
+                FAILED_SESSIONS.store(attempt, Ordering::Relaxed);
                 // Once, on entry to the retry loop: which of the four
                 // situations this is and what fixes it. Repeating it every
                 // backoff teaches the operator to skip the line that matters.
                 if let Some(text) = diagnosis.first(connect_diagnosis) {
                     eprintln!("[flezha] {}", text);
                 }
-                // Full jitter on the exponential backoff so a controller
-                // restart that drops the whole fleet doesn't produce a
-                // synchronized reconnect storm (shared with the Java SDK via
-                // the same `liveness::jittered` schedule).
-                let backoff = liveness::jittered(std::cmp::min(
-                    Duration::from_millis(100 * 2u64.pow(attempt.min(8))),
-                    max_backoff,
-                ));
-                eprintln!(
-                    "[flezha] Connection attempt {} failed: {}. Retrying in {:?}...",
-                    attempt, e, backoff
-                );
-                thread::sleep(backoff);
+                eprintln!("[flezha] Connection attempt {} failed: {}", attempt, e);
             }
         }
+    }
+}
+
+/// The wait before an attempt: jitter on the exponential backoff so a
+/// controller restart that drops a whole fleet does not produce a synchronized
+/// reconnect storm. Every SDK over this crate shares `liveness::jittered`,
+/// which spreads `[d/2, d]`. The `:sdk_reconnect` row of
+/// `Flezha.Config.Backoff` pins the base, the exponent cap and the delay cap
+/// to this literal and nothing more: the Elixir SDK spreads `[d/2, 3d/2)` and
+/// indexes its first wait one rung lower. Neither band is the other's.
+fn reconnect_backoff(attempt: u32) -> Duration {
+    liveness::jittered(std::cmp::min(
+        Duration::from_millis(100 * 2u64.pow(attempt.min(8))),
+        Duration::from_secs(30),
+    ))
+}
+
+/// Record how a control session ended, before the reconnect it asks for is
+/// posted — the coordinator opens the next one off this count.
+///
+/// "Admitted" is the controller's own answer: it writes `assign_runner_id` on
+/// a handshake it accepts and nothing at all on one it refuses, so the first
+/// inbound frame — `ControlLiveness`'s ack — is the whole definition, and a
+/// controller that restarts under a healthy fleet is reconnected to at once.
+/// The deliberate gap: a controller that admits a session and drops it at once
+/// resets every cycle, so that loop is unthrottled. It is a different failure
+/// — admission costs a full bind — from the cheap refusal this counts.
+fn note_session_end(acked: bool) {
+    if acked {
+        FAILED_SESSIONS.store(0, Ordering::Relaxed);
+    } else {
+        FAILED_SESSIONS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -275,6 +326,7 @@ fn sock_conn(
                 "control channel init send failed (peer vanished mid-handshake); reconnecting: {}",
                 e
             );
+            note_session_end(false);
             let _ = otx
                 .lock()
                 .unwrap()
@@ -334,6 +386,7 @@ fn read_loop(
                             e
                         );
                     }
+                    note_session_end(live.acked());
                     let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
                     return;
                 }

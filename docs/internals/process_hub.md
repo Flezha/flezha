@@ -323,8 +323,15 @@ cspec persists *which* plugins, the WAL persists *how far* an Entity has progres
   `FLEZHA_SOCKET_FILES_PATH` (unset, the socket ladder resolves it; the Kubernetes DaemonSet
   mounts the `flezha-sockets` hostPath at `/flezha/sockets`). QUIC runners dial
   `FLEZHA_QUIC_ADDRESSES` (SDK default `127.0.0.1:4433`).
-- The reconnect loop (`flz_core/src/control_unit.rs`, shared by Rust and Java) retries forever
-  with full-jitter exponential backoff `100 ms * 2^min(n, 8)`, capped at 30 s.
+- The reconnect loop (`flz_core/src/control_unit.rs`, shared by Rust, Java, Node, Python, Ruby
+  and PHP) retries forever with exponential backoff `100 ms * 2^min(n, 8)`, capped at 30 s and
+  jittered into `[d/2, d]`. `n` counts control sessions that ended without the controller
+  admitting the runner — a failed `connect(2)` and a connect the controller refuses alike — and
+  only the controller's `assign_runner_id` puts the ladder back on its first rung, so a
+  restarted controller is reconnected to at once and one that refuses is backed away from. The
+  count belongs to the runner: a runner that starts inherits nothing from one that closed. The
+  Elixir SDK runs its own ladder to the same three numbers, but spreads `[d/2, 3d/2)` and takes
+  its first wait one rung lower.
 - One control channel carries the handshake and protobuf commands; primary and secondary data
   streams carry operative I/O (see [NIF transport](nif_transport.md)).
 

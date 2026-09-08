@@ -353,13 +353,29 @@ silently skipped when `FLEZHA_TRANSPORT=quic`.
 
 Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter so that a
 controller restart dropping many runners does not produce a synchronized reconnect
-storm. Attempts SHALL remain stream (the runner must keep trying until a live
+storm. Attempts SHALL remain unbounded (the runner must keep trying until a live
 controller is found). The Elixir SDK, which inherits nothing from `flz_core`, SHALL
-carry the same schedule as the `:sdk_reconnect` row of the backoff table —
-`100 ms · 2^min(n, 8)`, capped at 30 s, jittered in `[d/2, 3d/2)` and capped again, reset
-on connect — and a test SHALL pin that row, and the `:sdk_retry` row
-(`base · 2^(n−1)` capped at 5 s), to the constants `flz_core` compiles, so the two
-runtimes cannot drift apart silently.
+carry the same schedule as the `:sdk_reconnect` row of the backoff table — base 100 ms,
+exponent capped at 8, delay capped at 30 s — and a test SHALL pin those three numbers,
+and the `:sdk_retry` row (`base · 2^(n−1)` capped at 5 s), to the constants `flz_core`
+compiles, so the two runtimes cannot drift apart silently.
+
+The jitter is where the two runtimes are NOT one value, and the difference is stated
+rather than pinned: `flz_core` spreads `[d/2, d]` and takes `100 ms · 2^n` for its
+attempt `n`, the Elixir SDK spreads `[d/2, 3d/2)` capped again and takes
+`100 ms · 2^(n−1)`, so its first wait is one rung lower. Both satisfy the anti-thunder
+property this requirement exists for; neither band is the other's, and a document or a
+scenario SHALL NOT describe one runtime's spread as the other's.
+
+The rung SHALL be a property of the control channel rather than of one call into the
+connect loop, so a reconnect starts where the last one left off instead of at rung zero.
+A control session that ends without the controller admitting the runner SHALL count as a
+failed attempt, and the ladder SHALL be reset only by the controller's own answer — the
+`assign_runner_id` frame it writes on a handshake it accepts and writes on none it
+refuses. Reaching the socket is not admission: a refusal closes the connection after
+`connect(2)` has already succeeded, so an SDK that treats a successful connect as a
+successful session retries a refusing controller as fast as the kernel allows, which one
+runner can do fast enough to saturate the controller refusing it.
 
 #### Scenario: Fleet reconnect does not thunder
 - **GIVEN** N runners whose controller restarts simultaneously
@@ -368,7 +384,18 @@ runtimes cannot drift apart silently.
 
 #### Scenario: The Elixir SDK's reconnect ladder equals the core's
 - **WHEN** the cross-runtime pin test reads `flz_core`'s reconnect and retry constants and the Elixir SDK's two rows
-- **THEN** base, exponent cap, delay cap and jitter band SHALL be equal, and a change to either side alone SHALL fail the test naming both files
+- **THEN** base, exponent cap and delay cap SHALL be equal, and a change to either side alone SHALL fail the test naming both files
+- **AND** the jitter band SHALL NOT be asserted equal, because it is not
+
+#### Scenario: A refused session climbs the ladder
+- **GIVEN** a controller that accepts the socket and closes it without admitting the runner
+- **WHEN** the runner reconnects again and again
+- **THEN** each attempt SHALL wait one rung further up the ladder, up to the 30 s cap, rather than reconnecting immediately
+
+#### Scenario: An admitted session puts the ladder back on its first rung
+- **GIVEN** a runner whose handshake the controller admitted, however many refusals preceded it
+- **WHEN** that session later ends and the runner reconnects
+- **THEN** the reconnect SHALL NOT be delayed by any earlier refusal
 
 ### Requirement: Java SDK transport-edge and decode events SHALL NOT crash the runtime thread
 

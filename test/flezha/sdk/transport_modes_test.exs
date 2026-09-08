@@ -308,19 +308,25 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
   @moduledoc """
   In-node integration tests for the SDK's liveness and lifecycle behaviour:
   heartbeats keep an idle runner from stalling (6.2), a killed SDK-side stream
-  synthesizes a close that drives reconnect (6.3), and the runner-as-handle
-  contract — reconnect with the same stable id, `UpdateFactories`, and
-  removal-refusal (7.2). Native transport, in-process, so `run/3` and the
-  streams live in this BEAM.
+  synthesizes a close that drives reconnect (6.3), a controller that refuses
+  the connect is retried further up the ladder each time rather than at one
+  rung for ever, and the runner-as-handle contract — reconnect with the same
+  stable id, `UpdateFactories`, and removal-refusal (7.2). Native transport,
+  in-process, so `run/3` and the streams live in this BEAM.
   """
   # async: false: the live controller and its fleet; global telemetry handlers; OS environment variables.
   use ExUnit.Case, async: false
+  use Mimic
+
+  import ExUnit.CaptureLog
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.Ctx
   alias Flezha.SDK.RunnerServer
   alias Flezha.Service.OperativeManager
+  alias Flezha.Transport.Server, as: TransportServer
   alias FlezhaTest.Helper.NodeTestHelper
 
   defmodule EchoProc do
@@ -459,6 +465,55 @@ defmodule Flezha.SDK.LivenessReconnectE2ETest do
 
     # The runner reconnects and stays listed.
     assert NodeTestHelper.wait_until(fn -> FleetManager.active_runners(ns) != [] end, 15_000)
+  end
+
+  test "a refused reconnect climbs the ladder instead of spinning at one rung", %{ns: ns} do
+    _handle = start_runner(ns, [EchoOp])
+    server = RunnerServer.whereis()
+    assert is_pid(server)
+
+    test_pid = self()
+    ref = make_ref()
+    handler = "lr-backoff-#{inspect(ref)}"
+
+    :telemetry.attach(
+      handler,
+      [:flezha, :backoff, :wait],
+      fn _e, %{attempt: attempt, delay_ms: delay}, meta, _ ->
+        if meta.ladder == :sdk_reconnect, do: send(test_pid, {ref, attempt, delay})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    # The controller refuses every further connect, which is what a runner
+    # meets when its namespace is not one this controller runs.
+    set_mimic_global_until_exit()
+    stub(TransportServer, :connect, fn _payload, _controller -> {:error, :refused} end)
+
+    {waits, _log} =
+      with_log(fn ->
+        send(server, {:flz_closed, 999_999, "test_injected"})
+
+        collected =
+          for _ <- 1..3 do
+            assert_receive {^ref, attempt, delay}, 10_000
+            {attempt, delay}
+          end
+
+        # The retry loop is unbounded by design; the runner is taken down
+        # rather than left climbing to the 30 s cap for the rest of the run.
+        Process.unlink(server)
+        Process.exit(server, :kill)
+        collected
+      end)
+
+    assert [{1, first}, {2, _}, {3, third}] = waits,
+           "three refused connects must announce attempts 1, 2 and 3, not one rung three times"
+
+    assert third > first,
+           "the third refused reconnect waited #{third} ms, no longer than the first (#{first} ms)"
   end
 
   test "post-start define_stream ships UpdateFactories; removal with a live instance refuses", %{
