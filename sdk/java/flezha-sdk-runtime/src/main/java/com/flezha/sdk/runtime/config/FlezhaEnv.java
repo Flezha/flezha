@@ -1,10 +1,10 @@
 package com.flezha.sdk.runtime.config;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import java.util.Map;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Reads the runtime's host-side configuration from {@code FLEZHA_*}
@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class FlezhaEnv {
 
-    private static final Logger LOG = LoggerFactory.getLogger(FlezhaEnv.class);
+    private static final Logger LOG = Flezha.log();
 
     public static final String FLEZHA_WORKER_POOL_SIZE = "FLEZHA_WORKER_POOL_SIZE";
 

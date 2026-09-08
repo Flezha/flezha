@@ -1,5 +1,7 @@
 package com.flezha.sdk.runtime;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import com.flezha.sdk.OperativeTypeInUseException;
 import com.flezha.sdk.internal.RunnerHandle;
 import com.flezha.sdk.native_.FlzCore;
@@ -20,8 +22,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Runtime implementation of the internal {@link RunnerHandle} SPI the public
@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class FlezhaImpl implements RunnerHandle {
 
-    private static final Logger LOG = LoggerFactory.getLogger(FlezhaImpl.class);
+    private static final Logger LOG = Flezha.log();
 
     private final String namespace;
     private final long core;

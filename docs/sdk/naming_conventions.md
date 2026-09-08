@@ -139,8 +139,7 @@ change; the directive-coverage tests in `sdk/rust/tests/diag.rs`
 (`default_directives_pass_every_sdk_diagnostic_target`,
 `every_source_declared_target_is_enabled_by_the_directives`) enforce it by
 sweeping the SDK crates' emit sites and failing on any target the directives
-discard at `warn`. The Java SDK is exempt: SLF4J logger names inherit the root
-level, so there is no enumerate-or-discard filter to keep in sync.
+discard at `warn`.
 
 ### 12. A runtime fact the SDK alone knows is a plain accessor plus an `on<Event>` registration
 

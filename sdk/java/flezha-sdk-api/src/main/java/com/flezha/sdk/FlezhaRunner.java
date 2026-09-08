@@ -133,6 +133,35 @@ public final class FlezhaRunner implements AutoCloseable {
         return remove(workflow, "removeWorkflow()", workflowClass);
     }
 
+    /**
+     * Send the SDK's diagnostics to {@code logger} instead of the default,
+     * which writes {@code [flezha] <message>} to standard error at the level
+     * {@code FLEZHA_LOG_LEVEL} names. The sink is JVM-wide and survives
+     * {@link #close()}, so the diagnostics a runner writes while shutting down
+     * still reach it. Legal before {@link #start()}, and after.
+     *
+     * <p>{@link Logger} is a functional interface, so routing into a pipeline
+     * the host already runs is one lambda. SLF4J, whose {@code {}} placeholder
+     * the SDK's messages already use:
+     *
+     * <pre>{@code
+     * org.slf4j.Logger slf4j = LoggerFactory.getLogger("flezha");
+     * runner.logger((level, format, args) ->
+     *         slf4j.atLevel(Level.valueOf(level.name())).log(format, args));
+     * }</pre>
+     *
+     * <p>The supplied logger decides for itself what it writes:
+     * {@code FLEZHA_LOG_LEVEL} filters the default sink and nothing else.
+     */
+    @Nonnull
+    public FlezhaRunner logger(Logger logger) {
+        if (logger == null) {
+            throw new IllegalArgumentException("logger must not be null");
+        }
+        Flezha.LOGGER.set(logger);
+        return this;
+    }
+
     private <C extends Operative> FlezhaRunner define(RegistryCore<C> core, String what, Class<? extends C> cls) {
         open(what);
         core.register(cls);

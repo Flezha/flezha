@@ -1,7 +1,9 @@
 package com.flezha.test;
 
+import com.flezha.sdk.ConsoleLogger;
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.FlezhaRunner;
+import com.flezha.sdk.LogLevel;
 
 /**
  * Mirror of {@code test/apps/rust_runner/src/main.rs}. Accepts the
@@ -29,7 +31,10 @@ public final class Main {
             return;
         }
         spawnStdinEofExit();
-        FlezhaRunner runner = Flezha.createRunner(namespace);
+        // The same sink and the same default the other conformance runners
+        // supply, so one FLEZHA_LOG_LEVEL governs every language in a drill.
+        FlezhaRunner runner = Flezha.createRunner(namespace)
+                .logger(new ConsoleLogger(LogLevel.from(System.getenv(ConsoleLogger.FLEZHA_LOG_LEVEL), LogLevel.INFO)));
         EntryIdleProbeStreamOperative.arm(runner);
         // One row of the refusal table instead of the fixture set: a refused
         // topology must not reach a connected runner.

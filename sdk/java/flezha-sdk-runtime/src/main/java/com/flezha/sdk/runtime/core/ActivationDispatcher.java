@@ -1,11 +1,11 @@
 package com.flezha.sdk.runtime.core;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The pure host layer over the poll core: {@link #dispatch} turns one
@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class ActivationDispatcher {
 
-    private static final Logger LOG = LoggerFactory.getLogger(ActivationDispatcher.class);
+    private static final Logger LOG = Flezha.log();
 
     private final ConcurrentHashMap<String, OperativeInstance> instances = new ConcurrentHashMap<>();
     private final Function<String, WorkflowSession> workflowSessions;

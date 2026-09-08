@@ -23,9 +23,14 @@
  *
  * <p>The remaining types in this package are the supporting surface for those two paths:
  * {@link com.flezha.sdk.SinkOutput} is the frame handed to a local-mode sink callback,
- * {@link com.flezha.sdk.IdleObserver} reports when a local run has drained, and
+ * {@link com.flezha.sdk.IdleObserver} reports an entry channel that has gone quiet, and
  * {@link com.flezha.sdk.OperativeTypeInUseException} is raised when one operative id is declared
  * twice on a single runner.
+ *
+ * <p>{@link com.flezha.sdk.Logger} is where the SDK's own diagnostics go. The default,
+ * {@link com.flezha.sdk.ConsoleLogger}, writes to standard error at the
+ * {@link com.flezha.sdk.LogLevel} {@code FLEZHA_LOG_LEVEL} names, or {@code warn};
+ * {@code FlezhaRunner.logger(Logger)} replaces it with the host's own, in one lambda.
  */
 @javax.annotation.ParametersAreNonnullByDefault
 package com.flezha.sdk;

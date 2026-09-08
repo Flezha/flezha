@@ -48,6 +48,34 @@ Every growth is logged at `INFO`; the first refusal at the ceiling is logged at
 `WARN` and latched, so a sustained wedge names itself once instead of once a
 second.
 
+## Diagnostics
+
+`FLEZHA_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `warn`) selects
+what the default logger writes to standard error, prefixed `[flezha]`. Unset,
+blank and unrecognised all mean `warn`, as in the other five SDKs. There is no
+logging dependency: the SDK owns a four-level `Logger` interface and a
+stderr-writing default, so a fresh application gets the failure paths with
+nothing to add and no missing-provider warning at startup.
+
+A host routes them into its own pipeline by passing a `Logger` to
+`FlezhaRunner.logger(...)`, the surface Node (`runner.logger(l)`), PHP
+(`Runner->logger()`) and Ruby (`Flezha.log =`) already carry. `Logger` is a
+functional interface and the messages carry SLF4J's `{}` placeholders, so an
+SLF4J adapter is one lambda:
+
+```java
+runner.logger((level, format, args) ->
+        slf4j.atLevel(Level.valueOf(level.name())).log(format, args));
+```
+
+A supplied logger decides for itself what it writes, so `FLEZHA_LOG_LEVEL`
+filters the default sink and nothing else. A sink that renders the line itself
+reuses the SDK's substitution through `Logger.render(format, args)` rather than
+writing a second one. The sink is JVM-wide and survives `close()`,
+because a runner's most interesting diagnostics are the ones it writes while
+shutting down. A write that fails is swallowed, so a standard error closed
+during a drain cannot turn a clean drain into a crash.
+
 ## Scope
 
 Every capability of the conformance vocabulary, deferred: none. The one place

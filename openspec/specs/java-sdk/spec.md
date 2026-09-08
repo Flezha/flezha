@@ -1033,3 +1033,74 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the Java interpreter authors an `ok` row
 - **THEN** the derived declaration equals the row's lines
 
+### Requirement: Diagnostics Reach a Stream Without a Third-Party Logging Dependency
+
+The Java SDK SHALL emit its diagnostics through a logger it owns, with a working default that requires no dependency the application has to add, and SHALL NOT declare a compile-scope dependency on a third-party logging facade or provider.
+
+A library that declares a logging facade without a provider is silent by
+construction, and one that bundles a provider collides with whatever the host
+already uses. Owning a small logger with a default sink is how the Node, Ruby
+and PHP SDKs avoid both, and the failure paths this SDK logs on (a dead fetcher
+thread, a failed core poll, a failed activation decode, a drain that timed out)
+are the ones an operator most needs to see.
+
+#### Scenario: A fresh application gets diagnostics with no extra dependency
+
+- **WHEN** an application depends only on the SDK and starts a runner that emits a `warn`-level diagnostic
+- **THEN** the line SHALL be written to standard error, and no warning about a missing logging provider SHALL be printed
+
+#### Scenario: No third-party logging facade on the compile classpath
+
+- **WHEN** the SDK's published modules are resolved
+- **THEN** no third-party logging facade or provider SHALL appear as a compile-scope dependency
+
+#### Scenario: A failed write never takes the process down
+
+- **GIVEN** a runner whose standard error has been closed
+- **WHEN** the SDK emits a diagnostic during its drain
+- **THEN** the write SHALL fail silently and the drain SHALL complete normally
+
+### Requirement: The Host Supplies Its Own Logger Through the Runner Builder
+
+The Java SDK SHALL let the application replace the logger through a builder method on the runner, so diagnostics can be routed into whatever logging pipeline the host already runs.
+
+This is the same authoring surface Node (`runner.logger(l)`), PHP
+(`Runner->logger()`) and Ruby (`Flezha.log =`) already carry. A host that wants
+SLF4J, Log4j, structured fields or spans supplies them; the SDK depends on none
+of them.
+
+#### Scenario: Diagnostics reach the host's logger
+
+- **WHEN** a logger is supplied through the runner builder before start
+- **THEN** every SDK diagnostic at or above the active level SHALL be emitted through it, and none SHALL be written to the default sink
+
+#### Scenario: A supplied logger survives the runner's close
+
+- **GIVEN** a runner whose logger was supplied through the builder
+- **WHEN** the runner is closed and the JVM-wide runner slot is released
+- **THEN** diagnostics emitted during and after the close SHALL still reach the supplied logger
+
+### Requirement: The Java SDK Honours FLEZHA_LOG_LEVEL
+
+The Java SDK SHALL read its default diagnostic level from `FLEZHA_LOG_LEVEL`, with the same level names and the same `warn` default the other SDKs use.
+
+`FLEZHA_LOG_LEVEL` is read by the Node, Ruby, PHP and Python SDKs and by the
+controller's own configuration. An operator setting one variable across a fleet
+of mixed-language runners SHALL not have to except the Java ones.
+
+#### Scenario: The variable sets the level
+
+- **WHEN** a runner starts with `FLEZHA_LOG_LEVEL=debug`
+- **THEN** the SDK SHALL emit diagnostics at `debug` and above
+
+#### Scenario: Unset, blank or unrecognised all mean warn
+
+- **WHEN** a runner starts with `FLEZHA_LOG_LEVEL` unset, empty, or set to a name that is not a level
+- **THEN** the SDK SHALL emit diagnostics at `warn` and above
+
+#### Scenario: A supplied logger governs its own level
+
+- **GIVEN** `FLEZHA_LOG_LEVEL` is set
+- **WHEN** the application supplies its own logger through the runner builder
+- **THEN** the variable SHALL NOT filter what reaches that logger, which decides for itself what it writes
+

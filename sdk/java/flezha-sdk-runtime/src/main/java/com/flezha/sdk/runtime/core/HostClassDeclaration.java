@@ -61,6 +61,16 @@ public final class HostClassDeclaration {
     /** Header format byte for the host's plain change bodies (Kryo = 4). */
     private static final int FORMAT_ID_KRYO = 4;
 
+    /** Declared by a stream class alone; see {@link #forWorkflow(WorkflowSpec)}. */
+    private static final List<String> STREAM_TIER_KEYS = List.of(
+            "effectively_once",
+            "checkpoint_ack",
+            "checkpoint_every",
+            "checkpoint_outputs",
+            "checkpoint_max_delay_ms",
+            "correction_window_ms",
+            "beyond_window_policy");
+
     private HostClassDeclaration() {}
 
     /** Resolve {@code factoryId} in the class registries and encode its record. */
@@ -182,6 +192,13 @@ public final class HostClassDeclaration {
         // Durability is the workflow's own declaration, not what its
         // procedures' Change types imply.
         decl.remove("persistent");
+        // The tier, checkpoint and correction keys are a stream class's to put
+        // on the wire. The core refuses effectively_once and
+        // correction_window_ms on a workflow outright, and the checkpoint
+        // family rests on an acknowledgement that refusal leaves unreachable
+        // there. The topology keeps the facts either way: gating the
+        // declaration must not gate the in-process tier.
+        STREAM_TIER_KEYS.forEach(decl::remove);
         if (spec.persistenceEnabled()) {
             decl.put("persistent", true);
         }

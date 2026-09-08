@@ -1,5 +1,7 @@
 package com.flezha.sdk.procedure;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -7,8 +9,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nonnull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The async result of a {@link ProcedureCtx#spawnWorkflow} request. Observing it
@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class SpawnHandle {
 
-    private static final Logger LOG = LoggerFactory.getLogger(SpawnHandle.class);
+    private static final Logger LOG = Flezha.log();
 
     /**
      * How long a result is awaited. Generous: the controller may have to start

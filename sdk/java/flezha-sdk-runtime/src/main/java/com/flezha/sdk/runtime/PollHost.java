@@ -1,5 +1,7 @@
 package com.flezha.sdk.runtime;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import com.flezha.sdk.native_.FlzCore;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.core.Activation;
@@ -17,8 +19,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The Java side of the poll/complete seam: a small fixed set of platform
@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
  */
 final class PollHost implements AutoCloseable {
 
-    private static final Logger LOG = LoggerFactory.getLogger(PollHost.class);
+    private static final Logger LOG = Flezha.log();
 
     /** Poll timeout per turn; bounds how fast {@link #close()} joins a fetcher. */
     private static final long POLL_TIMEOUT_MS = 250;

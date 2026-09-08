@@ -229,8 +229,26 @@ FLEZHA_E2E_RUNTIME=java mix test --include system   # from repo root: the shared
 | `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder | UDS only. Set, it wins outright; unset, the ladder walks `$XDG_RUNTIME_DIR/flezha`, `/run/flezha`, `app_data/sockets`. |
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | Durable stable identity. Unwritable means a fresh id per boot and lost bindings. |
 | `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Entity mailbox. |
+| `FLEZHA_LOG_LEVEL` | `warn` | `debug`, `info`, `warn` or `error` for the default logger. Unset, blank and unrecognised all mean `warn`. |
 | `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_core_ffi` is extracted. Set it on containers where `/tmp` is `noexec`. |
 | `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | Idle hysteresis before a looping workflow operative parks. |
+
+## Diagnostics
+
+The SDK writes its own diagnostics to standard error, prefixed `[flezha]`, at
+`warn` and above. There is no logging dependency and nothing to add: a fresh
+application gets the failure paths and none of the chatter, and
+`FLEZHA_LOG_LEVEL` moves the line. To route them into the pipeline the
+application already runs, hand the runner a `Logger`; it is a functional
+interface, so an adapter is one lambda:
+
+```java
+runner.logger((level, format, args) ->
+        slf4j.atLevel(Level.valueOf(level.name())).log(format, args));
+```
+
+`docs/sdk/java_sdk.md` has the rest: what a supplied sink is and is not
+filtered by, where the substitution lives, and what a failed write does.
 
 ## Further reading
 

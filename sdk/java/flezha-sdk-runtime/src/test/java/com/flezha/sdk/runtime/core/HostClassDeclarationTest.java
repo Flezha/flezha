@@ -167,6 +167,37 @@ class HostClassDeclarationTest {
     }
 
     @Test
+    @DisplayName("a workflow declaring the stream tier keeps the facts and puts none of the keys on the wire")
+    void workflowDeclarationDropsTheStreamTierKeys() throws Exception {
+        WorkflowOperativeClassRegistry.registerClass(TierWorkflow.class);
+        WorkflowSpec spec = WorkflowOperativeClassRegistry.getSpec("decl_tier_workflow");
+        JsonNode decl = JSON.readTree(HostClassDeclaration.forWorkflow(spec));
+
+        assertThat(spec.topology())
+                .as("the in-process tier is the topology's, and the wire record must not gate it")
+                .isPresent();
+        assertThat(spec.topology().orElseThrow().declaration())
+                .containsEntry("effectively_once", true)
+                .containsEntry("checkpoint_ack", true);
+
+        // The core refuses effectively_once and correction_window_ms on a class
+        // carrying a workflow block, and the checkpoint family rests on an
+        // acknowledgement that refusal leaves unreachable there.
+        assertThat(decl.fieldNames())
+                .toIterable()
+                .doesNotContain(
+                        "effectively_once",
+                        "checkpoint_ack",
+                        "checkpoint_every",
+                        "checkpoint_outputs",
+                        "checkpoint_max_delay_ms",
+                        "correction_window_ms",
+                        "beyond_window_policy");
+        assertThat(decl.get("workflow")).isNotNull();
+        assertThat(decl.get("channels")).isNotEmpty();
+    }
+
+    @Test
     @DisplayName("a workflow class declaring synchronous durability ships the flag")
     void syncDurabilityDeclaration() throws Exception {
         WorkflowOperativeClassRegistry.registerClass(SyncDurableWorkflow.class);
@@ -616,6 +647,29 @@ class HostClassDeclarationTest {
         public void run(String input, StateHandle<Object, DeclChange> state, ProcedureCtx ctx)
                 throws com.flezha.sdk.procedure.ProcedureException {
             ctx.emitKeyed("k", input);
+        }
+    }
+
+    /** A workflow whose channel graph declares the stream tier, as the conformance twin does. */
+    public static final class TierWorkflow implements WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "decl_tier_workflow";
+        }
+
+        @Override
+        public void procedures(ChannelBuilder c) {
+            c.effectivelyOnce();
+            c.checkpointAck();
+            c.input(String.class, "in")
+                    .into(DeclProc.class)
+                    .keyed()
+                    .sink("tier_sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
+            ctx.complete(args);
         }
     }
 

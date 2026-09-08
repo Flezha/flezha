@@ -1,6 +1,8 @@
 package com.flezha.sdk.runtime;
 
+import com.flezha.sdk.Flezha;
 import com.flezha.sdk.IdleObserver;
+import com.flezha.sdk.Logger;
 import com.flezha.sdk.native_.FlzCore;
 import java.time.Duration;
 import java.time.Instant;
@@ -14,8 +16,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Idle observation for entry channels: the policy half of the input-liveness
@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class EntryIdleWatcher {
 
-    private static final Logger LOG = LoggerFactory.getLogger(EntryIdleWatcher.class);
+    private static final Logger LOG = Flezha.log();
 
     /**
      * Tick floor and ceiling, mirrored in the Rust SDK. The floor bounds how

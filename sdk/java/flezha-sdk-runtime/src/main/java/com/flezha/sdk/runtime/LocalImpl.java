@@ -1,5 +1,7 @@
 package com.flezha.sdk.runtime;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import com.flezha.sdk.SinkOutput;
 import com.flezha.sdk.internal.LocalRunHandle;
 import com.flezha.sdk.native_.FlzCore;
@@ -18,8 +20,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import javax.annotation.Nonnull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Runtime implementation of {@link LocalRunHandle}, resolved by reflection
@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class LocalImpl implements LocalRunHandle {
 
-    private static final Logger LOG = LoggerFactory.getLogger(LocalImpl.class);
+    private static final Logger LOG = Flezha.log();
 
     /** Bounded so a stopped run's drain thread leaves promptly. */
     private static final long OUTPUT_POLL_MS = 100;

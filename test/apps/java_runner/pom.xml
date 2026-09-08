@@ -32,14 +32,6 @@
             <artifactId>flezha-sdk</artifactId>
             <version>${flezha.sdk.version}</version>
         </dependency>
-        <!-- Test app ships an SLF4J implementation; the SDK's own deps only
-             declare slf4j-api so library users can pick their own backend. -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.13</version>
-        </dependency>
-
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

@@ -1,13 +1,13 @@
 package com.flezha.sdk.runtime.core;
 
+import com.flezha.sdk.Flezha;
+import com.flezha.sdk.Logger;
 import com.flezha.sdk.operative.WorkflowOperative;
 import com.flezha.sdk.operative.WorkflowOperativeException;
 import com.flezha.sdk.runtime.workflow.WorkflowSpec;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
 import javax.annotation.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The workflow half of one live instance: whether the class is a structured
@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory;
  */
 final class WorkflowDispatch {
 
-    private static final Logger LOG = LoggerFactory.getLogger(WorkflowDispatch.class);
+    private static final Logger LOG = Flezha.log();
 
     private final String operativeId;
     private final String factoryId;

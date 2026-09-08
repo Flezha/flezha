@@ -43,7 +43,6 @@
         <!-- Dependency versions -->
         <protobuf.version>3.25.5</protobuf.version>
         <jackson.version>2.17.2</jackson.version>
-        <slf4j.version>2.0.13</slf4j.version>
         <jsr305.version>3.0.2</jsr305.version>
         <kryo.version>5.6.0</kryo.version>
 
@@ -128,11 +127,6 @@
                 <version>${jackson.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.slf4j</groupId>
-                <artifactId>slf4j-api</artifactId>
-                <version>${slf4j.version}</version>
-            </dependency>
-            <dependency>
                 <groupId>com.google.code.findbugs</groupId>
                 <artifactId>jsr305</artifactId>
                 <version>${jsr305.version}</version>
@@ -159,12 +153,6 @@
                 <groupId>org.mockito</groupId>
                 <artifactId>mockito-core</artifactId>
                 <version>${mockito.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.slf4j</groupId>
-                <artifactId>slf4j-simple</artifactId>
-                <version>${slf4j.version}</version>
                 <scope>test</scope>
             </dependency>
         </dependencies>
