@@ -13,3 +13,4 @@ OUTPUT FIELDS:
     durability_posture         local_only | remote_tier
     durability_rpo_breaches    References past the remote RPO target
     durability_superseded      References another controller now ships
+    state_root                 Absolute directory holding this node's durable state
