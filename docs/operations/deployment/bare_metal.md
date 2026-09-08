@@ -138,6 +138,26 @@ _build/prod/rel/flezha/bin/flzvm stop
 A clean stop removes the socket directory's contents. A controller that died
 hard leaves the socket behind, and the next start clears it.
 
+## Tune the VM
+
+The release ships its own flags in `_build/prod/rel/flezha/releases/<vsn>/vm.args`,
+and on bare metal that file is yours to edit. For one node or one experiment,
+setting `ERL_FLAGS` is less trouble and wins over the file either way:
+
+```bash
+ERL_FLAGS="+S 4:4" flz controller start --mode daemon
+```
+
+Two bare-metal caveats the container pages do not have. `ERL_FLAGS` is read by
+every `flzvm` invocation, and every `flz` verb starts one to make its call, so
+exporting it in a shell profile enlarges those short-lived nodes as well as the
+controller. And a dedicated machine is the one place scheduler binding
+(`+stbt`) is worth trying, because it is actively wrong anywhere a CPU quota or
+a cpuset can move underneath the VM.
+
+The full list, including the flags deliberately left unset and why, is in
+[`../../configuration.md`](../../configuration.md#erlang-vm-arguments).
+
 ## Two users on one machine
 
 Directory traversal is the UDS authentication boundary, so a runner run by a

@@ -152,3 +152,57 @@ nothing is deleted with its documentation line rather than kept inert.
 - **THEN** the row, its `runtime.exs` line and its documentation row are deleted in the same
   change, and the documentation gate would fail on the name thereafter
 
+### Requirement: Every Erlang VM Argument the Release Sets SHALL Be Declared in One Place and Rendered by the Configuration Reference
+
+The Erlang VM arguments the release sets SHALL be declared in `rel/vm.args.eex` and `rel/remote.vm.args.eex` and nowhere else, and every flag either file sets SHALL appear in the configuration reference with its value and its reason.
+
+The VM is configured before the application starts, so no flag here can be a row
+of `lib/flezha/config/keys.ex` and none of the four configuration layers already
+covers it. That is precisely why it rots quietly: no compile step and no suite
+reads an args file, and the reference has never mentioned one. A flag that ships
+undocumented is a behaviour change nobody can find, and a flag the reference
+claims the release sets when it does not is worse, because an operator will
+spend the afternoon overriding a default that was never there.
+
+#### Scenario: A flag is added to the release and not documented
+
+- **WHEN** a flag is set in either args template and does not appear in the configuration reference's VM-arguments table
+- **THEN** the VM-arguments gate SHALL fail, naming the flag and the template that sets it
+
+#### Scenario: The reference claims a shipped flag the release does not set
+
+- **WHEN** the configuration reference's VM-arguments table presents a flag as shipped and neither args template sets it
+- **THEN** the VM-arguments gate SHALL fail, naming the flag
+
+#### Scenario: A flag the reference discusses but does not present as shipped
+
+- **GIVEN** a flag the reference names only as an option an operator may set
+- **WHEN** the VM-arguments gate runs
+- **THEN** the gate SHALL pass, because only flags presented as shipped are held against the templates
+
+### Requirement: An Operator SHALL Be Able to Override Any Shipped VM Argument Without Rebuilding, Through One Documented Route
+
+An operator SHALL be able to change any VM argument the release ships by setting `ERL_FLAGS` in the process environment, and the configuration reference SHALL state the precedence rule that makes this work and SHALL state that `ELIXIR_ERL_OPTIONS` does not override a flag an args file sets.
+
+Three spellings exist and only two of them win, which is not guessable and was
+not written down. The rule is one sentence once measured: flags are concatenated
+and the last occurrence wins, `ELIXIR_ERL_OPTIONS` is placed before the args
+file, and `ERL_FLAGS` after it.
+
+#### Scenario: An operator overrides a shipped default
+
+- **GIVEN** an args template that sets a scheduler count
+- **WHEN** the node is started with `ERL_FLAGS` setting a different scheduler count
+- **THEN** the node SHALL run with the operator's value
+
+#### Scenario: The route that does not work is documented as not working
+
+- **GIVEN** an args template that sets a scheduler count
+- **WHEN** the node is started with `ELIXIR_ERL_OPTIONS` setting a different scheduler count and no other override
+- **THEN** the node SHALL run with the template's value, and the configuration reference SHALL say so
+
+#### Scenario: The whole file is replaced
+
+- **WHEN** `RELEASE_VM_ARGS` names a readable args file
+- **THEN** the node SHALL start with that file's flags in place of the release's own, and the reference SHALL name this as the route for a deployment whose root filesystem is read only
+

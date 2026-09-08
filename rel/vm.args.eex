@@ -1,12 +1,39 @@
-## Customize flags given to the VM: https://www.erlang.org/doc/man/erl.html
+## Flags for the controller node. The launcher reads this file for the start
+## commands only; `flzvm rpc` and `flzvm remote` read remote.vm.args.
+## Customize: https://www.erlang.org/doc/man/erl.html
 ## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
+##
+## Every flag below is documented in docs/configuration.md under "Erlang VM
+## arguments", and scripts/check-vm-args.sh fails when the two disagree.
+## Override any of them with ERL_FLAGS in the environment, which is read after
+## this file. ELIXIR_ERL_OPTIONS is read before it and cannot override one.
 
-## Increase number of concurrent ports/sockets
-##+Q 65536
+## A scheduler with no work stops spinning for it sooner. Measured against the
+## default over paired rounds of the regression bench: 21% less CPU for the same
+## run, with no throughput difference either window could resolve. `none` saves
+## barely more (22%) and costs four times the setup latency, and spinning HARDER
+## measured 33% more CPU and no faster. docs/configuration.md carries the table.
++sbwt short
++sbwtdcpu short
++sbwtdio short
 
-## Tweak GC to run more often
-##-env ERL_FULLSWEEP_AFTER 10
+## The ceiling on ports: plugin sockets, runner connections, distribution.
+## Pinned because the default moves with the ERTS underneath (65 536 on the
+## image's OTP 27, 1 048 576 on OTP 29), so the ceiling is a decision here
+## rather than a property of whichever runtime was built in. The table is
+## allocated up front at about 16 bytes a slot, so this also returns 15 MB of
+## RSS on the larger default.
++Q 65536
+
+## Already the default on OTP 27 and 29, pinned so a future ERTS cannot move it
+## underneath the keepalive roster, which reads a monotonic epoch that is only
+## well defined in this mode.
++C multi_time_warp
+
+## Reclaiming refc binaries more aggressively is a memory-drift remedy, chosen
+## against a measured series rather than set here. See
+## docs/operations/memory_drift.md.
 
 ## Enable deployment without epmd
 ## (requires changing both vm.args and remote.vm.args)
-##-start_epmd false -erl_epmd_port 6789false
+##-start_epmd false -erl_epmd_port 6789 -dist_listen false

@@ -173,18 +173,16 @@ def shape_check(lines, entries):
                     f"{RECORD}:{lineno}: the record carries {what} ({found.group(0)})"
                 )
 
-    if failures:
-        print("Publication-readiness record is malformed:\n", file=sys.stderr)
-        for failure in failures:
-            print(f"  {failure}", file=sys.stderr)
-        print(
-            f"\n{len(failures)} problem(s) across {len(entries)} entries. Every entry "
-            f"carries {', '.join(COLUMNS[:-1])}; `settled-by` is filled in when the class "
-            f"gains the `settled` qualifier. The record states RULES, so it names no file, "
-            f"commit or count that only exists on one box.",
-            file=sys.stderr,
-        )
-        return naming_gate.FINDING
+    code = naming_gate.report(
+        failures,
+        headline="Publication-readiness record is malformed:",
+        hint=f"Every entry carries {', '.join(COLUMNS[:-1])}; `settled-by` is filled in "
+             f"when the class gains the `settled` qualifier. The record states RULES, so "
+             f"it names no file, commit or count that only exists on one box.",
+        noun=f"problem(s) across {len(entries)} entries",
+    )
+    if code:
+        return code
 
     if not entries:
         print(f"{RECORD} carries no entries at all", file=sys.stderr)

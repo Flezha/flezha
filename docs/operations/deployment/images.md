@@ -56,6 +56,25 @@ docker exec -it <container> bin/flzvm remote
 docker exec <container>     bin/flz controller status
 ```
 
+### Retuning the VM without rebuilding
+
+The image carries the release's own `vm.args` at
+`/flezha/releases/<vsn>/vm.args`, and a pulled image cannot have that file
+edited. It does not need to be: the entrypoint execs the launcher with the
+container's environment inherited, and `ERL_FLAGS` is added after the args file,
+so it wins any flag both set.
+
+```bash
+docker run -e ERL_FLAGS="+S 4:4 +SDio 4" alfetahe/flezha:latest
+```
+
+An unaccepted flag refuses the boot and names itself on stderr, which under an
+orchestrator reads as a crash loop rather than as a setting quietly ignored.
+Where the whole file has to change, for a long list or a deployment that keeps
+its tuning under version control, mount one and set `RELEASE_VM_ARGS` to its path.
+The flags the release ships and the ones worth setting yourself are in
+[`../../configuration.md`](../../configuration.md#erlang-vm-arguments).
+
 ## Production image build
 
 ```bash

@@ -84,7 +84,26 @@ from 4 MB to 142 MB; no other table grew by more than 1 MB" — not "ETS is up".
 
 ## Step 4 — Fix and verify
 
-The fix is subsystem-specific. Prove it with the load harness:
+The fix is subsystem-specific. Two VM-level remedies belong to this page rather
+than to the release's shipped flags, because neither is right by default and
+both are chosen against a measured series:
+
+- `-env ERL_FULLSWEEP_AFTER 0` makes every process GC a fullsweep, which
+  reclaims refc binaries a generational collection leaves referenced. It is the
+  first thing to try when `erlang_memory_binary` and
+  `binary_alloc_carriers_size` diverge and the divergence is in carriers rather
+  than in live data. It costs CPU on every collection, which is why it is a
+  remedy and not a default.
+- The binary allocator's own strategy (`+MBas`, `+MBlmbcs`) addresses carrier
+  waste rather than live binaries. Reach for it only when Step 2's
+  `recon_alloc_allocated_types` shows carrier waste dominating, and change one
+  thing at a time.
+
+Both are set the way any VM flag is, through `ERL_FLAGS`
+([`../configuration.md`](../configuration.md#erlang-vm-arguments)), so a trial
+run needs no rebuild and no image change.
+
+Prove any fix with the load harness:
 
 ```bash
 MIX_RUN_MEMORY_DRIFT=1 \

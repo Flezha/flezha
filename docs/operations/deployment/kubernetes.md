@@ -71,6 +71,23 @@ kubectl apply -f kubernetes/flezha-configmap.yaml
 kubectl rollout restart daemonset/flezha-daemonset -n flezha
 ```
 
+### Erlang VM flags
+
+The ConfigMap carries `ERL_FLAGS` as a commented key. Uncommenting it is the
+whole override: the pod already reads the ConfigMap through `envFrom`, and
+`ERL_FLAGS` is added after the release's own `vm.args`, so it wins any flag both
+set. Nothing has to be rebuilt or mounted.
+
+The container runs with `readOnlyRootFilesystem: true`, so the image's args file
+cannot be edited in place. Where a whole file is wanted rather than a few flags,
+mount one from a ConfigMap and set `RELEASE_VM_ARGS` to its path.
+
+The BEAM already reads this pod's CPU limit for `schedulers_online`, so a CPU
+limit alone does not need rescuing with `+S`. What it does not read is the dirty
+IO pool, which stays at its default size whatever the limit. Which flags are
+worth setting, and what the release already sets, are in
+[`../../configuration.md`](../../configuration.md#erlang-vm-arguments).
+
 ## Volumes (per-node persistence)
 
 | Volume | Host path | Mount path | Holds |

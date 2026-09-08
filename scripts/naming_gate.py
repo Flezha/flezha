@@ -159,6 +159,26 @@ def stale_baseline(path, baseline, hits, what):
     return FINDING
 
 
+def report(failures, *, headline, hint, noun="finding(s)", ok_message=None):
+    """Print a findings list in the house shape and return an exit code.
+
+    Headline, one indented finding per line, then the count and what to do
+    about it. `walk` reports what it flagged this way; a gate whose subject is
+    a file or a table rather than a line calls this directly with its own
+    findings. `ok_message` is printed when there are none, and omitting it
+    leaves a clean run silent, which is what a second report in one run wants.
+    """
+    if not failures:
+        if ok_message:
+            print(ok_message)
+        return OK
+    print(f"{headline}\n", file=sys.stderr)
+    for failure in failures:
+        print(f"  {failure}", file=sys.stderr)
+    print(f"\n{len(failures)} {noun}. {hint}".rstrip(), file=sys.stderr)
+    return FINDING
+
+
 def pattern_check(patterns, allowlist=()):
     """A `check` that flags any line still matching `patterns` once the
     allowlist rules in scope for the file have been erased from it. The
@@ -235,26 +255,17 @@ def walk(*, check, headline, hint, ok_message, pathspec=(), path_filter=None,
         if in_record:
             unclosed.append((rel, in_record))
 
-    if unclosed:
-        print("a record block is never closed, so its exemption runs to end "
-              "of file:\n", file=sys.stderr)
-        for rel, lineno in unclosed:
-            print(f"  {rel}:{lineno}: `{begin}` has no matching `{end}`", file=sys.stderr)
-        print(f"\n{len(unclosed)} unclosed record block(s). Close the block, or "
-              "put both markers on one line to exempt that line alone.\n", file=sys.stderr)
-
-    if failures:
-        print(f"{headline}\n", file=sys.stderr)
-        for rel, lineno, message in failures:
-            print(f"  {rel}:{lineno}: {message[:160]}", file=sys.stderr)
-        summary = f"{len(failures)} {noun}."
-        print(f"\n{summary} {hint}".rstrip(), file=sys.stderr)
-
-    if failures or unclosed:
-        return 1
-
-    print(ok_message)
-    return 0
+    unclosed_code = report(
+        [f"{rel}:{lineno}: `{begin}` has no matching `{end}`" for rel, lineno in unclosed],
+        headline="a record block is never closed, so its exemption runs to end of file:",
+        hint="Close the block, or put both markers on one line to exempt that line alone.",
+        noun="unclosed record block(s)")
+    # The clean line is earned only when neither block reported.
+    found_code = report(
+        [f"{rel}:{lineno}: {message[:160]}" for rel, lineno, message in failures],
+        headline=headline, hint=hint, noun=noun,
+        ok_message=None if unclosed else ok_message)
+    return found_code or unclosed_code
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +301,8 @@ GATES = (
      "argv": ["scripts/check-live-env-in-tests.sh"]},
     {"id": "ci-toolchain", "group": "naming",
      "argv": ["scripts/check-ci-toolchain.sh"]},
+    {"id": "vm-args", "group": "naming",
+     "argv": ["scripts/check-vm-args.sh"]},
     {"id": "build-artifacts-tracked", "group": "naming",
      "argv": ["scripts/check-build-artifacts.sh", "tracked"]},
     {"id": "naming-gate-self-test", "group": "naming",

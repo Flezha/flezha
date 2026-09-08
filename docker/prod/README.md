@@ -59,6 +59,25 @@ docker exec <container>     bin/flzvm rpc 'IO.puts("ok")'
 docker exec -it <container> bin/flzvm remote
 ```
 
+### Retuning the Erlang VM
+
+The release ships its own `vm.args`, which the image bakes in at
+`/flezha/releases/<vsn>/vm.args`. You do not have to rebuild to change it:
+`ERL_FLAGS` is added after that file and wins any flag both set.
+
+```bash
+docker run -e ERL_FLAGS="+S 4:4" alfetahe/flezha:latest
+```
+
+A flag the VM does not accept refuses the boot and prints the reason, so a typo
+here restarts the container rather than being quietly ignored. To replace the
+file wholesale instead, which is the route where the container root filesystem
+is read only, mount one and point `RELEASE_VM_ARGS` at it. `ELIXIR_ERL_OPTIONS`
+is not a third route: it is placed before the args file, so it cannot override a
+flag the release sets. What the release ships, and which flags are worth
+setting, are in
+[`docs/configuration.md`](../../docs/configuration.md#erlang-vm-arguments).
+
 ## Image size budget
 
 `.github/workflows/docker.yml` runs `docker-size-gate` on PRs that touch

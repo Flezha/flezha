@@ -443,3 +443,53 @@ network once its deps volume is populated.
 - **WHEN** the controller boots again
 - **THEN** no stamp was written, and the fetch runs again
 
+### Requirement: The Release SHALL Ship VM Arguments Sized for the Controller, and CLI Arguments Sized for the CLI's Node
+
+The release SHALL ship a `vm.args` tuned for a long-running controller and a `remote.vm.args` sized for the short-lived node a `flz` verb starts, and each flag SHALL carry its reason where it is set.
+
+The two files are separately addressable by the launcher: start commands read
+`RELEASE_VM_ARGS` and `rpc`/`remote` read `RELEASE_REMOTE_VM_ARGS`. Today both
+are comment-only, so every `flz` verb boots a node sized for the whole host to
+make one call, and the controller runs on whatever the ERTS in the image happens
+to default to. Those are two different jobs and they get two different budgets.
+
+#### Scenario: A booted controller reports the shipped values
+
+- **WHEN** the release is started and asked for its own `system_info`
+- **THEN** every value the shipped `vm.args` sets SHALL be the value reported
+
+#### Scenario: A CLI verb's node is smaller than the controller's
+
+- **WHEN** a `flz` verb starts its node through `flzvm rpc`
+- **THEN** that node SHALL run with the reduced scheduler budget `remote.vm.args` sets, and the verb SHALL return the same result it returned before
+
+#### Scenario: A shipped throughput flag names its evidence
+
+- **WHEN** a flag is shipped for throughput rather than for capacity, clustering or clock semantics
+- **THEN** the benchmarking documentation SHALL record the measured series that chose it, including the arm it was measured against
+
+### Requirement: The Prod Image SHALL Honour `ERL_FLAGS` From the Container Environment
+
+The prod image SHALL start the controller with any `ERL_FLAGS` present in the container environment, and the deployment documentation SHALL show the one-line form for a pulled image and the mounted-file form for a read-only root filesystem.
+
+An operator who pulls the image cannot edit the args file inside it, and under
+the shipped DaemonSet cannot write to the root filesystem at all. Passing a
+variable is the only route that costs neither a rebuild nor a volume, so it is
+the route the documentation leads with.
+
+#### Scenario: A pulled image is retuned with one variable
+
+- **WHEN** the image is run with `ERL_FLAGS` set in the container environment
+- **THEN** the controller SHALL start with those flags applied over the shipped defaults, with no rebuild and no mounted file
+
+#### Scenario: A read-only root filesystem replaces the file instead
+
+- **GIVEN** a deployment whose container root filesystem is read only
+- **WHEN** an args file is mounted and `RELEASE_VM_ARGS` names it
+- **THEN** the controller SHALL start with that file's flags
+
+#### Scenario: The Kubernetes ConfigMap shows the seam
+
+- **WHEN** an operator reads the shipped ConfigMap
+- **THEN** it SHALL carry `ERL_FLAGS` as a commented key naming the documentation section, so the override is visible in the manifest an operator already edits
+

@@ -438,6 +438,96 @@ Two runs of byte-identical code inside one round spread **0.6 %–7.3 %** at
 `powersave`). Any arm-to-arm gap smaller than that band is not an effect, whatever
 its sign or consistency.
 
+### Measuring a VM flag
+
+An arm is one value of `ERL_FLAGS` on the `mix bench` process, which **is** the
+controller BEAM. Nothing else differs: the runner is a separate Rust binary that
+ignores the variable, so the arms share one tree and one runner and the harness
+cannot report its own shape as an effect. Round structure is the arms forward
+then reversed, so every arm takes an early and a late position inside the same
+round, and a round's arm-minus-control delta carries the same drift in both
+terms.
+
+**Measure CPU, not only throughput. On this workload it is the instrument that
+can see.** Wrapping the run in `/usr/bin/time` and reading user + sys costs
+nothing and, measured over the control arm, is three to five times quieter than
+either throughput window:
+
+| Metric | Control-arm CV | Runs |
+|---|---|---|
+| end-to-end window | 5.1 % | 16, 2026-09-08 |
+| receive window | 14.9 % | 16, 2026-09-08 |
+| CPU seconds, whole process tree | **3.2 %** | 16, 2026-09-08 |
+
+Taken on battery under `powersave`. A mains series has not been run; what would
+move is the absolute rate and, with it, how much of each arm's difference is
+wake-up latency rather than work.
+
+The first two reproduce the floors recorded above from an independent series
+three days earlier, which is the check that the third is worth trusting.
+
+**Results, `-n 100 -m 2000 -w 100`, rust on uds, 8 and 6 paired rounds
+(2026-09-08, **on battery** under `powersave`).** Deltas are per-round paired
+means against the control arm. The power state is stated because the absolute
+floors above were recorded on mains and this box boosts differently on each; the
+arms were interleaved inside every round, so a comparison here is protected
+against drift but the absolute rates are not comparable with a mains series.
+
+| Arm | CPU | end-to-end | receive | wall clock |
+|---|---|---|---|---|
+| `+sbwt short` ×3 | **−20.9 %** (6/6) | −1.1 % | +7.7 % | +0.96 s |
+| `+sbwt none` ×3 | **−21.9 %** (6/6) | +0.1 % | +9.5 % | +2.17 s |
+| `+sbwtdio none` alone | −4.5 % (6/6) | −0.4 % | +2.4 % | +0.07 s |
+| `+sbwt very_long` ×3 | **+32.7 %** (8/8) | −3.6 % (8/8) | −7.6 % (8/8) | +0.21 s |
+| `+SDio 4` | +1.1 % | +0.1 % | −2.8 % | +0.09 s |
+
+Only the bold figures clear their metric's floor. **Neither throughput window
+resolved anything**, including for the arm that burns a third more CPU, which is
+the clearest statement available of what these rows can and cannot decide.
+`very_long`'s throughput direction agreed in 8 of 8 rounds on both windows and
+is still inside the floor: a direction, not a number.
+
+**The wall-clock column is where the trade-off lives**, and it is invisible in
+both throughput windows because it falls outside them. Sleeping schedulers cost
+wake-up latency on sparse, request-response work and nothing on saturated work.
+Per-phase, against control:
+
+| Phase | `+sbwt short` | `+sbwt none` |
+|---|---|---|
+| operative creation | +3.5 % | +23 % |
+| plugin setup | +43 % | +204 % |
+| warmup | +28 % | +122 % |
+| receive (saturated) | −7 % | −8 % |
+
+That table is why the release ships `short`: one point of CPU is not worth four
+times the setup latency. A bench that had reported only its two throughput
+windows would have called all four arms a tie.
+
+**`+swt` was not measured, and the series above is the reason.** The wake-up
+threshold is worth a run when a workload is wake-up bound, and the candidate for
+that was `+sbwt very_long`: it spins the schedulers hardest, so if wake-up
+latency were costing throughput it is the arm that would buy it back. It bought
+nothing on either window while burning a third more CPU, and the flat arms
+either side of it agree. A flag whose only lever is the one already shown to
+move nothing here does not get a series; it gets this paragraph.
+
+**A capacity flag is measured in memory, not in throughput.** `+Q` sizes the
+port table, which is allocated at startup and does not depend on load, so a
+bench cannot decide it and does not need to. Peak RSS of a bare node, five runs
+each on OTP 29 (default port limit 1 048 576):
+
+| Port limit | Peak RSS | Against the default |
+|---|---|---|
+| default (1 048 576) | 69.9 MB | |
+| `+Q 262144` | 58.1 MB | −11.8 MB |
+| `+Q 65536` | 55.0 MB | **−14.9 MB** |
+
+That is about 16 bytes a slot, and it is why the release pins the ceiling at the
+value the image's own ERTS already defaults to rather than at the larger one: on
+the image the pin costs nothing, and on a newer ERTS it returns the difference.
+The same measurement on the CLI's node, which the release sizes separately, is
+64.9 MB down to 49.6 MB with a startup 11% shorter (5 runs each).
+
 ## Floor-update protocol
 
 When a change intentionally moves the floor:
