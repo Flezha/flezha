@@ -15,11 +15,13 @@ plugins are subscribed.
 
 The state root is one row of `lib/flezha/layout/table.ex`, which declares every
 subtree this product writes, the knob that moves each one and what `flz reset`
-does with it. This section describes what is inside the state root; the table
-is where the root itself is decided.
+does with it. `FLEZHA_STATE_DIR` fills `:state_root` once at boot in
+`config/runtime.exs`; nothing reads the variable afterwards. This section
+describes what is inside the state root; the table is where the root itself is
+decided.
 
 ```text
-<state_root>/                        # :flezha, :state_root → FLEZHA_STATE_DIR → app_data/state
+<state_root>/                        # :flezha, :state_root, else app_data/state
   .layout                            # namespaced-layout marker
   {namespace}/                       # `_system` holds pre-namespace state
     {operative_class}/

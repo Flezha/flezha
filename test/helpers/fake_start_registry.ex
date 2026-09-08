@@ -123,7 +123,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
     # The hub stop: drop each row BEFORE terminating its instance — the
     # remove-before-terminate ordering the real stop path gives — and answer
-    # the StopResult `stop_via_hub` reads.
+    # the StopResult `OperativeManager.Teardown.hub_stop_children/3` reads.
     stub(ProcessHub, :stop_children, fn _hub, ids, _opts ->
       stopped = Enum.map(ids, fn id -> stop_and_forget(registry, id) end)
 
